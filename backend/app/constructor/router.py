@@ -13,7 +13,7 @@ from ..utils.JWT import create_access_token
 
 logger = getLogger(__name__)
 
-router = APIRouter(prefix='/api/constuctor')
+router = APIRouter(prefix='/api/users')
 
 http_bearer = HTTPBearer()
 
@@ -46,6 +46,7 @@ async def user_registration(new_user: NewUser):
 
 @router.post("/login")
 async def user_login(login_user: LoginUser):
+
     async with async_session_maker() as session:
         user_dao = UserDAO(session)
 
