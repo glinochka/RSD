@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RSD Landing Page</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <header class="header">
+        <a class="logo" href="/main.html">RSD</a>
+        <nav class="nav">
+            <a href="/agentsPage.html">Мои агенты</a>
+            <a href="/createAgent.html">Создать агента</a>
+            <a href="/priceList.html">Цены</a>
+        </nav>
+        <a class="btn btn-black btn-reg" href="/auth.html">Регистрация</a>
+    </header>
+
+    <main class="container">
+        <section class="create-agent-header">
+            <h2>Имя агента:</h2>
+            <button class="btn btn-outline btn-save">Сохранить</button>
+        </section>
+
+        <form class="agent-form">
+            <div class="form-group">
+                <input type="text" placeholder="МОП" class="input-main">
+            </div>
+
+            <div class="form-group">
+                <label>Роль агента:</label>
+                <div class="select-wrapper">
+                    <select>
+                        <option>Менеджер отдела продаж</option>
+                        <option>Техническая поддержка</option>
+                        <option>Ассистент</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>Задача:</label>
+                <div class="select-wrapper">
+                    <select>
+                        <option>Заставь клиента купить</option>
+                        <option>Ответь на вопросы по документам</option>
+                        <option>Собери контактные данные</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>Документация:</label>
+                <div class="docs-container">
+                    <ul class="docs-list">
+                        <li>информация о продукте.docx</li>
+                        <li>как вести себя с клиентом.docx</li>
+                        <li>кейсы.pdf</li>
+                    </ul>
+                    <div class="add-files-zone">
+                        + Добавить файлы
+                    </div>
+                </div>
+            </div>
+        </form>
+    </main>
+</body>
+
+</html>
