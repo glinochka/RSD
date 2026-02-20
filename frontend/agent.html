@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RSD Landing Page</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <header class="header">
+        <a class="logo" href="/frontend/верстка/main.html">RSD</a>
+        <nav class="nav">
+            <a href="/frontend/верстка/agentsPage.html">Мои агенты</a>
+            <a href="/frontend/верстка/createAgent.html">Создать агента</a>
+            <a href="/frontend/верстка/priceList.html">Цены</a>
+        </nav>
+        <a class="btn btn-black btn-reg" href="/auth.html">Регистрация</a>
+    </header>
+
+    <main class="container">
+        <section class="edit-agent-header">
+            <h2>Агент: МОП</h2>
+            <div class="actions">
+                <button class="btn btn-black">Редактировать</button>
+                <button class="btn btn-outline">Сохранить</button>
+            </div>
+        </section>
+
+        <form class="agent-form">
+            <div class="form-group">
+                <label>Роль:</label>
+                <input type="text" value="Менеджер отдела продаж">
+            </div>
+
+            <div class="form-group">
+                <label>Задача:</label>
+                <input type="text" value="Заставь клиента купить">
+            </div>
+
+            <div class="form-group">
+                <label>Документация:</label>
+                <div class="docs-container">
+                    <ul class="docs-list">
+                        <li>информация о продукте.docx</li>
+                        <li>как вести себя с клиентом.docx</li>
+                        <li>кейсы.pdf</li>
+                    </ul>
+                    <div class="add-files-zone">
+                        + Добавить файлы
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>Telegram-bot</label>
+                <input type="text" placeholder="Апи ключ от тг бота">
+            </div>
+
+            <div class="form-group">
+                <label>API ключ для интеграции агента</label>
+                <input type="text" class="readonly-input" value="ключ(не редактируется, можно только скопировать)"
+                    readonly>
+            </div>
+        </form>
+    </main>
+</body>
+
+</html>
