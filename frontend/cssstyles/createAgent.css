@@ -1,6 +1,14 @@
 /* --- Базовые настройки --- */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
+:root {
+    --primary-black: #1a1a1a;
+    --border-color: #000000;
+    --text-gray: #666;
+    --bg-white: #ffffff;
+    --transition: all 0.2s ease;
+}
+
 * {
     margin: 0;
     padding: 0;
@@ -8,51 +16,16 @@
 }
 
 body {
-    font-family: 'Inter', -apple-system, sans-serif;
-    background-color: #ffffff;
-    color: #1a1a1a;
-    line-height: 1.6;
+    font-family: 'Inter', sans-serif;
+    background-color: var(--bg-white);
+    color: var(--primary-black);
+    -webkit-font-smoothing: antialiased;
 }
 
 .container {
-    max-width: 900px;
+    max-width: 1000px;
     margin: 0 auto;
     padding: 40px 20px;
-}
-
-/* --- Хедер (Header) --- */
-.header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 20px 5%;
-    background: #fff;
-    border-bottom: 1px solid transparent; /* Можно добавить тонкую линию для структуры */
-}
-
-.logo {
-    font-size: 28px;
-    font-weight: 800;
-    text-decoration: none;
-    color: #1a1a1a;
-    letter-spacing: -1px;
-}
-
-.nav {
-    display: flex;
-    gap: 30px;
-}
-
-.nav a {
-    text-decoration: none;
-    color: #1a1a1a;
-    font-size: 16px;
-    font-weight: 500;
-    transition: opacity 0.2s;
-}
-
-.nav a:hover {
-    opacity: 0.7;
 }
 
 /* --- Кнопки (Buttons) --- */

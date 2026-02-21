@@ -1,6 +1,14 @@
 /* --- БАЗОВЫЕ НАСТРОЙКИ --- */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
+:root {
+    --primary-black: #1a1a1a;
+    --border-color: #000000;
+    --text-gray: #666;
+    --bg-white: #ffffff;
+    --transition: all 0.2s ease;
+}
+
 * {
     margin: 0;
     padding: 0;
@@ -9,9 +17,8 @@
 
 body {
     font-family: 'Inter', sans-serif;
-    color: #000000;
-    background-color: #ffffff;
-    line-height: 1.5;
+    background-color: var(--bg-white);
+    color: var(--primary-black);
     -webkit-font-smoothing: antialiased;
 }
 
@@ -21,38 +28,6 @@ body {
     padding: 40px 20px;
 }
 
-/* --- ХЕДЕР (HEADER) --- */
-.header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 20px 5%;
-    background: #fff;
-}
-
-.logo {
-    font-size: 28px;
-    font-weight: 800;
-    text-decoration: none;
-    color: #000000;
-}
-
-.nav {
-    display: flex;
-    gap: 30px;
-}
-
-.nav a {
-    text-decoration: none;
-    color: #000000;
-    font-size: 16px;
-    font-weight: 600;
-    transition: opacity 0.2s;
-}
-
-.nav a:hover {
-    opacity: 0.6;
-}
 
 /* Активный пункт меню "Цены" (опционально, как на макете подчеркнуто "Тарифы") */
 .nav a[href="/frontend/priceList.html"] {

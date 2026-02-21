@@ -1,0 +1,112 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+/* Базовый сброс для элементов хедера */
+.header * {
+    font-family: 'Inter', sans-serif;
+    box-sizing: border-box;
+}
+
+/* Главный контейнер хедера */
+.header {
+    display: flex;
+    justify-content: space-between; /* Разносит логотип, меню и кнопку */
+    align-items: center;
+    padding: 20px 40px;
+    background-color: #ffffff;
+    max-width: 1200px; /* Ограничиваем максимальную ширину для больших экранов */
+    margin: 0 auto;    /* Центрируем хедер */
+    width: 100%;
+}
+
+/* Логотип RSD */
+.logo {
+    font-size: 28px;
+    font-weight: 800;
+    text-decoration: none;
+    color: #000000;
+    letter-spacing: -0.5px; /* Делает логотип более плотным и современным */
+}
+
+/* Контейнер навигации */
+.nav {
+    display: flex;
+    gap: 40px; /* Расстояние между ссылками */
+    align-items: center;
+}
+
+/* Ссылки навигации */
+.nav a {
+    text-decoration: none;
+    color: #000000;
+    font-size: 16px;
+    font-weight: 600;
+    padding-bottom: 4px; /* Отступ для линии подчеркивания */
+    border-bottom: 2px solid transparent; /* Прозрачная линия по умолчанию */
+    transition: all 0.2s ease-in-out;
+}
+
+/* Наведение на ссылки */
+.nav a:hover {
+    opacity: 0.6;
+}
+
+/* Класс для активной страницы (подчеркивание как на макетах) */
+.nav a.active {
+    border-bottom: 2px solid #000000;
+    opacity: 1;
+}
+
+/* Базовые стили для кнопок в хедере */
+.header .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px 24px;
+    border-radius: 12px; /* Скругленные края из макета */
+    font-size: 16px;
+    font-weight: 600;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background-color 0.2s ease, transform 0.1s ease;
+}
+
+/* Черная кнопка (Регистрация) */
+.header .btn-black {
+    background-color: #1a1a1a;
+    color: #ffffff;
+    border: 1px solid #1a1a1a;
+}
+
+.header .btn-black:hover {
+    background-color: #333333;
+    transform: translateY(-1px); /* Легкое поднятие при наведении */
+}
+
+
+@media (max-width: 850px) {
+    .header {
+        padding: 20px;
+    }
+    .nav {
+        gap: 20px;
+    }
+}
+
+@media (max-width: 650px) {
+    /* Перестраиваем хедер на мобильных устройствах */
+    .header {
+        flex-direction: column;
+        gap: 20px;
+        padding: 20px 15px;
+    }
+    
+    .nav {
+        flex-wrap: wrap;
+        justify-content: center;
+        width: 100%;
+    }
+    
+    .header .btn-reg {
+        width: 100%; /* Кнопка на всю ширину на телефоне */
+    }
+}

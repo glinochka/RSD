@@ -28,54 +28,7 @@ body {
     padding: 40px 20px;
 }
 
-/* --- HEADER (Общий для всех страниц) --- */
-.header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 20px 5%;
-    background: #fff;
-}
 
-.logo {
-    font-size: 28px;
-    font-weight: 800;
-    text-decoration: none;
-    color: var(--primary-black);
-    letter-spacing: -1px;
-}
-
-.nav {
-    display: flex;
-    gap: 35px;
-}
-
-.nav a {
-    text-decoration: none;
-    color: var(--primary-black);
-    font-size: 16px;
-    font-weight: 500;
-    border-bottom: 2px solid transparent;
-    padding-bottom: 2px;
-}
-
-.nav a:hover {
-    border-bottom-color: var(--primary-black);
-}
-
-.btn-black {
-    background-color: var(--primary-black);
-    color: #fff;
-    padding: 10px 25px;
-    border-radius: 12px;
-    text-decoration: none;
-    font-weight: 600;
-    transition: var(--transition);
-}
-
-.btn-black:hover {
-    opacity: 0.8;
-}
 
 /* --- СТРАНИЦА: МОИ АГЕНТЫ --- */
 .agents-section {
