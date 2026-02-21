@@ -6,7 +6,6 @@ from aiogram.fsm.context import FSMContext
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, update
 
-from database.models import User, Agent, AgentDocument
 from core.crypto import encrypt_token
 from services.indexer import process_document
 from states.master import CreateAgentSG
@@ -20,7 +19,7 @@ from services.ai_service import improve_prompt_with_ai
 
 from datetime import datetime, timedelta
 from sqlalchemy import select, update, func
-from database.models import User
+
 from keyboards.master_kb import get_main_menu, get_tariffs_keyboard
 
 master_router = Router()

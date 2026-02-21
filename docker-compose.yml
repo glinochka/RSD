@@ -1,6 +1,7 @@
-
 services:
+
     postgres:
+        restart: always
         image: postgres:15
         container_name: rsd_db
         environment:
@@ -24,8 +25,6 @@ services:
             sh -c "cd app/alembic && alembic upgrade head &&
                 cd .. && cd .. &&
                 python server.py"
-            
-
         container_name: rsd_backend
         environment:
             DB_HOST: ${DB_HOST}
@@ -45,6 +44,50 @@ services:
         volumes:
             - ./backend:/backend
             - /app/__pycache__
+    bot:
+        build: ./bot
+        container_name: rsd_bot
+        restart: always
+        depends_on:
+            - db
+            - qdrant
+
+        environment:
+            NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+            ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+            QDRANT_URL: ${QDRANT_URL}
+            DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+            DB_NAME: ${DB_NAME}
+            MASTER_BOT_TOKEN: ${MASTER_BOT_TOKEN}
+            BASE_URL: ${BASE_URL}
+        ports:
+            - "8001:8001"
+        networks:
+            - rsd_network
+        volumes:
+            - ./bot:/app
+            - ./temp_uploads:/app/temp_uploads
+    qdrant:
+        image: qdrant/qdrant:latest
+        container_name: rsd_qdrant
+        restart: always
+        ports:
+            - "6333:6333"
+            - "6334:6334"
+        volumes:
+            - qdrant_data:/qdrant/storage
+        networks:
+            - rsd_network
+    ngrok:
+        image: ngrok/ngrok:latest
+        restart: always
+        command:
+            - "http"
+            - "app:8001"
+        environment:
+        NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+        depends_on:
+            - app
 
 networks:
   rsd_network:
@@ -52,3 +95,4 @@ networks:
 
 volumes:
     postgres_data:
+    qdrant_data:

@@ -4,7 +4,7 @@ from app.logger_config import setup_logger
 setup_logger()
 
 from fastapi.middleware.cors import CORSMiddleware
-from app.users import router as users_router
+from app.router_users import router as users_router
 from app.origins import origins
 import uvicorn
 

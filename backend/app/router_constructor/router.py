@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, status
+'''from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer
 
@@ -75,4 +75,4 @@ async def user_login(login_user: LoginUser):
             'token_type': 'bearer'
         }
 
-
+'''

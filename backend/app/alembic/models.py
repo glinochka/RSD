@@ -4,59 +4,64 @@ sys.path.insert(0, dirname(dirname(abspath(__file__))))
 
 
 
-from sqlalchemy import String, ForeignKey
+from sqlalchemy import BigInteger, Boolean, String, ForeignKey, Text
 from sqlalchemy.orm import  Mapped, mapped_column, relationship
 
 try: from .database import Base
 except ImportError: from database import Base
     
 
-from datetime import date
+from datetime import date, datetime
 
 class User(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(30), unique=True, nullable=False)
     password: Mapped[str] = mapped_column(String(100), nullable=False)
-    registered: Mapped[date] = mapped_column()
-    agents: Mapped[list['Agent']] = relationship(back_populates='user')
+    
+    subscription_type: Mapped[str] = mapped_column(String(50), default="Free")
+    subscription_end_date: Mapped[date] = mapped_column(nullable=True)
+    
+    telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
+    
+    registered: Mapped[date] = mapped_column(default=date.today)
 
-    def __str__(self):
-        return (f'''
-                id={self.id} 
-                name={self.name}
-                registered={self.registered}
-                ''')
-
-    def __repr__(self):
-        return str(self)
+    agents: Mapped[list['Agent']] = relationship(back_populates='user', cascade="all, delete-orphan")
 
 class Agent(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
 
     user: Mapped['User'] = relationship(back_populates='agents')
-    user_id: Mapped[str] = mapped_column(ForeignKey('users.id'))
+    user_id: Mapped[int] = mapped_column(ForeignKey('users.id'), ondelete="CASCADE")
     
-agent_name: Mapped[str] = mapped_column(String(100), nullable=False)
-    agent_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    agent_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    encrypted_token: Mapped[str] = mapped_column(String(500), unique=True)
+    system_prompt: Mapped[str] = mapped_column(Text, default="Ты — полезный ассистент.")
     
 
-    registered: Mapped[date] = mapped_column()
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False)
+    welcome_message = mapped_column(Text, nullable=True)
 
-    def __str__(self):
-        return (f'''
-                id={self.id} 
-                agent_id={self.agent_id}
-                registered={self.registered}
-                ''')
+    registered: Mapped[date] = mapped_column(default=date.today)
 
-    def __repr__(self):
-        return str(self)
+    documents: Mapped[list["AgentDocument"]] = relationship(
+        back_populates="agent", 
+        cascade="all, delete-orphan"
+    )
+class AgentDocument(Base):
+    """Метаданные файлов, на которых обучен конкретный агент."""
+    __tablename__ = "agent_documents"
 
-
-
-
-
-
-
+    id: Mapped[int] = mapped_column(primary_key=True)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"))
+    
+    file_name: Mapped[str] = mapped_column(String(255))
+    
+    # Telegram File ID
+    file_id: Mapped[str] = mapped_column(String(255))  
+    # processing, ready, error
+    status: Mapped[str] = mapped_column(String(50), default="processing") 
+    
+    created_at: Mapped[date] = mapped_column(default=date.today)
+    agent: Mapped["Agent"] = relationship(back_populates="documents")
 
 

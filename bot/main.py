@@ -13,8 +13,7 @@ from core.crypto import decrypt_token
 from core.middlewares import AgentContextMiddleware, DbSessionMiddleware
 from handlers.agent import agent_router 
 from handlers.master import master_router 
-from database.db import async_session, engine, Base 
-from database.models import Agent
+
 from core.config import settings
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
@@ -27,10 +26,6 @@ async def get_session():
 # --- ЖИЗНЕННЫЙ ЦИКЛ ПРИЛОЖЕНИЯ ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # STARTUP
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    print("✅ База данных инициализирована")
 
     client = QdrantClient(url=os.getenv("QDRANT_URL"), api_key=os.getenv("QDRANT_API_KEY"))
     collection_name = "agent_documents"
@@ -48,8 +43,10 @@ async def lifespan(app: FastAPI):
                 }
             )
             print(f"✅ Коллекция {collection_name} создана")
+
     except Exception as e:
         print(f"⚠️ Qdrant Error: {e}")
+
 
     webhook_url = f"{settings.BASE_URL}/webhook/master"
     await master_bot.set_webhook(url=webhook_url, drop_pending_updates=True)

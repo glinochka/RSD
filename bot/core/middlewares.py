@@ -4,24 +4,7 @@ from aiogram import BaseMiddleware
 from aiogram.types import TelegramObject, Message
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload
-from database.db import async_session
-from database.models import Agent, User
 
-# Эта Middleware создает сессию БД и передает её в хендлер как аргумент "session"
-class DbSessionMiddleware(BaseMiddleware):
-    def __init__(self, session_pool):
-        super().__init__()
-        self.session_pool = session_pool
-
-    async def __call__(
-        self,
-        handler: Callable[[TelegramObject, Dict[str, Any]], Awaitable[Any]],
-        event: TelegramObject,
-        data: Dict[str, Any]
-    ) -> Any:
-        async with self.session_pool() as session:
-            data["session"] = session
-            return await handler(event, data)
 
 # Эта Middleware достает настройки агента и ПРОВЕРЯЕТ ПОДПИСКУ
 class AgentContextMiddleware(BaseMiddleware):
