@@ -1,0 +1,198 @@
+/* style.css — Страница редактирования агента */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+:root {
+    --primary-black: #1a1a1a;
+    --border-color: #000000;
+    --gray-bg: #e0e0e0;
+    --transition: all 0.2s ease;
+}
+
+body {
+    font-family: 'Inter', sans-serif;
+    color: var(--primary-black);
+    margin: 0;
+    line-height: 1.4;
+}
+
+.container {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+/* --- HEADER --- */
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 0;
+    margin-bottom: 20px;
+}
+
+.logo {
+    font-size: 28px;
+    font-weight: 800;
+    text-decoration: none;
+    color: black;
+}
+
+.nav {
+    display: flex;
+    gap: 25px;
+}
+
+.nav a {
+    text-decoration: none;
+    color: black;
+    font-weight: 500;
+    font-size: 16px;
+}
+
+/* --- BUTTONS --- */
+.btn {
+    padding: 10px 24px;
+    border-radius: 12px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    border: 1px solid var(--border-color);
+    transition: var(--transition);
+}
+
+.btn-black {
+    background: var(--primary-black);
+    color: white;
+}
+
+.btn-black:hover {
+    background: #333;
+}
+
+.btn-outline {
+    background: white;
+    color: black;
+}
+
+.btn-outline:hover {
+    background: #f0f0f0;
+}
+
+/* --- EDIT HEADER --- */
+.edit-agent-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 30px;
+}
+
+.edit-agent-header h2 {
+    font-size: 28px;
+    font-weight: 700;
+    margin: 0;
+}
+
+.actions {
+    display: flex;
+    gap: 12px;
+}
+
+/* --- FORM ELEMENTS --- */
+.agent-form {
+    display: flex;
+    flex-direction: column;
+    gap: 25px;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.form-group label {
+    font-size: 22px;
+    font-weight: 700;
+}
+
+.form-group input {
+    width: 100%;
+    padding: 12px 20px;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    font-size: 18px;
+    font-family: inherit;
+    outline: none;
+}
+
+/* Поле "Только для чтения" */
+.readonly-input {
+    background-color: #f9f9f9;
+    color: #666;
+    cursor: default;
+}
+
+/* --- DOCUMENTATION BLOCK --- */
+.docs-container {
+    border: 1px solid var(--border-color);
+    border-radius: 15px;
+    padding: 20px;
+}
+
+.docs-list {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 20px 0;
+}
+
+.docs-list li {
+    font-size: 18px;
+    font-weight: 500;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+}
+
+.docs-list li::before {
+    content: "•";
+    margin-right: 10px;
+    font-weight: bold;
+}
+
+.add-files-zone {
+    background-color: var(--gray-bg);
+    border-radius: 12px;
+    padding: 25px;
+    text-align: center;
+    font-size: 24px;
+    font-weight: 700;
+    color: #333;
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.add-files-zone:hover {
+    background-color: #d4d4d4;
+}
+
+/* --- RESPONSIVE --- */
+@media (max-width: 768px) {
+    .edit-agent-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 20px;
+    }
+    
+    .actions {
+        width: 100%;
+    }
+    
+    .actions .btn {
+        flex: 1;
+    }
+    
+    .nav {
+        display: none; /* Скрытие навигации на мобильных для чистоты */
+    }
+}

@@ -1,0 +1,223 @@
+/* --- Базовые настройки --- */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Inter', -apple-system, sans-serif;
+    background-color: #ffffff;
+    color: #1a1a1a;
+    line-height: 1.6;
+}
+
+.container {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 40px 20px;
+}
+
+/* --- Хедер (Header) --- */
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 5%;
+    background: #fff;
+    border-bottom: 1px solid transparent; /* Можно добавить тонкую линию для структуры */
+}
+
+.logo {
+    font-size: 28px;
+    font-weight: 800;
+    text-decoration: none;
+    color: #1a1a1a;
+    letter-spacing: -1px;
+}
+
+.nav {
+    display: flex;
+    gap: 30px;
+}
+
+.nav a {
+    text-decoration: none;
+    color: #1a1a1a;
+    font-size: 16px;
+    font-weight: 500;
+    transition: opacity 0.2s;
+}
+
+.nav a:hover {
+    opacity: 0.7;
+}
+
+/* --- Кнопки (Buttons) --- */
+.btn {
+    padding: 10px 25px;
+    border-radius: 12px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: none;
+    transition: all 0.2s ease;
+    border: none;
+}
+
+.btn-black {
+    background-color: #1a1a1a;
+    color: #ffffff;
+}
+
+.btn-black:hover {
+    background-color: #333333;
+}
+
+.btn-outline {
+    background-color: #ffffff;
+    border: 1px solid #000000;
+    color: #1a1a1a;
+}
+
+.btn-save {
+    border-radius: 12px; /* Округлые края как на макете */
+    font-size: 20px;
+    padding: 8px 30px;
+}
+
+/* --- Заголовок страницы и Сохранение --- */
+.create-agent-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 25px;
+}
+
+.create-agent-header h2 {
+    font-size: 28px;
+    font-weight: 700;
+}
+
+/* --- Форма (Agent Form) --- */
+.agent-form {
+    display: flex;
+    flex-direction: column;
+    gap: 30px;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.form-group label {
+    font-size: 26px; /* Крупные заголовки полей */
+    font-weight: 700;
+}
+
+/* Поля ввода (Inputs & Selects) */
+.input-main, .select-wrapper select {
+    width: 100%;
+    padding: 12px 20px;
+    border: 1px solid #000000;
+    border-radius: 12px; /* Овальные формы полей */
+    font-size: 18px;
+    outline: none;
+    background-color: #fff;
+}
+
+/* Стилизация выпадающего списка */
+.select-wrapper {
+    position: relative;
+    width: 100%;
+}
+
+.select-wrapper select {
+    appearance: none; /* Убираем дефолтную стрелку */
+    cursor: pointer;
+}
+
+/* Кастомная стрелочка */
+.select-wrapper::after {
+    content: '';
+    position: absolute;
+    right: 20px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 0;
+    height: 0;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-top: 8px solid #cccccc; /* Светло-серая стрелка */
+    pointer-events: none;
+}
+
+/* --- Блок документации (Documentation) --- */
+.docs-container {
+    border: 1px solid #000000;
+    border-radius: 12px;
+    padding: 25px;
+}
+
+.docs-list {
+    list-style: none;
+    margin-bottom: 20px;
+}
+
+.docs-list li {
+    font-size: 18px;
+    font-weight: 500;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+}
+
+.docs-list li::before {
+    content: '•';
+    margin-right: 10px;
+    font-weight: bold;
+}
+
+/* Зона добавления файлов */
+.add-files-zone {
+    background-color: #e0e0e0; /* Светло-серый фон кнопки добавления */
+    border-radius: 12px;
+    padding: 25px;
+    text-align: center;
+    font-size: 28px;
+    font-weight: 700;
+    color: #444444;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.add-files-zone:hover {
+    background-color: #d4d4d4;
+}
+
+/* --- Адаптивность --- */
+@media (max-width: 768px) {
+    .header {
+        flex-direction: column;
+        gap: 20px;
+    }
+    .nav {
+        gap: 15px;
+        font-size: 14px;
+    }
+    .create-agent-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 15px;
+    }
+    .btn-save {
+        width: 100%;
+    }
+    .form-group label {
+        font-size: 22px;
+    }
+}
