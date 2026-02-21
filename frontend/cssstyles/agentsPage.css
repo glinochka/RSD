@@ -1,0 +1,240 @@
+/* Базовые настройки и шрифты */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+:root {
+    --primary-black: #1a1a1a;
+    --border-color: #000000;
+    --text-gray: #666;
+    --bg-white: #ffffff;
+    --transition: all 0.2s ease;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Inter', sans-serif;
+    background-color: var(--bg-white);
+    color: var(--primary-black);
+    -webkit-font-smoothing: antialiased;
+}
+
+.container {
+    max-width: 1000px;
+    margin: 0 auto;
+    padding: 40px 20px;
+}
+
+/* --- HEADER (Общий для всех страниц) --- */
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 5%;
+    background: #fff;
+}
+
+.logo {
+    font-size: 28px;
+    font-weight: 800;
+    text-decoration: none;
+    color: var(--primary-black);
+    letter-spacing: -1px;
+}
+
+.nav {
+    display: flex;
+    gap: 35px;
+}
+
+.nav a {
+    text-decoration: none;
+    color: var(--primary-black);
+    font-size: 16px;
+    font-weight: 500;
+    border-bottom: 2px solid transparent;
+    padding-bottom: 2px;
+}
+
+.nav a:hover {
+    border-bottom-color: var(--primary-black);
+}
+
+.btn-black {
+    background-color: var(--primary-black);
+    color: #fff;
+    padding: 10px 25px;
+    border-radius: 12px;
+    text-decoration: none;
+    font-weight: 600;
+    transition: var(--transition);
+}
+
+.btn-black:hover {
+    opacity: 0.8;
+}
+
+/* --- СТРАНИЦА: МОИ АГЕНТЫ --- */
+.agents-section {
+    margin-top: 20px;
+}
+
+.section-title {
+    font-size: 24px;
+    font-weight: 700;
+    margin-bottom: 30px;
+}
+
+.agents-list {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.agent-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px 25px;
+    border: 1px solid var(--border-color);
+    border-radius: 12px; /* Скругление как на макете */
+    background: #fff;
+    transition: var(--transition);
+}
+
+.agent-item:hover {
+    box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+}
+
+.agent-name {
+    display: flex;
+    align-items: center;
+    font-size: 18px;
+    font-weight: 600;
+    gap: 12px;
+}
+
+.dot {
+    width: 6px;
+    height: 6px;
+    background-color: var(--primary-black);
+    border-radius: 50%;
+}
+
+.plus {
+    font-size: 22px;
+    font-weight: 400;
+    margin-right: 5px;
+}
+
+.edit-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    opacity: 0.7;
+    transition: var(--transition);
+}
+
+.edit-btn:hover {
+    opacity: 1;
+    transform: scale(1.1);
+}
+
+.add-agent {
+    cursor: pointer;
+}
+
+/* --- СТРАНИЦА: АВТОРИЗАЦИЯ (ОБНОВЛЕННАЯ) --- */
+.auth-logo {
+    text-align: center;
+    font-size: 60px;
+    font-weight: 800;
+    margin-top: 30px;
+}
+
+.auth-card {
+    display: flex;
+    max-width: 950px;
+    margin: 20px auto;
+    border: 1px solid var(--border-color);
+    border-radius: 24px;
+    overflow: hidden;
+    min-height: 500px;
+}
+
+.auth-form-side {
+    flex: 1;
+    padding: 40px;
+    border-right: 1px solid var(--border-color);
+}
+
+.auth-form-side h2 {
+    font-size: 36px;
+    font-weight: 700;
+    margin-bottom: 5px;
+}
+
+.google-btn {
+    width: 100%;
+    margin: 20px 0;
+    padding: 12px;
+    border: 1px solid var(--border-color);
+    background: transparent;
+    border-radius: 50px; /* Овальная кнопка */
+    font-family: inherit;
+    font-size: 16px;
+    cursor: pointer;
+}
+
+.input-group input {
+    width: 100%;
+    padding: 15px 25px;
+    margin-top: 5px;
+    border: 1px solid var(--border-color);
+    border-radius: 50px; /* Овальные инпуты */
+    font-size: 16px;
+    outline: none;
+}
+
+.btn-continue {
+    width: 100%;
+    padding: 15px;
+    margin-top: 20px;
+    background: var(--primary-black);
+    color: white;
+    border: none;
+    border-radius: 50px;
+    font-size: 18px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.auth-media-side {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    background: #fff;
+}
+
+/* Адаптивность */
+@media (max-width: 768px) {
+    .auth-card {
+        flex-direction: column;
+        border: none;
+    }
+    .auth-media-side {
+        display: none;
+    }
+    .nav {
+        display: none;
+    }
+}
