@@ -60,6 +60,8 @@ services:
             DB_NAME: ${DB_NAME}
             MASTER_BOT_TOKEN: ${MASTER_BOT_TOKEN}
             BASE_URL: ${BASE_URL}
+            API_HOST: ${API_HOST}
+            API_PORT: ${API_PORT}
         ports:
             - "8001:8001"
         networks:

@@ -11,7 +11,7 @@ try: from .database import Base
 except ImportError: from database import Base
     
 
-from datetime import date, datetime
+from datetime import date
 
 class User(Base):
     id: Mapped[int] = mapped_column(primary_key=True)

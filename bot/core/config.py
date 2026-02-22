@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     DEEPSEEK_API_KEY: str
     MASTER_BOT_TOKEN: str
     BASE_URL: str
+    API_HOST: str
+    API_PORT: str
 
 settings = Settings()
 
