@@ -1,61 +1,159 @@
+from datetime import date
+
 from config import settings
 import httpx
+from typing import Awaitable, Callable, Any
+from fastapi import status
 
-base_url = f'http://{settings.API_HOST}:{settings.API_PORT}'
+base_url = f'http://{settings.API_HOST}:{settings.API_PORT}/api'
 
 class APIbase():
-    operation_name: str = None
-    operation: function = None
+    operation: Callable[..., Awaitable[Any]] = None
 
     @classmethod
     async def fetch_post(cls, url: str, data: dict) -> dict:
         async with httpx.AsyncClient() as client:
             response = await client.post(url, json = data)
-            return response.json()
+
+            if not response.is_success:
+                return {'error_code': response.status_code}
+            if response.content:
+                result = response.json()
+
+                return result
+            else:
+                return {'no_body': True, 'status_code': response.status_code}
         
     @classmethod
     async def fetch_get(cls, url: str, data: dict) -> dict:
         async with httpx.AsyncClient() as client:
-            response = await client.get(url, json = data)
-            return response.json()
+            response = await client.get(url, params = data)
+            
+            if not response.is_success:
+                return {'error_code': response.status_code}
+            if response.content:
+                result = response.json()
+                
+                return result
+            else:
+                return {'no_body': True, 'status_code': response.status_code}
         
     @classmethod
     async def fetch_patch(cls, url: str, data: dict) -> dict:
         async with httpx.AsyncClient() as client:
             response = await client.patch(url, json = data)
-            return response.json()
+            
+            if not response.is_success:
+                return {'error_code': response.status_code}
+            if response.content:
+                result = response.json()
+
+                return result
+            else:
+                return {'no_body': True, 'status_code': response.status_code}
         
     @classmethod
-    async def fetch_delete(cls, url: str, data: dict) -> dict:
+    async def fetch_delete(cls, url: str, data: dict) -> dict|list:
         async with httpx.AsyncClient() as client:
-            response = await client.delete(url, json = data)
-            return response.json()
+            response = await client.delete(url, params = data)
+            
+            if not response.is_success:
+                return {'error_code': response.status_code}
+            if response.content:
+                result = response.json()
+                
+                return result
+            else:
+                return {'no_body': True, 'status_code': response.status_code}
 
     @classmethod
-    async def agent(cls, data: dict) -> dict:
-        url = f'{base_url}/{cls.operation_name}/agents'
+    async def agent(cls, data: dict, add_url = None) -> dict:
+        url = f'{base_url}/agents/{f"/{add_url}" if add_url else ""}'
         response = await cls.operation(url, data)
         return response
     
     @classmethod
-    async def agentDocs(cls, data: dict) -> dict:
-        url = f'{base_url}/{cls.operation_name}/agentsDocs'
+    async def user(cls, data: dict, add_url = None) -> dict:
+        url = f'{base_url}/users/{f"/{add_url}" if add_url else ""}'
         response = await cls.operation(url, data)
         return response
     
+
     
 class APIcreate(APIbase):
-    operation_name = 'create'
     operation = APIbase.fetch_post
 
+    @classmethod
+    async def agentBy_UserWith_tgID(cls, data: dict, tg_id: int) -> dict:
+        data = data.copy()
+        data['tg_id'] = tg_id
+        return await cls.agent(data, add_url='ByUserWith_tgID')
+
+    
+
 class APIread(APIbase):
-    operation_name = 'read'
     operation = APIbase.fetch_get
 
-class APIupdate(APIbase):
-    operation_name = 'update'
-    operation = APIbase.fetch_patch
+    @classmethod
+    async def agentBy_botID(cls, bot_id: int) -> dict:
+        return await cls.agent({'bot_id': bot_id})
+    
+    @classmethod
+    async def userBy_agentID(cls, bot_id: int) -> dict:
+        add_url = 'by_agentID'
+        return cls.user({'id': bot_id}, add_url = add_url)
+    
+    @classmethod
+    async def allAgentsBy_tgID(cls, tg_id: int) -> dict|list:
+        add_url = 'allBy_tgID'
+        return cls.agent({'id': tg_id}, add_url = add_url)
+    
+    @classmethod
+    async def userBy_tgID(cls, tg_id: int) -> dict:
+        add_url = 'by_tgID'
+        return cls.user({'id': tg_id}, add_url = add_url)
 
-class APIcreate(APIbase):
-    operation_name = 'delete'
+
+class APIupdate(APIbase):
+    operation = APIbase.fetch_patch
+    @classmethod
+    async def agentPromptBy_botID(cls, prompt: str, bot_id: int) -> dict:
+        add_url = 'by_botID'
+        return cls.agent({'system_prompt': prompt, 'bot_id': bot_id}, add_url = add_url)
+    
+    @classmethod
+    async def agentWelcomeBy_botID(cls, welcome: str, bot_id: int) -> dict:
+        add_url = 'by_botID'
+        return cls.agent({'welcome_message': welcome, 'bot_id': bot_id}, add_url = add_url)
+    
+    @classmethod
+    async def agentToggle_status(cls, bot_id: int) -> dict:
+        add_url = 'toggle_status'
+        return cls.agent({'bot_id': bot_id}, add_url = add_url)
+    @classmethod
+    async def userSubBy_tgID(cls, sub_type: str|None, sub_end: date|None, tg_id: int) -> dict:
+        add_url = 'by_tgID'
+        data = {'telegram_id': tg_id}
+        if sub_type:
+            data['subscription_type'] = sub_type
+
+        if sub_end:
+            data['subscription_end_date'] = sub_end
+
+        return cls.user(data, add_url = add_url)
+
+
+
+
+class APIdelete(APIbase):
     operation = APIbase.fetch_delete
+    @classmethod
+    async def agentBy_botID(cls, bot_id: int) -> dict:
+        return await cls.agent({'bot_id': bot_id})
+    
+# функция для понятной обрабоки ошибок  
+def get_response_status(response: dict|list) -> int:
+    if 'error_code' in response:
+        return response.get('error_code')
+    else:
+        return status.HTTP_200_OK

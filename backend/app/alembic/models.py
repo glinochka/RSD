@@ -11,11 +11,11 @@ try: from .database import Base
 except ImportError: from database import Base
     
 
-from datetime import date
+from datetime import datetime, date, timezone
 
 class User(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(30), unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
     password: Mapped[str] = mapped_column(String(100), nullable=False)
     
     subscription_type: Mapped[str] = mapped_column(String(50), default="Free")
@@ -23,7 +23,7 @@ class User(Base):
     
     telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
     
-    registered: Mapped[date] = mapped_column(default=date.today)
+    registered: Mapped[date] = mapped_column(default=datetime.now(timezone.utc))
 
     agents: Mapped[list['Agent']] = relationship(back_populates='user', cascade="all, delete-orphan")
 
@@ -33,35 +33,29 @@ class Agent(Base):
     user: Mapped['User'] = relationship(back_populates='agents')
     user_id: Mapped[int] = mapped_column(ForeignKey('users.id'), ondelete="CASCADE")
     
-    agent_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    bot_username: Mapped[str] = mapped_column(String(100), nullable=True)
     encrypted_token: Mapped[str] = mapped_column(String(500), unique=True)
+    bot_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=True) 
     system_prompt: Mapped[str] = mapped_column(Text, default="Ты — полезный ассистент.")
     
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=False)
-    welcome_message = mapped_column(Text, nullable=True)
+    welcome_message: Mapped[str] = mapped_column(Text, nullable=True)
 
-    registered: Mapped[date] = mapped_column(default=date.today)
+    registered: Mapped[date] = mapped_column(default=datetime.now(timezone.utc))
 
     documents: Mapped[list["AgentDocument"]] = relationship(
         back_populates="agent", 
         cascade="all, delete-orphan"
     )
 class AgentDocument(Base):
-    """Метаданные файлов, на которых обучен конкретный агент."""
-    __tablename__ = "agent_documents"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"))
     
     file_name: Mapped[str] = mapped_column(String(255))
-    
-    # Telegram File ID
-    file_id: Mapped[str] = mapped_column(String(255))  
-    # processing, ready, error
-    status: Mapped[str] = mapped_column(String(50), default="processing") 
-    
-    created_at: Mapped[date] = mapped_column(default=date.today)
+
+    created_at: Mapped[date] = mapped_column(default=datetime.now(timezone.utc))
     agent: Mapped["Agent"] = relationship(back_populates="documents")
 
 

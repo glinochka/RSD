@@ -1,9 +1,8 @@
 from typing import Any, Awaitable, Callable, Dict
-from datetime import datetime
+from datetime import datetime, timezone
 from aiogram import BaseMiddleware
 from aiogram.types import TelegramObject, Message
-from sqlalchemy import select
-from sqlalchemy.orm import joinedload
+from core.backendAPI import APIread
 
 
 # Эта Middleware достает настройки агента и ПРОВЕРЯЕТ ПОДПИСКУ
@@ -17,40 +16,35 @@ class AgentContextMiddleware(BaseMiddleware):
         agent_id = data.get("agent_id")
         
         if agent_id:
-            session = data.get("session")
-            if session:
-                # 1. Используем joinedload, чтобы одним запросом достать и Агента, и его Владельца (User)
-                result = await session.execute(
-                    select(Agent).options(joinedload(Agent.owner)).where(Agent.id == agent_id)
-                )
-                agent = result.scalar_one_or_none()
+            agent_json = await APIread.agentBy_botID(agent_id)
+            owner_json = await APIread.userBy_agentID(agent_id)
+            if not owner_json.get('error_code'):
+                # ПРОВЕРКА СТАТУСА ПОДПИСКИ
+                # Если дата окончания подписки установлена и она меньше текущего времени (подписка истекла)
+                subscription_end_date = datetime.fromisoformat(owner_json['subscription_end_date'])
+                if subscription_end_date < datetime.now(timezone.utc):
+                    
+                    # Если это обычное текстовое сообщение, отвечаем заглушкой
+                    if isinstance(event, Message):
+                        await event.answer(
+                            "⚠️ Извините, но этот бот временно недоступен.\n"
+                            "Владельцу бота необходимо проверить статус своей подписки."
+                        )
+                    
+                    # ВАЖНО: Прерываем выполнение!
+                    # Мы НЕ вызываем await handler(event, data), 
+                    # поэтому код не пойдет в handlers/agent.py и не потратит токены LLM.
+                    return
                 
-                if agent:
-                    owner = agent.owner
-                    
-                    # 2. ПРОВЕРКА СТАТУСА ПОДПИСКИ
-                    # Если дата окончания подписки установлена и она меньше текущего времени (подписка истекла)
-                    if owner.subscription_end_date and owner.subscription_end_date < datetime.utcnow():
-                        
-                        # Если это обычное текстовое сообщение, отвечаем заглушкой
-                        if isinstance(event, Message):
-                            await event.answer(
-                                "⚠️ Извините, но этот бот временно недоступен.\n"
-                                "Владельцу бота необходимо проверить статус своей подписки."
-                            )
-                        
-                        # ВАЖНО: Прерываем выполнение!
-                        # Мы НЕ вызываем await handler(event, data), 
-                        # поэтому код не пойдет в handlers/agent.py и не потратит токены LLM.
-                        return
-                    
-                    # 3. Если с подпиской всё в порядке, собираем конфиг и пускаем запрос дальше
-                    data["agent_config"] = {
-                        "id": agent.id,
-                        "system_prompt": agent.system_prompt,
-                        "is_active": agent.is_active,
-                        "welcome_message": agent.welcome_message
-                    }
-        
+                # Если с подпиской всё в порядке, собираем конфиг и пускаем запрос дальше
+                data["agent_config"] = {
+                    "id": agent_json['id'],
+                    "system_prompt": agent_json['system_prompt'],
+                    "is_active": agent_json['is_active'],
+                    "welcome_message": agent_json['welcome_message']
+                }
+            else:
+                print('Http ошибка при получении информации о пользавателе')
+    
         # Передаем управление в следующий хендлер (handlers/agent.py)
         return await handler(event, data)

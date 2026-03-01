@@ -1,11 +1,13 @@
 import os
 import asyncio
+from fastapi import status
 from aiogram import Router, F, Bot, types
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, update
 
+
+from core.backendAPI import APIread, APIcreate, APIupdate, APIdelete, get_response_status
+from core.config import settings
 from core.crypto import encrypt_token
 from services.indexer import process_document
 from states.master import CreateAgentSG
@@ -17,8 +19,7 @@ from services.search_service import delete_document_vectors
 from services.ai_service import generate_welcome_with_ai
 from services.ai_service import improve_prompt_with_ai
 
-from datetime import datetime, timedelta
-from sqlalchemy import select, update, func
+from datetime import datetime, timedelta, timezone
 
 from keyboards.master_kb import get_main_menu, get_tariffs_keyboard
 
@@ -34,20 +35,23 @@ def escape_md(text: str) -> str:
 # --- ГЛАВНОЕ МЕНЮ ---
 
 @master_router.message(CommandStart())
-async def cmd_start(message: types.Message, session: AsyncSession):
+async def cmd_start(message: types.Message):
     # Логика регистрации пользователя
-    res = await session.execute(select(User).where(User.telegram_id == message.from_user.id))
-    user = res.scalar_one_or_none()
+    user_json = await APIread.userBy_tgID(message.from_user.id)
     
-    if not user:
-        user = User(
-            telegram_id=message.from_user.id, 
-            username=message.from_user.username,
-            subscription_type="Free" # Явно задаем базовый тариф при регистрации
-        )
-        session.add(user)
-        await session.commit()
-    
+    response_status = get_response_status(user_json)
+    if response_status == status.HTTP_404_NOT_FOUND:
+        await APIcreate.user({
+            'telegram_id': message.from_user.id,        
+            'username': message.from_user.username
+            })
+        return
+    elif response_status != status.HTTP_200_OK: 
+        await message.answer(
+                    f"Ошибка сервера при попытке Вас зарегестрировать",
+                    reply_markup=get_main_menu())
+        return 
+
     await message.answer(
         f"Привет, {message.from_user.first_name}! Это конструктор AI-агентов.\n\n"
         "Здесь ты можешь создать своего бота с кастомными промптами и базой знаний.",
@@ -55,30 +59,36 @@ async def cmd_start(message: types.Message, session: AsyncSession):
     )
 
 @master_router.callback_query(F.data == "start_menu")
-async def back_to_menu(callback: types.CallbackQuery, session: AsyncSession):
+async def back_to_menu(callback: types.CallbackQuery):
     await callback.message.delete()
-    await cmd_start(callback.message, session)
+    await cmd_start(callback.message)
 
-# --- ПРОФИЛЬ (ЗДЕСЬ БЫЛА ОШИБКА) ---
 
 @master_router.callback_query(F.data == "profile")
-async def show_profile(callback: types.CallbackQuery, session: AsyncSession):
+async def show_profile(callback: types.CallbackQuery):
     tg_id = callback.from_user.id
-    
-    user_res = await session.execute(select(User).where(User.telegram_id == tg_id))
-    user = user_res.scalar_one_or_none()
-    
-    if not user:
+
+    all_user_agents = await APIread.allAgentsBy_tgID(tg_id)
+
+    response_status = get_response_status(all_user_agents)
+    if response_status == status.HTTP_404_NOT_FOUND:
         await callback.answer("Ошибка: пользователь не найден.")
         return
+    
+    elif response_status != status.HTTP_200_OK: 
+        await callback.answer(
+            f"Ошибка сервера при попытке получить всех ваших агентов",
+            reply_markup=get_main_menu()
+        )
+        return 
+    
+    if all_user_agents:
+        agents_names = [agent['agent_name'] for agent in all_user_agents]
+    else:
+        agents_names = []
 
-    query_count = select(func.count(Agent.id)).where(Agent.owner_id == user.id)
-    result_count = await session.execute(query_count)
-    agents_count = result_count.scalar()
-
-    query_agents = select(Agent.bot_username).where(Agent.owner_id == user.id).limit(5)
-    result_agents = await session.execute(query_agents)
-    agents_names = result_agents.scalars().all()
+    if len(agents_names) > 5:
+        agents_names = agents_names[:5]
 
     # Экранируем юзернеймы ботов, чтобы подчеркивания не ломали Markdown
     agents_list_str = "\n".join([f"• @{escape_md(name)}" for name in agents_names if name]) \
@@ -87,7 +97,7 @@ async def show_profile(callback: types.CallbackQuery, session: AsyncSession):
     profile_text = (
         "👤 *Мой профиль*\n\n"
         f"🆔 Ваш ID: `{tg_id}`\n"
-        f"🤖 Создано агентов: {agents_count}\n\n"
+        f"🤖 Создано агентов: {len(all_user_agents)}\n\n"
         "*Ваши последние боты:*\n"
         f"{agents_list_str}\n\n"
         "💡 Здесь можно управлять подпиской."
@@ -107,22 +117,37 @@ async def show_profile(callback: types.CallbackQuery, session: AsyncSession):
 # --- СОЗДАНИЕ АГЕНТА ---
 
 @master_router.callback_query(F.data == "add_agent")
-async def start_add_agent(callback: types.CallbackQuery, state: FSMContext, session: AsyncSession):
-    # 1. Получаем данные пользователя и его текущий тариф
-    res = await session.execute(select(User).where(User.telegram_id == callback.from_user.id))
-    user = res.scalar_one_or_none()
+async def start_add_agent(callback: types.CallbackQuery, state: FSMContext):
+
+    tg_id = callback.from_user.id
+    user_json = await APIread.userBy_tgID(tg_id)
     
-    if not user:
-        await callback.answer("Ошибка: пользователь не найден в базе.", show_alert=True)
+    response_status_user = get_response_status(user_json)
+
+    if response_status_user == status.HTTP_404_NOT_FOUND:
+        await callback.answer("Ошибка: пользователь не найден.")
         return
 
-    # 2. Считаем, сколько агентов уже создал этот пользователь
-    count_res = await session.execute(
-        select(func.count(Agent.id)).where(Agent.owner_id == user.id)
-    )
-    agents_count = count_res.scalar() or 0
+    elif response_status_user != status.HTTP_200_OK: 
+        await callback.answer(
+            f"Ошибка сервера при попытке получить пользователя",
+            reply_markup=get_main_menu()
+            )
+        return 
 
-    # 3. Определяем лимиты согласно ТЗ
+
+    all_user_agents = await APIread.allAgentsBy_tgID(tg_id)
+    response_status_agents = get_response_status(all_user_agents)
+
+    if response_status_agents != status.HTTP_200_OK: 
+        await callback.answer(
+            f"Ошибка сервера при попытке получить всех ваших агентов",
+            reply_markup=get_main_menu()
+        )
+        return 
+
+    agents_count = len(all_user_agents)
+    #  Определяем лимиты согласно ТЗ
     # Базовый (Free) — 1, Продвинутый — 5, Pro — 20
     limits = {
         "Free": 1,
@@ -130,9 +155,9 @@ async def start_add_agent(callback: types.CallbackQuery, state: FSMContext, sess
         "Pro": 20
     }
     
-    current_limit = limits.get(user.subscription_type, 1)
+    current_limit = limits.get(user_json['subscription_type'], 1)
 
-    # 4. Проверяем превышение лимита
+    #  Проверяем превышение лимита
     if agents_count >= current_limit:
         kb = types.InlineKeyboardMarkup(inline_keyboard=[
             [types.InlineKeyboardButton(text="💎 Повысить тариф", callback_data="tariffs_menu")],
@@ -141,7 +166,7 @@ async def start_add_agent(callback: types.CallbackQuery, state: FSMContext, sess
         
         await callback.message.edit_text(
             f"🚫 *Лимит достигнут*\n\n"
-            f"На вашем тарифе (*{user.subscription_type}*) можно создать не более {current_limit} агентов.\n"
+            f"На вашем тарифе (*{user_json['subscription_type']}*) можно создать не более {current_limit} агентов.\n"
             f"У вас уже создано: {agents_count}.\n\n"
             f"Чтобы создавать больше ботов, пожалуйста, обновите тарифную подписку.",
             reply_markup=kb,
@@ -150,7 +175,7 @@ async def start_add_agent(callback: types.CallbackQuery, state: FSMContext, sess
         await callback.answer()
         return
 
-    # 5. Если лимит не превышен, запускаем стандартный процесс создания
+    #  Если лимит не превышен, запускаем стандартный процесс создания
     await state.set_state(CreateAgentSG.waiting_token)
     await callback.message.answer(
         "🤖 *Создание нового агента*\n\n"
@@ -161,7 +186,7 @@ async def start_add_agent(callback: types.CallbackQuery, state: FSMContext, sess
     await callback.answer()
 
 @master_router.message(CreateAgentSG.waiting_token)
-async def process_token(message: types.Message, state: FSMContext, session: AsyncSession):
+async def process_token(message: types.Message, state: FSMContext):
     token = message.text.strip()
     try:
         temp_bot = Bot(token=token)
@@ -169,39 +194,41 @@ async def process_token(message: types.Message, state: FSMContext, session: Asyn
         
         # --- ПРОВЕРКА ПО УНИКАЛЬНОМУ ID БОТА ---
         # Это защитит от смены username
-        existing_agent_res = await session.execute(
-            select(Agent).where(Agent.bot_id == bot_info.id)
-        )
-        existing_agent = existing_agent_res.scalar_one_or_none()
+        existing_agent_json = await APIread.agentBy_botID(bot_info.id)
+        response_status = get_response_status(existing_agent_json)
 
-        if existing_agent:
+        if response_status == status.HTTP_200_OK:
             await temp_bot.session.close()
             return await message.answer(
-                f"❌ Этот бот (ID: {bot_info.id}) уже зарегистрирован в системе под юзернеймом @{escape_md(existing_agent.bot_username)}.\n"
+                f"❌ Этот бот (ID: {bot_info.id}) уже зарегистрирован в системе под юзернеймом @{escape_md(bot_info.username)}.\n"
                 "Один и тот же бот не может быть добавлен дважды."
+            )
+        elif response_status != status.HTTP_404_NOT_FOUND:
+            return await message.answer(
+                f"Ошибка сервера при попытке получить агента по bot id"
             )
         # ---------------------------------------
 
-        user_res = await session.execute(select(User).where(User.telegram_id == message.from_user.id))
-        user = user_res.scalar()
-        
-        new_agent = Agent(
-            owner_id=user.id,
-            bot_id=bot_info.id, # Сохраняем неизменный ID
-            encrypted_token=encrypt_token(token),
-            bot_username=bot_info.username # Сохраняем для красоты в меню
-        )
-        session.add(new_agent)
-        await session.commit()
+
+        tg_id = message.from_user.id
+
+        data = {
+            'bot_id': bot_info.id, 
+            'encrypted_token': encrypt_token(token),
+            'bot_username': bot_info.username
+
+        }
+        await APIcreate.agentBy_UserWith_tgID(data, tg_id)
+
 
         # Ставим вебхук с очисткой очереди
         await temp_bot.set_webhook(
-            url=f"{os.getenv('BASE_URL')}/webhook/{new_agent.id}",
+            url=f"{os.getenv('BASE_URL')}/webhook/{bot_info.id}",
             drop_pending_updates=True
         )
         await temp_bot.session.close()
 
-        await state.update_data(agent_id=new_agent.id)
+        await state.update_data(agent_id = bot_info.id)
         await message.answer(f"✅ Бот @{escape_md(bot_info.username)} успешно подключен!\nТеперь напиши системный промпт:")
         await state.set_state(CreateAgentSG.waiting_prompt)
 
@@ -210,16 +237,25 @@ async def process_token(message: types.Message, state: FSMContext, session: Asyn
         await message.answer(f"❌ Ошибка: {e}")
 
 @master_router.message(CreateAgentSG.waiting_prompt)
-async def process_prompt(message: types.Message, state: FSMContext, session: AsyncSession):
+async def process_prompt(message: types.Message, state: FSMContext):
     data = await state.get_data()
     agent_id = data['agent_id']
-    await session.execute(update(Agent).where(Agent.id == agent_id).values(system_prompt=message.text))
-    await session.commit()
+    newPrompt = message.text
+    update_response = await APIupdate.agentPromptBy_botID(newPrompt, agent_id)
+    response_status_agents = get_response_status(update_response)
+
+    if response_status_agents != status.HTTP_200_OK: 
+        await message.answer(
+            f"Ошибка сервера при попытке обновить промпт вашего агента",
+            reply_markup=get_main_menu()
+        )
+        return 
+
     await message.answer("Отправь файлы (.pdf, .docx, .txt). Когда закончишь, нажми /start")
     await state.set_state(CreateAgentSG.waiting_docs)
 
 @master_router.message(CreateAgentSG.waiting_docs, F.document)
-async def handle_docs(message: types.Message, state: FSMContext, session: AsyncSession, bot: Bot):
+async def handle_docs(message: types.Message, state: FSMContext, bot: Bot):
     data = await state.get_data()
     agent_id = data['agent_id']
     file_id = message.document.file_id
@@ -234,9 +270,22 @@ async def handle_docs(message: types.Message, state: FSMContext, session: AsyncS
     from services.indexer import extract_text, text_splitter, get_current_chunks_count, CHUNK_LIMITS
     
     # Получаем тариф пользователя
-    result = await session.execute(select(User).join(Agent).where(Agent.id == agent_id))
-    user = result.scalar_one_or_none()
-    limit = CHUNK_LIMITS.get(user.subscription_type, 100)
+    user_json = await APIread.userBy_agentID(agent_id)
+    
+    response_status_user = get_response_status(user_json)
+
+    if response_status_user == status.HTTP_404_NOT_FOUND:
+        await message.answer("Ошибка: пользователь не найден.")
+        return
+
+    elif response_status_user != status.HTTP_200_OK: 
+        await message.answer(
+            f"Ошибка сервера при попытке получить пользователя",
+            reply_markup=get_main_menu()
+            )
+        return 
+
+    limit = CHUNK_LIMITS.get(user_json['subscription_type'], 100)
 
     # Извлекаем текст и считаем чанки
     text = await extract_text(file_path)
@@ -251,7 +300,7 @@ async def handle_docs(message: types.Message, state: FSMContext, session: AsyncS
         
         await message.answer(
             f"🚫 *Лимит превышен!*\n\n"
-            f"Ваш тариф: *{user.subscription_type}* (лимит {limit} чанков).\n"
+            f"Ваш тариф: *{user_json['subscription_type']}* (лимит {limit} чанков).\n"
             f"Уже использовано: {current_count}.\n"
             f"Этот файл добавит еще {new_chunks_count} чанков.\n\n"
             f"Пожалуйста, удалите старые файлы или повысьте тариф в меню.",
@@ -281,23 +330,22 @@ async def handle_docs(message: types.Message, state: FSMContext, session: AsyncS
 # --- МОИ АГЕНТЫ (СПИСОК) ---
 
 @master_router.callback_query(F.data == "my_agents")
-async def show_my_agents(callback: types.CallbackQuery, session: AsyncSession):
+async def show_my_agents(callback: types.CallbackQuery):
     tg_id = callback.from_user.id
     
-    # Получаем внутренний ID пользователя
-    user_res = await session.execute(select(User.id).where(User.telegram_id == tg_id))
-    user_id = user_res.scalar_one_or_none()
-    
-    if not user_id:
-        await callback.answer("Ошибка: пользователь не найден.", show_alert=True)
+    # Достаем всех агентов этого пользователя
+    all_user_agents = await APIread.allAgentsBy_tgID(tg_id)
+    response_status_agents = get_response_status(all_user_agents)
+
+    if response_status_agents != status.HTTP_200_OK: 
+        await callback.answer(
+            f"Ошибка сервера при попытке получить всех ваших агентов",
+            reply_markup=get_main_menu()
+        )
         return
 
-    # Достаем всех агентов этого пользователя
-    agents_res = await session.execute(select(Agent).where(Agent.owner_id == user_id))
-    agents = agents_res.scalars().all()
-
     # Если агентов нет
-    if not agents:
+    if not all_user_agents:
         kb = types.InlineKeyboardMarkup(inline_keyboard=[
             [types.InlineKeyboardButton(text="➕ Создать агента", callback_data="add_agent")],
             [types.InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="start_menu")]
@@ -307,13 +355,13 @@ async def show_my_agents(callback: types.CallbackQuery, session: AsyncSession):
 
     # Если агенты есть, собираем клавиатуру через Builder
     builder = InlineKeyboardBuilder()
-    for agent in agents:
+    for agent in all_user_agents:
         
-        status_emoji = "🟢" if agent.is_active else "🔴"
-        bot_name = f"@{agent.bot_username}" if agent.bot_username else f"Агент #{agent.id}"
+        status_emoji = "🟢" if agent['is_active'] else "🔴"
+        bot_name = f"@{agent['bot_username']}" if agent['bot_username'] else f"Агент #{agent['bot_id']}"
         button_text = f"{status_emoji} {bot_name}"
         
-        builder.button(text=button_text, callback_data=f"agent_info_{agent.id}")
+        builder.button(text=button_text, callback_data=f"agent_info_{agent['bot_id']}")
     
     # Делаем по 1 кнопке в ряд
     builder.adjust(1)
@@ -329,33 +377,39 @@ async def show_my_agents(callback: types.CallbackQuery, session: AsyncSession):
 # --- ИНФОРМАЦИЯ О КОНКРЕТНОМ АГЕНТЕ ---
 
 @master_router.callback_query(F.data.startswith("agent_info_"))
-async def show_agent_info(callback: types.CallbackQuery, session: AsyncSession):
+async def show_agent_info(callback: types.CallbackQuery):
     agent_id = int(callback.data.split("_")[2])
-    
-    agent_res = await session.execute(select(Agent).where(Agent.id == agent_id))
-    agent = agent_res.scalar_one_or_none()
-    
-    if not agent:
-        await callback.answer("Агент не найден.", show_alert=True)
-        return
-    welcome_display = agent.welcome_message if agent.welcome_message else "❌ Не установлено"
-    docs_res = await session.execute(
-        select(func.count(AgentDocument.id)).where(AgentDocument.agent_id == agent_id)
-    )
-    docs_count = docs_res.scalar()
 
-    bot_name = escape_md(agent.bot_username) if agent.bot_username else "Бот"
-    status_text = "✅ Активен" if agent.is_active else "❌ Отключен"
-    toggle_label = "🔴 Отключить" if agent.is_active else "🟢 Включить"
+    agent_json = await APIread.agentBy_botID(agent_id)
+    response_status = get_response_status(agent_json)
+
+    if response_status != status.HTTP_200_OK:
+        if response_status == status.HTTP_404_NOT_FOUND:
+            await callback.answer(
+                f"Агент по bot id не найден"
+            )
+            return 
+        else:
+            await callback.answer(
+                f"Ошибка сервера при попытке получить агента по bot id"
+            )
+            return 
+
+    
+
+    welcome_display = agent_json['welcome_message'] if agent_json['welcome_message'] else "❌ Не установлено"
+
+    bot_name = escape_md(agent_json['bot_username']) if agent_json['bot_username'] else "Бот"
+    status_text = "✅ Активен" if agent_json['is_active'] else "❌ Отключен"
+    toggle_label = "🔴 Отключить" if agent_json['is_active'] else "🟢 Включить"
     
     text = (
         f"🤖 *Управление агентом*\n\n"
-        f"ID: `{agent.id}`\n"
+        f"ID: `{agent_id}`\n"
         f"🔗 *Бот:* @{bot_name}\n"
         f"📊 *Статус:* {status_text}\n"
-        f"📚 *Документов:* {docs_count}\n"
         f"👋 *Приветствие:* {welcome_display}\n\n"
-        f"🧠 *Промпт:* \n_{escape_md(agent.system_prompt[:200])}..._"
+        f"🧠 *Промпт:* \n_{escape_md(agent_json['system_prompt'][:200])}..._"
     )
 
     kb = types.InlineKeyboardMarkup(inline_keyboard=[
@@ -376,26 +430,33 @@ async def show_agent_info(callback: types.CallbackQuery, session: AsyncSession):
 # --- ПЕРЕКЛЮЧЕНИЕ СТАТУСА ---
 
 @master_router.callback_query(F.data.startswith("toggle_agent_"))
-async def toggle_agent(callback: types.CallbackQuery, session: AsyncSession):
+async def toggle_agent(callback: types.CallbackQuery):
     agent_id = int(callback.data.split("_")[2])
-    agent = await session.get(Agent, agent_id)
 
-    if not agent:
-        return await callback.answer("Агент не найден.")
+    agent_json = await APIupdate.agentToggle_status(agent_id)
+    response_status = get_response_status(agent_json)
 
-    # Переключаем состояние в БД
-    new_status = not agent.is_active
-    agent.is_active = new_status
-    await session.commit()
+    if response_status != status.HTTP_200_OK:
+        if response_status == status.HTTP_404_NOT_FOUND:
+            await callback.answer(
+                f"Агент по bot id не найден"
+            )
+            return 
+        else:
+            await callback.answer(
+                f"Ошибка сервера при попытке получить агента по bot id"
+            )
+            return 
+
+    new_status = not agent_json['is_active']
 
     try:
         from core.crypto import decrypt_token
-        temp_bot = Bot(token=decrypt_token(agent.encrypted_token))
+        temp_bot = Bot(token=decrypt_token(agent_json['encrypted_token']))
         
         if new_status:
-            # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
             # Добавляем drop_pending_updates=True, чтобы удалить старые сообщения
-            webhook_url = f"{os.getenv('BASE_URL')}/webhook/{agent.id}"
+            webhook_url = f"{settings.BASE_URL}/webhook/{agent_id}"
             await temp_bot.set_webhook(
                 url=webhook_url, 
                 drop_pending_updates=True  # Игнорировать всё, что прислали, пока бот был выключен
@@ -409,7 +470,7 @@ async def toggle_agent(callback: types.CallbackQuery, session: AsyncSession):
         print(f"Ошибка вебхука при переключении: {e}")
 
     await callback.answer(f"Статус изменен: {'Включен' if new_status else 'Отключен'}")
-    await show_agent_info(callback, session)
+    await show_agent_info(callback)
 
 # --- УДАЛЕНИЕ АГЕНТА ---
 
@@ -431,64 +492,39 @@ async def confirm_delete(callback: types.CallbackQuery):
     )
 
 @master_router.callback_query(F.data.startswith("delete_force_"))
-async def delete_agent(callback: types.CallbackQuery, session: AsyncSession):
+async def delete_agent(callback: types.CallbackQuery):
     agent_id = int(callback.data.split("_")[2])
-    agent = await session.get(Agent, agent_id)
-
-    if agent:
+    agent_json = await APIread.agentBy_botID(agent_id)
+    response_status = get_response_status(agent_json)
+    if response_status == status.HTTP_200_OK:
         try:
             # 1. Отключаем вебхук перед удалением
-            temp_bot = Bot(token=decrypt_token(agent.encrypted_token))
+            temp_bot = Bot(token = decrypt_token(agent_json['encrypted_token']))
             await temp_bot.delete_webhook()
             await temp_bot.session.close()
         except:
-            pass
+            await callback.answer("Ошибка при отключении веб хука")
 
-        # 2. Удаляем из БД (каскадно удалятся и документы, если настроено в моделях)
-        await session.delete(agent)
-        await session.commit()
+        is_deleted_vectors = await delete_agent_vectors(agent_id)
+        if not is_deleted_vectors:
+            await callback.answer("Произошла ошибка при удалении в векторной базе данных.", show_alert=True)
+            await show_my_agents(callback)
+
+        del_response = await APIdelete.agentBy_botID(agent_id)
+        del_response_status = get_response_status(del_response)
         
-        # Здесь также можно добавить вызов функции удаления векторов из Qdrant по agent_id
-        
+        if del_response_status != status.HTTP_200_OK and del_response_status != status.HTTP_404_NOT_FOUND:
+            await callback.answer("Произошла ошибка на сервере при удалении.", show_alert=True)
+            await show_my_agents(callback)
+
         await callback.answer("Агент полностью удален.", show_alert=True)
-        await show_my_agents(callback, session) # Возвращаемся к списку
-    else:
+        await show_my_agents(callback) # Возвращаемся к списку
+        
+    elif response_status == status.HTTP_404_NOT_FOUND :
         await callback.answer("Агент уже был удален.")
-
-@master_router.callback_query(F.data.startswith("delete_force_"))
-async def delete_agent(callback: types.CallbackQuery, session: AsyncSession):
-    agent_id = int(callback.data.split("_")[2])
-    
-    # 1. Получаем агента из БД
-    agent = await session.get(Agent, agent_id)
-
-    if agent:
-        try:
-            # 2. Удаляем вебхук в Telegram
-            from core.crypto import decrypt_token
-            temp_bot = Bot(token=decrypt_token(agent.encrypted_token))
-            await temp_bot.delete_webhook()
-            await temp_bot.session.close()
-            
-            # 3. Очищаем Qdrant (вызываем новую функцию)
-            await delete_agent_vectors(agent_id)
-            
-            # 4. Удаляем из Postgres
-            # Благодаря cascade="all, delete-orphan", документы удалятся сами!
-            await session.delete(agent)
-            await session.commit()
-            
-            await callback.answer("Агент и все его данные успешно удалены.", show_alert=True)
-            # Возвращаемся к списку агентов (импортируйте функцию show_my_agents если нужно)
-            from handlers.master import show_my_agents
-            await show_my_agents(callback, session)
-            
-        except Exception as e:
-            await session.rollback()
-            print(f"Ошибка при удалении: {e}")
-            await callback.answer("Произошла ошибка при удалении.", show_alert=True)
     else:
-        await callback.answer("Агент не найден.")
+        await callback.answer("Ошибка на сервере при попытке получить агента по bot id.")
+
 
 # --- РЕДАКТИРОВАНИЕ ПРОМПТА ---
 
@@ -512,14 +548,26 @@ async def start_edit_prompt(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 @master_router.callback_query(F.data.startswith("ai_improve_prompt_"))
-async def process_ai_improve_prompt(callback: types.CallbackQuery, state: FSMContext, session: AsyncSession):
+async def process_ai_improve_prompt(callback: types.CallbackQuery, state: FSMContext):
     agent_id = int(callback.data.split("_")[3])
     
     # 1. Получаем текущий промпт агента
-    result = await session.execute(select(Agent).where(Agent.id == agent_id))
-    agent = result.scalar_one_or_none()
-    
-    if not agent or not agent.system_prompt:
+    agent_json = await APIread.agentBy_botID(agent_id)
+    response_status = get_response_status(agent_json)
+
+    if response_status != status.HTTP_200_OK:
+        if response_status == status.HTTP_404_NOT_FOUND:
+            await callback.answer(
+                f"Агент по bot id не найден"
+            )
+            return 
+        else:
+            await callback.answer(
+                f"Ошибка сервера при попытке получить агента по bot id"
+            )
+            return 
+        
+    if not agent_json['system_prompt']:
         await callback.answer("❌ Сначала введите хотя бы краткое описание роли!", show_alert=True)
         return
 
@@ -531,13 +579,19 @@ async def process_ai_improve_prompt(callback: types.CallbackQuery, state: FSMCon
     
     # 2. Генерируем улучшение через сервис
     # Убедись, что improve_prompt_with_ai импортирована из services.ai_service
-    new_prompt = await improve_prompt_with_ai(agent.system_prompt)
+    new_prompt = await improve_prompt_with_ai(agent_json['system_prompt'])
     
     # 3. Сохраняем новый промпт в базу данных
-    await session.execute(
-        update(Agent).where(Agent.id == agent_id).values(system_prompt=new_prompt)
-    )
-    await session.commit()
+    update_response = await APIupdate.agentPromptBy_botID(new_prompt, agent_id)
+
+    response_status_agents = get_response_status(update_response)
+
+    if response_status_agents != status.HTTP_200_OK: 
+        await callback.answer(
+            f"Ошибка сервера при попытке обновить промпт вашего агента",
+            reply_markup=get_main_menu()
+        )
+        return 
     
     # Сбрасываем состояние FSM, так как редактирование завершено
     await state.clear()
@@ -561,10 +615,10 @@ async def process_ai_improve_prompt(callback: types.CallbackQuery, state: FSMCon
         message=callback.message, 
         data=f"agent_info_{agent_id}"
     )
-    await show_agent_info(fake_callback, session)
+    await show_agent_info(fake_callback)
 
 @master_router.message(CreateAgentSG.editing_prompt)
-async def process_new_prompt(message: types.Message, state: FSMContext, session: AsyncSession):
+async def process_new_prompt(message: types.Message, state: FSMContext):
     data = await state.get_data()
     agent_id = data.get('edit_agent_id')
     
@@ -574,10 +628,18 @@ async def process_new_prompt(message: types.Message, state: FSMContext, session:
         return
 
     # Обновляем промпт в базе
-    await session.execute(
-        update(Agent).where(Agent.id == agent_id).values(system_prompt=message.text)
-    )
-    await session.commit()
+    update_response = await APIupdate.agentPromptBy_botID(message.text, agent_id)
+
+    response_status_agents = get_response_status(update_response)
+
+    if response_status_agents != status.HTTP_200_OK: 
+        await message.answer(
+            f"Ошибка сервера при попытке обновить промпт вашего агента",
+            reply_markup=get_main_menu()
+        )
+        await state.clear()
+        return 
+    
     
     await state.clear()
     
@@ -592,12 +654,12 @@ async def process_new_prompt(message: types.Message, state: FSMContext, session:
     )
     
     await message.answer("✅ Системный промпт успешно обновлен!")
-    await show_agent_info(fake_callback, session)
+    await show_agent_info(fake_callback)
 
 # --- УПРАВЛЕНИЕ БАЗОЙ ЗНАНИЙ (ДОКУМЕНТЫ) ---
 
 @master_router.callback_query(F.data.startswith("edit_kb_"))
-async def show_knowledge_base(callback: types.CallbackQuery, session: AsyncSession):
+async def show_knowledge_base(callback: types.CallbackQuery):
     agent_id = int(callback.data.split("_")[2])
 
     # Получаем все документы агента
@@ -720,7 +782,7 @@ async def prompt_add_document(callback: types.CallbackQuery, state: FSMContext):
 # --- ПРИЕМ И ОБРАБОТКА НОВОГО ДОКУМЕНТА ---
 
 @master_router.message(CreateAgentSG.adding_extra_docs, F.document)
-async def process_extra_document(message: types.Message, state: FSMContext, session: AsyncSession, bot: Bot):
+async def process_extra_document(message: types.Message, state: FSMContext, bot: Bot):
     data = await state.get_data()
     agent_id = data.get('edit_agent_id')
     
@@ -803,7 +865,7 @@ async def process_extra_document(message: types.Message, state: FSMContext, sess
         id="0", from_user=message.from_user, chat_instance="0",
         message=message, data=f"edit_kb_{agent_id}"
     )
-    await show_knowledge_base(fake_callback, session)
+    await show_knowledge_base(fake_callback)
 @master_router.callback_query(F.data.startswith("edit_welcome_"))
 async def start_edit_welcome(callback: types.CallbackQuery, state: FSMContext):
     agent_id = int(callback.data.split("_")[2])
@@ -816,40 +878,78 @@ async def start_edit_welcome(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 @master_router.message(CreateAgentSG.editing_welcome)
-async def process_welcome_message(message: types.Message, state: FSMContext, session: AsyncSession):
+async def process_welcome_message(message: types.Message, state: FSMContext):
     data = await state.get_data()
     agent_id = data.get('edit_agent_id')
+    welcome_message = message.text
     
-    await session.execute(
-        update(Agent).where(Agent.id == agent_id).values(welcome_message=message.text)
-    )
-    await session.commit()
+    update_response = await APIupdate.agentWelcomeBy_botID(welcome_message, agent_id)
+
+    response_status_agents = get_response_status(update_response)
+
+    if response_status_agents != status.HTTP_200_OK:
+        if response_status_agents == status.HTTP_404_NOT_FOUND:
+            await message.answer(
+                f"Агент с таким bot id не найден",
+                reply_markup=get_main_menu()
+            )
+        else: 
+            await message.answer(
+                f"Ошибка сервера при попытке обновить welcome message вашего агента",
+                reply_markup=get_main_menu()
+            )
+        await state.clear()
+        return 
+    
+    
     await state.clear()
     await message.answer("✅ Приветствие сохранено!")
 
 @master_router.callback_query(F.data.startswith("gen_welcome_"))
-async def generate_welcome_callback(callback: types.CallbackQuery, state: FSMContext, session: AsyncSession):
+async def generate_welcome_callback(callback: types.CallbackQuery, state: FSMContext):
     agent_id = int(callback.data.split("_")[2])
     
     # Меняем сообщение, чтобы пользователь видел процесс
     await callback.message.edit_text("⏳ *DeepSeek анализирует промпт и генерирует приветствие...*", parse_mode="Markdown")
     
     # 1. Достаем агента из БД, чтобы получить его system_prompt
-    result = await session.execute(select(Agent).where(Agent.id == agent_id))
-    agent = result.scalar_one_or_none()
-    
-    if not agent:
-        await callback.answer("Агент не найден", show_alert=True)
-        return
+    agent_json = await APIread.agentBy_botID(agent_id)
+    response_status = get_response_status(agent_json)
+
+    if response_status != status.HTTP_200_OK:
+        if response_status == status.HTTP_404_NOT_FOUND:
+            await callback.answer(
+                f"Агент по bot id не найден"
+            )
+            return 
+        else:
+            await callback.answer(
+                f"Ошибка сервера при попытке получить агента по bot id"
+            )
+            return 
         
     # 2. Генерируем текст через ИИ
-    generated_text = await generate_welcome_with_ai(agent.system_prompt)
+    generated_text = await generate_welcome_with_ai(agent_json['system_prompt'])
     
     # 3. Сохраняем в БД
-    await session.execute(
-        update(Agent).where(Agent.id == agent_id).values(welcome_message=generated_text)
-    )
-    await session.commit()
+    update_response = await APIupdate.agentWelcomeBy_botID(generated_text, agent_id)
+
+    response_status_agents = get_response_status(update_response)
+
+    if response_status_agents != status.HTTP_200_OK:
+        if response_status_agents == status.HTTP_404_NOT_FOUND:
+            await callback.answer(
+                f"Агент с таким bot id не найден",
+                reply_markup=get_main_menu()
+            )
+        else: 
+            await callback.answer(
+                f"Ошибка сервера при попытке обновить welcome message вашего агента",
+                reply_markup=get_main_menu()
+            )
+        await state.clear()
+        return 
+    
     
     # 4. Очищаем состояние (пользователю больше не нужно вводить текст вручную)
     await state.clear()
@@ -866,19 +966,31 @@ async def generate_welcome_callback(callback: types.CallbackQuery, state: FSMCon
         id="0", from_user=callback.from_user, chat_instance="0",
         message=callback.message, data=f"agent_info_{agent_id}"
     )
-    await show_agent_info(fake_callback, session)
+    await show_agent_info(fake_callback)
 
 @master_router.callback_query(F.data == "tariffs_menu")
-async def show_tariffs(callback: types.CallbackQuery, session: AsyncSession):
+async def show_tariffs(callback: types.CallbackQuery):
     """Отображение меню тарифов и текущего статуса пользователя."""
     # Получаем данные пользователя из БД
-    result = await session.execute(
-        select(User).where(User.telegram_id == callback.from_user.id)
-    )
-    user = result.scalar_one_or_none()
+    tg_id = callback.from_user.id
+    
+    user_json = await APIread.userBy_tgID(tg_id)
+    
+    response_status_user = get_response_status(user_json)
+
+    if response_status_user == status.HTTP_404_NOT_FOUND:
+        await callback.answer("Ошибка: пользователь не найден.")
+        return
+
+    elif response_status_user != status.HTTP_200_OK: 
+        await callback.answer(
+            f"Ошибка сервера при попытке получить пользователя",
+            reply_markup=get_main_menu()
+            )
+        return 
     
     # Если пользователя вдруг нет, или у него нет тарифа, ставим Free
-    current_plan = user.subscription_type if user and user.subscription_type else "Free"
+    current_plan = user_json['subscription_type']
 
     text = (
         f"💎 *Управление подпиской*\n\n"
@@ -888,7 +1000,7 @@ async def show_tariffs(callback: types.CallbackQuery, session: AsyncSession):
         f"— 1 активный агент\n"
         f"— Лимит базы знаний: 100 чанков\n"
         f"— Цена: 0₽/мес\n\n"
-        f"2️⃣ *Продвинутый*\n"
+        f"2️⃣ *Продвинутый (Advanced)*\n"
         f"— До 5 активных агентов\n"
         f"— Лимит базы знаний: 500 чанков\n"
         f"— Цена: 1 990₽/мес\n\n"
@@ -916,25 +1028,35 @@ async def back_to_start(callback: types.CallbackQuery):
 
 
 @master_router.callback_query(F.data.startswith("set_plan_"))
-async def process_set_plan(callback: types.CallbackQuery, session: AsyncSession):
+async def process_set_plan(callback: types.CallbackQuery):
     """Имитация оплаты: переключение тарифа в БД."""
     plan_name = callback.data.split("_")[2] # Достаем название плана (Advanced или Pro)
     
     # Имитируем оплату: ставим тариф на 30 дней вперед
-    end_date = datetime.utcnow() + timedelta(days=30)
+    end_date = datetime.now(timezone.utc) + timedelta(days=30)
     
     # Обновляем запись пользователя в базе
-    await session.execute(
-        update(User)
-        .where(User.telegram_id == callback.from_user.id)
-        .values(
-            subscription_type=plan_name,
-            subscription_end_date=end_date
-        )
-    )
-    await session.commit()
+    
+    update_response = await APIupdate.userSubBy_tgID(plan_name, end_date, callback.from_user.id)
+
+    response_status_agents = get_response_status(update_response)
+
+    if response_status_agents != status.HTTP_200_OK:
+        if response_status_agents == status.HTTP_404_NOT_FOUND:
+            await callback.answer(
+                f"Пользователь не найден",
+                reply_markup=get_main_menu()
+            )
+        else: 
+            await callback.answer(
+                f"Ошибка сервера при попытке обновить вашу подписку",
+                reply_markup=get_main_menu()
+            )
+
+        await show_tariffs(callback)
+        return 
     
     await callback.answer(f"✅ Тариф {plan_name} успешно активирован на 30 дней!", show_alert=True)
     
     # Сразу обновляем интерфейс, чтобы пользователь увидел изменения
-    await show_tariffs(callback, session)
+    await show_tariffs(callback)

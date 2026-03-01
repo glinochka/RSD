@@ -1,15 +1,14 @@
-import os
 from typing import List, Dict, Any
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models
 from fastembed import TextEmbedding, SparseTextEmbedding
 from services.ai_service import rewrite_query
-from core.config import q_client
+from core.config import settings
 
 # Инициализируем асинхронный клиент
 q_client = AsyncQdrantClient(
-    url=os.getenv("QDRANT_URL"), 
-    api_key=os.getenv("QDRANT_API_KEY")
+    url=settings.QDRANT_URL, 
+    api_key=settings.QDRANT_API_KEY
 )
 
 dense_model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")

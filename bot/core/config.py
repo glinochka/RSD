@@ -14,7 +14,3 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-q_client = AsyncQdrantClient(
-    url=settings.QDRANT_URL, 
-    api_key=settings.QDRANT_API_KEY
-)

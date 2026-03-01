@@ -26,5 +26,5 @@ port = 3000
 origins = [
     f'http://localhost:{port}',
     f'http://127.0.0.1:{port}',
-    f'http://{ip}:3000' 
+    f'http://{ip}:{port}' 
 ]

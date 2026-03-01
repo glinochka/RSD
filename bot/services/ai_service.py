@@ -1,12 +1,10 @@
-import os
 import re
 from openai import AsyncOpenAI
-from dotenv import load_dotenv
+from core.config import settings
 
-load_dotenv()
 
 ai_client = AsyncOpenAI(
-    api_key=os.getenv("DEEPSEEK_API_KEY"),
+    api_key = settings.DEEPSEEK_API_KEY,
     base_url="https://api.deepseek.com"
 )
 
