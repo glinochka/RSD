@@ -5,7 +5,9 @@ from aiogram import Router, F, Bot, types
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 
-
+from aiogram.filters import StateFilter
+from sqlalchemy.ext.asyncio import AsyncSession
+from backend.app.alembic.models import AgentDocument
 from core.backendAPI import APIread, APIcreate, APIupdate, APIdelete, get_response_status
 from core.config import settings
 from core.crypto import encrypt_token
@@ -34,9 +36,11 @@ def escape_md(text: str) -> str:
 
 # --- ГЛАВНОЕ МЕНЮ ---
 
-@master_router.message(CommandStart())
-async def cmd_start(message: types.Message):
+@master_router.message(CommandStart(), StateFilter("*"))
+async def cmd_start(message: types.Message, state: FSMContext):
     # Логика регистрации пользователя
+    await state.clear()
+
     user_json = await APIread.userBy_tgID(message.from_user.id)
     
     response_status = get_response_status(user_json)
@@ -255,76 +259,57 @@ async def process_prompt(message: types.Message, state: FSMContext):
     await state.set_state(CreateAgentSG.waiting_docs)
 
 @master_router.message(CreateAgentSG.waiting_docs, F.document)
-async def handle_docs(message: types.Message, state: FSMContext, bot: Bot):
+async def handle_docs(message: types.Message, state: FSMContext, bot: Bot, session: AsyncSession):
     data = await state.get_data()
     agent_id = data['agent_id']
     file_id = message.document.file_id
     file_name = message.document.file_name
     
-    # 1. Сначала скачиваем файл во временную папку для анализа
     os.makedirs("temp_uploads", exist_ok=True)
     file_path = f"temp_uploads/{file_id}_{file_name}"
     await bot.download(message.document, destination=file_path)
 
-    # 2. Предварительная проверка лимитов (Этап 4)
     from services.indexer import extract_text, text_splitter, get_current_chunks_count, CHUNK_LIMITS
     
-    # Получаем тариф пользователя
     user_json = await APIread.userBy_agentID(agent_id)
-    
     response_status_user = get_response_status(user_json)
 
     if response_status_user == status.HTTP_404_NOT_FOUND:
-        await message.answer("Ошибка: пользователь не найден.")
+        await message.answer("Ошибка, пользователь не найден.")
         return
-
     elif response_status_user != status.HTTP_200_OK: 
         await message.answer(
-            f"Ошибка сервера при попытке получить пользователя",
+            "Ошибка сервера при попытке получить пользователя",
             reply_markup=get_main_menu()
-            )
+        )
         return 
 
     limit = CHUNK_LIMITS.get(user_json['subscription_type'], 100)
-
-    # Извлекаем текст и считаем чанки
     text = await extract_text(file_path)
     chunks = text_splitter.split_text(text)
     new_chunks_count = len(chunks)
-    
     current_count = await get_current_chunks_count(agent_id)
 
     if current_count + new_chunks_count > limit:
         if os.path.exists(file_path):
             os.remove(file_path)
-        
         await message.answer(
-            f"🚫 *Лимит превышен!*\n\n"
-            f"Ваш тариф: *{user_json['subscription_type']}* (лимит {limit} чанков).\n"
-            f"Уже использовано: {current_count}.\n"
-            f"Этот файл добавит еще {new_chunks_count} чанков.\n\n"
-            f"Пожалуйста, удалите старые файлы или повысьте тариф в меню.",
-            reply_markup=get_tariffs_keyboard(),
-            parse_mode="Markdown"
+            f"Лимит превышен. Ваш тариф, {user_json['subscription_type']}.",
+            reply_markup=get_tariffs_keyboard()
         )
         return
 
-    # 3. Если лимит не превышен — создаем запись в БД и запускаем обработку
     new_doc = AgentDocument(
         agent_id=agent_id, 
-        file_name=file_name, 
-        file_id=file_id, 
-        status="processing"
+        file_name=file_name
     )
     session.add(new_doc)
     await session.commit()
     
-    # Запускаем фоновую индексацию (теперь она точно пройдет по лимитам)
     asyncio.create_task(process_document(file_path, agent_id, new_doc.id))
     
     await message.answer(
-        f"✅ Файл '_{escape_md(file_name)}_' принят и обрабатывается ({new_chunks_count} чанков).",
-        parse_mode="Markdown"
+        f"Файл {escape_md(file_name)} принят и обрабатывается."
     )
 
 # --- МОИ АГЕНТЫ (СПИСОК) ---
@@ -782,20 +767,17 @@ async def prompt_add_document(callback: types.CallbackQuery, state: FSMContext):
 # --- ПРИЕМ И ОБРАБОТКА НОВОГО ДОКУМЕНТА ---
 
 @master_router.message(CreateAgentSG.adding_extra_docs, F.document)
-async def process_extra_document(message: types.Message, state: FSMContext, bot: Bot):
+async def process_extra_document(message: types.Message, state: FSMContext, bot: Bot, session: AsyncSession):
     data = await state.get_data()
     agent_id = data.get('edit_agent_id')
-    
     if not agent_id:
-        await message.answer("❌ Ошибка: потерян ID агента. Начните сначала.")
+        await message.answer("Ошибка: потерян ID агента. Начните сначала.")
         await state.clear()
         return
-
+    
     file_name = message.document.file_name
     file_id = message.document.file_id
-
-    # Временное сообщение
-    msg = await message.answer(f"⏳ Проверяю лимиты и анализирую файл `{file_name}`...")
+    msg = await message.answer(f"⏳ Проверяю лимиты и анализирую файл {file_name}")
 
     try:
         # 1. Скачиваем файл для предварительного анализа чанков
