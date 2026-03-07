@@ -3,6 +3,8 @@ from datetime import date
 from config import settings
 import httpx
 from typing import Awaitable, Callable, Any
+from aiogram.types import Document
+
 from fastapi import status
 
 base_url = f'http://{settings.API_HOST}:{settings.API_PORT}/api'
@@ -11,10 +13,17 @@ class APIbase():
     operation: Callable[..., Awaitable[Any]] = None
 
     @classmethod
-    async def fetch_post(cls, url: str, data: dict) -> dict:
+    async def fetch_post(cls, url: str, data: dict, file_name: str|None, file_bytes: bytes|None) -> dict:
         async with httpx.AsyncClient() as client:
-            response = await client.post(url, json = data)
+            if file_name and file_bytes:
+                files = {
+                    'file': (file_name, file_bytes, 'application/octet-stream')
+                }
 
+                response = await client.post(url, data = data, files=files, timeout=600.0)
+            else:
+                response = await client.post(url, json = data)
+            
             if not response.is_success:
                 return {'error_code': response.status_code}
             if response.content:
@@ -78,6 +87,12 @@ class APIbase():
         response = await cls.operation(url, data)
         return response
     
+    @classmethod
+    async def document(cls, data: dict, file_name: str|None, file_bytes: bytes|None, add_url = None) -> dict:
+        url = f'{base_url}/documents/{f"/{add_url}" if add_url else ""}'
+        response = await cls.operation(url, data, file_name, file_bytes)
+        return response
+    
 
     
 class APIcreate(APIbase):
@@ -88,30 +103,49 @@ class APIcreate(APIbase):
         data = data.copy()
         data['tg_id'] = tg_id
         return await cls.agent(data, add_url='ByUserWith_tgID')
+    
+    @classmethod
+    async def documentBy_botID(cls, agent_id: int, file_name: str, file_bytes: bytes) -> dict:
+        data = {'bot_id': agent_id}
+        return await cls.document(data, file_name, file_bytes)
+    
 
     
 
 class APIread(APIbase):
     operation = APIbase.fetch_get
-
+    # agents
     @classmethod
     async def agentBy_botID(cls, bot_id: int) -> dict:
         return await cls.agent({'bot_id': bot_id})
-    
-    @classmethod
-    async def userBy_agentID(cls, bot_id: int) -> dict:
-        add_url = 'by_agentID'
-        return cls.user({'id': bot_id}, add_url = add_url)
     
     @classmethod
     async def allAgentsBy_tgID(cls, tg_id: int) -> dict|list:
         add_url = 'allBy_tgID'
         return cls.agent({'id': tg_id}, add_url = add_url)
     
+    # docs
+    @classmethod
+    async def allDocsBy_botID(cls, bot_id: int) -> dict|list:
+        add_url = 'allBy_botID'
+        return cls.agent({'bot_id': bot_id}, add_url = add_url)
+    
+    @classmethod
+    async def docBy_ID(cls, id: int) -> dict:
+        add_url = f'{id}'
+        return cls.agent({}, add_url = add_url)
+    
+    # users
+    @classmethod
+    async def userBy_agentID(cls, bot_id: int) -> dict:
+        add_url = 'by_agentID'
+        return cls.user({'id': bot_id}, add_url = add_url)
+    
     @classmethod
     async def userBy_tgID(cls, tg_id: int) -> dict:
         add_url = 'by_tgID'
         return cls.user({'id': tg_id}, add_url = add_url)
+
 
 
 class APIupdate(APIbase):
@@ -150,6 +184,10 @@ class APIdelete(APIbase):
     @classmethod
     async def agentBy_botID(cls, bot_id: int) -> dict:
         return await cls.agent({'bot_id': bot_id})
+    @classmethod
+    async def documentBy_ID(cls, id: int) -> dict:
+        add_url = f'{id}'
+        return await cls.document({}, add_url=add_url)
     
 # функция для понятной обрабоки ошибок  
 def get_response_status(response: dict|list) -> int:

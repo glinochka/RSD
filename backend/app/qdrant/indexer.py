@@ -4,12 +4,12 @@ import pdfplumber
 from docx import Document
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from qdrant_client import QdrantClient
+from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models
 from fastembed import TextEmbedding, SparseTextEmbedding
 
-from core.config import settings
-from core.backendAPI import APIread
+from config import settings
+
 
 # Константы лимитов согласно ТЗ
 CHUNK_LIMITS = {
@@ -19,7 +19,7 @@ CHUNK_LIMITS = {
 }
 
 # Инициализация клиентов
-qdrant_client = QdrantClient(url=settings.QDRANT_URL, api_key=settings.DEEPSEEK_API_KEY)
+qdrant_client = AsyncQdrantClient(url=settings.QDRANT_URL, api_key=settings.DEEPSEEK_API_KEY)
 
 dense_model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5") 
 sparse_model = SparseTextEmbedding(model_name="prithivida/Splade_PP_en_v1")
@@ -64,36 +64,24 @@ async def get_current_chunks_count(agent_id: int) -> int:
         print(f"⚠️ Ошибка при подсчете чанков: {e}")
         return 0
 
-async def process_document(file_path: str, agent_id: int):
+from ..router_documents.dao import DocumentDAO
+from ..alembic.database import async_session_maker
+
+async def process_document(file_path: str, agent_id: int, document_id: int):
     """
     Фоновая задача для обработки документа с проверкой лимитов тарифа.
     """
-    try:
-        # 1. Получаем информацию о тарифе владельца
-
-        user_json = await APIread.userBy_agentID(agent_id)
-        if user_json.get('error_code'):
-            raise ValueError("Владелец агента не найден")
         
-        tariff = user_json['subscription_type'] or "Free"
-        limit = CHUNK_LIMITS.get(tariff, 100)
-
-        # 2. Извлечение текста и предварительный расчет чанков
+    try:
+        # Извлечение текста и предварительный расчет чанков
         text = await extract_text(file_path)
+    
         if not text:
             raise ValueError("Не удалось извлечь текст из файла")
 
         chunks = text_splitter.split_text(text)
-        new_chunks_count = len(chunks)
 
-        # 3. Проверка лимитов
-        current_chunks_count = await get_current_chunks_count(agent_id)
-        
-        if current_chunks_count + new_chunks_count > limit:
-            print(f"🚫 Лимит превышен для Agent {agent_id}. Доступно: {limit}, Текущее: {current_chunks_count}, Новое: {new_chunks_count}")
-            return
-
-        # 4. Генерация эмбеддингов и формирование точек для Qdrant
+        # Генерация эмбеддингов и формирование точек для Qdrant
         points = []
         for i, chunk_text in enumerate(chunks):
             dense_vector = list(dense_model.embed([chunk_text]))[0]
@@ -120,15 +108,26 @@ async def process_document(file_path: str, agent_id: int):
                 )
             )
 
-        # 5. Загрузка в Qdrant
+        # Загрузка в Qdrant
         qdrant_client.upsert(
             collection_name="agent_documents",
             points=points
         )
+        async with async_session_maker() as session:
+            docDAO = DocumentDAO(session)
+            async with session.begin():
+                doc = await docDAO.find_one_by_filter(id = document_id)
+                await docDAO.update(doc,{'status': 'ready'})
+
 
 
     except Exception as e:
         print(f"❌ Ошибка при индексации документа {e}")
+        async with async_session_maker() as session:
+            docDAO = DocumentDAO(session)
+            async with session.begin():
+                doc = await docDAO.find_one_by_filter(id = document_id)
+                await docDAO.update(doc,{'status': 'error'})
     finally:
         # Удаляем временный файл после обработки
         if os.path.exists(file_path):

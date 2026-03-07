@@ -5,6 +5,8 @@ setup_logger()
 
 from fastapi.middleware.cors import CORSMiddleware
 from app.router_users import router as users_router
+from app.router_agents import router as agents_router
+from app.qdrant import router as qdrant_router
 from app.origins import origins
 import uvicorn
 
@@ -21,6 +23,8 @@ app.add_middleware(
 )
 
 app.include_router(users_router.router)
+app.include_router(agents_router.router)
+app.include_router(qdrant_router.router)
 
 
 if __name__ == "__main__":

@@ -48,14 +48,14 @@ async def user_by_agentID(user_by_agent: User_by_agent_or_tgID = Depends()):
         agent_dao = AgentDAO(session)
         async with session.begin():
             agent = await agent_dao.find_one_by_filter(load_relations=True, bot_id=user_by_agent.id)
-            user = agent.user
+            
             if not agent:
                 logger.error(f'бот с айди {user_by_agent.id} не найден')
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Agent not found"
                 )
-            
+            user = agent.user
             if not user:
                 logger.error(f'пользователь владеющий ботом с айди {user_by_agent.id} не найден')
                 raise HTTPException(

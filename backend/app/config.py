@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     DB_PASSWORD: str
     SECRET_KEY: str
     ALGORITHM: str
+    QDRANT_URL: str
+    QDRANT_API_KEY:str = ''
+    DEEPSEEK_API_KEY: str
 
     @property
     def DB_HOST(self) -> str:

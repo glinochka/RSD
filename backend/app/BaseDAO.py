@@ -7,7 +7,7 @@ from sqlalchemy.orm import selectinload, joinedload
 def require_transaction(func):
     async def wrapper(self, *args, **kwargs):
         if not self._session.in_transaction():
-            raise RuntimeError("Session is not initialized")
+            raise RuntimeError("Transaction is not initialized")
         
         return await func(self, *args, **kwargs)
     return wrapper
@@ -25,7 +25,8 @@ class BaseDAO:
 
             if hasattr(self.model, 'user'):
                 comm = comm.options(joinedload(self.model.user))
-                
+            elif hasattr(self.model, 'agent'):
+                comm = comm.options(joinedload(self.model.agent))
             if hasattr(self.model, 'agents'):
                 comm = comm.options(selectinload(self.model.agents))
         one = await self._session.scalar(comm)

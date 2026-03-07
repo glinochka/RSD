@@ -34,6 +34,8 @@ services:
             DB_NAME: ${DB_NAME}
             SECRET_KEY: ${SECRET_KEY}
             ALGORITHM: ${ALGORITHM}
+            QDRANT_URL: ${QDRANT_URL}
+            DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
         ports:
             - '8000:8000'
         depends_on:
@@ -55,7 +57,6 @@ services:
         environment:
             NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
             ENCRYPTION_KEY: ${ENCRYPTION_KEY}
-            QDRANT_URL: ${QDRANT_URL}
             DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
             DB_NAME: ${DB_NAME}
             MASTER_BOT_TOKEN: ${MASTER_BOT_TOKEN}

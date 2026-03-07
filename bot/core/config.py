@@ -4,8 +4,6 @@ from qdrant_client import AsyncQdrantClient
 class Settings(BaseSettings):
     NGROK_AUTHTOKEN: str
     ENCRYPTION_KEY: str
-    QDRANT_URL: str
-    QDRANT_API_KEY:str = ''
     DEEPSEEK_API_KEY: str
     MASTER_BOT_TOKEN: str
     BASE_URL: str

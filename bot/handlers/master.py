@@ -9,13 +9,12 @@ from aiogram.fsm.context import FSMContext
 from core.backendAPI import APIread, APIcreate, APIupdate, APIdelete, get_response_status
 from core.config import settings
 from core.crypto import encrypt_token
-from services.indexer import process_document
+
 from states.master import CreateAgentSG
 from keyboards.master_kb import get_main_menu
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from core.crypto import decrypt_token  
-from services.search_service import delete_agent_vectors
-from services.search_service import delete_document_vectors
+
 from services.ai_service import generate_welcome_with_ai
 from services.ai_service import improve_prompt_with_ai
 
@@ -261,69 +260,42 @@ async def handle_docs(message: types.Message, state: FSMContext, bot: Bot):
     file_id = message.document.file_id
     file_name = message.document.file_name
     
-    # 1. Сначала скачиваем файл во временную папку для анализа
-    os.makedirs("temp_uploads", exist_ok=True)
-    file_path = f"temp_uploads/{file_id}_{file_name}"
-    await bot.download(message.document, destination=file_path)
+    file = await bot.get_file(message.document.file_id)
+    bytes_data = (await bot.download_file(file.file_path)).read() 
+    file_name = message.document.file_name
 
-    # 2. Предварительная проверка лимитов (Этап 4)
-    from services.indexer import extract_text, text_splitter, get_current_chunks_count, CHUNK_LIMITS
-    
-    # Получаем тариф пользователя
-    user_json = await APIread.userBy_agentID(agent_id)
-    
-    response_status_user = get_response_status(user_json)
+    response_data = await APIcreate.documentBy_botID(agent_id, file_name, bytes_data)
+    response_status = get_response_status(response_data)
 
-    if response_status_user == status.HTTP_404_NOT_FOUND:
-        await message.answer("Ошибка: пользователь не найден.")
-        return
-
-    elif response_status_user != status.HTTP_200_OK: 
-        await message.answer(
-            f"Ошибка сервера при попытке получить пользователя",
-            reply_markup=get_main_menu()
+    if response_status != status.HTTP_200_OK:
+        if response_status == status.HTTP_404_NOT_FOUND:
+            await message.answer(
+                f"Ресурс на сервере не найден", show_alert=True
             )
-        return 
-
-    limit = CHUNK_LIMITS.get(user_json['subscription_type'], 100)
-
-    # Извлекаем текст и считаем чанки
-    text = await extract_text(file_path)
-    chunks = text_splitter.split_text(text)
-    new_chunks_count = len(chunks)
-    
-    current_count = await get_current_chunks_count(agent_id)
-
-    if current_count + new_chunks_count > limit:
-        if os.path.exists(file_path):
-            os.remove(file_path)
+            await state.clear()
+            return 
+        else:
+            await message.answer(
+                f"Ошибка сервера при попытке добавить документ", show_alert=True
+            )
+            await state.clear()
+            return 
         
+    if response_data['status'] == 'limit_error':
+
         await message.answer(
-            f"🚫 *Лимит превышен!*\n\n"
-            f"Ваш тариф: *{user_json['subscription_type']}* (лимит {limit} чанков).\n"
-            f"Уже использовано: {current_count}.\n"
-            f"Этот файл добавит еще {new_chunks_count} чанков.\n\n"
-            f"Пожалуйста, удалите старые файлы или повысьте тариф в меню.",
-            reply_markup=get_tariffs_keyboard(),
+            f"🚫 *Лимит базы знаний превышен!*\n\n"
+            f"Ваш тариф: *{response_data['current_plan']}* (макс. {response_data['limit']} чанков).\n"
+            f"Уже использовано: {response_data['current_count']}.\n"
+            f"Файл содержит: {response_data['new_chunks_count']}.\n\n"
+            f"Удалите старые документы или повысьте тариф в меню.",
             parse_mode="Markdown"
         )
         return
 
-    # 3. Если лимит не превышен — создаем запись в БД и запускаем обработку
-    new_doc = AgentDocument(
-        agent_id=agent_id, 
-        file_name=file_name, 
-        file_id=file_id, 
-        status="processing"
-    )
-    session.add(new_doc)
-    await session.commit()
-    
-    # Запускаем фоновую индексацию (теперь она точно пройдет по лимитам)
-    asyncio.create_task(process_document(file_path, agent_id, new_doc.id))
-    
+
     await message.answer(
-        f"✅ Файл '_{escape_md(file_name)}_' принят и обрабатывается ({new_chunks_count} чанков).",
+        f"✅ Файл '_{escape_md(file_name)}_' принят и обрабатывается ({response_data['new_chunks_count']} чанков).",
         parse_mode="Markdown"
     )
 
@@ -505,11 +477,6 @@ async def delete_agent(callback: types.CallbackQuery):
         except:
             await callback.answer("Ошибка при отключении веб хука")
 
-        is_deleted_vectors = await delete_agent_vectors(agent_id)
-        if not is_deleted_vectors:
-            await callback.answer("Произошла ошибка при удалении в векторной базе данных.", show_alert=True)
-            await show_my_agents(callback)
-
         del_response = await APIdelete.agentBy_botID(agent_id)
         del_response_status = get_response_status(del_response)
         
@@ -663,28 +630,38 @@ async def show_knowledge_base(callback: types.CallbackQuery):
     agent_id = int(callback.data.split("_")[2])
 
     # Получаем все документы агента
-    docs_res = await session.execute(
-        select(AgentDocument).where(AgentDocument.agent_id == agent_id).order_by(AgentDocument.created_at.desc())
-    )
-    docs = docs_res.scalars().all()
+    all_agent_docs = await APIread.allDocsBy_botID(agent_id)
+
+    response_status = get_response_status(all_agent_docs)
+    if response_status == status.HTTP_404_NOT_FOUND:
+        await callback.answer("Ошибка: агент не найден.")
+        return
+    
+    elif response_status != status.HTTP_200_OK: 
+        await callback.answer(
+            f"Ошибка сервера при попытке получить всех ваших документов агентов",
+            reply_markup=get_main_menu()
+        )
+        return 
+
 
     builder = InlineKeyboardBuilder()
 
-    if docs:
-        for doc in docs:
+    if all_agent_docs:
+        for doc in all_agent_docs:
             # Обрезаем имя файла, если оно слишком длинное (Telegram лимит на кнопки)
-            short_name = doc.file_name[:25] + "..." if len(doc.file_name) > 25 else doc.file_name
+            short_name = doc['file_name'][:25] + "..." if len(doc['file_name']) > 25 else doc['file_name']
             # Индикаторы статуса
-            status_emoji = "⏳" if doc.status == "processing" else "✅" if doc.status == "ready" else "❌"
+            status_emoji = "⏳" if doc['status'] == "processing" else "✅" if doc['status'] == "ready" else "❌"
             
             builder.button(
                 text=f"🗑 {status_emoji} {short_name}",
-                callback_data=f"del_doc_conf_{doc.id}"
+                callback_data=f"del_doc_conf_{doc['id']}"
             )
         builder.adjust(1) # По одной кнопке в ряд
     
     # Кнопки навигации
-    # builder.row(types.InlineKeyboardButton(text="➕ Добавить файл", callback_data=f"add_doc_{agent_id}")) # Задел на будущее
+   
     builder.row(types.InlineKeyboardButton(text="➕ Добавить файл", callback_data=f"add_doc_{agent_id}"))
     builder.row(types.InlineKeyboardButton(text="⬅️ Назад к агенту", callback_data=f"agent_info_{agent_id}"))
 
@@ -695,7 +672,7 @@ async def show_knowledge_base(callback: types.CallbackQuery):
         "✅ — Успешно загружен в ИИ\n"
         "⏳ — В процессе обработки\n"
         "❌ — Ошибка чтения файла"
-    ) if docs else "📚 *Управление базой знаний*\n\nВ базе данных этого агента пока нет файлов."
+    ) if all_agent_docs else "📚 *Управление базой знаний*\n\nВ базе данных этого агента пока нет файлов."
 
     await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
 
@@ -703,20 +680,32 @@ async def show_knowledge_base(callback: types.CallbackQuery):
 # --- ПОДТВЕРЖДЕНИЕ УДАЛЕНИЯ ДОКУМЕНТА ---
 
 @master_router.callback_query(F.data.startswith("del_doc_conf_"))
-async def confirm_delete_document(callback: types.CallbackQuery, session: AsyncSession):
+async def confirm_delete_document(callback: types.CallbackQuery):
     # callback_data имеет вид "del_doc_conf_15", id под индексом 3
     doc_id = int(callback.data.split("_")[3])
 
-    doc = await session.get(AgentDocument, doc_id)
-    if not doc:
-        return await callback.answer("Ошибка: документ не найден.", show_alert=True)
+    doc_json = await APIread.docBy_ID(doc_id)
+    response_status = get_response_status(doc_json)
 
-    text = f"⚠️ *ВНИМАНИЕ!*\n\nВы действительно хотите навсегда удалить файл `{escape_md(doc.file_name)}`?\nБот больше не сможет использовать его для ответов."
+    if response_status != status.HTTP_200_OK:
+        if response_status == status.HTTP_404_NOT_FOUND:
+            await callback.answer(
+                f"Документ по id не найден", show_alert=True
+            )
+            return 
+        else:
+            await callback.answer(
+                f"Ошибка сервера при попытке получить документ по id", show_alert=True
+            )
+            return 
+        
+
+    text = f"⚠️ *ВНИМАНИЕ!*\n\nВы действительно хотите навсегда удалить файл `{escape_md(doc_json['file_name'])}`?\nБот больше не сможет использовать его для ответов."
 
     kb = types.InlineKeyboardMarkup(inline_keyboard=[
         [
-            types.InlineKeyboardButton(text="✅ ОТМЕНА", callback_data=f"edit_kb_{doc.agent_id}"),
-            types.InlineKeyboardButton(text="❌ ДА, УДАЛИТЬ", callback_data=f"del_doc_force_{doc.id}")
+            types.InlineKeyboardButton(text="✅ ОТМЕНА", callback_data=f"edit_kb_{doc_json['agent_id']}"),
+            types.InlineKeyboardButton(text="❌ ДА, УДАЛИТЬ", callback_data=f"del_doc_force_{doc_json['id']}")
         ]
     ])
 
@@ -726,35 +715,38 @@ async def confirm_delete_document(callback: types.CallbackQuery, session: AsyncS
 # --- ФАКТИЧЕСКОЕ УДАЛЕНИЕ ДОКУМЕНТА ---
 
 @master_router.callback_query(F.data.startswith("del_doc_force_"))
-async def force_delete_document(callback: types.CallbackQuery, session: AsyncSession):
+async def force_delete_document(callback: types.CallbackQuery):
     doc_id = int(callback.data.split("_")[3])
 
-    doc = await session.get(AgentDocument, doc_id)
-    if not doc:
-        return await callback.answer("Документ уже был удален.")
 
-    agent_id = doc.agent_id
+    response_data = await APIdelete.documentBy_ID(doc_id)
+    response_status = get_response_status(response_data)
 
-    try:
-        # 1. Удаляем векторы из векторной БД Qdrant
-        await delete_document_vectors(doc_id)
+    if response_status != status.HTTP_200_OK:
+        if response_status == status.HTTP_404_NOT_FOUND:
+            await callback.answer(
+                f"Документ уже был удален", show_alert=True
+            )
 
-        # 2. Удаляем запись из Postgres
-        await session.delete(doc)
-        await session.commit()
+            return 
+        else:
+            await callback.answer(
+                f"Ошибка сервера при попытке удалить документ", show_alert=True
+            )
 
-        await callback.answer("✅ Файл успешно удален из базы знаний!", show_alert=True)
-    except Exception as e:
-        await session.rollback()
-        print(f"Ошибка при удалении документа: {e}")
-        await callback.answer("Произошла ошибка при удалении.", show_alert=True)
+            return 
+
+    agent_id = response_data['agent_id']
+
+    await callback.answer("✅ Файл успешно удален из базы знаний!", show_alert=True)
+
 
     # Возвращаемся обратно в меню базы знаний (генерируем фейковый callback)
     fake_callback = types.CallbackQuery(
         id="0", from_user=callback.from_user, chat_instance="0",
         message=callback.message, data=f"edit_kb_{agent_id}"
     )
-    await show_knowledge_base(fake_callback, session)
+    await show_knowledge_base(fake_callback)
 
 # --- ДОБАВЛЕНИЕ НОВОГО ДОКУМЕНТА (ЗАПРОС) ---
 
@@ -790,77 +782,50 @@ async def process_extra_document(message: types.Message, state: FSMContext, bot:
         await message.answer("❌ Ошибка: потерян ID агента. Начните сначала.")
         await state.clear()
         return
-
+    
+    file = await bot.get_file(message.document.file_id)
+    bytes_data = (await bot.download_file(file.file_path)).read() 
     file_name = message.document.file_name
-    file_id = message.document.file_id
 
+    response_data = await APIcreate.documentBy_botID(agent_id, file_name, bytes_data)
+    response_status = get_response_status(response_data)
+
+    if response_status != status.HTTP_200_OK:
+        if response_status == status.HTTP_404_NOT_FOUND:
+            await message.answer(
+                f"Ресурс на сервере не найден", show_alert=True
+            )
+            await state.clear()
+            return 
+        else:
+            await message.answer(
+                f"Ошибка сервера при попытке добавить документ", show_alert=True
+            )
+            await state.clear()
+            return 
     # Временное сообщение
     msg = await message.answer(f"⏳ Проверяю лимиты и анализирую файл `{file_name}`...")
 
-    try:
-        # 1. Скачиваем файл для предварительного анализа чанков
-        os.makedirs("temp_uploads", exist_ok=True)
-        file_path = f"temp_uploads/{file_id}_{file_name}"
-        await bot.download(message.document, destination=file_path)
 
-        # 2. Импортируем инструменты лимитов из индексера
-        from services.indexer import extract_text, text_splitter, get_current_chunks_count, CHUNK_LIMITS, process_document
-        
-        # 3. Получаем тариф пользователя (через владельца агента)
-        from database.models import User, Agent
-        result = await session.execute(
-            select(User).join(Agent).where(Agent.id == agent_id)
+    # ПРОВЕРКА: Проходит ли файл в лимит?
+    if response_data['status'] == 'limit_error':
+
+        await msg.edit_text(
+            f"🚫 *Лимит базы знаний превышен!*\n\n"
+            f"Ваш тариф: *{response_data['current_plan']}* (макс. {response_data['limit']} чанков).\n"
+            f"Уже использовано: {response_data['current_count']}.\n"
+            f"Файл содержит: {response_data['new_chunks_count']}.\n\n"
+            f"Удалите старые документы или повысьте тариф в меню.",
+            parse_mode="Markdown"
         )
-        user = result.scalar_one_or_none()
-        
-        current_plan = user.subscription_type if user else "Free"
-        limit = CHUNK_LIMITS.get(current_plan, 100)
+        return
 
-        # 4. Считаем чанки в новом файле
-        text = await extract_text(file_path)
-        chunks = text_splitter.split_text(text)
-        new_chunks_count = len(chunks)
-        
-        # Считаем текущее кол-во чанков в Qdrant
-        current_count = await get_current_chunks_count(agent_id)
+    await msg.edit_text(f"✅ Файл `{file_name}` принят и обрабатывается ({response_data['new_chunks_count']} чанков).")
 
-        # 5. ПРОВЕРКА: Проходит ли файл в лимит?
-        if current_count + new_chunks_count > limit:
-            if os.path.exists(file_path):
-                os.remove(file_path)
-            
-            await msg.edit_text(
-                f"🚫 *Лимит базы знаний превышен!*\n\n"
-                f"Ваш тариф: *{current_plan}* (макс. {limit} чанков).\n"
-                f"Уже использовано: {current_count}.\n"
-                f"Файл содержит: {new_chunks_count}.\n\n"
-                f"Удалите старые документы или повысьте тариф в меню.",
-                parse_mode="Markdown"
-            )
-            return
 
-        # 6. Если всё хорошо — фиксируем в Postgres и запускаем фон
-        new_doc = AgentDocument(
-            agent_id=agent_id, 
-            file_name=file_name, 
-            file_id=file_id, 
-            status="processing"
-        )
-        session.add(new_doc)
-        await session.commit()
-
-        asyncio.create_task(process_document(file_path, agent_id, new_doc.id))
-        await msg.edit_text(f"✅ Файл `{file_name}` принят и обрабатывается ({new_chunks_count} чанков).")
-
-    except Exception as e:
-        print(f"❌ Ошибка в process_extra_document: {e}")
-        await msg.edit_text(f"❌ Ошибка при обработке файла: {e}")
-        if 'file_path' in locals() and os.path.exists(file_path):
-            os.remove(file_path)
 
     # 7. Возврат в меню базы знаний (через небольшую паузу, чтобы успели прочитать)
     await asyncio.sleep(2)
-    from handlers.master import show_knowledge_base
     fake_callback = types.CallbackQuery(
         id="0", from_user=message.from_user, chat_instance="0",
         message=message, data=f"edit_kb_{agent_id}"

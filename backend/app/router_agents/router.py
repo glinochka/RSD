@@ -12,19 +12,9 @@ from ..utils.convert import convert_to_dict
 
 logger = getLogger(__name__)
 
-router = APIRouter(prefix='/api')
+router = APIRouter(prefix='/api/agents')
 
-@router.post('/agents')
-async def createAgent(agent: NewAgent):
-    async with async_session_maker() as session:
-        agentDAO = AgentDAO(session)
-        
-        async with session.begin():
-            await agentDAO.add(agent.model_dump())
-
-    return JSONResponse(status_code=status.HTTP_201_CREATED)
-
-@router.get('/agents')
+@router.get('')
 async def readAgent(agent: Agent_by_botID = Depends()):
     async with async_session_maker() as session:
         agentDAO = AgentDAO(session)
@@ -43,7 +33,7 @@ async def readAgent(agent: Agent_by_botID = Depends()):
         content=dict_agent,
         status_code=status.HTTP_200_OK
         )
-@router.get('/agents/allBy_tgID')
+@router.get('/allBy_tgID')
 async def readAllAgents(user: User_by_agent_or_tgID = Depends()):
     async with async_session_maker() as session:
         userDAO = UserDAO(session)
@@ -67,7 +57,7 @@ async def readAllAgents(user: User_by_agent_or_tgID = Depends()):
         status_code=status.HTTP_200_OK
         )
 
-@router.post('/agents/ByUserWith_tgID')
+@router.post('/ByUserWith_tgID')
 async def createAgent_byTgID(newAgent: NewAgent_byUserWith_tgID):
     async with async_session_maker() as session:
         agentDAO = AgentDAO(session)
@@ -90,7 +80,7 @@ async def createAgent_byTgID(newAgent: NewAgent_byUserWith_tgID):
 
     return JSONResponse(status_code=status.HTTP_201_CREATED)
 
-@router.patch('/agents/by_botID')
+@router.patch('/by_botID')
 async def updateBy_botID(newData: UpdateAgent):
     async with async_session_maker() as session:
         agentDAO = AgentDAO(session)
@@ -109,7 +99,7 @@ async def updateBy_botID(newData: UpdateAgent):
 
     return JSONResponse(status_code=status.HTTP_204_NO_CONTENT)
 
-@router.patch('/agents/toggle_status')
+@router.patch('/toggle_status')
 async def toggleStatus(agentID: Agent_by_botID):
     async with async_session_maker() as session:
         agentDAO = AgentDAO(session)
@@ -131,7 +121,9 @@ async def toggleStatus(agentID: Agent_by_botID):
         content = agent_dict,
         status_code=status.HTTP_200_OK
         )
-@router.delete('/agents')
+
+from ..qdrant.search_service import delete_agent_vectors
+@router.delete('')
 async def toggleStatus(agentID: Agent_by_botID = Depends()):
     async with async_session_maker() as session:
         agentDAO = AgentDAO(session)
@@ -142,6 +134,12 @@ async def toggleStatus(agentID: Agent_by_botID = Depends()):
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Agent not found"
+                )
+            is_deleted_vectors = await delete_agent_vectors(agentID.bot_id)
+            if not is_deleted_vectors:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Qdrant deleting error"
                 )
             await agentDAO.delete(agent)
 
