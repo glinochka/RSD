@@ -5,7 +5,9 @@ from aiogram import Router, F, Bot, types
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 
-
+from aiogram.filters import StateFilter
+from sqlalchemy.ext.asyncio import AsyncSession
+from backend.app.alembic.models import AgentDocument
 from core.backendAPI import APIread, APIcreate, APIupdate, APIdelete, get_response_status
 from core.config import settings
 from core.crypto import encrypt_token
@@ -33,9 +35,11 @@ def escape_md(text: str) -> str:
 
 # --- ГЛАВНОЕ МЕНЮ ---
 
-@master_router.message(CommandStart())
-async def cmd_start(message: types.Message):
+@master_router.message(CommandStart(), StateFilter("*"))
+async def cmd_start(message: types.Message, state: FSMContext):
     # Логика регистрации пользователя
+    await state.clear()
+
     user_json = await APIread.userBy_tgID(message.from_user.id)
     
     response_status = get_response_status(user_json)
@@ -254,7 +258,7 @@ async def process_prompt(message: types.Message, state: FSMContext):
     await state.set_state(CreateAgentSG.waiting_docs)
 
 @master_router.message(CreateAgentSG.waiting_docs, F.document)
-async def handle_docs(message: types.Message, state: FSMContext, bot: Bot):
+async def handle_docs(message: types.Message, state: FSMContext, bot: Bot, session: AsyncSession):
     data = await state.get_data()
     agent_id = data['agent_id']
     file_id = message.document.file_id
@@ -774,12 +778,11 @@ async def prompt_add_document(callback: types.CallbackQuery, state: FSMContext):
 # --- ПРИЕМ И ОБРАБОТКА НОВОГО ДОКУМЕНТА ---
 
 @master_router.message(CreateAgentSG.adding_extra_docs, F.document)
-async def process_extra_document(message: types.Message, state: FSMContext, bot: Bot):
+async def process_extra_document(message: types.Message, state: FSMContext, bot: Bot, session: AsyncSession):
     data = await state.get_data()
     agent_id = data.get('edit_agent_id')
-    
     if not agent_id:
-        await message.answer("❌ Ошибка: потерян ID агента. Начните сначала.")
+        await message.answer("Ошибка: потерян ID агента. Начните сначала.")
         await state.clear()
         return
     
