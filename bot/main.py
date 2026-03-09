@@ -1,13 +1,9 @@
-
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, Depends
+from fastapi import FastAPI, Request
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import Update
-
-
-from fastapi import status
 
 from core.crypto import decrypt_token
 from core.middlewares import AgentContextMiddleware

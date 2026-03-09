@@ -51,7 +51,7 @@ services:
         container_name: rsd_bot
         restart: always
         depends_on:
-            - db
+            - postgres
             - qdrant
 
         environment:
@@ -88,9 +88,9 @@ services:
             - "http"
             - "app:8001"
         environment:
-        NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+            NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
         depends_on:
-            - app
+            - bot
 
 networks:
   rsd_network:

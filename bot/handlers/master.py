@@ -549,7 +549,7 @@ async def process_ai_improve_prompt(callback: types.CallbackQuery, state: FSMCon
     )
     
     # 2. Генерируем улучшение через сервис
-    # Убедись, что improve_prompt_with_ai импортирована из services.ai_service
+    
     new_prompt = await improve_prompt_with_ai(agent_json['system_prompt'])
     
     # 3. Сохраняем новый промпт в базу данных
