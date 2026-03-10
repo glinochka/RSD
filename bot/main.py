@@ -12,35 +12,12 @@ from handlers.master import master_router
 
 from core.backendAPI import *
 from core.config import settings
-from qdrant_client import QdrantClient
-from qdrant_client.http import models
+
 
 
 # --- ЖИЗНЕННЫЙ ЦИКЛ ПРИЛОЖЕНИЯ ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-
-    client = QdrantClient(url=settings.QDRANT_URL, api_key=settings.QDRANT_API_KEY)
-    collection_name = "agent_documents"
-    
-    try:
-        collections = client.get_collections().collections
-        if not any(c.name == collection_name for c in collections):
-            client.create_collection(
-                collection_name=collection_name,
-                vectors_config=models.VectorParams(size=384, distance=models.Distance.COSINE),
-                sparse_vectors_config={
-                    "sparse-text": models.SparseVectorParams(
-                        index=models.SparseIndexParams(on_disk=True)
-                    )
-                }
-            )
-            print(f"✅ Коллекция {collection_name} создана")
-
-    except Exception as e:
-        print(f"⚠️ Qdrant Error: {e}")
-
-
     webhook_url = f"{settings.BASE_URL}/webhook/master"
     await master_bot.set_webhook(url=webhook_url, drop_pending_updates=True)
     print(f"✅ Вебхук установлен")

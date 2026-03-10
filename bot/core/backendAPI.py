@@ -128,12 +128,17 @@ class APIread(APIbase):
     @classmethod
     async def allDocsBy_botID(cls, bot_id: int) -> dict|list:
         add_url = 'allBy_botID'
-        return cls.agent({'bot_id': bot_id}, add_url = add_url)
+        return cls.document({'bot_id': bot_id}, add_url = add_url)
     
     @classmethod
     async def docBy_ID(cls, id: int) -> dict:
         add_url = f'{id}'
-        return cls.agent({}, add_url = add_url)
+        return cls.document({}, add_url = add_url)
+    
+    @classmethod
+    async def contextBy_botID(cls, bot_id: int, query: str) -> dict|list:
+        add_url = 'getContextBy_agentID'
+        return cls.document({'agent_id': bot_id, 'query': query}, add_url = add_url)
     
     # users
     @classmethod

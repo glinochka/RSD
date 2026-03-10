@@ -1,6 +1,4 @@
 from pydantic_settings import BaseSettings
-from qdrant_client import AsyncQdrantClient
-
 class Settings(BaseSettings):
     NGROK_AUTHTOKEN: str
     ENCRYPTION_KEY: str

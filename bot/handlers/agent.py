@@ -1,7 +1,6 @@
 from aiogram import Router, types
-from services.search_service import search_knowledge_base
 from services.ai_service import get_answer
-
+from core.backendAPI import APIread
 agent_router = Router()
 
 @agent_router.message()
@@ -26,7 +25,7 @@ async def handle_agent_message(message: types.Message, agent_config: dict):
 
     # 2. Поиск по базе знаний (только по этому агенту!)
     # Если это не старт, работаем в обычном режиме
-    context = await search_knowledge_base(query, agent_id=agent_id)
+    context = await APIread.contextBy_botID(agent_id, query)
     
     # 3. Генерация ответа через LLM с динамическим промптом
     answer = await get_answer(query, context, system_prompt)

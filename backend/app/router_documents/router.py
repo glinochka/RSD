@@ -43,7 +43,7 @@ async def readAllDocuments(agent: Agent_by_botID = Depends()):
         )
 
 @router.get('/{doc_id}')
-async def readAllDocuments(doc_id: int):
+async def readDocument(doc_id: int):
     async with async_session_maker() as session:
         documentDAO = DocumentDAO(session)
         async with session.begin():
@@ -61,10 +61,10 @@ async def readAllDocuments(doc_id: int):
         status_code=status.HTTP_200_OK
         )
 
-from ..qdrant.search_service import delete_document_vectors
+from ..qdrant.search_service import delete_document_vectors, search_knowledge_base
 
 @router.delete('/{doc_id}')
-async def readAllDocuments(doc_id: int):
+async def deleteDocument(doc_id: int):
 
     async with async_session_maker() as session:
         documentDAO = DocumentDAO(session)
@@ -93,6 +93,34 @@ async def readAllDocuments(doc_id: int):
         content={'agent_id': agent.id},
         status_code=status.HTTP_200_OK
         )
+
+from ..qdrant.indexer import extract_text, text_splitter, get_current_chunks_count, CHUNK_LIMITS, process_document
+import shutil
+import tempfile
+import os
+
+@router.post('/getContextBy_agentID')
+async def getContext(agentContext: Context_by_botID):
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent = await agent_dao.find_one_by_filter(load_relations=True, bot_id = agentContext.agent_id)
+            
+            if not agent:
+                logger.error(f'бот с айди {agentContext.agent_id} не найден')
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Agent not found"
+                )
+
+            
+    contex = await search_knowledge_base(agentContext.query, agent_id = agentContext.agent_id)
+    return JSONResponse(
+        content= contex,
+        status_code=status.HTTP_200_OK
+        )
+
+
 
 from ..qdrant.indexer import extract_text, text_splitter, get_current_chunks_count, CHUNK_LIMITS, process_document
 import shutil
