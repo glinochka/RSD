@@ -49,7 +49,6 @@ services:
     bot:
         build: ./bot
         container_name: rsd_bot
-        restart: always
         depends_on:
             - postgres
             - qdrant
@@ -83,7 +82,6 @@ services:
             - rsd_network
     ngrok:
         image: ngrok/ngrok:latest
-        restart: always
         command:
             - "http"
             - "app:8001"

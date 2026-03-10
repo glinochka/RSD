@@ -31,7 +31,7 @@ class Agent(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
 
     user: Mapped['User'] = relationship(back_populates='agents')
-    user_id: Mapped[int] = mapped_column(ForeignKey('users.id'), ondelete="CASCADE")
+    user_id: Mapped[int] = mapped_column(ForeignKey('users.id', ondelete="CASCADE"))
     
     bot_username: Mapped[str] = mapped_column(String(100), nullable=True)
     encrypted_token: Mapped[str] = mapped_column(String(500), unique=True)

@@ -1,6 +1,6 @@
 from datetime import date
 
-from config import settings
+from core.config import settings
 import httpx
 from typing import Awaitable, Callable, Any
 from aiogram.types import Document

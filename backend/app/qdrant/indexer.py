@@ -19,7 +19,7 @@ CHUNK_LIMITS = {
 }
 
 # Инициализация клиентов
-qdrant_client = AsyncQdrantClient(url=settings.QDRANT_URL, api_key=settings.DEEPSEEK_API_KEY)
+qdrant_client = AsyncQdrantClient(url=settings.QDRANT_URL)
 
 dense_model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5") 
 sparse_model = SparseTextEmbedding(model_name="prithivida/Splade_PP_en_v1")

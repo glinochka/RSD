@@ -35,11 +35,7 @@ async def rewrite_query(original_query: str) -> str:
 
 
 # Инициализируем асинхронный клиент
-q_client = AsyncQdrantClient(
-    url=settings.QDRANT_URL, 
-    api_key=settings.QDRANT_API_KEY
-)
-
+q_client = AsyncQdrantClient(url=settings.QDRANT_URL)
 dense_model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
 sparse_model = SparseTextEmbedding(model_name="prithivida/Splade_PP_en_v1")
 
