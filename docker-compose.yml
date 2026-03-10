@@ -20,6 +20,7 @@ services:
             timeout: 5s
             retries: 5
     backend:
+        restart: always
         build: ./backend
         command: >
             sh -c "cd app/alembic && alembic upgrade head &&
@@ -47,6 +48,7 @@ services:
             - ./backend:/backend
             - /app/__pycache__
     bot:
+        restart: always
         build: ./bot
         container_name: rsd_bot
         depends_on:
@@ -70,9 +72,9 @@ services:
             - ./bot:/app
             - ./temp_uploads:/app/temp_uploads
     qdrant:
+        restart: always
         image: qdrant/qdrant:latest
         container_name: rsd_qdrant
-        restart: always
         ports:
             - "6333:6333"
             - "6334:6334"
@@ -81,6 +83,7 @@ services:
         networks:
             - rsd_network
     ngrok:
+        restart: always
         image: ngrok/ngrok:latest
         command:
             - "http"

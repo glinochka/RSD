@@ -6,8 +6,6 @@ from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 
 from aiogram.filters import StateFilter
-from sqlalchemy.ext.asyncio import AsyncSession
-from backend.app.alembic.models import AgentDocument
 from core.backendAPI import APIread, APIcreate, APIupdate, APIdelete, get_response_status
 from core.config import settings
 from core.crypto import encrypt_token
@@ -258,10 +256,9 @@ async def process_prompt(message: types.Message, state: FSMContext):
     await state.set_state(CreateAgentSG.waiting_docs)
 
 @master_router.message(CreateAgentSG.waiting_docs, F.document)
-async def handle_docs(message: types.Message, state: FSMContext, bot: Bot, session: AsyncSession):
+async def handle_docs(message: types.Message, state: FSMContext, bot: Bot):
     data = await state.get_data()
     agent_id = data['agent_id']
-    file_id = message.document.file_id
     file_name = message.document.file_name
     
     file = await bot.get_file(message.document.file_id)
@@ -778,7 +775,7 @@ async def prompt_add_document(callback: types.CallbackQuery, state: FSMContext):
 # --- ПРИЕМ И ОБРАБОТКА НОВОГО ДОКУМЕНТА ---
 
 @master_router.message(CreateAgentSG.adding_extra_docs, F.document)
-async def process_extra_document(message: types.Message, state: FSMContext, bot: Bot, session: AsyncSession):
+async def process_extra_document(message: types.Message, state: FSMContext, bot: Bot):
     data = await state.get_data()
     agent_id = data.get('edit_agent_id')
     if not agent_id:
