@@ -2,7 +2,7 @@ services:
 
     postgres:
         restart: always
-        image: postgres:15
+        image: postgres:15-alpine  
         container_name: rsd_db
         environment:
             POSTGRES_USER: ${DB_USER}
@@ -19,6 +19,7 @@ services:
             interval: 5s
             timeout: 5s
             retries: 5
+
     backend:
         restart: always
         build: ./backend
@@ -47,14 +48,11 @@ services:
         volumes:
             - ./backend:/backend
             - /app/__pycache__
+
     bot:
         restart: always
         build: ./bot
         container_name: rsd_bot
-        depends_on:
-            - postgres
-            - qdrant
-
         environment:
             NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
             ENCRYPTION_KEY: ${ENCRYPTION_KEY}
@@ -64,13 +62,15 @@ services:
             BASE_URL: ${BASE_URL}
             API_HOST: ${API_HOST}
             API_PORT: ${API_PORT}
+        command: >
+            uvicorn main:app --host 0.0.0.0 --port 8002
         ports:
-            - "8001:8001"
+            - "8002:8002"
         networks:
             - rsd_network
         volumes:
             - ./bot:/app
-            - ./temp_uploads:/app/temp_uploads
+
     qdrant:
         restart: always
         image: qdrant/qdrant:latest
@@ -82,16 +82,20 @@ services:
             - qdrant_data:/qdrant/storage
         networks:
             - rsd_network
+
     ngrok:
         restart: always
+        container_name: rsd_ngrok
         image: ngrok/ngrok:latest
         command:
             - "http"
-            - "app:8001"
+            - "bot:8002"
         environment:
             NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
         depends_on:
             - bot
+        networks:
+            - rsd_network
 
 networks:
   rsd_network:
