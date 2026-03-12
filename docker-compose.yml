@@ -20,12 +20,12 @@ services:
             timeout: 5s
             retries: 5
     backend:
-        restart: always
         build: ./backend
         command: >
-            sh -c "cd app/alembic && alembic upgrade head &&
-                cd .. && cd .. &&
-                python server.py"
+            sh -c "cd /backend/app/alembic && 
+             alembic upgrade head && 
+             cd /backend && 
+             python server.py"
         container_name: rsd_backend
         environment:
             DB_HOST: ${DB_HOST}
@@ -83,11 +83,10 @@ services:
         networks:
             - rsd_network
     ngrok:
-        restart: always
         image: ngrok/ngrok:latest
         command:
             - "http"
-            - "app:8001"
+            - "bot:8001"
         environment:
             NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
         depends_on:
