@@ -1,0 +1,217 @@
+/* Create Agent Page Styles */
+
+.create-agent-page {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+/* Page Header */
+.create-agent-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--spacing-2xl);
+  padding-bottom: var(--spacing-2xl);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.create-agent-header h2 {
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-text);
+  margin: 0;
+}
+
+.btn-save {
+  padding: var(--spacing-sm) var(--spacing-lg);
+  font-size: var(--font-size-base);
+}
+
+/* Form */
+.agent-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2xl);
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.form-group label {
+  margin-bottom: var(--spacing-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+  font-size: var(--font-size-base);
+}
+
+.form-group input,
+.form-group select {
+  padding: var(--spacing-sm) var(--spacing-base);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-base);
+  font-size: var(--font-size-base);
+  font-family: inherit;
+  transition: all var(--transition-base);
+}
+
+.form-group input:focus,
+.form-group select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.form-group input.error,
+.form-group select.error {
+  border-color: var(--color-danger);
+}
+
+.error-message {
+  font-size: var(--font-size-sm);
+  color: var(--color-danger);
+  margin-top: var(--spacing-xs);
+}
+
+/* Input Main & Textarea */
+.input-main.textarea {
+  padding: var(--spacing-base);
+  min-height: 150px;
+  resize: vertical;
+}
+
+/* Select Wrapper */
+.select-wrapper {
+  position: relative;
+  width: 100%;
+}
+
+.select-wrapper select {
+  width: 100%;
+  appearance: none;
+  padding-right: var(--spacing-2xl);
+  cursor: pointer;
+}
+
+.select-wrapper::after {
+  content: '\2304';
+  position: absolute;
+  right: var(--spacing-base);
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: var(--color-text-light);
+  font-size: var(--font-size-lg);
+}
+
+/* Docs Container */
+.docs-container {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-2xl);
+  background-color: var(--color-bg-light);
+}
+
+.docs-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 var(--spacing-lg) 0;
+}
+
+.doc-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--spacing-sm) var(--spacing-base);
+  background-color: var(--color-bg);
+  border-radius: var(--radius-base);
+  margin-bottom: var(--spacing-sm);
+}
+
+.remove-file-btn {
+  background: none;
+  border: none;
+  color: var(--color-danger);
+  cursor: pointer;
+  font-size: var(--font-size-lg);
+  padding: 0;
+  transition: color var(--transition-base);
+}
+
+.remove-file-btn:hover {
+  color: #dc2626;
+}
+
+/* File Upload Zone */
+.add-files-zone {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-2xl);
+  background-color: var(--color-bg-lighter);
+  border: 2px dashed var(--color-border);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: all var(--transition-base);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-light);
+  min-height: 80px;
+}
+
+.add-files-zone:hover {
+  border-color: var(--color-primary);
+  background-color: #f3f4f6;
+}
+
+.help-text {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-lighter);
+  margin-top: var(--spacing-sm);
+  margin-bottom: 0;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .create-agent-page {
+    padding: 0;
+  }
+
+  .create-agent-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--spacing-lg);
+  }
+
+  .btn-save {
+    width: 100%;
+  }
+
+  .create-agent-header h2 {
+    font-size: var(--font-size-xl);
+  }
+
+  .form-group label {
+    font-size: var(--font-size-base);
+  }
+
+  .input-main.textarea {
+    min-height: 120px;
+  }
+}
+
+@media (max-width: 480px) {
+  .agent-form {
+    gap: var(--spacing-lg);
+  }
+
+  .docs-container {
+    padding: var(--spacing-lg);
+  }
+
+  .form-group input,
+  .form-group select {
+    font-size: 16px; /* Prevents zoom on iOS */
+  }
+}

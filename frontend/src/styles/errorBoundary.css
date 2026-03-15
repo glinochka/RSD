@@ -1,0 +1,78 @@
+/* Error Boundary Styles */
+
+.error-boundary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  padding: 1rem;
+}
+
+.error-container {
+  background: white;
+  border-radius: 8px;
+  padding: 3rem 2rem;
+  max-width: 600px;
+  text-align: center;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+}
+
+.error-container h1 {
+  color: #333;
+  margin-bottom: 1rem;
+  font-size: 2rem;
+}
+
+.error-container p {
+  color: #666;
+  margin-bottom: 2rem;
+  font-size: 1rem;
+}
+
+.error-details {
+  background: #f5f5f5;
+  border-radius: 4px;
+  padding: 1rem;
+  margin: 2rem 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.error-details summary {
+  font-weight: 600;
+  color: #333;
+  padding: 0.5rem;
+}
+
+.error-details pre {
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 1rem;
+  overflow-x: auto;
+  margin-top: 1rem;
+  font-size: 0.85rem;
+  color: #d32f2f;
+}
+
+.error-container .btn {
+  margin: 0 0.5rem;
+  min-width: 150px;
+}
+
+@media (max-width: 600px) {
+  .error-container {
+    padding: 2rem 1rem;
+  }
+
+  .error-container h1 {
+    font-size: 1.5rem;
+  }
+
+  .error-container .btn {
+    display: block;
+    margin: 0.5rem 0;
+    width: 100%;
+  }
+}
