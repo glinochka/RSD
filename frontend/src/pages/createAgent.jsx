@@ -8,6 +8,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import MainLayout from '../components/Layout';
 import { useForm } from '../hooks/useForm';
 import { useNotification } from '../context/useNotification';
+import { useAuth } from '../context/useAuth';
 import agentService from '../services/agentService';
 import { validateFile } from '../utils/validation';
 import { AGENT_ROLES, AGENT_TASKS, NAVIGATION_ROUTES } from '../config/constants';
@@ -17,7 +18,9 @@ const CreateAgentContent = () => {
   const navigate = useNavigate();
   const { id: agentId } = useParams();
   const { showError, showSuccess } = useNotification();
+  const { isAuthenticated } = useAuth();
   const [uploadedFiles, setUploadedFiles] = useState([]);
+  const [showAuthModal, setShowAuthModal] = useState(false);
 
   const isEditMode = !!agentId;
 
@@ -46,6 +49,11 @@ const CreateAgentContent = () => {
       prompt: '',
     },
     async (values) => {
+      if (!isAuthenticated) {
+        setShowAuthModal(true);
+        return;
+      }
+
       try {
         const agentData = {
           ...values,
@@ -92,6 +100,11 @@ const CreateAgentContent = () => {
 
   const handleRemoveFile = (index) => {
     setUploadedFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleAuthRedirect = () => {
+    setShowAuthModal(false);
+    navigate(NAVIGATION_ROUTES.AUTH);
   };
 
   return (
@@ -232,6 +245,21 @@ const CreateAgentContent = () => {
               <p className="help-text">Максимальный размер файла: 10MB</p>
             </div>
           </form>
+
+          {showAuthModal && (
+            <div className="auth-modal-backdrop">
+              <div className="auth-modal">
+                <h3 className="auth-modal-title">
+                  вы еще не авторизованы, войдите в аккаунт чтобы создать агента
+                </h3>
+                <div className="auth-modal-actions">
+                  <button className="btn btn-black" onClick={handleAuthRedirect}>
+                    Авторизоваться
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
       </div>
     </MainLayout>
   );

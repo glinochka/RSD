@@ -11,13 +11,8 @@ import { useAsync } from '../hooks/useAsync';
 import agentService from '../services/agentService';
 import { useNotification } from '../context/useNotification';
 import { NAVIGATION_ROUTES } from '../config/constants';
+import { useAuth } from '../context/useAuth';
 import '../styles/agentsPage.css';
-
-const MOCK_AGENTS = [
-  { id: 1, name: 'МОП', role: 'support', status: 'active' },
-  { id: 2, name: 'Консультант', role: 'sales', status: 'active' },
-  { id: 3, name: 'Онлайн преподаватель', role: 'assistant', status: 'active' },
-];
 
 const AgentCard = ({ agent, onEdit, onDelete }) => {
   return (
@@ -54,17 +49,16 @@ const AgentCard = ({ agent, onEdit, onDelete }) => {
 const AgentsPageContent = () => {
   const navigate = useNavigate();
   const { showError, showSuccess } = useNotification();
+  const { isAuthenticated } = useAuth();
   const { data: agents, isLoading, execute } = useAsync(
     () => agentService.getAll(),
     false
   );
 
   useEffect(() => {
-    // Load agents - using mock data for now
-    // execute(); // Uncomment when API is ready
-    // For demo purposes:
-    setTimeout(() => {}, 100);
-  }, []);
+    if (!isAuthenticated) return;
+    execute();
+  }, [isAuthenticated]);
 
   const handleCreateAgent = () => {
     navigate(NAVIGATION_ROUTES.CREATE_AGENT);
@@ -89,11 +83,25 @@ const AgentsPageContent = () => {
     }
   };
 
-  if (isLoading) {
+  if (isLoading && isAuthenticated) {
     return <Loading message="Загрузка агентов..." />;
   }
 
-  const displayAgents = agents || MOCK_AGENTS;
+  if (!isAuthenticated) {
+    return (
+      <div className="agents-page-content">
+        <section className="agents-section">
+          <div className="empty-state">
+            <button className="btn btn-black" onClick={handleCreateAgent}>
+              У вас еще нет ни одного ИИ-сотруднника, создайте прямо сейчас
+            </button>
+          </div>
+        </section>
+      </div>
+    );
+  }
+
+  const displayAgents = agents || [];
 
   return (
     <div className="agents-page-content">
