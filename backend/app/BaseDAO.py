@@ -1,14 +1,13 @@
-from .alembic.database import async_session_maker
 from .alembic.models import Base
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
+from sqlalchemy.orm import selectinload, joinedload
 
 
 def require_transaction(func):
     async def wrapper(self, *args, **kwargs):
         if not self._session.in_transaction():
-            raise RuntimeError("Session is not initialized")
+            raise RuntimeError("Transaction is not initialized")
         
         return await func(self, *args, **kwargs)
     return wrapper
@@ -20,8 +19,16 @@ class BaseDAO:
         self._session = session
 
     @require_transaction 
-    async def find_one_by_filter(self, **filters) -> Base:
+    async def find_one_by_filter(self, load_relations: bool = False, **filters) -> Base:
         comm = select(self.model).filter_by(**filters)
+        if load_relations:
+
+            if hasattr(self.model, 'user'):
+                comm = comm.options(joinedload(self.model.user))
+            elif hasattr(self.model, 'agent'):
+                comm = comm.options(joinedload(self.model.agent))
+            if hasattr(self.model, 'agents'):
+                comm = comm.options(selectinload(self.model.agents))
         one = await self._session.scalar(comm)
         return one
      
@@ -36,7 +43,8 @@ class BaseDAO:
 
         return new_element
     
-    def update(self, ob: Base, updates: dict) -> None:
+    @require_transaction
+    async def update(self, ob: Base, updates: dict) -> None:
 
         for key, value in updates.items():
             if hasattr(ob, key):

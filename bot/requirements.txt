@@ -1,0 +1,9 @@
+aiogram
+Fastapi
+uvicorn
+cryptography
+pydantic-settings
+httpx
+openai
+qdrant-client
+python-multipart

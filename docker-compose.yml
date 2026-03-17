@@ -1,7 +1,8 @@
-
 services:
+
     postgres:
-        image: postgres:15
+        restart: always
+        image: postgres:15-alpine  
         container_name: rsd_db
         environment:
             POSTGRES_USER: ${DB_USER}
@@ -18,14 +19,14 @@ services:
             interval: 5s
             timeout: 5s
             retries: 5
+
     backend:
+        restart: always
         build: ./backend
         command: >
             sh -c "cd app/alembic && alembic upgrade head &&
                 cd .. && cd .. &&
                 python server.py"
-            
-
         container_name: rsd_backend
         environment:
             DB_HOST: ${DB_HOST}
@@ -35,6 +36,8 @@ services:
             DB_NAME: ${DB_NAME}
             SECRET_KEY: ${SECRET_KEY}
             ALGORITHM: ${ALGORITHM}
+            QDRANT_URL: ${QDRANT_URL}
+            DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
         ports:
             - '8000:8000'
         depends_on:
@@ -46,9 +49,77 @@ services:
             - ./backend:/backend
             - /app/__pycache__
 
+    # Frontend: built with Vite, served by Nginx. API URL is set at build time (VITE_API_BASE_URL).
+    frontend:
+        restart: always
+        build:
+            context: ./frontend
+            dockerfile: Dockerfile
+            args:
+                # URL the browser uses for API (set in .env for production, e.g. https://api.example.com)
+                VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+        container_name: rsd_frontend
+        ports:
+            # Port 3000 to align with backend/app/origins.py (CORS allows http://localhost:3000)
+            - "3000:80"
+        depends_on:
+            backend:
+                condition: service_started
+        networks:
+            - rsd_network
+
+    bot:
+        restart: always
+        build: ./bot
+        container_name: rsd_bot
+        environment:
+            NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+            ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+            DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+            DB_NAME: ${DB_NAME}
+            MASTER_BOT_TOKEN: ${MASTER_BOT_TOKEN}
+            BASE_URL: ${BASE_URL}
+            API_HOST: ${API_HOST}
+            API_PORT: ${API_PORT}
+        command: >
+            uvicorn main:app --host 0.0.0.0 --port 8002
+        ports:
+            - "8002:8002"
+        networks:
+            - rsd_network
+        volumes:
+            - ./bot:/app
+
+    qdrant:
+        restart: always
+        image: qdrant/qdrant:latest
+        container_name: rsd_qdrant
+        ports:
+            - "6333:6333"
+            - "6334:6334"
+        volumes:
+            - qdrant_data:/qdrant/storage
+        networks:
+            - rsd_network
+
+    ngrok:
+        restart: always
+        container_name: rsd_ngrok
+        image: ngrok/ngrok:latest
+        command:
+            - "http"
+            - "bot:8002"
+        environment:
+            NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+        depends_on:
+            - bot
+        networks:
+            - rsd_network
+
 networks:
   rsd_network:
     driver: bridge
 
 volumes:
     postgres_data:
+    qdrant_data:

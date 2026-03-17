@@ -1,0 +1,12 @@
+from pydantic_settings import BaseSettings
+class Settings(BaseSettings):
+    NGROK_AUTHTOKEN: str
+    ENCRYPTION_KEY: str
+    DEEPSEEK_API_KEY: str
+    MASTER_BOT_TOKEN: str
+    BASE_URL: str
+    API_HOST: str
+    API_PORT: str
+
+settings = Settings()
+

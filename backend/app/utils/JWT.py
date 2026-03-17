@@ -10,7 +10,7 @@ logger = getLogger(__name__)
 
 from ..config import get_auth_data
 from ..alembic.models import User
-from ..users.dao import UserDAO
+from ..router_users.dao import UserDAO
 def create_access_token(data: dict) -> str:
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + timedelta(days=30)
