@@ -1,45 +1,74 @@
 /**
  * Authentication Service
- * Handles all authentication-related API calls
+ * Handles the full auth lifecycle per backend app/router_users/router.py.
+ *
+ * Backend returns on successful login/registration:
+ *   { "access_token": "<jwt>", "token_type": "bearer" }
+ * We normalize to { token, tokenType, user } and the token is stored for the
+ * API client interceptor (Authorization: Bearer <access_token>).
+ *
+ * Payloads: LoginUser / NewUser → { name, password } (see router_users/schemas.py).
  */
 
 import apiClient from './apiClient';
 import { API_ROUTES } from '../config/constants';
 
+/** Normalize backend auth response to a shape used by AuthContext and storage */
+function normalizeAuthResponse(data, userName) {
+  const token = data?.access_token ?? data?.token ?? null;
+  const tokenType = data?.token_type ?? 'bearer';
+  if (!token) {
+    throw new Error('Сервер не вернул токен доступа');
+  }
+  return {
+    token,
+    tokenType,
+    user: { name: userName },
+  };
+}
+
 export const authService = {
   /**
-   * Login user with email and password
+   * Login: POST /api/users/login → { access_token, token_type }.
+   * Returns { token, tokenType, user } for storage and UI.
    */
-  login: async (email, password) => {
+  login: async (name, password) => {
     const response = await apiClient.post(API_ROUTES.AUTH_LOGIN, {
-      email,
+      name: name.trim(),
       password,
     });
-    return response.data;
+    return normalizeAuthResponse(response.data, name.trim());
   },
 
   /**
-   * Register new user
+   * Register: POST /api/users/registration → { access_token, token_type } (201).
+   * Returns { token, tokenType, user } for storage and UI.
    */
-  register: async (email, password, name) => {
+  register: async (name, password) => {
     const response = await apiClient.post(API_ROUTES.AUTH_REGISTER, {
-      email,
+      name: name.trim(),
       password,
-      name,
     });
-    return response.data;
+    return normalizeAuthResponse(response.data, name.trim());
   },
 
   /**
-   * Logout user
+   * Logout: optional backend call. Local token/user are always cleared by AuthContext.
+   * No-op if backend has no logout endpoint (404/405).
    */
   logout: async () => {
-    const response = await apiClient.post(API_ROUTES.AUTH_LOGOUT);
-    return response.data;
+    try {
+      await apiClient.post(API_ROUTES.AUTH_LOGOUT);
+    } catch (err) {
+      if (err?.status === 404 || err?.status === 405) {
+        return;
+      }
+      throw err;
+    }
   },
 
   /**
-   * Refresh authentication token
+   * Refresh token (if backend implements it). Not used by default.
    */
   refreshToken: async () => {
     const response = await apiClient.post(API_ROUTES.AUTH_REFRESH);
@@ -47,7 +76,8 @@ export const authService = {
   },
 
   /**
-   * Get current user profile
+   * Get current user (if backend implements GET /api/users/me).
+   * Not used on app init because backend may not expose this route.
    */
   getCurrentUser: async () => {
     const response = await apiClient.get(API_ROUTES.USERS_ME);

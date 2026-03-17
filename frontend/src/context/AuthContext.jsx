@@ -1,6 +1,9 @@
 /**
  * AuthContext
- * Manages authentication state globally across the app
+ * Full authentication lifecycle (aligned with backend app/router_users/router.py):
+ * - On login/register: store access_token and user; token is attached to requests via apiClient.
+ * - On load: trust stored token/user; any 401 from API clears storage and redirects to /auth.
+ * - On logout: clear token and user (and optionally call backend logout if implemented).
  */
 
 import React, { createContext, useCallback, useEffect, useState } from 'react';
@@ -10,54 +13,37 @@ import { ENV_CONFIG } from '../config/environment';
 
 export const AuthContext = createContext(null);
 
+const TOKEN_KEY = ENV_CONFIG.STORAGE_KEYS.TOKEN;
+const USER_KEY = ENV_CONFIG.STORAGE_KEYS.USER;
+
 export const AuthProvider = ({ children }) => {
-  const [token, setToken, removeToken] = useLocalStorage(ENV_CONFIG.STORAGE_KEYS.TOKEN, null);
-  const [user, setUser] = useLocalStorage(ENV_CONFIG.STORAGE_KEYS.USER, null);
+  const [token, setToken, removeToken] = useLocalStorage(TOKEN_KEY, null);
+  const [user, setUser] = useLocalStorage(USER_KEY, null);
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
 
-  // Check if user is logged in on mount
+  // On mount: no /users/me call (backend may not expose it). Token validity is checked
+  // when the first protected request runs; 401 triggers interceptor to clear and redirect.
   useEffect(() => {
-    const initializeAuth = async () => {
-      if (token) {
-        try {
-          const currentUser = await authService.getCurrentUser();
-          setUser(currentUser);
-        } catch (error) {
-          // Token is invalid, clear it
-          removeToken();
-          setUser(null);
-        }
-      }
-      setIsLoadingAuth(false);
-    };
-
-    initializeAuth();
+    setIsLoadingAuth(false);
   }, []);
 
+  // Store access_token so apiClient interceptor can send Authorization: Bearer <token>
   const login = useCallback(
-    async (email, password) => {
-      try {
-        const response = await authService.login(email, password);
-        setToken(response.token);
-        setUser(response.user);
-        return response;
-      } catch (error) {
-        throw error;
-      }
+    async (name, password) => {
+      const response = await authService.login(name, password);
+      setToken(response.token);
+      setUser(response.user);
+      return response;
     },
     [setToken, setUser]
   );
 
   const register = useCallback(
-    async (email, password, name) => {
-      try {
-        const response = await authService.register(email, password, name);
-        setToken(response.token);
-        setUser(response.user);
-        return response;
-      } catch (error) {
-        throw error;
-      }
+    async (name, password) => {
+      const response = await authService.register(name, password);
+      setToken(response.token);
+      setUser(response.user);
+      return response;
     },
     [setToken, setUser]
   );

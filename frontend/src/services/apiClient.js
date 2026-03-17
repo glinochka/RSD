@@ -1,12 +1,26 @@
 /**
  * API Service
- * Centralized API client with interceptors for authentication, error handling, and logging
+ * Centralized API client. baseURL from ENV_CONFIG.API.BASE_URL; CORS: backend/app/origins.py.
+ *
+ * Auth lifecycle (backend router_users/router.py):
+ * - Login/register return { access_token, token_type: "bearer" }. AuthContext stores
+ *   access_token under ENV_CONFIG.STORAGE_KEYS.TOKEN.
+ * - This request interceptor reads that token and sets Authorization: Bearer <access_token>
+ *   on every request so protected routes receive the JWT.
+ * - On 401, the response interceptor clears token/user and redirects to /auth.
  */
 
 import axios from 'axios';
 import { ENV_CONFIG } from '../config/environment';
 import { HTTP_STATUS, ERROR_MESSAGES } from '../config/constants';
 import { getStorageItem, removeStorageItem } from '../utils/storage';
+import { normalizeDetail } from '../utils/errorUtils';
+
+const TOKEN_KEY = ENV_CONFIG.STORAGE_KEYS.TOKEN;
+const USER_KEY = ENV_CONFIG.STORAGE_KEYS.USER;
+
+const isAuthRequest = (url) =>
+  url != null && (url.includes('/login') || url.includes('/registration'));
 
 class APIClient {
   constructor() {
@@ -22,13 +36,13 @@ class APIClient {
   }
 
   /**
-   * Setup request and response interceptors
+   * Request: attach Authorization: Bearer <access_token> from storage.
+   * Response: on 401, clear token/user and redirect to /auth.
    */
   setupInterceptors() {
-    // Request interceptor
     this.client.interceptors.request.use(
       (config) => {
-        const token = getStorageItem(ENV_CONFIG.STORAGE_KEYS.TOKEN);
+        const token = getStorageItem(TOKEN_KEY);
         if (token) {
           config.headers.Authorization = `Bearer ${token}`;
         }
@@ -62,12 +76,16 @@ class APIClient {
   handleResponseError(error) {
     const status = error.response?.status;
     const data = error.response?.data;
+    const requestUrl = error.response?.config?.url ?? error.config?.url;
 
-    // Handle unauthorized - redirect to login
     if (status === HTTP_STATUS.UNAUTHORIZED) {
-      removeStorageItem(ENV_CONFIG.STORAGE_KEYS.TOKEN);
-      removeStorageItem(ENV_CONFIG.STORAGE_KEYS.USER);
-      window.location.href = '/auth';
+      removeStorageItem(TOKEN_KEY);
+      removeStorageItem(USER_KEY);
+      // Only redirect when the 401 is from a protected request (e.g. expired token).
+      // Login/register 401 (user not found, wrong password) stay on auth page so the user sees the message.
+      if (!isAuthRequest(requestUrl)) {
+        window.location.href = '/auth';
+      }
     }
 
     // Log error in development
@@ -91,18 +109,17 @@ class APIClient {
   }
 
   /**
-   * Get user-friendly error message based on status code
+   * Get user-friendly message from FastAPI-style response (detail string or array).
+   * Backend detail is preferred; fallbacks by status (e.g. 401, 409, 422).
    */
   getErrorMessage(status, data) {
-    // Use server message if available
-    if (data?.detail) {
-      return data.detail;
-    }
-    if (data?.message) {
-      return data.message;
+    const rawDetail = data?.detail ?? data?.message;
+    if (rawDetail != null) {
+      const normalized =
+        typeof rawDetail === 'string' ? rawDetail : normalizeDetail(rawDetail);
+      if (normalized) return normalized;
     }
 
-    // Use predefined messages
     switch (status) {
       case HTTP_STATUS.BAD_REQUEST:
         return ERROR_MESSAGES.VALIDATION_ERROR;
@@ -112,6 +129,10 @@ class APIClient {
         return ERROR_MESSAGES.FORBIDDEN;
       case HTTP_STATUS.NOT_FOUND:
         return ERROR_MESSAGES.NOT_FOUND;
+      case HTTP_STATUS.CONFLICT:
+        return ERROR_MESSAGES.CONFLICT;
+      case HTTP_STATUS.UNPROCESSABLE_ENTITY:
+        return ERROR_MESSAGES.VALIDATION_ERROR;
       case HTTP_STATUS.INTERNAL_SERVER_ERROR:
       case HTTP_STATUS.SERVICE_UNAVAILABLE:
         return ERROR_MESSAGES.SERVER_ERROR;

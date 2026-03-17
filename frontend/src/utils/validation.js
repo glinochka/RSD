@@ -13,31 +13,54 @@ export const isValidEmail = (email) => {
 };
 
 /**
- * Validate password strength
+ * Validate password length (backend: min_length=6, max_length=30)
  */
 export const isValidPassword = (password) => {
-  return password.length >= VALIDATION.PASSWORD_MIN_LENGTH;
+  if (!password || typeof password !== 'string') return false;
+  const len = password.length;
+  return len >= VALIDATION.PASSWORD_MIN_LENGTH && len <= VALIDATION.PASSWORD_MAX_LENGTH;
 };
 
 /**
- * Validate password strength with detailed feedback
+ * Validate password with backend constraints (length 6-30). Optional complexity for UX.
  */
 export const validatePassword = (password) => {
   const errors = [];
 
-  if (password.length < VALIDATION.PASSWORD_MIN_LENGTH) {
-    errors.push(`Пароль должен содержать минимум ${VALIDATION.PASSWORD_MIN_LENGTH} символов`);
-  }
-  if (!/[A-Z]/.test(password)) {
-    errors.push('Пароль должен содержать хотя бы одну заглавную букву');
-  }
-  if (!/[a-z]/.test(password)) {
-    errors.push('Пароль должен содержать хотя бы одну строчную букву');
-  }
-  if (!/[0-9]/.test(password)) {
-    errors.push('Пароль должен содержать хотя бы одну цифру');
+  if (!password || typeof password !== 'string') {
+    errors.push('Пароль обязателен');
+    return { isValid: false, errors };
   }
 
+  if (password.length < VALIDATION.PASSWORD_MIN_LENGTH) {
+    errors.push(`Пароль: минимум ${VALIDATION.PASSWORD_MIN_LENGTH} символов`);
+  }
+  if (password.length > VALIDATION.PASSWORD_MAX_LENGTH) {
+    errors.push(`Пароль: максимум ${VALIDATION.PASSWORD_MAX_LENGTH} символов`);
+  }
+
+  return {
+    isValid: errors.length === 0,
+    errors,
+  };
+};
+
+/**
+ * Validate username for auth (backend: name min 3, max 30 for login, max 32 for register)
+ */
+export const validateUsername = (name, maxLength = VALIDATION.USERNAME_MAX_LENGTH_LOGIN) => {
+  const errors = [];
+  if (!name || typeof name !== 'string') {
+    errors.push('Имя пользователя обязательно');
+    return { isValid: false, errors };
+  }
+  const trimmed = name.trim();
+  if (trimmed.length < VALIDATION.USERNAME_MIN_LENGTH) {
+    errors.push(`Имя: минимум ${VALIDATION.USERNAME_MIN_LENGTH} символа`);
+  }
+  if (trimmed.length > maxLength) {
+    errors.push(`Имя: максимум ${maxLength} символов`);
+  }
   return {
     isValid: errors.length === 0,
     errors,
@@ -105,6 +128,15 @@ export const validateForm = (formData, rules) => {
       return;
     }
 
+    if (rule.type === 'username' && value) {
+      const maxLen = rule.maxLength ?? VALIDATION.USERNAME_MAX_LENGTH_LOGIN;
+      const validation = validateUsername(value, maxLen);
+      if (!validation.isValid) {
+        errors[field] = validation.errors[0];
+      }
+      return;
+    }
+
     if (rule.minLength && value && value.length < rule.minLength) {
       errors[field] = `Минимальная длина: ${rule.minLength} символов`;
       return;
@@ -130,6 +162,7 @@ export default {
   isValidEmail,
   isValidPassword,
   validatePassword,
+  validateUsername,
   isValidAgentName,
   validateFile,
   validateForm,

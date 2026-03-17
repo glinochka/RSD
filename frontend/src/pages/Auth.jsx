@@ -1,14 +1,29 @@
 /**
  * Auth Page
- * Handles user login and registration
+ * Handles user login and registration.
+ * Field names and validation match backend (router_users/schemas.py): name, password.
  */
 
 import React, { useState } from 'react';
+
+/** Message for auth UI: apiClient sets error.message from FastAPI detail (normalized). */
+function getAuthErrorMessage(error) {
+  if (error?.message) return error.message;
+  const data = error?.data ?? error?.originalError?.response?.data;
+  if (data?.detail) {
+    if (Array.isArray(data.detail)) {
+      const first = data.detail[0];
+      return first?.msg ?? (first?.loc && first.loc.join('. ')) ?? JSON.stringify(data.detail);
+    }
+    return typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail);
+  }
+  return 'Ошибка входа. Проверьте учетные данные.';
+}
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 import { useNotification } from '../context/useNotification';
 import { useForm } from '../hooks/useForm';
-import { NAVIGATION_ROUTES, SUCCESS_MESSAGES } from '../config/constants';
+import { NAVIGATION_ROUTES, SUCCESS_MESSAGES, VALIDATION } from '../config/constants';
 import '../styles/auth.css';
 
 const Auth = () => {
@@ -17,27 +32,31 @@ const Auth = () => {
   const { showError, showSuccess } = useNotification();
   const [isLogin, setIsLogin] = useState(true);
 
+  // Validation rules aligned with backend Pydantic: LoginUser (name 3-30), NewUser (name 3-32), password 6-30
   const authRules = {
-    email: { required: true, type: 'email', label: 'Email' },
+    name: {
+      required: true,
+      type: 'username',
+      label: 'Имя пользователя',
+      maxLength: isLogin ? VALIDATION.USERNAME_MAX_LENGTH_LOGIN : VALIDATION.USERNAME_MAX_LENGTH_REGISTER,
+    },
     password: { required: true, type: 'password', label: 'Пароль' },
-    ...(isLogin ? {} : { name: { required: true, label: 'Имя' } }),
   };
 
   const form = useForm(
-    { email: '', password: '', name: '' },
+    { name: '', password: '' },
     async (values) => {
       try {
         if (isLogin) {
-          await login(values.email, values.password);
+          await login(values.name, values.password);
           showSuccess(SUCCESS_MESSAGES.LOGIN_SUCCESS, 3000);
         } else {
-          await register(values.email, values.password, values.name);
+          await register(values.name, values.password);
           showSuccess('Регистрация успешна!', 3000);
         }
         navigate(NAVIGATION_ROUTES.AGENTS);
       } catch (error) {
-        const message = error.message || 'Ошибка входа. Проверьте учетные данные.';
-        showError(message);
+        showError(getAuthErrorMessage(error));
       }
     },
     authRules
@@ -73,43 +92,24 @@ const Auth = () => {
               Авторизация через Google
             </button>
 
-            {/* Auth Form */}
+            {/* Auth Form — fields match backend: name, password */}
             <form className="auth-form" onSubmit={form.handleSubmit}>
-              {!isLogin && (
-                <div className="form-group">
-                  <label htmlFor="name">Имя:</label>
-                  <input
-                    id="name"
-                    type="text"
-                    name="name"
-                    placeholder="Ваше имя"
-                    value={form.values.name}
-                    onChange={form.handleChange}
-                    onBlur={form.handleBlur}
-                    disabled={form.isSubmitting}
-                    className={form.errors.name ? 'error' : ''}
-                  />
-                  {form.touched.name && form.errors.name && (
-                    <span className="error-message">{form.errors.name}</span>
-                  )}
-                </div>
-              )}
-
               <div className="form-group">
-                <label htmlFor="email">Электронная почта:</label>
+                <label htmlFor="name">Имя пользователя:</label>
                 <input
-                  id="email"
-                  type="email"
-                  name="email"
-                  placeholder="example@email.com"
-                  value={form.values.email}
+                  id="name"
+                  type="text"
+                  name="name"
+                  placeholder={isLogin ? 'Имя пользователя' : 'От 3 до 32 символов'}
+                  value={form.values.name}
                   onChange={form.handleChange}
                   onBlur={form.handleBlur}
                   disabled={form.isSubmitting}
-                  className={form.errors.email ? 'error' : ''}
+                  className={form.errors.name ? 'error' : ''}
+                  autoComplete="username"
                 />
-                {form.touched.email && form.errors.email && (
-                  <span className="error-message">{form.errors.email}</span>
+                {form.touched.name && form.errors.name && (
+                  <span className="error-message">{form.errors.name}</span>
                 )}
               </div>
 
@@ -119,12 +119,13 @@ const Auth = () => {
                   id="password"
                   type="password"
                   name="password"
-                  placeholder="••••••••"
+                  placeholder="От 6 до 30 символов"
                   value={form.values.password}
                   onChange={form.handleChange}
                   onBlur={form.handleBlur}
                   disabled={form.isSubmitting}
                   className={form.errors.password ? 'error' : ''}
+                  autoComplete={isLogin ? 'current-password' : 'new-password'}
                 />
                 {form.touched.password && form.errors.password && (
                   <span className="error-message">{form.errors.password}</span>

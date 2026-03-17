@@ -1,6 +1,8 @@
 /**
  * Local Storage Utilities
- * Provides safe access to localStorage with error handling
+ * Provides safe access to localStorage with error handling.
+ * The key ENV_CONFIG.STORAGE_KEYS.TOKEN must be used for the JWT access_token
+ * so that apiClient's request interceptor can attach Authorization: Bearer <token>.
  */
 
 /**

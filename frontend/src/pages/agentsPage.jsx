@@ -85,7 +85,7 @@ const AgentsPageContent = () => {
       // Reload agents
       execute();
     } catch (error) {
-      showError('Ошибка при удалении агента');
+      showError(error?.message || 'Ошибка при удалении агента');
     }
   };
 

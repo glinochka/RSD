@@ -17,15 +17,15 @@ export const HTTP_STATUS = {
 };
 
 export const API_ROUTES = {
-  // Auth
-  AUTH_LOGIN: '/auth/login',
-  AUTH_REGISTER: '/auth/register',
-  AUTH_LOGOUT: '/auth/logout',
-  AUTH_REFRESH: '/auth/refresh',
+  // Auth (backend: prefix /api/users)
+  AUTH_LOGIN: '/api/users/login',
+  AUTH_REGISTER: '/api/users/registration',
+  AUTH_LOGOUT: '/api/users/logout',
+  AUTH_REFRESH: '/api/users/refresh',
 
   // Users
-  USERS_ME: '/users/me',
-  USERS_PROFILE: '/users/profile',
+  USERS_ME: '/api/users/me',
+  USERS_PROFILE: '/api/users/profile',
 
   // Agents
   AGENTS_LIST: '/agents',
@@ -101,11 +101,13 @@ export const NAVIGATION_ROUTES = {
   PRICING: '/pricing',
 };
 
+// User-facing messages; backend detail (FastAPI) is preferred when present (see errorUtils).
 export const ERROR_MESSAGES = {
   NETWORK_ERROR: 'Ошибка подключения. Проверьте интернет соединение.',
   UNAUTHORIZED: 'Пожалуйста, войдите в систему.',
   FORBIDDEN: 'У вас нет доступа к этому ресурсу.',
   NOT_FOUND: 'Ресурс не найден.',
+  CONFLICT: 'Пользователь уже существует.',
   SERVER_ERROR: 'Ошибка сервера. Попробуйте позже.',
   VALIDATION_ERROR: 'Пожалуйста, проверьте корректность данных.',
 };
@@ -120,7 +122,12 @@ export const SUCCESS_MESSAGES = {
 
 export const VALIDATION = {
   EMAIL_PATTERN: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
-  PASSWORD_MIN_LENGTH: 8,
+  // Auth: must match backend Pydantic (router_users/schemas.py)
+  USERNAME_MIN_LENGTH: 3,
+  USERNAME_MAX_LENGTH_LOGIN: 30,   // LoginUser.name
+  USERNAME_MAX_LENGTH_REGISTER: 32, // NewUser.name
+  PASSWORD_MIN_LENGTH: 6,          // both schemas
+  PASSWORD_MAX_LENGTH: 30,          // both schemas
   AGENT_NAME_MIN_LENGTH: 2,
   AGENT_NAME_MAX_LENGTH: 50,
   FILE_MAX_SIZE: 10 * 1024 * 1024, // 10MB

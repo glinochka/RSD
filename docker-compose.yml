@@ -49,6 +49,25 @@ services:
             - ./backend:/backend
             - /app/__pycache__
 
+    # Frontend: built with Vite, served by Nginx. API URL is set at build time (VITE_API_BASE_URL).
+    frontend:
+        restart: always
+        build:
+            context: ./frontend
+            dockerfile: Dockerfile
+            args:
+                # URL the browser uses for API (set in .env for production, e.g. https://api.example.com)
+                VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+        container_name: rsd_frontend
+        ports:
+            # Port 3000 to align with backend/app/origins.py (CORS allows http://localhost:3000)
+            - "3000:80"
+        depends_on:
+            backend:
+                condition: service_started
+        networks:
+            - rsd_network
+
     bot:
         restart: always
         build: ./bot
