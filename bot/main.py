@@ -23,7 +23,6 @@ agent_dp = None
 async def lifespan(app: FastAPI):
     global master_bot, master_dp, agent_dp
     
-    logger.info("🚀 LIFESPAN START")
     
     master_bot = Bot(token=settings.MASTER_BOT_TOKEN)
     master_dp = Dispatcher(storage=MemoryStorage())
@@ -42,8 +41,6 @@ async def lifespan(app: FastAPI):
     
     yield
     
-    # Shutdown
-    logger.info("🛑 LIFESPAN STOP")
     if master_dp:
         await master_dp.storage.close()
     if agent_dp:
@@ -83,3 +80,13 @@ async def handle_agent_webhook(bot_id: int, request: Request):
     except Exception as e:
         logging.error(f"❌ Ошибка в агенте {bot_id}: {e}")
         return {"status": "error"}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8002,
+        reload=True
+    )

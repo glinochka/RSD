@@ -1,7 +1,7 @@
 services:
 
     postgres:
-        restart: always
+        restart: on-failure
         image: postgres:15-alpine  
         container_name: rsd_db
         environment:
@@ -21,14 +21,15 @@ services:
             retries: 5
 
     backend:
-        restart: always
+        restart: on-failure
         build: ./backend
         command: >
             sh -c "cd app/alembic && alembic upgrade head &&
-                cd .. && cd .. &&
-                python server.py"
+                cd .. && cd .. && python server.py"
+                
         container_name: rsd_backend
         environment:
+            HF_ENDPOINT: https://hf-mirror.com
             DB_HOST: ${DB_HOST}
             DB_PORT: ${DB_PORT}
             DB_USER: ${DB_USER}
@@ -41,18 +42,25 @@ services:
         ports:
             - '8000:8000'
         depends_on:
+            qdrant:
+                condition: service_started
             postgres:
                 condition: service_healthy
+            
         networks:
             - rsd_network
         volumes:
             - ./backend:/backend
             - /app/__pycache__
+            - fastembed_cache:/tmp/fastembed_cache
+
 
     bot:
-        restart: always
+        restart: on-failure
         build: ./bot
         container_name: rsd_bot
+        depends_on:
+            - backend
         environment:
             NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
             ENCRYPTION_KEY: ${ENCRYPTION_KEY}
@@ -72,7 +80,7 @@ services:
             - ./bot:/app
 
     qdrant:
-        restart: always
+        restart: on-failure
         image: qdrant/qdrant:latest
         container_name: rsd_qdrant
         ports:
@@ -84,16 +92,17 @@ services:
             - rsd_network
 
     ngrok:
-        restart: always
+        restart: on-failure
         container_name: rsd_ngrok
         image: ngrok/ngrok:latest
         command:
             - "http"
-            - "bot:8002"
+            - "${NGROK_TARGET:-bot:8002}"
         environment:
             NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
-        depends_on:
-            - bot
+        #!! расскоментировать в проде
+        #depends_on:
+        #    - bot
         networks:
             - rsd_network
 
@@ -102,5 +111,6 @@ networks:
     driver: bridge
 
 volumes:
+    fastembed_cache:
     postgres_data:
     qdrant_data:

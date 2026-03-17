@@ -16,7 +16,7 @@ from datetime import datetime, date, timezone
 class User(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
-    password: Mapped[str] = mapped_column(String(100), nullable=False)
+    password: Mapped[str] = mapped_column(String(100), nullable=True)
     
     subscription_type: Mapped[str] = mapped_column(String(50), default="Free")
     subscription_end_date: Mapped[date] = mapped_column(nullable=True)

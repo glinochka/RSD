@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from logging import getLogger
 
@@ -28,6 +28,8 @@ async def readAgent(agent: Agent_by_botID = Depends()):
                     detail="Agent not found"
                 )
             dict_agent = convert_to_dict(finded_agent)
+            # для json сериализации
+            dict_agent.pop('registered', None)
 
     return JSONResponse(
         content=dict_agent,
@@ -50,7 +52,11 @@ async def readAllAgents(user: User_by_agent_or_tgID = Depends()):
 
             if list_agents:
                 for agent in list_agents:
-                    json_respose.append(convert_to_dict(agent))
+                    dict_agent = convert_to_dict(agent)
+                    # для json сериализации
+                    dict_agent.pop('registered', None)
+                    json_respose.append(dict_agent)
+
 
     return JSONResponse(
         content=json_respose,
@@ -78,7 +84,7 @@ async def createAgent_byTgID(newAgent: NewAgent_byUserWith_tgID):
 
             await agentDAO.add(newAgent)
 
-    return JSONResponse(status_code=status.HTTP_201_CREATED)
+    return Response(status_code=status.HTTP_201_CREATED)
 
 @router.patch('/by_botID')
 async def updateBy_botID(newData: UpdateAgent):
@@ -97,7 +103,7 @@ async def updateBy_botID(newData: UpdateAgent):
             await agentDAO.update(agent, newData)
 
 
-    return JSONResponse(status_code=status.HTTP_204_NO_CONTENT)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 @router.patch('/toggle_status')
 async def toggleStatus(agentID: Agent_by_botID):
@@ -115,8 +121,9 @@ async def toggleStatus(agentID: Agent_by_botID):
             await agentDAO.update(agent, {'is_active': new_status})
 
             agent_dict = convert_to_dict(agent)
-
-
+            # для json сериализации
+            agent_dict.pop('registered', None)
+            
     return JSONResponse(
         content = agent_dict,
         status_code=status.HTTP_200_OK
@@ -145,6 +152,4 @@ async def toggleStatus(agentID: Agent_by_botID = Depends()):
 
 
 
-    return JSONResponse(
-        status_code=status.HTTP_200_OK
-        )
+    return Response(status_code=status.HTTP_200_OK)

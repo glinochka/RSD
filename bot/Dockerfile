@@ -1,4 +1,4 @@
-FROM python:3.10-slim
+FROM python:3.13-slim
 
 # Установка системных зависимостей для сборки некоторых библиотек
 RUN apt-get update && apt-get install -y \

@@ -1,10 +1,10 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-
+from logging import getLogger
 from app.logger_config import setup_logger
 setup_logger()
-
+logger = getLogger(__name__)
 from fastapi.middleware.cors import CORSMiddleware
 from app.router_users import router as users_router
 from app.router_agents import router as agents_router
@@ -17,16 +17,15 @@ import uvicorn
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 
-
 # --- ЖИЗНЕННЫЙ ЦИКЛ ПРИЛОЖЕНИЯ ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-
     client = QdrantClient(url=settings.QDRANT_URL, api_key=settings.QDRANT_API_KEY)
     collection_name = "agent_documents"
     
     try:
         collections = client.get_collections().collections
+        print(f"✅ Коллекция {collection_name} проверяется")
         if not any(c.name == collection_name for c in collections):
             client.create_collection(
                 collection_name=collection_name,
@@ -70,5 +69,5 @@ if __name__ == "__main__":
         "server:app",
         host="0.0.0.0",
         port=8000,
-        reload=True 
+        reload=True
     )

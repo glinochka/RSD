@@ -42,11 +42,9 @@ async def cmd_start(message: types.Message, state: FSMContext):
     
     response_status = get_response_status(user_json)
     if response_status == status.HTTP_404_NOT_FOUND:
-        await APIcreate.user({
-            'telegram_id': message.from_user.id,        
-            'username': message.from_user.username
-            })
-        return
+
+        await APIcreate.userBy_tgID(message.from_user.username, message.from_user.id)
+        
     elif response_status != status.HTTP_200_OK: 
         await message.answer(
                     f"Ошибка сервера при попытке Вас зарегестрировать",
@@ -213,14 +211,12 @@ async def process_token(message: types.Message, state: FSMContext):
 
         tg_id = message.from_user.id
 
-        data = {
-            'bot_id': bot_info.id, 
-            'encrypted_token': encrypt_token(token),
-            'bot_username': bot_info.username
-
-        }
-        await APIcreate.agentBy_UserWith_tgID(data, tg_id)
-
+        response = await APIcreate.agentBy_UserWith_tgID(bot_id = bot_info.id,
+                                              encrypted_token = encrypt_token(token),
+                                              bot_username = bot_info.username,
+                                              tg_id = tg_id)
+        #для просмотра возможных ошибок
+        get_response_status(response)
 
         # Ставим вебхук с очисткой очереди
         await temp_bot.set_webhook(
@@ -442,7 +438,7 @@ async def toggle_agent(callback: types.CallbackQuery):
     except Exception as e:
         print(f"Ошибка вебхука при переключении: {e}")
 
-    await callback.answer(f"Статус изменен: {'Включен' if new_status else 'Отключен'}")
+    await callback.answer(f"Статус изменен: {'Отключен' if new_status else 'Включен'}")
     await show_agent_info(callback)
 
 # --- УДАЛЕНИЕ АГЕНТА ---
