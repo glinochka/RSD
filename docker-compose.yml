@@ -71,7 +71,7 @@ services:
             API_HOST: ${API_HOST}
             API_PORT: ${API_PORT}
         command: >
-            uvicorn main:app --host 0.0.0.0 --port 8002
+            python main.py
         ports:
             - "8002:8002"
         networks:
@@ -100,9 +100,9 @@ services:
             - "${NGROK_TARGET:-bot:8002}"
         environment:
             NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
-        #!! расскоментировать в проде
-        #depends_on:
-        #    - bot
+        
+        depends_on:
+           - bot
         networks:
             - rsd_network
 
