@@ -1,30 +1,37 @@
+"""
+CORS allowed origins for the FastAPI app.
+Must include the origin (scheme + host + port) the frontend is served from,
+so the browser allows API requests (backend runs on port 8000; frontend port here).
+"""
+
 import socket
+
+# Frontend dev server port — must match frontend (e.g. vite.config.js server.port)
+FRONTEND_PORT = 3000
+# Optional: Vite default port if frontend is run without custom port
+FRONTEND_PORT_ALT = 5173
 
 
 def get_ip_address():
-    # функция для получения автоматического получения ip сервера
-     
+    """Get this machine's local IP (for LAN access). Tries UDP to 8.8.8.8, then hostname."""
     try:
-        # Способ 1: через подключение к внешнему серверу
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
         ip = s.getsockname()[0]
         s.close()
         return ip
-    except:
-
-        # Способ 2: через hostname
+    except Exception:
         hostname = socket.gethostname()
-        ip = socket.gethostbyname(hostname)
-        return ip
+        return socket.gethostbyname(hostname)
 
 
-ip = get_ip_address()
-
-port = 3000
+_ip = get_ip_address()
 
 origins = [
-    f'http://localhost:{port}',
-    f'http://127.0.0.1:{port}',
-    f'http://{ip}:{port}' 
+    f"http://localhost:{FRONTEND_PORT}",
+    f"http://127.0.0.1:{FRONTEND_PORT}",
+    f"http://{_ip}:{FRONTEND_PORT}",
+    f"http://localhost:{FRONTEND_PORT_ALT}",
+    f"http://127.0.0.1:{FRONTEND_PORT_ALT}",
+    f"http://{_ip}:{FRONTEND_PORT_ALT}",
 ]

@@ -21,7 +21,8 @@ class User(Base):
     subscription_type: Mapped[str] = mapped_column(String(50), default="Free")
     subscription_end_date: Mapped[date] = mapped_column(nullable=True)
     
-    telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
+    # telegram_id is optional to allow web-only registration without Telegram
+    telegram_id: Mapped[int | None] = mapped_column(BigInteger, unique=True, index=True, nullable=True)
     
     registered: Mapped[date] = mapped_column(default=datetime.now(timezone.utc))
 

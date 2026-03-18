@@ -4,3 +4,4 @@ __pycache__/
 temp_uploads/
 collect_code.py
 full_project_code.txt
+node_modules
