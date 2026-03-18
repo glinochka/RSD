@@ -25,10 +25,13 @@ class BaseDAO:
 
             if hasattr(self.model, 'user'):
                 comm = comm.options(joinedload(self.model.user))
-            elif hasattr(self.model, 'agent'):
+            if hasattr(self.model, 'agent'):
                 comm = comm.options(joinedload(self.model.agent))
             if hasattr(self.model, 'agents'):
                 comm = comm.options(selectinload(self.model.agents))
+            if hasattr(self.model, 'documents'): 
+                comm = comm.options(selectinload(self.model.documents))
+
         one = await self._session.scalar(comm)
         return one
      

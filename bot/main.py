@@ -83,3 +83,13 @@ async def handle_agent_webhook(bot_id: int, request: Request):
     except Exception as e:
         logging.error(f"❌ Ошибка в агенте {bot_id}: {e}")
         return {"status": "error"}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8002,
+        reload=True
+    )

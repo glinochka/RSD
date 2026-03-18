@@ -9,13 +9,11 @@ class Settings(BaseSettings):
     DB_PASSWORD: str
     SECRET_KEY: str
     ALGORITHM: str
-    QDRANT_URL: str
     QDRANT_API_KEY:str = ''
     DEEPSEEK_API_KEY: str
 
-    @property
-    def DB_HOST(self) -> str:
-        return "postgres" if os.path.exists('/.dockerenv') else "localhost"
+    QDRANT_URL: str
+    DB_HOST: str
 
     model_config = SettingsConfigDict(
         env_file= Path(__file__).parent.parent.parent / '.env',  
@@ -23,8 +21,12 @@ class Settings(BaseSettings):
         extra='ignore'  
     )
 
-
 settings = Settings()
+ 
+if not os.path.exists('/.dockerenv'):
+    settings.DB_HOST = "localhost"
+    settings.QDRANT_URL = "http://localhost:6333"
+
 
 def get_db_url():
     return (f"postgresql+asyncpg://{settings.DB_USER}:{settings.DB_PASSWORD}@"

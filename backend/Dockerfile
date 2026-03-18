@@ -1,4 +1,4 @@
-FROM python:3.13
+FROM python:3.13-slim
 
 WORKDIR /backend
 
@@ -13,4 +13,11 @@ COPY requirements.txt .
 
 RUN pip install -r requirements.txt
 
+
+# Принудительно скачиваем модель при сборке
+RUN python -c "\
+from fastembed import SparseTextEmbedding; \
+import os; \
+os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'; \
+SparseTextEmbedding(model_name='prithivida/Splade_PP_en_v1')"
 COPY . .

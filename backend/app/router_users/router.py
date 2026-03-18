@@ -26,9 +26,9 @@ async def create_user(user_by_tg: User_from_tg):
         user_dao = UserDAO(session)
 
         async with session.begin():
-            double_user = await user_dao.find_one_by_filter(name=user_by_tg.username)
+            double_user = await user_dao.find_one_by_filter(name=user_by_tg.name)
             if double_user:
-                logger.info(f'{user_by_tg.username} уже есть в базе данных')
+                logger.info(f'{user_by_tg.name} уже есть в базе данных')
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="Пользователь уже существует"
@@ -37,7 +37,7 @@ async def create_user(user_by_tg: User_from_tg):
             dict_new_user = user_by_tg.model_dump()
             await user_dao.add(dict_new_user)
         
-    logger.info(f'{user_by_tg.username} был добавлен')
+    logger.info(f'{user_by_tg.name} был добавлен')
     
     return JSONResponse(status_code=status.HTTP_201_CREATED)
 
@@ -63,9 +63,12 @@ async def user_by_agentID(user_by_agent: User_by_agent_or_tgID = Depends()):
                     detail="User not found for this agent"
                 )
             user_dict = convert_to_dict(user)
+            # для json сериализации
+            user_dict.pop('registered', None)
+            
             user_dict.pop('password', None)
 
-    logger.info(f'запрос с {user_by_agent.agent_id} был обработан')
+    logger.info(f'запрос с {user_by_agent.id} был обработан')
     return JSONResponse(
         content = user_dict,
         status_code=status.HTTP_200_OK
@@ -85,6 +88,9 @@ async def user_by_tgID(user_by_tg: User_by_agent_or_tgID = Depends()):
                     detail="User not found for this tg ID"
                 )
             user_dict = convert_to_dict(user)
+            # для json сериализации
+            user_dict.pop('registered', None)
+
             user_dict.pop('password', None)
 
     logger.info(f'запрос с {user_by_tg.id} был обработан')

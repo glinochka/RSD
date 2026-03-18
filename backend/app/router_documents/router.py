@@ -35,7 +35,10 @@ async def readAllDocuments(agent: Agent_by_botID = Depends()):
 
             if list_docs:
                 for doc in list_docs:
-                    json_respose.append(convert_to_dict(doc))
+                    document_dict = convert_to_dict(doc)
+                    # для json сериализации
+                    document_dict.pop('registered', None)
+                    json_respose.append(document_dict)
 
     return JSONResponse(
         content=json_respose,
@@ -55,6 +58,8 @@ async def readDocument(doc_id: int):
                     detail="Document not found"
                 )
             document_json = convert_to_dict(document)
+            # для json сериализации
+            document_json.pop('registered', None)
 
     return JSONResponse(
         content=document_json,

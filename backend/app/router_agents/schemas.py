@@ -2,10 +2,10 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 class UpdateAgent(BaseModel):
-    name: Optional[str]  = Field(min_length=3, max_length=100, description="Имя агента: длина от 3 до 30 символов")
+    name: Optional[str]  = Field(None, min_length=3, max_length=100, description="Имя агента: длина от 3 до 30 символов")
     bot_id: int = Field(..., description="Id бота")
-    system_prompt: Optional[str] = Field(description="Промпт")
-    welcome_message: Optional[str] = Field(min_length=3, description="Начальное сообщение бота: длина от 3 символов")
+    system_prompt: Optional[str] = Field(None, description="Промпт")
+    welcome_message: Optional[str] = Field(None, min_length=3, description="Начальное сообщение бота: длина от 3 символов")
 
 class NewAgent_byUserWith_tgID(BaseModel):
     tg_id: int = Field(..., description="tg id")
@@ -13,8 +13,8 @@ class NewAgent_byUserWith_tgID(BaseModel):
     bot_username: str = Field(..., min_length=3, max_length=100, description="Имя агента: длина от 3 до 30 символов")
     encrypted_token: str = Field(..., min_length=3, max_length=500, description="Зашифрованный токен бота")
 
-    system_prompt: Optional[str] = Field(description="Промпт")
-    welcome_message: Optional[str] = Field(min_length=3, description="Начальное сообщение бота: длина от 3 символов")
+    system_prompt: Optional[str] = Field(None,description="Промпт")
+    welcome_message: Optional[str] = Field(None,min_length=3, description="Начальное сообщение бота: длина от 3 символов")
 
 
 class Agent_by_botID(BaseModel):

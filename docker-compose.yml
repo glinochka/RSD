@@ -21,14 +21,15 @@ services:
             retries: 5
 
     backend:
-        restart: always
+        restart: on-failure
         build: ./backend
         command: >
             sh -c "cd app/alembic && alembic upgrade head &&
-                cd .. && cd .. &&
-                python server.py"
+                cd .. && cd .. && python server.py"
+                
         container_name: rsd_backend
         environment:
+            HF_ENDPOINT: https://hf-mirror.com
             DB_HOST: ${DB_HOST}
             DB_PORT: ${DB_PORT}
             DB_USER: ${DB_USER}
@@ -41,13 +42,19 @@ services:
         ports:
             - '8000:8000'
         depends_on:
+            qdrant:
+                condition: service_started
             postgres:
                 condition: service_healthy
+            
         networks:
             - rsd_network
         volumes:
             - ./backend:/backend
             - /app/__pycache__
+            - fastembed_cache:/tmp/fastembed_cache
+
+
 
     # Frontend: built with Vite, served by Nginx. API URL is set at build time (VITE_API_BASE_URL).
     frontend:
@@ -69,9 +76,11 @@ services:
             - rsd_network
 
     bot:
-        restart: always
+        restart: on-failure
         build: ./bot
         container_name: rsd_bot
+        depends_on:
+            - backend
         environment:
             NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
             ENCRYPTION_KEY: ${ENCRYPTION_KEY}
@@ -82,7 +91,7 @@ services:
             API_HOST: ${API_HOST}
             API_PORT: ${API_PORT}
         command: >
-            uvicorn main:app --host 0.0.0.0 --port 8002
+            python main.py
         ports:
             - "8002:8002"
         networks:
@@ -91,7 +100,7 @@ services:
             - ./bot:/app
 
     qdrant:
-        restart: always
+        restart: on-failure
         image: qdrant/qdrant:latest
         container_name: rsd_qdrant
         ports:
@@ -108,9 +117,10 @@ services:
         image: ngrok/ngrok:latest
         command:
             - "http"
-            - "bot:8002"
+            - "${NGROK_TARGET:-bot:8002}"
         environment:
             NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+        
         depends_on:
             - bot
         networks:
@@ -121,5 +131,6 @@ networks:
     driver: bridge
 
 volumes:
+    fastembed_cache:
     postgres_data:
     qdrant_data:
