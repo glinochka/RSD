@@ -28,7 +28,7 @@ export const API_ROUTES = {
   USERS_PROFILE: '/api/users/profile',
 
   // Agents
-  AGENTS_LIST: '/agents',
+  AGENTS_LIST: '/api/agents/allBy_tgID',
   AGENTS_CREATE: '/agents',
   AGENTS_UPDATE: (id) => `/agents/${id}`,
   AGENTS_DELETE: (id) => `/agents/${id}`,

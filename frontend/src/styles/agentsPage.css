@@ -68,6 +68,14 @@
   flex-shrink: 0;
 }
 
+.agent-status-dot--active {
+  background-color: var(--color-success);
+}
+
+.agent-status-dot--inactive {
+  background-color: var(--color-danger);
+}
+
 .agent-details {
   display: flex;
   flex-direction: column;

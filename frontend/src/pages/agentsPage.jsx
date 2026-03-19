@@ -15,13 +15,18 @@ import { useAuth } from '../context/useAuth';
 import '../styles/agentsPage.css';
 
 const AgentCard = ({ agent, onEdit, onDelete }) => {
+  const agentName = agent.bot_username || agent.name || 'Агент';
+  const isActive = !!agent.is_active;
   return (
     <div className="agent-item">
       <div className="agent-info">
-        <span className="agent-status-dot" title={agent.status}></span>
+        <span
+          className={`agent-status-dot ${isActive ? 'agent-status-dot--active' : 'agent-status-dot--inactive'}`}
+          title={isActive ? 'Активен' : 'Не активен'}
+        ></span>
         <div className="agent-details">
-          <h3 className="agent-name">{agent.name}</h3>
-          <p className="agent-role">{agent.role}</p>
+          <h3 className="agent-name">{agentName}</h3>
+          <p className="agent-role">{isActive ? 'Активен' : 'Не активен'}</p>
         </div>
       </div>
       <div className="agent-actions">
@@ -115,9 +120,9 @@ const AgentsPageContent = () => {
 
         {displayAgents.length === 0 ? (
           <div className="empty-state">
-            <p>У вас еще нет агентов</p>
+            <p>У вас еще нет агентов, создайте прямо сейчас</p>
             <button className="btn btn-black" onClick={handleCreateAgent}>
-              Создать первого агента
+              Создайте прямо сейчас
             </button>
           </div>
         ) : (

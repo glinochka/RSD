@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse, Response
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from logging import getLogger
 
@@ -9,10 +10,31 @@ from .dao import AgentDAO
 from ..router_users.dao import UserDAO
 from ..alembic.database import async_session_maker
 from ..utils.convert import convert_to_dict
+from ..utils.JWT import get_user_from_access_token
 
 logger = getLogger(__name__)
 
 router = APIRouter(prefix='/api/agents')
+
+http_bearer = HTTPBearer()
+
+
+async def get_current_user(
+    http_credentials: HTTPAuthorizationCredentials = Depends(http_bearer)
+):
+    """
+    Returns the currently authenticated user from the Authorization: Bearer <token>.
+    Also loads relations so `current_user.agents` is available.
+    """
+    token = http_credentials.credentials
+
+    async with async_session_maker() as session:
+        userDAO = UserDAO(session)
+        async with session.begin():
+            user = await get_user_from_access_token(token, userDAO)
+            # Load relations (agents) explicitly, so they are available after the session ends.
+            return await userDAO.find_one_by_filter(load_relations=True, id=user.id)
+
 
 @router.get('')
 async def readAgent(agent: Agent_by_botID = Depends()):
@@ -36,32 +58,20 @@ async def readAgent(agent: Agent_by_botID = Depends()):
         status_code=status.HTTP_200_OK
         )
 @router.get('/allBy_tgID')
-async def readAllAgents(user: User_by_agent_or_tgID = Depends()):
-    async with async_session_maker() as session:
-        userDAO = UserDAO(session)
-        async with session.begin():
-            finded_user = await userDAO.find_one_by_filter(load_relations = True, telegram_id = user.id)
-            if not finded_user:
-                logger.error(f'пользователь с tg ID {user.id} не найден')
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="User not found"
-                )
-            list_agents = finded_user.agents
-            json_respose = []
+async def readAllAgents(current_user=Depends(get_current_user)):
+    list_agents = current_user.agents or []
+    json_respose = []
 
-            if list_agents:
-                for agent in list_agents:
-                    dict_agent = convert_to_dict(agent)
-                    # для json сериализации
-                    dict_agent.pop('registered', None)
-                    json_respose.append(dict_agent)
-
+    for agent in list_agents:
+        dict_agent = convert_to_dict(agent)
+        # для json сериализации
+        dict_agent.pop('registered', None)
+        json_respose.append(dict_agent)
 
     return JSONResponse(
         content=json_respose,
         status_code=status.HTTP_200_OK
-        )
+    )
 
 @router.post('/ByUserWith_tgID')
 async def createAgent_byTgID(newAgent: NewAgent_byUserWith_tgID):
