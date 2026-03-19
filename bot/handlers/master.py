@@ -82,7 +82,7 @@ async def show_profile(callback: types.CallbackQuery):
         return 
     
     if all_user_agents:
-        agents_names = [agent['agent_name'] for agent in all_user_agents]
+        agents_names = [agent['bot_username'] for agent in all_user_agents]
     else:
         agents_names = []
 

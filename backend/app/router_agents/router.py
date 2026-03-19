@@ -98,9 +98,13 @@ async def updateBy_botID(newData: UpdateAgent):
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Agent not found"
                 )
-            newData = newData.model_dump()
-            del newData['bot_id']
-            await agentDAO.update(agent, newData)
+            patchAgent = dict(newData.model_dump())
+            for key in patchAgent.copy():
+                if patchAgent[key] == None:
+                    del patchAgent[key]
+
+            del patchAgent['bot_id']
+            await agentDAO.update(agent, patchAgent)
 
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)

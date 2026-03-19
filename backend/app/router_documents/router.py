@@ -37,8 +37,9 @@ async def readAllDocuments(agent: Agent_by_botID = Depends()):
                 for doc in list_docs:
                     document_dict = convert_to_dict(doc)
                     # для json сериализации
-                    document_dict.pop('registered', None)
+                    document_dict.pop('created_at', None)
                     json_respose.append(document_dict)
+
 
     return JSONResponse(
         content=json_respose,
@@ -59,7 +60,7 @@ async def readDocument(doc_id: int):
                 )
             document_json = convert_to_dict(document)
             # для json сериализации
-            document_json.pop('registered', None)
+            document_json.pop('created_at', None)
 
     return JSONResponse(
         content=document_json,
@@ -133,7 +134,7 @@ import tempfile
 import os
 
 @router.post('')
-async def readAllDocuments(
+async def addDocument(
     background_tasks: BackgroundTasks,
     agent_data: str = Form(...), 
     file: UploadFile = File(...)
@@ -186,7 +187,7 @@ async def readAllDocuments(
             doc_dao = DocumentDAO(session)
             async with session.begin():
                 doc_data = {
-                    'agent_id': agent_id,
+                    'agent_id': agent.id,
                     'file_name': file.filename,
                     'status': 'processing'
                 }

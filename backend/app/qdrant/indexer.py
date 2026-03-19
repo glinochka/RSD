@@ -48,7 +48,7 @@ async def extract_text(file_path: str) -> str:
 async def get_current_chunks_count(agent_id: int) -> int:
     """Считает количество существующих чанков агента в Qdrant."""
     try:
-        result = qdrant_client.count(
+        result = await qdrant_client.count(
             collection_name="agent_documents",
             count_filter=models.Filter(
                 must=[

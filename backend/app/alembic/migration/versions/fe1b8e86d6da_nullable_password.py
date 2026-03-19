@@ -1,7 +1,7 @@
 """nullable password
 
 Revision ID: fe1b8e86d6da
-Revises: 399a6834dc1d
+Revises: b1e9b2f2c123
 Create Date: 2026-03-14 20:25:39.835265
 
 """
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'fe1b8e86d6da'
-down_revision: Union[str, Sequence[str], None] = '399a6834dc1d'
+down_revision: Union[str, Sequence[str], None] = 'b1e9b2f2c123'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

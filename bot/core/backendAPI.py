@@ -3,7 +3,7 @@ from datetime import date
 from core.config import settings
 import httpx
 from typing import Awaitable, Callable, Any
-
+import json
 from fastapi import status
  
 import inspect
@@ -140,8 +140,8 @@ class APIcreate(APIbase):
     
     @classmethod
     async def documentBy_botID(cls, agent_id: int, file_name: str, file_bytes: bytes) -> dict:
-        data = {'bot_id': agent_id}
-        return await cls.document(data, file_name=file_name, file_bytes = file_bytes)
+        agent_data = {'bot_id': agent_id}
+        return await cls.document(data = {'agent_data' : json.dumps(agent_data)}, file_name=file_name, file_bytes = file_bytes)
     
 
     

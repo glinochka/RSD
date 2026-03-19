@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPBearer
 
 from logging import getLogger
@@ -39,7 +39,7 @@ async def create_user(user_by_tg: User_from_tg):
         
     logger.info(f'{user_by_tg.name} был добавлен')
     
-    return JSONResponse(status_code=status.HTTP_201_CREATED)
+    return Response(status_code=status.HTTP_201_CREATED)
 
 
 @router.get("/by_agentID")
@@ -117,7 +117,7 @@ async def UpdateUser_by_tgID(user_by_tg: Update_userSubscription):
             await user_dao.update(user, update_dict)
 
     logger.info(f'запрос с {user_by_tg.id} был обработан')
-    return JSONResponse(
+    return Response(
         status_code=status.HTTP_204_NO_CONTENT
         )
 
