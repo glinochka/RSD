@@ -50,17 +50,13 @@ export const agentService = {
     return response.data;
   },
 
-  /**
-   * Upload files for agent
-   */
-  uploadFiles: async (id, files) => {
+  uploadDocumentByBotId: async (botId, file) => {
     const formData = new FormData();
-    files.forEach((file) => {
-      formData.append('files', file);
-    });
+    formData.append('agent_data', JSON.stringify({ bot_id: botId }));
+    formData.append('file', file);
 
     const response = await apiClient.post(
-      `${API_ROUTES.AGENTS_DETAIL(id)}/files`,
+      API_ROUTES.DOCUMENTS_CREATE,
       formData,
       {
         headers: {

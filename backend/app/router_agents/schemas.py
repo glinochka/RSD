@@ -23,3 +23,8 @@ class Agent_by_botID(BaseModel):
 class User_by_agent_or_tgID(BaseModel):
     id: int = Field(..., description="id")
 
+
+class NewAgent_byToken(BaseModel):
+    bot_token: str = Field(..., min_length=10, max_length=500, description="API token from BotFather")
+    system_prompt: str = Field(..., min_length=1, description="System prompt for agent")
+

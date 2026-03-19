@@ -96,6 +96,45 @@ async def createAgent_byTgID(newAgent: NewAgent_byUserWith_tgID):
 
     return Response(status_code=status.HTTP_201_CREATED)
 
+
+@router.post('/by_token')
+async def createAgent_byToken(newAgent: NewAgent_byToken, current_user=Depends(get_current_user)):
+    token_value = newAgent.bot_token.strip()
+    token_parts = token_value.split(':', 1)
+    if len(token_parts) != 2 or not token_parts[0].isdigit():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Некорректный формат API ключа Telegram бота"
+        )
+
+    bot_id = int(token_parts[0])
+
+    async with async_session_maker() as session:
+        agentDAO = AgentDAO(session)
+        async with session.begin():
+            duplicate_agent = await agentDAO.find_one_by_filter(bot_id=bot_id)
+            if duplicate_agent:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Этот Telegram бот уже зарегистрирован"
+                )
+
+            await agentDAO.add(
+                {
+                    "user_id": current_user.id,
+                    "bot_id": bot_id,
+                    # Kept in the existing DB field used by the bot-service.
+                    "encrypted_token": token_value,
+                    "bot_username": None,
+                    "system_prompt": newAgent.system_prompt.strip(),
+                }
+            )
+
+    return JSONResponse(
+        content={"bot_id": bot_id},
+        status_code=status.HTTP_201_CREATED
+    )
+
 @router.patch('/by_botID')
 async def updateBy_botID(newData: UpdateAgent):
     async with async_session_maker() as session:
