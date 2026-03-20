@@ -28,3 +28,7 @@ class NewAgent_byToken(BaseModel):
     bot_token: str = Field(..., min_length=10, max_length=500, description="API token from BotFather")
     system_prompt: str = Field(..., min_length=1, description="System prompt for agent")
 
+
+class AgentAIAction(BaseModel):
+    bot_id: int = Field(..., description="id бота")
+

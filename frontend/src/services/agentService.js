@@ -61,6 +61,20 @@ export const agentService = {
     return response.data;
   },
 
+  aiImprovePrompt: async (botId) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_AI_IMPROVE_PROMPT, {
+      bot_id: botId,
+    });
+    return response.data;
+  },
+
+  aiGenerateWelcome: async (botId) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_AI_GENERATE_WELCOME, {
+      bot_id: botId,
+    });
+    return response.data;
+  },
+
   uploadDocumentByBotId: async (botId, file) => {
     const formData = new FormData();
     formData.append('agent_data', JSON.stringify({ bot_id: botId }));

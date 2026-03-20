@@ -70,6 +70,8 @@ const AgentsPageContent = () => {
   const [isLoadingDetails, setIsLoadingDetails] = useState(false);
   const [isSavingPrompt, setIsSavingPrompt] = useState(false);
   const [isSavingWelcome, setIsSavingWelcome] = useState(false);
+  const [isGeneratingPrompt, setIsGeneratingPrompt] = useState(false);
+  const [isGeneratingWelcome, setIsGeneratingWelcome] = useState(false);
   const [isUploadingDocs, setIsUploadingDocs] = useState(false);
   const [systemPromptDraft, setSystemPromptDraft] = useState('');
   const [welcomeDraft, setWelcomeDraft] = useState('');
@@ -182,6 +184,39 @@ const AgentsPageContent = () => {
       showError(error?.message || 'Ошибка при обновлении приветствия');
     } finally {
       setIsSavingWelcome(false);
+    }
+  };
+
+  const handleAiImprovePrompt = async () => {
+    if (!selectedBotId) return;
+    setIsGeneratingPrompt(true);
+    try {
+      const result = await agentService.aiImprovePrompt(selectedBotId);
+      const nextPrompt = result?.system_prompt || '';
+      setSystemPromptDraft(nextPrompt);
+      setSelectedAgent((prev) => ({ ...(prev || {}), system_prompt: nextPrompt }));
+      showSuccess('ИИ улучшил системный промпт');
+      await refreshAgents();
+    } catch (error) {
+      showError(error?.message || 'Ошибка при улучшении промпта через ИИ');
+    } finally {
+      setIsGeneratingPrompt(false);
+    }
+  };
+
+  const handleAiGenerateWelcome = async () => {
+    if (!selectedBotId) return;
+    setIsGeneratingWelcome(true);
+    try {
+      const result = await agentService.aiGenerateWelcome(selectedBotId);
+      const nextWelcome = result?.welcome_message || '';
+      setWelcomeDraft(nextWelcome);
+      setSelectedAgent((prev) => ({ ...(prev || {}), welcome_message: nextWelcome }));
+      showSuccess('ИИ сгенерировал приветствие');
+    } catch (error) {
+      showError(error?.message || 'Ошибка при генерации приветствия через ИИ');
+    } finally {
+      setIsGeneratingWelcome(false);
     }
   };
 
@@ -336,6 +371,13 @@ const AgentsPageContent = () => {
                     >
                       {isSavingPrompt ? 'Сохранение...' : 'Сохранить промпт'}
                     </button>
+                    <button
+                      className="btn btn-black"
+                      onClick={handleAiImprovePrompt}
+                      disabled={isGeneratingPrompt}
+                    >
+                      {isGeneratingPrompt ? 'ИИ улучшает...' : 'Улучшить промпт ИИ'}
+                    </button>
                   </div>
 
                   <div className="agent-management-block">
@@ -354,6 +396,13 @@ const AgentsPageContent = () => {
                       disabled={isSavingWelcome}
                     >
                       {isSavingWelcome ? 'Сохранение...' : 'Сохранить приветствие'}
+                    </button>
+                    <button
+                      className="btn btn-black"
+                      onClick={handleAiGenerateWelcome}
+                      disabled={isGeneratingWelcome}
+                    >
+                      {isGeneratingWelcome ? 'ИИ генерирует...' : 'Сгенерировать приветствие ИИ'}
                     </button>
                   </div>
 

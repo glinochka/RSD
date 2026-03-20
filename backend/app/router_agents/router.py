@@ -14,6 +14,7 @@ from ..alembic.database import async_session_maker
 from ..config import settings
 from ..qdrant.search_service import delete_agent_vectors
 from ..router_users.dao import UserDAO
+from ..services.ai_authoring import generate_welcome_with_ai, improve_prompt_with_ai
 from ..utils.JWT import get_user_from_access_token
 from ..utils.convert import convert_to_dict
 from ..utils.crypto import encrypt_token
@@ -263,3 +264,65 @@ async def delete_by_bot_id(
                 )
             await agent_dao.delete(agent)
     return Response(status_code=status.HTTP_200_OK)
+
+
+@router.post("/ai/improve_prompt")
+async def ai_improve_prompt(
+    payload: AgentAIAction,
+    current_user=Depends(get_current_user_optional),
+    internal: bool = Depends(is_internal_request),
+):
+    _assert_access(current_user, internal)
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent = await agent_dao.find_one_by_filter(bot_id=payload.bot_id)
+            if not agent:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+            if current_user and agent.user_id != current_user.id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+
+            try:
+                improved_prompt = await improve_prompt_with_ai(agent.system_prompt or "")
+            except Exception:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail="Не удалось улучшить системный промпт через ИИ",
+                )
+
+            await agent_dao.update(agent, {"system_prompt": improved_prompt})
+            return JSONResponse(
+                content={"bot_id": agent.bot_id, "system_prompt": improved_prompt},
+                status_code=status.HTTP_200_OK,
+            )
+
+
+@router.post("/ai/generate_welcome")
+async def ai_generate_welcome(
+    payload: AgentAIAction,
+    current_user=Depends(get_current_user_optional),
+    internal: bool = Depends(is_internal_request),
+):
+    _assert_access(current_user, internal)
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent = await agent_dao.find_one_by_filter(bot_id=payload.bot_id)
+            if not agent:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+            if current_user and agent.user_id != current_user.id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+
+            try:
+                welcome_message = await generate_welcome_with_ai(agent.system_prompt or "")
+            except Exception:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail="Не удалось сгенерировать приветствие через ИИ",
+                )
+
+            await agent_dao.update(agent, {"welcome_message": welcome_message})
+            return JSONResponse(
+                content={"bot_id": agent.bot_id, "welcome_message": welcome_message},
+                status_code=status.HTTP_200_OK,
+            )

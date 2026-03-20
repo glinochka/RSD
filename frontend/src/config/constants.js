@@ -34,6 +34,8 @@ export const API_ROUTES = {
   AGENTS_DELETE: '/api/agents',
   AGENTS_DETAIL: '/api/agents',
   AGENTS_TOGGLE: '/api/agents/toggle_status',
+  AGENTS_AI_IMPROVE_PROMPT: '/api/agents/ai/improve_prompt',
+  AGENTS_AI_GENERATE_WELCOME: '/api/agents/ai/generate_welcome',
   DOCUMENTS_CREATE: '/api/documents',
   DOCUMENTS_LIST_BY_BOT: '/api/documents/allBy_botID',
   DOCUMENTS_DELETE: (docId) => `/api/documents/${docId}`,
