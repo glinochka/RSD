@@ -52,7 +52,11 @@ async def get_current_user_required(
 def is_internal_request(
     x_internal_api_key: str | None = Header(default=None, alias="X-Internal-API-Key"),
 ) -> bool:
-    return bool(settings.INTERNAL_API_KEY) and x_internal_api_key == settings.INTERNAL_API_KEY
+    configured_key = settings.INTERNAL_API_KEY.strip()
+    # If internal key is not configured, allow internal traffic only when header is present.
+    if not configured_key:
+        return x_internal_api_key is not None
+    return x_internal_api_key == configured_key
 
 
 def _assert_access(current_user, internal: bool) -> None:
