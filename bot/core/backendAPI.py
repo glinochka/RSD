@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 
 from core.config import settings
 import httpx
@@ -211,7 +211,7 @@ class APIupdate(APIbase):
             data['subscription_type'] = sub_type
 
         if sub_end:
-            data['subscription_end_date'] = sub_end
+            data['subscription_end_date'] = sub_end.isoformat()
 
         return await cls.user(data, add_url = add_url)
 

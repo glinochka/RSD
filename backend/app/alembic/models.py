@@ -4,7 +4,7 @@ sys.path.insert(0, dirname(dirname(abspath(__file__))))
 
 
 
-from sqlalchemy import BigInteger, Boolean, String, ForeignKey, Text
+from sqlalchemy import BigInteger, Boolean, String, ForeignKey, Text, DateTime
 from sqlalchemy.orm import  Mapped, mapped_column, relationship
 
 try: from .database import Base
@@ -19,7 +19,7 @@ class User(Base):
     password: Mapped[str] = mapped_column(String(100), nullable=True)
     
     subscription_type: Mapped[str] = mapped_column(String(50), default="Free")
-    subscription_end_date: Mapped[date] = mapped_column(nullable=True)
+    subscription_end_date: Mapped[date] = mapped_column(DateTime, nullable=True)
     
     # telegram_id is optional to allow web-only registration without Telegram
     telegram_id: Mapped[int | None] = mapped_column(BigInteger, unique=True, index=True, nullable=True)

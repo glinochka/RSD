@@ -74,11 +74,18 @@ async def handle_agent_webhook(bot_id: int, request: Request):
         agent_json = await APIread.agentBy_botID(bot_id)
         if agent_json.get('error_code') or not agent_json['is_active']:
             return {"status": "ignored"}
+        
         token = decrypt_token(agent_json['encrypted_token'])
         async with Bot(token=token) as bot:
             update_data = await request.json()
             tg_update = Update(**update_data)
-            await agent_dp.feed_update(bot, tg_update, agent_id=agent_json['id'])
+
+            await agent_dp.feed_update(
+                bot, tg_update,
+                bot_id = agent_json['bot_id'],
+                system_prompt = agent_json['system_prompt'],
+                welcome_message = agent_json['welcome_message']
+            )
         return {"status": "ok"}
     except Exception as e:
         logging.error(f"❌ Ошибка в агенте {bot_id}: {e}")

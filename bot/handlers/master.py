@@ -416,8 +416,8 @@ async def toggle_agent(callback: types.CallbackQuery):
                 f"Ошибка сервера при попытке получить агента по bot id"
             )
             return 
-
-    new_status = not agent_json['is_active']
+    
+    new_status = agent_json['is_active']
 
     try:
         from core.crypto import decrypt_token
@@ -430,9 +430,11 @@ async def toggle_agent(callback: types.CallbackQuery):
                 url=webhook_url, 
                 drop_pending_updates=True  # Игнорировать всё, что прислали, пока бот был выключен
             )
+            
         else:
             # При отключении просто удаляем вебхук
             await temp_bot.delete_webhook()
+            
             
         await temp_bot.session.close()
     except Exception as e:
@@ -994,8 +996,9 @@ async def process_set_plan(callback: types.CallbackQuery):
     plan_name = callback.data.split("_")[2] # Достаем название плана (Advanced или Pro)
     
     # Имитируем оплату: ставим тариф на 30 дней вперед
-    end_date = datetime.now(timezone.utc) + timedelta(days=30)
-    
+    end_date_aware = datetime.now(timezone.utc) + timedelta(days=30)
+
+    end_date = end_date_aware.replace(tzinfo=None) 
     # Обновляем запись пользователя в базе
     
     update_response = await APIupdate.userSubBy_tgID(plan_name, end_date, callback.from_user.id)

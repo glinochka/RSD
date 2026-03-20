@@ -3,7 +3,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPBearer
 
 from logging import getLogger
-
+from datetime import datetime
 from .schemas import *
 from .dao import UserDAO
 
@@ -65,6 +65,8 @@ async def user_by_agentID(user_by_agent: User_by_agent_or_tgID = Depends()):
             user_dict = convert_to_dict(user)
             # для json сериализации
             user_dict.pop('registered', None)
+            sub_time: datetime = user_dict['subscription_end_date']
+            user_dict['subscription_end_date'] = sub_time.isoformat()
             
             user_dict.pop('password', None)
 
@@ -90,8 +92,11 @@ async def user_by_tgID(user_by_tg: User_by_agent_or_tgID = Depends()):
             user_dict = convert_to_dict(user)
             # для json сериализации
             user_dict.pop('registered', None)
+            sub_time: datetime = user_dict['subscription_end_date']
+            user_dict['subscription_end_date'] = sub_time.isoformat()
 
             user_dict.pop('password', None)
+
 
     logger.info(f'запрос с {user_by_tg.id} был обработан')
     return JSONResponse(
@@ -116,7 +121,7 @@ async def UpdateUser_by_tgID(user_by_tg: Update_userSubscription):
 
             await user_dao.update(user, update_dict)
 
-    logger.info(f'запрос с {user_by_tg.id} был обработан')
+    logger.info(f'запрос с {user_by_tg.telegram_id} был обработан')
     return Response(
         status_code=status.HTTP_204_NO_CONTENT
         )

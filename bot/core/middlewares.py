@@ -13,16 +13,20 @@ class AgentContextMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: Dict[str, Any]
     ) -> Any:
-        agent_id = data.get("agent_id")
-        
+        agent_id = data["bot_id"]
+        agent_config = {
+            "bot_id": data['bot_id'],
+            "system_prompt": data['system_prompt'],
+            "welcome_message": data['welcome_message']
+        }
         if agent_id:
-            agent_json = await APIread.agentBy_botID(agent_id)
             owner_json = await APIread.userBy_agentID(agent_id)
             if not owner_json.get('error_code'):
                 # ПРОВЕРКА СТАТУСА ПОДПИСКИ
                 # Если дата окончания подписки установлена и она меньше текущего времени (подписка истекла)
                 subscription_end_date = datetime.fromisoformat(owner_json['subscription_end_date'])
-                if subscription_end_date < datetime.now(timezone.utc):
+                date_now = datetime.now(timezone.utc).replace(tzinfo=None)
+                if subscription_end_date < date_now:
                     
                     # Если это обычное текстовое сообщение, отвечаем заглушкой
                     if isinstance(event, Message):
@@ -37,12 +41,7 @@ class AgentContextMiddleware(BaseMiddleware):
                     return
                 
                 # Если с подпиской всё в порядке, собираем конфиг и пускаем запрос дальше
-                data["agent_config"] = {
-                    "id": agent_json['id'],
-                    "system_prompt": agent_json['system_prompt'],
-                    "is_active": agent_json['is_active'],
-                    "welcome_message": agent_json['welcome_message']
-                }
+                data["agent_config"] = agent_config
             else:
                 print('Http ошибка при получении информации о пользавателе')
     
