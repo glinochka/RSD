@@ -19,7 +19,9 @@ export const agentService = {
    * Get agent by ID
    */
   getById: async (id) => {
-    const response = await apiClient.get(API_ROUTES.AGENTS_DETAIL(id));
+    const response = await apiClient.get(API_ROUTES.AGENTS_DETAIL, {
+      params: { bot_id: id },
+    });
     return response.data;
   },
 
@@ -34,19 +36,28 @@ export const agentService = {
   /**
    * Update agent
    */
-  update: async (id, agentData) => {
-    const response = await apiClient.put(
-      API_ROUTES.AGENTS_UPDATE(id),
-      agentData
-    );
+  update: async (botId, agentData) => {
+    const response = await apiClient.patch(API_ROUTES.AGENTS_UPDATE, {
+      bot_id: botId,
+      ...agentData,
+    });
     return response.data;
   },
 
   /**
    * Delete agent
    */
-  delete: async (id) => {
-    const response = await apiClient.delete(API_ROUTES.AGENTS_DELETE(id));
+  delete: async (botId) => {
+    const response = await apiClient.delete(API_ROUTES.AGENTS_DELETE, {
+      params: { bot_id: botId },
+    });
+    return response.data;
+  },
+
+  toggleStatus: async (botId) => {
+    const response = await apiClient.patch(API_ROUTES.AGENTS_TOGGLE, {
+      bot_id: botId,
+    });
     return response.data;
   },
 
@@ -64,6 +75,18 @@ export const agentService = {
         },
       }
     );
+    return response.data;
+  },
+
+  getDocumentsByBotId: async (botId) => {
+    const response = await apiClient.get(API_ROUTES.DOCUMENTS_LIST_BY_BOT, {
+      params: { bot_id: botId },
+    });
+    return response.data;
+  },
+
+  deleteDocumentById: async (docId) => {
+    const response = await apiClient.delete(API_ROUTES.DOCUMENTS_DELETE(docId));
     return response.data;
   },
 };

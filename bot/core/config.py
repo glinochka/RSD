@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     API_PORT: str
 
     API_HOST: str
+    INTERNAL_API_KEY: str = ""
 
 settings = Settings()
 if not os.path.exists('/.dockerenv'):

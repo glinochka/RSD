@@ -9,6 +9,10 @@ from fastapi import status
 import inspect
 base_url = f'http://{settings.API_HOST}:{settings.API_PORT}/api'
 
+
+def _internal_headers() -> dict:
+    return {"X-Internal-API-Key": settings.INTERNAL_API_KEY}
+
 class APIbase():
     operation: Callable[..., Awaitable[Any]] = None
 
@@ -20,9 +24,9 @@ class APIbase():
                     'file': (file_name, file_bytes, 'application/octet-stream')
                 }
 
-                response = await client.post(url, data = data, files=files, timeout=600.0)
+                response = await client.post(url, data=data, files=files, timeout=600.0, headers=_internal_headers())
             else:
-                response = await client.post(url, json = data)
+                response = await client.post(url, json=data, headers=_internal_headers())
             if not response.is_success:
                 return {
                     'error_code': response.status_code,
@@ -38,7 +42,7 @@ class APIbase():
     @classmethod
     async def fetch_get(cls, url: str, data: dict) -> dict:
         async with httpx.AsyncClient() as client:
-            response = await client.get(url, params = data)
+            response = await client.get(url, params=data, headers=_internal_headers())
             if not response.is_success:
                 return {
                     'error_code': response.status_code,
@@ -54,7 +58,7 @@ class APIbase():
     @classmethod
     async def fetch_patch(cls, url: str, data: dict) -> dict:
         async with httpx.AsyncClient() as client:
-            response = await client.patch(url, json = data)
+            response = await client.patch(url, json=data, headers=_internal_headers())
             
             if not response.is_success:
                 return {
@@ -71,7 +75,7 @@ class APIbase():
     @classmethod
     async def fetch_delete(cls, url: str, data: dict) -> dict|list:
         async with httpx.AsyncClient() as client:
-            response = await client.delete(url, params = data)
+            response = await client.delete(url, params=data, headers=_internal_headers())
             
             if not response.is_success:
                 return {

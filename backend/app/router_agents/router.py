@@ -1,204 +1,265 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import JSONResponse, Response
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-
+import asyncio
+import json
 from logging import getLogger
+from urllib.parse import quote
+from urllib.request import urlopen
 
-from .schemas import *
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi.responses import JSONResponse, Response
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
 from .dao import AgentDAO
-
-from ..router_users.dao import UserDAO
+from .schemas import *
 from ..alembic.database import async_session_maker
-from ..utils.convert import convert_to_dict
+from ..config import settings
+from ..qdrant.search_service import delete_agent_vectors
+from ..router_users.dao import UserDAO
 from ..utils.JWT import get_user_from_access_token
+from ..utils.convert import convert_to_dict
+from ..utils.crypto import encrypt_token
 
 logger = getLogger(__name__)
-
-router = APIRouter(prefix='/api/agents')
-
-http_bearer = HTTPBearer()
+router = APIRouter(prefix="/api/agents")
+http_bearer = HTTPBearer(auto_error=False)
 
 
-async def get_current_user(
-    http_credentials: HTTPAuthorizationCredentials = Depends(http_bearer)
+async def get_current_user_optional(
+    http_credentials: HTTPAuthorizationCredentials | None = Depends(http_bearer),
 ):
-    """
-    Returns the currently authenticated user from the Authorization: Bearer <token>.
-    Also loads relations so `current_user.agents` is available.
-    """
+    if not http_credentials:
+        return None
+
     token = http_credentials.credentials
-
     async with async_session_maker() as session:
-        userDAO = UserDAO(session)
+        user_dao = UserDAO(session)
         async with session.begin():
-            user = await get_user_from_access_token(token, userDAO)
-            # Load relations (agents) explicitly, so they are available after the session ends.
-            return await userDAO.find_one_by_filter(load_relations=True, id=user.id)
+            user = await get_user_from_access_token(token, user_dao)
+            return await user_dao.find_one_by_filter(load_relations=True, id=user.id)
 
 
-@router.get('')
-async def readAgent(agent: Agent_by_botID = Depends()):
-    async with async_session_maker() as session:
-        agentDAO = AgentDAO(session)
-        
-        async with session.begin():
-            finded_agent = await agentDAO.find_one_by_filter(bot_id = agent.bot_id)
-            if not finded_agent:
-                logger.error(f'агент с ботом {agent.bot_id} не найден')
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Agent not found"
-                )
-            dict_agent = convert_to_dict(finded_agent)
-            # для json сериализации
-            dict_agent.pop('registered', None)
-
-    return JSONResponse(
-        content=dict_agent,
-        status_code=status.HTTP_200_OK
-        )
-@router.get('/allBy_tgID')
-async def readAllAgents(current_user=Depends(get_current_user)):
-    list_agents = current_user.agents or []
-    json_respose = []
-
-    for agent in list_agents:
-        dict_agent = convert_to_dict(agent)
-        # для json сериализации
-        dict_agent.pop('registered', None)
-        json_respose.append(dict_agent)
-
-    return JSONResponse(
-        content=json_respose,
-        status_code=status.HTTP_200_OK
-    )
-
-@router.post('/ByUserWith_tgID')
-async def createAgent_byTgID(newAgent: NewAgent_byUserWith_tgID):
-    async with async_session_maker() as session:
-        agentDAO = AgentDAO(session)
-        userDAO = UserDAO(session)
-        async with session.begin():
-            user = await userDAO.find_one_by_filter(telegram_id = newAgent.tg_id)
-            if not user:
-                logger.error(f'пользователь с tg id {newAgent.tg_id} не найден')
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="User not found"
-                )
-            
-            newAgent = newAgent.model_dump()
-
-            newAgent['user_id'] = user.id
-            del newAgent['tg_id']
-
-            await agentDAO.add(newAgent)
-
-    return Response(status_code=status.HTTP_201_CREATED)
-
-
-@router.post('/by_token')
-async def createAgent_byToken(newAgent: NewAgent_byToken, current_user=Depends(get_current_user)):
-    token_value = newAgent.bot_token.strip()
-    token_parts = token_value.split(':', 1)
-    if len(token_parts) != 2 or not token_parts[0].isdigit():
+async def get_current_user_required(
+    current_user=Depends(get_current_user_optional),
+):
+    if not current_user:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Некорректный формат API ключа Telegram бота"
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+        )
+    return current_user
+
+
+def is_internal_request(
+    x_internal_api_key: str | None = Header(default=None, alias="X-Internal-API-Key"),
+) -> bool:
+    return bool(settings.INTERNAL_API_KEY) and x_internal_api_key == settings.INTERNAL_API_KEY
+
+
+def _assert_access(current_user, internal: bool) -> None:
+    if current_user is None and not internal:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
         )
 
-    bot_id = int(token_parts[0])
+
+def _serialize_agent(agent) -> dict:
+    data = convert_to_dict(agent)
+    data.pop("registered", None)
+    return data
+
+
+@router.get("")
+async def read_agent(
+    agent: Agent_by_botID = Depends(),
+    current_user=Depends(get_current_user_optional),
+    internal: bool = Depends(is_internal_request),
+):
+    _assert_access(current_user, internal)
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            found_agent = await agent_dao.find_one_by_filter(bot_id=agent.bot_id)
+            if not found_agent:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+            if current_user and found_agent.user_id != current_user.id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+            return JSONResponse(content=_serialize_agent(found_agent), status_code=status.HTTP_200_OK)
+
+
+@router.get("/allBy_tgID")
+async def read_all_agents(
+    tg_id: int | None = Query(default=None, alias="id"),
+    current_user=Depends(get_current_user_optional),
+    internal: bool = Depends(is_internal_request),
+):
+    _assert_access(current_user, internal)
+    async with async_session_maker() as session:
+        user_dao = UserDAO(session)
+        async with session.begin():
+            if current_user:
+                user = await user_dao.find_one_by_filter(load_relations=True, id=current_user.id)
+            else:
+                if tg_id is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail="Query parameter 'id' is required for internal requests",
+                    )
+                user = await user_dao.find_one_by_filter(load_relations=True, telegram_id=tg_id)
+            if not user:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+            return JSONResponse(
+                content=[_serialize_agent(agent) for agent in (user.agents or [])],
+                status_code=status.HTTP_200_OK,
+            )
+
+
+@router.post("/ByUserWith_tgID")
+async def create_agent_by_tg_id(
+    new_agent: NewAgent_byUserWith_tgID,
+    internal: bool = Depends(is_internal_request),
+):
+    if not internal:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Internal API key required")
 
     async with async_session_maker() as session:
-        agentDAO = AgentDAO(session)
+        agent_dao = AgentDAO(session)
+        user_dao = UserDAO(session)
         async with session.begin():
-            duplicate_agent = await agentDAO.find_one_by_filter(bot_id=bot_id)
+            user = await user_dao.find_one_by_filter(telegram_id=new_agent.tg_id)
+            if not user:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+            duplicate_agent = await agent_dao.find_one_by_filter(bot_id=new_agent.bot_id)
             if duplicate_agent:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail="Этот Telegram бот уже зарегистрирован"
+                    detail="Этот Telegram бот уже зарегистрирован",
                 )
 
-            await agentDAO.add(
+            payload = new_agent.model_dump()
+            payload["user_id"] = user.id
+            del payload["tg_id"]
+            await agent_dao.add(payload)
+    return Response(status_code=status.HTTP_201_CREATED)
+
+
+@router.post("/by_token")
+async def create_agent_by_token(new_agent: NewAgent_byToken, current_user=Depends(get_current_user_required)):
+    token_value = new_agent.bot_token.strip()
+
+    async def telegram_get_me(bot_token: str) -> dict:
+        url = f"https://api.telegram.org/bot{quote(bot_token, safe='')}/getMe"
+
+        def _fetch():
+            with urlopen(url, timeout=15) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+
+        return await asyncio.get_running_loop().run_in_executor(None, _fetch)
+
+    try:
+        me = await telegram_get_me(token_value)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Не удалось связаться с Telegram для проверки токена: {e}",
+        )
+
+    if not me or me.get("ok") is not True:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Некорректный API ключ Telegram бота",
+        )
+
+    result = me.get("result") or {}
+    bot_id = result.get("id")
+    bot_username = result.get("username")
+    if bot_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Telegram не вернул bot id по указанному токену",
+        )
+
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            duplicate_agent = await agent_dao.find_one_by_filter(bot_id=bot_id)
+            if duplicate_agent:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Этот Telegram бот уже зарегистрирован",
+                )
+            await agent_dao.add(
                 {
                     "user_id": current_user.id,
                     "bot_id": bot_id,
-                    # Kept in the existing DB field used by the bot-service.
-                    "encrypted_token": token_value,
-                    "bot_username": None,
-                    "system_prompt": newAgent.system_prompt.strip(),
+                    "encrypted_token": encrypt_token(token_value),
+                    "bot_username": bot_username,
+                    "system_prompt": new_agent.system_prompt.strip(),
                 }
             )
+    return JSONResponse(content={"bot_id": bot_id}, status_code=status.HTTP_201_CREATED)
 
-    return JSONResponse(
-        content={"bot_id": bot_id},
-        status_code=status.HTTP_201_CREATED
-    )
 
-@router.patch('/by_botID')
-async def updateBy_botID(newData: UpdateAgent):
+@router.patch("/by_botID")
+async def update_by_bot_id(
+    new_data: UpdateAgent,
+    current_user=Depends(get_current_user_optional),
+    internal: bool = Depends(is_internal_request),
+):
+    _assert_access(current_user, internal)
     async with async_session_maker() as session:
-        agentDAO = AgentDAO(session)
+        agent_dao = AgentDAO(session)
         async with session.begin():
-            agent = await agentDAO.find_one_by_filter(bot_id = newData.bot_id)
+            agent = await agent_dao.find_one_by_filter(bot_id=new_data.bot_id)
             if not agent:
-                logger.error(f'агент с ботом {newData.bot_id} не найден')
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Agent not found"
-                )
-            newData = newData.model_dump()
-            del newData['bot_id']
-            await agentDAO.update(agent, newData)
-
-
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+            if current_user and agent.user_id != current_user.id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+            updates = new_data.model_dump(exclude_none=True)
+            updates.pop("bot_id", None)
+            await agent_dao.update(agent, updates)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
-@router.patch('/toggle_status')
-async def toggleStatus(agentID: Agent_by_botID):
-    async with async_session_maker() as session:
-        agentDAO = AgentDAO(session)
-        async with session.begin():
-            agent = await agentDAO.find_one_by_filter(bot_id = agentID.bot_id)
-            if not agent:
-                logger.error(f'агент с ботом {agentID.bot_id} не найден')
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Agent not found"
-                )
-            new_status = not agent.is_active
-            await agentDAO.update(agent, {'is_active': new_status})
 
-            agent_dict = convert_to_dict(agent)
-            # для json сериализации
-            agent_dict.pop('registered', None)
-            
-    return JSONResponse(
-        content = agent_dict,
-        status_code=status.HTTP_200_OK
-        )
-
-from ..qdrant.search_service import delete_agent_vectors
-@router.delete('')
-async def toggleStatus(agentID: Agent_by_botID = Depends()):
+@router.patch("/toggle_status")
+async def toggle_status(
+    agent_id: Agent_by_botID,
+    current_user=Depends(get_current_user_optional),
+    internal: bool = Depends(is_internal_request),
+):
+    _assert_access(current_user, internal)
     async with async_session_maker() as session:
-        agentDAO = AgentDAO(session)
+        agent_dao = AgentDAO(session)
         async with session.begin():
-            agent = await agentDAO.find_one_by_filter(bot_id = agentID.bot_id)
+            agent = await agent_dao.find_one_by_filter(bot_id=agent_id.bot_id)
             if not agent:
-                logger.error(f'агент с ботом {agentID.bot_id} не найден')
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Agent not found"
-                )
-            is_deleted_vectors = await delete_agent_vectors(agentID.bot_id)
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+            if current_user and agent.user_id != current_user.id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+            await agent_dao.update(agent, {"is_active": (not agent.is_active)})
+            return JSONResponse(content=_serialize_agent(agent), status_code=status.HTTP_200_OK)
+
+
+@router.delete("")
+async def delete_by_bot_id(
+    agent_id: Agent_by_botID = Depends(),
+    current_user=Depends(get_current_user_optional),
+    internal: bool = Depends(is_internal_request),
+):
+    _assert_access(current_user, internal)
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent = await agent_dao.find_one_by_filter(bot_id=agent_id.bot_id)
+            if not agent:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+            if current_user and agent.user_id != current_user.id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+            is_deleted_vectors = await delete_agent_vectors(agent_id.bot_id)
             if not is_deleted_vectors:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Qdrant deleting error"
+                    detail="Qdrant deleting error",
                 )
-            await agentDAO.delete(agent)
-
-
-
+            await agent_dao.delete(agent)
     return Response(status_code=status.HTTP_200_OK)

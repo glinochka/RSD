@@ -30,10 +30,13 @@ export const API_ROUTES = {
   // Agents
   AGENTS_LIST: '/api/agents/allBy_tgID',
   AGENTS_CREATE: '/api/agents/by_token',
-  AGENTS_UPDATE: (id) => `/agents/${id}`,
-  AGENTS_DELETE: (id) => `/agents/${id}`,
-  AGENTS_DETAIL: (id) => `/agents/${id}`,
+  AGENTS_UPDATE: '/api/agents/by_botID',
+  AGENTS_DELETE: '/api/agents',
+  AGENTS_DETAIL: '/api/agents',
+  AGENTS_TOGGLE: '/api/agents/toggle_status',
   DOCUMENTS_CREATE: '/api/documents',
+  DOCUMENTS_LIST_BY_BOT: '/api/documents/allBy_botID',
+  DOCUMENTS_DELETE: (docId) => `/api/documents/${docId}`,
 
   // Pricing
   PRICING_LIST: '/pricing',

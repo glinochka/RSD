@@ -21,8 +21,13 @@ class AgentContextMiddleware(BaseMiddleware):
             if not owner_json.get('error_code'):
                 # ПРОВЕРКА СТАТУСА ПОДПИСКИ
                 # Если дата окончания подписки установлена и она меньше текущего времени (подписка истекла)
-                subscription_end_date = datetime.fromisoformat(owner_json['subscription_end_date'])
-                if subscription_end_date < datetime.now(timezone.utc):
+                subscription_end_raw = owner_json.get('subscription_end_date')
+                if subscription_end_raw:
+                    subscription_end_date = datetime.fromisoformat(subscription_end_raw)
+                else:
+                    subscription_end_date = None
+
+                if subscription_end_date and subscription_end_date < datetime.now(timezone.utc):
                     
                     # Если это обычное текстовое сообщение, отвечаем заглушкой
                     if isinstance(event, Message):
