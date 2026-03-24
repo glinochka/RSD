@@ -135,7 +135,7 @@ const CreateAgentContent = () => {
                 id="bot_token"
                 type="text"
                 name="bot_token"
-                placeholder="Например, 8523614461:AAH8tzlk5jvC8aj-t2-fjuWYxfjVsrs2bUM"
+                placeholder="Введите API ключ Telegram бота, его можно получить в BotFather"
                 className={`input-main ${form.errors.bot_token ? 'error' : ''}`}
                 value={form.values.bot_token}
                 onChange={form.handleChange}

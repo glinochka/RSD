@@ -78,7 +78,10 @@ async def handle_agent_webhook(bot_id: int, request: Request):
         async with Bot(token=token) as bot:
             update_data = await request.json()
             tg_update = Update(**update_data)
-            await agent_dp.feed_update(bot, tg_update, agent_id=agent_json['id'])
+            # IMPORTANT:
+            # middleware and handlers expect `agent_id` to be Telegram bot_id,
+            # not internal DB id (`agents.id`).
+            await agent_dp.feed_update(bot, tg_update, agent_id=agent_json['bot_id'])
         return {"status": "ok"}
     except Exception as e:
         logging.error(f"❌ Ошибка в агенте {bot_id}: {e}")

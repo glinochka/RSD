@@ -43,7 +43,8 @@ class AgentContextMiddleware(BaseMiddleware):
                 
                 # Если с подпиской всё в порядке, собираем конфиг и пускаем запрос дальше
                 data["agent_config"] = {
-                    "id": agent_json['id'],
+                    # middleware/handlers treat this `id` as Telegram bot_id
+                    "id": agent_json['bot_id'],
                     "system_prompt": agent_json['system_prompt'],
                     "is_active": agent_json['is_active'],
                     "welcome_message": agent_json['welcome_message']
