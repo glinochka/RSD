@@ -75,6 +75,22 @@ async def safe_edit_callback_message(
             return
         raise
 
+
+async def safe_callback_answer(
+    callback: types.CallbackQuery,
+    text: str | None = None,
+    show_alert: bool = False,
+) -> None:
+    """
+    Safe wrapper for callback.answer.
+    It avoids crashing when a synthetic CallbackQuery is not mounted to a bot instance.
+    """
+    try:
+        await callback.answer(text=text, show_alert=show_alert)
+    except RuntimeError:
+        if text and callback.message:
+            await callback.message.answer(text)
+
 # --- ГЛАВНОЕ МЕНЮ ---
 
 @master_router.message(CommandStart(), StateFilter("*"))
@@ -677,14 +693,19 @@ async def show_knowledge_base(callback: types.CallbackQuery):
 
     response_status = get_response_status(all_agent_docs)
     if response_status == status.HTTP_404_NOT_FOUND:
-        await callback.answer("Ошибка: агент не найден.")
+        await safe_callback_answer(callback, "Ошибка: агент не найден.")
         return
     
     elif response_status != status.HTTP_200_OK: 
-        await callback.answer(
-            f"Ошибка сервера при попытке получить всех ваших документов агентов",
-            reply_markup=get_main_menu()
+        await safe_callback_answer(
+            callback,
+            "Ошибка сервера при попытке получить список документов агента",
         )
+        if callback.message:
+            await callback.message.answer(
+                "Вернитесь в главное меню и попробуйте еще раз.",
+                reply_markup=get_main_menu(),
+            )
         return 
 
 
@@ -863,7 +884,11 @@ async def process_extra_document(message: types.Message, state: FSMContext, bot:
         )
         return
 
-    await msg.edit_text(f"✅ Файл `{file_name}` принят и обрабатывается ({response_data['new_chunks_count']} чанков).")
+    await msg.edit_text(
+        f"✅ Файл `{file_name}` принят и обрабатывается ({response_data['new_chunks_count']} чанков).\n"
+        f"Текущий тариф: {response_data.get('current_plan', 'unknown')} "
+        f"(лимит: {response_data.get('limit', 'unknown')}, уже занято: {response_data.get('current_count', 'unknown')})."
+    )
 
 
 

@@ -4,6 +4,7 @@ import tempfile
 from logging import getLogger
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Header, HTTPException, UploadFile, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -54,7 +55,8 @@ def _assert_access(current_user, internal: bool) -> None:
 def _serialize_document(document) -> dict:
     data = convert_to_dict(document)
     data.pop("registered", None)
-    return data
+    # Convert date/datetime to ISO strings for JSONResponse.
+    return jsonable_encoder(data)
 
 
 @router.get("/allBy_botID")
@@ -193,7 +195,7 @@ async def upload_document(
             doc_dao = DocumentDAO(session)
             async with session.begin():
                 doc_data = {
-                    "agent_id": agent_id,
+                    "agent_id": agent.id,
                     "file_name": file.filename,
                     "status": "processing",
                 }
@@ -208,6 +210,9 @@ async def upload_document(
         data = {
             "status": "limit_ok",
             "new_chunks_count": new_chunks_count,
+            "current_plan": current_plan,
+            "limit": limit,
+            "current_count": current_count,
         }
 
     return JSONResponse(content=data, status_code=status.HTTP_200_OK)
