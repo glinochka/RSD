@@ -66,8 +66,8 @@ async def user_by_agentID(user_by_agent: User_by_agent_or_tgID = Depends(), _int
             user_dict = convert_to_dict(user)
             # для json сериализации
             user_dict.pop('registered', None)
-            sub_time: datetime = user_dict['subscription_end_date']
-            user_dict['subscription_end_date'] = sub_time.isoformat()
+            sub_time: datetime | None = user_dict.get('subscription_end_date')
+            user_dict['subscription_end_date'] = sub_time.isoformat() if sub_time else None
             
             user_dict.pop('password', None)
 
@@ -93,8 +93,8 @@ async def user_by_tgID(user_by_tg: User_by_agent_or_tgID = Depends(), _internal=
             user_dict = convert_to_dict(user)
             # для json сериализации
             user_dict.pop('registered', None)
-            sub_time: datetime = user_dict['subscription_end_date']
-            user_dict['subscription_end_date'] = sub_time.isoformat()
+            sub_time: datetime | None = user_dict.get('subscription_end_date')
+            user_dict['subscription_end_date'] = sub_time.isoformat() if sub_time else None
 
             user_dict.pop('password', None)
 

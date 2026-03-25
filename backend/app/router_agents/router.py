@@ -22,6 +22,7 @@ from ..utils.crypto import encrypt_token
 logger = getLogger(__name__)
 router = APIRouter(prefix="/api/agents")
 http_bearer = HTTPBearer(auto_error=False)
+MAX_INT32 = 2_147_483_647
 
 
 async def get_current_user_optional(
@@ -85,8 +86,9 @@ async def read_agent(
         async with session.begin():
             found_agent = await agent_dao.find_one_by_filter(bot_id=bot_id)
             # Fallback: Telegram webhook path sometimes carries internal Agent primary key.
-            # If we can't find by Telegram bot_id, try by DB id.
-            if not found_agent:
+            # If we can't find by Telegram bot_id, try by DB id only in int32 range.
+            # Agents.id is INTEGER, while Telegram bot_id can exceed int32.
+            if not found_agent and 0 < bot_id <= MAX_INT32:
                 found_agent = await agent_dao.find_one_by_filter(id=bot_id)
             if not found_agent:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")

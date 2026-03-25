@@ -2,6 +2,7 @@ import os
 import asyncio
 from fastapi import status
 from aiogram import Router, F, Bot, types
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 
@@ -31,6 +32,49 @@ def escape_md(text: str) -> str:
         return ""
     return text.replace("_", "\\_")
 
+
+def build_start_menu_text(first_name: str | None = None) -> str:
+    if first_name:
+        return (
+            f"Привет, {first_name}! Это конструктор AI-агентов.\n\n"
+            "Здесь ты можешь создать своего бота с кастомными промптами и базой знаний."
+        )
+    return (
+        "Привет! Это конструктор AI-агентов.\n\n"
+        "Здесь ты можешь создать своего бота с кастомными промптами и базой знаний."
+    )
+
+
+async def safe_edit_callback_message(
+    callback: types.CallbackQuery,
+    text: str,
+    reply_markup: types.InlineKeyboardMarkup | None = None,
+    parse_mode: str | None = None,
+) -> None:
+    if not callback.message:
+        await callback.answer("Не удалось обновить сообщение", show_alert=True)
+        return
+
+    try:
+        await callback.message.edit_text(
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode=parse_mode,
+        )
+    except TelegramBadRequest as e:
+        error_text = str(e).lower()
+        # Частые кейсы: старое сообщение уже удалено/не редактируемо.
+        if "message is not modified" in error_text:
+            return
+        if "message to edit not found" in error_text or "message can't be edited" in error_text:
+            await callback.message.answer(
+                text=text,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode,
+            )
+            return
+        raise
+
 # --- ГЛАВНОЕ МЕНЮ ---
 
 @master_router.message(CommandStart(), StateFilter("*"))
@@ -52,15 +96,18 @@ async def cmd_start(message: types.Message, state: FSMContext):
         return 
 
     await message.answer(
-        f"Привет, {message.from_user.first_name}! Это конструктор AI-агентов.\n\n"
-        "Здесь ты можешь создать своего бота с кастомными промптами и базой знаний.",
+        build_start_menu_text(message.from_user.first_name),
         reply_markup=get_main_menu()
     )
 
 @master_router.callback_query(F.data == "start_menu")
 async def back_to_menu(callback: types.CallbackQuery):
-    await callback.message.delete()
-    await cmd_start(callback.message)
+    await safe_edit_callback_message(
+        callback,
+        build_start_menu_text(callback.from_user.first_name),
+        reply_markup=get_main_menu(),
+    )
+    await callback.answer()
 
 
 @master_router.callback_query(F.data == "profile")
@@ -163,7 +210,8 @@ async def start_add_agent(callback: types.CallbackQuery, state: FSMContext):
             [types.InlineKeyboardButton(text="⬅️ В меню", callback_data="back_to_start")]
         ])
         
-        await callback.message.edit_text(
+        await safe_edit_callback_message(
+            callback,
             f"🚫 *Лимит достигнут*\n\n"
             f"На вашем тарифе (*{user_json['subscription_type']}*) можно создать не более {current_limit} агентов.\n"
             f"У вас уже создано: {agents_count}.\n\n"
@@ -176,7 +224,8 @@ async def start_add_agent(callback: types.CallbackQuery, state: FSMContext):
 
     #  Если лимит не превышен, запускаем стандартный процесс создания
     await state.set_state(CreateAgentSG.waiting_token)
-    await callback.message.answer(
+    await safe_edit_callback_message(
+        callback,
         "🤖 *Создание нового агента*\n\n"
         "Для начала работы мне нужен API токен вашего бота.\n"
         "Получить его можно у @BotFather.",
@@ -187,6 +236,7 @@ async def start_add_agent(callback: types.CallbackQuery, state: FSMContext):
 @master_router.message(CreateAgentSG.waiting_token)
 async def process_token(message: types.Message, state: FSMContext):
     token = message.text.strip()
+    temp_bot = None
     try:
         temp_bot = Bot(token=token)
         bot_info = await temp_bot.get_me()
@@ -197,7 +247,6 @@ async def process_token(message: types.Message, state: FSMContext):
         response_status = get_response_status(existing_agent_json)
 
         if response_status == status.HTTP_200_OK:
-            await temp_bot.session.close()
             return await message.answer(
                 f"❌ Этот бот (ID: {bot_info.id}) уже зарегистрирован в системе под юзернеймом @{escape_md(bot_info.username)}.\n"
                 "Один и тот же бот не может быть добавлен дважды."
@@ -223,15 +272,16 @@ async def process_token(message: types.Message, state: FSMContext):
             url=f"{os.getenv('BASE_URL')}/webhook/{bot_info.id}",
             drop_pending_updates=True
         )
-        await temp_bot.session.close()
 
         await state.update_data(agent_id = bot_info.id)
         await message.answer(f"✅ Бот @{escape_md(bot_info.username)} успешно подключен!\nТеперь напиши системный промпт:")
         await state.set_state(CreateAgentSG.waiting_prompt)
 
     except Exception as e:
-        if 'temp_bot' in locals(): await temp_bot.session.close()
         await message.answer(f"❌ Ошибка: {e}")
+    finally:
+        if temp_bot is not None:
+            await temp_bot.session.close()
 
 @master_router.message(CreateAgentSG.waiting_prompt)
 async def process_prompt(message: types.Message, state: FSMContext):
@@ -319,7 +369,11 @@ async def show_my_agents(callback: types.CallbackQuery):
             [types.InlineKeyboardButton(text="➕ Создать агента", callback_data="add_agent")],
             [types.InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="start_menu")]
         ])
-        await callback.message.edit_text(" У вас пока нет созданных ботов.\nСамое время создать первого!", reply_markup=kb)
+        await safe_edit_callback_message(
+            callback,
+            "У вас пока нет созданных ботов.\nСамое время создать первого!",
+            reply_markup=kb,
+        )
         return
 
     # Если агенты есть, собираем клавиатуру через Builder
@@ -337,7 +391,8 @@ async def show_my_agents(callback: types.CallbackQuery):
     # Добавляем кнопку возврата в конце
     builder.row(types.InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="start_menu"))
 
-    await callback.message.edit_text(
+    await safe_edit_callback_message(
+        callback,
         "🤖 *Ваши агенты:*\nВыберите бота для просмотра подробной информации:", 
         reply_markup=builder.as_markup(), 
         parse_mode="Markdown"
@@ -348,7 +403,10 @@ async def show_my_agents(callback: types.CallbackQuery):
 @master_router.callback_query(F.data.startswith("agent_info_"))
 async def show_agent_info(callback: types.CallbackQuery):
     agent_id = int(callback.data.split("_")[2])
+    await render_agent_info(callback, agent_id)
 
+
+async def render_agent_info(callback: types.CallbackQuery, agent_id: int):
     agent_json = await APIread.agentBy_botID(agent_id)
     response_status = get_response_status(agent_json)
 
@@ -394,7 +452,7 @@ async def show_agent_info(callback: types.CallbackQuery):
         [types.InlineKeyboardButton(text="⬅️ К списку агентов", callback_data="my_agents")]
     ])
 
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+    await safe_edit_callback_message(callback, text, reply_markup=kb, parse_mode="Markdown")
 
 # --- ПЕРЕКЛЮЧЕНИЕ СТАТУСА ---
 
@@ -441,7 +499,7 @@ async def toggle_agent(callback: types.CallbackQuery):
         print(f"Ошибка вебхука при переключении: {e}")
 
     await callback.answer(f"Статус изменен: {'Отключен' if new_status else 'Включен'}")
-    await show_agent_info(callback)
+    await render_agent_info(callback, agent_id)
 
 # --- УДАЛЕНИЕ АГЕНТА ---
 
@@ -456,7 +514,8 @@ async def confirm_delete(callback: types.CallbackQuery):
         ]
     ])
     
-    await callback.message.edit_text(
+    await safe_edit_callback_message(
+        callback,
         "⚠️ *ВНИМАНИЕ!*\nВы уверены, что хотите удалить этого агента? Все данные и привязка бота будут стерты.",
         reply_markup=kb,
         parse_mode="Markdown"
@@ -504,7 +563,8 @@ async def start_edit_prompt(callback: types.CallbackQuery, state: FSMContext):
         [types.InlineKeyboardButton(text="✨ Улучшить текущий через ИИ", callback_data=f"ai_improve_prompt_{agent_id}")]
     ])
     
-    await callback.message.answer(
+    await safe_edit_callback_message(
+        callback,
         "📝 *Редактирование системного промпта*\n\n"
         "Введите новую инструкцию для бота. Опишите, как он должен себя вести и на какие вопросы отвечать.\n\n"
         "💡 *Совет:* Чем подробнее инструкция, тем лучше результат.",
@@ -538,7 +598,8 @@ async def process_ai_improve_prompt(callback: types.CallbackQuery, state: FSMCon
         return
 
     # Визуальный фидбек пользователю
-    await callback.message.edit_text(
+    await safe_edit_callback_message(
+        callback,
         "*LLM модель обрабатывает промпт...*", 
         parse_mode="Markdown"
     )
@@ -562,26 +623,9 @@ async def process_ai_improve_prompt(callback: types.CallbackQuery, state: FSMCon
     # Сбрасываем состояние FSM, так как редактирование завершено
     await state.clear()
     
-    # Экранируем текст для безопасного отображения в Markdown
-    # Это предотвратит ошибку "can't parse entities", если ИИ выдаст много спецсимволов
-    safe_new_prompt = escape_md(new_prompt)
-    
-    # 4. Отправляем красивое сообщение с результатом (как при приветствии)
-    await callback.message.answer(
-        f"✅ ИИ модель придумала отличный промпт :\n\n_{safe_new_prompt}_",
-        parse_mode="Markdown"
-    )
-    
-    # 5. Возвращаем пользователя к карточке управления агентом
-    from handlers.master import show_agent_info
-    fake_callback = types.CallbackQuery(
-        id="0", 
-        from_user=callback.from_user, 
-        chat_instance="0",
-        message=callback.message, 
-        data=f"agent_info_{agent_id}"
-    )
-    await show_agent_info(fake_callback)
+    # 4-5. Даем быстрый фидбек и возвращаем в карточку агента без создания новых сообщений
+    await callback.answer("✅ Промпт улучшен и сохранен", show_alert=True)
+    await render_agent_info(callback, agent_id)
 
 @master_router.message(CreateAgentSG.editing_prompt)
 async def process_new_prompt(message: types.Message, state: FSMContext):
@@ -673,7 +717,7 @@ async def show_knowledge_base(callback: types.CallbackQuery):
         "❌ — Ошибка чтения файла"
     ) if all_agent_docs else "📚 *Управление базой знаний*\n\nВ базе данных этого агента пока нет файлов."
 
-    await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
+    await safe_edit_callback_message(callback, text, reply_markup=builder.as_markup(), parse_mode="Markdown")
 
 
 # --- ПОДТВЕРЖДЕНИЕ УДАЛЕНИЯ ДОКУМЕНТА ---
@@ -708,7 +752,7 @@ async def confirm_delete_document(callback: types.CallbackQuery):
         ]
     ])
 
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+    await safe_edit_callback_message(callback, text, reply_markup=kb, parse_mode="Markdown")
 
 
 # --- ФАКТИЧЕСКОЕ УДАЛЕНИЕ ДОКУМЕНТА ---
@@ -762,7 +806,8 @@ async def prompt_add_document(callback: types.CallbackQuery, state: FSMContext):
         [types.InlineKeyboardButton(text="❌ Отмена", callback_data=f"edit_kb_{agent_id}")]
     ])
     
-    await callback.message.edit_text(
+    await safe_edit_callback_message(
+        callback,
         "📂 *Добавление нового файла*\n\n"
         "Отправьте мне документ (PDF, TXT, DOCX), который нужно загрузить в базу знаний.\n"
         "Можно отправлять по одному файлу.",
@@ -837,7 +882,11 @@ async def start_edit_welcome(callback: types.CallbackQuery, state: FSMContext):
     kb = types.InlineKeyboardMarkup(inline_keyboard=[
         [types.InlineKeyboardButton(text="✨ Сгенерировать с ИИ", callback_data=f"gen_welcome_{agent_id}")]
     ])
-    await callback.message.answer("Введите новое приветственное сообщение или сгенерируйте его с помощью ИИ, которое пользователь увидит при команде /start:", reply_markup=kb)
+    await safe_edit_callback_message(
+        callback,
+        "Введите новое приветственное сообщение или сгенерируйте его с помощью ИИ, которое пользователь увидит при команде /start:",
+        reply_markup=kb
+    )
     await callback.answer()
 
 @master_router.message(CreateAgentSG.editing_welcome)
@@ -873,7 +922,11 @@ async def generate_welcome_callback(callback: types.CallbackQuery, state: FSMCon
     agent_id = int(callback.data.split("_")[2])
     
     # Меняем сообщение, чтобы пользователь видел процесс
-    await callback.message.edit_text("⏳ *DeepSeek анализирует промпт и генерирует приветствие...*", parse_mode="Markdown")
+    await safe_edit_callback_message(
+        callback,
+        "⏳ *DeepSeek анализирует промпт и генерирует приветствие...*",
+        parse_mode="Markdown"
+    )
     
     # 1. Достаем агента из БД, чтобы получить его system_prompt
     agent_json = await APIread.agentBy_botID(agent_id)
@@ -917,19 +970,9 @@ async def generate_welcome_callback(callback: types.CallbackQuery, state: FSMCon
     # 4. Очищаем состояние (пользователю больше не нужно вводить текст вручную)
     await state.clear()
     
-    # 5. Отправляем результат
-    await callback.message.answer(
-        f"✅ *ИИ модель придумала отличное приветствие:*\n\n_{generated_text}_", 
-        parse_mode="Markdown"
-    )
-    
-    # 6. Возвращаем пользователя в меню карточки агента
-    from handlers.master import show_agent_info
-    fake_callback = types.CallbackQuery(
-        id="0", from_user=callback.from_user, chat_instance="0",
-        message=callback.message, data=f"agent_info_{agent_id}"
-    )
-    await show_agent_info(fake_callback)
+    # 5-6. Не создаем лишние сообщения: показываем алерт и обновляем карточку
+    await callback.answer("✅ Приветствие сгенерировано и сохранено", show_alert=True)
+    await render_agent_info(callback, agent_id)
 
 @master_router.callback_query(F.data == "tariffs_menu")
 async def show_tariffs(callback: types.CallbackQuery):
@@ -973,7 +1016,8 @@ async def show_tariffs(callback: types.CallbackQuery):
         f"— Цена: 9 990₽/мес\n"
     )
 
-    await callback.message.edit_text(
+    await safe_edit_callback_message(
+        callback,
         text, 
         reply_markup=get_tariffs_keyboard(), 
         parse_mode="Markdown"
@@ -983,7 +1027,8 @@ async def show_tariffs(callback: types.CallbackQuery):
 @master_router.callback_query(F.data == "back_to_start")
 async def back_to_start(callback: types.CallbackQuery):
     """Возврат в главное меню из тарифов."""
-    await callback.message.edit_text(
+    await safe_edit_callback_message(
+        callback,
         "👋 Привет! Я Мастер-бот для создания AI-агентов.\n\n"
         "Здесь ты можешь создать своего бота с кастомными промптами и базой знаний.",
         reply_markup=get_main_menu()
