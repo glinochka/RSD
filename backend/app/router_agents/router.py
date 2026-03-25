@@ -75,7 +75,7 @@ def _serialize_agent(agent) -> dict:
 
 @router.get("")
 async def read_agent(
-    agent: Agent_by_botID = Depends(),
+    bot_id: int = Query(...),
     current_user=Depends(get_current_user_optional),
     internal: bool = Depends(is_internal_request),
 ):
@@ -83,7 +83,11 @@ async def read_agent(
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
         async with session.begin():
-            found_agent = await agent_dao.find_one_by_filter(bot_id=agent.bot_id)
+            found_agent = await agent_dao.find_one_by_filter(bot_id=bot_id)
+            # Fallback: Telegram webhook path sometimes carries internal Agent primary key.
+            # If we can't find by Telegram bot_id, try by DB id.
+            if not found_agent:
+                found_agent = await agent_dao.find_one_by_filter(id=bot_id)
             if not found_agent:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
             if current_user and found_agent.user_id != current_user.id:
