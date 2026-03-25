@@ -14,6 +14,7 @@ class Settings(BaseSettings):
 
     QDRANT_URL: str
     DB_HOST: str
+    INTERNAL_API_KEY: str = ""
 
     model_config = SettingsConfigDict(
         env_file= Path(__file__).parent.parent.parent / '.env',  

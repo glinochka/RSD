@@ -102,6 +102,7 @@ async def process_document(file_path: str, agent_id: int, document_id: int):
                     },
                     payload={
                         "agent_id": agent_id,
+                        "document_id": document_id,
                         "text": chunk_text,
                         "source": os.path.basename(file_path)
                     }
@@ -109,7 +110,7 @@ async def process_document(file_path: str, agent_id: int, document_id: int):
             )
 
         # Загрузка в Qdrant
-        qdrant_client.upsert(
+        await qdrant_client.upsert(
             collection_name="agent_documents",
             points=points
         )

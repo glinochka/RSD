@@ -28,11 +28,17 @@ export const API_ROUTES = {
   USERS_PROFILE: '/api/users/profile',
 
   // Agents
-  AGENTS_LIST: '/agents',
-  AGENTS_CREATE: '/agents',
-  AGENTS_UPDATE: (id) => `/agents/${id}`,
-  AGENTS_DELETE: (id) => `/agents/${id}`,
-  AGENTS_DETAIL: (id) => `/agents/${id}`,
+  AGENTS_LIST: '/api/agents/allBy_tgID',
+  AGENTS_CREATE: '/api/agents/by_token',
+  AGENTS_UPDATE: '/api/agents/by_botID',
+  AGENTS_DELETE: '/api/agents',
+  AGENTS_DETAIL: '/api/agents',
+  AGENTS_TOGGLE: '/api/agents/toggle_status',
+  AGENTS_AI_IMPROVE_PROMPT: '/api/agents/ai/improve_prompt',
+  AGENTS_AI_GENERATE_WELCOME: '/api/agents/ai/generate_welcome',
+  DOCUMENTS_CREATE: '/api/documents',
+  DOCUMENTS_LIST_BY_BOT: '/api/documents/allBy_botID',
+  DOCUMENTS_DELETE: (docId) => `/api/documents/${docId}`,
 
   // Pricing
   PRICING_LIST: '/pricing',

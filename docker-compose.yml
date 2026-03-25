@@ -21,7 +21,6 @@ services:
             retries: 5
 
     backend:
-        restart: on-failure
         build: ./backend
         command: >
             sh -c "cd app/alembic && alembic upgrade head &&
@@ -37,8 +36,10 @@ services:
             DB_NAME: ${DB_NAME}
             SECRET_KEY: ${SECRET_KEY}
             ALGORITHM: ${ALGORITHM}
+            ENCRYPTION_KEY: ${ENCRYPTION_KEY}
             QDRANT_URL: ${QDRANT_URL}
             DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+            INTERNAL_API_KEY: ${INTERNAL_API_KEY}
         ports:
             - '8000:8000'
         depends_on:
@@ -90,6 +91,7 @@ services:
             BASE_URL: ${BASE_URL}
             API_HOST: ${API_HOST}
             API_PORT: ${API_PORT}
+            INTERNAL_API_KEY: ${INTERNAL_API_KEY}
         command: >
             python main.py
         ports:

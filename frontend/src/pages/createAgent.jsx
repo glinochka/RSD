@@ -11,7 +11,7 @@ import { useNotification } from '../context/useNotification';
 import { useAuth } from '../context/useAuth';
 import agentService from '../services/agentService';
 import { validateFile } from '../utils/validation';
-import { AGENT_ROLES, AGENT_TASKS, NAVIGATION_ROUTES } from '../config/constants';
+import { NAVIGATION_ROUTES } from '../config/constants';
 import '../styles/createAgent.css';
 
 const CreateAgentContent = () => {
@@ -25,28 +25,22 @@ const CreateAgentContent = () => {
   const isEditMode = !!agentId;
 
   const validationRules = {
-    name: {
+    bot_token: {
       required: true,
-      label: 'Имя агента',
-      minLength: 2,
-      maxLength: 50,
+      label: 'API ключ Telegram бота',
     },
-    role: {
+    system_prompt: {
       required: true,
-      label: 'Роль агента',
-    },
-    task: {
-      required: true,
-      label: 'Задача',
+      label: 'Системный промпт',
+      minLength: 1,
+      maxLength: 5000,
     },
   };
 
   const form = useForm(
     {
-      name: '',
-      role: '',
-      task: '',
-      prompt: '',
+      bot_token: '',
+      system_prompt: '',
     },
     async (values) => {
       if (!isAuthenticated) {
@@ -55,18 +49,29 @@ const CreateAgentContent = () => {
       }
 
       try {
-        const agentData = {
-          ...values,
-          files: uploadedFiles,
-        };
-
         if (isEditMode) {
-          await agentService.update(agentId, agentData);
-          showSuccess('Агент успешно обновлен!');
-        } else {
-          await agentService.create(agentData);
-          showSuccess('Агент успешно создан!');
+          showError('Редактирование агента сейчас недоступно на этой странице');
+          return;
         }
+
+        const createdAgent = await agentService.create({
+          bot_token: values.bot_token.trim(),
+          system_prompt: values.system_prompt.trim(),
+        });
+
+        const fallbackBotId = Number(values.bot_token.split(':', 1)[0]);
+        const botId = createdAgent?.bot_id ?? fallbackBotId;
+
+        if (!Number.isFinite(botId)) {
+          showError('Не удалось определить bot_id после создания агента');
+          return;
+        }
+
+        for (const file of uploadedFiles) {
+          await agentService.uploadDocumentByBotId(botId, file);
+        }
+
+        showSuccess('Агент успешно создан!');
 
         navigate(NAVIGATION_ROUTES.AGENTS);
       } catch (error) {
@@ -123,88 +128,42 @@ const CreateAgentContent = () => {
           </section>
 
           <form id="agent-form" className="agent-form" onSubmit={form.handleSubmit}>
-            {/* Agent Name */}
+            {/* Bot Token */}
             <div className="form-group">
-              <label htmlFor="name">Имя агента:</label>
+              <label htmlFor="bot_token">API ключ Telegram бота:</label>
               <input
-                id="name"
+                id="bot_token"
                 type="text"
-                name="name"
-                placeholder="МОП"
-                className={`input-main ${form.errors.name ? 'error' : ''}`}
-                value={form.values.name}
+                name="bot_token"
+                placeholder="Например, 8523614461:AAH8tzlk5jvC8aj-t2-fjuWYxfjVsrs2bUM"
+                className={`input-main ${form.errors.bot_token ? 'error' : ''}`}
+                value={form.values.bot_token}
                 onChange={form.handleChange}
                 onBlur={form.handleBlur}
                 disabled={form.isSubmitting}
               />
-              {form.touched.name && form.errors.name && (
-                <span className="error-message">{form.errors.name}</span>
+              {form.touched.bot_token && form.errors.bot_token && (
+                <span className="error-message">{form.errors.bot_token}</span>
               )}
             </div>
 
-            {/* Agent Role */}
+            {/* System prompt */}
             <div className="form-group">
-              <label htmlFor="role">Роль агента:</label>
-              <div className="select-wrapper">
-                <select
-                  id="role"
-                  name="role"
-                  value={form.values.role}
-                  onChange={form.handleChange}
-                  onBlur={form.handleBlur}
-                  disabled={form.isSubmitting}
-                  className={form.errors.role ? 'error' : ''}
-                >
-                  <option value="">Выберите роль</option>
-                  <option value={AGENT_ROLES.SALES_MANAGER}>
-                    Менеджер отдела продаж
-                  </option>
-                  <option value={AGENT_ROLES.SUPPORT}>Техническая поддержка</option>
-                  <option value={AGENT_ROLES.ASSISTANT}>Ассистент</option>
-                </select>
-              </div>
-              {form.touched.role && form.errors.role && (
-                <span className="error-message">{form.errors.role}</span>
-              )}
-            </div>
-
-            {/* Agent Task */}
-            <div className="form-group">
-              <label htmlFor="task">Задача:</label>
-              <div className="select-wrapper">
-                <select
-                  id="task"
-                  name="task"
-                  value={form.values.task}
-                  onChange={form.handleChange}
-                  onBlur={form.handleBlur}
-                  disabled={form.isSubmitting}
-                  className={form.errors.task ? 'error' : ''}
-                >
-                  <option value="">Выберите задачу</option>
-                  <option value={AGENT_TASKS.SALES}>Заставь клиента купить</option>
-                  <option value={AGENT_TASKS.FAQ}>Ответь на вопросы по документам</option>
-                  <option value={AGENT_TASKS.CONTACTS}>Собери контактные данные</option>
-                </select>
-              </div>
-              {form.touched.task && form.errors.task && (
-                <span className="error-message">{form.errors.task}</span>
-              )}
-            </div>
-
-            {/* Prompt */}
-            <div className="form-group">
-              <label htmlFor="prompt">Промпт (опционально):</label>
+              <label htmlFor="system_prompt">Системный промпт:</label>
               <textarea
-                id="prompt"
-                name="prompt"
-                placeholder="Введите дополнительные инструкции для агента..."
+                id="system_prompt"
+                name="system_prompt"
+                placeholder="Введите системный промпт для агента..."
                 className="input-main textarea"
-                value={form.values.prompt}
+                value={form.values.system_prompt}
                 onChange={form.handleChange}
+                onBlur={form.handleBlur}
                 disabled={form.isSubmitting}
                 rows="5"
               ></textarea>
+              {form.touched.system_prompt && form.errors.system_prompt && (
+                <span className="error-message">{form.errors.system_prompt}</span>
+              )}
             </div>
 
             {/* Files Upload */}
@@ -250,7 +209,7 @@ const CreateAgentContent = () => {
             <div className="auth-modal-backdrop">
               <div className="auth-modal">
                 <h3 className="auth-modal-title">
-                  вы еще не авторизованы, войдите в аккаунт чтобы создать агента
+                  Вы еще не авторизованы, войдите в аккаунт чтобы создать агента
                 </h3>
                 <div className="auth-modal-actions">
                   <button className="btn btn-black" onClick={handleAuthRedirect}>
