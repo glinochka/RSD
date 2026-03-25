@@ -21,3 +21,12 @@ def encrypt_token(token: str) -> str:
   cipher_suite = _get_cipher_suite()
   return cipher_suite.encrypt(token.encode()).decode()
 
+
+def decrypt_token(encrypted_token: str) -> str:
+  """
+  Decrypts encrypted Telegram token stored in DB.
+  Must use the same ENCRYPTION_KEY as `bot/core/crypto.py`.
+  """
+  cipher_suite = _get_cipher_suite()
+  return cipher_suite.decrypt(encrypted_token.encode()).decode()
+

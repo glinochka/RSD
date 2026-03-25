@@ -24,7 +24,14 @@ class AgentContextMiddleware(BaseMiddleware):
             if not owner_json.get('error_code'):
                 # ПРОВЕРКА СТАТУСА ПОДПИСКИ
                 # Если дата окончания подписки установлена и она меньше текущего времени (подписка истекла)
-                subscription_end_date = datetime.fromisoformat(owner_json['subscription_end_date'])
+                subscription_end_raw = owner_json.get('subscription_end_date')
+                # For Free/неактивных тарифов поле может быть `None`.
+                # В этом случае считаем подписку валидной и пропускаем обработку.
+                if not subscription_end_raw:
+                    data["agent_config"] = agent_config
+                    return await handler(event, data)
+
+                subscription_end_date = datetime.fromisoformat(subscription_end_raw)
                 date_now = datetime.now(timezone.utc).replace(tzinfo=None)
                 if subscription_end_date < date_now:
                     

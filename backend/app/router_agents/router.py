@@ -17,7 +17,7 @@ from ..router_users.dao import UserDAO
 from ..services.ai_authoring import generate_welcome_with_ai, improve_prompt_with_ai
 from ..utils.JWT import get_user_from_access_token
 from ..utils.convert import convert_to_dict
-from ..utils.crypto import encrypt_token
+from ..utils.crypto import encrypt_token, decrypt_token
 
 logger = getLogger(__name__)
 router = APIRouter(prefix="/api/agents")
@@ -206,8 +206,40 @@ async def create_agent_by_token(new_agent: NewAgent_byToken, current_user=Depend
                     "encrypted_token": encrypt_token(token_value),
                     "bot_username": bot_username,
                     "system_prompt": new_agent.system_prompt.strip(),
+                    # New agents should be immediately usable via Telegram webhook.
+                    "is_active": True,
                 }
             )
+
+    # Configure Telegram webhook so updates reach `bot/main.py` handler.
+    # If BASE_URL is not set, it's impossible to register a public webhook URL.
+    if not settings.BASE_URL:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="BASE_URL is not configured for webhook setup",
+        )
+
+    try:
+        webhook_url = f"{settings.BASE_URL}/webhook/{bot_id}"
+        # setWebhook accepts `url` and optional `drop_pending_updates`.
+        set_webhook_url = (
+            f"https://api.telegram.org/bot{quote(token_value, safe='')}/setWebhook"
+            f"?url={quote(webhook_url, safe='')}&drop_pending_updates=true"
+        )
+
+        def _set_webhook():
+            with urlopen(set_webhook_url, timeout=15) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+
+        webhook_result = await asyncio.get_running_loop().run_in_executor(None, _set_webhook)
+        if not webhook_result or webhook_result.get("ok") is not True:
+            raise RuntimeError(webhook_result)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Не удалось установить webhook Telegram: {e}",
+        )
+
     return JSONResponse(content={"bot_id": bot_id}, status_code=status.HTTP_201_CREATED)
 
 
@@ -247,7 +279,51 @@ async def toggle_status(
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
             if current_user and agent.user_id != current_user.id:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-            await agent_dao.update(agent, {"is_active": (not agent.is_active)})
+            new_status = not agent.is_active
+            await agent_dao.update(agent, {"is_active": new_status})
+
+            # Keep Telegram webhook in sync with `is_active`.
+            if settings.BASE_URL:
+                agent_token = decrypt_token(agent.encrypted_token)
+                webhook_url = f"{settings.BASE_URL}/webhook/{agent.bot_id}"
+
+                try:
+                    if new_status:
+                        set_webhook_url = (
+                            f"https://api.telegram.org/bot{quote(agent_token, safe='')}/setWebhook"
+                            f"?url={quote(webhook_url, safe='')}&drop_pending_updates=true"
+                        )
+
+                        def _set_webhook():
+                            with urlopen(set_webhook_url, timeout=15) as resp:
+                                return json.loads(resp.read().decode("utf-8"))
+
+                        webhook_result = await asyncio.get_running_loop().run_in_executor(
+                            None, _set_webhook
+                        )
+                        if not webhook_result or webhook_result.get("ok") is not True:
+                            raise RuntimeError(webhook_result)
+                    else:
+                        delete_webhook_url = (
+                            f"https://api.telegram.org/bot{quote(agent_token, safe='')}/deleteWebhook"
+                        )
+
+                        def _delete_webhook():
+                            with urlopen(delete_webhook_url, timeout=15) as resp:
+                                return json.loads(resp.read().decode("utf-8"))
+
+                        delete_result = await asyncio.get_running_loop().run_in_executor(
+                            None, _delete_webhook
+                        )
+                        if not delete_result or delete_result.get("ok") is not True:
+                            raise RuntimeError(delete_result)
+                except Exception as e:
+                    # Rollback is complicated; fail loudly so UI won't lie about status.
+                    raise HTTPException(
+                        status_code=status.HTTP_502_BAD_GATEWAY,
+                        detail=f"Не удалось синхронизировать webhook Telegram: {e}",
+                    )
+
             return JSONResponse(content=_serialize_agent(agent), status_code=status.HTTP_200_OK)
 
 
