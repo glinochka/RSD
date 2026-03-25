@@ -31,10 +31,12 @@ async def get_current_user_optional(
         return None
     token = http_credentials.credentials
     async with async_session_maker() as session:
-        user_dao = AgentDAO(session)
+        # Token contains `user_id`, so we must query the users table (UserDAO).
+        # Using AgentDAO here makes user lookup fail and causes 401 redirects.
+        user_dao = UserDAO(session)
         async with session.begin():
             user = await get_user_from_access_token(token, user_dao)
-            return await user_dao.find_one_by_filter(id=user.id)
+            return user
 
 
 def is_internal_request(
