@@ -2,8 +2,8 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
 :root {
-    --primary-black: #1a1a1a;
-    --border-color: #000000;
+    --primary-black: #2f2f2f;
+    --border-color: #2f2f2f;
     --text-gray: #666;
     --bg-white: #ffffff;
     --transition: all 0.2s ease;
@@ -50,7 +50,7 @@ body {
 
 .btn-outline {
     background: white;
-    color: black;
+    color: #2f2f2f;
 }
 
 .btn-outline:hover {
