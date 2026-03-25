@@ -9,6 +9,9 @@ from fastapi import status
 import inspect
 base_url = f'http://{settings.API_HOST}:{settings.API_PORT}/api'
 
+# Default httpx timeout is 5s; backend context loads embeddings (cold start can take tens of seconds).
+_HTTP_TIMEOUT = httpx.Timeout(120.0, connect=30.0)
+
 
 def _internal_headers() -> dict:
     return {"X-Internal-API-Key": settings.INTERNAL_API_KEY}
@@ -18,7 +21,7 @@ class APIbase():
 
     @classmethod
     async def fetch_post(cls, url: str, data: dict, file_name: str|None = None, file_bytes: bytes|None = None) -> dict:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
             if file_name and file_bytes:
                 files = {
                     'file': (file_name, file_bytes, 'application/octet-stream')
@@ -41,7 +44,7 @@ class APIbase():
         
     @classmethod
     async def fetch_get(cls, url: str, data: dict) -> dict:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
             response = await client.get(url, params=data, headers=_internal_headers())
             if not response.is_success:
                 return {
@@ -57,7 +60,7 @@ class APIbase():
         
     @classmethod
     async def fetch_patch(cls, url: str, data: dict) -> dict:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
             response = await client.patch(url, json=data, headers=_internal_headers())
             
             if not response.is_success:
@@ -74,7 +77,7 @@ class APIbase():
         
     @classmethod
     async def fetch_delete(cls, url: str, data: dict) -> dict|list:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
             response = await client.delete(url, params=data, headers=_internal_headers())
             
             if not response.is_success:

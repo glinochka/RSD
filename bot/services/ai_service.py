@@ -66,9 +66,12 @@ async def get_answer(question: str, context_list: list, system_prompt: str) -> s
         )
         
         raw_answer = response.choices[0].message.content
-        
+        if not raw_answer or not str(raw_answer).strip():
+            return "Не удалось сформулировать ответ. Задайте вопрос чуть подробнее."
+
         # Применяем фильтрацию (удаление оставшихся * и #)
-        return clean_text(raw_answer)
+        cleaned = clean_text(raw_answer)
+        return cleaned if cleaned.strip() else "Не удалось сформулировать ответ. Задайте вопрос чуть подробнее."
         
     except Exception as e:
         return f"Ошибка при генерации ответа: {str(e)}"

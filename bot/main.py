@@ -88,7 +88,7 @@ async def handle_agent_webhook(bot_id: int, request: Request):
             )
         return {"status": "ok"}
     except Exception as e:
-        logging.error(f"❌ Ошибка в агенте {bot_id}: {e}")
+        logging.error(f"❌ Ошибка в агенте {bot_id}: {e!r}")
         return {"status": "error"}
 
 

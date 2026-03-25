@@ -10,6 +10,11 @@ async def handle_agent_message(message: types.Message, agent_config: dict):
     agent_config прилетел сюда из Middleware.
     """
     query = message.text
+    if query is None or not str(query).strip():
+        await message.answer("Напишите, пожалуйста, текстовое сообщение.")
+        return
+
+    query = str(query).strip()
     # Обратите внимание: в agent_config должны быть данные из вашей модели Agent
     agent_id = int(agent_config["bot_id"])
     system_prompt = agent_config["system_prompt"]
