@@ -78,6 +78,28 @@ async def read_all_documents(
             )
 
 
+# Must be registered before GET /{doc_id}, otherwise "getContextBy_agentID" is parsed as doc_id.
+@router.api_route("/getContextBy_agentID", methods=["GET", "POST"])
+async def get_context(
+    agent_id: int,
+    query: str,
+    current_user=Depends(get_current_user_optional),
+    internal: bool = Depends(is_internal_request),
+):
+    _assert_access(current_user, internal)
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent = await agent_dao.find_one_by_filter(bot_id=agent_id)
+            if not agent:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+            if current_user and agent.user_id != current_user.id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+
+    context = await search_knowledge_base(query, agent_id=agent_id)
+    return JSONResponse(content=context, status_code=status.HTTP_200_OK)
+
+
 @router.get("/{doc_id}")
 async def read_document(
     doc_id: int,
@@ -120,26 +142,6 @@ async def delete_document(
             agent_id = document.agent_id
             await document_dao.delete(document)
             return JSONResponse(content={"agent_id": agent_id}, status_code=status.HTTP_200_OK)
-
-
-@router.post("/getContextBy_agentID")
-async def get_context(
-    agent_id: int, query: str,
-    current_user=Depends(get_current_user_optional),
-    internal: bool = Depends(is_internal_request),
-):
-    _assert_access(current_user, internal)
-    async with async_session_maker() as session:
-        agent_dao = AgentDAO(session)
-        async with session.begin():
-            agent = await agent_dao.find_one_by_filter(bot_id=agent_id)
-            if not agent:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-            if current_user and agent.user_id != current_user.id:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-
-    context = await search_knowledge_base(query, agent_id=agent_id)
-    return JSONResponse(content=context, status_code=status.HTTP_200_OK)
 
 
 @router.post("")
