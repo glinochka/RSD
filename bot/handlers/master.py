@@ -19,8 +19,6 @@ from core.crypto import decrypt_token
 from services.ai_service import generate_welcome_with_ai
 from services.ai_service import improve_prompt_with_ai
 
-from datetime import datetime, timedelta, timezone
-
 from keyboards.master_kb import get_main_menu, get_tariffs_keyboard
 
 master_router = Router()
@@ -1149,34 +1147,34 @@ async def handle_successful_payment(message: types.Message):
         await message.answer("Платеж получен, но не удалось определить тариф. Напишите в поддержку.")
         return
 
-    user_json = await APIread.userBy_tgID(message.from_user.id)
-    response_status_user = get_response_status(user_json)
-    if response_status_user != status.HTTP_200_OK:
-        await message.answer("Оплата прошла, но не удалось обновить подписку автоматически. Напишите в поддержку.")
-        return
+    process_response = await APIcreate.processSuccessfulPayment(
+        telegram_id=message.from_user.id,
+        plan_name=plan_name,
+        currency=successful_payment.currency,
+        total_amount=successful_payment.total_amount,
+        telegram_payment_charge_id=successful_payment.telegram_payment_charge_id,
+        provider_payment_charge_id=successful_payment.provider_payment_charge_id,
+        invoice_payload=successful_payment.invoice_payload,
+    )
+    process_status = get_response_status(process_response)
 
-    now_utc = datetime.now(timezone.utc)
-    subscription_end_raw = user_json.get("subscription_end_date")
-    base_date = now_utc
-    if subscription_end_raw:
-        try:
-            current_end = datetime.fromisoformat(subscription_end_raw)
-            if current_end.tzinfo is None:
-                current_end = current_end.replace(tzinfo=timezone.utc)
-            else:
-                current_end = current_end.astimezone(timezone.utc)
-            if current_end > now_utc:
-                base_date = current_end
-        except ValueError:
-            base_date = now_utc
-
-    new_end_date = (base_date + timedelta(days=30)).replace(tzinfo=None)
-
-    update_response = await APIupdate.userSubBy_tgID(plan_name, new_end_date, message.from_user.id)
-    response_status_update = get_response_status(update_response)
-    if response_status_update != status.HTTP_200_OK:
+    if process_status != status.HTTP_200_OK:
         await message.answer("Оплата прошла, но активация подписки временно недоступна. Напишите в поддержку.")
         return
+
+    process_result = process_response.get("status")
+    if process_result == "duplicate":
+        await message.answer(
+            "ℹ️ Этот платеж уже был обработан ранее. Повторная активация не требуется."
+        )
+        return
+
+    end_date_text = process_response.get("subscription_end_date")
+    if end_date_text:
+        try:
+            end_date_text = end_date_text.replace("T", " ")[:16]
+        except Exception:
+            pass
 
     kb = types.InlineKeyboardMarkup(inline_keyboard=[
         [types.InlineKeyboardButton(text="💎 Открыть тарифы", callback_data="tariffs_menu")],
@@ -1184,7 +1182,7 @@ async def handle_successful_payment(message: types.Message):
     ])
     await message.answer(
         f"✅ Оплата получена!\n"
-        f"Тариф *{plan_name}* активирован до *{new_end_date.strftime('%d.%m.%Y %H:%M')}*.",
+        f"Тариф *{plan_name}* активирован до *{end_date_text or 'указанной в профиле даты'}*.",
         parse_mode="Markdown",
         reply_markup=kb,
     )

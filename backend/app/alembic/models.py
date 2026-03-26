@@ -60,3 +60,18 @@ class AgentDocument(Base):
     agent: Mapped["Agent"] = relationship(back_populates="documents")
 
 
+class PaymentTransaction(Base):
+    __tablename__ = "payment_transactions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
+    plan_name: Mapped[str] = mapped_column(String(32), nullable=False)
+    currency: Mapped[str] = mapped_column(String(10), nullable=False)
+    total_amount: Mapped[int] = mapped_column(nullable=False)
+
+    telegram_payment_charge_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    provider_payment_charge_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    invoice_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    processed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now(timezone.utc))
+

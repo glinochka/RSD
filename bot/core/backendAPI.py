@@ -117,6 +117,12 @@ class APIbase():
         
         return response
 
+    @classmethod
+    async def payment(cls, data: dict, add_url=None) -> dict:
+        url = f'{base_url}/payments{f"/{add_url}" if add_url else ""}'
+        response = await cls.operation(url, data)
+        return response
+
 
     
 class APIcreate(APIbase):
@@ -149,6 +155,28 @@ class APIcreate(APIbase):
     async def documentBy_botID(cls, agent_id: int, file_name: str, file_bytes: bytes) -> dict:
         agent_data = {'bot_id': agent_id}
         return await cls.document(data = {'agent_data' : json.dumps(agent_data)}, file_name=file_name, file_bytes = file_bytes)
+
+    @classmethod
+    async def processSuccessfulPayment(
+        cls,
+        telegram_id: int,
+        plan_name: str,
+        currency: str,
+        total_amount: int,
+        telegram_payment_charge_id: str,
+        provider_payment_charge_id: str | None,
+        invoice_payload: str | None,
+    ) -> dict:
+        data = {
+            "telegram_id": telegram_id,
+            "plan_name": plan_name,
+            "currency": currency,
+            "total_amount": total_amount,
+            "telegram_payment_charge_id": telegram_payment_charge_id,
+            "provider_payment_charge_id": provider_payment_charge_id,
+            "invoice_payload": invoice_payload,
+        }
+        return await cls.payment(data, add_url="process_successful")
     
 
     
