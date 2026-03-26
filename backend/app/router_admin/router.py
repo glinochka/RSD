@@ -1,11 +1,11 @@
 from datetime import datetime, timezone
 from secrets import compare_digest
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
-from sqlalchemy import func, select
+from sqlalchemy import String, cast, desc, func, or_, select
 
 from .schemas import AdminLoginRequest
 from ..alembic.database import async_session_maker
@@ -107,6 +107,15 @@ async def admin_stats(_admin=Depends(get_current_admin)):
             select(func.count(User.id)).where(User.subscription_type != "Free")
         )
         total_payments = await session.scalar(select(func.count(PaymentTransaction.id)))
+        free_users = await session.scalar(
+            select(func.count(User.id)).where(User.subscription_type == "Free")
+        )
+        advanced_users = await session.scalar(
+            select(func.count(User.id)).where(User.subscription_type == "Advanced")
+        )
+        pro_users = await session.scalar(
+            select(func.count(User.id)).where(User.subscription_type == "Pro")
+        )
 
     return JSONResponse(
         content={
@@ -116,6 +125,131 @@ async def admin_stats(_admin=Depends(get_current_admin)):
             "documents_total": total_documents or 0,
             "paid_users_total": paid_users or 0,
             "payments_total": total_payments or 0,
+            "users_by_plan": {
+                "Free": free_users or 0,
+                "Advanced": advanced_users or 0,
+                "Pro": pro_users or 0,
+            },
+        },
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@router.get("/users")
+async def admin_users(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=100),
+    search: str | None = Query(default=None),
+    _admin=Depends(get_current_admin),
+):
+    search_value = (search or "").strip()
+    offset = (page - 1) * page_size
+
+    async with async_session_maker() as session:
+        base_count_query = select(func.count(User.id))
+        base_items_query = (
+            select(User)
+            .order_by(desc(User.registered), desc(User.id))
+            .offset(offset)
+            .limit(page_size)
+        )
+        if search_value:
+            pattern = f"%{search_value}%"
+            filters = or_(
+                User.name.ilike(pattern),
+                cast(User.telegram_id, String).ilike(pattern),
+            )
+            base_count_query = base_count_query.where(filters)
+            base_items_query = base_items_query.where(filters)
+
+        total = await session.scalar(base_count_query)
+        users = (await session.scalars(base_items_query)).all()
+
+    items = [
+        {
+            "id": user.id,
+            "name": user.name,
+            "telegram_id": user.telegram_id,
+            "subscription_type": user.subscription_type,
+            "registered": user.registered.isoformat() if user.registered else None,
+        }
+        for user in users
+    ]
+    return JSONResponse(
+        content={
+            "items": items,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": total or 0,
+                "total_pages": max(1, ((total or 0) + page_size - 1) // page_size),
+            },
+        },
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@router.get("/agents")
+async def admin_agents(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=100),
+    search: str | None = Query(default=None),
+    _admin=Depends(get_current_admin),
+):
+    search_value = (search or "").strip()
+    offset = (page - 1) * page_size
+
+    async with async_session_maker() as session:
+        base_query = select(
+            Agent.id,
+            Agent.bot_id,
+            Agent.bot_username,
+            Agent.is_active,
+            Agent.registered,
+            User.name.label("owner_name"),
+            User.subscription_type.label("owner_subscription_type"),
+        ).join(User, User.id == Agent.user_id)
+        count_query = select(func.count(Agent.id)).join(User, User.id == Agent.user_id)
+        if search_value:
+            pattern = f"%{search_value}%"
+            filters = or_(
+                Agent.bot_username.ilike(pattern),
+                User.name.ilike(pattern),
+                cast(Agent.bot_id, String).ilike(pattern),
+            )
+            base_query = base_query.where(filters)
+            count_query = count_query.where(filters)
+
+        total = await session.scalar(count_query)
+        rows = (
+            await session.execute(
+                base_query.order_by(desc(Agent.registered), desc(Agent.id))
+                .offset(offset)
+                .limit(page_size)
+            )
+        ).all()
+
+    items = [
+        {
+            "id": row.id,
+            "bot_id": row.bot_id,
+            "bot_username": row.bot_username,
+            "is_active": row.is_active,
+            "owner_name": row.owner_name,
+            "owner_subscription_type": row.owner_subscription_type,
+            "registered": row.registered.isoformat() if row.registered else None,
+        }
+        for row in rows
+    ]
+    return JSONResponse(
+        content={
+            "items": items,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": total or 0,
+                "total_pages": max(1, ((total or 0) + page_size - 1) // page_size),
+            },
         },
         status_code=status.HTTP_200_OK,
     )

@@ -24,6 +24,34 @@ const adminService = {
     });
     return response.data;
   },
+
+  async getUsers(token, { page = 1, pageSize = 10, search = '' } = {}) {
+    const response = await adminClient.get(API_ROUTES.ADMIN_USERS, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      params: {
+        page,
+        page_size: pageSize,
+        search: search || undefined,
+      },
+    });
+    return response.data;
+  },
+
+  async getAgents(token, { page = 1, pageSize = 10, search = '' } = {}) {
+    const response = await adminClient.get(API_ROUTES.ADMIN_AGENTS, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      params: {
+        page,
+        page_size: pageSize,
+        search: search || undefined,
+      },
+    });
+    return response.data;
+  },
 };
 
 export default adminService;

@@ -46,6 +46,8 @@ export const API_ROUTES = {
   // Admin portal
   ADMIN_LOGIN: '/api/admin/login',
   ADMIN_STATS: '/api/admin/stats',
+  ADMIN_USERS: '/api/admin/users',
+  ADMIN_AGENTS: '/api/admin/agents',
 };
 
 export const AGENT_ROLES = {
