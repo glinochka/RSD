@@ -25,6 +25,21 @@ from keyboards.master_kb import get_main_menu, get_tariffs_keyboard
 
 master_router = Router()
 
+PAID_SUBSCRIPTION_PLANS = {
+    "Advanced": {
+        "title": "Продвинутый (Advanced)",
+        "description": "До 5 активных агентов и лимит базы знаний 500 чанков на 30 дней.",
+        "amount_kopecks": 199_000,
+    },
+    "Pro": {
+        "title": "Pro",
+        "description": "До 20 активных агентов и безлимитная база знаний на 30 дней.",
+        "amount_kopecks": 999_000,
+    },
+}
+
+PAYLOAD_PREFIX = "subscription"
+
 # --- Вспомогательная функция для безопасности Markdown ---
 def escape_md(text: str) -> str:
     """Экранирует нижнее подчеркивание для стандартного Markdown."""
@@ -1062,35 +1077,114 @@ async def back_to_start(callback: types.CallbackQuery):
 
 @master_router.callback_query(F.data.startswith("set_plan_"))
 async def process_set_plan(callback: types.CallbackQuery):
-    """Имитация оплаты: переключение тарифа в БД."""
-    plan_name = callback.data.split("_")[2] # Достаем название плана (Advanced или Pro)
-    
-    # Имитируем оплату: ставим тариф на 30 дней вперед
-    end_date_aware = datetime.now(timezone.utc) + timedelta(days=30)
+    """Выставляет инвойс Telegram Payments для выбранного тарифа."""
+    plan_name = callback.data.split("_")[2]
+    plan = PAID_SUBSCRIPTION_PLANS.get(plan_name)
+    if not plan:
+        await callback.answer("Неизвестный тариф.", show_alert=True)
+        return
 
-    end_date = end_date_aware.replace(tzinfo=None) 
-    # Обновляем запись пользователя в базе
-    
-    update_response = await APIupdate.userSubBy_tgID(plan_name, end_date, callback.from_user.id)
+    if not settings.BOT_PAYMENT_TOKEN:
+        await callback.answer("Платежи не настроены. Обратитесь в поддержку.", show_alert=True)
+        return
 
-    response_status_agents = get_response_status(update_response)
+    if not callback.message:
+        await callback.answer("Не удалось открыть платежное окно. Попробуйте еще раз.", show_alert=True)
+        return
 
-    if response_status_agents != status.HTTP_200_OK:
-        if response_status_agents == status.HTTP_404_NOT_FOUND:
-            await callback.answer(
-                f"Пользователь не найден",
-                reply_markup=get_main_menu()
-            )
-        else: 
-            await callback.answer(
-                f"Ошибка сервера при попытке обновить вашу подписку",
-                reply_markup=get_main_menu()
-            )
+    payload = f"{PAYLOAD_PREFIX}:{plan_name}:{callback.from_user.id}"
+    prices = [types.LabeledPrice(label=plan["title"], amount=plan["amount_kopecks"])]
 
-        await show_tariffs(callback)
-        return 
-    
-    await callback.answer(f"✅ Тариф {plan_name} успешно активирован на 30 дней!", show_alert=True)
-    
-    # Сразу обновляем интерфейс, чтобы пользователь увидел изменения
-    await show_tariffs(callback)
+    await callback.message.answer_invoice(
+        title=f"Подписка {plan['title']}",
+        description=plan["description"],
+        payload=payload,
+        provider_token=settings.BOT_PAYMENT_TOKEN,
+        currency="RUB",
+        prices=prices,
+        need_email=False,
+        need_phone_number=False,
+        need_shipping_address=False,
+        is_flexible=False,
+    )
+    await callback.answer("Счет выставлен. Завершите оплату в Telegram.", show_alert=True)
+
+
+def parse_payment_payload(payload: str) -> tuple[str | None, int | None]:
+    """
+    Формат payload: subscription:<PlanName>:<telegram_id>
+    Возвращает (plan_name, telegram_id) или (None, None), если формат некорректный.
+    """
+    try:
+        prefix, plan_name, tg_id_str = payload.split(":")
+        if prefix != PAYLOAD_PREFIX:
+            return None, None
+        return plan_name, int(tg_id_str)
+    except (ValueError, AttributeError):
+        return None, None
+
+
+@master_router.pre_checkout_query()
+async def process_pre_checkout_query(pre_checkout_query: types.PreCheckoutQuery):
+    """Подтверждает чек-аут только для валидного payload и правильного пользователя."""
+    plan_name, payload_tg_id = parse_payment_payload(pre_checkout_query.invoice_payload)
+
+    if plan_name not in PAID_SUBSCRIPTION_PLANS or payload_tg_id != pre_checkout_query.from_user.id:
+        await pre_checkout_query.answer(
+            ok=False,
+            error_message="Не удалось проверить заказ. Попробуйте снова через меню тарифов."
+        )
+        return
+
+    await pre_checkout_query.answer(ok=True)
+
+
+@master_router.message(F.successful_payment)
+async def handle_successful_payment(message: types.Message):
+    """Активирует подписку только после подтвержденного успешного платежа Telegram."""
+    successful_payment = message.successful_payment
+    plan_name, payload_tg_id = parse_payment_payload(successful_payment.invoice_payload)
+
+    if plan_name not in PAID_SUBSCRIPTION_PLANS or payload_tg_id != message.from_user.id:
+        await message.answer("Платеж получен, но не удалось определить тариф. Напишите в поддержку.")
+        return
+
+    user_json = await APIread.userBy_tgID(message.from_user.id)
+    response_status_user = get_response_status(user_json)
+    if response_status_user != status.HTTP_200_OK:
+        await message.answer("Оплата прошла, но не удалось обновить подписку автоматически. Напишите в поддержку.")
+        return
+
+    now_utc = datetime.now(timezone.utc)
+    subscription_end_raw = user_json.get("subscription_end_date")
+    base_date = now_utc
+    if subscription_end_raw:
+        try:
+            current_end = datetime.fromisoformat(subscription_end_raw)
+            if current_end.tzinfo is None:
+                current_end = current_end.replace(tzinfo=timezone.utc)
+            else:
+                current_end = current_end.astimezone(timezone.utc)
+            if current_end > now_utc:
+                base_date = current_end
+        except ValueError:
+            base_date = now_utc
+
+    new_end_date = (base_date + timedelta(days=30)).replace(tzinfo=None)
+
+    update_response = await APIupdate.userSubBy_tgID(plan_name, new_end_date, message.from_user.id)
+    response_status_update = get_response_status(update_response)
+    if response_status_update != status.HTTP_200_OK:
+        await message.answer("Оплата прошла, но активация подписки временно недоступна. Напишите в поддержку.")
+        return
+
+    kb = types.InlineKeyboardMarkup(inline_keyboard=[
+        [types.InlineKeyboardButton(text="💎 Открыть тарифы", callback_data="tariffs_menu")],
+        [types.InlineKeyboardButton(text="⬅️ В меню", callback_data="start_menu")]
+    ])
+    await message.answer(
+        f"✅ Оплата получена!\n"
+        f"Тариф *{plan_name}* активирован до *{new_end_date.strftime('%d.%m.%Y %H:%M')}*.",
+        parse_mode="Markdown",
+        reply_markup=kb,
+    )
