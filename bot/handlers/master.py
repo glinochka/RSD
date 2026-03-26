@@ -70,17 +70,27 @@ def _format_kb_limit(limit) -> str:
     return f"{limit} \u0447\u0430\u043d\u043a\u043e\u0432"
 
 
+def _normalize_surrogates(text: str) -> str:
+    """
+    Convert valid UTF-16 surrogate pairs into proper Unicode symbols
+    and drop broken surrogate code points.
+    """
+    if not text:
+        return text
+    return text.encode("utf-16", "surrogatepass").decode("utf-16", "ignore")
+
+
 def _build_tariffs_text(plans: list[dict], current_plan_code: str) -> str:
     # Keep the numbering stable: Free -> Advanced -> Pro.
     order = {"Free": 1, "Advanced": 2, "Pro": 3}
     plans_sorted = sorted(plans, key=lambda p: order.get(p.get("code"), 999))
 
     lines: list[str] = [
-        "\ud83d\udc8e *\u0423\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u0438\u0435 \u043f\u043e\u0434\u043f\u0438\u0441\u043a\u043e\u0439*",
+        "\U0001F48E *\u0423\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u0438\u0435 \u043f\u043e\u0434\u043f\u0438\u0441\u043a\u043e\u0439*",
         "",
         f"\u0412\u0430\u0448 \u0442\u0435\u043a\u0443\u0449\u0438\u0439 \u0442\u0430\u0440\u0438\u0444: *{current_plan_code}*",
         "",
-        "\ud83d\ude80 *\u0414\u043e\u0441\u0442\u0443\u043f\u043d\u044b\u0435 \u043f\u043b\u0430\u043d\u044b:*",
+        "\U0001F680 *\u0414\u043e\u0441\u0442\u0443\u043f\u043d\u044b\u0435 \u043f\u043b\u0430\u043d\u044b:*",
         "",
     ]
 
@@ -125,9 +135,11 @@ async def safe_edit_callback_message(
         await callback.answer("Не удалось обновить сообщение", show_alert=True)
         return
 
+    safe_text = _normalize_surrogates(text)
+
     try:
         await callback.message.edit_text(
-            text=text,
+            text=safe_text,
             reply_markup=reply_markup,
             parse_mode=parse_mode,
         )
@@ -138,7 +150,7 @@ async def safe_edit_callback_message(
             return
         if "message to edit not found" in error_text or "message can't be edited" in error_text:
             await callback.message.answer(
-                text=text,
+                text=safe_text,
                 reply_markup=reply_markup,
                 parse_mode=parse_mode,
             )
