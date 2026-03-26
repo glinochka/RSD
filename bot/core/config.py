@@ -5,7 +5,7 @@ class Settings(BaseSettings):
     ENCRYPTION_KEY: str
     DEEPSEEK_API_KEY: str
     MASTER_BOT_TOKEN: str
-    BOT_PAYMENT_TOKEN: str
+    BOT_PAYMENT_TOKEN: str = ""
     BASE_URL: str
     API_PORT: str
 
