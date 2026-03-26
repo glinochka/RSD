@@ -42,6 +42,10 @@ export const API_ROUTES = {
 
   // Pricing
   PRICING_LIST: '/pricing',
+
+  // Admin portal
+  ADMIN_LOGIN: '/api/admin/login',
+  ADMIN_STATS: '/api/admin/stats',
 };
 
 export const AGENT_ROLES = {
@@ -61,7 +65,7 @@ export const PRICING_PLANS = [
     id: 'basic',
     name: 'Базовая',
     price: 2990,
-    currency: 'р',
+    currency: '₽',
     period: 'месяц',
     per: 'за агента',
     features: [
@@ -74,7 +78,7 @@ export const PRICING_PLANS = [
     id: 'advanced',
     name: 'Продвинутая',
     price: 7990,
-    currency: 'р',
+    currency: '₽',
     period: 'месяц',
     per: 'за агента',
     features: [
@@ -87,7 +91,7 @@ export const PRICING_PLANS = [
     id: 'pro',
     name: 'Про',
     price: 14990,
-    currency: 'р',
+    currency: '₽',
     period: 'месяц',
     per: 'за агента',
     features: [
@@ -105,6 +109,7 @@ export const NAVIGATION_ROUTES = {
   CREATE_AGENT: '/create-agent',
   EDIT_AGENT: (id) => `/agents/${id}/edit`,
   PRICING: '/pricing',
+  MANAGEMENT_PORTAL: '/management-portal',
 };
 
 // User-facing messages; backend detail (FastAPI) is preferred when present (see errorUtils).

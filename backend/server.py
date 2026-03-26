@@ -11,6 +11,7 @@ from app.router_users import router as users_router
 from app.router_agents import router as agents_router
 from app.router_documents import router as documents_router
 from app.router_payments import router as payments_router
+from app.router_admin import router as admin_router
 from app.origins import origins
 from app.config import settings
 from app.services.subscription_maintenance import downgrade_expired_subscriptions_once
@@ -82,6 +83,7 @@ app.include_router(users_router.router)
 app.include_router(agents_router.router)
 app.include_router(documents_router.router)
 app.include_router(payments_router.router)
+app.include_router(admin_router.router)
 
 
 if __name__ == "__main__":

@@ -25,6 +25,8 @@ services:
         command: >
             sh -c "cd app/alembic && alembic upgrade head &&
                 cd .. && cd .. && python server.py"
+        env_file:
+            - .env
                 
         container_name: rsd_backend
         environment:
