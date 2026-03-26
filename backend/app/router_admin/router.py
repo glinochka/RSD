@@ -7,10 +7,11 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from sqlalchemy import String, cast, desc, func, or_, select
 
-from .schemas import AdminLoginRequest
+from .schemas import AdminLoginRequest, AdminSubscriptionPlansUpdateRequest
 from ..alembic.database import async_session_maker
 from ..alembic.models import Agent, AgentDocument, PaymentTransaction, User
 from ..config import get_auth_data, settings
+from ..subscription_plans import get_all_subscription_plans, update_subscription_plan_overrides
 from ..utils.JWT import create_access_token
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -251,5 +252,26 @@ async def admin_agents(
                 "total_pages": max(1, ((total or 0) + page_size - 1) // page_size),
             },
         },
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@router.get("/plans")
+async def admin_plans(_admin=Depends(get_current_admin)):
+    return JSONResponse(
+        content={"plans": get_all_subscription_plans()},
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@router.put("/plans")
+async def admin_update_plans(
+    payload: AdminSubscriptionPlansUpdateRequest,
+    _admin=Depends(get_current_admin),
+):
+    plan_updates = [p.model_dump() for p in payload.plans]
+    update_subscription_plan_overrides(plan_updates=plan_updates)
+    return JSONResponse(
+        content={"plans": get_all_subscription_plans()},
         status_code=status.HTTP_200_OK,
     )

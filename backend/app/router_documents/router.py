@@ -12,7 +12,13 @@ from .dao import DocumentDAO
 from .schemas import *
 from ..alembic.database import async_session_maker
 from ..config import settings
-from ..qdrant.indexer import CHUNK_LIMITS, extract_text, get_current_chunks_count, process_document, text_splitter
+from ..qdrant.indexer import (
+    extract_text,
+    get_chunk_limit_by_plan,
+    get_current_chunks_count,
+    process_document,
+    text_splitter,
+)
 from ..qdrant.search_service import delete_document_vectors, search_knowledge_base
 from ..router_agents.dao import AgentDAO
 from ..router_users.dao import UserDAO
@@ -173,7 +179,7 @@ async def upload_document(
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found for this agent")
 
     current_plan = user.subscription_type
-    limit = CHUNK_LIMITS.get(current_plan, 100)
+    limit = get_chunk_limit_by_plan(current_plan)
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as temp_file:
         shutil.copyfileobj(file.file, temp_file)

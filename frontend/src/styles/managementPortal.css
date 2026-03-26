@@ -215,3 +215,40 @@
     align-items: stretch;
   }
 }
+
+.management-plans-editor {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: var(--spacing-base);
+}
+
+.management-plan-editor-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-lg);
+  background: var(--color-bg);
+  display: grid;
+  gap: var(--spacing-base);
+}
+
+.management-form-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.management-form-row label {
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
+}
+
+.management-checkbox {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  cursor: pointer;
+}
+
+.management-checkbox input {
+  width: auto;
+}

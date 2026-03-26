@@ -23,19 +23,6 @@ from keyboards.master_kb import get_main_menu, get_tariffs_keyboard
 
 master_router = Router()
 
-PAID_SUBSCRIPTION_PLANS = {
-    "Advanced": {
-        "title": "Продвинутый (Advanced)",
-        "description": "До 5 активных агентов и лимит базы знаний 500 чанков на 30 дней.",
-        "amount_kopecks": 199_000,
-    },
-    "Pro": {
-        "title": "Pro",
-        "description": "До 20 активных агентов и безлимитная база знаний на 30 дней.",
-        "amount_kopecks": 999_000,
-    },
-}
-
 PAYLOAD_PREFIX = "subscription"
 
 # --- Вспомогательная функция для безопасности Markdown ---
@@ -56,6 +43,76 @@ def build_start_menu_text(first_name: str | None = None) -> str:
         "Привет! Это конструктор AI-агентов.\n\n"
         "Здесь ты можешь создать своего бота с кастомными промптами и базой знаний."
     )
+
+async def _get_plans_from_backend() -> list[dict]:
+    """
+    Single source of truth for plans is the backend (/api/payments/plans).
+    Returns list of plan dicts as-is from backend.
+    """
+    data = await APIread.subscriptionPlans()
+    response_status = get_response_status(data)
+    if response_status != status.HTTP_200_OK:
+        return []
+    plans = data.get("plans") if isinstance(data, dict) else None
+    return plans or []
+
+
+def _format_price_rub_month(price_rub_month: int) -> str:
+    if not price_rub_month:
+        return "0\u20bd/\u043c\u0435\u0441"
+    # "1 990" grouping for readability (Russian formatting style).
+    return f"{price_rub_month:,}".replace(",", " ") + "\u20bd/\u043c\u0435\u0441"
+
+
+def _format_kb_limit(limit) -> str:
+    if limit is None:
+        return "\u0411\u0435\u0437\u043b\u0438\u043c\u0438\u0442"
+    return f"{limit} \u0447\u0430\u043d\u043a\u043e\u0432"
+
+
+def _build_tariffs_text(plans: list[dict], current_plan_code: str) -> str:
+    # Keep the numbering stable: Free -> Advanced -> Pro.
+    order = {"Free": 1, "Advanced": 2, "Pro": 3}
+    plans_sorted = sorted(plans, key=lambda p: order.get(p.get("code"), 999))
+
+    lines: list[str] = [
+        "\ud83d\udc8e *\u0423\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u0438\u0435 \u043f\u043e\u0434\u043f\u0438\u0441\u043a\u043e\u0439*",
+        "",
+        f"\u0412\u0430\u0448 \u0442\u0435\u043a\u0443\u0449\u0438\u0439 \u0442\u0430\u0440\u0438\u0444: *{current_plan_code}*",
+        "",
+        "\ud83d\ude80 *\u0414\u043e\u0441\u0442\u0443\u043f\u043d\u044b\u0435 \u043f\u043b\u0430\u043d\u044b:*",
+        "",
+    ]
+
+    emoji_by_code = {"Free": "1\ufe0f\u20e3", "Advanced": "2\ufe0f\u20e3", "Pro": "3\ufe0f\u20e3"}
+
+    for plan in plans_sorted:
+        code = plan.get("code")
+        title = plan.get("title") or code
+        max_agents = plan.get("max_active_agents")
+        kb_limit = plan.get("knowledge_base_chunk_limit")
+        price = plan.get("price_rub_month", 0)
+
+        if not code:
+            continue
+
+        lines.extend(
+            [
+                f"{emoji_by_code.get(code, '')} *{title}*".strip(),
+                f"\u2014 \u0414\u043e {max_agents} \u0430\u043a\u0442\u0438\u0432\u043d\u044b\u0445 \u0430\u0433\u0435\u043d\u0442\u043e\u0432"
+                if code != "Free"
+                else f"\u2014 {max_agents} \u0430\u043a\u0442\u0438\u0432\u043d\u044b\u0439 \u0430\u0433\u0435\u043d\u0442",
+                f"\u2014 \u041b\u0438\u043c\u0438\u0442 \u0431\u0430\u0437\u044b \u0437\u043d\u0430\u043d\u0438\u0439: {_format_kb_limit(kb_limit)}",
+                f"\u2014 \u0426\u0435\u043d\u0430: {_format_price_rub_month(int(price or 0))}",
+                "",
+            ]
+        )
+
+    return "\n".join(lines).strip()
+
+
+def _paid_plans_map(plans: list[dict]) -> dict[str, dict]:
+    return {p["code"]: p for p in plans if p.get("is_paid") and p.get("code")}
 
 
 async def safe_edit_callback_message(
@@ -222,15 +279,11 @@ async def start_add_agent(callback: types.CallbackQuery, state: FSMContext):
         return 
 
     agents_count = len(all_user_agents)
-    #  Определяем лимиты согласно ТЗ
-    # Базовый (Free) — 1, Продвинутый — 5, Pro — 20
-    limits = {
-        "Free": 1,
-        "Advanced": 5,
-        "Pro": 20
-    }
-    
-    current_limit = limits.get(user_json['subscription_type'], 1)
+    plans = await _get_plans_from_backend()
+    plans_by_code = {p.get("code"): p for p in plans if p.get("code")}
+    current_plan_code = user_json.get("subscription_type") or "Free"
+    current_plan = plans_by_code.get(current_plan_code) or plans_by_code.get("Free") or {}
+    current_limit = int(current_plan.get("max_active_agents") or 1)
 
     #  Проверяем превышение лимита
     if agents_count >= current_limit:
@@ -1033,26 +1086,17 @@ async def show_tariffs(callback: types.CallbackQuery):
             )
         return 
     
-    # Если пользователя вдруг нет, или у него нет тарифа, ставим Free
-    current_plan = user_json['subscription_type']
+    current_plan_code = user_json.get('subscription_type') or "Free"
+    plans = await _get_plans_from_backend()
+    if not plans:
+        await safe_edit_callback_message(
+            callback,
+            "Не удалось загрузить тарифы с сервера. Попробуйте позже.",
+            reply_markup=get_main_menu(),
+        )
+        return
 
-    text = (
-        f"💎 *Управление подпиской*\n\n"
-        f"Ваш текущий тариф: *{current_plan}*\n\n"
-        f"🚀 *Доступные планы:*\n\n"
-        f"1️⃣ *Базовый (Free)*\n"
-        f"— 1 активный агент\n"
-        f"— Лимит базы знаний: 100 чанков\n"
-        f"— Цена: 0₽/мес\n\n"
-        f"2️⃣ *Продвинутый (Advanced)*\n"
-        f"— До 5 активных агентов\n"
-        f"— Лимит базы знаний: 500 чанков\n"
-        f"— Цена: 1 990₽/мес\n\n"
-        f"3️⃣ *Pro*\n"
-        f"— До 20 активных агентов\n"
-        f"— Лимит базы знаний: Безлимит\n"
-        f"— Цена: 9 990₽/мес\n"
-    )
+    text = _build_tariffs_text(plans, current_plan_code)
 
     await safe_edit_callback_message(
         callback,
@@ -1077,7 +1121,9 @@ async def back_to_start(callback: types.CallbackQuery):
 async def process_set_plan(callback: types.CallbackQuery):
     """Выставляет инвойс Telegram Payments для выбранного тарифа."""
     plan_name = callback.data.split("_")[2]
-    plan = PAID_SUBSCRIPTION_PLANS.get(plan_name)
+    plans = await _get_plans_from_backend()
+    paid_plans = _paid_plans_map(plans)
+    plan = paid_plans.get(plan_name)
     if not plan:
         await callback.answer("Неизвестный тариф.", show_alert=True)
         return
@@ -1091,11 +1137,16 @@ async def process_set_plan(callback: types.CallbackQuery):
         return
 
     payload = f"{PAYLOAD_PREFIX}:{plan_name}:{callback.from_user.id}"
-    prices = [types.LabeledPrice(label=plan["title"], amount=plan["amount_kopecks"])]
+    prices = [
+        types.LabeledPrice(
+            label=plan.get("title") or plan_name,
+            amount=int(plan.get("telegram_amount_kopecks") or 0),
+        )
+    ]
 
     await callback.message.answer_invoice(
-        title=f"Подписка {plan['title']}",
-        description=plan["description"],
+        title=f"Подписка {plan.get('title') or plan_name}",
+        description=plan.get("telegram_invoice_description") or "",
         payload=payload,
         provider_token=settings.BOT_PAYMENT_TOKEN,
         currency="RUB",
@@ -1127,7 +1178,9 @@ async def process_pre_checkout_query(pre_checkout_query: types.PreCheckoutQuery)
     """Подтверждает чек-аут только для валидного payload и правильного пользователя."""
     plan_name, payload_tg_id = parse_payment_payload(pre_checkout_query.invoice_payload)
 
-    if plan_name not in PAID_SUBSCRIPTION_PLANS or payload_tg_id != pre_checkout_query.from_user.id:
+    plans = await _get_plans_from_backend()
+    paid_plan_codes = set(_paid_plans_map(plans).keys())
+    if plan_name not in paid_plan_codes or payload_tg_id != pre_checkout_query.from_user.id:
         await pre_checkout_query.answer(
             ok=False,
             error_message="Не удалось проверить заказ. Попробуйте снова через меню тарифов."

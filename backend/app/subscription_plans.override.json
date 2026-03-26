@@ -1,0 +1,7 @@
+{
+  "Advanced": {
+    "price_rub_month": 1990,
+    "max_active_agents": 5,
+    "knowledge_base_chunk_limit": 500
+  }
+}

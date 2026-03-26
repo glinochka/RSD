@@ -220,6 +220,12 @@ class APIread(APIbase):
         add_url = 'by_tgID'
         return await cls.user({'id': tg_id}, add_url = add_url)
 
+    # payments / plans
+    @classmethod
+    async def subscriptionPlans(cls) -> dict:
+        # Returns { plans: [...] }
+        return await cls.payment({}, add_url="plans")
+
 
 
 class APIupdate(APIbase):

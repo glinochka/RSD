@@ -52,6 +52,28 @@ const adminService = {
     });
     return response.data;
   },
+
+  async getPlans(token) {
+    const response = await adminClient.get(API_ROUTES.ADMIN_PLANS, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    return response.data;
+  },
+
+  async updatePlans(token, plans) {
+    const response = await adminClient.put(
+      API_ROUTES.ADMIN_PLANS,
+      { plans },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+    return response.data;
+  },
 };
 
 export default adminService;

@@ -9,11 +9,23 @@ from sqlalchemy import select
 from ..alembic.database import async_session_maker
 from ..alembic.models import PaymentTransaction
 from ..router_users.dao import UserDAO
+from ..subscription_plans import (
+    get_all_subscription_plans,
+    get_subscription_plan,
+)
 from ..utils.internal_auth import verify_internal_key
 from .schemas import ProcessTelegramPayment
 
 logger = getLogger(__name__)
 router = APIRouter(prefix="/api/payments")
+
+
+@router.get("/plans")
+async def get_subscription_plans():
+    return JSONResponse(
+        content={"plans": get_all_subscription_plans()},
+        status_code=status.HTTP_200_OK,
+    )
 
 
 @router.post("/process_successful")
@@ -84,6 +96,13 @@ async def process_successful_payment(
                         current_end = current_end.astimezone(timezone.utc)
                     if current_end > now_utc:
                         base_date = current_end
+
+                selected_plan = get_subscription_plan(payload.plan_name)
+                if not selected_plan or not selected_plan.get("is_paid"):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Invalid paid plan",
+                    )
 
                 new_end_date = (base_date + timedelta(days=30)).replace(tzinfo=None)
                 await user_dao.update(

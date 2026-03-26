@@ -10,6 +10,7 @@ const MENU_ITEMS = [
   { id: 'overview', label: 'Обзор' },
   { id: 'users', label: 'Пользователи' },
   { id: 'agents', label: 'Агенты' },
+  { id: 'billing', label: 'Тарифы' },
 ];
 
 function formatError(error) {
@@ -46,6 +47,10 @@ const ManagementPortal = () => {
     total: 0,
     search: '',
   });
+
+  const [isLoadingPlans, setIsLoadingPlans] = useState(false);
+  const [isSavingPlans, setIsSavingPlans] = useState(false);
+  const [plansDraft, setPlansDraft] = useState([]);
 
   const statsCards = useMemo(() => {
     if (!stats) return [];
@@ -143,6 +148,41 @@ const ManagementPortal = () => {
     agentsState.search,
   ]);
 
+  useEffect(() => {
+    if (!adminToken) return;
+    if (activeSection !== 'billing') return;
+
+    let cancelled = false;
+    const fetchPlans = async () => {
+      try {
+        setIsLoadingPlans(true);
+        setError('');
+        const data = await adminService.getPlans(adminToken);
+        const plans = Array.isArray(data?.plans) ? data.plans : [];
+        if (cancelled) return;
+        setPlansDraft(
+          plans.map((p) => ({
+            code: p?.code,
+            title: p?.title || p?.code,
+            price_rub_month: Number(p?.price_rub_month ?? 0),
+            max_active_agents: Number(p?.max_active_agents ?? 0),
+            knowledge_base_chunk_limit:
+              p?.knowledge_base_chunk_limit === null ? null : Number(p?.knowledge_base_chunk_limit ?? 0),
+          }))
+        );
+      } catch (err) {
+        if (!cancelled) setError(formatError(err));
+      } finally {
+        if (!cancelled) setIsLoadingPlans(false);
+      }
+    };
+
+    fetchPlans();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSection, adminToken]);
+
   const handleLogin = async (event) => {
     event.preventDefault();
     if (!login.trim() || !password) {
@@ -175,6 +215,40 @@ const ManagementPortal = () => {
     setStats(null);
     setError('');
     setPassword('');
+  };
+
+  const handleSavePlans = async () => {
+    try {
+      setIsSavingPlans(true);
+      setError('');
+
+      const payloadPlans = (plansDraft || []).map((p) => ({
+        code: p.code,
+        price_rub_month: Number(p.price_rub_month ?? 0),
+        max_active_agents: Number(p.max_active_agents ?? 0),
+        knowledge_base_chunk_limit:
+          p.knowledge_base_chunk_limit === null ? null : Number(p.knowledge_base_chunk_limit ?? 0),
+      }));
+
+      const data = await adminService.updatePlans(adminToken, payloadPlans);
+      const updatedPlans = Array.isArray(data?.plans) ? data.plans : [];
+      setPlansDraft(
+        updatedPlans.map((p) => ({
+          code: p?.code,
+          title: p?.title || p?.code,
+          price_rub_month: Number(p?.price_rub_month ?? 0),
+          max_active_agents: Number(p?.max_active_agents ?? 0),
+          knowledge_base_chunk_limit:
+            p?.knowledge_base_chunk_limit === null
+              ? null
+              : Number(p?.knowledge_base_chunk_limit ?? 0),
+        }))
+      );
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setIsSavingPlans(false);
+    }
   };
 
   const renderOverview = () => (
@@ -366,6 +440,115 @@ const ManagementPortal = () => {
     </>
   );
 
+  const renderBilling = () => (
+    <>
+      <div className="management-content-head">
+        <h2>Тарифы</h2>
+        <button
+          type="button"
+          className="btn btn-outline"
+          disabled={isSavingPlans || isLoadingPlans || (plansDraft || []).length === 0}
+          onClick={handleSavePlans}
+        >
+          Сохранить изменения
+        </button>
+      </div>
+
+      {error && <div className="management-error">{error}</div>}
+
+      {isLoadingPlans ? (
+        <p>Загрузка тарифов...</p>
+      ) : (
+        <div className="management-plans-editor">
+          {(plansDraft || []).map((plan) => {
+            const kbUnlimited = plan.knowledge_base_chunk_limit === null;
+            return (
+              <article key={plan.code} className="management-plan-editor-card">
+                <h3>{plan.title}</h3>
+
+                <div className="management-form-row">
+                  <label>Цена (руб/мес)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={plan.price_rub_month}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      setPlansDraft((prev) =>
+                        prev.map((p) =>
+                          p.code === plan.code ? { ...p, price_rub_month: Number.isNaN(val) ? 0 : val } : p
+                        )
+                      );
+                    }}
+                  />
+                </div>
+
+                <div className="management-form-row">
+                  <label>Макс. активных агентов</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={plan.max_active_agents}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      setPlansDraft((prev) =>
+                        prev.map((p) =>
+                          p.code === plan.code ? { ...p, max_active_agents: Number.isNaN(val) ? 0 : val } : p
+                        )
+                      );
+                    }}
+                  />
+                </div>
+
+                <div className="management-form-row">
+                  <label className="management-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={kbUnlimited}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setPlansDraft((prev) =>
+                          prev.map((p) => {
+                            if (p.code !== plan.code) return p;
+                            if (checked) return { ...p, knowledge_base_chunk_limit: null };
+                            // If leaving unlimited mode, restore a sane default.
+                            return {
+                              ...p,
+                              knowledge_base_chunk_limit: p.knowledge_base_chunk_limit ?? 100,
+                            };
+                          })
+                        );
+                      }}
+                    />
+                    Безлимит базы знаний
+                  </label>
+
+                  <input
+                    type="number"
+                    min={0}
+                    disabled={kbUnlimited}
+                    value={kbUnlimited ? '' : plan.knowledge_base_chunk_limit ?? 0}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      setPlansDraft((prev) =>
+                        prev.map((p) =>
+                          p.code === plan.code
+                            ? { ...p, knowledge_base_chunk_limit: Number.isNaN(val) ? 0 : val }
+                            : p
+                        )
+                      );
+                    }}
+                    placeholder="Лимит чанков"
+                  />
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </>
+  );
+
   return (
     <div className="management-page">
       <header className="management-header">
@@ -429,6 +612,7 @@ const ManagementPortal = () => {
             {activeSection === 'overview' && renderOverview()}
             {activeSection === 'users' && renderUsers()}
             {activeSection === 'agents' && renderAgents()}
+            {activeSection === 'billing' && renderBilling()}
           </section>
         </main>
       )}

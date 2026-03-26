@@ -48,6 +48,7 @@ export const API_ROUTES = {
   ADMIN_STATS: '/api/admin/stats',
   ADMIN_USERS: '/api/admin/users',
   ADMIN_AGENTS: '/api/admin/agents',
+  ADMIN_PLANS: '/api/admin/plans',
 };
 
 export const AGENT_ROLES = {
@@ -62,47 +63,8 @@ export const AGENT_TASKS = {
   CONTACTS: 'contacts',
 };
 
-export const PRICING_PLANS = [
-  {
-    id: 'basic',
-    name: 'Базовая',
-    price: 2990,
-    currency: '₽',
-    period: 'месяц',
-    per: 'за агента',
-    features: [
-      '5 гб базы знаний',
-      'tg-bot',
-      'базовая аналитика',
-    ],
-  },
-  {
-    id: 'advanced',
-    name: 'Продвинутая',
-    price: 7990,
-    currency: '₽',
-    period: 'месяц',
-    per: 'за агента',
-    features: [
-      '15 гб базы знаний',
-      'tg-bot',
-      'API',
-    ],
-  },
-  {
-    id: 'pro',
-    name: 'Про',
-    price: 14990,
-    currency: '₽',
-    period: 'месяц',
-    per: 'за агента',
-    features: [
-      '50 гб базы знаний',
-      'tg-bot',
-      'API',
-    ],
-  },
-];
+// Pricing plans are served by backend (/api/payments/plans) to keep bot + web consistent.
+export const PRICING_PLANS = [];
 
 export const NAVIGATION_ROUTES = {
   HOME: '/',
