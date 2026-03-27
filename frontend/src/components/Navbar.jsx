@@ -115,18 +115,18 @@ const Navbar = () => {
               Вход
             </Link>
           )}
+          <button
+            className="menu-toggle"
+            type="button"
+            onClick={toggleMenu}
+            aria-label="Открыть меню"
+            aria-expanded={isMenuOpen}
+          >
+            <span></span>
+            <span></span>
+            <span></span>
+          </button>
         </div>
-
-        <button
-          className="menu-toggle"
-          onClick={toggleMenu}
-          aria-label="Toggle menu"
-          aria-expanded={isMenuOpen}
-        >
-          <span></span>
-          <span></span>
-          <span></span>
-        </button>
       </header>
 
       {isAuthenticated && isProfileOpen && (

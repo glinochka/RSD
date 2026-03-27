@@ -2,7 +2,7 @@
 
 .header {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--spacing-xl);
   padding: var(--spacing-lg) var(--spacing-xl);
@@ -60,7 +60,9 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  flex-wrap: nowrap;
   gap: var(--spacing-lg);
+  min-width: 0;
 }
 
 /* Profile trigger (person icon, top-right) */
@@ -257,6 +259,7 @@
 .menu-toggle {
   display: none;
   flex-direction: column;
+  flex-shrink: 0;
   gap: var(--spacing-xs);
   background: none;
   border: none;
@@ -287,8 +290,9 @@
 /* Responsive */
 @media (max-width: 768px) {
   .header {
-    padding: var(--spacing-base) var(--spacing-lg);
-    grid-template-columns: auto 1fr auto;
+    padding: var(--spacing-sm) var(--spacing-base);
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: var(--spacing-sm);
   }
 
   .nav {
@@ -329,16 +333,22 @@
 
 @media (max-width: 480px) {
   .header {
-    padding: var(--spacing-base);
-    grid-template-columns: auto 1fr;
+    padding: var(--spacing-sm);
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: var(--spacing-xs);
   }
 
   .logo {
     font-size: var(--font-size-xl);
   }
 
+  .navbar-actions {
+    gap: var(--spacing-xs);
+  }
+
   .btn-auth {
-    width: 100%;
-    justify-content: center;
+    padding: var(--spacing-xs) var(--spacing-base);
+    font-size: var(--font-size-sm);
+    white-space: nowrap;
   }
 }
