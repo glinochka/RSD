@@ -49,6 +49,9 @@ export const API_ROUTES = {
   ADMIN_USERS: '/api/admin/users',
   ADMIN_AGENTS: '/api/admin/agents',
   ADMIN_PLANS: '/api/admin/plans',
+  ADMIN_BAN_USER: (userId) => `/api/admin/users/${userId}/ban`,
+  ADMIN_UNBAN_USER: (userId) => `/api/admin/users/${userId}/unban`,
+  ADMIN_GIFT_SUBSCRIPTION: (userId) => `/api/admin/users/${userId}/gift-subscription`,
 };
 
 export const AGENT_ROLES = {

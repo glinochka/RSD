@@ -5,7 +5,7 @@
     "knowledge_base_chunk_limit": 100
   },
   "Advanced": {
-    "price_rub_month": 999,
+    "price_rub_month": 100,
     "max_active_agents": 5,
     "knowledge_base_chunk_limit": 500
   },

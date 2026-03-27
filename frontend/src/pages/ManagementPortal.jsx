@@ -51,6 +51,8 @@ const ManagementPortal = () => {
   const [isLoadingPlans, setIsLoadingPlans] = useState(false);
   const [isSavingPlans, setIsSavingPlans] = useState(false);
   const [plansDraft, setPlansDraft] = useState([]);
+  const [actionInProgress, setActionInProgress] = useState(null);
+  const [giftModal, setGiftModal] = useState({ open: false, user: null, planCode: 'Advanced' });
 
   const statsCards = useMemo(() => {
     if (!stats) return [];
@@ -251,6 +253,68 @@ const ManagementPortal = () => {
     }
   };
 
+  const refreshUsers = async () => {
+    try {
+      setIsLoadingTable(true);
+      setError('');
+      const data = await adminService.getUsers(adminToken, {
+        page: usersState.page,
+        pageSize: usersState.pageSize,
+        search: usersState.search,
+      });
+      setUsersState((prev) => ({
+        ...prev,
+        items: data.items ?? [],
+        total: data.pagination?.total ?? 0,
+        totalPages: data.pagination?.total_pages ?? 1,
+      }));
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setIsLoadingTable(false);
+    }
+  };
+
+  const handleBanUser = async (user) => {
+    const action = user.is_banned ? 'unban' : 'ban';
+    const confirmMsg = user.is_banned
+      ? `Разблокировать пользователя "${user.name}"?`
+      : `Заблокировать пользователя "${user.name}"? Все агенты будут удалены.`;
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      setActionInProgress(user.id);
+      setError('');
+      if (action === 'ban') {
+        await adminService.banUser(adminToken, user.id);
+      } else {
+        await adminService.unbanUser(adminToken, user.id);
+      }
+      await refreshUsers();
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setActionInProgress(null);
+    }
+  };
+
+  const handleGiftSubscription = async () => {
+    const { user, planCode } = giftModal;
+    if (!user || !planCode) return;
+
+    try {
+      setActionInProgress(user.id);
+      setError('');
+      await adminService.giftSubscription(adminToken, user.id, planCode);
+      setGiftModal({ open: false, user: null, planCode: 'Advanced' });
+      await refreshUsers();
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setActionInProgress(null);
+    }
+  };
+
   const renderOverview = () => (
     <>
       <div className="management-content-head">
@@ -328,21 +392,50 @@ const ManagementPortal = () => {
                   <th>Имя</th>
                   <th>Telegram ID</th>
                   <th>Тариф</th>
-                  <th>Регистрация</th>
+                  <th>Подписка до</th>
+                  <th>Статус</th>
+                  <th>Действия</th>
                 </tr>
               </thead>
               <tbody>
                 {usersState.items.map((user) => (
-                  <tr key={user.id}>
+                  <tr key={user.id} className={user.is_banned ? 'management-row-banned' : ''}>
                     <td>{user.id}</td>
                     <td>{user.name}</td>
                     <td>{user.telegram_id ?? '-'}</td>
                     <td>{user.subscription_type}</td>
-                    <td>{user.registered ? new Date(user.registered).toLocaleString() : '-'}</td>
+                    <td>
+                      {user.subscription_end_date
+                        ? new Date(user.subscription_end_date).toLocaleDateString()
+                        : '-'}
+                    </td>
+                    <td>
+                      {user.is_banned
+                        ? <span className="management-badge management-badge-banned">Заблокирован</span>
+                        : <span className="management-badge management-badge-active">Активен</span>}
+                    </td>
+                    <td className="management-actions-cell">
+                      <button
+                        type="button"
+                        className={`btn btn-sm ${user.is_banned ? 'btn-outline' : 'btn-danger'}`}
+                        disabled={actionInProgress === user.id}
+                        onClick={() => handleBanUser(user)}
+                      >
+                        {actionInProgress === user.id ? '...' : user.is_banned ? 'Разбан' : 'Бан'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-outline"
+                        disabled={actionInProgress === user.id || user.is_banned}
+                        onClick={() => setGiftModal({ open: true, user, planCode: 'Advanced' })}
+                      >
+                        Подарить
+                      </button>
+                    </td>
                   </tr>
                 ))}
                 {usersState.items.length === 0 && (
-                  <tr><td colSpan={5}>Ничего не найдено</td></tr>
+                  <tr><td colSpan={7}>Ничего не найдено</td></tr>
                 )}
               </tbody>
             </table>
@@ -367,6 +460,43 @@ const ManagementPortal = () => {
             </button>
           </div>
         </>
+      )}
+
+      {giftModal.open && (
+        <div className="management-modal-overlay" onClick={() => setGiftModal({ open: false, user: null, planCode: 'Advanced' })}>
+          <div className="management-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Подарить подписку</h3>
+            <p>Пользователь: <strong>{giftModal.user?.name}</strong> (ID: {giftModal.user?.id})</p>
+            <div className="management-form-row">
+              <label>Тариф</label>
+              <select
+                value={giftModal.planCode}
+                onChange={(e) => setGiftModal((prev) => ({ ...prev, planCode: e.target.value }))}
+              >
+                <option value="Advanced">Advanced</option>
+                <option value="Pro">Pro</option>
+              </select>
+            </div>
+            <p className="management-modal-hint">Подписка будет продлена на 30 дней от текущей даты окончания (или от сегодня).</p>
+            <div className="management-modal-buttons">
+              <button
+                type="button"
+                className="btn btn-black"
+                disabled={actionInProgress === giftModal.user?.id}
+                onClick={handleGiftSubscription}
+              >
+                {actionInProgress === giftModal.user?.id ? 'Оформляю...' : 'Подарить'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={() => setGiftModal({ open: false, user: null, planCode: 'Advanced' })}
+              >
+                Отмена
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );

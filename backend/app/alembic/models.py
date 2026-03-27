@@ -24,6 +24,8 @@ class User(Base):
     # telegram_id is optional to allow web-only registration without Telegram
     telegram_id: Mapped[int | None] = mapped_column(BigInteger, unique=True, index=True, nullable=True)
     
+    is_banned: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+
     registered: Mapped[date] = mapped_column(default=datetime.now(timezone.utc))
 
     agents: Mapped[list['Agent']] = relationship(back_populates='user', cascade="all, delete-orphan")

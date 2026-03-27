@@ -22,3 +22,9 @@ class SubscriptionPlanUpdate(BaseModel):
 
 class AdminSubscriptionPlansUpdateRequest(BaseModel):
     plans: list[SubscriptionPlanUpdate] = Field(..., min_length=1)
+
+
+class AdminGiftSubscriptionRequest(BaseModel):
+    plan_code: Literal["Free", "Advanced", "Pro"] = Field(
+        ..., description="Subscription plan to gift"
+    )

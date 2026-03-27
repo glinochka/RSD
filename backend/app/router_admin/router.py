@@ -1,18 +1,32 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from logging import getLogger
 from secrets import compare_digest
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from sqlalchemy import String, cast, desc, func, or_, select
 
-from .schemas import AdminLoginRequest, AdminSubscriptionPlansUpdateRequest
+from .schemas import (
+    AdminGiftSubscriptionRequest,
+    AdminLoginRequest,
+    AdminSubscriptionPlansUpdateRequest,
+)
 from ..alembic.database import async_session_maker
 from ..alembic.models import Agent, AgentDocument, PaymentTransaction, User
 from ..config import get_auth_data, settings
-from ..subscription_plans import get_all_subscription_plans, update_subscription_plan_overrides
+from ..qdrant.search_service import delete_agent_vectors
+from ..router_agents.dao import AgentDAO
+from ..router_users.dao import UserDAO
+from ..subscription_plans import (
+    get_all_subscription_plans,
+    get_subscription_plan,
+    update_subscription_plan_overrides,
+)
 from ..utils.JWT import create_access_token
+
+logger = getLogger(__name__)
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 http_bearer = HTTPBearer(auto_error=False)
@@ -172,6 +186,10 @@ async def admin_users(
             "name": user.name,
             "telegram_id": user.telegram_id,
             "subscription_type": user.subscription_type,
+            "subscription_end_date": (
+                user.subscription_end_date.isoformat() if user.subscription_end_date else None
+            ),
+            "is_banned": user.is_banned,
             "registered": user.registered.isoformat() if user.registered else None,
         }
         for user in users
@@ -273,5 +291,98 @@ async def admin_update_plans(
     update_subscription_plan_overrides(plan_updates=plan_updates)
     return JSONResponse(
         content={"plans": get_all_subscription_plans()},
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@router.post("/users/{user_id}/ban")
+async def admin_ban_user(
+    user_id: int = Path(...),
+    _admin=Depends(get_current_admin),
+):
+    async with async_session_maker() as session:
+        user_dao = UserDAO(session)
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            user = await user_dao.find_one_by_filter(load_relations=True, id=user_id)
+            if not user:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+            if user.is_banned:
+                return JSONResponse(content={"detail": "Already banned"}, status_code=status.HTTP_200_OK)
+
+            for agent in list(user.agents or []):
+                if agent.bot_id:
+                    await delete_agent_vectors(agent.bot_id)
+                await agent_dao.delete(agent)
+
+            await user_dao.update(user, {"is_banned": True})
+
+    logger.info("User %s (id=%d) banned by admin", user.name, user_id)
+    return JSONResponse(content={"detail": "User banned"}, status_code=status.HTTP_200_OK)
+
+
+@router.post("/users/{user_id}/unban")
+async def admin_unban_user(
+    user_id: int = Path(...),
+    _admin=Depends(get_current_admin),
+):
+    async with async_session_maker() as session:
+        user_dao = UserDAO(session)
+        async with session.begin():
+            user = await user_dao.find_one_by_filter(id=user_id)
+            if not user:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+            if not user.is_banned:
+                return JSONResponse(content={"detail": "User is not banned"}, status_code=status.HTTP_200_OK)
+            await user_dao.update(user, {"is_banned": False})
+
+    logger.info("User %s (id=%d) unbanned by admin", user.name, user_id)
+    return JSONResponse(content={"detail": "User unbanned"}, status_code=status.HTTP_200_OK)
+
+
+@router.post("/users/{user_id}/gift-subscription")
+async def admin_gift_subscription(
+    payload: AdminGiftSubscriptionRequest,
+    user_id: int = Path(...),
+    _admin=Depends(get_current_admin),
+):
+    plan = get_subscription_plan(payload.plan_code)
+    if not plan:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown plan code")
+
+    now_utc = datetime.now(timezone.utc)
+
+    async with async_session_maker() as session:
+        user_dao = UserDAO(session)
+        async with session.begin():
+            user = await user_dao.find_one_by_filter(id=user_id)
+            if not user:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+            base_date = now_utc
+            if user.subscription_end_date:
+                current_end = user.subscription_end_date
+                if current_end.tzinfo is None:
+                    current_end = current_end.replace(tzinfo=timezone.utc)
+                else:
+                    current_end = current_end.astimezone(timezone.utc)
+                if current_end > now_utc:
+                    base_date = current_end
+
+            new_end = (base_date + timedelta(days=30)).replace(tzinfo=None)
+            await user_dao.update(user, {
+                "subscription_type": payload.plan_code,
+                "subscription_end_date": new_end,
+            })
+
+    logger.info(
+        "Admin gifted %s subscription to user id=%d until %s",
+        payload.plan_code, user_id, new_end.isoformat(),
+    )
+    return JSONResponse(
+        content={
+            "subscription_type": payload.plan_code,
+            "subscription_end_date": new_end.isoformat(),
+        },
         status_code=status.HTTP_200_OK,
     )

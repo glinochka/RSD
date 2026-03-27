@@ -139,6 +139,8 @@ async def create_agent_by_tg_id(
             user = await user_dao.find_one_by_filter(telegram_id=new_agent.tg_id)
             if not user:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+            if user.is_banned:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
 
             duplicate_agent = await agent_dao.find_one_by_filter(bot_id=new_agent.bot_id)
             if duplicate_agent:
@@ -156,6 +158,9 @@ async def create_agent_by_tg_id(
 
 @router.post("/by_token")
 async def create_agent_by_token(new_agent: NewAgent_byToken, current_user=Depends(get_current_user_required)):
+    if current_user.is_banned:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
+
     token_value = new_agent.bot_token.strip()
 
     async def telegram_get_me(bot_token: str) -> dict:

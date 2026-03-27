@@ -74,6 +74,33 @@ const adminService = {
     );
     return response.data;
   },
+
+  async banUser(token, userId) {
+    const response = await adminClient.post(
+      API_ROUTES.ADMIN_BAN_USER(userId),
+      {},
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data;
+  },
+
+  async unbanUser(token, userId) {
+    const response = await adminClient.post(
+      API_ROUTES.ADMIN_UNBAN_USER(userId),
+      {},
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data;
+  },
+
+  async giftSubscription(token, userId, planCode) {
+    const response = await adminClient.post(
+      API_ROUTES.ADMIN_GIFT_SUBSCRIPTION(userId),
+      { plan_code: planCode },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data;
+  },
 };
 
 export default adminService;
