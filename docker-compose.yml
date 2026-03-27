@@ -60,15 +60,17 @@ services:
 
 
 
-    # Frontend: built with Vite, served by Nginx. API URL is set at build time (VITE_API_BASE_URL).
+    # Frontend: built with Vite, served by Nginx.
+    # In production, set VITE_API_BASE_URL=/api so browser traffic stays same-origin and
+    # Nginx inside frontend container proxies /api and /webhook.
     frontend:
         restart: always
         build:
             context: ./frontend
             dockerfile: Dockerfile
             args:
-                # URL the browser uses for API (set in .env for production, e.g. https://api.example.com)
-                VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+                # URL the browser uses for API. For production, prefer /api (same-origin).
+                VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
         container_name: rsd_frontend
         ports:
             # Port 3000 to align with backend/app/origins.py (CORS allows http://localhost:3000)
@@ -85,7 +87,6 @@ services:
         depends_on:
             - backend
         environment:
-            NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
             ENCRYPTION_KEY: ${ENCRYPTION_KEY}
             DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
             DB_NAME: ${DB_NAME}
@@ -113,21 +114,6 @@ services:
             - "6334:6334"
         volumes:
             - qdrant_data:/qdrant/storage
-        networks:
-            - rsd_network
-
-    ngrok:
-        restart: always
-        container_name: rsd_ngrok
-        image: ngrok/ngrok:latest
-        command:
-            - "http"
-            - "${NGROK_TARGET:-bot:8002}"
-        environment:
-            NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
-        
-        depends_on:
-            - bot
         networks:
             - rsd_network
 
