@@ -70,8 +70,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
+  width: 36px;
+  height: 36px;
   padding: 0;
   border-radius: var(--radius-full);
   border: 1px solid var(--color-border);
@@ -100,11 +100,18 @@
 
 .profile-menu-trigger-icon {
   flex-shrink: 0;
+  width: 18px;
+  height: 18px;
 }
 
 .btn-auth {
-  padding: var(--spacing-sm) var(--spacing-lg);
-  font-size: var(--font-size-base);
+  padding: 0.3125rem 0.6875rem;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.25;
+  min-height: 36px;
+  border-radius: var(--radius-full);
+  box-sizing: border-box;
 }
 
 /* Profile drawer backdrop + panel */
@@ -260,11 +267,17 @@
   display: none;
   flex-direction: column;
   flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
   gap: var(--spacing-xs);
+  min-width: 36px;
+  min-height: 36px;
+  margin: 0;
   background: none;
   border: none;
   cursor: pointer;
   padding: 0;
+  box-sizing: border-box;
 }
 
 .menu-toggle span {
@@ -323,7 +336,7 @@
   }
 
   .navbar-actions {
-    gap: var(--spacing-base);
+    gap: var(--spacing-sm);
   }
 
   .profile-drawer {
@@ -343,12 +356,6 @@
   }
 
   .navbar-actions {
-    gap: var(--spacing-xs);
-  }
-
-  .btn-auth {
-    padding: var(--spacing-xs) var(--spacing-base);
-    font-size: var(--font-size-sm);
-    white-space: nowrap;
+    gap: var(--spacing-base);
   }
 }
