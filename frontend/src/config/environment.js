@@ -11,7 +11,13 @@ const isDevelopment = import.meta.env.MODE === 'development';
 const isProduction = import.meta.env.MODE === 'production';
 
 // Backend runs on port 8000 (server.py). Override with VITE_API_BASE_URL for LAN/production.
+// API_ROUTES in constants.js already start with `/api/...`.
+// For same-origin nginx proxy use VITE_API_BASE_URL= (empty): requests go to /api/... on current host.
+// Do not use `|| defaultBaseUrl`: empty string must stay empty (otherwise you get double /api with base `/api`).
 const defaultBaseUrl = 'http://localhost:8000';
+const viteApiBase = import.meta.env.VITE_API_BASE_URL;
+const resolvedApiBaseUrl =
+  viteApiBase === undefined || viteApiBase === null ? defaultBaseUrl : viteApiBase;
 
 export const ENV_CONFIG = {
   isDevelopment,
@@ -19,7 +25,7 @@ export const ENV_CONFIG = {
 
   // API Configuration — backend address used by Axios (apiClient.js)
   API: {
-    BASE_URL: import.meta.env.VITE_API_BASE_URL || defaultBaseUrl,
+    BASE_URL: resolvedApiBaseUrl,
     TIMEOUT: parseInt(import.meta.env.VITE_API_TIMEOUT || '30000', 10),
   },
 

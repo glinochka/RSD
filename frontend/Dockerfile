@@ -3,8 +3,8 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Build-time API URL (browser will call this; default for Docker Compose)
-ARG VITE_API_BASE_URL=http://localhost:8000
+# Build-time API URL (browser). Empty = same-origin (paths in app already start with /api).
+ARG VITE_API_BASE_URL=
 ARG VITE_API_TIMEOUT=30000
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
 ENV VITE_API_TIMEOUT=${VITE_API_TIMEOUT}

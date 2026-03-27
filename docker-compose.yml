@@ -61,16 +61,15 @@ services:
 
 
     # Frontend: built with Vite, served by Nginx.
-    # In production, set VITE_API_BASE_URL=/api so browser traffic stays same-origin and
-    # Nginx inside frontend container proxies /api and /webhook.
+    # Leave VITE_API_BASE_URL unset or empty: API paths already include /api (see frontend constants).
+    # Setting VITE_API_BASE_URL=/api causes /api/api/... and 404 on the backend.
     frontend:
         restart: always
         build:
             context: ./frontend
             dockerfile: Dockerfile
             args:
-                # URL the browser uses for API. For production, prefer /api (same-origin).
-                VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
+                VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
         container_name: rsd_frontend
         ports:
             # Port 3000 to align with backend/app/origins.py (CORS allows http://localhost:3000)
