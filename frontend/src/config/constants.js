@@ -28,14 +28,30 @@ export const API_ROUTES = {
   USERS_PROFILE: '/api/users/profile',
 
   // Agents
-  AGENTS_LIST: '/agents',
-  AGENTS_CREATE: '/agents',
-  AGENTS_UPDATE: (id) => `/agents/${id}`,
-  AGENTS_DELETE: (id) => `/agents/${id}`,
-  AGENTS_DETAIL: (id) => `/agents/${id}`,
+  AGENTS_LIST: '/api/agents/allBy_tgID',
+  AGENTS_CREATE: '/api/agents/by_token',
+  AGENTS_UPDATE: '/api/agents/by_botID',
+  AGENTS_DELETE: '/api/agents',
+  AGENTS_DETAIL: '/api/agents',
+  AGENTS_TOGGLE: '/api/agents/toggle_status',
+  AGENTS_AI_IMPROVE_PROMPT: '/api/agents/ai/improve_prompt',
+  AGENTS_AI_GENERATE_WELCOME: '/api/agents/ai/generate_welcome',
+  DOCUMENTS_CREATE: '/api/documents',
+  DOCUMENTS_LIST_BY_BOT: '/api/documents/allBy_botID',
+  DOCUMENTS_DELETE: (docId) => `/api/documents/${docId}`,
 
   // Pricing
   PRICING_LIST: '/pricing',
+
+  // Admin portal
+  ADMIN_LOGIN: '/api/admin/login',
+  ADMIN_STATS: '/api/admin/stats',
+  ADMIN_USERS: '/api/admin/users',
+  ADMIN_AGENTS: '/api/admin/agents',
+  ADMIN_PLANS: '/api/admin/plans',
+  ADMIN_BAN_USER: (userId) => `/api/admin/users/${userId}/ban`,
+  ADMIN_UNBAN_USER: (userId) => `/api/admin/users/${userId}/unban`,
+  ADMIN_GIFT_SUBSCRIPTION: (userId) => `/api/admin/users/${userId}/gift-subscription`,
 };
 
 export const AGENT_ROLES = {
@@ -50,47 +66,8 @@ export const AGENT_TASKS = {
   CONTACTS: 'contacts',
 };
 
-export const PRICING_PLANS = [
-  {
-    id: 'basic',
-    name: 'Базовая',
-    price: 2990,
-    currency: 'р',
-    period: 'месяц',
-    per: 'за агента',
-    features: [
-      '5 гб базы знаний',
-      'tg-bot',
-      'базовая аналитика',
-    ],
-  },
-  {
-    id: 'advanced',
-    name: 'Продвинутая',
-    price: 7990,
-    currency: 'р',
-    period: 'месяц',
-    per: 'за агента',
-    features: [
-      '15 гб базы знаний',
-      'tg-bot',
-      'API',
-    ],
-  },
-  {
-    id: 'pro',
-    name: 'Про',
-    price: 14990,
-    currency: 'р',
-    period: 'месяц',
-    per: 'за агента',
-    features: [
-      '50 гб базы знаний',
-      'tg-bot',
-      'API',
-    ],
-  },
-];
+// Pricing plans are served by backend (/api/payments/plans) to keep bot + web consistent.
+export const PRICING_PLANS = [];
 
 export const NAVIGATION_ROUTES = {
   HOME: '/',
@@ -99,6 +76,7 @@ export const NAVIGATION_ROUTES = {
   CREATE_AGENT: '/create-agent',
   EDIT_AGENT: (id) => `/agents/${id}/edit`,
   PRICING: '/pricing',
+  MANAGEMENT_PORTAL: '/management-portal',
 };
 
 // User-facing messages; backend detail (FastAPI) is preferred when present (see errorUtils).

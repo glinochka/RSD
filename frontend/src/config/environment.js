@@ -39,6 +39,7 @@ export const ENV_CONFIG = {
   STORAGE_KEYS: {
     TOKEN: 'token',
     USER: 'user',
+    ADMIN_TOKEN: 'admin_token',
     THEME: 'theme',
   },
 };

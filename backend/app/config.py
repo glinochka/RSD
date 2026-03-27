@@ -14,6 +14,12 @@ class Settings(BaseSettings):
 
     QDRANT_URL: str
     DB_HOST: str
+    INTERNAL_API_KEY: str = ""
+    # Public base URL (e.g. ngrok) used by Telegram webhooks.
+    # Bot container uses this as well to reach `/webhook/{bot_id}`.
+    BASE_URL: str | None = None
+    ADMIN_WEB_LOGIN: str = ""
+    ADMIN_WEB_PASSWORD: str = ""
 
     model_config = SettingsConfigDict(
         env_file= Path(__file__).parent.parent.parent / '.env',  

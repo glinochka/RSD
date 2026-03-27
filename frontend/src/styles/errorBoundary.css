@@ -15,7 +15,7 @@
   padding: 3rem 2rem;
   max-width: 600px;
   text-align: center;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 10px 40px rgba(47, 47, 47, 0.1);
 }
 
 .error-container h1 {

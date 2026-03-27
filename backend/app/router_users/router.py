@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPBearer
 
 from logging import getLogger
-
+from datetime import datetime
 from .schemas import *
 from .dao import UserDAO
 
@@ -12,6 +12,7 @@ from ..alembic.database import async_session_maker
 from ..utils.security import get_password_hash, verify_password
 from ..utils.JWT import create_access_token
 from ..utils.convert import convert_to_dict
+from ..utils.internal_auth import verify_internal_key
 
 logger = getLogger(__name__)
 
@@ -21,7 +22,7 @@ http_bearer = HTTPBearer()
 
 
 @router.post("")
-async def create_user(user_by_tg: User_from_tg):
+async def create_user(user_by_tg: User_from_tg, _internal=Depends(verify_internal_key)):
     async with async_session_maker() as session:
         user_dao = UserDAO(session)
 
@@ -39,11 +40,11 @@ async def create_user(user_by_tg: User_from_tg):
         
     logger.info(f'{user_by_tg.name} был добавлен')
     
-    return JSONResponse(status_code=status.HTTP_201_CREATED)
+    return Response(status_code=status.HTTP_201_CREATED)
 
 
 @router.get("/by_agentID")
-async def user_by_agentID(user_by_agent: User_by_agent_or_tgID = Depends()):
+async def user_by_agentID(user_by_agent: User_by_agent_or_tgID = Depends(), _internal=Depends(verify_internal_key)):
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
         async with session.begin():
@@ -65,6 +66,8 @@ async def user_by_agentID(user_by_agent: User_by_agent_or_tgID = Depends()):
             user_dict = convert_to_dict(user)
             # для json сериализации
             user_dict.pop('registered', None)
+            sub_time: datetime | None = user_dict.get('subscription_end_date')
+            user_dict['subscription_end_date'] = sub_time.isoformat() if sub_time else None
             
             user_dict.pop('password', None)
 
@@ -75,7 +78,7 @@ async def user_by_agentID(user_by_agent: User_by_agent_or_tgID = Depends()):
         )
 
 @router.get("/by_tgID")
-async def user_by_tgID(user_by_tg: User_by_agent_or_tgID = Depends()):
+async def user_by_tgID(user_by_tg: User_by_agent_or_tgID = Depends(), _internal=Depends(verify_internal_key)):
     async with async_session_maker() as session:
         user_dao = UserDAO(session)
         async with session.begin():
@@ -90,8 +93,11 @@ async def user_by_tgID(user_by_tg: User_by_agent_or_tgID = Depends()):
             user_dict = convert_to_dict(user)
             # для json сериализации
             user_dict.pop('registered', None)
+            sub_time: datetime | None = user_dict.get('subscription_end_date')
+            user_dict['subscription_end_date'] = sub_time.isoformat() if sub_time else None
 
             user_dict.pop('password', None)
+
 
     logger.info(f'запрос с {user_by_tg.id} был обработан')
     return JSONResponse(
@@ -99,7 +105,7 @@ async def user_by_tgID(user_by_tg: User_by_agent_or_tgID = Depends()):
         status_code=status.HTTP_200_OK
         )
 @router.patch("/by_tgID")
-async def UpdateUser_by_tgID(user_by_tg: Update_userSubscription):
+async def UpdateUser_by_tgID(user_by_tg: Update_userSubscription, _internal=Depends(verify_internal_key)):
     async with async_session_maker() as session:
         user_dao = UserDAO(session)
         async with session.begin():
@@ -116,8 +122,8 @@ async def UpdateUser_by_tgID(user_by_tg: Update_userSubscription):
 
             await user_dao.update(user, update_dict)
 
-    logger.info(f'запрос с {user_by_tg.id} был обработан')
-    return JSONResponse(
+    logger.info(f'запрос с {user_by_tg.telegram_id} был обработан')
+    return Response(
         status_code=status.HTTP_204_NO_CONTENT
         )
 

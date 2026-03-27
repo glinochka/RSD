@@ -2,6 +2,7 @@ import os
 import asyncio
 from fastapi import status
 from aiogram import Router, F, Bot, types
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 
@@ -18,11 +19,11 @@ from core.crypto import decrypt_token
 from services.ai_service import generate_welcome_with_ai
 from services.ai_service import improve_prompt_with_ai
 
-from datetime import datetime, timedelta, timezone
-
 from keyboards.master_kb import get_main_menu, get_tariffs_keyboard
 
 master_router = Router()
+
+PAYLOAD_PREFIX = "subscription"
 
 # --- Вспомогательная функция для безопасности Markdown ---
 def escape_md(text: str) -> str:
@@ -30,6 +31,147 @@ def escape_md(text: str) -> str:
     if not text:
         return ""
     return text.replace("_", "\\_")
+
+
+def build_start_menu_text(first_name: str | None = None) -> str:
+    if first_name:
+        return (
+            f"Привет, {first_name}! Это конструктор AI-агентов.\n\n"
+            "Здесь ты можешь создать своего бота с кастомными промптами и базой знаний."
+        )
+    return (
+        "Привет! Это конструктор AI-агентов.\n\n"
+        "Здесь ты можешь создать своего бота с кастомными промптами и базой знаний."
+    )
+
+async def _get_plans_from_backend() -> list[dict]:
+    """
+    Single source of truth for plans is the backend (/api/payments/plans).
+    Returns list of plan dicts as-is from backend.
+    """
+    data = await APIread.subscriptionPlans()
+    response_status = get_response_status(data)
+    if response_status != status.HTTP_200_OK:
+        return []
+    plans = data.get("plans") if isinstance(data, dict) else None
+    return plans or []
+
+
+def _format_price_rub_month(price_rub_month: int) -> str:
+    if not price_rub_month:
+        return "0\u20bd/\u043c\u0435\u0441"
+    # "1 990" grouping for readability (Russian formatting style).
+    return f"{price_rub_month:,}".replace(",", " ") + "\u20bd/\u043c\u0435\u0441"
+
+
+def _format_kb_limit(limit) -> str:
+    if limit is None:
+        return "\u0411\u0435\u0437\u043b\u0438\u043c\u0438\u0442"
+    return f"{limit} \u0447\u0430\u043d\u043a\u043e\u0432"
+
+
+def _normalize_surrogates(text: str) -> str:
+    """
+    Convert valid UTF-16 surrogate pairs into proper Unicode symbols
+    and drop broken surrogate code points.
+    """
+    if not text:
+        return text
+    return text.encode("utf-16", "surrogatepass").decode("utf-16", "ignore")
+
+
+def _build_tariffs_text(plans: list[dict], current_plan_code: str) -> str:
+    # Keep the numbering stable: Free -> Advanced -> Pro.
+    order = {"Free": 1, "Advanced": 2, "Pro": 3}
+    plans_sorted = sorted(plans, key=lambda p: order.get(p.get("code"), 999))
+
+    lines: list[str] = [
+        "\U0001F48E *\u0423\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u0438\u0435 \u043f\u043e\u0434\u043f\u0438\u0441\u043a\u043e\u0439*",
+        "",
+        f"\u0412\u0430\u0448 \u0442\u0435\u043a\u0443\u0449\u0438\u0439 \u0442\u0430\u0440\u0438\u0444: *{current_plan_code}*",
+        "",
+        "\U0001F680 *\u0414\u043e\u0441\u0442\u0443\u043f\u043d\u044b\u0435 \u043f\u043b\u0430\u043d\u044b:*",
+        "",
+    ]
+
+    emoji_by_code = {"Free": "1\ufe0f\u20e3", "Advanced": "2\ufe0f\u20e3", "Pro": "3\ufe0f\u20e3"}
+
+    for plan in plans_sorted:
+        code = plan.get("code")
+        title = plan.get("title") or code
+        max_agents = plan.get("max_active_agents")
+        kb_limit = plan.get("knowledge_base_chunk_limit")
+        price = plan.get("price_rub_month", 0)
+
+        if not code:
+            continue
+
+        lines.extend(
+            [
+                f"{emoji_by_code.get(code, '')} *{title}*".strip(),
+                f"\u2014 \u0414\u043e {max_agents} \u0430\u043a\u0442\u0438\u0432\u043d\u044b\u0445 \u0430\u0433\u0435\u043d\u0442\u043e\u0432"
+                if code != "Free"
+                else f"\u2014 {max_agents} \u0430\u043a\u0442\u0438\u0432\u043d\u044b\u0439 \u0430\u0433\u0435\u043d\u0442",
+                f"\u2014 \u041b\u0438\u043c\u0438\u0442 \u0431\u0430\u0437\u044b \u0437\u043d\u0430\u043d\u0438\u0439: {_format_kb_limit(kb_limit)}",
+                f"\u2014 \u0426\u0435\u043d\u0430: {_format_price_rub_month(int(price or 0))}",
+                "",
+            ]
+        )
+
+    return "\n".join(lines).strip()
+
+
+def _paid_plans_map(plans: list[dict]) -> dict[str, dict]:
+    return {p["code"]: p for p in plans if p.get("is_paid") and p.get("code")}
+
+
+async def safe_edit_callback_message(
+    callback: types.CallbackQuery,
+    text: str,
+    reply_markup: types.InlineKeyboardMarkup | None = None,
+    parse_mode: str | None = None,
+) -> None:
+    if not callback.message:
+        await callback.answer("Не удалось обновить сообщение", show_alert=True)
+        return
+
+    safe_text = _normalize_surrogates(text)
+
+    try:
+        await callback.message.edit_text(
+            text=safe_text,
+            reply_markup=reply_markup,
+            parse_mode=parse_mode,
+        )
+    except TelegramBadRequest as e:
+        error_text = str(e).lower()
+        # Частые кейсы: старое сообщение уже удалено/не редактируемо.
+        if "message is not modified" in error_text:
+            return
+        if "message to edit not found" in error_text or "message can't be edited" in error_text:
+            await callback.message.answer(
+                text=safe_text,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode,
+            )
+            return
+        raise
+
+
+async def safe_callback_answer(
+    callback: types.CallbackQuery,
+    text: str | None = None,
+    show_alert: bool = False,
+) -> None:
+    """
+    Safe wrapper for callback.answer.
+    It avoids crashing when a synthetic CallbackQuery is not mounted to a bot instance.
+    """
+    try:
+        await callback.answer(text=text, show_alert=show_alert)
+    except RuntimeError:
+        if text and callback.message:
+            await callback.message.answer(text)
 
 # --- ГЛАВНОЕ МЕНЮ ---
 
@@ -52,15 +194,18 @@ async def cmd_start(message: types.Message, state: FSMContext):
         return 
 
     await message.answer(
-        f"Привет, {message.from_user.first_name}! Это конструктор AI-агентов.\n\n"
-        "Здесь ты можешь создать своего бота с кастомными промптами и базой знаний.",
+        build_start_menu_text(message.from_user.first_name),
         reply_markup=get_main_menu()
     )
 
 @master_router.callback_query(F.data == "start_menu")
 async def back_to_menu(callback: types.CallbackQuery):
-    await callback.message.delete()
-    await cmd_start(callback.message)
+    await safe_edit_callback_message(
+        callback,
+        build_start_menu_text(callback.from_user.first_name),
+        reply_markup=get_main_menu(),
+    )
+    await callback.answer()
 
 
 @master_router.callback_query(F.data == "profile")
@@ -82,7 +227,7 @@ async def show_profile(callback: types.CallbackQuery):
         return 
     
     if all_user_agents:
-        agents_names = [agent['agent_name'] for agent in all_user_agents]
+        agents_names = [agent.get('bot_username') for agent in all_user_agents]
     else:
         agents_names = []
 
@@ -146,15 +291,11 @@ async def start_add_agent(callback: types.CallbackQuery, state: FSMContext):
         return 
 
     agents_count = len(all_user_agents)
-    #  Определяем лимиты согласно ТЗ
-    # Базовый (Free) — 1, Продвинутый — 5, Pro — 20
-    limits = {
-        "Free": 1,
-        "Advanced": 5,
-        "Pro": 20
-    }
-    
-    current_limit = limits.get(user_json['subscription_type'], 1)
+    plans = await _get_plans_from_backend()
+    plans_by_code = {p.get("code"): p for p in plans if p.get("code")}
+    current_plan_code = user_json.get("subscription_type") or "Free"
+    current_plan = plans_by_code.get(current_plan_code) or plans_by_code.get("Free") or {}
+    current_limit = int(current_plan.get("max_active_agents") or 1)
 
     #  Проверяем превышение лимита
     if agents_count >= current_limit:
@@ -163,7 +304,8 @@ async def start_add_agent(callback: types.CallbackQuery, state: FSMContext):
             [types.InlineKeyboardButton(text="⬅️ В меню", callback_data="back_to_start")]
         ])
         
-        await callback.message.edit_text(
+        await safe_edit_callback_message(
+            callback,
             f"🚫 *Лимит достигнут*\n\n"
             f"На вашем тарифе (*{user_json['subscription_type']}*) можно создать не более {current_limit} агентов.\n"
             f"У вас уже создано: {agents_count}.\n\n"
@@ -176,7 +318,8 @@ async def start_add_agent(callback: types.CallbackQuery, state: FSMContext):
 
     #  Если лимит не превышен, запускаем стандартный процесс создания
     await state.set_state(CreateAgentSG.waiting_token)
-    await callback.message.answer(
+    await safe_edit_callback_message(
+        callback,
         "🤖 *Создание нового агента*\n\n"
         "Для начала работы мне нужен API токен вашего бота.\n"
         "Получить его можно у @BotFather.",
@@ -187,6 +330,7 @@ async def start_add_agent(callback: types.CallbackQuery, state: FSMContext):
 @master_router.message(CreateAgentSG.waiting_token)
 async def process_token(message: types.Message, state: FSMContext):
     token = message.text.strip()
+    temp_bot = None
     try:
         temp_bot = Bot(token=token)
         bot_info = await temp_bot.get_me()
@@ -197,7 +341,6 @@ async def process_token(message: types.Message, state: FSMContext):
         response_status = get_response_status(existing_agent_json)
 
         if response_status == status.HTTP_200_OK:
-            await temp_bot.session.close()
             return await message.answer(
                 f"❌ Этот бот (ID: {bot_info.id}) уже зарегистрирован в системе под юзернеймом @{escape_md(bot_info.username)}.\n"
                 "Один и тот же бот не может быть добавлен дважды."
@@ -223,15 +366,16 @@ async def process_token(message: types.Message, state: FSMContext):
             url=f"{os.getenv('BASE_URL')}/webhook/{bot_info.id}",
             drop_pending_updates=True
         )
-        await temp_bot.session.close()
 
         await state.update_data(agent_id = bot_info.id)
         await message.answer(f"✅ Бот @{escape_md(bot_info.username)} успешно подключен!\nТеперь напиши системный промпт:")
         await state.set_state(CreateAgentSG.waiting_prompt)
 
     except Exception as e:
-        if 'temp_bot' in locals(): await temp_bot.session.close()
         await message.answer(f"❌ Ошибка: {e}")
+    finally:
+        if temp_bot is not None:
+            await temp_bot.session.close()
 
 @master_router.message(CreateAgentSG.waiting_prompt)
 async def process_prompt(message: types.Message, state: FSMContext):
@@ -319,7 +463,11 @@ async def show_my_agents(callback: types.CallbackQuery):
             [types.InlineKeyboardButton(text="➕ Создать агента", callback_data="add_agent")],
             [types.InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="start_menu")]
         ])
-        await callback.message.edit_text(" У вас пока нет созданных ботов.\nСамое время создать первого!", reply_markup=kb)
+        await safe_edit_callback_message(
+            callback,
+            "У вас пока нет созданных ботов.\nСамое время создать первого!",
+            reply_markup=kb,
+        )
         return
 
     # Если агенты есть, собираем клавиатуру через Builder
@@ -337,7 +485,8 @@ async def show_my_agents(callback: types.CallbackQuery):
     # Добавляем кнопку возврата в конце
     builder.row(types.InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="start_menu"))
 
-    await callback.message.edit_text(
+    await safe_edit_callback_message(
+        callback,
         "🤖 *Ваши агенты:*\nВыберите бота для просмотра подробной информации:", 
         reply_markup=builder.as_markup(), 
         parse_mode="Markdown"
@@ -348,7 +497,10 @@ async def show_my_agents(callback: types.CallbackQuery):
 @master_router.callback_query(F.data.startswith("agent_info_"))
 async def show_agent_info(callback: types.CallbackQuery):
     agent_id = int(callback.data.split("_")[2])
+    await render_agent_info(callback, agent_id)
 
+
+async def render_agent_info(callback: types.CallbackQuery, agent_id: int):
     agent_json = await APIread.agentBy_botID(agent_id)
     response_status = get_response_status(agent_json)
 
@@ -394,7 +546,7 @@ async def show_agent_info(callback: types.CallbackQuery):
         [types.InlineKeyboardButton(text="⬅️ К списку агентов", callback_data="my_agents")]
     ])
 
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+    await safe_edit_callback_message(callback, text, reply_markup=kb, parse_mode="Markdown")
 
 # --- ПЕРЕКЛЮЧЕНИЕ СТАТУСА ---
 
@@ -416,8 +568,8 @@ async def toggle_agent(callback: types.CallbackQuery):
                 f"Ошибка сервера при попытке получить агента по bot id"
             )
             return 
-
-    new_status = not agent_json['is_active']
+    
+    new_status = agent_json['is_active']
 
     try:
         from core.crypto import decrypt_token
@@ -430,16 +582,18 @@ async def toggle_agent(callback: types.CallbackQuery):
                 url=webhook_url, 
                 drop_pending_updates=True  # Игнорировать всё, что прислали, пока бот был выключен
             )
+            
         else:
             # При отключении просто удаляем вебхук
             await temp_bot.delete_webhook()
+            
             
         await temp_bot.session.close()
     except Exception as e:
         print(f"Ошибка вебхука при переключении: {e}")
 
     await callback.answer(f"Статус изменен: {'Отключен' if new_status else 'Включен'}")
-    await show_agent_info(callback)
+    await render_agent_info(callback, agent_id)
 
 # --- УДАЛЕНИЕ АГЕНТА ---
 
@@ -454,7 +608,8 @@ async def confirm_delete(callback: types.CallbackQuery):
         ]
     ])
     
-    await callback.message.edit_text(
+    await safe_edit_callback_message(
+        callback,
         "⚠️ *ВНИМАНИЕ!*\nВы уверены, что хотите удалить этого агента? Все данные и привязка бота будут стерты.",
         reply_markup=kb,
         parse_mode="Markdown"
@@ -502,7 +657,8 @@ async def start_edit_prompt(callback: types.CallbackQuery, state: FSMContext):
         [types.InlineKeyboardButton(text="✨ Улучшить текущий через ИИ", callback_data=f"ai_improve_prompt_{agent_id}")]
     ])
     
-    await callback.message.answer(
+    await safe_edit_callback_message(
+        callback,
         "📝 *Редактирование системного промпта*\n\n"
         "Введите новую инструкцию для бота. Опишите, как он должен себя вести и на какие вопросы отвечать.\n\n"
         "💡 *Совет:* Чем подробнее инструкция, тем лучше результат.",
@@ -536,7 +692,8 @@ async def process_ai_improve_prompt(callback: types.CallbackQuery, state: FSMCon
         return
 
     # Визуальный фидбек пользователю
-    await callback.message.edit_text(
+    await safe_edit_callback_message(
+        callback,
         "*LLM модель обрабатывает промпт...*", 
         parse_mode="Markdown"
     )
@@ -560,26 +717,9 @@ async def process_ai_improve_prompt(callback: types.CallbackQuery, state: FSMCon
     # Сбрасываем состояние FSM, так как редактирование завершено
     await state.clear()
     
-    # Экранируем текст для безопасного отображения в Markdown
-    # Это предотвратит ошибку "can't parse entities", если ИИ выдаст много спецсимволов
-    safe_new_prompt = escape_md(new_prompt)
-    
-    # 4. Отправляем красивое сообщение с результатом (как при приветствии)
-    await callback.message.answer(
-        f"✅ ИИ модель придумала отличный промпт :\n\n_{safe_new_prompt}_",
-        parse_mode="Markdown"
-    )
-    
-    # 5. Возвращаем пользователя к карточке управления агентом
-    from handlers.master import show_agent_info
-    fake_callback = types.CallbackQuery(
-        id="0", 
-        from_user=callback.from_user, 
-        chat_instance="0",
-        message=callback.message, 
-        data=f"agent_info_{agent_id}"
-    )
-    await show_agent_info(fake_callback)
+    # 4-5. Даем быстрый фидбек и возвращаем в карточку агента без создания новых сообщений
+    await callback.answer("✅ Промпт улучшен и сохранен", show_alert=True)
+    await render_agent_info(callback, agent_id)
 
 @master_router.message(CreateAgentSG.editing_prompt)
 async def process_new_prompt(message: types.Message, state: FSMContext):
@@ -631,14 +771,19 @@ async def show_knowledge_base(callback: types.CallbackQuery):
 
     response_status = get_response_status(all_agent_docs)
     if response_status == status.HTTP_404_NOT_FOUND:
-        await callback.answer("Ошибка: агент не найден.")
+        await safe_callback_answer(callback, "Ошибка: агент не найден.")
         return
     
     elif response_status != status.HTTP_200_OK: 
-        await callback.answer(
-            f"Ошибка сервера при попытке получить всех ваших документов агентов",
-            reply_markup=get_main_menu()
+        await safe_callback_answer(
+            callback,
+            "Ошибка сервера при попытке получить список документов агента",
         )
+        if callback.message:
+            await callback.message.answer(
+                "Вернитесь в главное меню и попробуйте еще раз.",
+                reply_markup=get_main_menu(),
+            )
         return 
 
 
@@ -671,7 +816,7 @@ async def show_knowledge_base(callback: types.CallbackQuery):
         "❌ — Ошибка чтения файла"
     ) if all_agent_docs else "📚 *Управление базой знаний*\n\nВ базе данных этого агента пока нет файлов."
 
-    await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
+    await safe_edit_callback_message(callback, text, reply_markup=builder.as_markup(), parse_mode="Markdown")
 
 
 # --- ПОДТВЕРЖДЕНИЕ УДАЛЕНИЯ ДОКУМЕНТА ---
@@ -706,7 +851,7 @@ async def confirm_delete_document(callback: types.CallbackQuery):
         ]
     ])
 
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+    await safe_edit_callback_message(callback, text, reply_markup=kb, parse_mode="Markdown")
 
 
 # --- ФАКТИЧЕСКОЕ УДАЛЕНИЕ ДОКУМЕНТА ---
@@ -760,7 +905,8 @@ async def prompt_add_document(callback: types.CallbackQuery, state: FSMContext):
         [types.InlineKeyboardButton(text="❌ Отмена", callback_data=f"edit_kb_{agent_id}")]
     ])
     
-    await callback.message.edit_text(
+    await safe_edit_callback_message(
+        callback,
         "📂 *Добавление нового файла*\n\n"
         "Отправьте мне документ (PDF, TXT, DOCX), который нужно загрузить в базу знаний.\n"
         "Можно отправлять по одному файлу.",
@@ -816,7 +962,11 @@ async def process_extra_document(message: types.Message, state: FSMContext, bot:
         )
         return
 
-    await msg.edit_text(f"✅ Файл `{file_name}` принят и обрабатывается ({response_data['new_chunks_count']} чанков).")
+    await msg.edit_text(
+        f"✅ Файл `{file_name}` принят и обрабатывается ({response_data['new_chunks_count']} чанков).\n"
+        f"Текущий тариф: {response_data.get('current_plan', 'unknown')} "
+        f"(лимит: {response_data.get('limit', 'unknown')}, уже занято: {response_data.get('current_count', 'unknown')})."
+    )
 
 
 
@@ -835,7 +985,11 @@ async def start_edit_welcome(callback: types.CallbackQuery, state: FSMContext):
     kb = types.InlineKeyboardMarkup(inline_keyboard=[
         [types.InlineKeyboardButton(text="✨ Сгенерировать с ИИ", callback_data=f"gen_welcome_{agent_id}")]
     ])
-    await callback.message.answer("Введите новое приветственное сообщение или сгенерируйте его с помощью ИИ, которое пользователь увидит при команде /start:", reply_markup=kb)
+    await safe_edit_callback_message(
+        callback,
+        "Введите новое приветственное сообщение или сгенерируйте его с помощью ИИ, которое пользователь увидит при команде /start:",
+        reply_markup=kb
+    )
     await callback.answer()
 
 @master_router.message(CreateAgentSG.editing_welcome)
@@ -871,7 +1025,11 @@ async def generate_welcome_callback(callback: types.CallbackQuery, state: FSMCon
     agent_id = int(callback.data.split("_")[2])
     
     # Меняем сообщение, чтобы пользователь видел процесс
-    await callback.message.edit_text("⏳ *DeepSeek анализирует промпт и генерирует приветствие...*", parse_mode="Markdown")
+    await safe_edit_callback_message(
+        callback,
+        "⏳ *DeepSeek анализирует промпт и генерирует приветствие...*",
+        parse_mode="Markdown"
+    )
     
     # 1. Достаем агента из БД, чтобы получить его system_prompt
     agent_json = await APIread.agentBy_botID(agent_id)
@@ -915,19 +1073,9 @@ async def generate_welcome_callback(callback: types.CallbackQuery, state: FSMCon
     # 4. Очищаем состояние (пользователю больше не нужно вводить текст вручную)
     await state.clear()
     
-    # 5. Отправляем результат
-    await callback.message.answer(
-        f"✅ *ИИ модель придумала отличное приветствие:*\n\n_{generated_text}_", 
-        parse_mode="Markdown"
-    )
-    
-    # 6. Возвращаем пользователя в меню карточки агента
-    from handlers.master import show_agent_info
-    fake_callback = types.CallbackQuery(
-        id="0", from_user=callback.from_user, chat_instance="0",
-        message=callback.message, data=f"agent_info_{agent_id}"
-    )
-    await show_agent_info(fake_callback)
+    # 5-6. Не создаем лишние сообщения: показываем алерт и обновляем карточку
+    await callback.answer("✅ Приветствие сгенерировано и сохранено", show_alert=True)
+    await render_agent_info(callback, agent_id)
 
 @master_router.callback_query(F.data == "tariffs_menu")
 async def show_tariffs(callback: types.CallbackQuery):
@@ -950,28 +1098,20 @@ async def show_tariffs(callback: types.CallbackQuery):
             )
         return 
     
-    # Если пользователя вдруг нет, или у него нет тарифа, ставим Free
-    current_plan = user_json['subscription_type']
+    current_plan_code = user_json.get('subscription_type') or "Free"
+    plans = await _get_plans_from_backend()
+    if not plans:
+        await safe_edit_callback_message(
+            callback,
+            "Не удалось загрузить тарифы с сервера. Попробуйте позже.",
+            reply_markup=get_main_menu(),
+        )
+        return
 
-    text = (
-        f"💎 *Управление подпиской*\n\n"
-        f"Ваш текущий тариф: *{current_plan}*\n\n"
-        f"🚀 *Доступные планы:*\n\n"
-        f"1️⃣ *Базовый (Free)*\n"
-        f"— 1 активный агент\n"
-        f"— Лимит базы знаний: 100 чанков\n"
-        f"— Цена: 0₽/мес\n\n"
-        f"2️⃣ *Продвинутый (Advanced)*\n"
-        f"— До 5 активных агентов\n"
-        f"— Лимит базы знаний: 500 чанков\n"
-        f"— Цена: 1 990₽/мес\n\n"
-        f"3️⃣ *Pro*\n"
-        f"— До 20 активных агентов\n"
-        f"— Лимит базы знаний: Безлимит\n"
-        f"— Цена: 9 990₽/мес\n"
-    )
+    text = _build_tariffs_text(plans, current_plan_code)
 
-    await callback.message.edit_text(
+    await safe_edit_callback_message(
+        callback,
         text, 
         reply_markup=get_tariffs_keyboard(), 
         parse_mode="Markdown"
@@ -981,7 +1121,8 @@ async def show_tariffs(callback: types.CallbackQuery):
 @master_router.callback_query(F.data == "back_to_start")
 async def back_to_start(callback: types.CallbackQuery):
     """Возврат в главное меню из тарифов."""
-    await callback.message.edit_text(
+    await safe_edit_callback_message(
+        callback,
         "👋 Привет! Я Мастер-бот для создания AI-агентов.\n\n"
         "Здесь ты можешь создать своего бота с кастомными промптами и базой знаний.",
         reply_markup=get_main_menu()
@@ -990,34 +1131,123 @@ async def back_to_start(callback: types.CallbackQuery):
 
 @master_router.callback_query(F.data.startswith("set_plan_"))
 async def process_set_plan(callback: types.CallbackQuery):
-    """Имитация оплаты: переключение тарифа в БД."""
-    plan_name = callback.data.split("_")[2] # Достаем название плана (Advanced или Pro)
-    
-    # Имитируем оплату: ставим тариф на 30 дней вперед
-    end_date = datetime.now(timezone.utc) + timedelta(days=30)
-    
-    # Обновляем запись пользователя в базе
-    
-    update_response = await APIupdate.userSubBy_tgID(plan_name, end_date, callback.from_user.id)
+    """Выставляет инвойс Telegram Payments для выбранного тарифа."""
+    plan_name = callback.data.split("_")[2]
+    plans = await _get_plans_from_backend()
+    paid_plans = _paid_plans_map(plans)
+    plan = paid_plans.get(plan_name)
+    if not plan:
+        await callback.answer("Неизвестный тариф.", show_alert=True)
+        return
 
-    response_status_agents = get_response_status(update_response)
+    if not settings.BOT_PAYMENT_TOKEN:
+        await callback.answer("Платежи не настроены. Обратитесь в поддержку.", show_alert=True)
+        return
 
-    if response_status_agents != status.HTTP_200_OK:
-        if response_status_agents == status.HTTP_404_NOT_FOUND:
-            await callback.answer(
-                f"Пользователь не найден",
-                reply_markup=get_main_menu()
-            )
-        else: 
-            await callback.answer(
-                f"Ошибка сервера при попытке обновить вашу подписку",
-                reply_markup=get_main_menu()
-            )
+    if not callback.message:
+        await callback.answer("Не удалось открыть платежное окно. Попробуйте еще раз.", show_alert=True)
+        return
 
-        await show_tariffs(callback)
-        return 
-    
-    await callback.answer(f"✅ Тариф {plan_name} успешно активирован на 30 дней!", show_alert=True)
-    
-    # Сразу обновляем интерфейс, чтобы пользователь увидел изменения
-    await show_tariffs(callback)
+    payload = f"{PAYLOAD_PREFIX}:{plan_name}:{callback.from_user.id}"
+    prices = [
+        types.LabeledPrice(
+            label=plan.get("title") or plan_name,
+            amount=int(plan.get("telegram_amount_kopecks") or 0),
+        )
+    ]
+
+    await callback.message.answer_invoice(
+        title=f"Подписка {plan.get('title') or plan_name}",
+        description=plan.get("telegram_invoice_description") or "",
+        payload=payload,
+        provider_token=settings.BOT_PAYMENT_TOKEN,
+        currency="RUB",
+        prices=prices,
+        need_email=False,
+        need_phone_number=False,
+        need_shipping_address=False,
+        is_flexible=False,
+    )
+    await callback.answer("Счет выставлен. Завершите оплату в Telegram.", show_alert=True)
+
+
+def parse_payment_payload(payload: str) -> tuple[str | None, int | None]:
+    """
+    Формат payload: subscription:<PlanName>:<telegram_id>
+    Возвращает (plan_name, telegram_id) или (None, None), если формат некорректный.
+    """
+    try:
+        prefix, plan_name, tg_id_str = payload.split(":")
+        if prefix != PAYLOAD_PREFIX:
+            return None, None
+        return plan_name, int(tg_id_str)
+    except (ValueError, AttributeError):
+        return None, None
+
+
+@master_router.pre_checkout_query()
+async def process_pre_checkout_query(pre_checkout_query: types.PreCheckoutQuery):
+    """Подтверждает чек-аут только для валидного payload и правильного пользователя."""
+    plan_name, payload_tg_id = parse_payment_payload(pre_checkout_query.invoice_payload)
+
+    plans = await _get_plans_from_backend()
+    paid_plan_codes = set(_paid_plans_map(plans).keys())
+    if plan_name not in paid_plan_codes or payload_tg_id != pre_checkout_query.from_user.id:
+        await pre_checkout_query.answer(
+            ok=False,
+            error_message="Не удалось проверить заказ. Попробуйте снова через меню тарифов."
+        )
+        return
+
+    await pre_checkout_query.answer(ok=True)
+
+
+@master_router.message(F.successful_payment)
+async def handle_successful_payment(message: types.Message):
+    """Активирует подписку только после подтвержденного успешного платежа Telegram."""
+    successful_payment = message.successful_payment
+    plan_name, payload_tg_id = parse_payment_payload(successful_payment.invoice_payload)
+
+    if plan_name not in PAID_SUBSCRIPTION_PLANS or payload_tg_id != message.from_user.id:
+        await message.answer("Платеж получен, но не удалось определить тариф. Напишите в поддержку.")
+        return
+
+    process_response = await APIcreate.processSuccessfulPayment(
+        telegram_id=message.from_user.id,
+        plan_name=plan_name,
+        currency=successful_payment.currency,
+        total_amount=successful_payment.total_amount,
+        telegram_payment_charge_id=successful_payment.telegram_payment_charge_id,
+        provider_payment_charge_id=successful_payment.provider_payment_charge_id,
+        invoice_payload=successful_payment.invoice_payload,
+    )
+    process_status = get_response_status(process_response)
+
+    if process_status != status.HTTP_200_OK:
+        await message.answer("Оплата прошла, но активация подписки временно недоступна. Напишите в поддержку.")
+        return
+
+    process_result = process_response.get("status")
+    if process_result == "duplicate":
+        await message.answer(
+            "ℹ️ Этот платеж уже был обработан ранее. Повторная активация не требуется."
+        )
+        return
+
+    end_date_text = process_response.get("subscription_end_date")
+    if end_date_text:
+        try:
+            end_date_text = end_date_text.replace("T", " ")[:16]
+        except Exception:
+            pass
+
+    kb = types.InlineKeyboardMarkup(inline_keyboard=[
+        [types.InlineKeyboardButton(text="💎 Открыть тарифы", callback_data="tariffs_menu")],
+        [types.InlineKeyboardButton(text="⬅️ В меню", callback_data="start_menu")]
+    ])
+    await message.answer(
+        f"✅ Оплата получена!\n"
+        f"Тариф *{plan_name}* активирован до *{end_date_text or 'указанной в профиле даты'}*.",
+        parse_mode="Markdown",
+        reply_markup=kb,
+    )

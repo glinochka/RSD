@@ -20,6 +20,7 @@ import PriceList from './pages/PriceList';
 // Lazy loaded pages
 const AgentsPage = lazy(() => import('./pages/agentsPage'));
 const CreateAgent = lazy(() => import('./pages/createAgent'));
+const ManagementPortal = lazy(() => import('./pages/ManagementPortal'));
 
 const App = () => {
   return (
@@ -34,6 +35,10 @@ const App = () => {
                 <Route path={NAVIGATION_ROUTES.HOME} element={<Main />} />
                 <Route path={NAVIGATION_ROUTES.AUTH} element={<Auth />} />
                 <Route path={NAVIGATION_ROUTES.PRICING} element={<PriceList />} />
+                <Route
+                  path={NAVIGATION_ROUTES.MANAGEMENT_PORTAL}
+                  element={<ManagementPortal />}
+                />
 
                 {/* Protected routes */}
                 <Route path={NAVIGATION_ROUTES.AGENTS} element={<AgentsPage />} />

@@ -4,7 +4,7 @@ sys.path.insert(0, dirname(dirname(abspath(__file__))))
 
 
 
-from sqlalchemy import BigInteger, Boolean, String, ForeignKey, Text
+from sqlalchemy import BigInteger, Boolean, String, ForeignKey, Text, DateTime
 from sqlalchemy.orm import  Mapped, mapped_column, relationship
 
 try: from .database import Base
@@ -19,11 +19,13 @@ class User(Base):
     password: Mapped[str] = mapped_column(String(100), nullable=True)
     
     subscription_type: Mapped[str] = mapped_column(String(50), default="Free")
-    subscription_end_date: Mapped[date] = mapped_column(nullable=True)
+    subscription_end_date: Mapped[date] = mapped_column(DateTime, nullable=True)
     
     # telegram_id is optional to allow web-only registration without Telegram
     telegram_id: Mapped[int | None] = mapped_column(BigInteger, unique=True, index=True, nullable=True)
     
+    is_banned: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+
     registered: Mapped[date] = mapped_column(default=datetime.now(timezone.utc))
 
     agents: Mapped[list['Agent']] = relationship(back_populates='user', cascade="all, delete-orphan")
@@ -59,4 +61,19 @@ class AgentDocument(Base):
     created_at: Mapped[date] = mapped_column(default=datetime.now(timezone.utc))
     agent: Mapped["Agent"] = relationship(back_populates="documents")
 
+
+class PaymentTransaction(Base):
+    __tablename__ = "payment_transactions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
+    plan_name: Mapped[str] = mapped_column(String(32), nullable=False)
+    currency: Mapped[str] = mapped_column(String(10), nullable=False)
+    total_amount: Mapped[int] = mapped_column(nullable=False)
+
+    telegram_payment_charge_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    provider_payment_charge_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    invoice_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    processed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now(timezone.utc))
 

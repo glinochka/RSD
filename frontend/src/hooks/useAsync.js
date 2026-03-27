@@ -35,6 +35,9 @@ export const useAsync = (asyncFunction, immediate = true) => {
   }, [asyncFunction]);
 
   useEffect(() => {
+    // Reset mount flag on each effect run (important for React StrictMode in dev)
+    mounted.current = true;
+
     if (immediate) {
       execute();
     }

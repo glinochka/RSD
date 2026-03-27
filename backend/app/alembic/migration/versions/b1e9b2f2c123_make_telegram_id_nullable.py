@@ -1,7 +1,7 @@
 """Make users.telegram_id nullable
 
 Revision ID: b1e9b2f2c123
-Revises: a4987f857d3f
+Revises: fe1b8e86d6da
 Create Date: 2026-03-15
 """
 
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "b1e9b2f2c123"
-down_revision: Union[str, Sequence[str], None] = "a4987f857d3f"
+down_revision: Union[str, Sequence[str], None] = "fe1b8e86d6da"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

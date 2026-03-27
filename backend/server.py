@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import asyncio
 
 from fastapi import FastAPI
 from logging import getLogger
@@ -9,8 +10,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.router_users import router as users_router
 from app.router_agents import router as agents_router
 from app.router_documents import router as documents_router
+from app.router_payments import router as payments_router
+from app.router_admin import router as admin_router
 from app.origins import origins
 from app.config import settings
+from app.services.subscription_maintenance import downgrade_expired_subscriptions_once
 import uvicorn
 
 
@@ -20,6 +24,16 @@ from qdrant_client.http import models
 # --- ЖИЗНЕННЫЙ ЦИКЛ ПРИЛОЖЕНИЯ ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    cron_task: asyncio.Task | None = None
+
+    async def run_subscription_cron():
+        while True:
+            try:
+                await downgrade_expired_subscriptions_once()
+            except Exception:
+                logger.exception("Subscription cron failed")
+            await asyncio.sleep(3600)
+
     client = QdrantClient(url=settings.QDRANT_URL, api_key=settings.QDRANT_API_KEY)
     collection_name = "agent_documents"
     
@@ -41,9 +55,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"⚠️ Qdrant Error: {e}")
 
+    cron_task = asyncio.create_task(run_subscription_cron())
 
     yield 
 
+    if cron_task:
+        cron_task.cancel()
+        try:
+            await cron_task
+        except asyncio.CancelledError:
+            pass
 
 
 
@@ -61,6 +82,8 @@ app.add_middleware(
 app.include_router(users_router.router)
 app.include_router(agents_router.router)
 app.include_router(documents_router.router)
+app.include_router(payments_router.router)
+app.include_router(admin_router.router)
 
 
 if __name__ == "__main__":
@@ -69,5 +92,5 @@ if __name__ == "__main__":
         "server:app",
         host="0.0.0.0",
         port=8000,
-        reload=True
+        reload=False
     )

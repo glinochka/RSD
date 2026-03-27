@@ -1,28 +1,35 @@
-from datetime import date
+from datetime import date, datetime
 
 from core.config import settings
 import httpx
 from typing import Awaitable, Callable, Any
-
+import json
 from fastapi import status
  
 import inspect
 base_url = f'http://{settings.API_HOST}:{settings.API_PORT}/api'
+
+# Default httpx timeout is 5s; backend context loads embeddings (cold start can take tens of seconds).
+_HTTP_TIMEOUT = httpx.Timeout(120.0, connect=30.0)
+
+
+def _internal_headers() -> dict:
+    return {"X-Internal-API-Key": settings.INTERNAL_API_KEY}
 
 class APIbase():
     operation: Callable[..., Awaitable[Any]] = None
 
     @classmethod
     async def fetch_post(cls, url: str, data: dict, file_name: str|None = None, file_bytes: bytes|None = None) -> dict:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
             if file_name and file_bytes:
                 files = {
                     'file': (file_name, file_bytes, 'application/octet-stream')
                 }
 
-                response = await client.post(url, data = data, files=files, timeout=600.0)
+                response = await client.post(url, data=data, files=files, timeout=600.0, headers=_internal_headers())
             else:
-                response = await client.post(url, json = data)
+                response = await client.post(url, json=data, headers=_internal_headers())
             if not response.is_success:
                 return {
                     'error_code': response.status_code,
@@ -37,8 +44,8 @@ class APIbase():
         
     @classmethod
     async def fetch_get(cls, url: str, data: dict) -> dict:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url, params = data)
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+            response = await client.get(url, params=data, headers=_internal_headers())
             if not response.is_success:
                 return {
                     'error_code': response.status_code,
@@ -53,8 +60,8 @@ class APIbase():
         
     @classmethod
     async def fetch_patch(cls, url: str, data: dict) -> dict:
-        async with httpx.AsyncClient() as client:
-            response = await client.patch(url, json = data)
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+            response = await client.patch(url, json=data, headers=_internal_headers())
             
             if not response.is_success:
                 return {
@@ -70,8 +77,8 @@ class APIbase():
         
     @classmethod
     async def fetch_delete(cls, url: str, data: dict) -> dict|list:
-        async with httpx.AsyncClient() as client:
-            response = await client.delete(url, params = data)
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+            response = await client.delete(url, params=data, headers=_internal_headers())
             
             if not response.is_success:
                 return {
@@ -110,6 +117,12 @@ class APIbase():
         
         return response
 
+    @classmethod
+    async def payment(cls, data: dict, add_url=None) -> dict:
+        url = f'{base_url}/payments{f"/{add_url}" if add_url else ""}'
+        response = await cls.operation(url, data)
+        return response
+
 
     
 class APIcreate(APIbase):
@@ -140,8 +153,30 @@ class APIcreate(APIbase):
     
     @classmethod
     async def documentBy_botID(cls, agent_id: int, file_name: str, file_bytes: bytes) -> dict:
-        data = {'bot_id': agent_id}
-        return await cls.document(data, file_name=file_name, file_bytes = file_bytes)
+        agent_data = {'bot_id': agent_id}
+        return await cls.document(data = {'agent_data' : json.dumps(agent_data)}, file_name=file_name, file_bytes = file_bytes)
+
+    @classmethod
+    async def processSuccessfulPayment(
+        cls,
+        telegram_id: int,
+        plan_name: str,
+        currency: str,
+        total_amount: int,
+        telegram_payment_charge_id: str,
+        provider_payment_charge_id: str | None,
+        invoice_payload: str | None,
+    ) -> dict:
+        data = {
+            "telegram_id": telegram_id,
+            "plan_name": plan_name,
+            "currency": currency,
+            "total_amount": total_amount,
+            "telegram_payment_charge_id": telegram_payment_charge_id,
+            "provider_payment_charge_id": provider_payment_charge_id,
+            "invoice_payload": invoice_payload,
+        }
+        return await cls.payment(data, add_url="process_successful")
     
 
     
@@ -185,6 +220,12 @@ class APIread(APIbase):
         add_url = 'by_tgID'
         return await cls.user({'id': tg_id}, add_url = add_url)
 
+    # payments / plans
+    @classmethod
+    async def subscriptionPlans(cls) -> dict:
+        # Returns { plans: [...] }
+        return await cls.payment({}, add_url="plans")
+
 
 
 class APIupdate(APIbase):
@@ -211,7 +252,7 @@ class APIupdate(APIbase):
             data['subscription_type'] = sub_type
 
         if sub_end:
-            data['subscription_end_date'] = sub_end
+            data['subscription_end_date'] = sub_end.isoformat()
 
         return await cls.user(data, add_url = add_url)
 

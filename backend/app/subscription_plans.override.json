@@ -1,0 +1,17 @@
+{
+  "Free": {
+    "price_rub_month": 0,
+    "max_active_agents": 1,
+    "knowledge_base_chunk_limit": 100
+  },
+  "Advanced": {
+    "price_rub_month": 100,
+    "max_active_agents": 5,
+    "knowledge_base_chunk_limit": 500
+  },
+  "Pro": {
+    "price_rub_month": 4990,
+    "max_active_agents": 200,
+    "knowledge_base_chunk_limit": null
+  }
+}

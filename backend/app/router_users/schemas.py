@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from datetime import date
+from datetime import datetime
 from typing import Optional, Literal
 
 
@@ -24,4 +24,4 @@ class Update_userSubscription(BaseModel):
     telegram_id: int = Field(..., description="Id пользователя в телеграме")
 
     subscription_type: Optional[Literal['Free', 'Advanced', 'Pro']] = Field(None, description="Тип подписки ('Free', 'Advanced', 'Pro')")
-    subscription_end_date: Optional[date] = Field(None, description="Дата окончания подписки")
+    subscription_end_date: Optional[datetime] = Field(None, description="Дата окончания подписки")

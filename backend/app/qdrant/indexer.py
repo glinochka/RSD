@@ -10,13 +10,19 @@ from fastembed import TextEmbedding, SparseTextEmbedding
 
 from config import settings
 
+from ..subscription_plans import get_subscription_plan, UNLIMITED_KNOWLEDGE_BASE_CHUNKS
 
-# Константы лимитов согласно ТЗ
-CHUNK_LIMITS = {
-    "Free": 100,
-    "Advanced": 500,
-    "Pro": 1000000  # Условно безлимит
-}
+
+def get_chunk_limit_by_plan(plan_code: str) -> int:
+    """
+    Returns chunk limit for plan.
+    Unlimited is implemented as a large number to keep comparisons simple.
+    """
+    plan = get_subscription_plan(plan_code) or get_subscription_plan("Free")
+    limit = plan.get("knowledge_base_chunk_limit")
+    if limit is UNLIMITED_KNOWLEDGE_BASE_CHUNKS:
+        return 1_000_000_000
+    return int(limit)
 
 # Инициализация клиентов
 qdrant_client = AsyncQdrantClient(url=settings.QDRANT_URL)
@@ -48,7 +54,7 @@ async def extract_text(file_path: str) -> str:
 async def get_current_chunks_count(agent_id: int) -> int:
     """Считает количество существующих чанков агента в Qdrant."""
     try:
-        result = qdrant_client.count(
+        result = await qdrant_client.count(
             collection_name="agent_documents",
             count_filter=models.Filter(
                 must=[
@@ -102,6 +108,7 @@ async def process_document(file_path: str, agent_id: int, document_id: int):
                     },
                     payload={
                         "agent_id": agent_id,
+                        "document_id": document_id,
                         "text": chunk_text,
                         "source": os.path.basename(file_path)
                     }
@@ -109,7 +116,7 @@ async def process_document(file_path: str, agent_id: int, document_id: int):
             )
 
         # Загрузка в Qdrant
-        qdrant_client.upsert(
+        await qdrant_client.upsert(
             collection_name="agent_documents",
             points=points
         )

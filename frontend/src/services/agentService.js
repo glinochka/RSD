@@ -19,7 +19,9 @@ export const agentService = {
    * Get agent by ID
    */
   getById: async (id) => {
-    const response = await apiClient.get(API_ROUTES.AGENTS_DETAIL(id));
+    const response = await apiClient.get(API_ROUTES.AGENTS_DETAIL, {
+      params: { bot_id: id },
+    });
     return response.data;
   },
 
@@ -34,33 +36,52 @@ export const agentService = {
   /**
    * Update agent
    */
-  update: async (id, agentData) => {
-    const response = await apiClient.put(
-      API_ROUTES.AGENTS_UPDATE(id),
-      agentData
-    );
+  update: async (botId, agentData) => {
+    const response = await apiClient.patch(API_ROUTES.AGENTS_UPDATE, {
+      bot_id: botId,
+      ...agentData,
+    });
     return response.data;
   },
 
   /**
    * Delete agent
    */
-  delete: async (id) => {
-    const response = await apiClient.delete(API_ROUTES.AGENTS_DELETE(id));
+  delete: async (botId) => {
+    const response = await apiClient.delete(API_ROUTES.AGENTS_DELETE, {
+      params: { bot_id: botId },
+    });
     return response.data;
   },
 
-  /**
-   * Upload files for agent
-   */
-  uploadFiles: async (id, files) => {
-    const formData = new FormData();
-    files.forEach((file) => {
-      formData.append('files', file);
+  toggleStatus: async (botId) => {
+    const response = await apiClient.patch(API_ROUTES.AGENTS_TOGGLE, {
+      bot_id: botId,
     });
+    return response.data;
+  },
+
+  aiImprovePrompt: async (botId) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_AI_IMPROVE_PROMPT, {
+      bot_id: botId,
+    });
+    return response.data;
+  },
+
+  aiGenerateWelcome: async (botId) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_AI_GENERATE_WELCOME, {
+      bot_id: botId,
+    });
+    return response.data;
+  },
+
+  uploadDocumentByBotId: async (botId, file) => {
+    const formData = new FormData();
+    formData.append('agent_data', JSON.stringify({ bot_id: botId }));
+    formData.append('file', file);
 
     const response = await apiClient.post(
-      `${API_ROUTES.AGENTS_DETAIL(id)}/files`,
+      API_ROUTES.DOCUMENTS_CREATE,
       formData,
       {
         headers: {
@@ -68,6 +89,18 @@ export const agentService = {
         },
       }
     );
+    return response.data;
+  },
+
+  getDocumentsByBotId: async (botId) => {
+    const response = await apiClient.get(API_ROUTES.DOCUMENTS_LIST_BY_BOT, {
+      params: { bot_id: botId },
+    });
+    return response.data;
+  },
+
+  deleteDocumentById: async (docId) => {
+    const response = await apiClient.delete(API_ROUTES.DOCUMENTS_DELETE(docId));
     return response.data;
   },
 };

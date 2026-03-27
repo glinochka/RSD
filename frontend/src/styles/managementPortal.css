@@ -1,0 +1,368 @@
+.management-page {
+  min-height: 100vh;
+  padding: var(--spacing-xl);
+  background: var(--color-bg-light);
+}
+
+.management-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-base);
+  margin-bottom: var(--spacing-xl);
+}
+
+.management-header h1 {
+  margin: 0;
+  font-size: var(--font-size-2xl);
+}
+
+.management-logo {
+  font-weight: var(--font-weight-bold);
+  color: var(--color-text);
+  font-size: var(--font-size-xl);
+}
+
+.management-login-wrap {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: calc(100vh - 160px);
+}
+
+.management-login-card {
+  width: 100%;
+  max-width: 520px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  padding: var(--spacing-xl);
+  display: grid;
+  gap: var(--spacing-sm);
+}
+
+.management-login-card h2 {
+  margin-bottom: var(--spacing-xs);
+}
+
+.management-login-card p {
+  margin-bottom: var(--spacing-lg);
+  font-size: var(--font-size-sm);
+}
+
+.management-login-btn {
+  margin-top: var(--spacing-base);
+}
+
+.management-dashboard {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: var(--spacing-xl);
+}
+
+.management-sidebar {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-base);
+  align-self: start; /* avoid stretching sidebar to content column height */
+}
+
+.management-sidebar h3 {
+  margin-bottom: var(--spacing-sm);
+  font-size: var(--font-size-lg);
+}
+
+.management-sidebar nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.management-menu-item {
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  border-radius: var(--radius-base);
+  padding: var(--spacing-sm) var(--spacing-base);
+  cursor: pointer;
+  height: 42px; /* фиксированная высота пункта меню */
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.management-menu-item:hover {
+  border-color: var(--color-primary);
+}
+
+.management-menu-item.active {
+  background: rgba(102, 126, 234, 0.1);
+  border-color: var(--color-primary);
+  color: var(--color-primary-dark);
+}
+
+.management-logout {
+  margin-top: 0;
+  width: 100%;
+}
+
+.management-content {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-lg);
+}
+
+.management-content-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--spacing-base);
+  margin-bottom: var(--spacing-lg);
+}
+
+.management-content-head h2 {
+  margin: 0;
+  font-size: var(--font-size-xl);
+}
+
+.management-inline-controls {
+  width: min(420px, 100%);
+}
+
+.management-inline-controls input {
+  width: 100%;
+}
+
+.management-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--spacing-base);
+}
+
+.management-plan-grid {
+  margin-top: var(--spacing-sm);
+}
+
+.management-section-title {
+  margin: var(--spacing-lg) 0 var(--spacing-base);
+  font-size: var(--font-size-lg);
+}
+
+.management-stat-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-base);
+  background: linear-gradient(180deg, var(--color-bg) 0%, var(--color-bg-light) 100%);
+}
+
+.management-stat-card span {
+  display: block;
+  color: var(--color-text-light);
+  margin-bottom: var(--spacing-xs);
+}
+
+.management-stat-card strong {
+  font-size: var(--font-size-2xl);
+  color: var(--color-text);
+}
+
+.management-table-wrap {
+  overflow-x: auto;
+}
+
+.management-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.management-table th,
+.management-table td {
+  border-bottom: 1px solid var(--color-border);
+  padding: var(--spacing-sm) var(--spacing-base);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.management-table th {
+  color: var(--color-text-light);
+  font-weight: var(--font-weight-semibold);
+}
+
+.management-pagination {
+  margin-top: var(--spacing-base);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-base);
+}
+
+.management-error {
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #991b1b;
+  border-radius: var(--radius-base);
+  padding: var(--spacing-sm) var(--spacing-base);
+  margin-bottom: var(--spacing-base);
+}
+
+@media (max-width: 900px) {
+  .management-dashboard {
+    grid-template-columns: 1fr;
+  }
+
+  .management-content-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .management-pagination {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+.management-plans-editor {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: var(--spacing-base);
+}
+
+.management-plan-editor-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-lg);
+  background: var(--color-bg);
+  display: grid;
+  gap: var(--spacing-base);
+}
+
+.management-form-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.management-form-row label {
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
+}
+
+.management-checkbox {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  cursor: pointer;
+}
+
+.management-checkbox input {
+  width: auto;
+}
+
+/* --- Ban / status badges --- */
+.management-row-banned {
+  background: #fef2f2;
+}
+
+.management-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: var(--font-size-xs, 0.75rem);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.5;
+}
+
+.management-badge-active {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.management-badge-banned {
+  background: #fecaca;
+  color: #991b1b;
+}
+
+/* --- Action buttons --- */
+.management-actions-cell {
+  display: flex;
+  gap: var(--spacing-xs, 4px);
+  flex-wrap: nowrap;
+}
+
+.btn-sm {
+  padding: 4px 10px;
+  font-size: var(--font-size-xs, 0.75rem);
+  border-radius: var(--radius-base, 6px);
+}
+
+.btn-danger {
+  background: #dc2626;
+  color: #fff;
+  border: 1px solid #dc2626;
+  cursor: pointer;
+}
+
+.btn-danger:hover {
+  background: #b91c1c;
+  border-color: #b91c1c;
+}
+
+.btn-danger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* --- Gift modal --- */
+.management-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.management-modal {
+  background: var(--color-bg);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg, 0 8px 32px rgba(0,0,0,.18));
+  padding: var(--spacing-xl);
+  width: min(440px, 90vw);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-base);
+}
+
+.management-modal h3 {
+  margin: 0;
+  font-size: var(--font-size-lg);
+}
+
+.management-modal select {
+  width: 100%;
+  padding: var(--spacing-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-base);
+  font-size: var(--font-size-base, 1rem);
+}
+
+.management-modal-hint {
+  font-size: var(--font-size-sm, 0.875rem);
+  color: var(--color-text-light);
+  margin: 0;
+}
+
+.management-modal-buttons {
+  display: flex;
+  gap: var(--spacing-sm);
+  justify-content: flex-end;
+}

@@ -46,8 +46,27 @@
 .description {
   font-size: var(--font-size-lg);
   color: var(--color-text-light);
-  margin-bottom: var(--spacing-lg);
+  margin-bottom: var(--spacing-base);
   line-height: 1.8;
+}
+
+.description-lead {
+  font-size: var(--font-size-base);
+  color: var(--color-text-lighter);
+  margin-bottom: var(--spacing-xl);
+  line-height: 1.75;
+  max-width: 36rem;
+}
+
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-base);
+}
+
+.hero-actions-secondary {
+  border-color: var(--color-border);
 }
 
 .hero .btn {
@@ -67,17 +86,69 @@
   font-weight: var(--font-weight-semibold);
 }
 
-/* Features Section */
-.features {
+/* Shared section headings */
+.section-title {
+  text-align: center;
+  font-size: var(--font-size-2xl);
+  margin-bottom: var(--spacing-base);
+  color: var(--color-text);
+}
+
+.section-lead {
+  text-align: center;
+  max-width: 40rem;
+  margin: 0 auto var(--spacing-3xl);
+  font-size: var(--font-size-base);
+  color: var(--color-text-light);
+  line-height: 1.7;
+}
+
+.section-lead-tight {
+  margin-bottom: var(--spacing-2xl);
+}
+
+/* Value highlights */
+.value-highlights {
   padding: var(--spacing-3xl) 0;
   border-top: 1px solid var(--color-border);
 }
 
-.features h3 {
-  text-align: center;
-  font-size: var(--font-size-2xl);
-  margin-bottom: var(--spacing-3xl);
+.value-highlights-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--spacing-xl);
+}
+
+.value-highlight-card {
+  padding: var(--spacing-xl);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background-color: var(--color-bg);
+  transition: border-color var(--transition-base), box-shadow var(--transition-base);
+}
+
+.value-highlight-card:hover {
+  border-color: rgba(102, 126, 234, 0.35);
+  box-shadow: var(--shadow-md);
+}
+
+.value-highlight-card h3 {
+  font-size: var(--font-size-lg);
+  margin-bottom: var(--spacing-sm);
   color: var(--color-text);
+}
+
+.value-highlight-card p {
+  margin: 0;
+  font-size: var(--font-size-base);
+  color: var(--color-text-light);
+  line-height: 1.75;
+}
+
+/* Features Section */
+.features {
+  padding: var(--spacing-3xl) 0;
+  border-top: 1px solid var(--color-border);
 }
 
 .features-grid {
@@ -133,6 +204,73 @@
   font-weight: var(--font-weight-bold);
 }
 
+/* Audience */
+.audience-section {
+  padding: var(--spacing-3xl) 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.audience-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--spacing-xl);
+}
+
+.audience-card {
+  padding: var(--spacing-xl);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, var(--color-bg-light) 0%, var(--color-bg) 100%);
+  border: 1px solid var(--color-border);
+}
+
+.audience-card h3 {
+  font-size: var(--font-size-lg);
+  margin-bottom: var(--spacing-sm);
+  color: var(--color-text);
+}
+
+.audience-card p {
+  margin: 0;
+  font-size: var(--font-size-base);
+  color: var(--color-text-light);
+  line-height: 1.75;
+}
+
+/* Closing CTA */
+.cta-band {
+  margin: var(--spacing-3xl) 0 var(--spacing-2xl);
+  padding: var(--spacing-3xl) var(--spacing-xl);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-light);
+  border: 1px solid var(--color-border);
+}
+
+.cta-band-inner {
+  max-width: 36rem;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.cta-band-inner h2 {
+  font-size: var(--font-size-2xl);
+  margin-bottom: var(--spacing-base);
+  color: var(--color-text);
+}
+
+.cta-band-inner > p {
+  margin: 0 0 var(--spacing-xl);
+  font-size: var(--font-size-base);
+  color: var(--color-text-light);
+  line-height: 1.75;
+}
+
+.cta-band-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--spacing-base);
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .hero {
@@ -154,9 +292,12 @@
     min-height: 300px;
   }
 
-  .features h3 {
+  .section-title {
     font-size: var(--font-size-xl);
-    margin-bottom: var(--spacing-2xl);
+  }
+
+  .cta-band {
+    padding: var(--spacing-2xl) var(--spacing-lg);
   }
 }
 

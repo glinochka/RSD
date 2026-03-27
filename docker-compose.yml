@@ -21,11 +21,12 @@ services:
             retries: 5
 
     backend:
-        restart: on-failure
         build: ./backend
         command: >
             sh -c "cd app/alembic && alembic upgrade head &&
                 cd .. && cd .. && python server.py"
+        env_file:
+            - .env
                 
         container_name: rsd_backend
         environment:
@@ -37,8 +38,11 @@ services:
             DB_NAME: ${DB_NAME}
             SECRET_KEY: ${SECRET_KEY}
             ALGORITHM: ${ALGORITHM}
+            ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+            BASE_URL: ${BASE_URL}
             QDRANT_URL: ${QDRANT_URL}
             DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+            INTERNAL_API_KEY: ${INTERNAL_API_KEY}
         ports:
             - '8000:8000'
         depends_on:
@@ -76,7 +80,6 @@ services:
             - rsd_network
 
     bot:
-        restart: on-failure
         build: ./bot
         container_name: rsd_bot
         depends_on:
@@ -87,9 +90,11 @@ services:
             DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
             DB_NAME: ${DB_NAME}
             MASTER_BOT_TOKEN: ${MASTER_BOT_TOKEN}
+            BOT_PAYMENT_TOKEN: ${BOT_PAYMENT_TOKEN}
             BASE_URL: ${BASE_URL}
             API_HOST: ${API_HOST}
             API_PORT: ${API_PORT}
+            INTERNAL_API_KEY: ${INTERNAL_API_KEY}
         command: >
             python main.py
         ports:
