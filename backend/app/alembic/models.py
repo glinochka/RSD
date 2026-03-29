@@ -13,6 +13,12 @@ except ImportError: from database import Base
 
 from datetime import datetime, date, timezone
 
+
+def _utc_now_naive() -> datetime:
+    """UTC 'now' without tzinfo — matches Postgres TIMESTAMP WITHOUT TIME ZONE + asyncpg."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 class User(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
@@ -89,6 +95,6 @@ class WebsitePaymentTransaction(Base):
     yookassa_payment_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     is_processed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utc_now_naive)
     paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 

@@ -121,7 +121,7 @@ async def _apply_yookassa_payment_to_subscription(
         },
     )
     tx.is_processed = True
-    tx.paid_at = datetime.now(timezone.utc)
+    tx.paid_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 @router.get("/plans")
