@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     BASE_URL: str | None = None
     ADMIN_WEB_LOGIN: str = ""
     ADMIN_WEB_PASSWORD: str = ""
+    YOOKASSA_SHOP_ID: str = ""
+    YOOKASSA_SECRET_KEY: str = ""
+    YOOKASSA_RETURN_URL: str | None = None
 
     model_config = SettingsConfigDict(
         env_file= Path(__file__).parent.parent.parent / '.env',  

@@ -6,22 +6,57 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
+import { useNotification } from '../context/useNotification';
 import MainLayout from '../components/Layout';
 import { NAVIGATION_ROUTES } from '../config/constants';
 import pricingService from '../services/pricingService';
 import '../styles/priceList.css';
 
+const PENDING_YOOKASSA_PAYMENT_ID_KEY = 'pending_yookassa_payment_id';
+
 const PriceList = () => {
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
+  const { showError, showInfo, showSuccess } = useNotification();
   const [plans, setPlans] = useState([]);
+  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
 
-  const handleSelectPlan = (planId) => {
+  const handleSelectPlan = async (planId) => {
     if (!isAuthenticated) {
       navigate(NAVIGATION_ROUTES.AUTH);
       return;
     }
-    navigate(NAVIGATION_ROUTES.CREATE_AGENT);
+
+    const selectedPlan = plans.find((plan) => plan?.code === planId);
+    if (!selectedPlan) {
+      showError('Не удалось найти выбранный тариф.');
+      return;
+    }
+
+    if (!selectedPlan.is_paid) {
+      navigate(NAVIGATION_ROUTES.CREATE_AGENT);
+      return;
+    }
+
+    if (isProcessingPayment) return;
+    setIsProcessingPayment(true);
+    try {
+      const returnUrl = `${window.location.origin}${NAVIGATION_ROUTES.PRICING}`;
+      const payment = await pricingService.createYooKassaPayment({
+        plan_name: planId,
+        return_url: returnUrl,
+      });
+
+      if (!payment?.confirmation_url || !payment?.payment_id) {
+        throw new Error('Сервис оплаты вернул некорректный ответ.');
+      }
+
+      localStorage.setItem(PENDING_YOOKASSA_PAYMENT_ID_KEY, payment.payment_id);
+      window.location.href = payment.confirmation_url;
+    } catch (error) {
+      showError(error?.message || 'Не удалось создать платеж. Попробуйте еще раз.');
+      setIsProcessingPayment(false);
+    }
   };
 
   useEffect(() => {
@@ -38,6 +73,43 @@ const PriceList = () => {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const pendingPaymentId = localStorage.getItem(PENDING_YOOKASSA_PAYMENT_ID_KEY);
+    if (!pendingPaymentId) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const statusData = await pricingService.getYooKassaPaymentStatus(pendingPaymentId);
+        if (cancelled) return;
+
+        if (statusData?.status === 'succeeded') {
+          showSuccess('Оплата прошла успешно. Подписка активирована.');
+          localStorage.removeItem(PENDING_YOOKASSA_PAYMENT_ID_KEY);
+          return;
+        }
+
+        if (statusData?.status === 'pending' || statusData?.status === 'waiting_for_capture') {
+          showInfo('Платеж еще обрабатывается. Проверьте статус чуть позже.');
+          return;
+        }
+
+        showError('Оплата не завершена или была отменена.');
+        localStorage.removeItem(PENDING_YOOKASSA_PAYMENT_ID_KEY);
+      } catch (error) {
+        if (!cancelled) {
+          showError(error?.message || 'Не удалось проверить статус платежа.');
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated, showError, showInfo, showSuccess]);
 
   const uiPlans = useMemo(() => {
     const order = { Free: 1, Advanced: 2, Pro: 3 };
@@ -97,8 +169,9 @@ const PriceList = () => {
               <button
                 className="btn btn-black"
                 onClick={() => handleSelectPlan(plan.id)}
+                disabled={isProcessingPayment}
               >
-                Выбрать план
+                {isProcessingPayment && plan.price > 0 ? 'Переход к оплате...' : 'Выбрать план'}
               </button>
             </div>
           ))}

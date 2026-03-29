@@ -20,3 +20,23 @@ class ProcessTelegramPayment(BaseModel):
             raise ValueError("Invalid paid subscription plan name")
         return value
 
+
+class CreateYooKassaPayment(BaseModel):
+    plan_name: str = Field(..., description="Paid subscription plan name")
+    return_url: str | None = Field(default=None, description="URL where YooKassa returns user after payment")
+
+    @field_validator("plan_name")
+    @classmethod
+    def validate_paid_plan_name(cls, value: str) -> str:
+        if value not in get_subscription_plan_codes(paid_only=True):
+            raise ValueError("Invalid paid subscription plan name")
+        return value
+
+
+class YooKassaPaymentStatusResponse(BaseModel):
+    payment_id: str
+    status: str
+    plan_name: str
+    subscription_type: str | None = None
+    subscription_end_date: str | None = None
+

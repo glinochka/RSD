@@ -77,3 +77,18 @@ class PaymentTransaction(Base):
 
     processed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now(timezone.utc))
 
+
+class WebsitePaymentTransaction(Base):
+    __tablename__ = "website_payment_transactions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    plan_name: Mapped[str] = mapped_column(String(32), nullable=False)
+    currency: Mapped[str] = mapped_column(String(10), nullable=False, default="RUB")
+    total_amount: Mapped[int] = mapped_column(nullable=False)
+    yookassa_payment_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    is_processed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now(timezone.utc))
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
