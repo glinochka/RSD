@@ -44,6 +44,8 @@ class Agent(Base):
     
     bot_username: Mapped[str] = mapped_column(String(100), nullable=True)
     encrypted_token: Mapped[str] = mapped_column(String(500), unique=True)
+    encrypted_external_api_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    external_api_key_hash: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
     bot_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=True) 
     system_prompt: Mapped[str] = mapped_column(Text, default="Ты — полезный ассистент.")
     

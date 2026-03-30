@@ -32,3 +32,7 @@ class NewAgent_byToken(BaseModel):
 class AgentAIAction(BaseModel):
     bot_id: int = Field(..., description="id бота")
 
+
+class ExternalAgentChatRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=4000, description="Запрос для агента")
+

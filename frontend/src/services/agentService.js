@@ -75,6 +75,19 @@ export const agentService = {
     return response.data;
   },
 
+  externalChat: async (message, apiKey) => {
+    const response = await apiClient.post(
+      API_ROUTES.AGENTS_EXTERNAL_CHAT,
+      { message },
+      {
+        headers: {
+          'X-Agent-API-Key': apiKey,
+        },
+      }
+    );
+    return response.data;
+  },
+
   uploadDocumentByBotId: async (botId, file) => {
     const formData = new FormData();
     formData.append('agent_data', JSON.stringify({ bot_id: botId }));

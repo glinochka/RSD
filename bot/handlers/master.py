@@ -523,6 +523,7 @@ async def render_agent_info(callback: types.CallbackQuery, agent_id: int):
     bot_name = escape_md(agent_json['bot_username']) if agent_json['bot_username'] else "Бот"
     status_text = "✅ Активен" if agent_json['is_active'] else "❌ Отключен"
     toggle_label = "🔴 Отключить" if agent_json['is_active'] else "🟢 Включить"
+    external_api_key = agent_json.get("external_api_key")
     
     text = (
         f"🤖 *Управление агентом*\n\n"
@@ -533,11 +534,24 @@ async def render_agent_info(callback: types.CallbackQuery, agent_id: int):
         f"🧠 *Промпт:* \n_{escape_md(agent_json['system_prompt'][:200])}..._"
     )
 
+    api_key_button = (
+        types.InlineKeyboardButton(
+            text="📋 Скопировать API ключ",
+            switch_inline_query_current_chat=external_api_key,
+        )
+        if external_api_key
+        else types.InlineKeyboardButton(
+            text="📋 Скопировать API ключ",
+            callback_data="api_key_unavailable",
+        )
+    )
+
     kb = types.InlineKeyboardMarkup(inline_keyboard=[
        [
         types.InlineKeyboardButton(text="📝 Изменить промпт", callback_data=f"edit_prompt_{agent_id}"),
         types.InlineKeyboardButton(text="👋 Изменить приветствие", callback_data=f"edit_welcome_{agent_id}")
         ],
+        [api_key_button],
         [types.InlineKeyboardButton(text="📚 Редактировать базу знаний", callback_data=f"edit_kb_{agent_id}")],
         [
             types.InlineKeyboardButton(text=toggle_label, callback_data=f"toggle_agent_{agent_id}"),
@@ -547,6 +561,15 @@ async def render_agent_info(callback: types.CallbackQuery, agent_id: int):
     ])
 
     await safe_edit_callback_message(callback, text, reply_markup=kb, parse_mode="Markdown")
+
+
+@master_router.callback_query(F.data == "api_key_unavailable")
+async def api_key_unavailable(callback: types.CallbackQuery):
+    await safe_callback_answer(
+        callback,
+        "API ключ временно недоступен. Попробуйте открыть карточку агента еще раз.",
+        show_alert=True,
+    )
 
 # --- ПЕРЕКЛЮЧЕНИЕ СТАТУСА ---
 

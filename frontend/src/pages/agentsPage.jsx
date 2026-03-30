@@ -279,6 +279,21 @@ const AgentsPageContent = () => {
     }
   };
 
+  const handleCopyApiKey = async () => {
+    const key = selectedAgent?.external_api_key;
+    if (!key) {
+      showError('API ключ не найден');
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(key);
+      showSuccess('API ключ скопирован');
+    } catch (error) {
+      showError('Не удалось скопировать API ключ');
+    }
+  };
+
   useEffect(() => {
     if (!isAuthenticated) return;
     const list = agents || [];
@@ -353,6 +368,26 @@ const AgentsPageContent = () => {
                   <div className="agent-management-header">
                     <h3>{selectedAgentName}</h3>
                     <p>ID: {selectedAgent.bot_id}</p>
+                  </div>
+
+                  <div className="agent-management-block">
+                    <label htmlFor="agent_external_api_key">API ключ для внешних интеграций</label>
+                    <div className="api-key-row">
+                      <input
+                        id="agent_external_api_key"
+                        className="input-main"
+                        value={selectedAgent.external_api_key || ''}
+                        readOnly
+                      />
+                      <button
+                        className="edit-btn api-key-copy-btn"
+                        onClick={handleCopyApiKey}
+                        title="Скопировать API ключ"
+                        aria-label="Copy API key"
+                      >
+                        📋
+                      </button>
+                    </div>
                   </div>
 
                   <div className="agent-management-block">

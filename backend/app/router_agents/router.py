@@ -14,7 +14,13 @@ from ..alembic.database import async_session_maker
 from ..config import settings
 from ..qdrant.search_service import delete_agent_vectors
 from ..router_users.dao import UserDAO
-from ..services.ai_authoring import generate_welcome_with_ai, improve_prompt_with_ai
+from ..services.ai_authoring import (
+    generate_answer_with_context,
+    generate_welcome_with_ai,
+    improve_prompt_with_ai,
+)
+from ..qdrant.search_service import search_knowledge_base
+from ..utils.api_keys import generate_agent_external_api_key, hash_agent_external_api_key
 from ..utils.JWT import get_user_from_access_token
 from ..utils.convert import convert_to_dict
 from ..utils.crypto import encrypt_token, decrypt_token
@@ -68,10 +74,49 @@ def _assert_access(current_user, internal: bool) -> None:
         )
 
 
-def _serialize_agent(agent) -> dict:
+async def _ensure_external_api_key(agent, agent_dao: AgentDAO) -> str:
+    if agent.encrypted_external_api_key and agent.external_api_key_hash:
+        return decrypt_token(agent.encrypted_external_api_key)
+
+    raw_key = generate_agent_external_api_key()
+    await agent_dao.update(
+        agent,
+        {
+            "encrypted_external_api_key": encrypt_token(raw_key),
+            "external_api_key_hash": hash_agent_external_api_key(raw_key),
+        },
+    )
+    return raw_key
+
+
+def _serialize_agent(agent, *, include_external_api_key: bool = False, include_encrypted_token: bool = False) -> dict:
     data = convert_to_dict(agent)
     data.pop("registered", None)
+    data.pop("encrypted_external_api_key", None)
+    data.pop("external_api_key_hash", None)
+    if not include_encrypted_token:
+        data.pop("encrypted_token", None)
+    if include_external_api_key:
+        if agent.encrypted_external_api_key:
+            data["external_api_key"] = decrypt_token(agent.encrypted_external_api_key)
+        else:
+            data["external_api_key"] = None
     return data
+
+
+async def get_agent_by_external_api_key(
+    x_agent_api_key: str | None = Header(default=None, alias="X-Agent-API-Key"),
+):
+    if not x_agent_api_key:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="X-Agent-API-Key is required")
+    api_key_hash = hash_agent_external_api_key(x_agent_api_key.strip())
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent = await agent_dao.find_one_by_filter(external_api_key_hash=api_key_hash)
+            if not agent:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
+            return agent
 
 
 @router.get("")
@@ -94,7 +139,15 @@ async def read_agent(
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
             if current_user and found_agent.user_id != current_user.id:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-            return JSONResponse(content=_serialize_agent(found_agent), status_code=status.HTTP_200_OK)
+            await _ensure_external_api_key(found_agent, agent_dao)
+            return JSONResponse(
+                content=_serialize_agent(
+                    found_agent,
+                    include_external_api_key=True,
+                    include_encrypted_token=internal,
+                ),
+                status_code=status.HTTP_200_OK,
+            )
 
 
 @router.get("/allBy_tgID")
@@ -119,7 +172,7 @@ async def read_all_agents(
             if not user:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
             return JSONResponse(
-                content=[_serialize_agent(agent) for agent in (user.agents or [])],
+                content=[_serialize_agent(agent, include_encrypted_token=internal) for agent in (user.agents or [])],
                 status_code=status.HTTP_200_OK,
             )
 
@@ -152,6 +205,9 @@ async def create_agent_by_tg_id(
             payload = new_agent.model_dump()
             payload["user_id"] = user.id
             del payload["tg_id"]
+            external_api_key = generate_agent_external_api_key()
+            payload["encrypted_external_api_key"] = encrypt_token(external_api_key)
+            payload["external_api_key_hash"] = hash_agent_external_api_key(external_api_key)
             await agent_dao.add(payload)
     return Response(status_code=status.HTTP_201_CREATED)
 
@@ -204,11 +260,14 @@ async def create_agent_by_token(new_agent: NewAgent_byToken, current_user=Depend
                     status_code=status.HTTP_409_CONFLICT,
                     detail="Этот Telegram бот уже зарегистрирован",
                 )
+            external_api_key = generate_agent_external_api_key()
             await agent_dao.add(
                 {
                     "user_id": current_user.id,
                     "bot_id": bot_id,
                     "encrypted_token": encrypt_token(token_value),
+                    "encrypted_external_api_key": encrypt_token(external_api_key),
+                    "external_api_key_hash": hash_agent_external_api_key(external_api_key),
                     "bot_username": bot_username,
                     "system_prompt": new_agent.system_prompt.strip(),
                     # New agents should be immediately usable via Telegram webhook.
@@ -329,7 +388,10 @@ async def toggle_status(
                         detail=f"Не удалось синхронизировать webhook Telegram: {e}",
                     )
 
-            return JSONResponse(content=_serialize_agent(agent), status_code=status.HTTP_200_OK)
+            return JSONResponse(
+                content=_serialize_agent(agent, include_external_api_key=True, include_encrypted_token=internal),
+                status_code=status.HTTP_200_OK,
+            )
 
 
 @router.delete("")
@@ -417,3 +479,41 @@ async def ai_generate_welcome(
                 content={"bot_id": agent.bot_id, "welcome_message": welcome_message},
                 status_code=status.HTTP_200_OK,
             )
+
+
+@router.post("/external/chat")
+async def external_chat(
+    payload: ExternalAgentChatRequest,
+    agent=Depends(get_agent_by_external_api_key),
+):
+    if not agent.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Agent is disabled")
+
+    message = payload.message.strip()
+    if not message:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Message is empty")
+
+    context = await search_knowledge_base(message, agent_id=agent.bot_id)
+    try:
+        answer = await generate_answer_with_context(message, context, agent.system_prompt or "Ты — полезный ассистент.")
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Не удалось получить ответ от LLM",
+        )
+
+    sources = []
+    for item in context:
+        source = item.get("source")
+        if source and source not in sources:
+            sources.append(source)
+
+    return JSONResponse(
+        content={
+            "bot_id": agent.bot_id,
+            "bot_username": agent.bot_username,
+            "answer": answer,
+            "sources": sources,
+        },
+        status_code=status.HTTP_200_OK,
+    )

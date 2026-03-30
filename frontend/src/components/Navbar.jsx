@@ -94,6 +94,7 @@ const Navbar = () => {
         <nav className={`nav ${isMenuOpen ? 'nav-open' : ''}`}>
           <Link to={NAVIGATION_ROUTES.AGENTS}>Мои агенты</Link>
           <Link to={NAVIGATION_ROUTES.CREATE_AGENT}>Создать агента</Link>
+          <Link to={NAVIGATION_ROUTES.DOCUMENTATION}>Документация</Link>
           <Link to={NAVIGATION_ROUTES.PRICING}>Цены</Link>
         </nav>
 
