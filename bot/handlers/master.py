@@ -572,8 +572,6 @@ async def render_agent_info(callback: types.CallbackQuery, agent_id: int):
     bot_name = escape_md(agent_json['bot_username']) if agent_json['bot_username'] else "Бот"
     status_text = "✅ Активен" if agent_json['is_active'] else "❌ Отключен"
     toggle_label = "🔴 Отключить" if agent_json['is_active'] else "🟢 Включить"
-    external_api_key = agent_json.get("external_api_key")
-    
     text = (
         f"🤖 *Управление агентом*\n\n"
         f"ID: `{agent_id}`\n"
@@ -583,17 +581,12 @@ async def render_agent_info(callback: types.CallbackQuery, agent_id: int):
         f"🧠 *Промпт:* \n_{escape_md(agent_json['system_prompt'][:200])}..._"
     )
 
-    api_key_button = build_copy_api_key_button(external_api_key)
-
     kb = types.InlineKeyboardMarkup(inline_keyboard=[
        [
         types.InlineKeyboardButton(text="📝 Изменить промпт", callback_data=f"edit_prompt_{agent_id}"),
         types.InlineKeyboardButton(text="👋 Изменить приветствие", callback_data=f"edit_welcome_{agent_id}")
         ],
-        [
-            api_key_button,
-            types.InlineKeyboardButton(text="♻️ Перевыпустить ключ", callback_data=f"confirm_regen_api_key_{agent_id}"),
-        ],
+        [types.InlineKeyboardButton(text="🔑 API ключ", callback_data=f"api_menu_{agent_id}")],
         [types.InlineKeyboardButton(text="📚 Редактировать базу знаний", callback_data=f"edit_kb_{agent_id}")],
         [
             types.InlineKeyboardButton(text=toggle_label, callback_data=f"toggle_agent_{agent_id}"),
@@ -603,6 +596,43 @@ async def render_agent_info(callback: types.CallbackQuery, agent_id: int):
     ])
 
     await safe_edit_callback_message(callback, text, reply_markup=kb, parse_mode="Markdown")
+
+
+async def render_api_key_menu(callback: types.CallbackQuery, agent_id: int):
+    agent_json = await APIread.agentBy_botID(agent_id)
+    response_status = get_response_status(agent_json)
+    if response_status != status.HTTP_200_OK:
+        await safe_callback_answer(
+            callback,
+            "Не удалось открыть меню API ключа. Попробуйте позже.",
+            show_alert=True,
+        )
+        return
+
+    external_api_key = agent_json.get("external_api_key")
+    api_key_button = build_copy_api_key_button(external_api_key)
+    kb = types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                api_key_button,
+                types.InlineKeyboardButton(text="♻️ Перевыпустить ключ", callback_data=f"confirm_regen_api_key_{agent_id}"),
+            ],
+            [types.InlineKeyboardButton(text="⬅️ Назад к агенту", callback_data=f"agent_info_{agent_id}")],
+        ]
+    )
+    text = (
+        "🔑 *API ключ агента*\n\n"
+        "Вы можете скопировать API ключ вашего агента, чтобы интегрировать его "
+        "в свой сервис через API-запросы.\n\n"
+        "⚠️ Если вы перевыпустите ключ, старый ключ сразу перестанет работать."
+    )
+    await safe_edit_callback_message(callback, text, reply_markup=kb, parse_mode="Markdown")
+
+
+@master_router.callback_query(F.data.startswith("api_menu_"))
+async def show_api_menu(callback: types.CallbackQuery):
+    agent_id = int(callback.data.split("_")[2])
+    await render_api_key_menu(callback, agent_id)
 
 
 @master_router.callback_query(F.data == "api_key_unavailable")
@@ -621,7 +651,7 @@ async def confirm_regenerate_api_key(callback: types.CallbackQuery):
         inline_keyboard=[
             [
                 types.InlineKeyboardButton(text="✅ Да, перевыпустить", callback_data=f"regen_api_key_{agent_id}"),
-                types.InlineKeyboardButton(text="❌ Отмена", callback_data=f"agent_info_{agent_id}"),
+                types.InlineKeyboardButton(text="❌ Отмена", callback_data=f"api_menu_{agent_id}"),
             ]
         ]
     )
@@ -646,7 +676,7 @@ async def regenerate_api_key(callback: types.CallbackQuery):
         return
 
     await safe_callback_answer(callback, "API ключ перевыпущен", show_alert=True)
-    await render_agent_info(callback, agent_id)
+    await render_api_key_menu(callback, agent_id)
 
 # --- ПЕРЕКЛЮЧЕНИЕ СТАТУСА ---
 
