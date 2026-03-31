@@ -150,6 +150,20 @@ class APIcreate(APIbase):
     async def userBy_tgID(cls, name:str, tg_id: int) -> dict:
         data = {'name':name, 'telegram_id': tg_id}
         return await cls.user(data)
+
+    @classmethod
+    async def confirmTelegramLinkCode(
+        cls,
+        code: str,
+        telegram_id: int,
+        telegram_username: str | None = None,
+    ) -> dict:
+        data = {
+            "code": code,
+            "telegram_id": telegram_id,
+            "telegram_username": telegram_username,
+        }
+        return await cls.user(data, add_url="telegram-link/confirm")
     
     @classmethod
     async def documentBy_botID(cls, agent_id: int, file_name: str, file_bytes: bytes) -> dict:

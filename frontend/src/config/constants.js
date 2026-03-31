@@ -26,6 +26,7 @@ export const API_ROUTES = {
   // Users
   USERS_ME: '/api/users/me',
   USERS_PROFILE: '/api/users/profile',
+  USERS_TELEGRAM_LINK_START: '/api/users/telegram-link/start',
 
   // Agents
   AGENTS_LIST: '/api/agents/allBy_tgID',

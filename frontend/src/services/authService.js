@@ -83,6 +83,11 @@ export const authService = {
     const response = await apiClient.get(API_ROUTES.USERS_ME);
     return response.data;
   },
+
+  startTelegramLink: async () => {
+    const response = await apiClient.post(API_ROUTES.USERS_TELEGRAM_LINK_START);
+    return response.data;
+  },
 };
 
 export default authService;

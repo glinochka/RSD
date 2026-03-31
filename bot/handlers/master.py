@@ -3,7 +3,7 @@ import asyncio
 from fastapi import status
 from aiogram import Router, F, Bot, types
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.filters import CommandStart
+from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 
 from aiogram.filters import StateFilter
@@ -197,6 +197,43 @@ async def cmd_start(message: types.Message, state: FSMContext):
         build_start_menu_text(message.from_user.first_name),
         reply_markup=get_main_menu()
     )
+
+
+@master_router.message(Command("link"))
+async def link_website_account(message: types.Message):
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        await message.answer(
+            "Чтобы привязать аккаунт сайта, сначала нажмите кнопку 'Связать TG' в профиле на сайте, "
+            "а затем отправьте сюда команду вида:\n/link ABCD-EFGH"
+        )
+        return
+
+    raw_code = parts[1].strip()
+    response = await APIcreate.confirmTelegramLinkCode(
+        code=raw_code,
+        telegram_id=message.from_user.id,
+        telegram_username=message.from_user.username,
+    )
+    response_status = get_response_status(response)
+
+    if response_status == status.HTTP_200_OK:
+        await message.answer("✅ Telegram успешно привязан к вашему аккаунту на сайте.")
+        return
+
+    if response_status == status.HTTP_409_CONFLICT:
+        await message.answer("Этот Telegram уже привязан к другому аккаунту.")
+        return
+
+    if response_status == status.HTTP_429_TOO_MANY_REQUESTS:
+        await message.answer("Код заблокирован из-за превышения числа попыток. Сгенерируйте новый код на сайте.")
+        return
+
+    if response_status == status.HTTP_400_BAD_REQUEST:
+        await message.answer("Код недействителен или истек. Сгенерируйте новый код в профиле на сайте.")
+        return
+
+    await message.answer("Не удалось привязать аккаунт из-за ошибки сервера. Попробуйте позже.")
 
 @master_router.callback_query(F.data == "start_menu")
 async def back_to_menu(callback: types.CallbackQuery):

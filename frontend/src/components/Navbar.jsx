@@ -6,6 +6,8 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
+import { useNotification } from '../context/useNotification';
+import authService from '../services/authService';
 import { NAVIGATION_ROUTES } from '../config/constants';
 import '../styles/navbar.css';
 
@@ -29,10 +31,16 @@ function ProfilePersonIcon({ className }) {
 }
 
 const Navbar = () => {
-  const { isAuthenticated, user, logout } = useAuth();
+  const { isAuthenticated, user, logout, setUser } = useAuth();
+  const { showError, showInfo, showSuccess } = useNotification();
   const navigate = useNavigate();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isTelegramLinked, setIsTelegramLinked] = useState(!!user?.telegram_id);
+  const [telegramLinkCode, setTelegramLinkCode] = useState('');
+  const [telegramLinkExpiresAt, setTelegramLinkExpiresAt] = useState('');
+  const [isStartingTelegramLink, setIsStartingTelegramLink] = useState(false);
+  const [isCheckingTelegramLink, setIsCheckingTelegramLink] = useState(false);
   const profilePanelId = useId();
   const profilePanelRef = useRef(null);
 
@@ -83,6 +91,79 @@ const Navbar = () => {
     }, 0);
     return () => window.clearTimeout(t);
   }, [isProfileOpen]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !isProfileOpen) return;
+
+    let cancelled = false;
+    const loadCurrentUser = async () => {
+      try {
+        const me = await authService.getCurrentUser();
+        if (cancelled) return;
+        const linked = !!me?.telegram_id;
+        setIsTelegramLinked(linked);
+        setUser((prev) => ({ ...(prev || {}), name: me?.name ?? prev?.name, telegram_id: me?.telegram_id ?? null }));
+        if (linked) {
+          setTelegramLinkCode('');
+          setTelegramLinkExpiresAt('');
+        }
+      } catch (error) {
+        if (!cancelled) {
+          showError(error?.message || 'Не удалось загрузить профиль');
+        }
+      }
+    };
+
+    loadCurrentUser();
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated, isProfileOpen, setUser, showError]);
+
+  const handleStartTelegramLink = async () => {
+    try {
+      setIsStartingTelegramLink(true);
+      const result = await authService.startTelegramLink();
+      setTelegramLinkCode(result?.code || '');
+      setTelegramLinkExpiresAt(result?.expires_at || '');
+      showInfo('Код сгенерирован. Отправьте его в мастер-бот: /link <код>', 5000);
+    } catch (error) {
+      showError(error?.message || 'Не удалось сгенерировать код привязки');
+    } finally {
+      setIsStartingTelegramLink(false);
+    }
+  };
+
+  const handleCheckTelegramLink = async () => {
+    try {
+      setIsCheckingTelegramLink(true);
+      const me = await authService.getCurrentUser();
+      const linked = !!me?.telegram_id;
+      setIsTelegramLinked(linked);
+      setUser((prev) => ({ ...(prev || {}), name: me?.name ?? prev?.name, telegram_id: me?.telegram_id ?? null }));
+      if (linked) {
+        setTelegramLinkCode('');
+        setTelegramLinkExpiresAt('');
+        showSuccess('Telegram успешно привязан', 3000);
+      } else {
+        showInfo('Привязка пока не завершена. После команды /link проверьте еще раз.', 4000);
+      }
+    } catch (error) {
+      showError(error?.message || 'Не удалось проверить статус привязки');
+    } finally {
+      setIsCheckingTelegramLink(false);
+    }
+  };
+
+  const handleCopyTelegramCode = async () => {
+    if (!telegramLinkCode) return;
+    try {
+      await navigator.clipboard.writeText(telegramLinkCode);
+      showSuccess('Код скопирован', 2500);
+    } catch {
+      showError('Не удалось скопировать код');
+    }
+  };
 
   return (
     <>
@@ -171,6 +252,54 @@ const Navbar = () => {
               <p className="profile-drawer-hint">
                 Управляйте агентами через разделы «Мои агенты» и «Создать агента» в шапке сайта.
               </p>
+              <div className="profile-telegram-link-box">
+                <p className="profile-telegram-link-title">Связь с мастер-ботом</p>
+                {isTelegramLinked ? (
+                  <p className="profile-telegram-link-status success">Telegram уже привязан к аккаунту.</p>
+                ) : (
+                  <>
+                    <p className="profile-telegram-link-status">
+                      Чтобы привязать аккаунт, сгенерируйте код и отправьте его в мастер-боте: <code>/link &lt;код&gt;</code>
+                    </p>
+                    {telegramLinkCode ? (
+                      <div className="profile-telegram-link-code-wrap">
+                        <p className="profile-telegram-link-code">{telegramLinkCode}</p>
+                        <div className="profile-telegram-link-actions">
+                          <button
+                            type="button"
+                            className="btn btn-outline profile-drawer-btn"
+                            onClick={handleCopyTelegramCode}
+                          >
+                            Скопировать код
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-outline profile-drawer-btn"
+                            onClick={handleCheckTelegramLink}
+                            disabled={isCheckingTelegramLink}
+                          >
+                            {isCheckingTelegramLink ? 'Проверка...' : 'Проверить привязку'}
+                          </button>
+                        </div>
+                        {telegramLinkExpiresAt && (
+                          <p className="profile-telegram-link-expire">
+                            Код действует до {new Date(telegramLinkExpiresAt).toLocaleString()}.
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        className="btn btn-outline profile-drawer-btn"
+                        onClick={handleStartTelegramLink}
+                        disabled={isStartingTelegramLink}
+                      >
+                        {isStartingTelegramLink ? 'Генерация...' : 'Связать TG'}
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
             </div>
 
             <div className="profile-drawer-footer">

@@ -4,7 +4,7 @@ sys.path.insert(0, dirname(dirname(abspath(__file__))))
 
 
 
-from sqlalchemy import BigInteger, Boolean, String, ForeignKey, Text, DateTime
+from sqlalchemy import BigInteger, Boolean, String, ForeignKey, Text, DateTime, Integer
 from sqlalchemy.orm import  Mapped, mapped_column, relationship
 
 try: from .database import Base
@@ -35,6 +35,19 @@ class User(Base):
     registered: Mapped[date] = mapped_column(default=datetime.now(timezone.utc))
 
     agents: Mapped[list['Agent']] = relationship(back_populates='user', cascade="all, delete-orphan")
+
+
+class TelegramLinkChallenge(Base):
+    __tablename__ = "telegram_link_challenges"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    code_hash: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    attempts_left: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 class Agent(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
