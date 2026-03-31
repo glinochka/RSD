@@ -429,6 +429,8 @@ async def confirm_telegram_link(payload: TelegramLinkConfirmRequest, _internal=D
                 # so it can be attached to the authenticated web account.
                 if linked_user.password is None:
                     await user_dao.update(linked_user, {"telegram_id": None})
+                    # Ensure unique index slot is released before assigning telegram_id to target user.
+                    await session.flush()
                 else:
                     await challenge_dao.update(
                         challenge,
