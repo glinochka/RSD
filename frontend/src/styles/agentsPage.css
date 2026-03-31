@@ -163,16 +163,9 @@
 
 .api-key-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
+  flex-wrap: wrap;
   gap: var(--spacing-sm);
-}
-
-.api-key-copy-btn {
-  font-size: var(--font-size-lg);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  min-width: 40px;
-  min-height: 40px;
 }
 
 .agent-management-empty {

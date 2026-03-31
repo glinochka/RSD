@@ -89,6 +89,18 @@ async def _ensure_external_api_key(agent, agent_dao: AgentDAO) -> str:
     return raw_key
 
 
+async def _regenerate_external_api_key(agent, agent_dao: AgentDAO) -> str:
+    raw_key = generate_agent_external_api_key()
+    await agent_dao.update(
+        agent,
+        {
+            "encrypted_external_api_key": encrypt_token(raw_key),
+            "external_api_key_hash": hash_agent_external_api_key(raw_key),
+        },
+    )
+    return raw_key
+
+
 def _serialize_agent(agent, *, include_external_api_key: bool = False, include_encrypted_token: bool = False) -> dict:
     data = convert_to_dict(agent)
     data.pop("registered", None)
@@ -477,6 +489,28 @@ async def ai_generate_welcome(
             await agent_dao.update(agent, {"welcome_message": welcome_message})
             return JSONResponse(
                 content={"bot_id": agent.bot_id, "welcome_message": welcome_message},
+                status_code=status.HTTP_200_OK,
+            )
+
+
+@router.post("/external/regenerate_key")
+async def regenerate_external_api_key(
+    payload: Agent_by_botID,
+    current_user=Depends(get_current_user_optional),
+    internal: bool = Depends(is_internal_request),
+):
+    _assert_access(current_user, internal)
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent = await agent_dao.find_one_by_filter(bot_id=payload.bot_id)
+            if not agent:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+            if current_user and agent.user_id != current_user.id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+            await _regenerate_external_api_key(agent, agent_dao)
+            return JSONResponse(
+                content=_serialize_agent(agent, include_external_api_key=True, include_encrypted_token=internal),
                 status_code=status.HTTP_200_OK,
             )
 

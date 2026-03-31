@@ -125,6 +125,27 @@ def _paid_plans_map(plans: list[dict]) -> dict[str, dict]:
     return {p["code"]: p for p in plans if p.get("is_paid") and p.get("code")}
 
 
+def build_copy_api_key_button(external_api_key: str | None) -> types.InlineKeyboardButton:
+    if not external_api_key:
+        return types.InlineKeyboardButton(
+            text="📋 Скопировать API ключ",
+            callback_data="api_key_unavailable",
+        )
+
+    # New Telegram clients support native clipboard copy for inline button.
+    if hasattr(types, "CopyTextButton"):
+        return types.InlineKeyboardButton(
+            text="📋 Скопировать API ключ",
+            copy_text=types.CopyTextButton(text=external_api_key),
+        )
+
+    # Fallback for older aiogram/Telegram clients.
+    return types.InlineKeyboardButton(
+        text="📋 Скопировать API ключ",
+        switch_inline_query_current_chat=external_api_key,
+    )
+
+
 async def safe_edit_callback_message(
     callback: types.CallbackQuery,
     text: str,
@@ -562,24 +583,17 @@ async def render_agent_info(callback: types.CallbackQuery, agent_id: int):
         f"🧠 *Промпт:* \n_{escape_md(agent_json['system_prompt'][:200])}..._"
     )
 
-    api_key_button = (
-        types.InlineKeyboardButton(
-            text="📋 Скопировать API ключ",
-            switch_inline_query_current_chat=external_api_key,
-        )
-        if external_api_key
-        else types.InlineKeyboardButton(
-            text="📋 Скопировать API ключ",
-            callback_data="api_key_unavailable",
-        )
-    )
+    api_key_button = build_copy_api_key_button(external_api_key)
 
     kb = types.InlineKeyboardMarkup(inline_keyboard=[
        [
         types.InlineKeyboardButton(text="📝 Изменить промпт", callback_data=f"edit_prompt_{agent_id}"),
         types.InlineKeyboardButton(text="👋 Изменить приветствие", callback_data=f"edit_welcome_{agent_id}")
         ],
-        [api_key_button],
+        [
+            api_key_button,
+            types.InlineKeyboardButton(text="♻️ Перевыпустить ключ", callback_data=f"confirm_regen_api_key_{agent_id}"),
+        ],
         [types.InlineKeyboardButton(text="📚 Редактировать базу знаний", callback_data=f"edit_kb_{agent_id}")],
         [
             types.InlineKeyboardButton(text=toggle_label, callback_data=f"toggle_agent_{agent_id}"),
@@ -598,6 +612,41 @@ async def api_key_unavailable(callback: types.CallbackQuery):
         "API ключ временно недоступен. Попробуйте открыть карточку агента еще раз.",
         show_alert=True,
     )
+
+
+@master_router.callback_query(F.data.startswith("confirm_regen_api_key_"))
+async def confirm_regenerate_api_key(callback: types.CallbackQuery):
+    agent_id = int(callback.data.split("_")[4])
+    kb = types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(text="✅ Да, перевыпустить", callback_data=f"regen_api_key_{agent_id}"),
+                types.InlineKeyboardButton(text="❌ Отмена", callback_data=f"agent_info_{agent_id}"),
+            ]
+        ]
+    )
+    await safe_edit_callback_message(
+        callback,
+        "⚠️ Вы точно хотите перевыпустить ключ?\n\nНынешний API ключ больше не будет активен.",
+        reply_markup=kb,
+    )
+
+
+@master_router.callback_query(F.data.startswith("regen_api_key_"))
+async def regenerate_api_key(callback: types.CallbackQuery):
+    agent_id = int(callback.data.split("_")[3])
+    result = await APIcreate.regenerateExternalAgentApiKey(agent_id)
+    response_status = get_response_status(result)
+    if response_status != status.HTTP_200_OK:
+        await safe_callback_answer(
+            callback,
+            "Не удалось перевыпустить API ключ. Попробуйте позже.",
+            show_alert=True,
+        )
+        return
+
+    await safe_callback_answer(callback, "API ключ перевыпущен", show_alert=True)
+    await render_agent_info(callback, agent_id)
 
 # --- ПЕРЕКЛЮЧЕНИЕ СТАТУСА ---
 

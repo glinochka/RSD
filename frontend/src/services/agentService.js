@@ -88,6 +88,13 @@ export const agentService = {
     return response.data;
   },
 
+  regenerateExternalKey: async (botId) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_REGENERATE_EXTERNAL_KEY, {
+      bot_id: botId,
+    });
+    return response.data;
+  },
+
   uploadDocumentByBotId: async (botId, file) => {
     const formData = new FormData();
     formData.append('agent_data', JSON.stringify({ bot_id: botId }));

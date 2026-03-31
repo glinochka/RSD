@@ -189,6 +189,10 @@ class APIcreate(APIbase):
             "invoice_payload": invoice_payload,
         }
         return await cls.payment(data, add_url="process_successful")
+
+    @classmethod
+    async def regenerateExternalAgentApiKey(cls, bot_id: int) -> dict:
+        return await cls.agent({"bot_id": bot_id}, add_url="external/regenerate_key")
     
 
     

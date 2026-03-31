@@ -294,6 +294,20 @@ const AgentsPageContent = () => {
     }
   };
 
+  const handleRegenerateApiKey = async () => {
+    if (!selectedBotId) return;
+    if (!window.confirm('Вы точно хотите перевыпустить ключ? Нынешний ключ больше не будет активен.')) {
+      return;
+    }
+    try {
+      const updated = await agentService.regenerateExternalKey(selectedBotId);
+      setSelectedAgent((prev) => ({ ...(prev || {}), ...updated }));
+      showSuccess('API ключ перевыпущен');
+    } catch (error) {
+      showError(error?.message || 'Ошибка перевыпуска API ключа');
+    }
+  };
+
   useEffect(() => {
     if (!isAuthenticated) return;
     const list = agents || [];
@@ -371,21 +385,23 @@ const AgentsPageContent = () => {
                   </div>
 
                   <div className="agent-management-block">
-                    <label htmlFor="agent_external_api_key">API ключ для внешних интеграций</label>
+                    <label>API ключ для внешних интеграций</label>
                     <div className="api-key-row">
-                      <input
-                        id="agent_external_api_key"
-                        className="input-main"
-                        value={selectedAgent.external_api_key || ''}
-                        readOnly
-                      />
                       <button
-                        className="edit-btn api-key-copy-btn"
+                        className="btn btn-black"
                         onClick={handleCopyApiKey}
                         title="Скопировать API ключ"
                         aria-label="Copy API key"
                       >
-                        📋
+                        Скопировать API ключ
+                      </button>
+                      <button
+                        className="btn btn-outline"
+                        onClick={handleRegenerateApiKey}
+                        title="Перевыпустить API ключ"
+                        aria-label="Regenerate API key"
+                      >
+                        Перевыпустить API ключ
                       </button>
                     </div>
                   </div>

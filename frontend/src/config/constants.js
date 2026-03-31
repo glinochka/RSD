@@ -38,6 +38,7 @@ export const API_ROUTES = {
   AGENTS_AI_IMPROVE_PROMPT: '/api/agents/ai/improve_prompt',
   AGENTS_AI_GENERATE_WELCOME: '/api/agents/ai/generate_welcome',
   AGENTS_EXTERNAL_CHAT: '/api/agents/external/chat',
+  AGENTS_REGENERATE_EXTERNAL_KEY: '/api/agents/external/regenerate_key',
   DOCUMENTS_CREATE: '/api/documents',
   DOCUMENTS_LIST_BY_BOT: '/api/documents/allBy_botID',
   DOCUMENTS_DELETE: (docId) => `/api/documents/${docId}`,
