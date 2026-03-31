@@ -349,7 +349,7 @@ async def start_telegram_link(payload: TelegramLinkStartRequest, current_user=De
     return JSONResponse(
         content={
             "code": _format_link_code(code),
-            "expires_at": expires_at.isoformat(),
+            "expires_at": expires_at.replace(tzinfo=timezone.utc).isoformat(),
             "expires_in_seconds": LINK_CODE_TTL_MINUTES * 60,
         },
         status_code=status.HTTP_200_OK,
