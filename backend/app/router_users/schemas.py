@@ -33,10 +33,19 @@ class TelegramLinkStartResponse(BaseModel):
     expires_in_seconds: int = Field(..., description="Оставшееся время жизни кода")
 
 
+class TelegramLinkStartRequest(BaseModel):
+    telegram_username: str = Field(
+        ...,
+        min_length=4,
+        max_length=33,
+        pattern=r"^@[A-Za-z0-9_]{3,32}$",
+        description="Username Telegram в формате @username",
+    )
+
+
 class TelegramLinkConfirmRequest(BaseModel):
-    code: str = Field(..., min_length=6, max_length=16, description="Одноразовый код из сайта")
+    code: str = Field(..., min_length=6, max_length=6, description="Одноразовый 6-значный код из сайта")
     telegram_id: int = Field(..., description="Telegram ID пользователя")
-    telegram_username: Optional[str] = Field(default=None, description="Telegram username (опционально)")
 
 
 class UserMeResponse(BaseModel):

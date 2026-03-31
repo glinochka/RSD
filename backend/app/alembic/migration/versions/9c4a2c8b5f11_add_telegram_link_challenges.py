@@ -23,6 +23,7 @@ def upgrade() -> None:
         "telegram_link_challenges",
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("target_telegram_id", sa.BigInteger(), nullable=False),
         sa.Column("code_hash", sa.String(length=64), nullable=False),
         sa.Column("expires_at", sa.DateTime(), nullable=False),
         sa.Column("attempts_left", sa.Integer(), nullable=False),
@@ -36,6 +37,12 @@ def upgrade() -> None:
         op.f("ix_telegram_link_challenges_user_id"),
         "telegram_link_challenges",
         ["user_id"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_telegram_link_challenges_target_telegram_id"),
+        "telegram_link_challenges",
+        ["target_telegram_id"],
         unique=False,
     )
     op.create_index(
@@ -55,5 +62,6 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index(op.f("ix_telegram_link_challenges_expires_at"), table_name="telegram_link_challenges")
     op.drop_index(op.f("ix_telegram_link_challenges_code_hash"), table_name="telegram_link_challenges")
+    op.drop_index(op.f("ix_telegram_link_challenges_target_telegram_id"), table_name="telegram_link_challenges")
     op.drop_index(op.f("ix_telegram_link_challenges_user_id"), table_name="telegram_link_challenges")
     op.drop_table("telegram_link_challenges")

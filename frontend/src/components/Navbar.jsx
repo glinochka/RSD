@@ -37,8 +37,11 @@ const Navbar = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isTelegramLinked, setIsTelegramLinked] = useState(!!user?.telegram_id);
+  const [isTelegramFormOpen, setIsTelegramFormOpen] = useState(false);
+  const [telegramUsernameInput, setTelegramUsernameInput] = useState('');
   const [telegramLinkCode, setTelegramLinkCode] = useState('');
   const [telegramLinkExpiresAt, setTelegramLinkExpiresAt] = useState('');
+  const [telegramLinkRemainingSeconds, setTelegramLinkRemainingSeconds] = useState(0);
   const [isStartingTelegramLink, setIsStartingTelegramLink] = useState(false);
   const [isCheckingTelegramLink, setIsCheckingTelegramLink] = useState(false);
   const profilePanelId = useId();
@@ -92,6 +95,21 @@ const Navbar = () => {
     return () => window.clearTimeout(t);
   }, [isProfileOpen]);
 
+  const normalizeTelegramUsernameInput = (value) => {
+    const compact = (value || '').replace(/\s+/g, '');
+    if (!compact) return '';
+    const withPrefix = compact.startsWith('@') ? compact : `@${compact}`;
+    const sanitizedBody = withPrefix.slice(1).replace(/[^A-Za-z0-9_]/g, '').slice(0, 32);
+    return `@${sanitizedBody}`;
+  };
+
+  const formatSeconds = (totalSeconds) => {
+    const safe = Math.max(0, totalSeconds || 0);
+    const minutes = Math.floor(safe / 60);
+    const seconds = safe % 60;
+    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  };
+
   useEffect(() => {
     if (!isAuthenticated || !isProfileOpen) return;
 
@@ -104,8 +122,10 @@ const Navbar = () => {
         setIsTelegramLinked(linked);
         setUser((prev) => ({ ...(prev || {}), name: me?.name ?? prev?.name, telegram_id: me?.telegram_id ?? null }));
         if (linked) {
+          setIsTelegramFormOpen(false);
           setTelegramLinkCode('');
           setTelegramLinkExpiresAt('');
+          setTelegramLinkRemainingSeconds(0);
         }
       } catch (error) {
         if (!cancelled) {
@@ -120,13 +140,42 @@ const Navbar = () => {
     };
   }, [isAuthenticated, isProfileOpen, setUser, showError]);
 
+  useEffect(() => {
+    if (!telegramLinkExpiresAt) {
+      setTelegramLinkRemainingSeconds(0);
+      return undefined;
+    }
+
+    const updateRemaining = () => {
+      const expiresAtMs = new Date(telegramLinkExpiresAt).getTime();
+      const diffSeconds = Math.max(0, Math.ceil((expiresAtMs - Date.now()) / 1000));
+      setTelegramLinkRemainingSeconds(diffSeconds);
+      if (diffSeconds === 0) {
+        setTelegramLinkCode('');
+        setTelegramLinkExpiresAt('');
+      }
+    };
+
+    updateRemaining();
+    const timerId = window.setInterval(updateRemaining, 1000);
+    return () => window.clearInterval(timerId);
+  }, [telegramLinkExpiresAt]);
+
   const handleStartTelegramLink = async () => {
+    const username = telegramUsernameInput.trim();
+    if (!/^@[A-Za-z0-9_]{3,32}$/.test(username)) {
+      showError('Введите Telegram username в формате @asd123');
+      return;
+    }
     try {
       setIsStartingTelegramLink(true);
-      const result = await authService.startTelegramLink();
+      const result = await authService.startTelegramLink(username);
       setTelegramLinkCode(result?.code || '');
       setTelegramLinkExpiresAt(result?.expires_at || '');
-      showInfo('Код сгенерирован. Отправьте его в мастер-бот: /link <код>', 5000);
+      setTelegramLinkRemainingSeconds(Number(result?.expires_in_seconds || 0));
+      setIsTelegramFormOpen(false);
+      setTelegramUsernameInput('');
+      showInfo('Код сгенерирован. Проверьте сообщение в мастер-боте и отправьте туда 6-значный код.', 5000);
     } catch (error) {
       showError(error?.message || 'Не удалось сгенерировать код привязки');
     } finally {
@@ -142,8 +191,10 @@ const Navbar = () => {
       setIsTelegramLinked(linked);
       setUser((prev) => ({ ...(prev || {}), name: me?.name ?? prev?.name, telegram_id: me?.telegram_id ?? null }));
       if (linked) {
+        setIsTelegramFormOpen(false);
         setTelegramLinkCode('');
         setTelegramLinkExpiresAt('');
+        setTelegramLinkRemainingSeconds(0);
         showSuccess('Telegram успешно привязан', 3000);
       } else {
         showInfo('Привязка пока не завершена. После команды /link проверьте еще раз.', 4000);
@@ -259,7 +310,7 @@ const Navbar = () => {
                 ) : (
                   <>
                     <p className="profile-telegram-link-status">
-                      Чтобы привязать аккаунт, сгенерируйте код и отправьте его в мастер-боте: <code>/link &lt;код&gt;</code>
+                      Нажмите «Связать TG», укажите username в формате <code>@username</code>, затем введите код в боте.
                     </p>
                     {telegramLinkCode ? (
                       <div className="profile-telegram-link-code-wrap">
@@ -283,19 +334,54 @@ const Navbar = () => {
                         </div>
                         {telegramLinkExpiresAt && (
                           <p className="profile-telegram-link-expire">
-                            Код действует до {new Date(telegramLinkExpiresAt).toLocaleString()}.
+                            Код действителен: {formatSeconds(telegramLinkRemainingSeconds)}
                           </p>
                         )}
                       </div>
                     ) : (
-                      <button
-                        type="button"
-                        className="btn btn-outline profile-drawer-btn"
-                        onClick={handleStartTelegramLink}
-                        disabled={isStartingTelegramLink}
-                      >
-                        {isStartingTelegramLink ? 'Генерация...' : 'Связать TG'}
-                      </button>
+                      <>
+                        {!isTelegramFormOpen ? (
+                          <button
+                            type="button"
+                            className="btn btn-outline profile-drawer-btn"
+                            onClick={() => setIsTelegramFormOpen(true)}
+                          >
+                            Связать TG
+                          </button>
+                        ) : (
+                          <div className="profile-telegram-link-form">
+                            <input
+                              type="text"
+                              value={telegramUsernameInput}
+                              onChange={(e) => setTelegramUsernameInput(normalizeTelegramUsernameInput(e.target.value))}
+                              className="profile-telegram-link-input"
+                              placeholder="@asd123"
+                              autoComplete="off"
+                            />
+                            <div className="profile-telegram-link-actions">
+                              <button
+                                type="button"
+                                className="btn btn-outline profile-drawer-btn"
+                                onClick={handleStartTelegramLink}
+                                disabled={isStartingTelegramLink}
+                              >
+                                {isStartingTelegramLink ? 'Отправка...' : 'Отправить код в бот'}
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-outline profile-drawer-btn"
+                                onClick={() => {
+                                  setIsTelegramFormOpen(false);
+                                  setTelegramUsernameInput('');
+                                }}
+                                disabled={isStartingTelegramLink}
+                              >
+                                Отмена
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </>
                     )}
                   </>
                 )}

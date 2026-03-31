@@ -156,12 +156,10 @@ class APIcreate(APIbase):
         cls,
         code: str,
         telegram_id: int,
-        telegram_username: str | None = None,
     ) -> dict:
         data = {
             "code": code,
             "telegram_id": telegram_id,
-            "telegram_username": telegram_username,
         }
         return await cls.user(data, add_url="telegram-link/confirm")
     

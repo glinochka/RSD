@@ -295,6 +295,27 @@
   gap: var(--spacing-xs);
 }
 
+.profile-telegram-link-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.profile-telegram-link-input {
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-base);
+  padding: 0.625rem 0.75rem;
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+
+.profile-telegram-link-input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
 .profile-telegram-link-expire {
   margin: 0;
   font-size: var(--font-size-xs);

@@ -3,15 +3,16 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from logging import getLogger
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 
 from .dao import TelegramLinkChallengeDAO, UserDAO
 from .schemas import *
 from ..alembic.database import async_session_maker
-from ..alembic.models import TelegramLinkChallenge
+from ..alembic.models import TelegramLinkChallenge, User
 from ..config import settings
 from ..router_agents.dao import AgentDAO
 from ..utils.convert import convert_to_dict
@@ -24,9 +25,9 @@ logger = getLogger(__name__)
 router = APIRouter(prefix="/api/users")
 
 http_bearer = HTTPBearer(auto_error=False)
-LINK_CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
-LINK_CODE_LENGTH = 8
-LINK_CODE_TTL_MINUTES = 10
+LINK_CODE_ALPHABET = "0123456789"
+LINK_CODE_LENGTH = 6
+LINK_CODE_TTL_MINUTES = 5
 LINK_CODE_MAX_ATTEMPTS = 5
 
 
@@ -39,7 +40,7 @@ def _normalize_link_code(raw_code: str) -> str:
 
 
 def _format_link_code(raw_code: str) -> str:
-    return f"{raw_code[:4]}-{raw_code[4:]}"
+    return raw_code
 
 
 def _generate_link_code() -> str:
@@ -50,6 +51,40 @@ def _hash_link_code(raw_code: str) -> str:
     normalized_code = _normalize_link_code(raw_code)
     peppered_code = f"{settings.SECRET_KEY}:{normalized_code}"
     return hashlib.sha256(peppered_code.encode("utf-8")).hexdigest()
+
+
+def _normalize_tg_username(username: str) -> str:
+    value = username.strip()
+    if value.startswith("@"):
+        value = value[1:]
+    return value.lower()
+
+
+async def _send_master_bot_link_prompt(telegram_id: int) -> None:
+    token = settings.MASTER_BOT_TOKEN.strip()
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="MASTER_BOT_TOKEN is not configured on backend",
+        )
+
+    message_text = (
+        "Привязка web аккаунта с bot аккаунтом.\n"
+        "Введите код, указанный на сайте (6 цифр), обычным сообщением в этот чат.\n\n"
+        "Если вы не начинали привязку, проигнорируйте это сообщение."
+    )
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = {
+        "chat_id": telegram_id,
+        "text": message_text,
+    }
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as client:
+        response = await client.post(url, json=payload)
+    if not response.is_success:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to deliver message to Telegram user",
+        )
 
 
 async def get_current_user_required(
@@ -251,21 +286,39 @@ async def user_me(current_user=Depends(get_current_user_required)):
 
 
 @router.post("/telegram-link/start")
-async def start_telegram_link(current_user=Depends(get_current_user_required)):
+async def start_telegram_link(payload: TelegramLinkStartRequest, current_user=Depends(get_current_user_required)):
     if current_user.telegram_id is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Telegram already linked",
         )
 
-    code = _generate_link_code()
-    code_hash = _hash_link_code(code)
+    normalized_tg_username = _normalize_tg_username(payload.telegram_username)
     now_utc = _utc_now_naive()
     expires_at = now_utc + timedelta(minutes=LINK_CODE_TTL_MINUTES)
+    code = ""
+    target_telegram_id: int | None = None
 
     async with async_session_maker() as session:
         challenge_dao = TelegramLinkChallengeDAO(session)
         async with session.begin():
+            target_user_result = await session.execute(
+                select(User).where(
+                    func.lower(User.name) == normalized_tg_username,
+                    User.telegram_id.is_not(None),
+                )
+            )
+            target_user = target_user_result.scalar_one_or_none()
+            if not target_user:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Telegram user not found. Ask user to start master bot first.",
+                )
+
+            code = _generate_link_code()
+            code_hash = _hash_link_code(code)
+            target_telegram_id = int(target_user.telegram_id)
+
             stale_result = await session.execute(
                 select(TelegramLinkChallenge).where(
                     TelegramLinkChallenge.user_id == current_user.id,
@@ -279,12 +332,19 @@ async def start_telegram_link(current_user=Depends(get_current_user_required)):
             await challenge_dao.add(
                 {
                     "user_id": current_user.id,
+                    "target_telegram_id": target_telegram_id,
                     "code_hash": code_hash,
                     "expires_at": expires_at,
                     "attempts_left": LINK_CODE_MAX_ATTEMPTS,
                     "status": "pending",
                 }
             )
+    if target_telegram_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Telegram target is not set",
+        )
+    await _send_master_bot_link_prompt(target_telegram_id)
 
     return JSONResponse(
         content={
@@ -311,12 +371,30 @@ async def confirm_telegram_link(payload: TelegramLinkConfirmRequest, _internal=D
                 .where(
                     TelegramLinkChallenge.code_hash == code_hash,
                     TelegramLinkChallenge.status == "pending",
+                    TelegramLinkChallenge.target_telegram_id == payload.telegram_id,
                 )
                 .order_by(desc(TelegramLinkChallenge.id))
                 .limit(1)
             )
             challenge = challenge_result.scalar_one_or_none()
             if not challenge:
+                latest_by_tg_result = await session.execute(
+                    select(TelegramLinkChallenge)
+                    .where(
+                        TelegramLinkChallenge.target_telegram_id == payload.telegram_id,
+                        TelegramLinkChallenge.status == "pending",
+                    )
+                    .order_by(desc(TelegramLinkChallenge.id))
+                    .limit(1)
+                )
+                latest_challenge = latest_by_tg_result.scalar_one_or_none()
+                if latest_challenge:
+                    new_attempts = max(0, latest_challenge.attempts_left - 1)
+                    new_status = "blocked" if new_attempts == 0 else "pending"
+                    await challenge_dao.update(
+                        latest_challenge,
+                        {"attempts_left": new_attempts, "status": new_status},
+                    )
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Invalid link code",

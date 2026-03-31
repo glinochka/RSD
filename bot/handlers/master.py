@@ -3,7 +3,7 @@ import asyncio
 from fastapi import status
 from aiogram import Router, F, Bot, types
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.filters import Command, CommandStart
+from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 
 from aiogram.filters import StateFilter
@@ -199,21 +199,12 @@ async def cmd_start(message: types.Message, state: FSMContext):
     )
 
 
-@master_router.message(Command("link"))
-async def link_website_account(message: types.Message):
-    parts = (message.text or "").split(maxsplit=1)
-    if len(parts) < 2 or not parts[1].strip():
-        await message.answer(
-            "Чтобы привязать аккаунт сайта, сначала нажмите кнопку 'Связать TG' в профиле на сайте, "
-            "а затем отправьте сюда команду вида:\n/link ABCD-EFGH"
-        )
-        return
-
-    raw_code = parts[1].strip()
+@master_router.message(StateFilter(None), F.text.regexp(r"^\d{6}$"))
+async def link_website_account_by_code(message: types.Message):
+    raw_code = (message.text or "").strip()
     response = await APIcreate.confirmTelegramLinkCode(
         code=raw_code,
         telegram_id=message.from_user.id,
-        telegram_username=message.from_user.username,
     )
     response_status = get_response_status(response)
 
