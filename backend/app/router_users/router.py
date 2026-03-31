@@ -414,17 +414,6 @@ async def confirm_telegram_link(payload: TelegramLinkConfirmRequest, _internal=D
                     detail="Link code blocked",
                 )
 
-            linked_user = await user_dao.find_one_by_filter(telegram_id=payload.telegram_id)
-            if linked_user and linked_user.id != challenge.user_id:
-                await challenge_dao.update(
-                    challenge,
-                    {"attempts_left": max(0, challenge.attempts_left - 1)},
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Telegram ID already linked to another account",
-                )
-
             user = await user_dao.find_one_by_filter(id=challenge.user_id)
             if not user:
                 await challenge_dao.update(challenge, {"status": "expired"})
@@ -432,6 +421,23 @@ async def confirm_telegram_link(payload: TelegramLinkConfirmRequest, _internal=D
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="User for link code not found",
                 )
+
+            linked_user = await user_dao.find_one_by_filter(telegram_id=payload.telegram_id)
+            if linked_user and linked_user.id != challenge.user_id:
+                # Auto-resolve "telegram-only" records created by master-bot bootstrap flow.
+                # Those records have no password and can safely release telegram_id
+                # so it can be attached to the authenticated web account.
+                if linked_user.password is None:
+                    await user_dao.update(linked_user, {"telegram_id": None})
+                else:
+                    await challenge_dao.update(
+                        challenge,
+                        {"attempts_left": max(0, challenge.attempts_left - 1)},
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Telegram ID already linked to another account",
+                    )
 
             if user.telegram_id and user.telegram_id != payload.telegram_id:
                 await challenge_dao.update(
