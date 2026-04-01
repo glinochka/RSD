@@ -23,6 +23,7 @@
 
 .hero-content h1 {
   font-size: var(--font-size-4xl);
+  font-weight: var(--font-weight-bold);
   margin-bottom: var(--spacing-base);
   color: var(--color-text);
 }
@@ -38,7 +39,8 @@
 }
 
 .hero-content h2 {
-  font-size: var(--font-size-2xl);
+  font-size: var(--font-size-4xl);
+  font-weight: var(--font-weight-bold);
   margin-bottom: var(--spacing-lg);
   color: var(--color-text);
 }
@@ -284,12 +286,9 @@
   }
 
   .hero-content h1,
-  .highlight {
-    font-size: var(--font-size-3xl);
-  }
-
+  .highlight,
   .hero-content h2 {
-    font-size: var(--font-size-xl);
+    font-size: var(--font-size-3xl);
   }
 
   .hero-media {
@@ -312,12 +311,9 @@
   }
 
   .hero-content h1,
-  .highlight {
-    font-size: var(--font-size-2xl);
-  }
-
+  .highlight,
   .hero-content h2 {
-    font-size: var(--font-size-lg);
+    font-size: var(--font-size-2xl);
   }
 
   .description {
