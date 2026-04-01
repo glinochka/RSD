@@ -114,6 +114,29 @@
   box-sizing: border-box;
 }
 
+/* Как .auth-form .btn-continue на странице Auth: белый фон, тёмный текст, чёрная обводка при наведении.
+   Grayscale AA: без этого на Windows светлый текст на тёмном кажется визуально «шире», чем тёмный на белом. */
+.navbar-actions .btn.btn-black.btn-auth {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition:
+    background-color 0.3s,
+    color 0.3s,
+    border-color 0.3s;
+}
+
+.navbar-actions .btn.btn-black.btn-auth:hover {
+  transform: none;
+  box-shadow: none;
+  background-color: #fff;
+  color: #2f2f2f;
+  border: 1px solid #2f2f2f;
+}
+
+.navbar-actions .btn.btn-black.btn-auth:active {
+  transform: none;
+}
+
 /* Profile drawer backdrop + panel */
 .profile-drawer-backdrop {
   position: fixed;
