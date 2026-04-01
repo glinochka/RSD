@@ -22,6 +22,9 @@ const AgentsPage = lazy(() => import('./pages/agentsPage'));
 const CreateAgent = lazy(() => import('./pages/createAgent'));
 const ManagementPortal = lazy(() => import('./pages/ManagementPortal'));
 const DocumentationPage = lazy(() => import('./pages/DocumentationPage'));
+const PublicOfferPage = lazy(() => import('./pages/PublicOfferPage'));
+const UserAgreementPage = lazy(() => import('./pages/UserAgreementPage'));
+const PrivacyPolicyPage = lazy(() => import('./pages/PrivacyPolicyPage'));
 
 const App = () => {
   return (
@@ -37,6 +40,9 @@ const App = () => {
                 <Route path={NAVIGATION_ROUTES.AUTH} element={<Auth />} />
                 <Route path={NAVIGATION_ROUTES.PRICING} element={<PriceList />} />
                 <Route path={NAVIGATION_ROUTES.DOCUMENTATION} element={<DocumentationPage />} />
+                <Route path={NAVIGATION_ROUTES.PUBLIC_OFFER} element={<PublicOfferPage />} />
+                <Route path={NAVIGATION_ROUTES.USER_AGREEMENT} element={<UserAgreementPage />} />
+                <Route path={NAVIGATION_ROUTES.PRIVACY_POLICY} element={<PrivacyPolicyPage />} />
                 <Route
                   path={NAVIGATION_ROUTES.MANAGEMENT_PORTAL}
                   element={<ManagementPortal />}

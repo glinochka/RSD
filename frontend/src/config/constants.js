@@ -81,6 +81,9 @@ export const NAVIGATION_ROUTES = {
   EDIT_AGENT: (id) => `/agents/${id}/edit`,
   PRICING: '/pricing',
   MANAGEMENT_PORTAL: '/management-portal',
+  PUBLIC_OFFER: '/public-offer',
+  USER_AGREEMENT: '/user-agreement',
+  PRIVACY_POLICY: '/privacy',
 };
 
 // User-facing messages; backend detail (FastAPI) is preferred when present (see errorUtils).
