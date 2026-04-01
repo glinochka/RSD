@@ -24,6 +24,7 @@ import { useAuth } from '../context/useAuth';
 import { useNotification } from '../context/useNotification';
 import { useForm } from '../hooks/useForm';
 import { NAVIGATION_ROUTES, SUCCESS_MESSAGES, VALIDATION } from '../config/constants';
+import AgentChatShowcase from '../components/AgentChatShowcase';
 import '../styles/auth.css';
 
 /** Путь к иллюстрации справа; пока null — показывается запасной фон без растягивания */
@@ -291,8 +292,8 @@ const Auth = () => {
                   decoding="async"
                 />
               ) : (
-                <div className="auth-media-fallback">
-                  <span className="auth-media-fallback-text">МЕДИА</span>
+                <div className="auth-media-showcase-wrap">
+                  <AgentChatShowcase tone="light" variant="auth" />
                 </div>
               )}
             </div>

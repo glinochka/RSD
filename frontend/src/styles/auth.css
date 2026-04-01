@@ -325,7 +325,7 @@
   align-self: stretch;
   border-radius: var(--radius-lg);
   overflow: hidden;
-  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
+  background: var(--color-bg);
 }
 
 .auth-media-frame {
@@ -344,21 +344,21 @@
   /* Целиком видимое изображение без обрезки: замените на object-fit: contain; и при необходимости фон подложки */
 }
 
-.auth-media-fallback {
-  width: 100%;
-  height: 100%;
+.auth-media-showcase-wrap {
+  position: absolute;
+  inset: 0;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  background: inherit;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0;
+  box-sizing: border-box;
+  border-radius: inherit;
+  overflow: hidden;
 }
 
-.auth-media-fallback-text {
-  font-size: var(--font-size-2xl);
-  font-weight: var(--font-weight-bold);
-  color: rgba(255, 255, 255, 0.3);
-  text-align: center;
-  letter-spacing: 0.12em;
+.auth-media-showcase-wrap .agent-chat-showcase {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 /* Responsive */

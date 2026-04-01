@@ -7,6 +7,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 import MainLayout from '../components/Layout';
+import AgentChatShowcase from '../components/AgentChatShowcase';
 import { NAVIGATION_ROUTES } from '../config/constants';
 import '../styles/main.css';
 
@@ -109,8 +110,8 @@ const Main = () => {
               </button>
             </div>
           </div>
-          <div className="media-placeholder" aria-hidden="true">
-            МЕДИА
+          <div className="hero-media">
+            <AgentChatShowcase tone="light" variant="main" />
           </div>
         </section>
 

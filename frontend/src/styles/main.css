@@ -74,16 +74,20 @@
   padding: var(--spacing-base) var(--spacing-2xl);
 }
 
-.media-placeholder {
+.hero-media {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(135deg, #f0f0f0, #e0e0e0);
+  flex-direction: column;
+  min-width: 0;
+  min-height: clamp(320px, 56vh, 620px);
   border-radius: var(--radius-lg);
-  min-height: 500px;
-  font-size: var(--font-size-2xl);
-  color: var(--color-text-lighter);
-  font-weight: var(--font-weight-semibold);
+  overflow: hidden;
+  background: linear-gradient(145deg, var(--color-bg-light) 0%, var(--color-bg-lighter) 100%);
+  border: 1px solid var(--color-border);
+}
+
+.hero-media .agent-chat-showcase {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 /* Shared section headings */
@@ -288,8 +292,8 @@
     font-size: var(--font-size-xl);
   }
 
-  .media-placeholder {
-    min-height: 300px;
+  .hero-media {
+    min-height: clamp(300px, 48vh, 440px);
   }
 
   .section-title {
