@@ -23,12 +23,11 @@
   text-decoration: none;
   color: var(--color-text);
   letter-spacing: 0.02em;
-  transition: color var(--transition-base);
   white-space: nowrap;
 }
 
 .logo:hover {
-  color: var(--color-primary);
+  color: var(--color-text);
 }
 
 /* Navigation */
@@ -40,22 +39,46 @@
 }
 
 .nav a {
+  position: relative;
   color: var(--color-text);
   font-weight: var(--font-weight-medium);
   font-size: var(--font-size-base);
-  padding-bottom: var(--spacing-xs);
-  border-bottom: 2px solid transparent;
-  transition: all var(--transition-base);
+  padding-bottom: calc(var(--spacing-xs) + 2px);
+  border-bottom: none;
+  transition: color var(--transition-base);
+}
+
+/* Линия снизу: скруглённые края (border-bottom так не умеет) */
+.nav a::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  border-radius: 999px;
+  background-color: transparent;
+  transition: background-color var(--transition-base);
 }
 
 .nav a:hover {
-  color: var(--color-primary);
-  border-bottom-color: var(--color-primary);
+  color: var(--color-text);
+}
+
+.nav a:hover::after {
+  background-color: var(--color-text);
 }
 
 .nav a.active {
   color: var(--color-primary);
-  border-bottom-color: var(--color-primary);
+}
+
+.nav a.active::after {
+  background-color: var(--color-primary);
+}
+
+.nav a.active:hover::after {
+  background-color: var(--color-primary);
 }
 
 /* Navbar Actions */
@@ -430,6 +453,10 @@
   .nav a {
     padding: var(--spacing-sm) 0;
     border-bottom: none;
+  }
+
+  .nav a::after {
+    display: none;
   }
 
   .menu-toggle {

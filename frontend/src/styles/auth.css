@@ -23,11 +23,10 @@
   letter-spacing: 0.02em;
   text-decoration: none;
   color: var(--color-text);
-  transition: color var(--transition-base);
 }
 
 .auth-logo:hover {
-  color: var(--color-primary);
+  color: var(--color-text);
 }
 
 /* Auth Container & Card */
