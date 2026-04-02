@@ -3,7 +3,7 @@
  * Landing page with features overview
  */
 
-import React from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 import MainLayout from '../components/Layout';
@@ -29,52 +29,67 @@ const VALUE_HIGHLIGHTS = [
   },
 ];
 
-const FEATURES = [
+const TESTIMONIALS = [
   {
-    id: 'simplicity',
-    title: 'Простота',
-    items: [
-      'Выберите роль агента',
-      'Напишите промпт',
-      'Загрузите файлы',
-      'Получите ИИ-агента',
-    ],
+    id: 'review-1',
+    name: 'Анастасия, владелец сети салонов',
+    company: 'Lumi Beauty',
+    text: 'С RSD мы закрыли большую часть типовых вопросов в Telegram. Администраторы перестали отвечать по шаблону в ручном режиме и теперь больше времени уделяют записи клиентов.',
   },
   {
-    id: 'security',
-    title: 'Безопасность',
-    description:
-      'Шифрование и аккуратная работа с данными — чтобы спокойно использовать платформу для рабочей информации.',
+    id: 'review-2',
+    name: 'Руслан, операционный директор',
+    company: 'GreenBox Logistics',
+    text: 'За первую неделю запустили агента для входящих обращений от партнеров. Сократилось количество эскалаций, а ответы по SLA стали заметно стабильнее.',
   },
   {
-    id: 'bigdata',
-    title: 'Умный отбор',
-    description:
-      'Алгоритмы помогают находить релевантные фрагменты в больших объёмах текста — без лишнего «шума» в ответах.',
+    id: 'review-3',
+    name: 'Марина, основатель онлайн-школы',
+    company: 'Focus Learning',
+    text: 'Мы загрузили базу материалов и регламенты, и агент начал помогать ученикам 24/7. Команда поддержки обрабатывает сложные кейсы, а не повторяющиеся вопросы.',
+  },
+  {
+    id: 'review-4',
+    name: 'Илья, руководитель продаж',
+    company: 'TechNova',
+    text: 'Агент берет первый контакт и квалификацию заявок. Менеджеры получают уже подготовленные диалоги и быстрее доводят клиентов до демо.',
   },
 ];
 
-const FOR_WHOM = [
+const IMPACT_METRICS = [
   {
-    id: 'smb',
-    title: 'Малый и средний бизнес',
-    text: 'Сервисы, студии и онлайн-торговля — когда важен понятный первый контакт и стабильные ответы по вашим правилам.',
+    id: 'requests',
+    value: 'до 68%',
+    label: 'типовых запросов автоматизируется',
   },
   {
-    id: 'teams',
-    title: 'Поддержка и продажи',
-    text: 'Единый источник правды по продукту и политикам: меньше повторов и быстрее согласованные формулировки.',
+    id: 'launch',
+    value: '1-2 дня',
+    label: 'на запуск пилотного агента',
   },
   {
-    id: 'experts',
-    title: 'Эксперты и консультанты',
-    text: 'Масштабируйте типовые разъяснения и онбординг, не размывая личный стиль общения.',
+    id: 'channels',
+    value: '3 канала',
+    label: 'поддержки чаще всего закрывают одним сценарием',
   },
+  {
+    id: 'team',
+    value: 'x2',
+    label: 'быстрее подключаются новые сотрудники',
+  },
+];
+
+const LAUNCH_STEPS = [
+  'Определяете роль агента и собираете 10-15 частых вопросов.',
+  'Добавляете базу знаний: документы, правила, тон коммуникации.',
+  'Тестируете сценарии на реальных диалогах и уточняете ответы.',
+  'Запускаете в рабочем канале и отслеживаете метрики качества.',
 ];
 
 const Main = () => {
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
+  const [activeTestimonialIndex, setActiveTestimonialIndex] = useState(0);
 
   const handleCreateAgent = () => {
     if (isAuthenticated) {
@@ -85,6 +100,12 @@ const Main = () => {
   };
 
   const handlePricing = () => navigate(NAVIGATION_ROUTES.PRICING);
+  const handleNextTestimonial = () =>
+    setActiveTestimonialIndex((prev) => (prev + 1) % TESTIMONIALS.length);
+  const handlePrevTestimonial = () =>
+    setActiveTestimonialIndex((prev) => (prev - 1 + TESTIMONIALS.length) % TESTIMONIALS.length);
+
+  const activeTestimonial = TESTIMONIALS[activeTestimonialIndex];
 
   return (
     <MainLayout>
@@ -132,43 +153,68 @@ const Main = () => {
           </div>
         </section>
 
-        <section className="features" aria-labelledby="features-heading">
-          <h2 id="features-heading" className="section-title">
-            Как устроена платформа
+        <section className="testimonials" aria-labelledby="testimonials-heading">
+          <h2 id="testimonials-heading" className="section-title">
+            Как это работает у владельцев бизнеса
           </h2>
           <p className="section-lead section-lead-tight">
-            Один поток от идеи до работающего агента — с упором на безопасность и релевантность ответов.
+            Ниже — примеры команд, которые уже внедрили агентов в поддержку, продажи и обучение клиентов.
           </p>
-          <div className="features-grid">
-            {FEATURES.map((feature) => (
-              <div key={feature.id} className="feature-card">
-                <h4>{feature.title}</h4>
-                {feature.items ? (
-                  <ul>
-                    {feature.items.map((item, index) => (
-                      <li key={index}>{item}</li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p>{feature.description}</p>
-                )}
+          <div className="testimonial-carousel" aria-live="polite">
+            <article className="testimonial-card">
+              <p className="testimonial-text">"{activeTestimonial.text}"</p>
+              <p className="testimonial-author">
+                {activeTestimonial.name}
+                <span>{activeTestimonial.company}</span>
+              </p>
+            </article>
+            <div className="testimonial-controls">
+              <button type="button" className="btn btn-outline testimonial-nav-btn" onClick={handlePrevTestimonial}>
+                Назад
+              </button>
+              <div className="testimonial-dots" role="tablist" aria-label="Отзывы">
+                {TESTIMONIALS.map((item, index) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={`testimonial-dot ${index === activeTestimonialIndex ? 'is-active' : ''}`}
+                    onClick={() => setActiveTestimonialIndex(index)}
+                    aria-label={`Показать отзыв ${index + 1}`}
+                    aria-selected={index === activeTestimonialIndex}
+                    role="tab"
+                  />
+                ))}
               </div>
+              <button type="button" className="btn btn-outline testimonial-nav-btn" onClick={handleNextTestimonial}>
+                Далее
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <section className="impact-section" aria-labelledby="impact-heading">
+          <h2 id="impact-heading" className="section-title">
+            Что обычно меняется после внедрения
+          </h2>
+          <div className="impact-grid">
+            {IMPACT_METRICS.map((metric) => (
+              <article key={metric.id} className="impact-card">
+                <p className="impact-value">{metric.value}</p>
+                <p className="impact-label">{metric.label}</p>
+              </article>
             ))}
           </div>
         </section>
 
-        <section className="audience-section" aria-labelledby="audience-heading">
-          <h2 id="audience-heading" className="section-title">
-            Кому подойдёт RSD
+        <section className="launch-roadmap" aria-labelledby="launch-roadmap-heading">
+          <h2 id="launch-roadmap-heading" className="section-title">
+            Сценарий запуска за 4 шага
           </h2>
-          <div className="audience-grid">
-            {FOR_WHOM.map((item) => (
-              <article key={item.id} className="audience-card">
-                <h3>{item.title}</h3>
-                <p>{item.text}</p>
-              </article>
+          <ol className="roadmap-list">
+            {LAUNCH_STEPS.map((step) => (
+              <li key={step}>{step}</li>
             ))}
-          </div>
+          </ol>
         </section>
 
         <section className="cta-band" aria-labelledby="cta-heading">

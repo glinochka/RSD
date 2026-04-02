@@ -151,95 +151,159 @@
   line-height: 1.75;
 }
 
-/* Features Section */
-.features {
+/* Testimonials */
+.testimonials {
   padding: var(--spacing-3xl) 0;
   border-top: 1px solid var(--color-border);
 }
 
-.features-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: var(--spacing-2xl);
+.testimonial-carousel {
+  max-width: 52rem;
+  margin: 0 auto;
 }
 
-.feature-card {
+.testimonial-card {
   padding: var(--spacing-2xl);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
-  background-color: var(--color-bg-light);
-  transition: all var(--transition-base);
+  background: linear-gradient(170deg, var(--color-bg-light) 0%, var(--color-bg) 100%);
+  min-height: 220px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 
-.feature-card:hover {
-  border-color: var(--color-primary);
-  transform: translateY(-4px);
-  box-shadow: var(--shadow-lg);
-}
-
-.feature-card h4 {
-  font-size: var(--font-size-xl);
-  margin-bottom: var(--spacing-lg);
+.testimonial-text {
+  margin: 0 0 var(--spacing-xl);
+  font-size: var(--font-size-lg);
+  line-height: 1.8;
   color: var(--color-text);
 }
 
-.feature-card ul,
-.feature-card p {
-  margin-bottom: 0;
+.testimonial-author {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
+.testimonial-author span {
+  font-weight: var(--font-weight-normal);
   color: var(--color-text-light);
-  font-size: var(--font-size-base);
-  line-height: 1.8;
 }
 
-.feature-card ul {
-  list-style: none;
+.testimonial-controls {
+  margin-top: var(--spacing-lg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-base);
+}
+
+.testimonial-nav-btn {
+  min-width: 102px;
+}
+
+.testimonial-dots {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.testimonial-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: none;
   padding: 0;
+  cursor: pointer;
+  background-color: var(--color-border);
+  transition: all var(--transition-base);
 }
 
-.feature-card li {
-  padding: var(--spacing-sm) 0;
-  padding-left: var(--spacing-lg);
-  position: relative;
+.testimonial-dot.is-active {
+  width: 26px;
+  border-radius: 999px;
+  background-color: var(--color-text);
 }
 
-.feature-card li:before {
-  content: '✓';
-  position: absolute;
-  left: 0;
-  color: var(--color-success);
-  font-weight: var(--font-weight-bold);
-}
-
-/* Audience */
-.audience-section {
+/* Impact metrics */
+.impact-section {
   padding: var(--spacing-3xl) 0;
   border-top: 1px solid var(--color-border);
 }
 
-.audience-grid {
+.impact-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: var(--spacing-xl);
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--spacing-lg);
 }
 
-.audience-card {
+.impact-card {
   padding: var(--spacing-xl);
-  border-radius: var(--radius-lg);
-  background: linear-gradient(180deg, var(--color-bg-light) 0%, var(--color-bg) 100%);
   border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-bg-light);
+  text-align: center;
 }
 
-.audience-card h3 {
-  font-size: var(--font-size-lg);
-  margin-bottom: var(--spacing-sm);
+.impact-value {
+  margin: 0 0 var(--spacing-xs);
+  font-size: var(--font-size-3xl);
+  font-weight: var(--font-weight-bold);
   color: var(--color-text);
 }
 
-.audience-card p {
+.impact-label {
   margin: 0;
   font-size: var(--font-size-base);
   color: var(--color-text-light);
   line-height: 1.75;
+}
+
+/* Launch roadmap */
+.launch-roadmap {
+  padding: var(--spacing-3xl) 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.roadmap-list {
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: 0;
+  list-style: none;
+  counter-reset: roadmap-step;
+  display: grid;
+  gap: var(--spacing-lg);
+}
+
+.roadmap-list li {
+  counter-increment: roadmap-step;
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  gap: var(--spacing-base);
+  align-items: start;
+  padding: var(--spacing-lg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-bg);
+  color: var(--color-text-light);
+  line-height: 1.7;
+}
+
+.roadmap-list li::before {
+  content: counter(roadmap-step);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background-color: var(--color-text);
+  color: var(--color-bg);
+  font-weight: var(--font-weight-semibold);
 }
 
 /* Closing CTA */
@@ -299,6 +363,14 @@
     font-size: var(--font-size-xl);
   }
 
+  .testimonial-card {
+    min-height: 0;
+  }
+
+  .testimonial-text {
+    font-size: var(--font-size-base);
+  }
+
   .cta-band {
     padding: var(--spacing-2xl) var(--spacing-lg);
   }
@@ -320,11 +392,23 @@
     font-size: var(--font-size-base);
   }
 
-  .features-grid {
-    gap: var(--spacing-lg);
+  .hero-actions {
+    flex-wrap: nowrap;
   }
 
-  .feature-card {
-    padding: var(--spacing-lg);
+  .hero-actions .btn {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: var(--spacing-sm) var(--spacing-base);
+    font-size: 0.9rem;
+  }
+
+  .testimonial-controls {
+    flex-wrap: wrap;
+  }
+
+  .roadmap-list li {
+    grid-template-columns: 36px 1fr;
+    padding: var(--spacing-base);
   }
 }

@@ -161,6 +161,7 @@ select {
 
 input[type='text'],
 input[type='email'],
+input[type='tel'],
 input[type='password'],
 input[type='number'],
 input[type='search'],
@@ -177,6 +178,7 @@ select {
 
 input[type='text']:focus,
 input[type='email']:focus,
+input[type='tel']:focus,
 input[type='password']:focus,
 input[type='number']:focus,
 input[type='search']:focus,
@@ -189,6 +191,7 @@ select:focus {
 
 input[type='text']:disabled,
 input[type='email']:disabled,
+input[type='tel']:disabled,
 input[type='password']:disabled,
 input[type='number']:disabled,
 input[type='search']:disabled,
@@ -201,6 +204,7 @@ select:disabled {
 
 input[type='text'].error,
 input[type='email'].error,
+input[type='tel'].error,
 input[type='password'].error,
 textarea.error {
   border-color: var(--color-danger);

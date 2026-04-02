@@ -314,7 +314,6 @@ const PriceList = () => {
               <label>
                 Номер телефона
                 <input
-                  className="pricing-phone-input"
                   type="tel"
                   value={requestForm.phoneNumber}
                   onChange={(event) => setRequestForm((prev) => ({ ...prev, phoneNumber: event.target.value }))}
