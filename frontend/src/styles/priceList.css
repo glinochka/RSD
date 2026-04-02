@@ -72,6 +72,10 @@
   font-weight: var(--font-weight-bold);
   color: var(--color-text);
   margin-bottom: var(--spacing-lg);
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .price-old-row {
@@ -115,6 +119,7 @@
   align-items: baseline;
   justify-content: center;
   gap: var(--spacing-xs);
+  min-height: 48px;
 }
 
 .currency {
@@ -269,5 +274,9 @@
   .price-card {
     padding: var(--spacing-lg);
     min-height: 340px;
+  }
+
+  .price-title {
+    min-height: 48px;
   }
 }

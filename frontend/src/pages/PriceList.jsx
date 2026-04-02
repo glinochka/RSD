@@ -17,6 +17,11 @@ const MARKETING_DISCOUNTS_BY_PLAN = {
   Advanced: 40,
   Pro: 60,
 };
+const PLAN_DISPLAY_NAMES = {
+  Free: 'Базовый',
+  Advanced: 'Продвинутый',
+  Pro: 'Про',
+};
 
 const roundUpToNextHundred = (value) => Math.ceil(value / 100) * 100;
 const formatRubPrice = (value) => Number(value || 0).toLocaleString('ru-RU');
@@ -77,7 +82,7 @@ const PriceList = () => {
     try {
       const returnUrl = `${window.location.origin}${NAVIGATION_ROUTES.PRICING}`;
       const payment = await pricingService.createYooKassaPayment({
-        plan_name: planId,
+        plan_name: selectedPlan.code,
         return_url: returnUrl,
       });
 
@@ -185,7 +190,7 @@ const PriceList = () => {
     const sorted = [...plans].sort((a, b) => (order[a?.code] ?? 999) - (order[b?.code] ?? 999));
     const mapped = sorted.map((plan) => {
       const code = plan?.code;
-      const title = plan?.title || code;
+      const title = PLAN_DISPLAY_NAMES[code] || plan?.title || code;
       const price = Number(plan?.price_rub_month ?? 0);
       const discountPercent = MARKETING_DISCOUNTS_BY_PLAN[code] ?? null;
       const isPaid = Boolean(plan?.is_paid);
