@@ -1,7 +1,7 @@
 /* Pricing Page Styles */
 
 .pricing-page {
-  padding: var(--spacing-3xl) 0;
+  padding: 0 0 var(--spacing-3xl);
   width: 100%;
 }
 
@@ -218,7 +218,7 @@
 /* Responsive */
 @media (max-width: 768px) {
   .pricing-page {
-    padding: var(--spacing-2xl) 0;
+    padding: 0 0 var(--spacing-2xl);
   }
 
   .pricing-header h1 {

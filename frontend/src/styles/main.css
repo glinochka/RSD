@@ -12,7 +12,7 @@
   grid-template-columns: 1fr 1fr;
   gap: var(--spacing-3xl);
   align-items: center;
-  padding: var(--spacing-3xl) 0;
+  padding: 0 0 var(--spacing-3xl);
   margin-bottom: var(--spacing-3xl);
 }
 
@@ -346,7 +346,7 @@
   .hero {
     grid-template-columns: 1fr;
     gap: var(--spacing-2xl);
-    padding: var(--spacing-2xl) 0;
+    padding: 0 0 var(--spacing-2xl);
   }
 
   .hero-content h1,
@@ -378,7 +378,7 @@
 
 @media (max-width: 480px) {
   .hero {
-    padding: var(--spacing-xl) 0;
+    padding: 0 0 var(--spacing-xl);
     margin-bottom: var(--spacing-2xl);
   }
 
