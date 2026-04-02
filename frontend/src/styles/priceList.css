@@ -26,6 +26,7 @@
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
+  align-items: stretch;
   gap: var(--spacing-2xl);
   width: 100%;
 }
@@ -35,12 +36,29 @@
   flex-direction: column;
   flex: 0 1 300px;
   width: min(320px, 100%);
+  min-height: 420px;
+  box-sizing: border-box;
   padding: var(--spacing-2xl);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   background-color: var(--color-bg);
   transition: all var(--transition-base);
   text-align: center;
+}
+
+/* 4 тарифа в одну строку на широких экранах */
+@media (min-width: 1240px) {
+  .pricing-grid {
+    flex-wrap: nowrap;
+    justify-content: center;
+  }
+
+  .price-card {
+    flex: 1 1 0;
+    min-width: 0;
+    width: auto;
+    max-width: none;
+  }
 }
 
 .price-card:hover {
@@ -222,6 +240,7 @@
   .price-card {
     width: 100%;
     max-width: 520px;
+    min-height: 360px;
     text-align: center;
   }
 
@@ -249,5 +268,6 @@
 
   .price-card {
     padding: var(--spacing-lg);
+    min-height: 340px;
   }
 }
