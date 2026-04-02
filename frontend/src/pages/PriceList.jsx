@@ -32,16 +32,14 @@ const PriceList = () => {
   const [requestForm, setRequestForm] = useState({
     phoneNumber: '',
     email: '',
-    requestedAgent: '',
-    purpose: '',
+    employeeRequest: '',
   });
 
   const resetRequestForm = () => {
     setRequestForm({
       phoneNumber: '',
       email: '',
-      requestedAgent: '',
-      purpose: '',
+      employeeRequest: '',
     });
   };
 
@@ -101,10 +99,9 @@ const PriceList = () => {
 
     const phoneNumber = requestForm.phoneNumber.trim();
     const email = requestForm.email.trim();
-    const requestedAgent = requestForm.requestedAgent.trim();
-    const purpose = requestForm.purpose.trim();
+    const employeeRequest = requestForm.employeeRequest.trim();
 
-    if (!phoneNumber || !email || !requestedAgent || !purpose) {
+    if (!phoneNumber || !email || !employeeRequest) {
       showError('Заполните все поля заявки.');
       return;
     }
@@ -118,8 +115,8 @@ const PriceList = () => {
       await pricingService.createTurnkeyRequest({
         phone_number: phoneNumber,
         email,
-        requested_agent: requestedAgent,
-        purpose,
+        requested_agent: employeeRequest,
+        purpose: employeeRequest,
       });
       setIsRequestModalOpen(false);
       resetRequestForm();
@@ -313,6 +310,7 @@ const PriceList = () => {
               <label>
                 Номер телефона
                 <input
+                  className="pricing-phone-input"
                   type="tel"
                   value={requestForm.phoneNumber}
                   onChange={(event) => setRequestForm((prev) => ({ ...prev, phoneNumber: event.target.value }))}
@@ -333,22 +331,11 @@ const PriceList = () => {
               </label>
 
               <label>
-                Какого агента хотите получить
-                <input
-                  type="text"
-                  value={requestForm.requestedAgent}
-                  onChange={(event) => setRequestForm((prev) => ({ ...prev, requestedAgent: event.target.value }))}
-                  placeholder="Например: агент поддержки клиентов"
-                  required
-                />
-              </label>
-
-              <label>
-                Для каких целей нужен агент
+                Какого сотрудника вы хотите получить
                 <textarea
-                  value={requestForm.purpose}
-                  onChange={(event) => setRequestForm((prev) => ({ ...prev, purpose: event.target.value }))}
-                  placeholder="Опишите сценарии, задачи и ожидаемый результат"
+                  value={requestForm.employeeRequest}
+                  onChange={(event) => setRequestForm((prev) => ({ ...prev, employeeRequest: event.target.value }))}
+                  placeholder="Опишите роли, задачи и сценарии работы сотрудника"
                   rows={4}
                   required
                 />

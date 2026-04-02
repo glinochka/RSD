@@ -622,8 +622,7 @@ const ManagementPortal = () => {
                   <th>Дата</th>
                   <th>Телефон</th>
                   <th>Email</th>
-                  <th>Какой агент</th>
-                  <th>Цель</th>
+                  <th>Запрос</th>
                 </tr>
               </thead>
               <tbody>
@@ -633,12 +632,11 @@ const ManagementPortal = () => {
                     <td>{request.created_at ? new Date(request.created_at).toLocaleString() : '-'}</td>
                     <td>{request.phone_number}</td>
                     <td>{request.email}</td>
-                    <td>{request.requested_agent}</td>
-                    <td>{request.purpose}</td>
+                    <td>{request.requested_agent || request.purpose}</td>
                   </tr>
                 ))}
                 {requestsState.items.length === 0 && (
-                  <tr><td colSpan={6}>Заявок пока нет</td></tr>
+                  <tr><td colSpan={5}>Заявок пока нет</td></tr>
                 )}
               </tbody>
             </table>
