@@ -59,6 +59,11 @@
   justify-content: center;
   gap: var(--spacing-sm);
   margin-bottom: var(--spacing-sm);
+  min-height: 24px;
+}
+
+.price-old-row--placeholder {
+  visibility: hidden;
 }
 
 .price-old-value {

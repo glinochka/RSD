@@ -13,7 +13,10 @@ import pricingService from '../services/pricingService';
 import '../styles/priceList.css';
 
 const PENDING_YOOKASSA_PAYMENT_ID_KEY = 'pending_yookassa_payment_id';
-const MARKETING_DISCOUNT_PERCENT = 60;
+const MARKETING_DISCOUNTS_BY_PLAN = {
+  Advanced: 40,
+  Pro: 60,
+};
 
 const roundUpToNextHundred = (value) => Math.ceil(value / 100) * 100;
 const formatRubPrice = (value) => Number(value || 0).toLocaleString('ru-RU');
@@ -122,9 +125,10 @@ const PriceList = () => {
       const code = plan?.code;
       const title = plan?.title || code;
       const price = Number(plan?.price_rub_month ?? 0);
+      const discountPercent = MARKETING_DISCOUNTS_BY_PLAN[code] ?? null;
       const isPaid = Boolean(plan?.is_paid);
-      const originalPrice = isPaid
-        ? roundUpToNextHundred(price * (1 + MARKETING_DISCOUNT_PERCENT / 100))
+      const originalPrice = isPaid && discountPercent
+        ? roundUpToNextHundred(price * (1 + discountPercent / 100))
         : null;
       const kbLimit = plan?.knowledge_base_chunk_limit;
       const maxAgents = Number(plan?.max_active_agents ?? 0);
@@ -136,7 +140,7 @@ const PriceList = () => {
         name: title,
         price,
         originalPrice,
-        discountPercent: isPaid ? MARKETING_DISCOUNT_PERCENT : null,
+        discountPercent: isPaid ? discountPercent : null,
         isPaid,
         currency: '₽',
         period: 'мес',
@@ -161,16 +165,23 @@ const PriceList = () => {
           {uiPlans.map((plan) => (
             <div key={plan.id} className="price-card">
               <h2 className="price-title">{plan.name}</h2>
-              {plan.isPaid && plan.originalPrice ? (
-                <div className="price-old-row">
+              <div className={`price-old-row ${plan.isPaid && plan.originalPrice ? '' : 'price-old-row--placeholder'}`}>
+                {plan.isPaid && plan.originalPrice ? (
+                  <>
                   <span className="price-old-value">
                     {formatRubPrice(plan.originalPrice)}
                     <span className="currency">{plan.currency}</span>
                     <span className="period">/{plan.period}</span>
                   </span>
                   <span className="price-discount-badge">-{plan.discountPercent}%</span>
-                </div>
-              ) : null}
+                  </>
+                ) : (
+                  <>
+                    <span className="price-old-value">0 ₽/мес</span>
+                    <span className="price-discount-badge">-0%</span>
+                  </>
+                )}
+              </div>
               <div className="price-value">
                 {formatRubPrice(plan.price)}
                 <span className="currency">{plan.currency}</span>
