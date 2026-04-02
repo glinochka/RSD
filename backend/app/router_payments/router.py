@@ -14,7 +14,7 @@ from yookassa.domain.notification.webhook_notification import WebhookNotificatio
 from yookassa.domain.notification.webhook_notification_types import WebhookNotificationEventType
 
 from ..alembic.database import async_session_maker
-from ..alembic.models import PaymentTransaction, WebsitePaymentTransaction
+from ..alembic.models import PaymentTransaction, TurnkeyAgentRequest, WebsitePaymentTransaction
 from ..config import settings
 from ..router_users.dao import UserDAO
 from ..subscription_plans import (
@@ -24,6 +24,7 @@ from ..subscription_plans import (
 from ..utils.internal_auth import verify_internal_key
 from ..utils.JWT import get_user_from_access_token
 from .schemas import (
+    CreateTurnkeyAgentRequest,
     CreateYooKassaPayment,
     ProcessTelegramPayment,
     YooKassaPaymentStatusResponse,
@@ -129,6 +130,24 @@ async def get_subscription_plans():
     return JSONResponse(
         content={"plans": get_all_subscription_plans()},
         status_code=status.HTTP_200_OK,
+    )
+
+
+@router.post("/turnkey-requests")
+async def create_turnkey_request(payload: CreateTurnkeyAgentRequest):
+    async with async_session_maker() as session:
+        async with session.begin():
+            session.add(
+                TurnkeyAgentRequest(
+                    phone_number=payload.phone_number,
+                    email=payload.email,
+                    requested_agent=payload.requested_agent,
+                    purpose=payload.purpose,
+                )
+            )
+    return JSONResponse(
+        content={"detail": "Request created"},
+        status_code=status.HTTP_201_CREATED,
     )
 
 

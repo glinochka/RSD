@@ -10,6 +10,7 @@ const MENU_ITEMS = [
   { id: 'overview', label: 'Обзор' },
   { id: 'users', label: 'Пользователи' },
   { id: 'agents', label: 'Агенты' },
+  { id: 'turnkeyRequests', label: 'Заявки под ключ' },
   { id: 'billing', label: 'Тарифы' },
 ];
 
@@ -40,6 +41,14 @@ const ManagementPortal = () => {
     search: '',
   });
   const [agentsState, setAgentsState] = useState({
+    items: [],
+    page: 1,
+    pageSize: 10,
+    totalPages: 1,
+    total: 0,
+    search: '',
+  });
+  const [requestsState, setRequestsState] = useState({
     items: [],
     page: 1,
     pageSize: 10,
@@ -102,7 +111,11 @@ const ManagementPortal = () => {
   useEffect(() => {
     const fetchSectionData = async () => {
       if (!adminToken) return;
-      if (activeSection !== 'users' && activeSection !== 'agents') return;
+      if (
+        activeSection !== 'users'
+        && activeSection !== 'agents'
+        && activeSection !== 'turnkeyRequests'
+      ) return;
 
       try {
         setIsLoadingTable(true);
@@ -131,6 +144,18 @@ const ManagementPortal = () => {
             total: data.pagination?.total ?? 0,
             totalPages: data.pagination?.total_pages ?? 1,
           }));
+        } else if (activeSection === 'turnkeyRequests') {
+          const data = await adminService.getTurnkeyRequests(adminToken, {
+            page: requestsState.page,
+            pageSize: requestsState.pageSize,
+            search: requestsState.search,
+          });
+          setRequestsState((prev) => ({
+            ...prev,
+            items: data.items ?? [],
+            total: data.pagination?.total ?? 0,
+            totalPages: data.pagination?.total_pages ?? 1,
+          }));
         }
       } catch (err) {
         setError(formatError(err));
@@ -148,6 +173,9 @@ const ManagementPortal = () => {
     agentsState.page,
     agentsState.pageSize,
     agentsState.search,
+    requestsState.page,
+    requestsState.pageSize,
+    requestsState.search,
   ]);
 
   useEffect(() => {
@@ -570,6 +598,75 @@ const ManagementPortal = () => {
     </>
   );
 
+  const renderTurnkeyRequests = () => (
+    <>
+      <div className="management-content-head">
+        <h2>Заявки по тарифу «Агент под ключ»</h2>
+        <div className="management-inline-controls">
+          <input
+            type="text"
+            placeholder="Поиск по телефону, email или тексту заявки"
+            value={requestsState.search}
+            onChange={(e) => setRequestsState((prev) => ({ ...prev, page: 1, search: e.target.value }))}
+          />
+        </div>
+      </div>
+      {error && <div className="management-error">{error}</div>}
+      {isLoadingTable ? <p>Загрузка заявок...</p> : (
+        <>
+          <div className="management-table-wrap">
+            <table className="management-table management-table-wrap-text">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Дата</th>
+                  <th>Телефон</th>
+                  <th>Email</th>
+                  <th>Какой агент</th>
+                  <th>Цель</th>
+                </tr>
+              </thead>
+              <tbody>
+                {requestsState.items.map((request) => (
+                  <tr key={request.id}>
+                    <td>{request.id}</td>
+                    <td>{request.created_at ? new Date(request.created_at).toLocaleString() : '-'}</td>
+                    <td>{request.phone_number}</td>
+                    <td>{request.email}</td>
+                    <td>{request.requested_agent}</td>
+                    <td>{request.purpose}</td>
+                  </tr>
+                ))}
+                {requestsState.items.length === 0 && (
+                  <tr><td colSpan={6}>Заявок пока нет</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <div className="management-pagination">
+            <button
+              type="button"
+              className="btn btn-outline"
+              disabled={requestsState.page <= 1}
+              onClick={() => setRequestsState((prev) => ({ ...prev, page: prev.page - 1 }))}
+            >
+              Назад
+            </button>
+            <span>Стр. {requestsState.page} из {requestsState.totalPages} (всего: {requestsState.total})</span>
+            <button
+              type="button"
+              className="btn btn-outline"
+              disabled={requestsState.page >= requestsState.totalPages}
+              onClick={() => setRequestsState((prev) => ({ ...prev, page: prev.page + 1 }))}
+            >
+              Вперед
+            </button>
+          </div>
+        </>
+      )}
+    </>
+  );
+
   const renderBilling = () => (
     <>
       <div className="management-content-head">
@@ -742,6 +839,7 @@ const ManagementPortal = () => {
             {activeSection === 'overview' && renderOverview()}
             {activeSection === 'users' && renderUsers()}
             {activeSection === 'agents' && renderAgents()}
+            {activeSection === 'turnkeyRequests' && renderTurnkeyRequests()}
             {activeSection === 'billing' && renderBilling()}
           </section>
         </main>

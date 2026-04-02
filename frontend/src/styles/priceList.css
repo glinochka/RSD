@@ -141,6 +141,54 @@
   width: 100%;
 }
 
+.pricing-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1100;
+  padding: var(--spacing-base);
+}
+
+.pricing-modal {
+  width: min(560px, 100%);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+  padding: var(--spacing-xl);
+}
+
+.pricing-modal h3 {
+  margin: 0 0 var(--spacing-base);
+}
+
+.pricing-request-form {
+  display: grid;
+  gap: var(--spacing-base);
+}
+
+.pricing-request-form label {
+  display: grid;
+  gap: var(--spacing-xs);
+  text-align: left;
+  color: var(--color-text);
+  font-weight: var(--font-weight-medium);
+}
+
+.pricing-request-form textarea {
+  resize: vertical;
+  min-height: 96px;
+}
+
+.pricing-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-sm);
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .pricing-page {
@@ -158,6 +206,18 @@
 
   .price-card {
     text-align: center;
+  }
+
+  .pricing-modal {
+    padding: var(--spacing-lg);
+  }
+
+  .pricing-modal-actions {
+    flex-direction: column-reverse;
+  }
+
+  .pricing-modal-actions .btn {
+    width: 100%;
   }
 }
 

@@ -191,6 +191,11 @@
   white-space: nowrap;
 }
 
+.management-table-wrap-text td {
+  white-space: normal;
+  vertical-align: top;
+}
+
 .management-table th {
   color: var(--color-text-light);
   font-weight: var(--font-weight-semibold);

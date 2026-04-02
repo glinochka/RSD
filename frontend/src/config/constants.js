@@ -51,10 +51,12 @@ export const API_ROUTES = {
   ADMIN_STATS: '/api/admin/stats',
   ADMIN_USERS: '/api/admin/users',
   ADMIN_AGENTS: '/api/admin/agents',
+  ADMIN_TURNKEY_REQUESTS: '/api/admin/turnkey-requests',
   ADMIN_PLANS: '/api/admin/plans',
   ADMIN_BAN_USER: (userId) => `/api/admin/users/${userId}/ban`,
   ADMIN_UNBAN_USER: (userId) => `/api/admin/users/${userId}/unban`,
   ADMIN_GIFT_SUBSCRIPTION: (userId) => `/api/admin/users/${userId}/gift-subscription`,
+  TURNKEY_REQUESTS: '/api/payments/turnkey-requests',
 };
 
 export const AGENT_ROLES = {

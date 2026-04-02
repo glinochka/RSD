@@ -114,3 +114,14 @@ class WebsitePaymentTransaction(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utc_now_naive)
     paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
+
+class TurnkeyAgentRequest(Base):
+    __tablename__ = "turnkey_agent_requests"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    phone_number: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    requested_agent: Mapped[str] = mapped_column(String(255), nullable=False)
+    purpose: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utc_now_naive, index=True)
+

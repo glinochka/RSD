@@ -8,7 +8,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 import { useNotification } from '../context/useNotification';
 import MainLayout from '../components/Layout';
-import { NAVIGATION_ROUTES } from '../config/constants';
+import { NAVIGATION_ROUTES, VALIDATION } from '../config/constants';
 import pricingService from '../services/pricingService';
 import '../styles/priceList.css';
 
@@ -27,16 +27,45 @@ const PriceList = () => {
   const { showError, showInfo, showSuccess } = useNotification();
   const [plans, setPlans] = useState([]);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+  const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
+  const [isSubmittingRequest, setIsSubmittingRequest] = useState(false);
+  const [requestForm, setRequestForm] = useState({
+    phoneNumber: '',
+    email: '',
+    requestedAgent: '',
+    purpose: '',
+  });
 
-  const handleSelectPlan = async (planId) => {
-    if (!isAuthenticated) {
-      navigate(NAVIGATION_ROUTES.AUTH);
+  const resetRequestForm = () => {
+    setRequestForm({
+      phoneNumber: '',
+      email: '',
+      requestedAgent: '',
+      purpose: '',
+    });
+  };
+
+  const handleCloseRequestModal = () => {
+    if (isSubmittingRequest) return;
+    setIsRequestModalOpen(false);
+    resetRequestForm();
+  };
+
+  const handleSelectPlan = async (plan) => {
+    if (!plan) return;
+    if (plan.requestOnly) {
+      setIsRequestModalOpen(true);
       return;
     }
 
-    const selectedPlan = plans.find((plan) => plan?.code === planId);
+    const selectedPlan = plans.find((p) => p?.code === plan.id);
     if (!selectedPlan) {
       showError('Не удалось найти выбранный тариф.');
+      return;
+    }
+
+    if (!isAuthenticated) {
+      navigate(NAVIGATION_ROUTES.AUTH);
       return;
     }
 
@@ -63,6 +92,42 @@ const PriceList = () => {
     } catch (error) {
       showError(error?.message || 'Не удалось создать платеж. Попробуйте еще раз.');
       setIsProcessingPayment(false);
+    }
+  };
+
+  const handleSubmitTurnkeyRequest = async (event) => {
+    event.preventDefault();
+    if (isSubmittingRequest) return;
+
+    const phoneNumber = requestForm.phoneNumber.trim();
+    const email = requestForm.email.trim();
+    const requestedAgent = requestForm.requestedAgent.trim();
+    const purpose = requestForm.purpose.trim();
+
+    if (!phoneNumber || !email || !requestedAgent || !purpose) {
+      showError('Заполните все поля заявки.');
+      return;
+    }
+    if (!VALIDATION.EMAIL_PATTERN.test(email)) {
+      showError('Введите корректный email.');
+      return;
+    }
+
+    try {
+      setIsSubmittingRequest(true);
+      await pricingService.createTurnkeyRequest({
+        phone_number: phoneNumber,
+        email,
+        requested_agent: requestedAgent,
+        purpose,
+      });
+      setIsRequestModalOpen(false);
+      resetRequestForm();
+      showSuccess('Заявка успешно создана, мы скоро свяжемся с вами.');
+    } catch (error) {
+      showError(error?.response?.data?.detail || error?.message || 'Не удалось отправить заявку.');
+    } finally {
+      setIsSubmittingRequest(false);
     }
   };
 
@@ -121,7 +186,7 @@ const PriceList = () => {
   const uiPlans = useMemo(() => {
     const order = { Free: 1, Advanced: 2, Pro: 3 };
     const sorted = [...plans].sort((a, b) => (order[a?.code] ?? 999) - (order[b?.code] ?? 999));
-    return sorted.map((plan) => {
+    const mapped = sorted.map((plan) => {
       const code = plan?.code;
       const title = plan?.title || code;
       const price = Number(plan?.price_rub_month ?? 0);
@@ -142,6 +207,7 @@ const PriceList = () => {
         originalPrice,
         discountPercent: isPaid ? discountPercent : null,
         isPaid,
+        requestOnly: false,
         currency: '₽',
         period: 'мес',
         per: '',
@@ -151,6 +217,26 @@ const PriceList = () => {
         ],
       };
     });
+    return [
+      ...mapped,
+      {
+        id: 'turnkey',
+        name: 'Агент под ключ',
+        price: 0,
+        originalPrice: null,
+        discountPercent: null,
+        isPaid: false,
+        requestOnly: true,
+        currency: '₽',
+        period: 'мес',
+        per: 'Индивидуальный расчет и реализация под ваш бизнес',
+        features: [
+          'Персональная разработка под задачи компании',
+          'Сценарии, интеграции и настройка под ключ',
+          'Поддержка внедрения и запуск в продакшн',
+        ],
+      },
+    ];
   }, [plans]);
 
   return (
@@ -183,9 +269,15 @@ const PriceList = () => {
                 )}
               </div>
               <div className="price-value">
-                {formatRubPrice(plan.price)}
-                <span className="currency">{plan.currency}</span>
-                <span className="period">/{plan.period}</span>
+                {plan.requestOnly ? (
+                  <span>По запросу</span>
+                ) : (
+                  <>
+                    {formatRubPrice(plan.price)}
+                    <span className="currency">{plan.currency}</span>
+                    <span className="period">/{plan.period}</span>
+                  </>
+                )}
               </div>
               {plan.per ? <p className="price-per">{plan.per}</p> : null}
 
@@ -200,15 +292,80 @@ const PriceList = () => {
 
               <button
                 className="btn btn-black"
-                onClick={() => handleSelectPlan(plan.id)}
-                disabled={isProcessingPayment}
+                onClick={() => handleSelectPlan(plan)}
+                disabled={isProcessingPayment || isSubmittingRequest}
               >
-                {isProcessingPayment && plan.price > 0 ? 'Переход к оплате...' : 'Выбрать план'}
+                {plan.requestOnly
+                  ? 'Оставить заявку'
+                  : isProcessingPayment && plan.price > 0
+                    ? 'Переход к оплате...'
+                    : 'Выбрать план'}
               </button>
             </div>
           ))}
         </div>
       </div>
+      {isRequestModalOpen && (
+        <div className="pricing-modal-overlay" onClick={handleCloseRequestModal}>
+          <div className="pricing-modal" onClick={(event) => event.stopPropagation()}>
+            <h3>Заявка на тариф «Агент под ключ»</h3>
+            <form className="pricing-request-form" onSubmit={handleSubmitTurnkeyRequest}>
+              <label>
+                Номер телефона
+                <input
+                  type="tel"
+                  value={requestForm.phoneNumber}
+                  onChange={(event) => setRequestForm((prev) => ({ ...prev, phoneNumber: event.target.value }))}
+                  placeholder="+7 (900) 000-00-00"
+                  required
+                />
+              </label>
+
+              <label>
+                Электронная почта
+                <input
+                  type="email"
+                  value={requestForm.email}
+                  onChange={(event) => setRequestForm((prev) => ({ ...prev, email: event.target.value }))}
+                  placeholder="name@company.ru"
+                  required
+                />
+              </label>
+
+              <label>
+                Какого агента хотите получить
+                <input
+                  type="text"
+                  value={requestForm.requestedAgent}
+                  onChange={(event) => setRequestForm((prev) => ({ ...prev, requestedAgent: event.target.value }))}
+                  placeholder="Например: агент поддержки клиентов"
+                  required
+                />
+              </label>
+
+              <label>
+                Для каких целей нужен агент
+                <textarea
+                  value={requestForm.purpose}
+                  onChange={(event) => setRequestForm((prev) => ({ ...prev, purpose: event.target.value }))}
+                  placeholder="Опишите сценарии, задачи и ожидаемый результат"
+                  rows={4}
+                  required
+                />
+              </label>
+
+              <div className="pricing-modal-actions">
+                <button type="submit" className="btn btn-black" disabled={isSubmittingRequest}>
+                  {isSubmittingRequest ? 'Отправка...' : 'Отправить заявку'}
+                </button>
+                <button type="button" className="btn btn-outline" onClick={handleCloseRequestModal}>
+                  Отмена
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </MainLayout>
   );
 };

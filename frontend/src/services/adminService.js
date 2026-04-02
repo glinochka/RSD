@@ -53,6 +53,20 @@ const adminService = {
     return response.data;
   },
 
+  async getTurnkeyRequests(token, { page = 1, pageSize = 10, search = '' } = {}) {
+    const response = await adminClient.get(API_ROUTES.ADMIN_TURNKEY_REQUESTS, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      params: {
+        page,
+        page_size: pageSize,
+        search: search || undefined,
+      },
+    });
+    return response.data;
+  },
+
   async getPlans(token) {
     const response = await adminClient.get(API_ROUTES.ADMIN_PLANS, {
       headers: {

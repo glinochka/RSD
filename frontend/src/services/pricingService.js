@@ -1,4 +1,5 @@
 import apiClient from './apiClient';
+import { API_ROUTES } from '../config/constants';
 
 export const pricingService = {
   getPlans: async () => {
@@ -15,6 +16,15 @@ export const pricingService = {
   getYooKassaPaymentStatus: async (paymentId) => {
     const response = await apiClient.get('/api/payments/yookassa/status', {
       params: { payment_id: paymentId },
+    });
+    return response.data;
+  },
+  createTurnkeyRequest: async ({ phone_number, email, requested_agent, purpose }) => {
+    const response = await apiClient.post(API_ROUTES.TURNKEY_REQUESTS, {
+      phone_number,
+      email,
+      requested_agent,
+      purpose,
     });
     return response.data;
   },

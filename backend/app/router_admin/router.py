@@ -14,7 +14,7 @@ from .schemas import (
     AdminSubscriptionPlansUpdateRequest,
 )
 from ..alembic.database import async_session_maker
-from ..alembic.models import Agent, AgentDocument, PaymentTransaction, User
+from ..alembic.models import Agent, AgentDocument, PaymentTransaction, TurnkeyAgentRequest, User
 from ..config import get_auth_data, settings
 from ..qdrant.search_service import delete_agent_vectors
 from ..router_agents.dao import AgentDAO
@@ -260,6 +260,64 @@ async def admin_agents(
         }
         for row in rows
     ]
+    return JSONResponse(
+        content={
+            "items": items,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": total or 0,
+                "total_pages": max(1, ((total or 0) + page_size - 1) // page_size),
+            },
+        },
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@router.get("/turnkey-requests")
+async def admin_turnkey_requests(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=100),
+    search: str | None = Query(default=None),
+    _admin=Depends(get_current_admin),
+):
+    search_value = (search or "").strip()
+    offset = (page - 1) * page_size
+
+    async with async_session_maker() as session:
+        count_query = select(func.count(TurnkeyAgentRequest.id))
+        base_query = (
+            select(TurnkeyAgentRequest)
+            .order_by(desc(TurnkeyAgentRequest.created_at), desc(TurnkeyAgentRequest.id))
+            .offset(offset)
+            .limit(page_size)
+        )
+        if search_value:
+            pattern = f"%{search_value}%"
+            filters = or_(
+                TurnkeyAgentRequest.phone_number.ilike(pattern),
+                TurnkeyAgentRequest.email.ilike(pattern),
+                TurnkeyAgentRequest.requested_agent.ilike(pattern),
+                TurnkeyAgentRequest.purpose.ilike(pattern),
+            )
+            count_query = count_query.where(filters)
+            base_query = base_query.where(filters)
+
+        total = await session.scalar(count_query)
+        items_data = (await session.scalars(base_query)).all()
+
+    items = [
+        {
+            "id": item.id,
+            "phone_number": item.phone_number,
+            "email": item.email,
+            "requested_agent": item.requested_agent,
+            "purpose": item.purpose,
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+        }
+        for item in items_data
+    ]
+
     return JSONResponse(
         content={
             "items": items,
