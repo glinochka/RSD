@@ -86,6 +86,13 @@ const LAUNCH_STEPS = [
   'Запускаете в рабочем канале и отслеживаете метрики качества.',
 ];
 
+const getInitials = (name) => {
+  const parts = name.replace(/,/g, ' ').split(/\s+/).filter(Boolean);
+  const first = parts[0]?.[0] ?? '?';
+  const second = parts[1]?.[0] ?? '';
+  return `${first}${second}`.toUpperCase();
+};
+
 const Main = () => {
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
@@ -161,12 +168,15 @@ const Main = () => {
             Ниже — примеры команд, которые уже внедрили агентов в поддержку, продажи и обучение клиентов.
           </p>
           <div className="testimonial-carousel" aria-live="polite">
-            <article className="testimonial-card">
-              <p className="testimonial-text">"{activeTestimonial.text}"</p>
-              <p className="testimonial-author">
-                {activeTestimonial.name}
-                <span>{activeTestimonial.company}</span>
-              </p>
+            <article
+              className="testimonial-card"
+              aria-label={`Отзыв: ${activeTestimonial.company}, ${activeTestimonial.name}`}
+            >
+              <div className="testimonial-avatar" aria-hidden="true">
+                {getInitials(activeTestimonial.name)}
+              </div>
+              <p className="testimonial-company">{activeTestimonial.company}</p>
+              <p className="testimonial-text">«{activeTestimonial.text}»</p>
             </article>
             <div className="testimonial-controls">
               <button type="button" className="btn btn-outline testimonial-nav-btn" onClick={handlePrevTestimonial}>
