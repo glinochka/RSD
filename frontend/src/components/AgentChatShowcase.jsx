@@ -1,7 +1,8 @@
 /**
- * Demo чата: клиент и ИИ-администратор. Растягивается на 100%×100% родителя (min-height задаётся снаружи).
+ * Demo чата: клиент и ИИ-администратор. Количество сообщений фиксировано,
+ * список сообщений при загрузке прокручивается вниз к последнему ответу.
  */
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useLayoutEffect, useRef } from 'react';
 import '../styles/agentChatShowcase.css';
 
 const PERKS = [
@@ -102,105 +103,31 @@ const CHAT_BY_VARIANT = {
   ],
 };
 
-const BASE_COUNT_BY_VARIANT = {
-  main: 2,
-  auth: 4,
-};
-
-function getTargetMessageCount(variant, height, width) {
-  const baseCount = BASE_COUNT_BY_VARIANT[variant] ?? BASE_COUNT_BY_VARIANT.main;
-  let target = baseCount;
-
-  if (height >= 560) target = baseCount + 4;
-  else if (height >= 480) target = baseCount + 3;
-  else if (height >= 400) target = baseCount + 2;
-  else if (height >= 320) target = baseCount + 1;
-
-  // На узких контейнерах уменьшаем число сообщений, чтобы избежать перегруза и лишнего скролла.
-  if (width < 300) target -= 1;
-  if (width < 240) target -= 1;
-
-  return Math.max(baseCount, target);
-}
-
-/** Прокрутка так, чтобы последний ответ ИИ был в зоне видимости (getBoundingClientRect — надёжно во flex). */
-function scrollSoLastAgentAnswerVisible(scroller) {
-  if (!scroller) return;
-  const agents = scroller.querySelectorAll('.agent-chat-showcase__msg--agent');
-  const lastAgent = agents[agents.length - 1];
-  if (!lastAgent) {
-    scroller.scrollTop = scroller.scrollHeight;
-    return;
-  }
-
-  const sRect = scroller.getBoundingClientRect();
-  const aRect = lastAgent.getBoundingClientRect();
-  const viewH = scroller.clientHeight;
-
-  if (aRect.height >= viewH - 0.5) {
-    scroller.scrollTop += aRect.top - sRect.top;
-    return;
-  }
-
-  let delta = 0;
-  if (aRect.bottom > sRect.bottom) delta = aRect.bottom - sRect.bottom;
-  else if (aRect.top < sRect.top) delta = aRect.top - sRect.top;
-  scroller.scrollTop += delta;
-}
-
 /**
  * @param {{ tone?: 'light' | 'glass', variant?: 'main' | 'auth', className?: string }} props
  */
 function AgentChatShowcase({ tone = 'light', variant = 'main', className = '' }) {
-  const rootRef = useRef(null);
   const messagesRef = useRef(null);
   const allMessages = CHAT_BY_VARIANT[variant] ?? CHAT_BY_VARIANT.main;
-  const baseCount = BASE_COUNT_BY_VARIANT[variant] ?? BASE_COUNT_BY_VARIANT.main;
-  const [visibleCount, setVisibleCount] = useState(baseCount);
   const rootClass =
     tone === 'glass'
       ? 'agent-chat-showcase agent-chat-showcase--glass'
       : 'agent-chat-showcase agent-chat-showcase--light';
-  const messages = useMemo(
-    () => allMessages.slice(0, Math.min(visibleCount, allMessages.length)),
-    [allMessages, visibleCount]
-  );
-
-  useEffect(() => {
-    const node = rootRef.current;
-    if (!node) return undefined;
-
-    const updateVisibleCount = () => {
-      const nextCount = getTargetMessageCount(variant, node.clientHeight, node.clientWidth);
-      setVisibleCount(Math.min(nextCount, allMessages.length));
-    };
-
-    updateVisibleCount();
-
-    const observer = new ResizeObserver(updateVisibleCount);
-    observer.observe(node);
-
-    return () => observer.disconnect();
-  }, [allMessages.length, variant]);
 
   useLayoutEffect(() => {
-    const el = messagesRef.current;
-    if (!el) return undefined;
+    const scroller = messagesRef.current;
+    if (!scroller) return;
 
-    const run = () => {
-      scrollSoLastAgentAnswerVisible(el);
-      requestAnimationFrame(() => scrollSoLastAgentAnswerVisible(el));
+    const scrollToBottom = () => {
+      scroller.scrollTop = scroller.scrollHeight;
     };
 
-    run();
-    const ro = new ResizeObserver(run);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [messages]);
+    scrollToBottom();
+    requestAnimationFrame(scrollToBottom);
+  }, [variant]);
 
   return (
     <section
-      ref={rootRef}
       className={`${rootClass} ${className}`.trim()}
       aria-label="Пример диалога: клиент и ИИ-администратор бизнеса"
     >
@@ -213,7 +140,7 @@ function AgentChatShowcase({ tone = 'light', variant = 'main', className = '' })
 
       <div className="agent-chat-showcase__thread">
         <div className="agent-chat-showcase__messages" ref={messagesRef}>
-          {messages.map((message, index) => (
+          {allMessages.map((message, index) => (
             <article key={`${message.side}-${message.time}-${index}`} className={`agent-chat-showcase__msg agent-chat-showcase__msg--${message.side}`}>
               <div className="agent-chat-showcase__msg-top">
                 <span className="agent-chat-showcase__author">{message.author}</span>
