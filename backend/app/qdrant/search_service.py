@@ -1,9 +1,10 @@
+import os
 from typing import List, Dict, Any
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models
-from fastembed import TextEmbedding, SparseTextEmbedding
 
 from config import settings
+from fastembed import TextEmbedding, SparseTextEmbedding
 
 from openai import AsyncOpenAI
 
@@ -36,8 +37,10 @@ async def rewrite_query(original_query: str) -> str:
 
 # Инициализируем асинхронный клиент
 q_client = AsyncQdrantClient(url=settings.QDRANT_URL)
-dense_model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
-sparse_model = SparseTextEmbedding(model_name="prithivida/Splade_PP_en_v1")
+os.environ.setdefault("OMP_NUM_THREADS", str(settings.EMBEDDING_THREADS))
+os.environ.setdefault("ORT_NUM_THREADS", str(settings.EMBEDDING_THREADS))
+dense_model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5", threads=settings.EMBEDDING_THREADS)
+sparse_model = SparseTextEmbedding(model_name="prithivida/Splade_PP_en_v1", threads=settings.EMBEDDING_THREADS)
 
 async def search_knowledge_base(query: str, agent_id: int, limit: int = 5) -> List[Dict[str, Any]]:
     """Поиск по базе знаний с использованием актуального API query_points."""

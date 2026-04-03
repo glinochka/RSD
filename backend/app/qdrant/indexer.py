@@ -1,3 +1,4 @@
+import asyncio
 import os
 import uuid
 import pdfplumber
@@ -6,9 +7,9 @@ from docx import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models
-from fastembed import TextEmbedding, SparseTextEmbedding
 
 from config import settings
+from fastembed import TextEmbedding, SparseTextEmbedding
 
 from ..subscription_plans import get_subscription_plan, UNLIMITED_KNOWLEDGE_BASE_CHUNKS
 
@@ -27,8 +28,19 @@ def get_chunk_limit_by_plan(plan_code: str) -> int:
 # Инициализация клиентов
 qdrant_client = AsyncQdrantClient(url=settings.QDRANT_URL)
 
-dense_model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5") 
-sparse_model = SparseTextEmbedding(model_name="prithivida/Splade_PP_en_v1")
+# Limit thread-hungry runtime defaults for small VPS instances.
+os.environ.setdefault("OMP_NUM_THREADS", str(settings.EMBEDDING_THREADS))
+os.environ.setdefault("ORT_NUM_THREADS", str(settings.EMBEDDING_THREADS))
+
+dense_model = TextEmbedding(
+    model_name="BAAI/bge-small-en-v1.5",
+    threads=settings.EMBEDDING_THREADS,
+)
+sparse_model = SparseTextEmbedding(
+    model_name="prithivida/Splade_PP_en_v1",
+    threads=settings.EMBEDDING_THREADS,
+)
+indexing_semaphore = asyncio.Semaphore(settings.EMBEDDING_MAX_CONCURRENT_DOCUMENTS)
 
 text_splitter = RecursiveCharacterTextSplitter(
     chunk_size=1000,
@@ -79,41 +91,60 @@ async def process_document(file_path: str, agent_id: int, document_id: int):
     """
         
     try:
-        # Извлечение текста и предварительный расчет чанков
-        text = await extract_text(file_path)
-    
-        if not text:
-            raise ValueError("Не удалось извлечь текст из файла")
+        async with indexing_semaphore:
+            # Извлечение текста и предварительный расчет чанков
+            text = await extract_text(file_path)
 
-        chunks = text_splitter.split_text(text)
+            if not text:
+                raise ValueError("Не удалось извлечь текст из файла")
 
-        # Генерация эмбеддингов и формирование точек для Qdrant
-        points = []
-        for i, chunk_text in enumerate(chunks):
-            dense_vector = list(dense_model.embed([chunk_text]))[0]
-            sparse_vector = list(sparse_model.embed([chunk_text]))[0]
+            chunks = text_splitter.split_text(text)
 
-            # UUID на основе document_id и индекса чанка
-            point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{document_id}_{i}"))
-
-            points.append(
-                models.PointStruct(
-                    id=point_id,
-                    vector={
-                        "": dense_vector.tolist(),
-                        "sparse-text": models.SparseVector(
-                            indices=sparse_vector.indices.tolist(),
-                            values=sparse_vector.values.tolist()
-                        )
-                    },
-                    payload={
-                        "agent_id": agent_id,
-                        "document_id": document_id,
-                        "text": chunk_text,
-                        "source": os.path.basename(file_path)
-                    }
+            dense_vectors = list(
+                dense_model.embed(
+                    chunks,
+                    batch_size=settings.EMBEDDING_BATCH_SIZE,
+                    parallel=settings.EMBEDDING_PARALLEL,
                 )
             )
+            sparse_vectors = list(
+                sparse_model.embed(
+                    chunks,
+                    batch_size=settings.EMBEDDING_BATCH_SIZE,
+                    parallel=settings.EMBEDDING_PARALLEL,
+                )
+            )
+
+            if len(dense_vectors) != len(chunks) or len(sparse_vectors) != len(chunks):
+                raise RuntimeError("Ошибка генерации эмбеддингов: неверное количество векторов")
+
+            # Генерация эмбеддингов и формирование точек для Qdrant
+            points = []
+            for i, chunk_text in enumerate(chunks):
+                dense_vector = dense_vectors[i]
+                sparse_vector = sparse_vectors[i]
+
+                # UUID на основе document_id и индекса чанка
+                point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{document_id}_{i}"))
+
+                points.append(
+                    models.PointStruct(
+                        id=point_id,
+                        vector={
+                            "": dense_vector.tolist(),
+                            "sparse-text": models.SparseVector(
+                                indices=sparse_vector.indices.tolist(),
+                                values=sparse_vector.values.tolist()
+                            )
+                        },
+                        payload={
+                            "agent_id": agent_id,
+                            "document_id": document_id,
+                            "text": chunk_text,
+                            "source": os.path.basename(file_path)
+                        }
+                    )
+                )
 
         # Загрузка в Qdrant
         await qdrant_client.upsert(

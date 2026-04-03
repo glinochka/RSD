@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     YOOKASSA_SECRET_KEY: str = ""
     YOOKASSA_RETURN_URL: str | None = None
     MASTER_BOT_TOKEN: str = ""
+    EMBEDDING_THREADS: int = 1
+    EMBEDDING_BATCH_SIZE: int = 16
+    EMBEDDING_PARALLEL: int = 1
+    EMBEDDING_MAX_CONCURRENT_DOCUMENTS: int = 1
 
     model_config = SettingsConfigDict(
         env_file= Path(__file__).parent.parent.parent / '.env',  
