@@ -60,6 +60,11 @@
   box-shadow: var(--shadow-md);
 }
 
+.agent-item--selected {
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-md);
+}
+
 .agent-info {
   display: flex;
   align-items: center;

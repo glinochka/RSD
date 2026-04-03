@@ -3,7 +3,7 @@
  * Display user's agents and manage full lifecycle
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import MainLayout from '../components/Layout';
 import Loading from '../components/Loading';
@@ -20,11 +20,11 @@ const AGENTS_EMPTY_MESSAGE = 'У вас еще нет агентов, созда
 const AGENTS_EMPTY_CTA = 'Создайте прямо сейчас';
 const fileIdentity = (file) => `${file.name}::${file.size}::${file.lastModified}`;
 
-const AgentCard = ({ agent, onManage, onDelete, onToggle }) => {
+const AgentCard = ({ agent, isSelected, onManage, onDelete, onToggle }) => {
   const agentName = agent.bot_username || agent.name || 'Агент';
   const isActive = !!agent.is_active;
   return (
-    <div className="agent-item">
+    <div className={`agent-item ${isSelected ? 'agent-item--selected' : ''}`}>
       <div className="agent-info">
         <span
           className={`agent-status-dot ${isActive ? 'agent-status-dot--active' : 'agent-status-dot--inactive'}`}
@@ -80,6 +80,7 @@ const AgentsPageContent = () => {
   const [isUploadingDocs, setIsUploadingDocs] = useState(false);
   const [systemPromptDraft, setSystemPromptDraft] = useState('');
   const [welcomeDraft, setWelcomeDraft] = useState('');
+  const detailsRequestIdRef = useRef(0);
   const { data: agents, isLoading, execute } = useAsync(
     () => agentService.getAll(),
     false
@@ -100,20 +101,27 @@ const AgentsPageContent = () => {
   };
 
   const loadAgentDetails = async (botId) => {
+    const requestId = detailsRequestIdRef.current + 1;
+    detailsRequestIdRef.current = requestId;
+    setSelectedBotId(botId);
+    setSelectedAgent(null);
+    setDocuments([]);
     setIsLoadingDetails(true);
     try {
       const [agent, docs] = await Promise.all([
         agentService.getById(botId),
         agentService.getDocumentsByBotId(botId),
       ]);
-      setSelectedBotId(botId);
+      if (requestId !== detailsRequestIdRef.current) return;
       setSelectedAgent(agent);
       setSystemPromptDraft(agent.system_prompt || '');
       setWelcomeDraft(agent.welcome_message || '');
       setDocuments(docs || []);
     } catch (error) {
+      if (requestId !== detailsRequestIdRef.current) return;
       showError(error?.message || 'Ошибка при загрузке карточки агента');
     } finally {
+      if (requestId !== detailsRequestIdRef.current) return;
       setIsLoadingDetails(false);
     }
   };
@@ -365,6 +373,7 @@ const AgentsPageContent = () => {
                 <AgentCard
                   key={agent.bot_id}
                   agent={agent}
+                  isSelected={selectedBotId === agent.bot_id}
                   onManage={loadAgentDetails}
                   onDelete={handleDeleteAgent}
                   onToggle={handleToggleAgent}
