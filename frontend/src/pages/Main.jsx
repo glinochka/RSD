@@ -32,26 +32,30 @@ const VALUE_HIGHLIGHTS = [
 const TESTIMONIALS = [
   {
     id: 'review-1',
-    name: 'Анастасия, владелец сети салонов',
+    name: 'Анастасия',
     company: 'Lumi Beauty',
+    segment: 'Сеть салонов красоты',
     text: 'С RSD мы закрыли большую часть типовых вопросов в Telegram. Администраторы перестали отвечать по шаблону в ручном режиме и теперь больше времени уделяют записи клиентов.',
   },
   {
     id: 'review-2',
-    name: 'Руслан, операционный директор',
+    name: 'Руслан',
     company: 'GreenBox Logistics',
+    segment: 'Логистика и доставка',
     text: 'За первую неделю запустили агента для входящих обращений от партнеров. Сократилось количество эскалаций, а ответы по SLA стали заметно стабильнее.',
   },
   {
     id: 'review-3',
-    name: 'Марина, основатель онлайн-школы',
+    name: 'Марина',
     company: 'Focus Learning',
+    segment: 'Онлайн-образование',
     text: 'Мы загрузили базу материалов и регламенты, и агент начал помогать ученикам 24/7. Команда поддержки обрабатывает сложные кейсы, а не повторяющиеся вопросы.',
   },
   {
     id: 'review-4',
-    name: 'Илья, руководитель продаж',
+    name: 'Илья',
     company: 'TechNova',
+    segment: 'B2B SaaS, продажи',
     text: 'Агент берет первый контакт и квалификацию заявок. Менеджеры получают уже подготовленные диалоги и быстрее доводят клиентов до демо.',
   },
 ];
@@ -86,17 +90,50 @@ const LAUNCH_STEPS = [
   'Запускаете в рабочем канале и отслеживаете метрики качества.',
 ];
 
+const FAQ_ITEMS = [
+  {
+    id: 'faq-1',
+    question: 'Нужны ли разработчики, чтобы запустить агента?',
+    answer:
+      'Нет. Вы задаёте роль, промпт и прикрепляете документы — агент готов к диалогу в Telegram. Доработки и уточнения сценария можно делать самостоятельно, без кода.',
+  },
+  {
+    id: 'faq-2',
+    question: 'На чём основываются ответы агента?',
+    answer:
+      'Агент опирается на загруженные вами материалы и инструкции. Вы контролируете тон и границы тем: типовые вопросы закрывает агент, сложные случаи остаются за людьми.',
+  },
+  {
+    id: 'faq-3',
+    question: 'Можно ли использовать корпоративные документы?',
+    answer:
+      'Платформа рассчитана на рабочий контекст: регламенты, прайсы, FAQ. Обращайте внимание на политику обработки данных в вашей организации и настройки доступа к боту.',
+  },
+  {
+    id: 'faq-4',
+    question: 'Сколько времени занимает первый запуск?',
+    answer:
+      'Часто достаточно от нескольких часов до пары дней: зависит от объёма базы знаний и того, насколько детально вы хотите прогнать тестовые диалоги перед включением для клиентов.',
+  },
+];
+
 const getInitials = (name) => {
-  const parts = name.replace(/,/g, ' ').split(/\s+/).filter(Boolean);
-  const first = parts[0]?.[0] ?? '?';
-  const second = parts[1]?.[0] ?? '';
-  return `${first}${second}`.toUpperCase();
+  const trimmed = name.trim();
+  if (!trimmed) return '?';
+  const parts = trimmed.replace(/,/g, ' ').split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+  }
+  const word = parts[0];
+  if (word.length >= 2) return `${word[0]}${word[1]}`.toUpperCase();
+  return word[0].toUpperCase();
 };
 
 const Main = () => {
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
   const [activeTestimonialIndex, setActiveTestimonialIndex] = useState(0);
+  const [openFaqId, setOpenFaqId] = useState(null);
 
   const handleCreateAgent = () => {
     if (isAuthenticated) {
@@ -170,13 +207,25 @@ const Main = () => {
           <div className="testimonial-carousel" aria-live="polite">
             <article
               className="testimonial-card"
-              aria-label={`Отзыв: ${activeTestimonial.company}, ${activeTestimonial.name}`}
+              aria-label={`Отзыв: ${activeTestimonial.name}, ${activeTestimonial.company}`}
             >
-              <div className="testimonial-avatar" aria-hidden="true">
-                {getInitials(activeTestimonial.name)}
+              <div key={activeTestimonial.id} className="testimonial-card-body">
+                <div className="testimonial-card-top">
+                  <div className="testimonial-avatar" aria-hidden="true">
+                    {getInitials(activeTestimonial.name)}
+                  </div>
+                  <p className="testimonial-person-name">{activeTestimonial.name}</p>
+                </div>
+                <p className="testimonial-meta">
+                  <span className="testimonial-company-part">{activeTestimonial.company}</span>
+                  <span className="testimonial-meta-dot" aria-hidden="true">
+                    {' '}
+                    ·{' '}
+                  </span>
+                  <span className="testimonial-segment">{activeTestimonial.segment}</span>
+                </p>
+                <p className="testimonial-text">«{activeTestimonial.text}»</p>
               </div>
-              <p className="testimonial-company">{activeTestimonial.company}</p>
-              <p className="testimonial-text">«{activeTestimonial.text}»</p>
             </article>
             <div className="testimonial-controls">
               <button type="button" className="btn btn-outline testimonial-nav-btn" onClick={handlePrevTestimonial}>
@@ -225,6 +274,45 @@ const Main = () => {
               <li key={step}>{step}</li>
             ))}
           </ol>
+        </section>
+
+        <section className="faq-section" aria-labelledby="faq-heading">
+          <h2 id="faq-heading" className="section-title">
+            Частые вопросы
+          </h2>
+          <p className="section-lead section-lead-tight">
+            Коротко о том, как устроен старт и что вы контролируете при работе с агентом.
+          </p>
+          <div className="faq-list">
+            {FAQ_ITEMS.map((item) => {
+              const isOpen = openFaqId === item.id;
+              return (
+                <div key={item.id} className={`faq-item${isOpen ? ' is-open' : ''}`}>
+                  <button
+                    type="button"
+                    className="faq-summary"
+                    aria-expanded={isOpen}
+                    aria-controls={`faq-panel-${item.id}`}
+                    id={`faq-trigger-${item.id}`}
+                    onClick={() => setOpenFaqId(isOpen ? null : item.id)}
+                  >
+                    {item.question}
+                  </button>
+                  <div
+                    id={`faq-panel-${item.id}`}
+                    role="region"
+                    aria-labelledby={`faq-trigger-${item.id}`}
+                    aria-hidden={!isOpen}
+                    className="faq-answer-shell"
+                  >
+                    <div className="faq-answer-inner">
+                      <p className="faq-answer">{item.answer}</p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </section>
 
         <section className="cta-band" aria-labelledby="cta-heading">

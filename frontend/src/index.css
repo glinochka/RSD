@@ -289,6 +289,22 @@ label {
   background-color: #059669;
 }
 
+/* ===== FOCUS (без обводки при клике мышью; при навигации с Tab — видимый фокус) ===== */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+button:focus-visible,
+a:focus-visible,
+[type='button']:focus-visible,
+[type='submit']:focus-visible,
+[type='reset']:focus-visible,
+[role='button']:focus-visible,
+[role='tab']:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
 /* ===== CONTAINERS ===== */
 .container {
   max-width: 1200px;
@@ -318,10 +334,6 @@ label {
   .container {
     padding: 0 var(--spacing-base);
   }
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
 }
 
 @media (prefers-color-scheme: light) {
