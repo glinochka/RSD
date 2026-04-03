@@ -9,9 +9,9 @@ from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models
 
 from config import settings
-from fastembed import TextEmbedding, SparseTextEmbedding
 
 from ..subscription_plans import get_subscription_plan, UNLIMITED_KNOWLEDGE_BASE_CHUNKS
+from .embeddings import embed_dense_and_sparse_for_chunks, run_in_cpu_pool
 
 
 def get_chunk_limit_by_plan(plan_code: str) -> int:
@@ -28,18 +28,6 @@ def get_chunk_limit_by_plan(plan_code: str) -> int:
 # Инициализация клиентов
 qdrant_client = AsyncQdrantClient(url=settings.QDRANT_URL)
 
-# Limit thread-hungry runtime defaults for small VPS instances.
-os.environ.setdefault("OMP_NUM_THREADS", str(settings.EMBEDDING_THREADS))
-os.environ.setdefault("ORT_NUM_THREADS", str(settings.EMBEDDING_THREADS))
-
-dense_model = TextEmbedding(
-    model_name="BAAI/bge-small-en-v1.5",
-    threads=settings.EMBEDDING_THREADS,
-)
-sparse_model = SparseTextEmbedding(
-    model_name="prithivida/Splade_PP_en_v1",
-    threads=settings.EMBEDDING_THREADS,
-)
 indexing_semaphore = asyncio.Semaphore(settings.EMBEDDING_MAX_CONCURRENT_DOCUMENTS)
 
 text_splitter = RecursiveCharacterTextSplitter(
@@ -48,8 +36,8 @@ text_splitter = RecursiveCharacterTextSplitter(
     separators=["\n\n", "\n", ".", " ", ""]
 )
 
-async def extract_text(file_path: str) -> str:
-    """Извлекает текст в зависимости от расширения файла."""
+def extract_text_sync(file_path: str) -> str:
+    """Синхронное извлечение текста (вызывать через run_in_cpu_pool / extract_text)."""
     ext = os.path.splitext(file_path)[1].lower()
     text = ""
     if ext == ".pdf":
@@ -62,6 +50,11 @@ async def extract_text(file_path: str) -> str:
         with open(file_path, "r", encoding="utf-8") as f:
             text = f.read()
     return text
+
+
+async def extract_text(file_path: str) -> str:
+    """Извлекает текст в зависимости от расширения файла."""
+    return await run_in_cpu_pool(extract_text_sync, file_path)
 
 async def get_current_chunks_count(agent_id: int) -> int:
     """Считает количество существующих чанков агента в Qdrant."""
@@ -100,19 +93,9 @@ async def process_document(file_path: str, agent_id: int, document_id: int, cont
 
             chunks = text_splitter.split_text(text)
 
-            dense_vectors = list(
-                dense_model.embed(
-                    chunks,
-                    batch_size=settings.EMBEDDING_BATCH_SIZE,
-                    parallel=settings.EMBEDDING_PARALLEL,
-                )
-            )
-            sparse_vectors = list(
-                sparse_model.embed(
-                    chunks,
-                    batch_size=settings.EMBEDDING_BATCH_SIZE,
-                    parallel=settings.EMBEDDING_PARALLEL,
-                )
+            dense_vectors, sparse_vectors = await run_in_cpu_pool(
+                embed_dense_and_sparse_for_chunks,
+                chunks,
             )
 
             if len(dense_vectors) != len(chunks) or len(sparse_vectors) != len(chunks):
@@ -147,11 +130,15 @@ async def process_document(file_path: str, agent_id: int, document_id: int, cont
                     )
                 )
 
-        # Загрузка в Qdrant
-        await qdrant_client.upsert(
-            collection_name="agent_documents",
-            points=points
-        )
+        # Загрузка в Qdrant батчами — один большой upsert сильнее бьёт по CPU Qdrant/хоста
+        upsert_batch = 48
+        for start in range(0, len(points), upsert_batch):
+            batch = points[start : start + upsert_batch]
+            await qdrant_client.upsert(
+                collection_name="agent_documents",
+                points=batch,
+            )
+            await asyncio.sleep(0)
         async with async_session_maker() as session:
             docDAO = DocumentDAO(session)
             async with session.begin():
