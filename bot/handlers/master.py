@@ -1,5 +1,6 @@
 import os
 import asyncio
+from html import escape as html_escape
 from fastapi import status
 from aiogram import Router, F, Bot, types
 from aiogram.exceptions import TelegramBadRequest
@@ -474,19 +475,20 @@ async def handle_docs(message: types.Message, state: FSMContext, bot: Bot):
     if response_data['status'] == 'limit_error':
 
         await message.answer(
-            f"🚫 *Лимит базы знаний превышен!*\n\n"
-            f"Ваш тариф: *{response_data['current_plan']}* (макс. {response_data['limit']} чанков).\n"
+            f"🚫 <b>Лимит базы знаний превышен!</b>\n\n"
+            f"Ваш тариф: <b>{html_escape(str(response_data['current_plan']))}</b> "
+            f"(макс. {response_data['limit']} чанков).\n"
             f"Уже использовано: {response_data['current_count']}.\n"
             f"Файл содержит: {response_data['new_chunks_count']}.\n\n"
             f"Удалите старые документы или повысьте тариф в меню.",
-            parse_mode="Markdown"
+            parse_mode="HTML",
         )
         return
 
-
     await message.answer(
-        f"✅ Файл '_{escape_md(file_name)}_' принят и обрабатывается ({response_data['new_chunks_count']} чанков).",
-        parse_mode="Markdown"
+        f"✅ Файл <b>{html_escape(file_name or '')}</b> принят и обрабатывается "
+        f"({response_data['new_chunks_count']} чанков).",
+        parse_mode="HTML",
     )
 
 # --- МОИ АГЕНТЫ (СПИСОК) ---
