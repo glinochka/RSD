@@ -972,13 +972,20 @@ async def confirm_delete_document(callback: types.CallbackQuery):
                 f"Ошибка сервера при попытке получить документ по id", show_alert=True
             )
             return 
-        
+
+    kb_bot_id = doc_json.get("bot_id")
+    if kb_bot_id is None:
+        await callback.answer(
+            "Не удалось открыть подтверждение: у агента не задан bot_id. Обновите сервер или обратитесь в поддержку.",
+            show_alert=True,
+        )
+        return
 
     text = f"⚠️ *ВНИМАНИЕ!*\n\nВы действительно хотите навсегда удалить файл `{escape_md(doc_json['file_name'])}`?\nБот больше не сможет использовать его для ответов."
 
     kb = types.InlineKeyboardMarkup(inline_keyboard=[
         [
-            types.InlineKeyboardButton(text="✅ ОТМЕНА", callback_data=f"edit_kb_{doc_json['agent_id']}"),
+            types.InlineKeyboardButton(text="✅ ОТМЕНА", callback_data=f"edit_kb_{kb_bot_id}"),
             types.InlineKeyboardButton(text="❌ ДА, УДАЛИТЬ", callback_data=f"del_doc_force_{doc_json['id']}")
         ]
     ])
@@ -1010,7 +1017,13 @@ async def force_delete_document(callback: types.CallbackQuery):
 
             return 
 
-    agent_id = response_data['agent_id']
+    bot_id = response_data.get("bot_id")
+    if bot_id is None:
+        await callback.answer(
+            "Файл удалён, но не удалось вернуться в меню базы знаний (нет bot_id в ответе сервера). Откройте раздел из карточки агента.",
+            show_alert=True,
+        )
+        return
 
     await callback.answer("✅ Файл успешно удален из базы знаний!", show_alert=True)
 
@@ -1018,7 +1031,7 @@ async def force_delete_document(callback: types.CallbackQuery):
     # Возвращаемся обратно в меню базы знаний (генерируем фейковый callback)
     fake_callback = types.CallbackQuery(
         id="0", from_user=callback.from_user, chat_instance="0",
-        message=callback.message, data=f"edit_kb_{agent_id}"
+        message=callback.message, data=f"edit_kb_{bot_id}"
     )
     await show_knowledge_base(fake_callback)
 

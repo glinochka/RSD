@@ -63,9 +63,15 @@ def _assert_access(current_user, internal: bool) -> None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
 
 
-def _serialize_document(document) -> dict:
+def _serialize_document(document, bot_id: int | None = None) -> dict:
     data = convert_to_dict(document)
     data.pop("registered", None)
+    data.pop("agent", None)
+    resolved_bot_id = bot_id
+    if resolved_bot_id is None and getattr(document, "agent", None) is not None:
+        resolved_bot_id = document.agent.bot_id
+    if resolved_bot_id is not None:
+        data["bot_id"] = resolved_bot_id
     # Convert date/datetime to ISO strings for JSONResponse.
     return jsonable_encoder(data)
 
@@ -97,7 +103,10 @@ async def read_all_documents(
             if current_user and found_agent.user_id != current_user.id:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
             return JSONResponse(
-                content=[_serialize_document(doc) for doc in (found_agent.documents or [])],
+                content=[
+                    _serialize_document(doc, bot_id=found_agent.bot_id)
+                    for doc in (found_agent.documents or [])
+                ],
                 status_code=status.HTTP_200_OK,
             )
 
@@ -163,9 +172,13 @@ async def delete_document(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="Qdrant deleting error",
                 )
-            agent_id = document.agent_id
+            agent_pk = document.agent_id
+            bot_id = document.agent.bot_id
             await document_dao.delete(document)
-            return JSONResponse(content={"agent_id": agent_id}, status_code=status.HTTP_200_OK)
+            return JSONResponse(
+                content={"agent_id": agent_pk, "bot_id": bot_id},
+                status_code=status.HTTP_200_OK,
+            )
 
 
 @router.post("")
