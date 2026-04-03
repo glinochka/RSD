@@ -23,8 +23,27 @@ const fileIdentity = (file) => `${file.name}::${file.size}::${file.lastModified}
 const AgentCard = ({ agent, isSelected, onManage, onDelete, onToggle }) => {
   const agentName = agent.bot_username || agent.name || 'Агент';
   const isActive = !!agent.is_active;
+
+  const handleSelect = () => {
+    onManage(agent.bot_id);
+  };
+
+  const handleKeyDown = (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      onManage(agent.bot_id);
+    }
+  };
+
   return (
-    <div className={`agent-item ${isSelected ? 'agent-item--selected' : ''}`}>
+    <div
+      className={`agent-item ${isSelected ? 'agent-item--selected' : ''}`}
+      onClick={handleSelect}
+      onKeyDown={handleKeyDown}
+      role="button"
+      tabIndex={0}
+      aria-label={`Выбрать агента ${agentName}`}
+    >
       <div className="agent-info">
         <span
           className={`agent-status-dot ${isActive ? 'agent-status-dot--active' : 'agent-status-dot--inactive'}`}
@@ -38,7 +57,10 @@ const AgentCard = ({ agent, isSelected, onManage, onDelete, onToggle }) => {
       <div className="agent-actions">
         <button
           className="edit-btn"
-          onClick={() => onManage(agent.bot_id)}
+          onClick={(event) => {
+            event.stopPropagation();
+            onManage(agent.bot_id);
+          }}
           title="Управлять агентом"
           aria-label="Manage agent"
         >
@@ -46,7 +68,10 @@ const AgentCard = ({ agent, isSelected, onManage, onDelete, onToggle }) => {
         </button>
         <button
           className="edit-btn"
-          onClick={() => onToggle(agent.bot_id)}
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggle(agent.bot_id);
+          }}
           title={isActive ? 'Отключить агента' : 'Включить агента'}
           aria-label={isActive ? 'Disable agent' : 'Enable agent'}
         >
@@ -54,7 +79,10 @@ const AgentCard = ({ agent, isSelected, onManage, onDelete, onToggle }) => {
         </button>
         <button
           className="delete-btn"
-          onClick={() => onDelete(agent.bot_id)}
+          onClick={(event) => {
+            event.stopPropagation();
+            onDelete(agent.bot_id);
+          }}
           title="Delete agent"
           aria-label="Delete agent"
         >
