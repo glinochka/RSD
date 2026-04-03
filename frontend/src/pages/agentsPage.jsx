@@ -7,6 +7,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import MainLayout from '../components/Layout';
 import Loading from '../components/Loading';
+import AgentsEmptyState from '../components/AgentsEmptyState';
 import { useAsync } from '../hooks/useAsync';
 import agentService from '../services/agentService';
 import { useNotification } from '../context/useNotification';
@@ -14,6 +15,9 @@ import { NAVIGATION_ROUTES } from '../config/constants';
 import { useAuth } from '../context/useAuth';
 import { validateFile } from '../utils/validation';
 import '../styles/agentsPage.css';
+
+const AGENTS_EMPTY_MESSAGE = 'У вас еще нет агентов, создайте прямо сейчас';
+const AGENTS_EMPTY_CTA = 'Создайте прямо сейчас';
 
 const AgentCard = ({ agent, onManage, onDelete, onToggle }) => {
   const agentName = agent.bot_username || agent.name || 'Агент';
@@ -325,39 +329,25 @@ const AgentsPageContent = () => {
     return <Loading message="Загрузка агентов..." />;
   }
 
-  if (!isAuthenticated) {
-    return (
-      <div className="agents-page-content">
-        <section className="agents-section">
-          <div className="empty-state">
-            <button className="btn btn-black" onClick={handleCreateAgent}>
-              У вас еще нет ни одного ИИ-сотруднника, создайте прямо сейчас
-            </button>
-          </div>
-        </section>
-      </div>
-    );
-  }
-
   const displayAgents = agents || [];
+  const showEmptyAgentsList = !isAuthenticated || displayAgents.length === 0;
 
   return (
     <div className="agents-page-content">
       <section className="agents-section">
         <div className="section-header">
           <h2 className="section-title">Ваши агенты:</h2>
-          <button className="btn btn-black btn-add" onClick={handleCreateAgent}>
+          <button type="button" className="btn btn-black btn-add" onClick={handleCreateAgent}>
             + Новый агент
           </button>
         </div>
 
-        {displayAgents.length === 0 ? (
-          <div className="empty-state">
-            <p>У вас еще нет агентов, создайте прямо сейчас</p>
-            <button className="btn btn-black" onClick={handleCreateAgent}>
-              Создайте прямо сейчас
-            </button>
-          </div>
+        {showEmptyAgentsList ? (
+          <AgentsEmptyState
+            message={AGENTS_EMPTY_MESSAGE}
+            ctaLabel={AGENTS_EMPTY_CTA}
+            onCtaClick={handleCreateAgent}
+          />
         ) : (
           <div className="agents-layout">
             <div className="agents-list">
