@@ -79,6 +79,7 @@ class AgentDocument(Base):
     agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"))
     
     file_name: Mapped[str] = mapped_column(String(255))
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(15), default="processing") # processing, ready, error
     created_at: Mapped[date] = mapped_column(default=datetime.now(timezone.utc))
     agent: Mapped["Agent"] = relationship(back_populates="documents")

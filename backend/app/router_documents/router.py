@@ -1,5 +1,5 @@
 import os
-import shutil
+import hashlib
 import tempfile
 from logging import getLogger
 
@@ -7,10 +7,13 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Header, HTT
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from .dao import DocumentDAO
 from .schemas import *
 from ..alembic.database import async_session_maker
+from ..alembic.models import AgentDocument
 from ..config import settings
 from ..qdrant.indexer import (
     extract_text,
@@ -65,6 +68,17 @@ def _serialize_document(document) -> dict:
     data.pop("registered", None)
     # Convert date/datetime to ISO strings for JSONResponse.
     return jsonable_encoder(data)
+
+def _save_upload_to_temp_with_hash(file: UploadFile, suffix: str) -> tuple[str, str]:
+    hasher = hashlib.sha256()
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+        while True:
+            chunk = file.file.read(1024 * 1024)
+            if not chunk:
+                break
+            hasher.update(chunk)
+            temp_file.write(chunk)
+        return temp_file.name, hasher.hexdigest()
 
 
 @router.get("/allBy_botID")
@@ -181,16 +195,68 @@ async def upload_document(
     current_plan = user.subscription_type
     limit = get_chunk_limit_by_plan(current_plan)
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as temp_file:
-        shutil.copyfileobj(file.file, temp_file)
-        temp_path = temp_file.name
-        text = await extract_text(temp_path)
+    temp_path, content_hash = _save_upload_to_temp_with_hash(
+        file=file,
+        suffix=os.path.splitext(file.filename)[1],
+    )
+
+    existing_doc = None
+    async with async_session_maker() as session:
+        async with session.begin():
+            existing_doc = await session.scalar(
+                select(AgentDocument).where(
+                    AgentDocument.agent_id == agent.id,
+                    AgentDocument.content_hash == content_hash,
+                )
+            )
+
+    if existing_doc:
+        if existing_doc.status == "error":
+            async with async_session_maker() as session:
+                doc_dao = DocumentDAO(session)
+                async with session.begin():
+                    found_doc = await doc_dao.find_one_by_filter(id=existing_doc.id)
+                    await doc_dao.update(
+                        found_doc,
+                        {"status": "processing", "file_name": file.filename},
+                    )
+            background_tasks.add_task(
+                process_document,
+                file_path=temp_path,
+                agent_id=agent_id,
+                document_id=existing_doc.id,
+                content_hash=content_hash,
+            )
+            data = {
+                "status": "reprocessing",
+                "document_id": existing_doc.id,
+                "new_chunks_count": 0,
+                "current_plan": current_plan,
+                "limit": limit,
+            }
+            return JSONResponse(content=data, status_code=status.HTTP_200_OK)
+
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        data = {
+            "status": "duplicate",
+            "document_id": existing_doc.id,
+            "document_status": existing_doc.status,
+            "new_chunks_count": 0,
+            "current_plan": current_plan,
+            "limit": limit,
+        }
+        return JSONResponse(content=data, status_code=status.HTTP_200_OK)
+
+    text = await extract_text(temp_path)
 
     chunks = text_splitter.split_text(text)
     new_chunks_count = len(chunks)
     current_count = await get_current_chunks_count(agent_id)
 
     if current_count + new_chunks_count > limit:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
         data = {
             "status": "limit_error",
             "current_plan": current_plan,
@@ -199,21 +265,46 @@ async def upload_document(
             "new_chunks_count": new_chunks_count,
         }
     else:
-        async with async_session_maker() as session:
-            doc_dao = DocumentDAO(session)
-            async with session.begin():
-                doc_data = {
-                    "agent_id": agent.id,
-                    "file_name": file.filename,
-                    "status": "processing",
-                }
-                doc = await doc_dao.add(doc_data)
+        doc = None
+        try:
+            async with async_session_maker() as session:
+                doc_dao = DocumentDAO(session)
+                async with session.begin():
+                    doc_data = {
+                        "agent_id": agent.id,
+                        "file_name": file.filename,
+                        "content_hash": content_hash,
+                        "status": "processing",
+                    }
+                    doc = await doc_dao.add(doc_data)
+                    await session.flush()
+        except IntegrityError:
+            async with async_session_maker() as session:
+                async with session.begin():
+                    existing_doc = await session.scalar(
+                        select(AgentDocument).where(
+                            AgentDocument.agent_id == agent.id,
+                            AgentDocument.content_hash == content_hash,
+                        )
+                    )
+            data = {
+                "status": "duplicate",
+                "document_id": existing_doc.id if existing_doc else None,
+                "document_status": existing_doc.status if existing_doc else None,
+                "new_chunks_count": 0,
+                "current_plan": current_plan,
+                "limit": limit,
+            }
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+            return JSONResponse(content=data, status_code=status.HTTP_200_OK)
 
         background_tasks.add_task(
             process_document,
             file_path=temp_path,
             agent_id=agent_id,
             document_id=doc.id,
+            content_hash=content_hash,
         )
         data = {
             "status": "limit_ok",

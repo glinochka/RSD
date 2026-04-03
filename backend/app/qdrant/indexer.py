@@ -85,7 +85,7 @@ async def get_current_chunks_count(agent_id: int) -> int:
 from ..router_documents.dao import DocumentDAO
 from ..alembic.database import async_session_maker
 
-async def process_document(file_path: str, agent_id: int, document_id: int):
+async def process_document(file_path: str, agent_id: int, document_id: int, content_hash: str | None = None):
     """
     Фоновая задача для обработки документа с проверкой лимитов тарифа.
     """
@@ -140,6 +140,7 @@ async def process_document(file_path: str, agent_id: int, document_id: int):
                         payload={
                             "agent_id": agent_id,
                             "document_id": document_id,
+                            "content_hash": content_hash,
                             "text": chunk_text,
                             "source": os.path.basename(file_path)
                         }

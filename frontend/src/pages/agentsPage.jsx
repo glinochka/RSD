@@ -18,6 +18,7 @@ import '../styles/agentsPage.css';
 
 const AGENTS_EMPTY_MESSAGE = 'У вас еще нет агентов, создайте прямо сейчас';
 const AGENTS_EMPTY_CTA = 'Создайте прямо сейчас';
+const fileIdentity = (file) => `${file.name}::${file.size}::${file.lastModified}`;
 
 const AgentCard = ({ agent, onManage, onDelete, onToggle }) => {
   const agentName = agent.bot_username || agent.name || 'Агент';
@@ -227,10 +228,11 @@ const AgentsPageContent = () => {
   const handleUploadDocuments = async (event) => {
     const files = Array.from(event.target.files || []);
     if (!selectedBotId || files.length === 0) return;
+    const uniqueFiles = Array.from(new Map(files.map((f) => [fileIdentity(f), f])).values());
 
     const validFiles = [];
     const fileErrors = [];
-    files.forEach((file) => {
+    uniqueFiles.forEach((file) => {
       const check = validateFile(file);
       if (check.isValid) {
         validFiles.push(file);
@@ -256,6 +258,14 @@ const AgentsPageContent = () => {
             `Лимит базы знаний превышен: план ${res.current_plan}, лимит ${res.limit}, уже ${res.current_count}, файл добавит ${res.new_chunks_count}`
           );
           break;
+        }
+        if (res?.status === 'duplicate') {
+          showSuccess(`Файл ${file.name} уже загружен ранее (статус: ${res?.document_status || 'ready'})`);
+          continue;
+        }
+        if (res?.status === 'reprocessing') {
+          showSuccess(`Файл ${file.name} отправлен на повторную обработку`);
+          continue;
         }
         showSuccess(`Файл ${file.name} принят к обработке`);
       }

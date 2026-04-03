@@ -14,6 +14,8 @@ import { validateFile } from '../utils/validation';
 import { NAVIGATION_ROUTES } from '../config/constants';
 import '../styles/createAgent.css';
 
+const fileIdentity = (file) => `${file.name}::${file.size}::${file.lastModified}`;
+
 const CreateAgentContent = () => {
   const navigate = useNavigate();
   const { id: agentId } = useParams();
@@ -100,7 +102,10 @@ const CreateAgentContent = () => {
       showError(`Ошибки при загрузке файлов:\n${errors.join('\n')}`);
     }
 
-    setUploadedFiles((prev) => [...prev, ...validFiles]);
+    setUploadedFiles((prev) => {
+      const merged = [...prev, ...validFiles];
+      return Array.from(new Map(merged.map((f) => [fileIdentity(f), f])).values());
+    });
   };
 
   const handleRemoveFile = (index) => {
