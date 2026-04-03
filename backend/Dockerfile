@@ -16,8 +16,8 @@ RUN pip install -r requirements.txt
 
 # Принудительно скачиваем модель при сборке
 RUN python -c "\
-from fastembed import SparseTextEmbedding; \
+from fastembed import TextEmbedding; \
 import os; \
 os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'; \
-SparseTextEmbedding(model_name='prithivida/Splade_PP_en_v1')"
+TextEmbedding(model_name='BAAI/bge-m3')"
 COPY . .

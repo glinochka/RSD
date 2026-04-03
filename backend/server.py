@@ -15,6 +15,7 @@ from app.router_admin import router as admin_router
 from app.origins import origins
 from app.config import settings
 from app.services.subscription_maintenance import downgrade_expired_subscriptions_once
+from app.qdrant.embeddings import get_dense_vector_size
 import uvicorn
 
 
@@ -36,21 +37,45 @@ async def lifespan(app: FastAPI):
 
     client = QdrantClient(url=settings.QDRANT_URL, api_key=settings.QDRANT_API_KEY)
     collection_name = "agent_documents"
+    expected_vector_size = get_dense_vector_size()
     
     try:
         collections = client.get_collections().collections
         print(f"✅ Коллекция {collection_name} проверяется")
-        if not any(c.name == collection_name for c in collections):
+        exists = any(c.name == collection_name for c in collections)
+        if not exists:
             client.create_collection(
                 collection_name=collection_name,
-                vectors_config=models.VectorParams(size=384, distance=models.Distance.COSINE),
-                sparse_vectors_config={
-                    "sparse-text": models.SparseVectorParams(
-                        index=models.SparseIndexParams(on_disk=True)
-                    )
-                }
+                vectors_config=models.VectorParams(
+                    size=expected_vector_size,
+                    distance=models.Distance.COSINE,
+                ),
             )
             print(f"✅ Коллекция {collection_name} создана")
+        else:
+            collection_info = client.get_collection(collection_name)
+            vectors_cfg = collection_info.config.params.vectors
+            if isinstance(vectors_cfg, dict):
+                first_vec_cfg = next(iter(vectors_cfg.values()), None)
+                current_vector_size = getattr(first_vec_cfg, "size", None)
+            else:
+                current_vector_size = getattr(vectors_cfg, "size", None)
+            has_sparse_vectors = bool(getattr(collection_info.config.params, "sparse_vectors", None))
+
+            if current_vector_size != expected_vector_size or has_sparse_vectors:
+                print(
+                    f"⚠️ Обнаружена несовместимая схема коллекции "
+                    f"(size={current_vector_size}, sparse={has_sparse_vectors}). "
+                    "Пересоздаем под BAAI/bge-m3."
+                )
+                client.recreate_collection(
+                    collection_name=collection_name,
+                    vectors_config=models.VectorParams(
+                        size=expected_vector_size,
+                        distance=models.Distance.COSINE,
+                    ),
+                )
+                print(f"✅ Коллекция {collection_name} пересоздана")
 
     except Exception as e:
         print(f"⚠️ Qdrant Error: {e}")

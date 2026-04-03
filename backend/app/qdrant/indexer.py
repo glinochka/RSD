@@ -11,7 +11,7 @@ from qdrant_client.http import models
 from config import settings
 
 from ..subscription_plans import get_subscription_plan, UNLIMITED_KNOWLEDGE_BASE_CHUNKS
-from .embeddings import embed_dense_and_sparse_for_chunks, run_in_cpu_pool
+from .embeddings import embed_dense_for_chunks, run_in_cpu_pool
 
 
 def get_chunk_limit_by_plan(plan_code: str) -> int:
@@ -93,33 +93,25 @@ async def process_document(file_path: str, agent_id: int, document_id: int, cont
 
             chunks = text_splitter.split_text(text)
 
-            dense_vectors, sparse_vectors = await run_in_cpu_pool(
-                embed_dense_and_sparse_for_chunks,
+            dense_vectors = await run_in_cpu_pool(
+                embed_dense_for_chunks,
                 chunks,
             )
 
-            if len(dense_vectors) != len(chunks) or len(sparse_vectors) != len(chunks):
+            if len(dense_vectors) != len(chunks):
                 raise RuntimeError("Ошибка генерации эмбеддингов: неверное количество векторов")
 
             # Генерация эмбеддингов и формирование точек для Qdrant
             points = []
             for i, chunk_text in enumerate(chunks):
                 dense_vector = dense_vectors[i]
-                sparse_vector = sparse_vectors[i]
-
                 # UUID на основе document_id и индекса чанка
                 point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{document_id}_{i}"))
 
                 points.append(
                     models.PointStruct(
                         id=point_id,
-                        vector={
-                            "": dense_vector.tolist(),
-                            "sparse-text": models.SparseVector(
-                                indices=sparse_vector.indices.tolist(),
-                                values=sparse_vector.values.tolist()
-                            )
-                        },
+                        vector=dense_vector.tolist(),
                         payload={
                             "agent_id": agent_id,
                             "document_id": document_id,
