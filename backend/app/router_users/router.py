@@ -12,7 +12,7 @@ from sqlalchemy import desc, func, select
 from .dao import TelegramLinkChallengeDAO, UserDAO
 from .schemas import *
 from ..alembic.database import async_session_maker
-from ..alembic.models import TelegramLinkChallenge, User
+from ..alembic.models import Agent, TelegramLinkChallenge, User
 from ..config import settings
 from ..router_agents.dao import AgentDAO
 from ..utils.convert import convert_to_dict
@@ -428,6 +428,13 @@ async def confirm_telegram_link(payload: TelegramLinkConfirmRequest, _internal=D
                 # Those records have no password and can safely release telegram_id
                 # so it can be attached to the authenticated web account.
                 if linked_user.password is None:
+                    # Preserve all agents created from Telegram account before linking.
+                    linked_user_agents_result = await session.execute(
+                        select(Agent).where(Agent.user_id == linked_user.id)
+                    )
+                    linked_user_agents = linked_user_agents_result.scalars().all()
+                    for linked_agent in linked_user_agents:
+                        linked_agent.user_id = user.id
                     await user_dao.update(linked_user, {"telegram_id": None})
                     # Ensure unique index slot is released before assigning telegram_id to target user.
                     await session.flush()
