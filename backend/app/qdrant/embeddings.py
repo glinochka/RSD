@@ -21,9 +21,25 @@ from fastembed import TextEmbedding
 
 _cpu_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rsd_cpu")
 _embed_lock = threading.Lock()
+PRIMARY_DENSE_MODEL = "BAAI/bge-m3"
+FALLBACK_DENSE_MODEL = "BAAI/bge-base-en-v1.5"
+
+
+def _resolve_dense_model_name() -> str:
+    supported_models = {m.get("model") for m in TextEmbedding.list_supported_models()}
+    if PRIMARY_DENSE_MODEL in supported_models:
+        return PRIMARY_DENSE_MODEL
+    print(
+        f"WARNING: fastembed does not support {PRIMARY_DENSE_MODEL}; "
+        f"using {FALLBACK_DENSE_MODEL}."
+    )
+    return FALLBACK_DENSE_MODEL
+
+
+ACTIVE_DENSE_MODEL = _resolve_dense_model_name()
 
 dense_model = TextEmbedding(
-    model_name="BAAI/bge-m3",
+    model_name=ACTIVE_DENSE_MODEL,
     threads=settings.EMBEDDING_THREADS,
 )
 
@@ -70,3 +86,7 @@ def get_dense_vector_size() -> int:
             )
         )[0]
     return len(vec)
+
+
+def get_active_dense_model_name() -> str:
+    return ACTIVE_DENSE_MODEL

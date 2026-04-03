@@ -15,7 +15,7 @@ from app.router_admin import router as admin_router
 from app.origins import origins
 from app.config import settings
 from app.services.subscription_maintenance import downgrade_expired_subscriptions_once
-from app.qdrant.embeddings import get_dense_vector_size
+from app.qdrant.embeddings import get_active_dense_model_name, get_dense_vector_size
 import uvicorn
 
 
@@ -37,6 +37,7 @@ async def lifespan(app: FastAPI):
 
     client = QdrantClient(url=settings.QDRANT_URL, api_key=settings.QDRANT_API_KEY)
     collection_name = "agent_documents"
+    active_dense_model = get_active_dense_model_name()
     expected_vector_size = get_dense_vector_size()
     
     try:
@@ -66,7 +67,7 @@ async def lifespan(app: FastAPI):
                 print(
                     f"⚠️ Обнаружена несовместимая схема коллекции "
                     f"(size={current_vector_size}, sparse={has_sparse_vectors}). "
-                    "Пересоздаем под BAAI/bge-m3."
+                    f"Пересоздаем под {active_dense_model}."
                 )
                 client.recreate_collection(
                     collection_name=collection_name,
