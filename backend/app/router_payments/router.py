@@ -12,7 +12,7 @@ from sqlalchemy import select
 from yookassa import Configuration, Payment
 from yookassa.domain.notification.webhook_notification import WebhookNotificationFactory
 from yookassa.domain.notification.webhook_notification_types import WebhookNotificationEventType
-
+from yookassa.domain.exceptions import NotFoundError
 from ..alembic.database import async_session_maker
 from ..alembic.models import PaymentTransaction, WebsitePaymentTransaction
 from ..config import settings
@@ -325,12 +325,11 @@ async def get_yookassa_payment_status(
 
     try:
         payment = await asyncio.to_thread(Payment.find_one, payment_id)
+    except NotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payment not found")
     except Exception as e:
         logger.exception("YooKassa payment status check failed")
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"YooKassa payment status check failed: {e}",
-        )
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"YooKassa payment status check failed: {e}")
 
     payment_status = str(getattr(payment, "status", "pending"))
 

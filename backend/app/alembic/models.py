@@ -20,6 +20,7 @@ def _utc_now_naive() -> datetime:
 
 
 class User(Base):
+    __table_args__ = {'extend_existing': True}
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
     password: Mapped[str] = mapped_column(String(100), nullable=True)
@@ -37,6 +38,7 @@ class User(Base):
     agents: Mapped[list['Agent']] = relationship(back_populates='user', cascade="all, delete-orphan")
 
 class Agent(Base):
+    __table_args__ = {'extend_existing': True}
     id: Mapped[int] = mapped_column(primary_key=True)
 
     user: Mapped['User'] = relationship(back_populates='agents')
@@ -58,7 +60,7 @@ class Agent(Base):
         cascade="all, delete-orphan"
     )
 class AgentDocument(Base):
-
+    __table_args__ = {'extend_existing': True}
     id: Mapped[int] = mapped_column(primary_key=True)
     agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"))
     
@@ -69,8 +71,9 @@ class AgentDocument(Base):
 
 
 class PaymentTransaction(Base):
+    
     __tablename__ = "payment_transactions"
-
+    __table_args__ = {'extend_existing': True}
     id: Mapped[int] = mapped_column(primary_key=True)
     telegram_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
     plan_name: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -86,7 +89,7 @@ class PaymentTransaction(Base):
 
 class WebsitePaymentTransaction(Base):
     __tablename__ = "website_payment_transactions"
-
+    __table_args__ = {'extend_existing': True}
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
     plan_name: Mapped[str] = mapped_column(String(32), nullable=False)
