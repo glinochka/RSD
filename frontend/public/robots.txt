@@ -1,8 +1,5 @@
-# Правила для поисковых роботов (сайт RSD)
 User-agent: *
 
-# Личный кабинет, создание агентов и вход — без индексации
-Disallow: /auth
-Disallow: /agents
-Disallow: /create-agent
-Disallow: /management-portal
+Disallow: /
+
+Allow: /$

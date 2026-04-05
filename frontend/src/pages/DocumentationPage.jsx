@@ -14,7 +14,7 @@ const SECTIONS = [
   { id: 'production-tips', title: 'Рекомендации для production' },
 ];
 
-const JS_EXAMPLE = `const API_BASE_URL = 'https://your-domain.com';
+const JS_EXAMPLE = `const API_BASE_URL = 'https://rsd-ai.ru/'
 const AGENT_API_KEY = 'agnt_xxxxxxxxxxxxxxxxxxxxxxxxx';
 
 async function askAgent(message) {
@@ -46,7 +46,7 @@ askAgent('Подскажи условия доставки')
 
 const PYTHON_EXAMPLE = `import requests
 
-API_BASE_URL = "https://your-domain.com"
+API_BASE_URL = "https://rsd-ai.ru/"
 AGENT_API_KEY = "agnt_xxxxxxxxxxxxxxxxxxxxxxxxx"
 
 def ask_agent(message: str) -> dict:
