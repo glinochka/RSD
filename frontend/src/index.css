@@ -165,6 +165,7 @@ input[type='tel'],
 input[type='password'],
 input[type='number'],
 input[type='search'],
+input[type='url'],
 textarea,
 select {
   width: 100%;
@@ -182,6 +183,7 @@ input[type='tel']:focus,
 input[type='password']:focus,
 input[type='number']:focus,
 input[type='search']:focus,
+input[type='url']:focus,
 textarea:focus,
 select:focus {
   outline: none;
@@ -195,6 +197,7 @@ input[type='tel']:disabled,
 input[type='password']:disabled,
 input[type='number']:disabled,
 input[type='search']:disabled,
+input[type='url']:disabled,
 textarea:disabled,
 select:disabled {
   background-color: var(--color-bg-lighter);
@@ -206,6 +209,7 @@ input[type='text'].error,
 input[type='email'].error,
 input[type='tel'].error,
 input[type='password'].error,
+input[type='url'].error,
 textarea.error {
   border-color: var(--color-danger);
 }
