@@ -22,13 +22,39 @@
   margin-bottom: 0;
 }
 
-.pricing-promo-control {
-  margin: var(--spacing-base) auto 0;
-  max-width: 360px;
+.pricing-promo-after {
+  margin: var(--spacing-2xl) auto 0;
+  max-width: 280px;
+  text-align: center;
 }
 
-.pricing-promo-control input {
+.pricing-promo-after-label {
+  display: block;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-light);
+  font-weight: var(--font-weight-normal);
+  margin-bottom: var(--spacing-xs);
+}
+
+.pricing-promo-after input {
   width: 100%;
+  font-size: var(--font-size-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-base);
+  background: var(--color-bg-light);
+  color: var(--color-text);
+}
+
+.pricing-promo-after input::placeholder {
+  color: var(--color-text-light);
+  opacity: 0.85;
+}
+
+.pricing-promo-after input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  background: var(--color-bg);
 }
 
 .pricing-grid {

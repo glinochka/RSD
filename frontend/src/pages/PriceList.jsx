@@ -255,16 +255,6 @@ const PriceList = () => {
         <div className="pricing-header">
           <h1>Наши тарифные планы</h1>
           <p>Выберите подходящий план для вашего бизнеса</p>
-          <div className="pricing-promo-control">
-            <input
-              type="text"
-              placeholder="Промокод (опционально)"
-              value={promoCode}
-              onChange={(event) => setPromoCode(event.target.value.toUpperCase())}
-              maxLength={64}
-              disabled={isProcessingPayment || isSubmittingRequest}
-            />
-          </div>
         </div>
 
         <div className="pricing-grid">
@@ -323,6 +313,23 @@ const PriceList = () => {
               </button>
             </div>
           ))}
+        </div>
+
+        <div className="pricing-promo-after">
+          <label className="pricing-promo-after-label" htmlFor="pricing-promo-input">
+            Есть промокод?
+          </label>
+          <input
+            id="pricing-promo-input"
+            type="text"
+            placeholder="Введите код"
+            value={promoCode}
+            onChange={(event) => setPromoCode(event.target.value.toUpperCase())}
+            maxLength={64}
+            disabled={isProcessingPayment || isSubmittingRequest}
+            autoComplete="off"
+            spellCheck="false"
+          />
         </div>
       </div>
       {isRequestModalOpen && (
