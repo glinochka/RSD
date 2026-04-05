@@ -5,7 +5,8 @@ from secrets import compare_digest
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError, jwt
+import jwt
+from jwt.exceptions import InvalidTokenError
 from sqlalchemy import String, cast, desc, func, or_, select
 
 from .schemas import (
@@ -52,7 +53,7 @@ def _decode_admin_token(token: str) -> dict:
     try:
         auth_data = get_auth_data()
         payload = jwt.decode(token, auth_data["secret_key"], algorithms=[auth_data["algorithm"]])
-    except JWTError:
+    except InvalidTokenError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Admin token is invalid",
