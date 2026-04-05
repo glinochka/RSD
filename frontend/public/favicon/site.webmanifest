@@ -1,6 +1,9 @@
 {
   "name": "RSD",
   "short_name": "RSD",
+  "lang": "ru",
+  "start_url": "/",
+  "scope": "/",
   "icons": [
     {
       "src": "/favicon/android-chrome-192x192.png",
