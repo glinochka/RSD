@@ -42,9 +42,22 @@ async def get_user_from_access_token(token: str, user_dao: UserDAO) -> User:
         )
     
     expire = data.get('exp')
-    expire_time = datetime.fromtimestamp(int(expire), tz=timezone.utc)
+    if not expire:
+        logger.info('Токен истек (exp отсутствует)')
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail='Токен истек'
+        )
+    try:
+        expire_time = datetime.fromtimestamp(int(expire), tz=timezone.utc)
+    except (TypeError, ValueError, OSError):
+        logger.info('Токен не валиден (exp некорректен)')
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Токен не валиден"
+        )
 
-    if (not expire) or (expire_time < datetime.now(timezone.utc)):
+    if expire_time < datetime.now(timezone.utc):
         logger.info(f'Токен истек (id = {user_id})')
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -60,6 +73,6 @@ async def get_user_from_access_token(token: str, user_dao: UserDAO) -> User:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Пользователь не найден"
         )
-    logger.info(f'Обрабработан токен пользователя: \n{user}')
+    logger.info("Токен пользователя обработан (id=%s)", user_id)
     return user
     

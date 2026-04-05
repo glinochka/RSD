@@ -2,6 +2,7 @@ import os
 import hashlib
 import tempfile
 from logging import getLogger
+from secrets import compare_digest
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Header, HTTPException, UploadFile, status
 from fastapi.encoders import jsonable_encoder
@@ -52,10 +53,9 @@ def is_internal_request(
     x_internal_api_key: str | None = Header(default=None, alias="X-Internal-API-Key"),
 ) -> bool:
     configured_key = settings.INTERNAL_API_KEY.strip()
-    # If internal key is not configured, allow internal traffic only when header is present.
-    if not configured_key:
-        return x_internal_api_key is not None
-    return x_internal_api_key == configured_key
+    if not configured_key or not x_internal_api_key:
+        return False
+    return compare_digest(x_internal_api_key, configured_key)
 
 
 def _assert_access(current_user, internal: bool) -> None:

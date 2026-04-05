@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from logging import getLogger
 from secrets import compare_digest
 
@@ -26,6 +26,7 @@ from ..alembic.models import (
 from ..config import get_auth_data, settings
 from ..qdrant.search_service import delete_agent_vectors
 from ..router_agents.dao import AgentDAO
+from ..router_payments.router import _calculate_new_end_date
 from ..router_users.dao import UserDAO
 from ..subscription_plans import (
     get_all_subscription_plans,
@@ -33,6 +34,7 @@ from ..subscription_plans import (
     update_subscription_plan_overrides,
 )
 from ..utils.JWT import create_access_token
+from ..utils.rate_limit import rate_limit
 
 logger = getLogger(__name__)
 
@@ -101,7 +103,7 @@ def _serialize_promo_code(item: PromoCode) -> dict:
     }
 
 
-@router.post("/login")
+@router.post("/login", dependencies=[Depends(rate_limit(max_requests=5, window_seconds=60, scope="admin_login"))])
 async def admin_login(payload: AdminLoginRequest):
     _ensure_admin_credentials_configured()
     login = payload.login.strip()
@@ -486,8 +488,6 @@ async def admin_gift_subscription(
     if not plan:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown plan code")
 
-    now_utc = datetime.now(timezone.utc)
-
     async with async_session_maker() as session:
         user_dao = UserDAO(session)
         async with session.begin():
@@ -495,17 +495,7 @@ async def admin_gift_subscription(
             if not user:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-            base_date = now_utc
-            if user.subscription_end_date:
-                current_end = user.subscription_end_date
-                if current_end.tzinfo is None:
-                    current_end = current_end.replace(tzinfo=timezone.utc)
-                else:
-                    current_end = current_end.astimezone(timezone.utc)
-                if current_end > now_utc:
-                    base_date = current_end
-
-            new_end = (base_date + timedelta(days=30)).replace(tzinfo=None)
+            new_end = _calculate_new_end_date(user.subscription_end_date)
             await user_dao.update(user, {
                 "subscription_type": payload.plan_code,
                 "subscription_end_date": new_end,

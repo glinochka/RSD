@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from logging import getLogger
 import asyncio
 from decimal import Decimal
@@ -23,6 +23,7 @@ from ..subscription_plans import (
 )
 from ..utils.internal_auth import verify_internal_key
 from ..utils.JWT import get_user_from_access_token
+from ..utils.rate_limit import rate_limit
 from .schemas import (
     CreateTurnkeyAgentRequest,
     CreateYooKassaPayment,
@@ -72,14 +73,20 @@ def _resolve_confirmation_url(payment: Payment) -> str | None:
     return getattr(confirmation, "confirmation_url", None)
 
 
-def _calculate_new_end_date(current_end_date) -> datetime:
+def _calculate_new_end_date(current_end_date: date | datetime | None) -> datetime:
+    """Extend subscription from now or from current end. Handles DB values as date or datetime."""
     now_utc = datetime.now(timezone.utc)
     base_date = now_utc
-    if current_end_date:
-        if current_end_date.tzinfo is None:
-            current_end = current_end_date.replace(tzinfo=timezone.utc)
+    if current_end_date is not None:
+        if isinstance(current_end_date, datetime):
+            if current_end_date.tzinfo is None:
+                current_end = current_end_date.replace(tzinfo=timezone.utc)
+            else:
+                current_end = current_end_date.astimezone(timezone.utc)
         else:
-            current_end = current_end_date.astimezone(timezone.utc)
+            current_end = datetime.combine(
+                current_end_date, datetime.min.time(), tzinfo=timezone.utc
+            )
         if current_end > now_utc:
             base_date = current_end
     return (base_date + timedelta(days=30)).replace(tzinfo=None)
@@ -140,7 +147,7 @@ async def get_subscription_plans():
     )
 
 
-@router.post("/turnkey-requests")
+@router.post("/turnkey-requests", dependencies=[Depends(rate_limit(max_requests=5, window_seconds=300, scope="turnkey_requests"))])
 async def create_turnkey_request(payload: CreateTurnkeyAgentRequest):
     async with async_session_maker() as session:
         async with session.begin():
@@ -167,8 +174,6 @@ async def process_successful_payment(
     Idempotent payment processing.
     Guarantees that the same telegram_payment_charge_id cannot be processed twice.
     """
-    now_utc = datetime.now(timezone.utc)
-
     try:
         async with async_session_maker() as session:
             user_dao = UserDAO(session)
@@ -217,16 +222,6 @@ async def process_successful_payment(
                 )
                 await session.flush()
 
-                base_date = now_utc
-                if user.subscription_end_date:
-                    current_end = user.subscription_end_date
-                    if current_end.tzinfo is None:
-                        current_end = current_end.replace(tzinfo=timezone.utc)
-                    else:
-                        current_end = current_end.astimezone(timezone.utc)
-                    if current_end > now_utc:
-                        base_date = current_end
-
                 selected_plan = get_subscription_plan(payload.plan_name)
                 if not selected_plan or not selected_plan.get("is_paid"):
                     raise HTTPException(
@@ -234,7 +229,7 @@ async def process_successful_payment(
                         detail="Invalid paid plan",
                     )
 
-                new_end_date = (base_date + timedelta(days=30)).replace(tzinfo=None)
+                new_end_date = _calculate_new_end_date(user.subscription_end_date)
                 await user_dao.update(
                     user,
                     {

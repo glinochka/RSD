@@ -1,6 +1,7 @@
 import asyncio
 import json
 from logging import getLogger
+from secrets import compare_digest
 from urllib.parse import quote
 from urllib.request import urlopen
 
@@ -24,6 +25,7 @@ from ..utils.api_keys import generate_agent_external_api_key, hash_agent_externa
 from ..utils.JWT import get_user_from_access_token
 from ..utils.convert import convert_to_dict
 from ..utils.crypto import encrypt_token, decrypt_token
+from ..utils.rate_limit import rate_limit
 
 logger = getLogger(__name__)
 router = APIRouter(prefix="/api/agents")
@@ -60,10 +62,9 @@ def is_internal_request(
     x_internal_api_key: str | None = Header(default=None, alias="X-Internal-API-Key"),
 ) -> bool:
     configured_key = settings.INTERNAL_API_KEY.strip()
-    # If internal key is not configured, allow internal traffic only when header is present.
-    if not configured_key:
-        return x_internal_api_key is not None
-    return x_internal_api_key == configured_key
+    if not configured_key or not x_internal_api_key:
+        return False
+    return compare_digest(x_internal_api_key, configured_key)
 
 
 def _assert_access(current_user, internal: bool) -> None:
@@ -519,6 +520,7 @@ async def regenerate_external_api_key(
 async def external_chat(
     payload: ExternalAgentChatRequest,
     agent=Depends(get_agent_by_external_api_key),
+    _rate_limited=Depends(rate_limit(max_requests=60, window_seconds=60, scope="agents_external_chat")),
 ):
     if not agent.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Agent is disabled")

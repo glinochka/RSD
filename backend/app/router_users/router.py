@@ -18,6 +18,7 @@ from ..router_agents.dao import AgentDAO
 from ..utils.convert import convert_to_dict
 from ..utils.internal_auth import verify_internal_key
 from ..utils.JWT import create_access_token, get_user_from_access_token
+from ..utils.rate_limit import rate_limit
 from ..utils.security import get_password_hash, verify_password
 
 logger = getLogger(__name__)
@@ -214,7 +215,7 @@ async def UpdateUser_by_tgID(user_by_tg: Update_userSubscription, _internal=Depe
 
 
 
-@router.post("/registration")
+@router.post("/registration", dependencies=[Depends(rate_limit(max_requests=10, window_seconds=60, scope="users_registration"))])
 async def user_registration(new_user: NewUser):
     async with async_session_maker() as session:
         user_dao = UserDAO(session)
@@ -241,7 +242,7 @@ async def user_registration(new_user: NewUser):
         },
         status_code=status.HTTP_201_CREATED)
 
-@router.post("/login")
+@router.post("/login", dependencies=[Depends(rate_limit(max_requests=10, window_seconds=60, scope="users_login"))])
 async def user_login(login_user: LoginUser):
     async with async_session_maker() as session:
         user_dao = UserDAO(session)
@@ -249,18 +250,11 @@ async def user_login(login_user: LoginUser):
         async with session.begin():
             user = await user_dao.find_one_by_filter(name=login_user.name)
 
-    if not user:
-        logger.info(f"{login_user.name} отсутствует в базе данных")
+    if not user or (not user.password) or (not verify_password(login_user.password, user.password)):
+        logger.info("Неуспешная попытка входа для имени: %s", login_user.name)
         raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Пользователь не найден"
-        )
-
-    if (not user.password) or (not verify_password(login_user.password, user.password)):
-        logger.info(f"{login_user.name} выдан неверный пароль")
-        raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Неверный пароль"
+                detail="Неверные учетные данные"
         )
 
     logger.info(f"{login_user.name} вошел в систему")
