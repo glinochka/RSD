@@ -1,6 +1,7 @@
 import os
 import asyncio
 from html import escape as html_escape
+from urllib.parse import urlparse
 from fastapi import status
 from aiogram import Router, F, Bot, types
 from aiogram.exceptions import TelegramBadRequest
@@ -79,6 +80,48 @@ def _normalize_surrogates(text: str) -> str:
     if not text:
         return text
     return text.encode("utf-16", "surrogatepass").decode("utf-16", "ignore")
+
+
+def _is_public_http_url(value: str) -> bool:
+    if not value:
+        return False
+    try:
+        parsed = urlparse(value.strip())
+    except Exception:
+        return False
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+async def _handle_link_upload_result(
+    message: types.Message,
+    response_data: dict,
+    *,
+    source_label: str,
+) -> None:
+    if response_data.get("status") == "limit_error":
+        await message.answer(
+            f"🚫 <b>Лимит базы знаний превышен!</b>\n\n"
+            f"Ваш тариф: <b>{html_escape(str(response_data.get('current_plan', 'unknown')))}</b> "
+            f"(макс. {response_data.get('limit', 'unknown')} чанков).\n"
+            f"Уже использовано: {response_data.get('current_count', 'unknown')}.\n"
+            f"{source_label} добавит: {response_data.get('new_chunks_count', 'unknown')}.\n\n"
+            f"Удалите старые источники или повысьте тариф в меню.",
+            parse_mode="HTML",
+        )
+        return
+
+    if response_data.get("status") == "duplicate":
+        await message.answer(
+            f"ℹ️ Источник уже добавлен ранее "
+            f"(статус: {html_escape(str(response_data.get('document_status', 'ready')))}).",
+            parse_mode="HTML",
+        )
+        return
+
+    await message.answer(
+        f"✅ Ссылка принята и обрабатывается ({response_data.get('new_chunks_count', 'unknown')} чанков).",
+        parse_mode="HTML",
+    )
 
 
 def _build_tariffs_text(plans: list[dict], current_plan_code: str) -> str:
@@ -442,7 +485,10 @@ async def process_prompt(message: types.Message, state: FSMContext):
         )
         return 
 
-    await message.answer("Отправь файлы (.pdf, .docx, .txt). Когда закончишь, нажми /start")
+    await message.answer(
+        "Отправь файлы (.pdf, .docx, .txt) или публичные ссылки (http/https).\n"
+        "Когда закончишь, нажми /start."
+    )
     await state.set_state(CreateAgentSG.waiting_docs)
 
 @master_router.message(CreateAgentSG.waiting_docs, F.document)
@@ -490,6 +536,30 @@ async def handle_docs(message: types.Message, state: FSMContext, bot: Bot):
         f"({response_data['new_chunks_count']} чанков).",
         parse_mode="HTML",
     )
+
+
+@master_router.message(CreateAgentSG.waiting_docs, F.text)
+async def handle_link_during_agent_creation(message: types.Message, state: FSMContext):
+    url_value = (message.text or "").strip()
+    if not _is_public_http_url(url_value):
+        await message.answer("❌ Нужна корректная публичная ссылка в формате http/https.")
+        return
+
+    data = await state.get_data()
+    agent_id = data.get("agent_id")
+    if not agent_id:
+        await message.answer("Ошибка: потерян ID агента. Начните заново через /start.")
+        await state.clear()
+        return
+
+    response_data = await APIcreate.documentLinkBy_botID(agent_id, url_value)
+    response_status = get_response_status(response_data)
+
+    if response_status != status.HTTP_200_OK:
+        await message.answer("Ошибка сервера при попытке добавить ссылку.")
+        return
+
+    await _handle_link_upload_result(message, response_data, source_label="Ссылка")
 
 # --- МОИ АГЕНТЫ (СПИСОК) ---
 
@@ -937,16 +1007,17 @@ async def show_knowledge_base(callback: types.CallbackQuery):
     # Кнопки навигации
    
     builder.row(types.InlineKeyboardButton(text="➕ Добавить файл", callback_data=f"add_doc_{agent_id}"))
+    builder.row(types.InlineKeyboardButton(text="🔗 Добавить ссылку", callback_data=f"add_link_{agent_id}"))
     builder.row(types.InlineKeyboardButton(text="⬅️ Назад к агенту", callback_data=f"agent_info_{agent_id}"))
 
     text = (
         "📚 *Управление базой знаний*\n\n"
-        "Нажмите на файл, который хотите удалить.\n\n"
+        "Нажмите на источник, который хотите удалить.\n\n"
         "Легенда:\n"
         "✅ — Успешно загружен в ИИ\n"
         "⏳ — В процессе обработки\n"
         "❌ — Ошибка чтения файла"
-    ) if all_agent_docs else "📚 *Управление базой знаний*\n\nВ базе данных этого агента пока нет файлов."
+    ) if all_agent_docs else "📚 *Управление базой знаний*\n\nВ базе данных этого агента пока нет источников."
 
     await safe_edit_callback_message(callback, text, reply_markup=builder.as_markup(), parse_mode="Markdown")
 
@@ -1059,6 +1130,27 @@ async def prompt_add_document(callback: types.CallbackQuery, state: FSMContext):
         parse_mode="Markdown"
     )
 
+
+@master_router.callback_query(F.data.startswith("add_link_"))
+async def prompt_add_link(callback: types.CallbackQuery, state: FSMContext):
+    agent_id = int(callback.data.split("_")[2])
+
+    await state.update_data(edit_agent_id=agent_id)
+    await state.set_state(CreateAgentSG.adding_extra_links)
+
+    kb = types.InlineKeyboardMarkup(inline_keyboard=[
+        [types.InlineKeyboardButton(text="❌ Отмена", callback_data=f"edit_kb_{agent_id}")]
+    ])
+
+    await safe_edit_callback_message(
+        callback,
+        "🔗 *Добавление публичной ссылки*\n\n"
+        "Отправьте URL (http/https), который нужно загрузить в базу знаний.\n"
+        "Ссылка обрабатывается один раз и не обновляется автоматически.",
+        reply_markup=kb,
+        parse_mode="Markdown",
+    )
+
 # --- ПРИЕМ И ОБРАБОТКА НОВОГО ДОКУМЕНТА ---
 
 @master_router.message(CreateAgentSG.adding_extra_docs, F.document)
@@ -1116,6 +1208,60 @@ async def process_extra_document(message: types.Message, state: FSMContext, bot:
 
 
     # 7. Возврат в меню базы знаний (через небольшую паузу, чтобы успели прочитать)
+    await asyncio.sleep(2)
+    fake_callback = types.CallbackQuery(
+        id="0", from_user=message.from_user, chat_instance="0",
+        message=message, data=f"edit_kb_{agent_id}"
+    )
+    await show_knowledge_base(fake_callback)
+
+
+@master_router.message(CreateAgentSG.adding_extra_links, F.text)
+async def process_extra_link(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    agent_id = data.get("edit_agent_id")
+    if not agent_id:
+        await message.answer("Ошибка: потерян ID агента. Начните сначала.")
+        await state.clear()
+        return
+
+    url_value = (message.text or "").strip()
+    if not _is_public_http_url(url_value):
+        await message.answer("❌ Нужна корректная публичная ссылка в формате http/https.")
+        return
+
+    msg = await message.answer("⏳ Проверяю лимиты и анализирую ссылку...")
+    response_data = await APIcreate.documentLinkBy_botID(agent_id, url_value)
+    response_status = get_response_status(response_data)
+
+    if response_status != status.HTTP_200_OK:
+        await msg.edit_text("Ошибка сервера при попытке добавить ссылку.")
+        return
+
+    if response_data.get("status") == "limit_error":
+        await msg.edit_text(
+            f"🚫 <b>Лимит базы знаний превышен!</b>\n\n"
+            f"Ваш тариф: <b>{html_escape(str(response_data.get('current_plan', 'unknown')))}</b> "
+            f"(макс. {response_data.get('limit', 'unknown')} чанков).\n"
+            f"Уже использовано: {response_data.get('current_count', 'unknown')}.\n"
+            f"Ссылка добавит: {response_data.get('new_chunks_count', 'unknown')}.\n\n"
+            f"Удалите старые источники или повысьте тариф в меню.",
+            parse_mode="HTML",
+        )
+        return
+
+    if response_data.get("status") == "duplicate":
+        await msg.edit_text(
+            f"ℹ️ Ссылка уже добавлена ранее "
+            f"(статус: {html_escape(str(response_data.get('document_status', 'ready')))}).",
+            parse_mode="HTML",
+        )
+    else:
+        await msg.edit_text(
+            f"✅ Ссылка принята и обрабатывается ({response_data.get('new_chunks_count', 'unknown')} чанков).",
+            parse_mode="HTML",
+        )
+
     await asyncio.sleep(2)
     fake_callback = types.CallbackQuery(
         id="0", from_user=message.from_user, chat_instance="0",

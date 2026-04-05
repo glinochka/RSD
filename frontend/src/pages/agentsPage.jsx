@@ -19,6 +19,7 @@ import '../styles/agentsPage.css';
 const AGENTS_EMPTY_MESSAGE = 'У вас еще нет агентов, создайте прямо сейчас';
 const AGENTS_EMPTY_CTA = 'Создайте прямо сейчас';
 const fileIdentity = (file) => `${file.name}::${file.size}::${file.lastModified}`;
+const linkIdentity = (link) => link.trim().toLowerCase();
 
 const AgentCard = ({ agent, isSelected, onManage, onDelete, onToggle }) => {
   const agentName = agent.bot_username || agent.name || 'Агент';
@@ -106,6 +107,8 @@ const AgentsPageContent = () => {
   const [isGeneratingPrompt, setIsGeneratingPrompt] = useState(false);
   const [isGeneratingWelcome, setIsGeneratingWelcome] = useState(false);
   const [isUploadingDocs, setIsUploadingDocs] = useState(false);
+  const [isUploadingLink, setIsUploadingLink] = useState(false);
+  const [pendingLink, setPendingLink] = useState('');
   const [systemPromptDraft, setSystemPromptDraft] = useState('');
   const [welcomeDraft, setWelcomeDraft] = useState('');
   const detailsRequestIdRef = useRef(0);
@@ -314,6 +317,59 @@ const AgentsPageContent = () => {
     }
   };
 
+  const isValidPublicUrl = (value) => {
+    try {
+      const parsed = new URL(value);
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    } catch {
+      return false;
+    }
+  };
+
+  const handleUploadLink = async () => {
+    const normalized = pendingLink.trim();
+    if (!selectedBotId) {
+      return;
+    }
+    if (!normalized) {
+      showError('Введите ссылку для добавления');
+      return;
+    }
+    if (!isValidPublicUrl(normalized)) {
+      showError('Некорректная ссылка. Разрешены только публичные http/https URL');
+      return;
+    }
+
+    setIsUploadingLink(true);
+    try {
+      const res = await agentService.uploadPublicLinkByBotId(selectedBotId, normalized);
+      if (res?.status === 'limit_error') {
+        showError(
+          `Лимит базы знаний превышен: план ${res.current_plan}, лимит ${res.limit}, уже ${res.current_count}, ссылка добавит ${res.new_chunks_count}`
+        );
+        return;
+      }
+      if (res?.status === 'duplicate') {
+        showSuccess(`Ссылка уже добавлена ранее (статус: ${res?.document_status || 'ready'})`);
+        return;
+      }
+      showSuccess('Ссылка принята к обработке');
+      setPendingLink('');
+      await loadAgentDetails(selectedBotId);
+    } catch (error) {
+      showError(error?.message || 'Ошибка при добавлении ссылки');
+    } finally {
+      setIsUploadingLink(false);
+    }
+  };
+
+  const handleLinkKeyDown = (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      handleUploadLink();
+    }
+  };
+
   const handleDeleteDocument = async (docId) => {
     if (!window.confirm('Удалить документ из базы знаний агента?')) {
       return;
@@ -496,7 +552,7 @@ const AgentsPageContent = () => {
 
                   <div className="agent-management-block">
                     <div className="docs-header-row">
-                      <label>База знаний (документы)</label>
+                      <label>База знаний (документы и ссылки)</label>
                       <label className="btn btn-black docs-upload-btn">
                         {isUploadingDocs ? 'Загрузка...' : '+ Добавить файлы'}
                         <input
@@ -509,12 +565,32 @@ const AgentsPageContent = () => {
                         />
                       </label>
                     </div>
+                    <div className="kb-link-row">
+                      <input
+                        type="url"
+                        className="input-main"
+                        value={pendingLink}
+                        onChange={(e) => setPendingLink(e.target.value)}
+                        onKeyDown={handleLinkKeyDown}
+                        placeholder="https://example.com/article"
+                        disabled={isUploadingLink}
+                      />
+                      <button
+                        type="button"
+                        className="btn btn-black"
+                        onClick={handleUploadLink}
+                        disabled={isUploadingLink}
+                      >
+                        {isUploadingLink ? 'Добавление...' : '+ Добавить ссылку'}
+                      </button>
+                    </div>
+                    <p className="docs-empty">Ссылка обрабатывается один раз и не обновляется автоматически</p>
                     {documents.length === 0 ? (
                       <p className="docs-empty">Документы не добавлены</p>
                     ) : (
                       <div className="docs-list-web">
                         {documents.map((doc) => (
-                          <div key={doc.id} className="doc-row">
+                          <div key={`${doc.id}-${linkIdentity(doc.file_name || '')}`} className="doc-row">
                             <div className="doc-meta">
                               <span className="doc-name">{doc.file_name}</span>
                               <span className={`doc-status doc-status--${doc.status}`}>{doc.status}</span>

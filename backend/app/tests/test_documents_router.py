@@ -383,3 +383,55 @@ class TestUploadDocument:
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "limit_error"
+
+
+class TestUploadPublicLink:
+    """Tests for POST /api/documents/link endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_upload_public_link_success(self, authenticated_client, test_session):
+        client, user_info = authenticated_client
+        from app.router_users.dao import UserDAO
+        from app.router_agents.dao import AgentDAO
+
+        user_dao = UserDAO(test_session)
+        agent_dao = AgentDAO(test_session)
+
+        async with test_session.begin():
+            user = await user_dao.find_one_by_filter(id=user_info["user_id"])
+            await user_dao.update(user, {"subscription_type": "Free"})
+            agent = await agent_dao.add({
+                "user_id": user.id,
+                "bot_id": 99991,
+                "encrypted_token": "encrypted_test_token",
+                "bot_username": "linkbot",
+            })
+            await test_session.commit()
+
+        with patch('app.router_documents.router.fetch_public_url_text', new_callable=AsyncMock) as mock_fetch:
+            mock_fetch.return_value = "Some page text for indexing"
+            with patch('app.router_documents.router.text_splitter') as mock_splitter:
+                mock_splitter.split_text = MagicMock(return_value=["chunk1", "chunk2", "chunk3"])
+                with patch('app.router_documents.router.get_current_chunks_count', new_callable=AsyncMock) as mock_count:
+                    mock_count.return_value = 0
+                    with patch('app.router_documents.router.get_chunk_limit_by_plan', return_value=100):
+                        with patch('app.router_documents.router.process_text_source', new_callable=AsyncMock):
+                            response = await client.post(
+                                "/api/documents/link",
+                                json={"bot_id": agent.bot_id, "url": "https://example.com/docs"},
+                            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "limit_ok"
+        assert data["new_chunks_count"] == 3
+
+    @pytest.mark.asyncio
+    async def test_upload_public_link_rejects_private_host(self, authenticated_client):
+        client, _ = authenticated_client
+        response = await client.post(
+            "/api/documents/link",
+            json={"bot_id": 1, "url": "http://127.0.0.1/private"},
+        )
+        assert response.status_code == 422
+        assert "публичной" in response.json()["detail"]

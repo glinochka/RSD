@@ -15,6 +15,7 @@ import { NAVIGATION_ROUTES } from '../config/constants';
 import '../styles/createAgent.css';
 
 const fileIdentity = (file) => `${file.name}::${file.size}::${file.lastModified}`;
+const linkIdentity = (link) => link.trim().toLowerCase();
 
 const CreateAgentContent = () => {
   const navigate = useNavigate();
@@ -22,6 +23,8 @@ const CreateAgentContent = () => {
   const { showError, showSuccess } = useNotification();
   const { isAuthenticated } = useAuth();
   const [uploadedFiles, setUploadedFiles] = useState([]);
+  const [pendingLink, setPendingLink] = useState('');
+  const [uploadedLinks, setUploadedLinks] = useState([]);
   const [showAuthModal, setShowAuthModal] = useState(false);
 
   const isEditMode = !!agentId;
@@ -73,6 +76,10 @@ const CreateAgentContent = () => {
           await agentService.uploadDocumentByBotId(botId, file);
         }
 
+        for (const link of uploadedLinks) {
+          await agentService.uploadPublicLinkByBotId(botId, link);
+        }
+
         showSuccess('Агент успешно создан!');
 
         navigate(NAVIGATION_ROUTES.AGENTS);
@@ -110,6 +117,42 @@ const CreateAgentContent = () => {
 
   const handleRemoveFile = (index) => {
     setUploadedFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const isValidPublicUrl = (value) => {
+    try {
+      const parsed = new URL(value);
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    } catch {
+      return false;
+    }
+  };
+
+  const handleAddLink = () => {
+    const normalized = pendingLink.trim();
+    if (!normalized) {
+      return;
+    }
+    if (!isValidPublicUrl(normalized)) {
+      showError('Некорректная ссылка. Разрешены только публичные http/https URL');
+      return;
+    }
+    setUploadedLinks((prev) => {
+      const merged = [...prev, normalized];
+      return Array.from(new Map(merged.map((link) => [linkIdentity(link), link])).values());
+    });
+    setPendingLink('');
+  };
+
+  const handleRemoveLink = (index) => {
+    setUploadedLinks((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleLinkKeyDown = (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      handleAddLink();
+    }
   };
 
   const handleAuthRedirect = () => {
@@ -207,6 +250,52 @@ const CreateAgentContent = () => {
                 </label>
               </div>
               <p className="help-text">Максимальный размер файла: 10MB</p>
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="public-link">Публичные ссылки:</label>
+              <div className="docs-container">
+                {uploadedLinks.length > 0 && (
+                  <ul className="docs-list">
+                    {uploadedLinks.map((link, index) => (
+                      <li key={linkIdentity(link)} className="doc-item">
+                        <span>{link}</span>
+                        <button
+                          type="button"
+                          className="remove-file-btn"
+                          onClick={() => handleRemoveLink(index)}
+                          aria-label="Remove link"
+                        >
+                          ×
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                <div className="link-source-row">
+                  <input
+                    id="public-link"
+                    type="url"
+                    name="public-link"
+                    placeholder="https://example.com/article"
+                    className="input-main"
+                    value={pendingLink}
+                    onChange={(e) => setPendingLink(e.target.value)}
+                    onKeyDown={handleLinkKeyDown}
+                    disabled={form.isSubmitting}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-black link-add-btn"
+                    onClick={handleAddLink}
+                    disabled={form.isSubmitting}
+                  >
+                    Добавить ссылку
+                  </button>
+                </div>
+              </div>
+              <p className="help-text">Ссылка обрабатывается один раз и не обновляется автоматически</p>
             </div>
           </form>
 

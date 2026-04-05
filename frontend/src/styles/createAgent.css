@@ -189,6 +189,19 @@
   margin-bottom: 0;
 }
 
+.link-source-row {
+  display: flex;
+  gap: var(--spacing-base);
+}
+
+.link-source-row .input-main {
+  flex: 1;
+}
+
+.link-add-btn {
+  white-space: nowrap;
+}
+
 /* Auth Modal */
 .auth-modal-backdrop {
   position: fixed;
@@ -249,6 +262,10 @@
 
   .input-main.textarea {
     min-height: 120px;
+  }
+
+  .link-source-row {
+    flex-direction: column;
   }
 }
 

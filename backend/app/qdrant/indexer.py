@@ -1,6 +1,10 @@
 import asyncio
 import os
+import re
 import uuid
+from html import unescape
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 import pdfplumber
 from docx import Document
 
@@ -56,6 +60,41 @@ async def extract_text(file_path: str) -> str:
     """Извлекает текст в зависимости от расширения файла."""
     return await run_in_cpu_pool(extract_text_sync, file_path)
 
+
+def _extract_text_from_html(raw_html: str) -> str:
+    html_without_scripts = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", raw_html, flags=re.IGNORECASE | re.DOTALL)
+    html_without_tags = re.sub(r"<[^>]+>", " ", html_without_scripts)
+    normalized = re.sub(r"\s+", " ", unescape(html_without_tags))
+    return normalized.strip()
+
+
+def fetch_public_url_text_sync(url: str) -> str:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("Поддерживаются только публичные http/https ссылки")
+
+    request = Request(
+        url,
+        headers={
+            "User-Agent": "RSDKnowledgeBot/1.0 (+https://rsd.ai)",
+            "Accept": "text/html,text/plain;q=0.9,*/*;q=0.8",
+        },
+    )
+    with urlopen(request, timeout=20) as response:
+        content_type = (response.headers.get("Content-Type") or "").lower()
+        body = response.read()
+        if not body:
+            return ""
+        encoding = response.headers.get_content_charset() or "utf-8"
+        decoded = body.decode(encoding, errors="ignore")
+        if "text/html" in content_type or "<html" in decoded.lower():
+            return _extract_text_from_html(decoded)
+        return re.sub(r"\s+", " ", decoded).strip()
+
+
+async def fetch_public_url_text(url: str) -> str:
+    return await run_in_cpu_pool(fetch_public_url_text_sync, url)
+
 async def get_current_chunks_count(agent_id: int) -> int:
     """Считает количество существующих чанков агента в Qdrant."""
     try:
@@ -78,7 +117,61 @@ async def get_current_chunks_count(agent_id: int) -> int:
 from ..router_documents.dao import DocumentDAO
 from ..alembic.database import async_session_maker
 
-async def process_document(file_path: str, agent_id: int, document_id: int, content_hash: str | None = None):
+async def _upsert_document_chunks(
+    *,
+    chunks: list[str],
+    agent_id: int,
+    document_id: int,
+    content_hash: str | None,
+    source: str,
+):
+    dense_vectors = await run_in_cpu_pool(
+        embed_dense_for_chunks,
+        chunks,
+    )
+
+    if len(dense_vectors) != len(chunks):
+        raise RuntimeError("Ошибка генерации эмбеддингов: неверное количество векторов")
+
+    # Генерация эмбеддингов и формирование точек для Qdrant
+    points = []
+    for i, chunk_text in enumerate(chunks):
+        dense_vector = dense_vectors[i]
+        # UUID на основе document_id и индекса чанка
+        point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{document_id}_{i}"))
+
+        points.append(
+            models.PointStruct(
+                id=point_id,
+                vector=dense_vector.tolist(),
+                payload={
+                    "agent_id": agent_id,
+                    "document_id": document_id,
+                    "content_hash": content_hash,
+                    "text": chunk_text,
+                    "source": source,
+                }
+            )
+        )
+
+    # Загрузка в Qdrant батчами — один большой upsert сильнее бьёт по CPU Qdrant/хоста
+    upsert_batch = 48
+    for start in range(0, len(points), upsert_batch):
+        batch = points[start : start + upsert_batch]
+        await qdrant_client.upsert(
+            collection_name="agent_documents",
+            points=batch,
+        )
+        await asyncio.sleep(0)
+
+
+async def process_document(
+    file_path: str,
+    agent_id: int,
+    document_id: int,
+    content_hash: str | None = None,
+    source_name: str | None = None,
+):
     """
     Фоновая задача для обработки документа с проверкой лимитов тарифа.
     """
@@ -92,45 +185,13 @@ async def process_document(file_path: str, agent_id: int, document_id: int, cont
                 raise ValueError("Не удалось извлечь текст из файла")
 
             chunks = text_splitter.split_text(text)
-
-            dense_vectors = await run_in_cpu_pool(
-                embed_dense_for_chunks,
-                chunks,
+            await _upsert_document_chunks(
+                chunks=chunks,
+                agent_id=agent_id,
+                document_id=document_id,
+                content_hash=content_hash,
+                source=source_name or os.path.basename(file_path),
             )
-
-            if len(dense_vectors) != len(chunks):
-                raise RuntimeError("Ошибка генерации эмбеддингов: неверное количество векторов")
-
-            # Генерация эмбеддингов и формирование точек для Qdrant
-            points = []
-            for i, chunk_text in enumerate(chunks):
-                dense_vector = dense_vectors[i]
-                # UUID на основе document_id и индекса чанка
-                point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{document_id}_{i}"))
-
-                points.append(
-                    models.PointStruct(
-                        id=point_id,
-                        vector=dense_vector.tolist(),
-                        payload={
-                            "agent_id": agent_id,
-                            "document_id": document_id,
-                            "content_hash": content_hash,
-                            "text": chunk_text,
-                            "source": os.path.basename(file_path)
-                        }
-                    )
-                )
-
-        # Загрузка в Qdrant батчами — один большой upsert сильнее бьёт по CPU Qdrant/хоста
-        upsert_batch = 48
-        for start in range(0, len(points), upsert_batch):
-            batch = points[start : start + upsert_batch]
-            await qdrant_client.upsert(
-                collection_name="agent_documents",
-                points=batch,
-            )
-            await asyncio.sleep(0)
         async with async_session_maker() as session:
             docDAO = DocumentDAO(session)
             async with session.begin():
@@ -150,3 +211,37 @@ async def process_document(file_path: str, agent_id: int, document_id: int, cont
         # Удаляем временный файл после обработки
         if os.path.exists(file_path):
             os.remove(file_path)
+
+
+async def process_text_source(
+    *,
+    text: str,
+    source_name: str,
+    agent_id: int,
+    document_id: int,
+    content_hash: str | None = None,
+):
+    try:
+        async with indexing_semaphore:
+            chunks = text_splitter.split_text(text)
+            if not chunks:
+                raise ValueError("Не удалось получить чанки из текста")
+            await _upsert_document_chunks(
+                chunks=chunks,
+                agent_id=agent_id,
+                document_id=document_id,
+                content_hash=content_hash,
+                source=source_name,
+            )
+        async with async_session_maker() as session:
+            docDAO = DocumentDAO(session)
+            async with session.begin():
+                doc = await docDAO.find_one_by_filter(id=document_id)
+                await docDAO.update(doc, {"status": "ready"})
+    except Exception as e:
+        print(f"❌ Ошибка при индексации текстового источника {e}")
+        async with async_session_maker() as session:
+            docDAO = DocumentDAO(session)
+            async with session.begin():
+                doc = await docDAO.find_one_by_filter(id=document_id)
+                await docDAO.update(doc, {"status": "error"})

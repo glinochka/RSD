@@ -169,6 +169,11 @@ class APIcreate(APIbase):
         return await cls.document(data = {'agent_data' : json.dumps(agent_data)}, file_name=file_name, file_bytes = file_bytes)
 
     @classmethod
+    async def documentLinkBy_botID(cls, agent_id: int, url: str) -> dict:
+        data = {"bot_id": agent_id, "url": url}
+        return await cls.document(data=data, add_url="link")
+
+    @classmethod
     async def processSuccessfulPayment(
         cls,
         telegram_id: int,

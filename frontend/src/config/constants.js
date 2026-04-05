@@ -40,6 +40,7 @@ export const API_ROUTES = {
   AGENTS_EXTERNAL_CHAT: '/api/agents/external/chat',
   AGENTS_REGENERATE_EXTERNAL_KEY: '/api/agents/external/regenerate_key',
   DOCUMENTS_CREATE: '/api/documents',
+  DOCUMENTS_CREATE_LINK: '/api/documents/link',
   DOCUMENTS_LIST_BY_BOT: '/api/documents/allBy_botID',
   DOCUMENTS_DELETE: (docId) => `/api/documents/${docId}`,
 

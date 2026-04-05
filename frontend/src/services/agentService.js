@@ -112,6 +112,14 @@ export const agentService = {
     return response.data;
   },
 
+  uploadPublicLinkByBotId: async (botId, url) => {
+    const response = await apiClient.post(API_ROUTES.DOCUMENTS_CREATE_LINK, {
+      bot_id: botId,
+      url,
+    });
+    return response.data;
+  },
+
   getDocumentsByBotId: async (botId) => {
     const response = await apiClient.get(API_ROUTES.DOCUMENTS_LIST_BY_BOT, {
       params: { bot_id: botId },
