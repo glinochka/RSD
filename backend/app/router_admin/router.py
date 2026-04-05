@@ -11,10 +11,18 @@ from sqlalchemy import String, cast, desc, func, or_, select
 from .schemas import (
     AdminGiftSubscriptionRequest,
     AdminLoginRequest,
+    AdminPromoCodeCreateRequest,
     AdminSubscriptionPlansUpdateRequest,
 )
 from ..alembic.database import async_session_maker
-from ..alembic.models import Agent, AgentDocument, PaymentTransaction, TurnkeyAgentRequest, User
+from ..alembic.models import (
+    Agent,
+    AgentDocument,
+    PaymentTransaction,
+    PromoCode,
+    TurnkeyAgentRequest,
+    User,
+)
 from ..config import get_auth_data, settings
 from ..qdrant.search_service import delete_agent_vectors
 from ..router_agents.dao import AgentDAO
@@ -82,6 +90,15 @@ def get_current_admin(
             detail="Admin authorization required",
         )
     return _decode_admin_token(credentials.credentials)
+
+
+def _serialize_promo_code(item: PromoCode) -> dict:
+    return {
+        "id": item.id,
+        "code": item.code,
+        "discount_percent": item.discount_percent,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+    }
 
 
 @router.post("/login")
@@ -351,6 +368,67 @@ async def admin_update_plans(
         content={"plans": get_all_subscription_plans()},
         status_code=status.HTTP_200_OK,
     )
+
+
+@router.get("/promo-codes")
+async def admin_list_promo_codes(_admin=Depends(get_current_admin)):
+    async with async_session_maker() as session:
+        rows = (
+            await session.scalars(
+                select(PromoCode).order_by(desc(PromoCode.created_at), desc(PromoCode.id))
+            )
+        ).all()
+
+    return JSONResponse(
+        content={"items": [_serialize_promo_code(row) for row in rows]},
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@router.post("/promo-codes")
+async def admin_create_promo_code(
+    payload: AdminPromoCodeCreateRequest,
+    _admin=Depends(get_current_admin),
+):
+    code = payload.code.strip().upper()
+    if not code:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Promo code is required")
+
+    async with async_session_maker() as session:
+        async with session.begin():
+            existing = await session.scalar(
+                select(PromoCode).where(func.upper(PromoCode.code) == code)
+            )
+            if existing:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Promo code already exists",
+                )
+
+            item = PromoCode(code=code, discount_percent=payload.discount_percent)
+            session.add(item)
+            await session.flush()
+            await session.refresh(item)
+
+    return JSONResponse(
+        content={"item": _serialize_promo_code(item)},
+        status_code=status.HTTP_201_CREATED,
+    )
+
+
+@router.delete("/promo-codes/{promo_code_id}")
+async def admin_delete_promo_code(
+    promo_code_id: int = Path(..., ge=1),
+    _admin=Depends(get_current_admin),
+):
+    async with async_session_maker() as session:
+        async with session.begin():
+            item = await session.get(PromoCode, promo_code_id)
+            if not item:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Promo code not found")
+            await session.delete(item)
+
+    return JSONResponse(content={"detail": "Promo code deleted"}, status_code=status.HTTP_200_OK)
 
 
 @router.post("/users/{user_id}/ban")

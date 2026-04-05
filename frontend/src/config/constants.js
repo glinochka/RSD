@@ -53,9 +53,11 @@ export const API_ROUTES = {
   ADMIN_AGENTS: '/api/admin/agents',
   ADMIN_TURNKEY_REQUESTS: '/api/admin/turnkey-requests',
   ADMIN_PLANS: '/api/admin/plans',
+  ADMIN_PROMO_CODES: '/api/admin/promo-codes',
   ADMIN_BAN_USER: (userId) => `/api/admin/users/${userId}/ban`,
   ADMIN_UNBAN_USER: (userId) => `/api/admin/users/${userId}/unban`,
   ADMIN_GIFT_SUBSCRIPTION: (userId) => `/api/admin/users/${userId}/gift-subscription`,
+  ADMIN_DELETE_PROMO_CODE: (promoCodeId) => `/api/admin/promo-codes/${promoCodeId}`,
   TURNKEY_REQUESTS: '/api/payments/turnkey-requests',
 };
 

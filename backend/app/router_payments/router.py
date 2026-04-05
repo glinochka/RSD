@@ -8,13 +8,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import select
+from sqlalchemy import func, select
 from yookassa import Configuration, Payment
 from yookassa.domain.notification.webhook_notification import WebhookNotificationFactory
 from yookassa.domain.notification.webhook_notification_types import WebhookNotificationEventType
 
 from ..alembic.database import async_session_maker
-from ..alembic.models import PaymentTransaction, TurnkeyAgentRequest, WebsitePaymentTransaction
+from ..alembic.models import PaymentTransaction, PromoCode, TurnkeyAgentRequest, WebsitePaymentTransaction
 from ..config import settings
 from ..router_users.dao import UserDAO
 from ..subscription_plans import (
@@ -83,6 +83,13 @@ def _calculate_new_end_date(current_end_date) -> datetime:
         if current_end > now_utc:
             base_date = current_end
     return (base_date + timedelta(days=30)).replace(tzinfo=None)
+
+
+def _normalize_promo_code(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip().upper()
+    return cleaned or None
 
 
 async def _apply_yookassa_payment_to_subscription(
@@ -267,6 +274,77 @@ async def create_yookassa_payment(
             detail="Invalid paid plan",
         )
 
+    original_amount_kopecks = int(selected_plan.get("price_rub_month", 0) or 0) * 100
+    normalized_promo = _normalize_promo_code(payload.promo_code)
+    applied_discount_percent = 0
+    applied_promo_code = None
+
+    if normalized_promo:
+        async with async_session_maker() as session:
+            promo = await session.scalar(
+                select(PromoCode).where(func.upper(PromoCode.code) == normalized_promo)
+            )
+        if not promo:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Promo code not found",
+            )
+        applied_discount_percent = int(promo.discount_percent or 0)
+        applied_promo_code = promo.code
+
+    discount_kopecks = (original_amount_kopecks * applied_discount_percent) // 100
+    amount_kopecks = max(0, original_amount_kopecks - discount_kopecks)
+
+    # 100% promo flow: activate subscription without external payment gateway.
+    if amount_kopecks == 0:
+        async with async_session_maker() as session:
+            user_dao = UserDAO(session)
+            async with session.begin():
+                user = await user_dao.find_one_by_filter(id=current_user.id)
+                if not user:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="User not found",
+                    )
+
+                new_end_date = _calculate_new_end_date(user.subscription_end_date)
+                await user_dao.update(
+                    user,
+                    {
+                        "subscription_type": payload.plan_name,
+                        "subscription_end_date": new_end_date,
+                    },
+                )
+                session.add(
+                    WebsitePaymentTransaction(
+                        user_id=current_user.id,
+                        plan_name=payload.plan_name,
+                        currency="RUB",
+                        total_amount=0,
+                        original_total_amount=original_amount_kopecks,
+                        discount_percent=applied_discount_percent,
+                        promo_code=applied_promo_code,
+                        yookassa_payment_id=f"promo-{uuid4()}",
+                        status="succeeded",
+                        is_processed=True,
+                        paid_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                    )
+                )
+
+        return JSONResponse(
+            content={
+                "payment_id": None,
+                "status": "succeeded",
+                "confirmation_url": None,
+                "plan_name": payload.plan_name,
+                "promo_code": applied_promo_code,
+                "discount_percent": applied_discount_percent,
+                "amount_kopecks": 0,
+                "subscription_activated": True,
+            },
+            status_code=status.HTTP_200_OK,
+        )
+
     return_url = (payload.return_url or settings.YOOKASSA_RETURN_URL or "").strip()
     if not return_url:
         raise HTTPException(
@@ -276,7 +354,6 @@ async def create_yookassa_payment(
 
     _configure_yookassa()
 
-    amount_kopecks = int(selected_plan.get("price_rub_month", 0) or 0) * 100
     amount_rub = f"{(Decimal(amount_kopecks) / Decimal('100')):.2f}"
     idempotence_key = str(uuid4())
 
@@ -291,6 +368,8 @@ async def create_yookassa_payment(
                 "metadata": {
                     "user_id": str(current_user.id),
                     "plan_name": payload.plan_name,
+                    "promo_code": applied_promo_code or "",
+                    "discount_percent": str(applied_discount_percent),
                 },
             },
             idempotence_key,
@@ -319,6 +398,9 @@ async def create_yookassa_payment(
                     plan_name=payload.plan_name,
                     currency="RUB",
                     total_amount=amount_kopecks,
+                    original_total_amount=original_amount_kopecks,
+                    discount_percent=applied_discount_percent,
+                    promo_code=applied_promo_code,
                     yookassa_payment_id=payment_id,
                     status=payment_status,
                 )
@@ -330,6 +412,9 @@ async def create_yookassa_payment(
             "status": payment_status,
             "confirmation_url": confirmation_url,
             "plan_name": payload.plan_name,
+            "promo_code": applied_promo_code,
+            "discount_percent": applied_discount_percent,
+            "amount_kopecks": amount_kopecks,
         },
         status_code=status.HTTP_201_CREATED,
     )

@@ -22,6 +22,15 @@
   margin-bottom: 0;
 }
 
+.pricing-promo-control {
+  margin: var(--spacing-base) auto 0;
+  max-width: 360px;
+}
+
+.pricing-promo-control input {
+  width: 100%;
+}
+
 .pricing-grid {
   display: flex;
   flex-wrap: wrap;

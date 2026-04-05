@@ -109,6 +109,9 @@ class WebsitePaymentTransaction(Base):
     plan_name: Mapped[str] = mapped_column(String(32), nullable=False)
     currency: Mapped[str] = mapped_column(String(10), nullable=False, default="RUB")
     total_amount: Mapped[int] = mapped_column(nullable=False)
+    original_total_amount: Mapped[int] = mapped_column(nullable=False)
+    discount_percent: Mapped[int] = mapped_column(nullable=False, default=0, server_default="0")
+    promo_code: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     yookassa_payment_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     is_processed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
@@ -125,4 +128,13 @@ class TurnkeyAgentRequest(Base):
     requested_agent: Mapped[str] = mapped_column(String(255), nullable=False)
     purpose: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utc_now_naive, index=True)
+
+
+class PromoCode(Base):
+    __tablename__ = "promo_codes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    discount_percent: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
 

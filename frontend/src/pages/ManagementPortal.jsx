@@ -12,6 +12,7 @@ const MENU_ITEMS = [
   { id: 'agents', label: 'Агенты' },
   { id: 'turnkeyRequests', label: 'Заявки под ключ' },
   { id: 'billing', label: 'Тарифы' },
+  { id: 'promoCodes', label: 'Промокоды' },
 ];
 
 function formatError(error) {
@@ -60,6 +61,9 @@ const ManagementPortal = () => {
   const [isLoadingPlans, setIsLoadingPlans] = useState(false);
   const [isSavingPlans, setIsSavingPlans] = useState(false);
   const [plansDraft, setPlansDraft] = useState([]);
+  const [isLoadingPromoCodes, setIsLoadingPromoCodes] = useState(false);
+  const [promoCodes, setPromoCodes] = useState([]);
+  const [promoCodeDraft, setPromoCodeDraft] = useState({ code: '', discountPercent: 0 });
   const [actionInProgress, setActionInProgress] = useState(null);
   const [giftModal, setGiftModal] = useState({ open: false, user: null, planCode: 'Advanced' });
 
@@ -213,6 +217,31 @@ const ManagementPortal = () => {
     };
   }, [activeSection, adminToken]);
 
+  useEffect(() => {
+    if (!adminToken) return;
+    if (activeSection !== 'promoCodes') return;
+
+    let cancelled = false;
+    const fetchPromoCodes = async () => {
+      try {
+        setIsLoadingPromoCodes(true);
+        setError('');
+        const data = await adminService.getPromoCodes(adminToken);
+        if (cancelled) return;
+        setPromoCodes(Array.isArray(data?.items) ? data.items : []);
+      } catch (err) {
+        if (!cancelled) setError(formatError(err));
+      } finally {
+        if (!cancelled) setIsLoadingPromoCodes(false);
+      }
+    };
+
+    fetchPromoCodes();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSection, adminToken]);
+
   const handleLogin = async (event) => {
     event.preventDefault();
     if (!login.trim() || !password) {
@@ -336,6 +365,63 @@ const ManagementPortal = () => {
       await adminService.giftSubscription(adminToken, user.id, planCode);
       setGiftModal({ open: false, user: null, planCode: 'Advanced' });
       await refreshUsers();
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setActionInProgress(null);
+    }
+  };
+
+  const refreshPromoCodes = async () => {
+    try {
+      setIsLoadingPromoCodes(true);
+      setError('');
+      const data = await adminService.getPromoCodes(adminToken);
+      setPromoCodes(Array.isArray(data?.items) ? data.items : []);
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setIsLoadingPromoCodes(false);
+    }
+  };
+
+  const handleCreatePromoCode = async (event) => {
+    event.preventDefault();
+    const code = promoCodeDraft.code.trim().toUpperCase();
+    const discountPercent = Number(promoCodeDraft.discountPercent);
+    if (!code) {
+      setError('Введите промокод');
+      return;
+    }
+    if (Number.isNaN(discountPercent) || discountPercent < 0 || discountPercent > 100) {
+      setError('Скидка должна быть от 0 до 100');
+      return;
+    }
+
+    try {
+      setActionInProgress('promo-create');
+      setError('');
+      await adminService.createPromoCode(adminToken, {
+        code,
+        discount_percent: discountPercent,
+      });
+      setPromoCodeDraft({ code: '', discountPercent: 0 });
+      await refreshPromoCodes();
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setActionInProgress(null);
+    }
+  };
+
+  const handleDeletePromoCode = async (promoCodeItem) => {
+    if (!window.confirm(`Удалить промокод "${promoCodeItem.code}"?`)) return;
+
+    try {
+      setActionInProgress(`promo-delete-${promoCodeItem.id}`);
+      setError('');
+      await adminService.deletePromoCode(adminToken, promoCodeItem.id);
+      await refreshPromoCodes();
     } catch (err) {
       setError(formatError(err));
     } finally {
@@ -774,6 +860,100 @@ const ManagementPortal = () => {
     </>
   );
 
+  const renderPromoCodes = () => (
+    <>
+      <div className="management-content-head">
+        <h2>Промокоды</h2>
+        <button
+          type="button"
+          className="btn btn-outline"
+          disabled={isLoadingPromoCodes || actionInProgress === 'promo-create'}
+          onClick={refreshPromoCodes}
+        >
+          Обновить
+        </button>
+      </div>
+      {error && <div className="management-error">{error}</div>}
+
+      <form className="management-promo-form" onSubmit={handleCreatePromoCode}>
+        <div className="management-form-row">
+          <label htmlFor="promo-code-input">Промокод</label>
+          <input
+            id="promo-code-input"
+            type="text"
+            placeholder="Например: SPRING50"
+            value={promoCodeDraft.code}
+            maxLength={64}
+            onChange={(e) => setPromoCodeDraft((prev) => ({ ...prev, code: e.target.value.toUpperCase() }))}
+          />
+        </div>
+        <div className="management-form-row">
+          <label htmlFor="promo-discount-input">Скидка (%)</label>
+          <input
+            id="promo-discount-input"
+            type="number"
+            min={0}
+            max={100}
+            value={promoCodeDraft.discountPercent}
+            onChange={(e) => setPromoCodeDraft((prev) => ({ ...prev, discountPercent: e.target.value }))}
+          />
+        </div>
+        <button
+          type="submit"
+          className="btn btn-black"
+          disabled={actionInProgress === 'promo-create'}
+        >
+          {actionInProgress === 'promo-create' ? 'Создание...' : 'Добавить промокод'}
+        </button>
+      </form>
+
+      {isLoadingPromoCodes ? (
+        <p>Загрузка промокодов...</p>
+      ) : (
+        <div className="management-table-wrap">
+          <table className="management-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Код</th>
+                <th>Скидка</th>
+                <th>Создан</th>
+                <th>Действия</th>
+              </tr>
+            </thead>
+            <tbody>
+              {promoCodes.map((promoCodeItem) => (
+                <tr key={promoCodeItem.id}>
+                  <td>{promoCodeItem.id}</td>
+                  <td>{promoCodeItem.code}</td>
+                  <td>{promoCodeItem.discount_percent}%</td>
+                  <td>
+                    {promoCodeItem.created_at
+                      ? new Date(promoCodeItem.created_at).toLocaleString()
+                      : '-'}
+                  </td>
+                  <td>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-danger"
+                      disabled={actionInProgress === `promo-delete-${promoCodeItem.id}`}
+                      onClick={() => handleDeletePromoCode(promoCodeItem)}
+                    >
+                      {actionInProgress === `promo-delete-${promoCodeItem.id}` ? '...' : 'Удалить'}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {promoCodes.length === 0 && (
+                <tr><td colSpan={5}>Промокодов пока нет</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </>
+  );
+
   return (
     <div className="management-page">
       <header className="management-header">
@@ -839,6 +1019,7 @@ const ManagementPortal = () => {
             {activeSection === 'agents' && renderAgents()}
             {activeSection === 'turnkeyRequests' && renderTurnkeyRequests()}
             {activeSection === 'billing' && renderBilling()}
+            {activeSection === 'promoCodes' && renderPromoCodes()}
           </section>
         </main>
       )}

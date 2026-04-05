@@ -24,6 +24,7 @@ class ProcessTelegramPayment(BaseModel):
 class CreateYooKassaPayment(BaseModel):
     plan_name: str = Field(..., description="Paid subscription plan name")
     return_url: str | None = Field(default=None, description="URL where YooKassa returns user after payment")
+    promo_code: str | None = Field(default=None, max_length=64, description="Optional promo code")
 
     @field_validator("plan_name")
     @classmethod

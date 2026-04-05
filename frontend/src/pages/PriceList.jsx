@@ -39,6 +39,7 @@ const PriceList = () => {
     email: '',
     employeeRequest: '',
   });
+  const [promoCode, setPromoCode] = useState('');
 
   const resetRequestForm = () => {
     setRequestForm({
@@ -84,7 +85,15 @@ const PriceList = () => {
       const payment = await pricingService.createYooKassaPayment({
         plan_name: selectedPlan.code,
         return_url: returnUrl,
+        promo_code: promoCode.trim() || undefined,
       });
+
+      if (payment?.status === 'succeeded' && !payment?.confirmation_url) {
+        showSuccess('Подписка активирована по промокоду.');
+        setPromoCode('');
+        setIsProcessingPayment(false);
+        return;
+      }
 
       if (!payment?.confirmation_url || !payment?.payment_id) {
         throw new Error('Сервис оплаты вернул некорректный ответ.');
@@ -246,6 +255,16 @@ const PriceList = () => {
         <div className="pricing-header">
           <h1>Наши тарифные планы</h1>
           <p>Выберите подходящий план для вашего бизнеса</p>
+          <div className="pricing-promo-control">
+            <input
+              type="text"
+              placeholder="Промокод (опционально)"
+              value={promoCode}
+              onChange={(event) => setPromoCode(event.target.value.toUpperCase())}
+              maxLength={64}
+              disabled={isProcessingPayment || isSubmittingRequest}
+            />
+          </div>
         </div>
 
         <div className="pricing-grid">

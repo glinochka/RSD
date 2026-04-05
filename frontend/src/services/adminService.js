@@ -89,6 +89,40 @@ const adminService = {
     return response.data;
   },
 
+  async getPromoCodes(token) {
+    const response = await adminClient.get(API_ROUTES.ADMIN_PROMO_CODES, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    return response.data;
+  },
+
+  async createPromoCode(token, { code, discount_percent }) {
+    const response = await adminClient.post(
+      API_ROUTES.ADMIN_PROMO_CODES,
+      { code, discount_percent },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+    return response.data;
+  },
+
+  async deletePromoCode(token, promoCodeId) {
+    const response = await adminClient.delete(
+      API_ROUTES.ADMIN_DELETE_PROMO_CODE(promoCodeId),
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+    return response.data;
+  },
+
   async banUser(token, userId) {
     const response = await adminClient.post(
       API_ROUTES.ADMIN_BAN_USER(userId),
