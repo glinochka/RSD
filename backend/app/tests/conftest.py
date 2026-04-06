@@ -14,7 +14,7 @@ from sqlalchemy.pool import StaticPool
 
 backend_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(backend_root))
-
+ 
 # --- ЗАГРУЗКА ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ---
 env_path = Path(__file__).parent.parent / ".env"
 if not env_path.exists():
