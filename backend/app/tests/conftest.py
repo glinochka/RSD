@@ -12,8 +12,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-backend_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(backend_root))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
  
 # --- ЗАГРУЗКА ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ---
 env_path = Path(__file__).parent.parent / ".env"
