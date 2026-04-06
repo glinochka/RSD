@@ -152,6 +152,12 @@
   gap: var(--spacing-lg);
 }
 
+.agent-management-header {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
 .agent-management-header h3 {
   margin: 0;
   font-size: var(--font-size-xl);
@@ -163,7 +169,10 @@
 }
 
 .analytics-btn {
-  margin-top: var(--spacing-sm);
+  margin-top: var(--spacing-base);
+  width: 100%;
+  box-sizing: border-box;
+  justify-content: center;
 }
 
 .agent-management-block {

@@ -625,19 +625,22 @@ const AgentDetailedAnalyticsPageContent = () => {
                   Не отправлять замороженным пользователям
                 </label>
                 <label className="analytics-broadcast-limit">
-                  <span>Максимум за раз</span>
-                  <select
-                    className="input-main analytics-broadcast-select"
-                    value={broadcastMaxRecipients}
-                    onChange={(e) => setBroadcastMaxRecipients(Number(e.target.value))}
-                    disabled={isBroadcasting}
-                  >
-                    {BROADCAST_LIMIT_OPTIONS.map((n) => (
-                      <option key={n} value={n}>
-                        {formatNumber(n)}
-                      </option>
-                    ))}
-                  </select>
+                  <span className="analytics-broadcast-limit-label">Максимум за раз</span>
+                  <span className="analytics-broadcast-select-wrap">
+                    <select
+                      className="analytics-broadcast-select"
+                      value={broadcastMaxRecipients}
+                      onChange={(e) => setBroadcastMaxRecipients(Number(e.target.value))}
+                      disabled={isBroadcasting}
+                      aria-label="Максимум получателей за одну рассылку"
+                    >
+                      {BROADCAST_LIMIT_OPTIONS.map((n) => (
+                        <option key={n} value={n}>
+                          {formatNumber(n)}
+                        </option>
+                      ))}
+                    </select>
+                  </span>
                 </label>
               </div>
 
