@@ -44,6 +44,8 @@ export const API_ROUTES = {
   AGENTS_ANALYTICS_TIMESERIES: '/api/agents/analytics/timeseries',
   AGENTS_ANALYTICS_FROZEN: '/api/agents/analytics/frozen',
   AGENTS_TELEGRAM_SEND_TO_USER: '/api/agents/telegram/send_to_user',
+  AGENTS_TELEGRAM_BROADCAST_RECIPIENTS: '/api/agents/telegram/broadcast_recipients',
+  AGENTS_TELEGRAM_BROADCAST: '/api/agents/telegram/broadcast',
   DOCUMENTS_CREATE: '/api/documents',
   DOCUMENTS_CREATE_LINK: '/api/documents/link',
   DOCUMENTS_LIST_BY_BOT: '/api/documents/allBy_botID',

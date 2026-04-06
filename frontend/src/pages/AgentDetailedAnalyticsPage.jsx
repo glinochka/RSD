@@ -10,7 +10,10 @@ import '../styles/agentDetailedAnalytics.css';
 const ANALYTICS_SECTIONS = {
   OVERVIEW: 'overview',
   CHATS: 'chats',
+  BROADCAST: 'broadcast',
 };
+
+const BROADCAST_LIMIT_OPTIONS = [100, 250, 500, 1000, 2000, 5000];
 const CHART_PERIODS = [7, 30, 90];
 
 const formatNumber = (value) => {
@@ -202,8 +205,23 @@ const AgentDetailedAnalyticsPageContent = () => {
   const [ownerReplyText, setOwnerReplyText] = useState('');
   const [isSendingOwnerReply, setIsSendingOwnerReply] = useState(false);
   const [isTogglingFreeze, setIsTogglingFreeze] = useState(false);
+  const [broadcastStats, setBroadcastStats] = useState(null);
+  const [broadcastStatsLoading, setBroadcastStatsLoading] = useState(false);
+  const [broadcastBody, setBroadcastBody] = useState('');
+  const [broadcastSkipFrozen, setBroadcastSkipFrozen] = useState(true);
+  const [broadcastMaxRecipients, setBroadcastMaxRecipients] = useState(500);
+  const [isBroadcasting, setIsBroadcasting] = useState(false);
+  const [broadcastResult, setBroadcastResult] = useState(null);
 
   const botId = useMemo(() => Number(id), [id]);
+
+  const plannedBroadcastRecipients = useMemo(() => {
+    if (!broadcastStats) return 0;
+    const base = broadcastSkipFrozen
+      ? Number(broadcastStats.eligible_when_skip_frozen || 0)
+      : Number(broadcastStats.telegram_users_total || 0);
+    return Math.min(base, broadcastMaxRecipients);
+  }, [broadcastStats, broadcastSkipFrozen, broadcastMaxRecipients]);
 
   useEffect(() => {
     if (!Number.isFinite(botId) || botId <= 0) {
@@ -255,6 +273,27 @@ const AgentDetailedAnalyticsPageContent = () => {
 
     loadTimeline();
   }, [botId, selectedDays, showError]);
+
+  useEffect(() => {
+    if (selectedSection !== ANALYTICS_SECTIONS.BROADCAST) return;
+    if (!Number.isFinite(botId) || botId <= 0) return;
+
+    const loadBroadcastStats = async () => {
+      setBroadcastStatsLoading(true);
+      setBroadcastResult(null);
+      try {
+        const data = await agentService.getTelegramBroadcastRecipients(botId);
+        setBroadcastStats(data);
+      } catch (error) {
+        setBroadcastStats(null);
+        showError(error?.message || 'Не удалось загрузить данные рассылки');
+      } finally {
+        setBroadcastStatsLoading(false);
+      }
+    };
+
+    loadBroadcastStats();
+  }, [selectedSection, botId, showError]);
 
   const selectedUser = useMemo(
     () => chatUsers.find((user) => user.id === selectedUserId) || null,
@@ -321,6 +360,51 @@ const AgentDetailedAnalyticsPageContent = () => {
     }
   };
 
+  const handleBroadcastSend = async () => {
+    const text = broadcastBody.trim();
+    if (!text) {
+      showError('Введите текст сообщения');
+      return;
+    }
+    if (plannedBroadcastRecipients <= 0) {
+      showError('Нет получателей для рассылки');
+      return;
+    }
+    const n = plannedBroadcastRecipients;
+    const noun = n === 1 ? 'получателю' : 'получателям';
+    if (
+      !window.confirm(
+        `Отправить сообщение ${n} ${noun}? Сообщения уйдут от имени бота в Telegram. Отменить рассылку будет нельзя.`
+      )
+    ) {
+      return;
+    }
+    setIsBroadcasting(true);
+    setBroadcastResult(null);
+    try {
+      const result = await agentService.sendTelegramBroadcast(botId, text, {
+        skipFrozen: broadcastSkipFrozen,
+        maxRecipients: broadcastMaxRecipients,
+      });
+      setBroadcastResult(result);
+      setBroadcastBody('');
+      const parts = [
+        `отправлено ${result.sent}`,
+        `ошибок ${result.failed}`,
+      ];
+      if (result.skipped_frozen) parts.push(`пропущено замороженных: ${result.skipped_frozen}`);
+      if (result.truncated_over_limit) parts.push(`не вошли в лимит: ${result.truncated_over_limit}`);
+      showSuccess(`Рассылка завершена: ${parts.join(', ')}`);
+      const data = await agentService.getTelegramBroadcastRecipients(botId);
+      setBroadcastStats(data);
+      await refreshChats();
+    } catch (error) {
+      showError(error?.message || 'Рассылка не удалась');
+    } finally {
+      setIsBroadcasting(false);
+    }
+  };
+
   if (isLoading) {
     return <Loading message="Загрузка аналитики..." />;
   }
@@ -360,6 +444,13 @@ const AgentDetailedAnalyticsPageContent = () => {
           >
             Чаты
           </button>
+          <button
+            type="button"
+            className={`analytics-section-btn ${selectedSection === ANALYTICS_SECTIONS.BROADCAST ? 'analytics-section-btn--active' : ''}`}
+            onClick={() => setSelectedSection(ANALYTICS_SECTIONS.BROADCAST)}
+          >
+            Рассылка
+          </button>
         </aside>
 
         <div className="agent-analytics-content">
@@ -384,7 +475,7 @@ const AgentDetailedAnalyticsPageContent = () => {
                 isLoading={isChartLoading}
               />
             </section>
-          ) : (
+          ) : selectedSection === ANALYTICS_SECTIONS.CHATS ? (
             <section className="analytics-chats">
               <h3>Чаты</h3>
               <div className="analytics-chat-window">
@@ -481,6 +572,111 @@ const AgentDetailedAnalyticsPageContent = () => {
                   )}
                 </div>
               </div>
+            </section>
+          ) : (
+            <section className="analytics-broadcast">
+              <h3>Рассылка в Telegram</h3>
+              <p className="analytics-note">
+                Одно и то же сообщение от вашего лица (как в чатах) получат выбранные пользователи, которые писали боту
+                в Telegram. Пользователи из других каналов сюда не попадают.
+              </p>
+
+              {broadcastStatsLoading ? (
+                <p className="analytics-broadcast-muted">Загрузка аудитории...</p>
+              ) : broadcastStats ? (
+                <div className="analytics-broadcast-stats">
+                  <article className="analytics-broadcast-stat">
+                    <span className="analytics-broadcast-stat-value">
+                      {formatNumber(Number(broadcastStats.telegram_users_total || 0))}
+                    </span>
+                    <span className="analytics-broadcast-stat-label">Всего в Telegram (по аналитике)</span>
+                  </article>
+                  <article className="analytics-broadcast-stat">
+                    <span className="analytics-broadcast-stat-value">
+                      {formatNumber(Number(broadcastStats.frozen_among_telegram || 0))}
+                    </span>
+                    <span className="analytics-broadcast-stat-label">Заморожено среди них</span>
+                  </article>
+                  <article className="analytics-broadcast-stat">
+                    <span className="analytics-broadcast-stat-value">
+                      {formatNumber(Number(broadcastStats.eligible_when_skip_frozen || 0))}
+                    </span>
+                    <span className="analytics-broadcast-stat-label">Доступно при пропуске замороженных</span>
+                  </article>
+                </div>
+              ) : (
+                <p className="analytics-broadcast-muted">Не удалось загрузить аудиторию</p>
+              )}
+
+              <div className="analytics-broadcast-warning" role="note">
+                Рассылка может занять время: между отправками есть небольшая пауза, чтобы не перегружать Telegram. За один
+                раз отправляется не больше выбранного лимита; при большой базе повторите рассылку позже (уже отправленным
+                придёт дубликат — используйте осмотрительно).
+              </div>
+
+              <div className="analytics-broadcast-options">
+                <label className="analytics-broadcast-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={broadcastSkipFrozen}
+                    onChange={(e) => setBroadcastSkipFrozen(e.target.checked)}
+                    disabled={isBroadcasting}
+                  />
+                  Не отправлять замороженным пользователям
+                </label>
+                <label className="analytics-broadcast-limit">
+                  <span>Максимум за раз</span>
+                  <select
+                    className="input-main analytics-broadcast-select"
+                    value={broadcastMaxRecipients}
+                    onChange={(e) => setBroadcastMaxRecipients(Number(e.target.value))}
+                    disabled={isBroadcasting}
+                  >
+                    {BROADCAST_LIMIT_OPTIONS.map((n) => (
+                      <option key={n} value={n}>
+                        {formatNumber(n)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <p className="analytics-broadcast-planned">
+                Будет отправлено сообщений:{' '}
+                <strong>{formatNumber(plannedBroadcastRecipients)}</strong>
+              </p>
+
+              <div className="analytics-broadcast-composer">
+                <textarea
+                  className="input-main analytics-broadcast-textarea"
+                  rows={5}
+                  placeholder="Текст рассылки..."
+                  value={broadcastBody}
+                  onChange={(e) => setBroadcastBody(e.target.value)}
+                  disabled={isBroadcasting}
+                />
+                <button
+                  type="button"
+                  className="btn btn-black analytics-broadcast-send"
+                  onClick={handleBroadcastSend}
+                  disabled={isBroadcasting || plannedBroadcastRecipients <= 0}
+                >
+                  {isBroadcasting ? 'Отправка...' : 'Разослать'}
+                </button>
+              </div>
+
+              {broadcastResult && broadcastResult.errors?.length > 0 ? (
+                <div className="analytics-broadcast-errors">
+                  <h4>Ошибки доставки (фрагмент)</h4>
+                  <ul>
+                    {broadcastResult.errors.map((err, idx) => (
+                      <li key={`${err.user_external_id}-${idx}`}>
+                        <code>{err.user_external_id}</code>: {err.detail}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
             </section>
           )}
         </div>

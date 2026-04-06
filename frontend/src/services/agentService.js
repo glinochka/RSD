@@ -133,6 +133,23 @@ export const agentService = {
     return response.data;
   },
 
+  getTelegramBroadcastRecipients: async (botId) => {
+    const response = await apiClient.get(API_ROUTES.AGENTS_TELEGRAM_BROADCAST_RECIPIENTS, {
+      params: { bot_id: botId },
+    });
+    return response.data;
+  },
+
+  sendTelegramBroadcast: async (botId, message, { skipFrozen = true, maxRecipients = 500 } = {}) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_TELEGRAM_BROADCAST, {
+      bot_id: botId,
+      message,
+      skip_frozen: skipFrozen,
+      max_recipients: maxRecipients,
+    });
+    return response.data;
+  },
+
   uploadDocumentByBotId: async (botId, file) => {
     const formData = new FormData();
     formData.append('agent_data', JSON.stringify({ bot_id: botId }));

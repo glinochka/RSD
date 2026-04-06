@@ -175,10 +175,11 @@ async def _telegram_api_send_message(bot_token: str, chat_id: int, text: str) ->
         )
 
 
-async def _log_analytics_message(
+async def _log_analytics_message_for_agent_ids(
     *,
     session,
-    agent,
+    agent_id: int,
+    telegram_bot_id: int,
     role: str,
     message_text: str,
     channel: str = "telegram",
@@ -199,8 +200,8 @@ async def _log_analytics_message(
         normalized_channel = "web"
 
     row = AgentAnalyticsMessage(
-        agent_id=agent.id,
-        bot_id=agent.bot_id,
+        agent_id=agent_id,
+        bot_id=telegram_bot_id,
         role=normalized_role,
         channel=normalized_channel,
         user_external_id=(user_external_id or None),
@@ -208,6 +209,52 @@ async def _log_analytics_message(
         message_text=normalized_text,
     )
     session.add(row)
+
+
+async def _log_analytics_message(
+    *,
+    session,
+    agent,
+    role: str,
+    message_text: str,
+    channel: str = "telegram",
+    user_external_id: str | None = None,
+    user_display_name: str | None = None,
+) -> None:
+    await _log_analytics_message_for_agent_ids(
+        session=session,
+        agent_id=agent.id,
+        telegram_bot_id=agent.bot_id,
+        role=role,
+        message_text=message_text,
+        channel=channel,
+        user_external_id=user_external_id,
+        user_display_name=user_display_name,
+    )
+
+
+async def _list_telegram_broadcast_recipient_ids(session, telegram_bot_id: int) -> list[str]:
+    rows = (
+        (
+            await session.execute(
+                select(
+                    AgentAnalyticsMessage.user_external_id.label("uid"),
+                    func.max(AgentAnalyticsMessage.created_at).label("last_at"),
+                )
+                .where(
+                    AgentAnalyticsMessage.bot_id == telegram_bot_id,
+                    AgentAnalyticsMessage.role == "user",
+                    AgentAnalyticsMessage.channel == "telegram",
+                    AgentAnalyticsMessage.user_external_id.is_not(None),
+                )
+                .group_by(AgentAnalyticsMessage.user_external_id)
+                .order_by(func.max(AgentAnalyticsMessage.created_at).desc())
+            )
+        )
+        .mappings()
+        .all()
+    )
+    return [str(r["uid"]) for r in rows if r["uid"] and str(r["uid"]).isdigit()]
 
 
 async def get_agent_by_external_api_key(
@@ -924,6 +971,142 @@ async def telegram_send_to_user_as_owner(
                 user_display_name=None,
             )
     return JSONResponse(content={"ok": True}, status_code=status.HTTP_200_OK)
+
+
+@router.get("/telegram/broadcast_recipients")
+async def telegram_broadcast_recipients(
+    bot_id: int = Query(...),
+    current_user=Depends(get_current_user_required),
+):
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent = await _find_agent_with_access(
+                agent_dao,
+                bot_id=bot_id,
+                current_user=current_user,
+                internal=False,
+            )
+            recipient_ids = await _list_telegram_broadcast_recipient_ids(session, agent.bot_id)
+            if not recipient_ids:
+                return JSONResponse(
+                    content={
+                        "bot_id": agent.bot_id,
+                        "telegram_users_total": 0,
+                        "frozen_among_telegram": 0,
+                        "eligible_when_skip_frozen": 0,
+                    },
+                    status_code=status.HTTP_200_OK,
+                )
+            frozen_rows = await session.scalars(
+                select(AgentFrozenUser.user_external_id).where(
+                    AgentFrozenUser.agent_id == agent.id,
+                    AgentFrozenUser.user_external_id.in_(recipient_ids),
+                )
+            )
+            frozen_set = set(frozen_rows.all())
+            frozen_among = len(frozen_set)
+            eligible = len([uid for uid in recipient_ids if uid not in frozen_set])
+            return JSONResponse(
+                content={
+                    "bot_id": agent.bot_id,
+                    "telegram_users_total": len(recipient_ids),
+                    "frozen_among_telegram": frozen_among,
+                    "eligible_when_skip_frozen": eligible,
+                },
+                status_code=status.HTTP_200_OK,
+            )
+
+
+@router.post("/telegram/broadcast")
+async def telegram_broadcast_as_owner(
+    payload: AgentTelegramBroadcastPayload,
+    current_user=Depends(get_current_user_required),
+):
+    text = payload.message.strip()
+    if not text:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Сообщение пустое",
+        )
+    max_n = payload.max_recipients
+
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent = await _find_agent_with_access(
+                agent_dao,
+                bot_id=payload.bot_id,
+                current_user=current_user,
+                internal=False,
+            )
+            recipient_ids = await _list_telegram_broadcast_recipient_ids(session, agent.bot_id)
+            agent_pk = agent.id
+            telegram_bot_id = agent.bot_id
+            bot_token = decrypt_token(agent.encrypted_token)
+
+    frozen_set: set[str] = set()
+    if payload.skip_frozen and recipient_ids:
+        async with async_session_maker() as session:
+            async with session.begin():
+                frozen_rows = await session.scalars(
+                    select(AgentFrozenUser.user_external_id).where(
+                        AgentFrozenUser.agent_id == agent_pk,
+                        AgentFrozenUser.user_external_id.in_(recipient_ids),
+                    )
+                )
+                frozen_set = set(frozen_rows.all())
+
+    skipped_frozen = sum(1 for uid in recipient_ids if payload.skip_frozen and uid in frozen_set)
+    eligible_ids = [uid for uid in recipient_ids if not (payload.skip_frozen and uid in frozen_set)]
+    to_send = eligible_ids[:max_n]
+    truncated_over_limit = max(0, len(eligible_ids) - max_n)
+
+    sent = 0
+    failed = 0
+    errors: list[dict] = []
+    throttle_seconds = 0.05
+
+    for uid in to_send:
+        chat_id = int(uid)
+        try:
+            await _telegram_api_send_message(bot_token, chat_id, text)
+            sent += 1
+            async with async_session_maker() as log_session:
+                async with log_session.begin():
+                    await _log_analytics_message_for_agent_ids(
+                        session=log_session,
+                        agent_id=agent_pk,
+                        telegram_bot_id=telegram_bot_id,
+                        role="operator",
+                        message_text=text,
+                        channel="dashboard",
+                        user_external_id=uid,
+                        user_display_name=None,
+                    )
+        except HTTPException as exc:
+            failed += 1
+            detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+            if len(errors) < 25:
+                errors.append({"user_external_id": uid, "detail": detail})
+        except Exception as exc:
+            failed += 1
+            if len(errors) < 25:
+                errors.append({"user_external_id": uid, "detail": str(exc)})
+        await asyncio.sleep(throttle_seconds)
+
+    return JSONResponse(
+        content={
+            "ok": True,
+            "sent": sent,
+            "failed": failed,
+            "skipped_frozen": skipped_frozen,
+            "truncated_over_limit": truncated_over_limit,
+            "attempted": len(to_send),
+            "errors": errors,
+        },
+        status_code=status.HTTP_200_OK,
+    )
 
 
 @router.get("/analytics/chats")
