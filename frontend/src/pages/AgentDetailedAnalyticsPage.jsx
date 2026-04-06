@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import MainLayout from '../components/Layout';
 import Loading from '../components/Loading';
@@ -59,6 +59,64 @@ const buildOverviewMetrics = (summary, docsCount) => {
     { id: 'qualified', label: 'Доля квалифицированных лидов', value: `${conversionToQualified.toFixed(1)}%` },
     { id: 'docs', label: 'Документов в базе знаний', value: formatNumber(docsCount) },
   ];
+};
+
+const BroadcastLimitSelect = ({ value, onChange, disabled, options }) => {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => {
+      if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="analytics-broadcast-custom" ref={rootRef}>
+      <button
+        type="button"
+        className="analytics-broadcast-custom-trigger"
+        disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label="Максимум получателей за одну рассылку"
+        onClick={() => !disabled && setOpen((o) => !o)}
+      >
+        <span className="analytics-broadcast-custom-trigger-value">{formatNumber(value)}</span>
+        <span className="analytics-broadcast-custom-trigger-chevron" aria-hidden />
+      </button>
+      {open ? (
+        <ul className="analytics-broadcast-custom-menu" role="listbox" aria-label="Лимит получателей">
+          {options.map((n) => (
+            <li key={n} role="none">
+              <button
+                type="button"
+                role="option"
+                aria-selected={n === value}
+                className={`analytics-broadcast-custom-option ${n === value ? 'analytics-broadcast-custom-option--selected' : ''}`}
+                onClick={() => {
+                  onChange(n);
+                  setOpen(false);
+                }}
+              >
+                {formatNumber(n)}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
 };
 
 const mapChatsPayload = (payload) => {
@@ -626,21 +684,12 @@ const AgentDetailedAnalyticsPageContent = () => {
                 </label>
                 <label className="analytics-broadcast-limit">
                   <span className="analytics-broadcast-limit-label">Максимум за раз</span>
-                  <span className="analytics-broadcast-select-wrap">
-                    <select
-                      className="analytics-broadcast-select"
-                      value={broadcastMaxRecipients}
-                      onChange={(e) => setBroadcastMaxRecipients(Number(e.target.value))}
-                      disabled={isBroadcasting}
-                      aria-label="Максимум получателей за одну рассылку"
-                    >
-                      {BROADCAST_LIMIT_OPTIONS.map((n) => (
-                        <option key={n} value={n}>
-                          {formatNumber(n)}
-                        </option>
-                      ))}
-                    </select>
-                  </span>
+                  <BroadcastLimitSelect
+                    value={broadcastMaxRecipients}
+                    onChange={setBroadcastMaxRecipients}
+                    disabled={isBroadcasting}
+                    options={BROADCAST_LIMIT_OPTIONS}
+                  />
                 </label>
               </div>
 

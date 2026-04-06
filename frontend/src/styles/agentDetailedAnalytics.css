@@ -606,20 +606,53 @@
   color: var(--color-text);
 }
 
-.analytics-broadcast-select-wrap {
+/* Кастомное меню: нативный <option> в Windows почти не стилизуется; список — разметка + кнопки */
+.analytics-broadcast-custom {
   position: relative;
-  display: block;
   width: 100%;
   max-width: 240px;
 }
 
-.analytics-broadcast-select-wrap::after {
-  content: '';
-  position: absolute;
-  right: 14px;
-  top: 50%;
-  transform: translateY(-50%);
-  pointer-events: none;
+.analytics-broadcast-custom-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  width: 100%;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: inherit;
+  padding: var(--spacing-sm) var(--spacing-base);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-base);
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  cursor: pointer;
+  transition: border-color var(--transition-base), box-shadow var(--transition-base);
+  text-align: left;
+}
+
+.analytics-broadcast-custom-trigger:focus {
+  outline: none;
+}
+
+.analytics-broadcast-custom-trigger:focus-visible {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.analytics-broadcast-custom-trigger:disabled {
+  background-color: var(--color-bg-lighter);
+  color: var(--color-text-lighter);
+  cursor: not-allowed;
+}
+
+.analytics-broadcast-custom-trigger-value {
+  font-variant-numeric: tabular-nums;
+}
+
+.analytics-broadcast-custom-trigger-chevron {
+  flex-shrink: 0;
   width: 0;
   height: 0;
   border-left: 5px solid transparent;
@@ -627,58 +660,59 @@
   border-top: 6px solid var(--color-text-light);
 }
 
-.analytics-broadcast-select {
-  width: 100%;
-  box-sizing: border-box;
-  appearance: none;
-  -webkit-appearance: none;
-  -moz-appearance: none;
-  font-family: inherit;
-  font-size: var(--font-size-base);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text);
-  line-height: 1.45;
-  background-color: var(--color-bg);
+.analytics-broadcast-custom-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  margin: 0;
+  padding: var(--spacing-xs);
+  list-style: none;
+  z-index: var(--z-dropdown);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  padding: var(--spacing-sm) calc(var(--spacing-2xl) + 2px) var(--spacing-sm) var(--spacing-base);
-  cursor: pointer;
-  transition:
-    border-color var(--transition-base),
-    box-shadow var(--transition-base),
-    background-color var(--transition-base);
+  background: var(--color-bg);
+  box-shadow: var(--shadow-lg);
 }
 
-.analytics-broadcast-select:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--color-primary) 40%, var(--color-border));
-  background-color: color-mix(in srgb, var(--color-bg) 94%, var(--color-primary) 6%);
-}
-
-.analytics-broadcast-select:focus {
-  outline: none;
-}
-
-.analytics-broadcast-select:focus-visible {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.22);
-}
-
-.analytics-broadcast-select:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-.analytics-broadcast-select option {
-  font-weight: var(--font-weight-normal);
+.analytics-broadcast-custom-option {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  border: none;
+  background: transparent;
+  text-align: left;
   padding: var(--spacing-sm) var(--spacing-base);
-  background-color: var(--color-bg);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: var(--font-size-base);
+  cursor: pointer;
   color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
 }
 
-@supports not (border-color: color-mix(in srgb, white 50%, black)) {
-  .analytics-broadcast-select:hover:not(:disabled) {
-    border-color: var(--color-primary);
-    background-color: var(--color-bg-light);
+.analytics-broadcast-custom-option--selected {
+  font-weight: var(--font-weight-semibold);
+  background: color-mix(in srgb, var(--color-primary) 10%, var(--color-bg));
+}
+
+.analytics-broadcast-custom-option:hover,
+.analytics-broadcast-custom-option:focus-visible {
+  outline: none;
+  background: var(--primary-black);
+  color: #fff;
+}
+
+.analytics-broadcast-custom-option--selected:hover,
+.analytics-broadcast-custom-option--selected:focus-visible {
+  background: var(--primary-black);
+  color: #fff;
+}
+
+@supports not (background: color-mix(in srgb, white 50%, black)) {
+  .analytics-broadcast-custom-option--selected {
+    background: var(--color-bg-light);
   }
 }
 
@@ -806,8 +840,7 @@
     width: 100%;
   }
 
-  .analytics-broadcast-select-wrap,
-  .analytics-broadcast-select {
+  .analytics-broadcast-custom {
     max-width: none;
   }
 
