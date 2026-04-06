@@ -139,13 +139,19 @@ const AnalyticsChart = ({ timeline, selectedDays, onChangeDays, isLoading }) => 
           <p className="analytics-chart-empty">Недостаточно данных для графика</p>
         ) : (
           <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="analytics-chart-svg">
-            <line x1={paddingX} y1={paddingY} x2={paddingX} y2={height - paddingY} stroke="#d1d5db" />
             <line
+              className="analytics-chart-axis"
+              x1={paddingX}
+              y1={paddingY}
+              x2={paddingX}
+              y2={height - paddingY}
+            />
+            <line
+              className="analytics-chart-axis"
               x1={paddingX}
               y1={height - paddingY}
               x2={width - paddingX}
               y2={height - paddingY}
-              stroke="#d1d5db"
             />
             {series.map((serie) => (
               <g key={serie.key}>
@@ -258,19 +264,19 @@ const AgentDetailedAnalyticsPageContent = () => {
   return (
     <div className="agent-analytics-page">
       <div className="agent-analytics-header">
+        <div className="agent-analytics-header-main">
+          <h2>Детальная аналитика</h2>
+          <p className="agent-analytics-header-subtitle">
+            {agent?.bot_username ? `@${agent.bot_username}` : `Агент #${botId}`}
+          </p>
+        </div>
         <button
           type="button"
-          className="btn btn-outline"
+          className="btn btn-outline agent-analytics-back-btn"
           onClick={() => navigate(NAVIGATION_ROUTES.AGENTS)}
         >
           ← Назад к управлению агентами
         </button>
-        <div>
-          <h2>Детальная аналитика</h2>
-          <p>
-            {agent?.bot_username ? `@${agent.bot_username}` : `Агент #${botId}`}
-          </p>
-        </div>
       </div>
 
       <div className="agent-analytics-layout">
