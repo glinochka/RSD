@@ -36,6 +36,10 @@ class User(Base):
     registered: Mapped[date] = mapped_column(default=datetime.now(timezone.utc))
 
     agents: Mapped[list['Agent']] = relationship(back_populates='user', cascade="all, delete-orphan")
+    external_identities: Mapped[list["UserExternalIdentity"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
 
 class TelegramLinkChallenge(Base):
@@ -63,6 +67,19 @@ class Agent(Base):
     encrypted_external_api_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
     external_api_key_hash: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
     bot_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=True) 
+    primary_provider: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="telegram_bot",
+        server_default="telegram_bot",
+    )
+    template_type: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="qa",
+        server_default="qa",
+    )
+    template_config: Mapped[str | None] = mapped_column(Text, nullable=True)
     system_prompt: Mapped[str] = mapped_column(Text, default="Ты — полезный ассистент.")
     
 
@@ -80,6 +97,14 @@ class Agent(Base):
         cascade="all, delete-orphan",
     )
     frozen_users: Mapped[list["AgentFrozenUser"]] = relationship(
+        back_populates="agent",
+        cascade="all, delete-orphan",
+    )
+    channel_connections: Mapped[list["AgentChannelConnection"]] = relationship(
+        back_populates="agent",
+        cascade="all, delete-orphan",
+    )
+    reindex_jobs: Mapped[list["ReindexJob"]] = relationship(
         back_populates="agent",
         cascade="all, delete-orphan",
     )
@@ -117,6 +142,44 @@ class AgentAnalyticsMessage(Base):
     agent: Mapped["Agent"] = relationship(back_populates="analytics_messages")
 
 
+class AgentChannelConnection(Base):
+    __tablename__ = "agent_channel_connections"
+    __table_args__ = (
+        UniqueConstraint("provider", "external_id", name="uq_agent_channel_provider_external"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), index=True, nullable=False)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    connection_type: Mapped[str] = mapped_column(String(32), nullable=False, default="bot", server_default="bot")
+    external_id: Mapped[str] = mapped_column(String(191), nullable=False, index=True)
+    encrypted_credentials: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    agent: Mapped["Agent"] = relationship(back_populates="channel_connections")
+
+
+class UserExternalIdentity(Base):
+    __tablename__ = "user_external_identities"
+    __table_args__ = (
+        UniqueConstraint("provider", "external_user_id", name="uq_user_identity_provider_external"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    external_user_id: Mapped[str] = mapped_column(String(191), nullable=False, index=True)
+    display_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+
+    user: Mapped["User"] = relationship(back_populates="external_identities")
+
+
 class AgentDocument(Base):
     __table_args__ = {'extend_existing': True}
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -124,9 +187,70 @@ class AgentDocument(Base):
     
     file_name: Mapped[str] = mapped_column(String(255))
     content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    embedding_profile_key: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default="bge_m3_v1",
+        server_default="bge_m3_v1",
+        index=True,
+    )
+    embedding_schema_version: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=1,
+        server_default="1",
+        index=True,
+    )
+    embedding_model_name: Mapped[str] = mapped_column(
+        String(128),
+        nullable=False,
+        default="BAAI/bge-m3",
+        server_default="BAAI/bge-m3",
+    )
+    chunk_size: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=1000,
+        server_default="1000",
+    )
+    chunk_overlap: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=100,
+        server_default="100",
+    )
     status: Mapped[str] = mapped_column(String(15), default="processing") # processing, ready, error
     created_at: Mapped[date] = mapped_column(default=datetime.now(timezone.utc))
     agent: Mapped["Agent"] = relationship(back_populates="documents")
+
+
+class ReindexJob(Base):
+    __tablename__ = "reindex_jobs"
+    __table_args__ = {"extend_existing": True}
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), index=True, nullable=False)
+    requested_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="queued", server_default="queued", index=True)
+    target_embedding_profile_key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    target_embedding_schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    target_embedding_model_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    batch_size: Mapped[int] = mapped_column(Integer, nullable=False, default=10, server_default="10")
+    document_cursor: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    total_documents: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    processed_documents: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    success_documents: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    failed_documents: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    agent: Mapped["Agent"] = relationship(back_populates="reindex_jobs")
 
 
 class PaymentTransaction(Base):

@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     EMBEDDING_BATCH_SIZE: int = 16
     EMBEDDING_PARALLEL: int = 1
     EMBEDDING_MAX_CONCURRENT_DOCUMENTS: int = 1
+    EMBEDDING_PROFILE_KEY: str = "bge_m3_v1"
+    EMBEDDING_SCHEMA_VERSION: int = 1
+    EMBEDDING_CHUNK_SIZE: int = 1000
+    EMBEDDING_CHUNK_OVERLAP: int = 100
 
     model_config = SettingsConfigDict(
         env_file= Path(__file__).parent.parent.parent / '.env',  

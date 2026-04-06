@@ -15,6 +15,11 @@ class NewAgent_byUserWith_tgID(BaseModel):
 
     system_prompt: Optional[str] = Field(None,description="Промпт")
     welcome_message: Optional[str] = Field(None,min_length=3, description="Начальное сообщение бота: длина от 3 символов")
+    template_type: str = Field(
+        default="qa",
+        pattern="^(qa|function_calling|lead_generation|content_factory)$",
+        description="Тип шаблона агента",
+    )
 
 
 class Agent_by_botID(BaseModel):
@@ -27,6 +32,11 @@ class User_by_agent_or_tgID(BaseModel):
 class NewAgent_byToken(BaseModel):
     bot_token: str = Field(..., min_length=10, max_length=500, description="API token from BotFather")
     system_prompt: str = Field(..., min_length=1, description="System prompt for agent")
+    template_type: str = Field(
+        default="qa",
+        pattern="^(qa|function_calling|lead_generation|content_factory)$",
+        description="Тип шаблона агента",
+    )
 
 
 class AgentAIAction(BaseModel):
@@ -52,7 +62,7 @@ class AgentAnalyticsMessageLog(BaseModel):
     role: str = Field(..., pattern="^(user|agent)$", description="Роль сообщения")
     channel: str = Field(
         default="telegram",
-        pattern="^(telegram|external_api|web)$",
+        pattern="^(telegram|external_api|web|dashboard|telegram_userbot|whatsapp_userbot|whatsapp_business_api|instagram|tiktok|pinterest)$",
         description="Канал сообщения",
     )
     user_external_id: Optional[str] = Field(

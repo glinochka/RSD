@@ -7,16 +7,17 @@ from logging import getLogger
 from secrets import compare_digest
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Header, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Header, HTTPException, Path, Query, UploadFile, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.exc import IntegrityError
 
-from .dao import DocumentDAO
+from .dao import DocumentDAO, ReindexJobDAO
 from .schemas import *
 from ..alembic.database import async_session_maker
 from ..config import settings
+from ..qdrant.embeddings import get_active_embedding_profile
 from ..qdrant.indexer import (
     extract_text,
     fetch_public_url_text,
@@ -29,6 +30,12 @@ from ..qdrant.indexer import (
 from ..qdrant.search_service import delete_document_vectors, search_knowledge_base
 from ..router_agents.dao import AgentDAO
 from ..router_users.dao import UserDAO
+from ..services.reindex_jobs import (
+    cancel_reindex_job,
+    create_reindex_job,
+    retry_reindex_job,
+    serialize_reindex_job,
+)
 from ..utils.JWT import get_user_from_access_token
 from ..utils.convert import convert_to_dict
 
@@ -258,6 +265,7 @@ async def upload_document(
 
     current_plan = user.subscription_type
     limit = get_chunk_limit_by_plan(current_plan)
+    embedding_profile = get_active_embedding_profile()
 
     temp_path, content_hash = _save_upload_to_temp_with_hash(
         file=file,
@@ -267,7 +275,11 @@ async def upload_document(
     async with async_session_maker() as session:
         doc_dao = DocumentDAO(session)
         async with session.begin():
-            existing_doc = await doc_dao.find_by_agent_and_content_hash(agent.id, content_hash)
+            existing_doc = await doc_dao.find_by_agent_and_content_hash(
+                agent.id,
+                content_hash,
+                embedding_profile_key=embedding_profile["profile_key"],
+            )
 
     if existing_doc:
         if existing_doc.status == "error":
@@ -277,7 +289,15 @@ async def upload_document(
                     found_doc = await doc_dao.find_one_by_filter(id=existing_doc.id)
                     await doc_dao.update(
                         found_doc,
-                        {"status": "processing", "file_name": file.filename},
+                        {
+                            "status": "processing",
+                            "file_name": file.filename,
+                            "embedding_profile_key": embedding_profile["profile_key"],
+                            "embedding_schema_version": embedding_profile["schema_version"],
+                            "embedding_model_name": embedding_profile["model_name"],
+                            "chunk_size": settings.EMBEDDING_CHUNK_SIZE,
+                            "chunk_overlap": settings.EMBEDDING_CHUNK_OVERLAP,
+                        },
                     )
             background_tasks.add_task(
                 process_document,
@@ -312,7 +332,10 @@ async def upload_document(
 
     chunks = text_splitter.split_text(text)
     new_chunks_count = len(chunks)
-    current_count = await get_current_chunks_count(agent_id)
+    current_count = await get_current_chunks_count(
+        agent_id,
+        embedding_profile_key=embedding_profile["profile_key"],
+    )
 
     if current_count + new_chunks_count > limit:
         if os.path.exists(temp_path):
@@ -334,6 +357,11 @@ async def upload_document(
                         "agent_id": agent.id,
                         "file_name": file.filename,
                         "content_hash": content_hash,
+                        "embedding_profile_key": embedding_profile["profile_key"],
+                        "embedding_schema_version": embedding_profile["schema_version"],
+                        "embedding_model_name": embedding_profile["model_name"],
+                        "chunk_size": settings.EMBEDDING_CHUNK_SIZE,
+                        "chunk_overlap": settings.EMBEDDING_CHUNK_OVERLAP,
                         "status": "processing",
                     }
                     doc = await doc_dao.add(doc_data)
@@ -342,7 +370,11 @@ async def upload_document(
             async with async_session_maker() as session:
                 doc_dao = DocumentDAO(session)
                 async with session.begin():
-                    existing_doc = await doc_dao.find_by_agent_and_content_hash(agent.id, content_hash)
+                    existing_doc = await doc_dao.find_by_agent_and_content_hash(
+                        agent.id,
+                        content_hash,
+                        embedding_profile_key=embedding_profile["profile_key"],
+                    )
             data = {
                 "status": "duplicate",
                 "document_id": existing_doc.id if existing_doc else None,
@@ -399,12 +431,17 @@ async def upload_public_link(
 
     current_plan = user.subscription_type
     limit = get_chunk_limit_by_plan(current_plan)
+    embedding_profile = get_active_embedding_profile()
 
     content_hash = hashlib.sha256(normalized_url.encode("utf-8")).hexdigest()
     async with async_session_maker() as session:
         doc_dao = DocumentDAO(session)
         async with session.begin():
-            existing_doc = await doc_dao.find_by_agent_and_content_hash(agent.id, content_hash)
+            existing_doc = await doc_dao.find_by_agent_and_content_hash(
+                agent.id,
+                content_hash,
+                embedding_profile_key=embedding_profile["profile_key"],
+            )
 
     if existing_doc:
         data = {
@@ -441,7 +478,10 @@ async def upload_public_link(
             detail="По ссылке не удалось подготовить данные для индексации",
         )
 
-    current_count = await get_current_chunks_count(agent_id)
+    current_count = await get_current_chunks_count(
+        agent_id,
+        embedding_profile_key=embedding_profile["profile_key"],
+    )
     if current_count + new_chunks_count > limit:
         data = {
             "status": "limit_error",
@@ -461,6 +501,11 @@ async def upload_public_link(
                     "agent_id": agent.id,
                     "file_name": normalized_url,
                     "content_hash": content_hash,
+                    "embedding_profile_key": embedding_profile["profile_key"],
+                    "embedding_schema_version": embedding_profile["schema_version"],
+                    "embedding_model_name": embedding_profile["model_name"],
+                    "chunk_size": settings.EMBEDDING_CHUNK_SIZE,
+                    "chunk_overlap": settings.EMBEDDING_CHUNK_OVERLAP,
                     "status": "processing",
                 }
                 doc = await doc_dao.add(doc_data)
@@ -469,7 +514,11 @@ async def upload_public_link(
         async with async_session_maker() as session:
             doc_dao = DocumentDAO(session)
             async with session.begin():
-                existing_doc = await doc_dao.find_by_agent_and_content_hash(agent.id, content_hash)
+                existing_doc = await doc_dao.find_by_agent_and_content_hash(
+                    agent.id,
+                    content_hash,
+                    embedding_profile_key=embedding_profile["profile_key"],
+                )
         data = {
             "status": "duplicate",
             "document_id": existing_doc.id if existing_doc else None,
@@ -496,4 +545,112 @@ async def upload_public_link(
         "current_count": current_count,
     }
     return JSONResponse(content=data, status_code=status.HTTP_200_OK)
+
+
+@router.post("/reindex-jobs")
+async def create_manual_reindex_job(
+    payload: ReindexJobCreateRequest,
+    current_user=Depends(get_current_user_optional),
+    internal: bool = Depends(is_internal_request),
+):
+    _assert_access(current_user, internal)
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent = await agent_dao.find_one_by_filter(bot_id=payload.bot_id)
+            if not agent:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+            if current_user and agent.user_id != current_user.id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+
+    try:
+        job = await create_reindex_job(
+            agent_pk=agent.id,
+            requested_by_user_id=current_user.id if current_user else None,
+            batch_size=payload.batch_size,
+            target_embedding_profile_key=payload.target_embedding_profile_key,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+
+    return JSONResponse(content={"job": serialize_reindex_job(job)}, status_code=status.HTTP_201_CREATED)
+
+
+@router.get("/reindex-jobs")
+async def list_reindex_jobs(
+    bot_id: int = Query(...),
+    current_user=Depends(get_current_user_optional),
+    internal: bool = Depends(is_internal_request),
+):
+    _assert_access(current_user, internal)
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        job_dao = ReindexJobDAO(session)
+        async with session.begin():
+            agent = await agent_dao.find_one_by_filter(bot_id=bot_id)
+            if not agent:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+            if current_user and agent.user_id != current_user.id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+            jobs = await job_dao.list_by_agent(agent.id)
+
+    return JSONResponse(
+        content={
+            "bot_id": bot_id,
+            "jobs": [serialize_reindex_job(job) for job in jobs],
+        },
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@router.post("/reindex-jobs/{job_id}/retry")
+async def retry_manual_reindex_job(
+    job_id: int = Path(..., ge=1),
+    current_user=Depends(get_current_user_optional),
+    internal: bool = Depends(is_internal_request),
+):
+    _assert_access(current_user, internal)
+    async with async_session_maker() as session:
+        job_dao = ReindexJobDAO(session)
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            job = await job_dao.find_one_by_filter(id=job_id)
+            if not job:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reindex job not found")
+            agent = await agent_dao.find_one_by_filter(id=job.agent_id)
+            if not agent:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+            if current_user and agent.user_id != current_user.id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reindex job not found")
+
+    retried_job = await retry_reindex_job(job_id)
+    if not retried_job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reindex job not found")
+    return JSONResponse(content={"job": serialize_reindex_job(retried_job)}, status_code=status.HTTP_200_OK)
+
+
+@router.post("/reindex-jobs/{job_id}/cancel")
+async def cancel_manual_reindex_job(
+    job_id: int = Path(..., ge=1),
+    current_user=Depends(get_current_user_optional),
+    internal: bool = Depends(is_internal_request),
+):
+    _assert_access(current_user, internal)
+    async with async_session_maker() as session:
+        job_dao = ReindexJobDAO(session)
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            job = await job_dao.find_one_by_filter(id=job_id)
+            if not job:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reindex job not found")
+            agent = await agent_dao.find_one_by_filter(id=job.agent_id)
+            if not agent:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+            if current_user and agent.user_id != current_user.id:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reindex job not found")
+
+    cancelled_job = await cancel_reindex_job(job_id)
+    if not cancelled_job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reindex job not found")
+    return JSONResponse(content={"job": serialize_reindex_job(cancelled_job)}, status_code=status.HTTP_200_OK)
 
