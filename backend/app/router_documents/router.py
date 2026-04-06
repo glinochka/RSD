@@ -4,10 +4,9 @@ import ipaddress
 import socket
 import tempfile
 from logging import getLogger
-from secrets import compare_digest
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Header, HTTPException, Path, Query, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Path, Query, UploadFile, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -38,6 +37,7 @@ from ..services.reindex_jobs import (
 )
 from ..utils.JWT import get_user_from_access_token
 from ..utils.convert import convert_to_dict
+from ..utils.internal_auth import is_internal_request
 
 logger = getLogger(__name__)
 router = APIRouter(prefix="/api/documents")
@@ -57,15 +57,6 @@ async def get_current_user_optional(
         async with session.begin():
             user = await get_user_from_access_token(token, user_dao)
             return user
-
-
-def is_internal_request(
-    x_internal_api_key: str | None = Header(default=None, alias="X-Internal-API-Key"),
-) -> bool:
-    configured_key = settings.INTERNAL_API_KEY.strip()
-    if not configured_key or not x_internal_api_key:
-        return False
-    return compare_digest(x_internal_api_key, configured_key)
 
 
 def _assert_access(current_user, internal: bool) -> None:

@@ -13,6 +13,16 @@ class LoginUser(BaseModel):
     name: str = Field(..., min_length=3, max_length=30, description="Имя пользователя: длина от 3 до 30 символов")
     password: str = Field(..., min_length=6, max_length=30, description="Пароль: длина от 6 до 30 символов")
 
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str = Field(..., min_length=32, max_length=1024, description="Refresh token")
+
+
+class AuthTokensResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: Literal["bearer"] = "bearer"
+
 class User_from_tg(BaseModel):
     name: str = Field(..., min_length=3, max_length=32, description="Имя пользователя: длина от 3 до 32 символов")
     telegram_id: int = Field(..., description="Id пользователя в телеграме")

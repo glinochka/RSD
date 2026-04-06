@@ -216,16 +216,34 @@ async def test_agent(test_session, test_user) -> Generator:
         crypto.encrypt_token = original_encrypt
 
 
-@pytest.fixture
-def auth_headers(test_user):
+@pytest_asyncio.fixture(scope="function")
+async def auth_headers(test_user, test_session):
     """
     Генерирует заголовки с JWT токеном.
     Использует вашу функцию create_access_token без изменений.
     """
-    # Просто вызываем вашу функцию, она сама разберется с конфигом благодаря load_dotenv в начале файла
+    from datetime import datetime, timedelta, timezone
+    import secrets
+    import hashlib
+    from app.alembic.models import UserAuthSession
     from app.utils.JWT import create_access_token
 
-    access_token = create_access_token(data={"user_id": str(test_user.id)})
+    sid = secrets.token_hex(16)
+    refresh_raw = secrets.token_urlsafe(48)
+    material = f"{os.getenv('USER_JWT_SECRET_KEY', '')}:{refresh_raw}"
+    refresh_hash = hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+    async with test_session.begin():
+        test_session.add(
+            UserAuthSession(
+                id=sid,
+                user_id=test_user.id,
+                refresh_token_hash=refresh_hash,
+                expires_at=(datetime.now(timezone.utc) + timedelta(days=30)).replace(tzinfo=None),
+            )
+        )
+
+    access_token = create_access_token(data={"user_id": str(test_user.id), "sid": sid})
 
     return {"Authorization": f"Bearer {access_token}"}
 

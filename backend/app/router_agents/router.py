@@ -1,7 +1,6 @@
 import asyncio
 import json
 from logging import getLogger
-from secrets import compare_digest
 from urllib.parse import quote
 from urllib.request import urlopen
 from datetime import datetime, timedelta
@@ -29,6 +28,7 @@ from ..utils.api_keys import generate_agent_external_api_key, hash_agent_externa
 from ..utils.JWT import get_user_from_access_token
 from ..utils.convert import convert_to_dict
 from ..utils.crypto import encrypt_token, decrypt_token
+from ..utils.internal_auth import is_internal_request
 from ..utils.rate_limit import rate_limit
 
 logger = getLogger(__name__)
@@ -60,15 +60,6 @@ async def get_current_user_required(
             detail="Authentication required",
         )
     return current_user
-
-
-def is_internal_request(
-    x_internal_api_key: str | None = Header(default=None, alias="X-Internal-API-Key"),
-) -> bool:
-    configured_key = settings.INTERNAL_API_KEY.strip()
-    if not configured_key or not x_internal_api_key:
-        return False
-    return compare_digest(x_internal_api_key, configured_key)
 
 
 def _assert_access(current_user, internal: bool) -> None:

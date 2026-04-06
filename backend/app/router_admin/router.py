@@ -30,6 +30,7 @@ from ..subscription_plans import (
 )
 from ..utils.JWT import create_access_token
 from ..utils.rate_limit import rate_limit
+from ..utils.security import verify_password
 
 logger = getLogger(__name__)
 
@@ -38,16 +39,16 @@ http_bearer = HTTPBearer(auto_error=False)
 
 
 def _ensure_admin_credentials_configured() -> None:
-    if not settings.ADMIN_WEB_LOGIN.strip() or not settings.ADMIN_WEB_PASSWORD:
+    if not settings.ADMIN_WEB_LOGIN.strip() or not settings.ADMIN_WEB_PASSWORD_HASH.strip():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="ADMIN_WEB_LOGIN / ADMIN_WEB_PASSWORD are not configured",
+            detail="ADMIN_WEB_LOGIN / ADMIN_WEB_PASSWORD_HASH are not configured",
         )
 
 
 def _decode_admin_token(token: str) -> dict:
     try:
-        auth_data = get_auth_data()
+        auth_data = get_auth_data("admin")
         payload = jwt.decode(token, auth_data["secret_key"], algorithms=[auth_data["algorithm"]])
     except InvalidTokenError:
         raise HTTPException(
@@ -70,6 +71,11 @@ def _decode_admin_token(token: str) -> dict:
         )
 
     if payload.get("admin_web") is not True:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Admin token is invalid",
+        )
+    if payload.get("token_kind") != "admin":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Admin token is invalid",
@@ -105,7 +111,7 @@ async def admin_login(payload: AdminLoginRequest):
     password = payload.password
 
     is_login_valid = compare_digest(login, settings.ADMIN_WEB_LOGIN.strip())
-    is_password_valid = compare_digest(password, settings.ADMIN_WEB_PASSWORD)
+    is_password_valid = verify_password(password, settings.ADMIN_WEB_PASSWORD_HASH)
 
     if not is_login_valid or not is_password_valid:
         raise HTTPException(
@@ -113,7 +119,7 @@ async def admin_login(payload: AdminLoginRequest):
             detail="Invalid admin credentials",
         )
 
-    access_token = create_access_token({"admin_web": True})
+    access_token = create_access_token({"admin_web": True}, token_kind="admin")
     return JSONResponse(
         content={
             "access_token": access_token,

@@ -40,6 +40,25 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    auth_sessions: Mapped[list["UserAuthSession"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+
+
+class UserAuthSession(Base):
+    __tablename__ = "user_auth_sessions"
+    __table_args__ = {"extend_existing": True}
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    refresh_token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    last_refreshed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+
+    user: Mapped["User"] = relationship(back_populates="auth_sessions")
 
 
 class TelegramLinkChallenge(Base):

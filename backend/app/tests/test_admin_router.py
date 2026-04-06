@@ -13,9 +13,11 @@ class TestAdminLogin:
     @pytest.mark.asyncio
     async def test_admin_login_success(self, client):
         """Test successful admin login."""
+        from app.utils.security import get_password_hash
+
         with patch('app.router_admin.router.settings') as mock_settings:
             mock_settings.ADMIN_WEB_LOGIN = "admin"
-            mock_settings.ADMIN_WEB_PASSWORD = "secure_password"
+            mock_settings.ADMIN_WEB_PASSWORD_HASH = get_password_hash("secure_password")
 
             response = await client.post(
                 "/api/admin/login",
@@ -30,9 +32,11 @@ class TestAdminLogin:
     @pytest.mark.asyncio
     async def test_admin_login_invalid_credentials(self, client):
         """Test login with invalid credentials."""
+        from app.utils.security import get_password_hash
+
         with patch('app.router_admin.router.settings') as mock_settings:
             mock_settings.ADMIN_WEB_LOGIN = "admin"
-            mock_settings.ADMIN_WEB_PASSWORD = "secure_password"
+            mock_settings.ADMIN_WEB_PASSWORD_HASH = get_password_hash("secure_password")
 
             response = await client.post(
                 "/api/admin/login",
@@ -47,7 +51,7 @@ class TestAdminLogin:
         """Test login when admin credentials are not configured."""
         with patch('app.router_admin.router.settings') as mock_settings:
             mock_settings.ADMIN_WEB_LOGIN = ""
-            mock_settings.ADMIN_WEB_PASSWORD = None
+            mock_settings.ADMIN_WEB_PASSWORD_HASH = ""
 
             response = await client.post(
                 "/api/admin/login",

@@ -7,15 +7,17 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy import select
 
 from .dao import TelegramLinkChallengeDAO, UserDAO
 from .schemas import *
 from ..alembic.database import async_session_maker
+from ..alembic.models import UserAuthSession
 from ..config import settings
 from ..router_agents.dao import AgentDAO
 from ..utils.convert import convert_to_dict
 from ..utils.internal_auth import verify_internal_key
-from ..utils.JWT import create_access_token, get_user_from_access_token
+from ..utils.JWT import create_access_token, decode_access_token_payload, get_user_from_access_token
 from ..utils.rate_limit import rate_limit
 from ..utils.security import get_password_hash, verify_password
 
@@ -28,6 +30,7 @@ LINK_CODE_ALPHABET = "0123456789"
 LINK_CODE_LENGTH = 6
 LINK_CODE_TTL_MINUTES = 5
 LINK_CODE_MAX_ATTEMPTS = 5
+REFRESH_TOKEN_BYTES = 48
 
 
 def _utc_now_naive() -> datetime:
@@ -57,6 +60,35 @@ def _normalize_tg_username(username: str) -> str:
     if value.startswith("@"):
         value = value[1:]
     return value.lower()
+
+
+def _build_refresh_expiry() -> datetime:
+    return _utc_now_naive() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+
+
+def _hash_refresh_token(refresh_token: str) -> str:
+    material = f"{settings.USER_JWT_SECRET_KEY}:{refresh_token.strip()}"
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+def _generate_refresh_token() -> str:
+    return secrets.token_urlsafe(REFRESH_TOKEN_BYTES)
+
+
+async def _issue_user_tokens(session, user_id: int) -> tuple[str, str]:
+    session_id = secrets.token_hex(16)
+    refresh_token = _generate_refresh_token()
+    expires_at = _build_refresh_expiry()
+    session.add(
+        UserAuthSession(
+            id=session_id,
+            user_id=user_id,
+            refresh_token_hash=_hash_refresh_token(refresh_token),
+            expires_at=expires_at,
+        )
+    )
+    access_token = create_access_token({"user_id": str(user_id), "sid": session_id}, token_kind="user")
+    return access_token, refresh_token
 
 
 def _serialize_user_public(user) -> dict:
@@ -229,11 +261,14 @@ async def user_registration(new_user: NewUser):
             dict_new_user["password"] = get_password_hash(dict_new_user["password"])
 
             user = await user_dao.add(dict_new_user)
+            await session.flush()
+            access_token, refresh_token = await _issue_user_tokens(session, user.id)
         
     logger.info(f"{new_user.name} был добавлен")
 
     return JSONResponse(content={
-            "access_token": create_access_token({"user_id": str(user.id)}),
+            "access_token": access_token,
+            "refresh_token": refresh_token,
             "token_type": "bearer"
         },
         status_code=status.HTTP_201_CREATED)
@@ -252,14 +287,115 @@ async def user_login(login_user: LoginUser):
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Неверные учетные данные"
         )
+    if user.is_banned:
+        logger.info("Заблокированный пользователь попытался войти: %s", login_user.name)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Пользователь заблокирован",
+        )
 
     logger.info(f"{login_user.name} вошел в систему")
 
-    access_token = create_access_token({"user_id": str(user.id)})
+    async with async_session_maker() as session:
+        async with session.begin():
+            access_token, refresh_token = await _issue_user_tokens(session, user.id)
+
     return {
             "access_token": access_token,
+            "refresh_token": refresh_token,
             "token_type": "bearer"
         }
+
+
+@router.post("/refresh", dependencies=[Depends(rate_limit(max_requests=20, window_seconds=60, scope="users_refresh"))])
+async def refresh_user_tokens(payload: RefreshTokenRequest):
+    refresh_token = payload.refresh_token.strip()
+    refresh_token_hash = _hash_refresh_token(refresh_token)
+    now_utc = _utc_now_naive()
+
+    async with async_session_maker() as session:
+        user_dao = UserDAO(session)
+        async with session.begin():
+            auth_session = await session.scalar(
+                select(UserAuthSession).where(UserAuthSession.refresh_token_hash == refresh_token_hash)
+            )
+            if not auth_session or auth_session.revoked_at is not None:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token is invalid")
+            if auth_session.expires_at < now_utc:
+                auth_session.revoked_at = now_utc
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token is expired")
+
+            user = await user_dao.find_one_by_filter(id=auth_session.user_id)
+            if not user:
+                auth_session.revoked_at = now_utc
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+            if user.is_banned:
+                auth_session.revoked_at = now_utc
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
+
+            new_refresh_token = _generate_refresh_token()
+            auth_session.refresh_token_hash = _hash_refresh_token(new_refresh_token)
+            auth_session.expires_at = _build_refresh_expiry()
+            auth_session.last_refreshed_at = now_utc
+
+            access_token = create_access_token(
+                {"user_id": str(user.id), "sid": auth_session.id},
+                token_kind="user",
+            )
+
+    return JSONResponse(
+        content={
+            "access_token": access_token,
+            "refresh_token": new_refresh_token,
+            "token_type": "bearer",
+        },
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@router.post("/logout")
+async def user_logout(
+    current_user=Depends(get_current_user_required),
+    http_credentials: HTTPAuthorizationCredentials | None = Depends(http_bearer),
+):
+    if not http_credentials:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+    payload = decode_access_token_payload(http_credentials.credentials, "user")
+    session_id = payload.get("sid")
+    if not session_id:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    now_utc = _utc_now_naive()
+    async with async_session_maker() as session:
+        async with session.begin():
+            auth_session = await session.scalar(
+                select(UserAuthSession).where(
+                    UserAuthSession.id == str(session_id),
+                    UserAuthSession.user_id == current_user.id,
+                    UserAuthSession.revoked_at.is_(None),
+                )
+            )
+            if auth_session:
+                auth_session.revoked_at = now_utc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/logout_all")
+async def user_logout_all(current_user=Depends(get_current_user_required)):
+    now_utc = _utc_now_naive()
+    async with async_session_maker() as session:
+        async with session.begin():
+            sessions = (
+                await session.scalars(
+                    select(UserAuthSession).where(
+                        UserAuthSession.user_id == current_user.id,
+                        UserAuthSession.revoked_at.is_(None),
+                    )
+                )
+            ).all()
+            for auth_session in sessions:
+                auth_session.revoked_at = now_utc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/me")
