@@ -126,6 +126,14 @@ const AgentsPageContent = () => {
     navigate(NAVIGATION_ROUTES.CREATE_AGENT);
   };
 
+  const handleOpenDetailedAnalytics = () => {
+    if (!selectedBotId) {
+      showError('Сначала выберите агента');
+      return;
+    }
+    navigate(NAVIGATION_ROUTES.AGENT_ANALYTICS(selectedBotId));
+  };
+
   const refreshAgents = async () => {
     const updated = await execute();
     return updated || [];
@@ -475,6 +483,13 @@ const AgentsPageContent = () => {
                   <div className="agent-management-header">
                     <h3>{selectedAgentName}</h3>
                     <p>ID: {selectedAgent.bot_id}</p>
+                    <button
+                      type="button"
+                      className="btn btn-black analytics-btn"
+                      onClick={handleOpenDetailedAnalytics}
+                    >
+                      Детальная аналитика
+                    </button>
                   </div>
 
                   <div className="agent-management-block">

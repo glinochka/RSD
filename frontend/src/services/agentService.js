@@ -95,6 +95,20 @@ export const agentService = {
     return response.data;
   },
 
+  getAnalyticsSummary: async (botId) => {
+    const response = await apiClient.get(API_ROUTES.AGENTS_ANALYTICS_SUMMARY, {
+      params: { bot_id: botId },
+    });
+    return response.data;
+  },
+
+  getAnalyticsChats: async (botId, params = {}) => {
+    const response = await apiClient.get(API_ROUTES.AGENTS_ANALYTICS_CHATS, {
+      params: { bot_id: botId, ...params },
+    });
+    return response.data;
+  },
+
   uploadDocumentByBotId: async (botId, file) => {
     const formData = new FormData();
     formData.append('agent_data', JSON.stringify({ bot_id: botId }));

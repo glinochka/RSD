@@ -75,6 +75,29 @@ class Agent(Base):
         back_populates="agent", 
         cascade="all, delete-orphan"
     )
+    analytics_messages: Mapped[list["AgentAnalyticsMessage"]] = relationship(
+        back_populates="agent",
+        cascade="all, delete-orphan",
+    )
+
+
+class AgentAnalyticsMessage(Base):
+    __tablename__ = "agent_analytics_messages"
+    __table_args__ = {'extend_existing': True}
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), index=True, nullable=False)
+    bot_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
+    role: Mapped[str] = mapped_column(String(16), nullable=False, index=True)  # user | agent
+    channel: Mapped[str] = mapped_column(String(32), nullable=False, default="telegram", server_default="telegram")
+    user_external_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    user_display_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    message_text: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+
+    agent: Mapped["Agent"] = relationship(back_populates="analytics_messages")
+
+
 class AgentDocument(Base):
     __table_args__ = {'extend_existing': True}
     id: Mapped[int] = mapped_column(primary_key=True)

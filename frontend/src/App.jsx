@@ -21,6 +21,7 @@ import PriceList from './pages/PriceList';
 
 // Lazy loaded pages
 const AgentsPage = lazy(() => import('./pages/agentsPage'));
+const AgentDetailedAnalyticsPage = lazy(() => import('./pages/AgentDetailedAnalyticsPage'));
 const CreateAgent = lazy(() => import('./pages/createAgent'));
 const ManagementPortal = lazy(() => import('./pages/ManagementPortal'));
 const DocumentationPage = lazy(() => import('./pages/DocumentationPage'));
@@ -54,6 +55,10 @@ const App = () => {
 
                   {/* Protected routes */}
                   <Route path={NAVIGATION_ROUTES.AGENTS} element={<AgentsPage />} />
+                  <Route
+                    path={NAVIGATION_ROUTES.AGENT_ANALYTICS(':id')}
+                    element={<AgentDetailedAnalyticsPage />}
+                  />
                   <Route path={NAVIGATION_ROUTES.CREATE_AGENT} element={<CreateAgent />} />
                   <Route
                     path={`${NAVIGATION_ROUTES.CREATE_AGENT}/:id`}

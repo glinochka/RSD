@@ -198,6 +198,27 @@ class APIcreate(APIbase):
     @classmethod
     async def regenerateExternalAgentApiKey(cls, bot_id: int) -> dict:
         return await cls.agent({"bot_id": bot_id}, add_url="external/regenerate_key")
+
+    @classmethod
+    async def logAgentAnalyticsMessage(
+        cls,
+        *,
+        bot_id: int,
+        role: str,
+        message_text: str,
+        user_external_id: str | None = None,
+        user_display_name: str | None = None,
+        channel: str = "telegram",
+    ) -> dict:
+        data = {
+            "bot_id": bot_id,
+            "role": role,
+            "message_text": message_text,
+            "channel": channel,
+            "user_external_id": user_external_id,
+            "user_display_name": user_display_name,
+        }
+        return await cls.agent(data, add_url="analytics/messages/log")
     
 
     

@@ -35,4 +35,35 @@ class AgentAIAction(BaseModel):
 
 class ExternalAgentChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=4000, description="Запрос для агента")
+    external_user_id: Optional[str] = Field(
+        None,
+        max_length=128,
+        description="Опциональный ID пользователя во внешней системе",
+    )
+    external_user_name: Optional[str] = Field(
+        None,
+        max_length=128,
+        description="Опциональное имя пользователя во внешней системе",
+    )
+
+
+class AgentAnalyticsMessageLog(BaseModel):
+    bot_id: int = Field(..., description="Id бота")
+    role: str = Field(..., pattern="^(user|agent)$", description="Роль сообщения")
+    channel: str = Field(
+        default="telegram",
+        pattern="^(telegram|external_api|web)$",
+        description="Канал сообщения",
+    )
+    user_external_id: Optional[str] = Field(
+        None,
+        max_length=128,
+        description="ID пользователя во внешнем канале (например, Telegram user id)",
+    )
+    user_display_name: Optional[str] = Field(
+        None,
+        max_length=128,
+        description="Отображаемое имя пользователя",
+    )
+    message_text: str = Field(..., min_length=1, max_length=8000, description="Текст сообщения")
 

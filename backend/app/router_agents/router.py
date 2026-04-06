@@ -4,14 +4,18 @@ from logging import getLogger
 from secrets import compare_digest
 from urllib.parse import quote
 from urllib.request import urlopen
+from datetime import timedelta
+from collections import defaultdict
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy import select, func
 
 from .dao import AgentDAO
 from .schemas import *
 from ..alembic.database import async_session_maker
+from ..alembic.models import AgentAnalyticsMessage
 from ..config import settings
 from ..qdrant.search_service import delete_agent_vectors
 from ..router_users.dao import UserDAO
@@ -115,6 +119,69 @@ def _serialize_agent(agent, *, include_external_api_key: bool = False, include_e
         else:
             data["external_api_key"] = None
     return data
+
+
+async def _find_agent_with_access(
+    agent_dao: AgentDAO,
+    *,
+    bot_id: int,
+    current_user,
+    internal: bool,
+):
+    agent = await agent_dao.find_one_by_filter(bot_id=bot_id)
+    if not agent and 0 < bot_id <= MAX_INT32:
+        agent = await agent_dao.find_one_by_filter(id=bot_id)
+    if not agent:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+    if current_user and agent.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+    if current_user is None and not internal:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+    return agent
+
+
+def _safe_iso(value):
+    if not value:
+        return None
+    try:
+        return value.isoformat(sep=" ", timespec="seconds")
+    except Exception:
+        return str(value)
+
+
+async def _log_analytics_message(
+    *,
+    session,
+    agent,
+    role: str,
+    message_text: str,
+    channel: str = "telegram",
+    user_external_id: str | None = None,
+    user_display_name: str | None = None,
+) -> None:
+    normalized_text = (message_text or "").strip()
+    if not normalized_text:
+        return
+    normalized_role = (role or "").strip().lower()
+    if normalized_role not in {"user", "agent"}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="role must be either 'user' or 'agent'",
+        )
+    normalized_channel = (channel or "telegram").strip().lower()
+    if normalized_channel not in {"telegram", "external_api", "web"}:
+        normalized_channel = "web"
+
+    row = AgentAnalyticsMessage(
+        agent_id=agent.id,
+        bot_id=agent.bot_id,
+        role=normalized_role,
+        channel=normalized_channel,
+        user_external_id=(user_external_id or None),
+        user_display_name=(user_display_name or None),
+        message_text=normalized_text,
+    )
+    session.add(row)
 
 
 async def get_agent_by_external_api_key(
@@ -516,6 +583,220 @@ async def regenerate_external_api_key(
             )
 
 
+@router.post("/analytics/messages/log")
+async def log_analytics_message(
+    payload: AgentAnalyticsMessageLog,
+    current_user=Depends(get_current_user_optional),
+    internal: bool = Depends(is_internal_request),
+):
+    _assert_access(current_user, internal)
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent = await _find_agent_with_access(
+                agent_dao,
+                bot_id=payload.bot_id,
+                current_user=current_user,
+                internal=internal,
+            )
+            await _log_analytics_message(
+                session=session,
+                agent=agent,
+                role=payload.role,
+                message_text=payload.message_text,
+                channel=payload.channel,
+                user_external_id=payload.user_external_id,
+                user_display_name=payload.user_display_name,
+            )
+    return Response(status_code=status.HTTP_201_CREATED)
+
+
+@router.get("/analytics/summary")
+async def read_analytics_summary(
+    bot_id: int = Query(...),
+    current_user=Depends(get_current_user_optional),
+    internal: bool = Depends(is_internal_request),
+):
+    _assert_access(current_user, internal)
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent = await _find_agent_with_access(
+                agent_dao,
+                bot_id=bot_id,
+                current_user=current_user,
+                internal=internal,
+            )
+
+            total_questions = (
+                await session.scalar(
+                    select(func.count(AgentAnalyticsMessage.id)).where(
+                        AgentAnalyticsMessage.bot_id == agent.bot_id,
+                        AgentAnalyticsMessage.role == "user",
+                    )
+                )
+            ) or 0
+
+            unique_users = (
+                await session.scalar(
+                    select(func.count(func.distinct(AgentAnalyticsMessage.user_external_id))).where(
+                        AgentAnalyticsMessage.bot_id == agent.bot_id,
+                        AgentAnalyticsMessage.role == "user",
+                        AgentAnalyticsMessage.user_external_id.is_not(None),
+                    )
+                )
+            ) or 0
+
+            per_user_rows = (
+                (
+                    await session.execute(
+                        select(
+                            AgentAnalyticsMessage.user_external_id.label("uid"),
+                            func.min(AgentAnalyticsMessage.created_at).label("first_at"),
+                            func.max(AgentAnalyticsMessage.created_at).label("last_at"),
+                            func.count(AgentAnalyticsMessage.id).label("questions"),
+                        ).where(
+                            AgentAnalyticsMessage.bot_id == agent.bot_id,
+                            AgentAnalyticsMessage.role == "user",
+                            AgentAnalyticsMessage.user_external_id.is_not(None),
+                        ).group_by(AgentAnalyticsMessage.user_external_id)
+                    )
+                )
+                .mappings()
+                .all()
+            )
+
+            returning_users = 0
+            returned_next_day = 0
+            for row in per_user_rows:
+                first_at = row["first_at"]
+                last_at = row["last_at"]
+                if first_at and last_at and last_at > first_at:
+                    returning_users += 1
+                if first_at and last_at and last_at >= first_at + timedelta(days=1):
+                    returned_next_day += 1
+
+            avg_questions_per_user = (float(total_questions) / unique_users) if unique_users > 0 else 0.0
+            qualified_leads_share_percent = (
+                (float(returned_next_day) / unique_users) * 100.0 if unique_users > 0 else 0.0
+            )
+
+            return JSONResponse(
+                content={
+                    "bot_id": agent.bot_id,
+                    "unique_users": unique_users,
+                    "total_questions": total_questions,
+                    "returning_users": returning_users,
+                    "returned_next_day_users": returned_next_day,
+                    "avg_questions_per_user": round(avg_questions_per_user, 2),
+                    "qualified_leads_share_percent": round(qualified_leads_share_percent, 2),
+                },
+                status_code=status.HTTP_200_OK,
+            )
+
+
+@router.get("/analytics/chats")
+async def read_analytics_chats(
+    bot_id: int = Query(...),
+    limit_users: int = Query(default=100, ge=1, le=500),
+    messages_per_user: int = Query(default=50, ge=1, le=200),
+    current_user=Depends(get_current_user_optional),
+    internal: bool = Depends(is_internal_request),
+):
+    _assert_access(current_user, internal)
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent = await _find_agent_with_access(
+                agent_dao,
+                bot_id=bot_id,
+                current_user=current_user,
+                internal=internal,
+            )
+
+            user_rows = (
+                (
+                    await session.execute(
+                        select(
+                            AgentAnalyticsMessage.user_external_id.label("uid"),
+                            func.max(AgentAnalyticsMessage.user_display_name).label("display_name"),
+                            func.count(AgentAnalyticsMessage.id).label("questions"),
+                            func.max(AgentAnalyticsMessage.created_at).label("last_message_at"),
+                        ).where(
+                            AgentAnalyticsMessage.bot_id == agent.bot_id,
+                            AgentAnalyticsMessage.role == "user",
+                            AgentAnalyticsMessage.user_external_id.is_not(None),
+                        ).group_by(AgentAnalyticsMessage.user_external_id).order_by(
+                            func.max(AgentAnalyticsMessage.created_at).desc()
+                        ).limit(limit_users)
+                    )
+                )
+                .mappings()
+                .all()
+            )
+
+            user_ids = [row["uid"] for row in user_rows if row["uid"]]
+            if not user_ids:
+                return JSONResponse(
+                    content={"bot_id": agent.bot_id, "users": []},
+                    status_code=status.HTTP_200_OK,
+                )
+
+            message_rows = (
+                (
+                    await session.execute(
+                        select(
+                            AgentAnalyticsMessage.user_external_id,
+                            AgentAnalyticsMessage.user_display_name,
+                            AgentAnalyticsMessage.role,
+                            AgentAnalyticsMessage.channel,
+                            AgentAnalyticsMessage.message_text,
+                            AgentAnalyticsMessage.created_at,
+                        ).where(
+                            AgentAnalyticsMessage.bot_id == agent.bot_id,
+                            AgentAnalyticsMessage.user_external_id.in_(user_ids),
+                        ).order_by(AgentAnalyticsMessage.created_at.asc())
+                    )
+                )
+                .mappings()
+                .all()
+            )
+
+            grouped_messages = defaultdict(list)
+            for row in message_rows:
+                grouped_messages[row["user_external_id"]].append(row)
+
+            users_payload = []
+            for row in user_rows:
+                uid = row["uid"]
+                items = grouped_messages.get(uid, [])
+                if messages_per_user > 0 and len(items) > messages_per_user:
+                    items = items[-messages_per_user:]
+
+                users_payload.append(
+                    {
+                        "user_external_id": uid,
+                        "user_display_name": row["display_name"] or f"User {uid}",
+                        "questions_count": int(row["questions"] or 0),
+                        "last_message_at": _safe_iso(row["last_message_at"]),
+                        "messages": [
+                            {
+                                "role": item["role"],
+                                "channel": item["channel"],
+                                "text": item["message_text"],
+                                "created_at": _safe_iso(item["created_at"]),
+                            }
+                            for item in items
+                        ],
+                    }
+                )
+
+            return JSONResponse(
+                content={"bot_id": agent.bot_id, "users": users_payload},
+                status_code=status.HTTP_200_OK,
+            )
+
+
 @router.post("/external/chat")
 async def external_chat(
     payload: ExternalAgentChatRequest,
@@ -528,6 +809,9 @@ async def external_chat(
     message = payload.message.strip()
     if not message:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Message is empty")
+
+    external_user_id = (payload.external_user_id or "").strip() or None
+    external_user_name = (payload.external_user_name or "").strip() or None
 
     context = await search_knowledge_base(message, agent_id=agent.bot_id)
     try:
@@ -543,6 +827,27 @@ async def external_chat(
         source = item.get("source")
         if source and source not in sources:
             sources.append(source)
+
+    async with async_session_maker() as session:
+        async with session.begin():
+            await _log_analytics_message(
+                session=session,
+                agent=agent,
+                role="user",
+                channel="external_api",
+                user_external_id=external_user_id,
+                user_display_name=external_user_name,
+                message_text=message,
+            )
+            await _log_analytics_message(
+                session=session,
+                agent=agent,
+                role="agent",
+                channel="external_api",
+                user_external_id=external_user_id,
+                user_display_name=external_user_name,
+                message_text=answer,
+            )
 
     return JSONResponse(
         content={

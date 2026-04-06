@@ -162,6 +162,10 @@
   color: var(--color-text-light);
 }
 
+.analytics-btn {
+  margin-top: var(--spacing-sm);
+}
+
 .agent-management-block {
   display: flex;
   flex-direction: column;
