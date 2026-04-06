@@ -1,4 +1,5 @@
 import hashlib
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from logging import getLogger
@@ -30,6 +31,11 @@ LINK_CODE_ALPHABET = "0123456789"
 LINK_CODE_LENGTH = 6
 LINK_CODE_TTL_MINUTES = 5
 LINK_CODE_MAX_ATTEMPTS = 5
+EMAIL_CODE_ALPHABET = "0123456789"
+EMAIL_CODE_LENGTH = 6
+EMAIL_CODE_TTL_MINUTES = 10
+EMAIL_CODE_MAX_ATTEMPTS = 5
+EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 REFRESH_TOKEN_BYTES = 48
 
 
@@ -41,6 +47,17 @@ def _normalize_link_code(raw_code: str) -> str:
     return "".join(ch for ch in raw_code.upper().strip() if ch.isalnum())
 
 
+def _normalize_email(raw_email: str) -> str:
+    return raw_email.strip().lower()
+
+
+def _validate_email_or_422(raw_email: str) -> str:
+    normalized_email = _normalize_email(raw_email)
+    if not EMAIL_PATTERN.match(normalized_email):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Некорректный email")
+    return normalized_email
+
+
 def _format_link_code(raw_code: str) -> str:
     return raw_code
 
@@ -49,9 +66,19 @@ def _generate_link_code() -> str:
     return "".join(secrets.choice(LINK_CODE_ALPHABET) for _ in range(LINK_CODE_LENGTH))
 
 
+def _generate_email_code() -> str:
+    return "".join(secrets.choice(EMAIL_CODE_ALPHABET) for _ in range(EMAIL_CODE_LENGTH))
+
+
 def _hash_link_code(raw_code: str) -> str:
     normalized_code = _normalize_link_code(raw_code)
     peppered_code = f"{settings.SECRET_KEY}:{normalized_code}"
+    return hashlib.sha256(peppered_code.encode("utf-8")).hexdigest()
+
+
+def _hash_email_code(raw_code: str) -> str:
+    normalized_code = "".join(ch for ch in raw_code.strip() if ch.isdigit())
+    peppered_code = f"{settings.SECRET_KEY}:email_verification:{normalized_code}"
     return hashlib.sha256(peppered_code.encode("utf-8")).hexdigest()
 
 
@@ -125,6 +152,57 @@ async def _send_master_bot_link_prompt(telegram_id: int) -> None:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Failed to deliver message to Telegram user",
+        )
+
+
+async def _send_registration_email_code(email: str, code: str) -> None:
+    api_token = settings.MAILOPOST_API_TOKEN.strip()
+    from_email = settings.MAILOPOST_FROM_EMAIL.strip()
+    base_url = settings.MAILOPOST_API_URL.strip().rstrip("/")
+    if not api_token or not from_email:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Mail sender is not configured",
+        )
+
+    payload = {
+        "from_email": from_email,
+        "to": email,
+        "subject": "Код подтверждения регистрации",
+        "text": (
+            "Ваш код подтверждения: "
+            f"{code}\n\n"
+            f"Код действует {EMAIL_CODE_TTL_MINUTES} минут."
+        ),
+        "html": (
+            "<p>Ваш код подтверждения:</p>"
+            f"<p><b style='font-size:20px;'>{code}</b></p>"
+            f"<p>Код действует {EMAIL_CODE_TTL_MINUTES} минут.</p>"
+        ),
+    }
+    from_name = settings.MAILOPOST_FROM_NAME.strip()
+    if from_name:
+        payload["from_name"] = from_name
+
+    headers = {
+        "Authorization": f"Bearer {api_token}",
+        "Content-Type": "application/json",
+    }
+    url = f"{base_url}/email/messages"
+
+    timeout = httpx.Timeout(settings.MAILOPOST_SEND_TIMEOUT_SECONDS, connect=5.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.post(url, json=payload, headers=headers)
+
+    if not response.is_success:
+        logger.error(
+            "MailoPost send failed: status=%s body=%s",
+            response.status_code,
+            response.text[:500],
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Не удалось отправить код подтверждения на email",
         )
 
 
@@ -245,33 +323,157 @@ async def UpdateUser_by_tgID(user_by_tg: Update_userSubscription, _internal=Depe
 
 @router.post("/registration", dependencies=[Depends(rate_limit(max_requests=10, window_seconds=60, scope="users_registration"))])
 async def user_registration(new_user: NewUser):
+    normalized_email = _validate_email_or_422(new_user.email)
+    verification_code = _generate_email_code()
+    verification_code_hash = _hash_email_code(verification_code)
+    expires_at = _utc_now_naive() + timedelta(minutes=EMAIL_CODE_TTL_MINUTES)
+
     async with async_session_maker() as session:
         user_dao = UserDAO(session)
+        user_to_update = None
 
         async with session.begin():
-            double_user = await user_dao.find_one_by_filter(name=new_user.name)
-            if double_user:
-                logger.info(f"{new_user.name} уже есть в базе данных")
+            user_with_name = await user_dao.find_one_by_filter(name=new_user.name)
+            user_with_email = await user_dao.find_one_by_filter(email=normalized_email)
+
+            if user_with_name and (user_with_name.email_verified or user_with_name.email != normalized_email):
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="Пользователь уже существует"
                 )
-            
-            dict_new_user = new_user.model_dump()
-            dict_new_user["password"] = get_password_hash(dict_new_user["password"])
+            if user_with_email and user_with_email.email_verified:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Email уже используется"
+                )
+            if user_with_email and user_with_email.name != new_user.name:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Email уже используется"
+                )
+            if user_with_name and user_with_email and user_with_name.id != user_with_email.id:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Найден конфликт регистрационных данных"
+                )
 
-            user = await user_dao.add(dict_new_user)
-            await session.flush()
-            access_token, refresh_token = await _issue_user_tokens(session, user.id)
-        
-    logger.info(f"{new_user.name} был добавлен")
+            user_to_update = user_with_name or user_with_email
+            updates = {
+                "name": new_user.name,
+                "email": normalized_email,
+                "password": get_password_hash(new_user.password),
+                "email_verified": False,
+                "email_verification_code_hash": verification_code_hash,
+                "email_verification_expires_at": expires_at,
+                "email_verification_attempts_left": EMAIL_CODE_MAX_ATTEMPTS,
+            }
+            if user_to_update:
+                await user_dao.update(user_to_update, updates)
+            else:
+                await user_dao.add(
+                    {
+                        **updates,
+                        "telegram_id": new_user.telegram_id,
+                    }
+                )
+
+    await _send_registration_email_code(normalized_email, verification_code)
+    logger.info("Код подтверждения регистрации отправлен пользователю %s", new_user.name)
 
     return JSONResponse(content={
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "token_type": "bearer"
+            "status": "verification_required",
+            "detail": "Код подтверждения отправлен на email",
+            "email": normalized_email,
+            "expires_in_seconds": EMAIL_CODE_TTL_MINUTES * 60,
         },
         status_code=status.HTTP_201_CREATED)
+
+
+@router.post(
+    "/registration/verify",
+    dependencies=[Depends(rate_limit(max_requests=20, window_seconds=60, scope="users_registration_verify"))],
+)
+async def verify_user_registration_code(payload: VerifyRegistrationCodeRequest):
+    normalized_email = _validate_email_or_422(payload.email)
+    code_hash = _hash_email_code(payload.code)
+    now_utc = _utc_now_naive()
+
+    async with async_session_maker() as session:
+        user_dao = UserDAO(session)
+        async with session.begin():
+            user = await user_dao.find_one_by_filter(name=payload.name, email=normalized_email)
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Пользователь не найден",
+                )
+
+            if user.email_verified:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Email уже подтвержден",
+                )
+
+            if not user.email_verification_code_hash or not user.email_verification_expires_at:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Код подтверждения не запрошен",
+                )
+
+            if user.email_verification_expires_at < now_utc:
+                await user_dao.update(
+                    user,
+                    {
+                        "email_verification_code_hash": None,
+                        "email_verification_expires_at": None,
+                        "email_verification_attempts_left": 0,
+                    },
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Код подтверждения истек",
+                )
+
+            if user.email_verification_attempts_left <= 0:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="Превышено число попыток ввода кода",
+                )
+
+            if user.email_verification_code_hash != code_hash:
+                attempts_left = max(0, user.email_verification_attempts_left - 1)
+                await user_dao.update(user, {"email_verification_attempts_left": attempts_left})
+                if attempts_left == 0:
+                    raise HTTPException(
+                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        detail="Превышено число попыток ввода кода",
+                    )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Неверный код. Осталось попыток: {attempts_left}",
+                )
+
+            await user_dao.update(
+                user,
+                {
+                    "email_verified": True,
+                    "email_verification_code_hash": None,
+                    "email_verification_expires_at": None,
+                    "email_verification_attempts_left": 0,
+                },
+            )
+
+            access_token, refresh_token = await _issue_user_tokens(session, user.id)
+
+    return JSONResponse(
+        content={
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": "bearer",
+        },
+        status_code=status.HTTP_200_OK,
+    )
+
 
 @router.post("/login", dependencies=[Depends(rate_limit(max_requests=10, window_seconds=60, scope="users_login"))])
 async def user_login(login_user: LoginUser):
@@ -292,6 +494,11 @@ async def user_login(login_user: LoginUser):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Пользователь заблокирован",
+        )
+    if user.email and not user.email_verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Подтвердите email перед входом",
         )
 
     logger.info(f"{login_user.name} вошел в систему")

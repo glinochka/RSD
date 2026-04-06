@@ -36,15 +36,16 @@ class TestUserRegistration:
     @pytest.mark.asyncio
     async def test_registration_success(self, client, sample_user_data, test_session):
         """Test successful user registration."""
-        response = await client.post(
-            "/api/users/registration",
-            json=sample_user_data
-        )
+        with patch("app.router_users.router._send_registration_email_code", new=AsyncMock()):
+            response = await client.post(
+                "/api/users/registration",
+                json=sample_user_data
+            )
 
         assert response.status_code == 201
         data = response.json()
-        assert "access_token" in data
-        assert data["token_type"] == "bearer"
+        assert data["status"] == "verification_required"
+        assert data["email"] == sample_user_data["email"]
 
         # Verify user was created in database
         async with test_session.begin():
@@ -54,6 +55,8 @@ class TestUserRegistration:
             user = result.scalar_one_or_none()
             assert user is not None
             assert user.name == sample_user_data["name"]
+            assert user.email == sample_user_data["email"]
+            assert user.email_verified is False
 
     @pytest.mark.asyncio
     async def test_registration_duplicate_name(self, client, sample_user_data, test_session):
@@ -69,10 +72,11 @@ class TestUserRegistration:
             })
             await test_session.commit()
 
-        response = await client.post(
-            "/api/users/registration",
-            json=sample_user_data
-        )
+        with patch("app.router_users.router._send_registration_email_code", new=AsyncMock()):
+            response = await client.post(
+                "/api/users/registration",
+                json=sample_user_data
+            )
 
         assert response.status_code == 409
         assert "Пользователь уже существует" in response.json()["detail"]
@@ -82,7 +86,7 @@ class TestUserRegistration:
         """Test registration fails with name too short."""
         response = await client.post(
             "/api/users/registration",
-            json={"name": "ab", "password": "password123"}
+            json={"name": "ab", "email": "ab@example.com", "password": "password123"}
         )
 
         assert response.status_code == 422
@@ -92,10 +96,31 @@ class TestUserRegistration:
         """Test registration fails with password too short."""
         response = await client.post(
             "/api/users/registration",
-            json={"name": sample_user_data["name"], "password": "123"}
+            json={"name": sample_user_data["name"], "email": sample_user_data["email"], "password": "123"}
         )
 
         assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_registration_verify_success(self, client, sample_user_data):
+        """Test successful email verification after registration."""
+        with patch("app.router_users.router._generate_email_code", return_value="123456"), \
+             patch("app.router_users.router._send_registration_email_code", new=AsyncMock()):
+            response = await client.post("/api/users/registration", json=sample_user_data)
+        assert response.status_code == 201
+
+        verify_response = await client.post(
+            "/api/users/registration/verify",
+            json={
+                "name": sample_user_data["name"],
+                "email": sample_user_data["email"],
+                "code": "123456",
+            },
+        )
+        assert verify_response.status_code == 200
+        verify_data = verify_response.json()
+        assert "access_token" in verify_data
+        assert verify_data["token_type"] == "bearer"
 
 
 class TestUserLogin:
@@ -145,7 +170,7 @@ class TestUserLogin:
         )
 
         assert response.status_code == 401
-        assert "Неверный пароль" in response.json()["detail"]
+        assert "Неверные учетные данные" in response.json()["detail"]
 
     @pytest.mark.asyncio
     async def test_login_user_not_found(self, client):
@@ -156,7 +181,7 @@ class TestUserLogin:
         )
 
         assert response.status_code == 401
-        assert "Пользователь не найден" in response.json()["detail"]
+        assert "Неверные учетные данные" in response.json()["detail"]
 
 
 # --- Тесты для /api/users/me (требуют реализации эндпоинта) ---

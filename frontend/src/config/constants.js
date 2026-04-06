@@ -20,6 +20,7 @@ export const API_ROUTES = {
   // Auth (backend: prefix /api/users)
   AUTH_LOGIN: '/api/users/login',
   AUTH_REGISTER: '/api/users/registration',
+  AUTH_REGISTER_VERIFY: '/api/users/registration/verify',
   AUTH_LOGOUT: '/api/users/logout',
   AUTH_REFRESH: '/api/users/refresh',
 
@@ -126,6 +127,7 @@ export const VALIDATION = {
   USERNAME_MAX_LENGTH_REGISTER: 32, // NewUser.name
   PASSWORD_MIN_LENGTH: 6,          // both schemas
   PASSWORD_MAX_LENGTH: 30,          // both schemas
+  EMAIL_CODE_LENGTH: 6,
   AGENT_NAME_MIN_LENGTH: 2,
   AGENT_NAME_MAX_LENGTH: 50,
   FILE_MAX_SIZE: 10 * 1024 * 1024, // 10MB

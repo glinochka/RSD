@@ -5,6 +5,7 @@ from typing import Optional, Literal
 
 class NewUser(BaseModel):
     name: str = Field(..., min_length=3, max_length=32, description="Имя пользователя: длина от 3 до 32 символов")
+    email: str = Field(..., min_length=5, max_length=255, description="Email пользователя")
     password: str = Field(..., min_length=6, max_length=30, description="Пароль: длина от 6 до 30 символов")
     # Optional Telegram ID for linking bot later; web registration does not require it.
     telegram_id: Optional[int] = Field(default=None, description="Id пользователя в телеграме (необязательное поле)")
@@ -22,6 +23,19 @@ class AuthTokensResponse(BaseModel):
     access_token: str
     refresh_token: str
     token_type: Literal["bearer"] = "bearer"
+
+
+class RegistrationCodeSentResponse(BaseModel):
+    status: Literal["verification_required"] = "verification_required"
+    detail: str
+    email: str
+    expires_in_seconds: int
+
+
+class VerifyRegistrationCodeRequest(BaseModel):
+    name: str = Field(..., min_length=3, max_length=32, description="Имя пользователя")
+    email: str = Field(..., min_length=5, max_length=255, description="Email пользователя")
+    code: str = Field(..., min_length=6, max_length=6, description="6-значный код подтверждения")
 
 class User_from_tg(BaseModel):
     name: str = Field(..., min_length=3, max_length=32, description="Имя пользователя: длина от 3 до 32 символов")

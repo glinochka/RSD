@@ -41,13 +41,25 @@ export const authService = {
   },
 
   /**
-   * Register: POST /api/users/registration → { access_token, token_type } (201).
-   * Returns { token, tokenType, user } for storage and UI.
+   * Register step 1: sends verification code to email.
    */
-  register: async (name, password) => {
+  register: async (name, email, password) => {
     const response = await apiClient.post(API_ROUTES.AUTH_REGISTER, {
       name: name.trim(),
+      email: email.trim(),
       password,
+    });
+    return response.data;
+  },
+
+  /**
+   * Register step 2: verifies code and receives tokens.
+   */
+  verifyRegistrationCode: async (name, email, code) => {
+    const response = await apiClient.post(API_ROUTES.AUTH_REGISTER_VERIFY, {
+      name: name.trim(),
+      email: email.trim(),
+      code: code.trim(),
     });
     return normalizeAuthResponse(response.data, name.trim());
   },

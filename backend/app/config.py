@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     YOOKASSA_SECRET_KEY: str = ""
     YOOKASSA_RETURN_URL: str | None = None
     MASTER_BOT_TOKEN: str = ""
+    MAILOPOST_API_URL: str = "https://api.mailopost.ru/v1"
+    MAILOPOST_API_TOKEN: str = ""
+    MAILOPOST_FROM_EMAIL: str = ""
+    MAILOPOST_FROM_NAME: str = ""
+    MAILOPOST_SEND_TIMEOUT_SECONDS: float = 10.0
     EMBEDDING_THREADS: int = 1
     EMBEDDING_BATCH_SIZE: int = 16
     EMBEDDING_PARALLEL: int = 1
@@ -57,6 +62,7 @@ if not os.path.exists('/.dockerenv'):
 def get_db_url():
     return (f"postgresql+asyncpg://{settings.DB_USER}:{settings.DB_PASSWORD}@"
             f"{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}")
+
 
 def get_auth_data(token_kind: Literal["user", "admin"] = "user"):
     if token_kind == "admin":

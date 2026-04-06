@@ -8,7 +8,9 @@ import React, { useMemo, useState } from 'react';
 
 /** Message for auth UI: apiClient sets error.message from FastAPI detail (normalized). */
 function getAuthErrorMessage(error) {
-  if (error?.message) return error.message;
+  if (error?.message) {
+    return error.message;
+  }
   const data = error?.data ?? error?.originalError?.response?.data;
   if (data?.detail) {
     if (Array.isArray(data.detail)) {
@@ -32,16 +34,19 @@ const AUTH_MEDIA_IMAGE_SRC = null;
 
 const AUTH_FORM_INITIAL = {
   name: '',
+  email: '',
   password: '',
+  verificationCode: '',
   consentPersonal: false,
   consentTerms: false,
 };
 
 const Auth = () => {
   const navigate = useNavigate();
-  const { login, register } = useAuth();
+  const { login, register, verifyRegistrationCode } = useAuth();
   const { showError, showSuccess } = useNotification();
   const [isLogin, setIsLogin] = useState(true);
+  const [isAwaitingEmailCode, setIsAwaitingEmailCode] = useState(false);
 
   // Validation rules aligned with backend Pydantic: LoginUser (name 3-30), NewUser (name 3-32), password 6-30
   const authRules = useMemo(() => {
@@ -54,9 +59,26 @@ const Auth = () => {
       },
       password: { required: true, type: 'password', label: 'Пароль' },
     };
-    if (isLogin) return base;
+    if (isLogin) {
+      return base;
+    }
+    if (isAwaitingEmailCode) {
+      return {
+        ...base,
+        email: { required: true, type: 'email', label: 'Email' },
+        verificationCode: {
+          required: true,
+          label: 'Код подтверждения',
+          minLength: VALIDATION.EMAIL_CODE_LENGTH,
+          maxLength: VALIDATION.EMAIL_CODE_LENGTH,
+          pattern: /^\d{6}$/,
+          message: 'Введите 6 цифр из письма',
+        },
+      };
+    }
     return {
       ...base,
+      email: { required: true, type: 'email', label: 'Email' },
       consentPersonal: {
         type: 'checkbox',
         required: true,
@@ -70,7 +92,7 @@ const Auth = () => {
         message: 'Примите условия Публичной оферты и Пользовательского соглашения',
       },
     };
-  }, [isLogin]);
+  }, [isAwaitingEmailCode, isLogin]);
 
   const form = useForm(
     AUTH_FORM_INITIAL,
@@ -79,11 +101,19 @@ const Auth = () => {
         if (isLogin) {
           await login(values.name, values.password);
           showSuccess(SUCCESS_MESSAGES.LOGIN_SUCCESS, 3000);
+          navigate(NAVIGATION_ROUTES.AGENTS);
         } else {
-          await register(values.name, values.password);
+          if (!isAwaitingEmailCode) {
+            await register(values.name, values.email, values.password);
+            setIsAwaitingEmailCode(true);
+            showSuccess('Код подтверждения отправлен на email', 3500);
+            return;
+          }
+
+          await verifyRegistrationCode(values.name, values.email, values.verificationCode);
           showSuccess('Регистрация успешна!', 3000);
+          navigate(NAVIGATION_ROUTES.AGENTS);
         }
-        navigate(NAVIGATION_ROUTES.AGENTS);
       } catch (error) {
         showError(getAuthErrorMessage(error));
       }
@@ -93,7 +123,17 @@ const Auth = () => {
 
   const toggleAuthMode = () => {
     form.reset();
+    setIsAwaitingEmailCode(false);
     setIsLogin(!isLogin);
+  };
+
+  const resendEmailCode = async () => {
+    try {
+      await register(form.values.name, form.values.email, form.values.password);
+      showSuccess('Новый код отправлен на email', 3000);
+    } catch (error) {
+      showError(getAuthErrorMessage(error));
+    }
   };
 
   return (
@@ -110,7 +150,9 @@ const Auth = () => {
               <p className="auth-subtitle">
                 {isLogin
                   ? 'Войдите в систему для получения доступа к платформе'
-                  : 'Заполните форму для создания нового аккаунта'}
+                  : isAwaitingEmailCode
+                    ? 'Введите 6-значный код, отправленный на ваш email'
+                    : 'Заполните форму для создания нового аккаунта'}
               </p>
 
               {/* Google Auth Button */}
@@ -134,7 +176,7 @@ const Auth = () => {
                   value={form.values.name}
                   onChange={form.handleChange}
                   onBlur={form.handleBlur}
-                  disabled={form.isSubmitting}
+                  disabled={form.isSubmitting || (!isLogin && isAwaitingEmailCode)}
                   className={form.errors.name ? 'error' : ''}
                   autoComplete="username"
                 />
@@ -142,6 +184,27 @@ const Auth = () => {
                   <span className="error-message">{form.errors.name}</span>
                 )}
               </div>
+
+              {!isLogin && (
+                <div className="form-group">
+                  <label htmlFor="email">Email:</label>
+                  <input
+                    id="email"
+                    type="email"
+                    name="email"
+                    placeholder="example@mail.com"
+                    value={form.values.email}
+                    onChange={form.handleChange}
+                    onBlur={form.handleBlur}
+                    disabled={form.isSubmitting || isAwaitingEmailCode}
+                    className={form.errors.email ? 'error' : ''}
+                    autoComplete="email"
+                  />
+                  {form.touched.email && form.errors.email && (
+                    <span className="error-message">{form.errors.email}</span>
+                  )}
+                </div>
+              )}
 
               <div className="form-group">
                 <label htmlFor="password">Пароль:</label>
@@ -153,7 +216,7 @@ const Auth = () => {
                   value={form.values.password}
                   onChange={form.handleChange}
                   onBlur={form.handleBlur}
-                  disabled={form.isSubmitting}
+                  disabled={form.isSubmitting || (!isLogin && isAwaitingEmailCode)}
                   className={form.errors.password ? 'error' : ''}
                   autoComplete={isLogin ? 'current-password' : 'new-password'}
                 />
@@ -162,7 +225,30 @@ const Auth = () => {
                 )}
               </div>
 
-              {!isLogin && (
+              {!isLogin && isAwaitingEmailCode && (
+                <div className="form-group">
+                  <label htmlFor="verificationCode">Код подтверждения:</label>
+                  <input
+                    id="verificationCode"
+                    type="text"
+                    name="verificationCode"
+                    placeholder="6 цифр"
+                    value={form.values.verificationCode}
+                    onChange={form.handleChange}
+                    onBlur={form.handleBlur}
+                    disabled={form.isSubmitting}
+                    className={form.errors.verificationCode ? 'error' : ''}
+                    autoComplete="one-time-code"
+                    inputMode="numeric"
+                    maxLength={VALIDATION.EMAIL_CODE_LENGTH}
+                  />
+                  {form.touched.verificationCode && form.errors.verificationCode && (
+                    <span className="error-message">{form.errors.verificationCode}</span>
+                  )}
+                </div>
+              )}
+
+              {!isLogin && !isAwaitingEmailCode && (
                 <div className="auth-consents" role="group" aria-label="Согласия при регистрации">
                   <div className="auth-consent-block">
                     <div className="auth-checkbox-row auth-checkbox-row--terms">
@@ -241,8 +327,24 @@ const Auth = () => {
                 className="btn btn-continue"
                 disabled={form.isSubmitting}
               >
-                {form.isSubmitting ? 'Обработка...' : isLogin ? 'Войти' : 'Создать аккаунт'}
+                {form.isSubmitting
+                  ? 'Обработка...'
+                  : isLogin
+                    ? 'Войти'
+                    : isAwaitingEmailCode
+                      ? 'Подтвердить код'
+                      : 'Создать аккаунт'}
               </button>
+              {!isLogin && isAwaitingEmailCode && (
+                <button
+                  type="button"
+                  className="btn btn-continue"
+                  disabled={form.isSubmitting}
+                  onClick={resendEmailCode}
+                >
+                  Отправить код повторно
+                </button>
+              )}
               </form>
             </div>
 

@@ -274,7 +274,7 @@ def mock_telegram_get_me():
 
 @pytest.fixture
 def sample_user_data():
-    return {"name": "testuser", "password": "testpassword123"}
+    return {"name": "testuser", "email": "testuser@example.com", "password": "testpassword123"}
 
 @pytest.fixture
 def sample_agent_data():
