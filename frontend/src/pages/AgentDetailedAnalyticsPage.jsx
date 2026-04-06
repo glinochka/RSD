@@ -11,6 +11,7 @@ const ANALYTICS_SECTIONS = {
   OVERVIEW: 'overview',
   CHATS: 'chats',
 };
+const CHART_PERIODS = [7, 30, 90];
 
 const formatNumber = (value) => {
   if (typeof value !== 'number' || Number.isNaN(value)) return '0';
@@ -27,6 +28,16 @@ const formatDateTime = (value) => {
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
+  }).format(date);
+};
+
+const formatDateShort = (value) => {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
   }).format(date);
 };
 
@@ -64,12 +75,8 @@ const mapChatsPayload = (payload) => {
   }));
 };
 
-const AnalyticsChart = ({ timeline }) => {
+const AnalyticsChart = ({ timeline, selectedDays, onChangeDays, isLoading }) => {
   const points = Array.isArray(timeline) ? timeline : [];
-  if (points.length === 0) {
-    return <p className="analytics-chart-empty">Недостаточно данных для графика</p>;
-  }
-
   const width = 900;
   const height = 260;
   const paddingX = 40;
@@ -102,6 +109,21 @@ const AnalyticsChart = ({ timeline }) => {
 
   return (
     <div className="analytics-chart-block">
+      <div className="analytics-chart-topbar">
+        <h4>Динамика метрик</h4>
+        <div className="analytics-period-switcher" role="group" aria-label="Период графика">
+          {CHART_PERIODS.map((days) => (
+            <button
+              key={days}
+              type="button"
+              className={`analytics-period-btn ${selectedDays === days ? 'analytics-period-btn--active' : ''}`}
+              onClick={() => onChangeDays(days)}
+            >
+              {days} дн
+            </button>
+          ))}
+        </div>
+      </div>
       <div className="analytics-chart-legend">
         {series.map((serie) => (
           <span key={serie.key}>
@@ -111,28 +133,47 @@ const AnalyticsChart = ({ timeline }) => {
         ))}
       </div>
       <div className="analytics-chart-wrapper">
-        <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="analytics-chart-svg">
-          <line x1={paddingX} y1={paddingY} x2={paddingX} y2={height - paddingY} stroke="#d1d5db" />
-          <line
-            x1={paddingX}
-            y1={height - paddingY}
-            x2={width - paddingX}
-            y2={height - paddingY}
-            stroke="#d1d5db"
-          />
-          {series.map((serie) => (
-            <polyline
-              key={serie.key}
-              points={toLine(serie.key)}
-              fill="none"
-              stroke={serie.color}
-              strokeWidth="2"
+        {isLoading ? (
+          <p className="analytics-chart-empty">Загрузка данных графика...</p>
+        ) : points.length === 0 ? (
+          <p className="analytics-chart-empty">Недостаточно данных для графика</p>
+        ) : (
+          <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="analytics-chart-svg">
+            <line x1={paddingX} y1={paddingY} x2={paddingX} y2={height - paddingY} stroke="#d1d5db" />
+            <line
+              x1={paddingX}
+              y1={height - paddingY}
+              x2={width - paddingX}
+              y2={height - paddingY}
+              stroke="#d1d5db"
             />
-          ))}
-        </svg>
+            {series.map((serie) => (
+              <g key={serie.key}>
+                <polyline
+                  points={toLine(serie.key)}
+                  fill="none"
+                  stroke={serie.color}
+                  strokeWidth="2"
+                />
+                {points.map((item, index) => {
+                  const x =
+                    paddingX +
+                    (points.length === 1 ? chartWidth / 2 : (index / (points.length - 1)) * chartWidth);
+                  const value = Number(item[serie.key] || 0);
+                  const y = paddingY + chartHeight - (value / maxValue) * chartHeight;
+                  return (
+                    <circle key={`${serie.key}-${item.date}`} cx={x} cy={y} r="3.2" fill={serie.color}>
+                      <title>{`${serie.label}\n${formatDateShort(item.date)}: ${formatNumber(value)}`}</title>
+                    </circle>
+                  );
+                })}
+              </g>
+            ))}
+          </svg>
+        )}
       </div>
       <div className="analytics-chart-caption">
-        Последние 30 дней: пользователи за все время, пользователи за сегодня, новые пользователи, вопросы сегодня
+        Наведите на точки, чтобы увидеть точные значения за день.
       </div>
     </div>
   );
@@ -147,6 +188,8 @@ const AgentDetailedAnalyticsPageContent = () => {
   const [agent, setAgent] = useState(null);
   const [metrics, setMetrics] = useState([]);
   const [timeline, setTimeline] = useState([]);
+  const [selectedDays, setSelectedDays] = useState(30);
+  const [isChartLoading, setIsChartLoading] = useState(false);
   const [chatUsers, setChatUsers] = useState([]);
   const [selectedUserId, setSelectedUserId] = useState(null);
 
@@ -162,19 +205,17 @@ const AgentDetailedAnalyticsPageContent = () => {
     const loadData = async () => {
       setIsLoading(true);
       try {
-        const [agentData, docs, summary, chats, timeseries] = await Promise.all([
+        const [agentData, docs, summary, chats] = await Promise.all([
           agentService.getById(botId),
           agentService.getDocumentsByBotId(botId),
           agentService.getAnalyticsSummary(botId),
           agentService.getAnalyticsChats(botId, { limit_users: 100, messages_per_user: 100 }),
-          agentService.getAnalyticsTimeseries(botId, 30),
         ]);
         const mappedUsers = mapChatsPayload(chats);
         setAgent(agentData);
         setChatUsers(mappedUsers);
         setSelectedUserId(mappedUsers[0]?.id || null);
         setMetrics(buildOverviewMetrics(summary, docs?.length || 0));
-        setTimeline(Array.isArray(timeseries?.timeline) ? timeseries.timeline : []);
       } catch (error) {
         showError(error?.message || 'Не удалось загрузить аналитику агента');
         navigate(NAVIGATION_ROUTES.AGENTS);
@@ -185,6 +226,25 @@ const AgentDetailedAnalyticsPageContent = () => {
 
     loadData();
   }, [botId, navigate, showError]);
+
+  useEffect(() => {
+    if (!Number.isFinite(botId) || botId <= 0) return;
+
+    const loadTimeline = async () => {
+      setIsChartLoading(true);
+      try {
+        const timeseries = await agentService.getAnalyticsTimeseries(botId, selectedDays);
+        setTimeline(Array.isArray(timeseries?.timeline) ? timeseries.timeline : []);
+      } catch (error) {
+        setTimeline([]);
+        showError(error?.message || 'Не удалось загрузить график аналитики');
+      } finally {
+        setIsChartLoading(false);
+      }
+    };
+
+    loadTimeline();
+  }, [botId, selectedDays, showError]);
 
   const selectedUser = useMemo(
     () => chatUsers.find((user) => user.id === selectedUserId) || null,
@@ -247,7 +307,12 @@ const AgentDetailedAnalyticsPageContent = () => {
                   </article>
                 ))}
               </div>
-              <AnalyticsChart timeline={timeline} />
+              <AnalyticsChart
+                timeline={timeline}
+                selectedDays={selectedDays}
+                onChangeDays={setSelectedDays}
+                isLoading={isChartLoading}
+              />
             </section>
           ) : (
             <section className="analytics-chats">

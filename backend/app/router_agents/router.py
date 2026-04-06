@@ -10,7 +10,7 @@ from collections import defaultdict
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select, func
+from sqlalchemy import Date, cast, func, select
 
 from .dao import AgentDAO
 from .schemas import *
@@ -726,18 +726,21 @@ async def read_analytics_timeseries(
                 .all()
             )
 
+            # Use cast(..., Date) instead of date_trunc('day', ...): with bound parameters,
+            # PostgreSQL can reject GROUP BY when SELECT and GROUP BY date_trunc texts differ.
+            day_bucket = cast(AgentAnalyticsMessage.created_at, Date).label("day")
             daily_rows = (
                 (
                     await session.execute(
                         select(
-                            func.date_trunc("day", AgentAnalyticsMessage.created_at).label("day"),
+                            day_bucket,
                             func.count(AgentAnalyticsMessage.id).label("questions_today"),
                             func.count(func.distinct(AgentAnalyticsMessage.user_external_id)).label("users_today"),
                         ).where(
                             AgentAnalyticsMessage.bot_id == agent.bot_id,
                             AgentAnalyticsMessage.role == "user",
                             AgentAnalyticsMessage.user_external_id.is_not(None),
-                        ).group_by(func.date_trunc("day", AgentAnalyticsMessage.created_at))
+                        ).group_by(day_bucket)
                     )
                 )
                 .mappings()

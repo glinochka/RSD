@@ -192,6 +192,39 @@
   background: var(--color-bg-light);
 }
 
+.analytics-chart-topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--spacing-base);
+  margin-bottom: var(--spacing-sm);
+}
+
+.analytics-chart-topbar h4 {
+  margin: 0;
+  font-size: var(--font-size-base);
+}
+
+.analytics-period-switcher {
+  display: flex;
+  gap: var(--spacing-xs);
+}
+
+.analytics-period-btn {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text);
+  cursor: pointer;
+  padding: 6px 10px;
+  font-size: var(--font-size-xs);
+}
+
+.analytics-period-btn--active {
+  border-color: var(--color-primary);
+  background: rgba(0, 0, 0, 0.06);
+}
+
 .analytics-chart-legend {
   display: flex;
   flex-wrap: wrap;
@@ -298,5 +331,10 @@
 
   .analytics-message-bubble {
     max-width: 100%;
+  }
+
+  .analytics-chart-topbar {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }
