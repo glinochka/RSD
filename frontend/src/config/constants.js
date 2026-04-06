@@ -41,6 +41,7 @@ export const API_ROUTES = {
   AGENTS_REGENERATE_EXTERNAL_KEY: '/api/agents/external/regenerate_key',
   AGENTS_ANALYTICS_SUMMARY: '/api/agents/analytics/summary',
   AGENTS_ANALYTICS_CHATS: '/api/agents/analytics/chats',
+  AGENTS_ANALYTICS_TIMESERIES: '/api/agents/analytics/timeseries',
   DOCUMENTS_CREATE: '/api/documents',
   DOCUMENTS_CREATE_LINK: '/api/documents/link',
   DOCUMENTS_LIST_BY_BOT: '/api/documents/allBy_botID',

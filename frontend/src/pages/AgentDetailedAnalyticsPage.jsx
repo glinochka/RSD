@@ -33,16 +33,14 @@ const formatDateTime = (value) => {
 const buildOverviewMetrics = (summary, docsCount) => {
   const totalUsers = Number(summary?.unique_users || 0);
   const totalQuestions = Number(summary?.total_questions || 0);
-  const returningUsers = Number(summary?.returning_users || 0);
-  const dayOneReturningUsers = Number(summary?.returned_next_day_users || 0);
+  const returningUsers = Number(summary?.returned_over_time_users || 0);
   const avgQuestionsPerUser = Number(summary?.avg_questions_per_user || 0);
   const conversionToQualified = Number(summary?.qualified_leads_share_percent || 0);
 
   return [
     { id: 'users', label: 'Написало агенту', value: formatNumber(totalUsers) },
     { id: 'questions', label: 'Всего вопросов', value: formatNumber(totalQuestions) },
-    { id: 'returning', label: 'Вернулось к агенту', value: formatNumber(returningUsers) },
-    { id: 'day1', label: 'Вернулось на следующий день', value: formatNumber(dayOneReturningUsers) },
+    { id: 'returning', label: 'Вернулось через время', value: formatNumber(returningUsers) },
     { id: 'avg', label: 'Среднее вопросов на пользователя', value: avgQuestionsPerUser.toFixed(1) },
     { id: 'qualified', label: 'Доля квалифицированных лидов', value: `${conversionToQualified.toFixed(1)}%` },
     { id: 'docs', label: 'Документов в базе знаний', value: formatNumber(docsCount) },
@@ -66,6 +64,80 @@ const mapChatsPayload = (payload) => {
   }));
 };
 
+const AnalyticsChart = ({ timeline }) => {
+  const points = Array.isArray(timeline) ? timeline : [];
+  if (points.length === 0) {
+    return <p className="analytics-chart-empty">Недостаточно данных для графика</p>;
+  }
+
+  const width = 900;
+  const height = 260;
+  const paddingX = 40;
+  const paddingY = 20;
+  const chartWidth = width - paddingX * 2;
+  const chartHeight = height - paddingY * 2;
+
+  const series = [
+    { key: 'users_all_time', label: 'Пользователи за все время', color: '#111827' },
+    { key: 'users_today', label: 'Пользователи за сегодня', color: '#2563eb' },
+    { key: 'new_users', label: 'Новые пользователи', color: '#16a34a' },
+    { key: 'questions_today', label: 'Вопросы сегодня', color: '#dc2626' },
+  ];
+
+  const maxValue = Math.max(
+    1,
+    ...points.flatMap((item) => series.map((serie) => Number(item[serie.key] || 0)))
+  );
+
+  const toLine = (key) =>
+    points
+      .map((item, index) => {
+        const x =
+          paddingX + (points.length === 1 ? chartWidth / 2 : (index / (points.length - 1)) * chartWidth);
+        const value = Number(item[key] || 0);
+        const y = paddingY + chartHeight - (value / maxValue) * chartHeight;
+        return `${x},${y}`;
+      })
+      .join(' ');
+
+  return (
+    <div className="analytics-chart-block">
+      <div className="analytics-chart-legend">
+        {series.map((serie) => (
+          <span key={serie.key}>
+            <i style={{ backgroundColor: serie.color }} />
+            {serie.label}
+          </span>
+        ))}
+      </div>
+      <div className="analytics-chart-wrapper">
+        <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="analytics-chart-svg">
+          <line x1={paddingX} y1={paddingY} x2={paddingX} y2={height - paddingY} stroke="#d1d5db" />
+          <line
+            x1={paddingX}
+            y1={height - paddingY}
+            x2={width - paddingX}
+            y2={height - paddingY}
+            stroke="#d1d5db"
+          />
+          {series.map((serie) => (
+            <polyline
+              key={serie.key}
+              points={toLine(serie.key)}
+              fill="none"
+              stroke={serie.color}
+              strokeWidth="2"
+            />
+          ))}
+        </svg>
+      </div>
+      <div className="analytics-chart-caption">
+        Последние 30 дней: пользователи за все время, пользователи за сегодня, новые пользователи, вопросы сегодня
+      </div>
+    </div>
+  );
+};
+
 const AgentDetailedAnalyticsPageContent = () => {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -74,6 +146,7 @@ const AgentDetailedAnalyticsPageContent = () => {
   const [selectedSection, setSelectedSection] = useState(ANALYTICS_SECTIONS.OVERVIEW);
   const [agent, setAgent] = useState(null);
   const [metrics, setMetrics] = useState([]);
+  const [timeline, setTimeline] = useState([]);
   const [chatUsers, setChatUsers] = useState([]);
   const [selectedUserId, setSelectedUserId] = useState(null);
 
@@ -89,17 +162,19 @@ const AgentDetailedAnalyticsPageContent = () => {
     const loadData = async () => {
       setIsLoading(true);
       try {
-        const [agentData, docs, summary, chats] = await Promise.all([
+        const [agentData, docs, summary, chats, timeseries] = await Promise.all([
           agentService.getById(botId),
           agentService.getDocumentsByBotId(botId),
           agentService.getAnalyticsSummary(botId),
           agentService.getAnalyticsChats(botId, { limit_users: 100, messages_per_user: 100 }),
+          agentService.getAnalyticsTimeseries(botId, 30),
         ]);
         const mappedUsers = mapChatsPayload(chats);
         setAgent(agentData);
         setChatUsers(mappedUsers);
         setSelectedUserId(mappedUsers[0]?.id || null);
         setMetrics(buildOverviewMetrics(summary, docs?.length || 0));
+        setTimeline(Array.isArray(timeseries?.timeline) ? timeseries.timeline : []);
       } catch (error) {
         showError(error?.message || 'Не удалось загрузить аналитику агента');
         navigate(NAVIGATION_ROUTES.AGENTS);
@@ -139,6 +214,24 @@ const AgentDetailedAnalyticsPageContent = () => {
       </div>
 
       <div className="agent-analytics-layout">
+        <aside className="agent-analytics-sidebar">
+          <h4>Разделы</h4>
+          <button
+            type="button"
+            className={`analytics-section-btn ${selectedSection === ANALYTICS_SECTIONS.OVERVIEW ? 'analytics-section-btn--active' : ''}`}
+            onClick={() => setSelectedSection(ANALYTICS_SECTIONS.OVERVIEW)}
+          >
+            Общая аналитика
+          </button>
+          <button
+            type="button"
+            className={`analytics-section-btn ${selectedSection === ANALYTICS_SECTIONS.CHATS ? 'analytics-section-btn--active' : ''}`}
+            onClick={() => setSelectedSection(ANALYTICS_SECTIONS.CHATS)}
+          >
+            Чаты
+          </button>
+        </aside>
+
         <div className="agent-analytics-content">
           {selectedSection === ANALYTICS_SECTIONS.OVERVIEW ? (
             <section className="analytics-overview">
@@ -154,6 +247,7 @@ const AgentDetailedAnalyticsPageContent = () => {
                   </article>
                 ))}
               </div>
+              <AnalyticsChart timeline={timeline} />
             </section>
           ) : (
             <section className="analytics-chats">
@@ -208,24 +302,6 @@ const AgentDetailedAnalyticsPageContent = () => {
             </section>
           )}
         </div>
-
-        <aside className="agent-analytics-sidebar">
-          <h4>Разделы</h4>
-          <button
-            type="button"
-            className={`analytics-section-btn ${selectedSection === ANALYTICS_SECTIONS.OVERVIEW ? 'analytics-section-btn--active' : ''}`}
-            onClick={() => setSelectedSection(ANALYTICS_SECTIONS.OVERVIEW)}
-          >
-            Общая аналитика
-          </button>
-          <button
-            type="button"
-            className={`analytics-section-btn ${selectedSection === ANALYTICS_SECTIONS.CHATS ? 'analytics-section-btn--active' : ''}`}
-            onClick={() => setSelectedSection(ANALYTICS_SECTIONS.CHATS)}
-          >
-            Чаты
-          </button>
-        </aside>
       </div>
     </div>
   );

@@ -4,7 +4,7 @@ from logging import getLogger
 from secrets import compare_digest
 from urllib.parse import quote
 from urllib.request import urlopen
-from datetime import timedelta
+from datetime import datetime, timedelta
 from collections import defaultdict
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
@@ -666,19 +666,16 @@ async def read_analytics_summary(
                 .all()
             )
 
-            returning_users = 0
-            returned_next_day = 0
+            returning_users_over_time = 0
             for row in per_user_rows:
                 first_at = row["first_at"]
                 last_at = row["last_at"]
                 if first_at and last_at and last_at > first_at:
-                    returning_users += 1
-                if first_at and last_at and last_at >= first_at + timedelta(days=1):
-                    returned_next_day += 1
+                    returning_users_over_time += 1
 
             avg_questions_per_user = (float(total_questions) / unique_users) if unique_users > 0 else 0.0
             qualified_leads_share_percent = (
-                (float(returned_next_day) / unique_users) * 100.0 if unique_users > 0 else 0.0
+                (float(returning_users_over_time) / unique_users) * 100.0 if unique_users > 0 else 0.0
             )
 
             return JSONResponse(
@@ -686,10 +683,109 @@ async def read_analytics_summary(
                     "bot_id": agent.bot_id,
                     "unique_users": unique_users,
                     "total_questions": total_questions,
-                    "returning_users": returning_users,
-                    "returned_next_day_users": returned_next_day,
+                    "returned_over_time_users": returning_users_over_time,
                     "avg_questions_per_user": round(avg_questions_per_user, 2),
                     "qualified_leads_share_percent": round(qualified_leads_share_percent, 2),
+                },
+                status_code=status.HTTP_200_OK,
+            )
+
+
+@router.get("/analytics/timeseries")
+async def read_analytics_timeseries(
+    bot_id: int = Query(...),
+    days: int = Query(default=30, ge=7, le=90),
+    current_user=Depends(get_current_user_optional),
+    internal: bool = Depends(is_internal_request),
+):
+    _assert_access(current_user, internal)
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent = await _find_agent_with_access(
+                agent_dao,
+                bot_id=bot_id,
+                current_user=current_user,
+                internal=internal,
+            )
+
+            first_seen_rows = (
+                (
+                    await session.execute(
+                        select(
+                            AgentAnalyticsMessage.user_external_id.label("uid"),
+                            func.min(AgentAnalyticsMessage.created_at).label("first_at"),
+                        ).where(
+                            AgentAnalyticsMessage.bot_id == agent.bot_id,
+                            AgentAnalyticsMessage.role == "user",
+                            AgentAnalyticsMessage.user_external_id.is_not(None),
+                        ).group_by(AgentAnalyticsMessage.user_external_id)
+                    )
+                )
+                .mappings()
+                .all()
+            )
+
+            daily_rows = (
+                (
+                    await session.execute(
+                        select(
+                            func.date_trunc("day", AgentAnalyticsMessage.created_at).label("day"),
+                            func.count(AgentAnalyticsMessage.id).label("questions_today"),
+                            func.count(func.distinct(AgentAnalyticsMessage.user_external_id)).label("users_today"),
+                        ).where(
+                            AgentAnalyticsMessage.bot_id == agent.bot_id,
+                            AgentAnalyticsMessage.role == "user",
+                            AgentAnalyticsMessage.user_external_id.is_not(None),
+                        ).group_by(func.date_trunc("day", AgentAnalyticsMessage.created_at))
+                    )
+                )
+                .mappings()
+                .all()
+            )
+
+            today = datetime.utcnow().date()
+            start_day = today - timedelta(days=days - 1)
+
+            daily_activity = {}
+            for row in daily_rows:
+                day_value = row["day"]
+                day_key = day_value.date() if hasattr(day_value, "date") else day_value
+                daily_activity[day_key] = {
+                    "questions_today": int(row["questions_today"] or 0),
+                    "users_today": int(row["users_today"] or 0),
+                }
+
+            new_users_by_day = defaultdict(int)
+            for row in first_seen_rows:
+                first_at = row["first_at"]
+                if not first_at:
+                    continue
+                first_day = first_at.date() if hasattr(first_at, "date") else first_at
+                new_users_by_day[first_day] += 1
+
+            timeline = []
+            users_all_time = 0
+            day_cursor = start_day
+            while day_cursor <= today:
+                users_all_time += int(new_users_by_day.get(day_cursor, 0))
+                current_activity = daily_activity.get(day_cursor, {})
+                timeline.append(
+                    {
+                        "date": day_cursor.isoformat(),
+                        "users_all_time": users_all_time,
+                        "users_today": int(current_activity.get("users_today", 0)),
+                        "new_users": int(new_users_by_day.get(day_cursor, 0)),
+                        "questions_today": int(current_activity.get("questions_today", 0)),
+                    }
+                )
+                day_cursor += timedelta(days=1)
+
+            return JSONResponse(
+                content={
+                    "bot_id": agent.bot_id,
+                    "days": days,
+                    "timeline": timeline,
                 },
                 status_code=status.HTTP_200_OK,
             )

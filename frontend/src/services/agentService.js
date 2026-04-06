@@ -109,6 +109,13 @@ export const agentService = {
     return response.data;
   },
 
+  getAnalyticsTimeseries: async (botId, days = 30) => {
+    const response = await apiClient.get(API_ROUTES.AGENTS_ANALYTICS_TIMESERIES, {
+      params: { bot_id: botId, days },
+    });
+    return response.data;
+  },
+
   uploadDocumentByBotId: async (botId, file) => {
     const formData = new FormData();
     formData.append('agent_data', JSON.stringify({ bot_id: botId }));
