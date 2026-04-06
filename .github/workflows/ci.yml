@@ -30,6 +30,7 @@ jobs:
 
       - name: Run tests
         env:
+          PYTHONPATH: ./backend 
           SECRET_KEY: test-secret-key-for-ci-min-32-chars-long
           INTERNAL_API_KEY: test-internal-api-key
           ENCRYPTION_KEY: test-encryption-key-for-fernet-ci
