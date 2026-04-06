@@ -12,8 +12,8 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-# Добавляем корень проекта (backend) в путь
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+backend_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(backend_root))
 
 # --- ЗАГРУЗКА ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ---
 env_path = Path(__file__).parent.parent / ".env"
