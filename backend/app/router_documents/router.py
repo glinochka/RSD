@@ -11,13 +11,11 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Header, HTT
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from .dao import DocumentDAO
 from .schemas import *
 from ..alembic.database import async_session_maker
-from ..alembic.models import AgentDocument
 from ..config import settings
 from ..qdrant.indexer import (
     extract_text,
@@ -266,15 +264,10 @@ async def upload_document(
         suffix=os.path.splitext(file.filename)[1],
     )
 
-    existing_doc = None
     async with async_session_maker() as session:
+        doc_dao = DocumentDAO(session)
         async with session.begin():
-            existing_doc = await session.scalar(
-                select(AgentDocument).where(
-                    AgentDocument.agent_id == agent.id,
-                    AgentDocument.content_hash == content_hash,
-                )
-            )
+            existing_doc = await doc_dao.find_by_agent_and_content_hash(agent.id, content_hash)
 
     if existing_doc:
         if existing_doc.status == "error":
@@ -347,13 +340,9 @@ async def upload_document(
                     await session.flush()
         except IntegrityError:
             async with async_session_maker() as session:
+                doc_dao = DocumentDAO(session)
                 async with session.begin():
-                    existing_doc = await session.scalar(
-                        select(AgentDocument).where(
-                            AgentDocument.agent_id == agent.id,
-                            AgentDocument.content_hash == content_hash,
-                        )
-                    )
+                    existing_doc = await doc_dao.find_by_agent_and_content_hash(agent.id, content_hash)
             data = {
                 "status": "duplicate",
                 "document_id": existing_doc.id if existing_doc else None,
@@ -412,15 +401,10 @@ async def upload_public_link(
     limit = get_chunk_limit_by_plan(current_plan)
 
     content_hash = hashlib.sha256(normalized_url.encode("utf-8")).hexdigest()
-    existing_doc = None
     async with async_session_maker() as session:
+        doc_dao = DocumentDAO(session)
         async with session.begin():
-            existing_doc = await session.scalar(
-                select(AgentDocument).where(
-                    AgentDocument.agent_id == agent.id,
-                    AgentDocument.content_hash == content_hash,
-                )
-            )
+            existing_doc = await doc_dao.find_by_agent_and_content_hash(agent.id, content_hash)
 
     if existing_doc:
         data = {
@@ -483,13 +467,9 @@ async def upload_public_link(
                 await session.flush()
     except IntegrityError:
         async with async_session_maker() as session:
+            doc_dao = DocumentDAO(session)
             async with session.begin():
-                existing_doc = await session.scalar(
-                    select(AgentDocument).where(
-                        AgentDocument.agent_id == agent.id,
-                        AgentDocument.content_hash == content_hash,
-                    )
-                )
+                existing_doc = await doc_dao.find_by_agent_and_content_hash(agent.id, content_hash)
         data = {
             "status": "duplicate",
             "document_id": existing_doc.id if existing_doc else None,

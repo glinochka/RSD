@@ -7,7 +7,6 @@ from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 import jwt
 from jwt.exceptions import InvalidTokenError
-from sqlalchemy import String, cast, desc, func, or_, select
 
 from .schemas import (
     AdminGiftSubscriptionRequest,
@@ -16,17 +15,12 @@ from .schemas import (
     AdminSubscriptionPlansUpdateRequest,
 )
 from ..alembic.database import async_session_maker
-from ..alembic.models import (
-    Agent,
-    AgentDocument,
-    PaymentTransaction,
-    PromoCode,
-    TurnkeyAgentRequest,
-    User,
-)
+from ..alembic.models import PromoCode
 from ..config import get_auth_data, settings
 from ..qdrant.search_service import delete_agent_vectors
 from ..router_agents.dao import AgentDAO
+from ..router_documents.dao import DocumentDAO
+from ..router_payments.dao import PaymentTransactionDAO, PromoCodeDAO, TurnkeyAgentRequestDAO
 from ..router_payments.router import _calculate_new_end_date
 from ..router_users.dao import UserDAO
 from ..subscription_plans import (
@@ -132,25 +126,20 @@ async def admin_login(payload: AdminLoginRequest):
 @router.get("/stats")
 async def admin_stats(_admin=Depends(get_current_admin)):
     async with async_session_maker() as session:
-        total_users = await session.scalar(select(func.count(User.id)))
-        total_agents = await session.scalar(select(func.count(Agent.id)))
-        active_agents = await session.scalar(
-            select(func.count(Agent.id)).where(Agent.is_active.is_(True))
-        )
-        total_documents = await session.scalar(select(func.count(AgentDocument.id)))
-        paid_users = await session.scalar(
-            select(func.count(User.id)).where(User.subscription_type != "Free")
-        )
-        total_payments = await session.scalar(select(func.count(PaymentTransaction.id)))
-        free_users = await session.scalar(
-            select(func.count(User.id)).where(User.subscription_type == "Free")
-        )
-        advanced_users = await session.scalar(
-            select(func.count(User.id)).where(User.subscription_type == "Advanced")
-        )
-        pro_users = await session.scalar(
-            select(func.count(User.id)).where(User.subscription_type == "Pro")
-        )
+        user_dao = UserDAO(session)
+        agent_dao = AgentDAO(session)
+        document_dao = DocumentDAO(session)
+        payment_tx_dao = PaymentTransactionDAO(session)
+        async with session.begin():
+            total_users = await user_dao.count_for_admin()
+            total_agents = await agent_dao.count_all()
+            active_agents = await agent_dao.count_active()
+            total_documents = await document_dao.count_all()
+            paid_users = await user_dao.count_paid_users()
+            total_payments = await payment_tx_dao.count_all()
+            free_users = await user_dao.count_by_subscription_type("Free")
+            advanced_users = await user_dao.count_by_subscription_type("Advanced")
+            pro_users = await user_dao.count_by_subscription_type("Pro")
 
     return JSONResponse(
         content={
@@ -178,27 +167,16 @@ async def admin_users(
     _admin=Depends(get_current_admin),
 ):
     search_value = (search or "").strip()
-    offset = (page - 1) * page_size
 
     async with async_session_maker() as session:
-        base_count_query = select(func.count(User.id))
-        base_items_query = (
-            select(User)
-            .order_by(desc(User.registered), desc(User.id))
-            .offset(offset)
-            .limit(page_size)
-        )
-        if search_value:
-            pattern = f"%{search_value}%"
-            filters = or_(
-                User.name.ilike(pattern),
-                cast(User.telegram_id, String).ilike(pattern),
+        user_dao = UserDAO(session)
+        async with session.begin():
+            total = await user_dao.count_for_admin(search_value)
+            users = await user_dao.list_for_admin(
+                page=page,
+                page_size=page_size,
+                search_value=search_value,
             )
-            base_count_query = base_count_query.where(filters)
-            base_items_query = base_items_query.where(filters)
-
-        total = await session.scalar(base_count_query)
-        users = (await session.scalars(base_items_query)).all()
 
     items = [
         {
@@ -236,37 +214,16 @@ async def admin_agents(
     _admin=Depends(get_current_admin),
 ):
     search_value = (search or "").strip()
-    offset = (page - 1) * page_size
 
     async with async_session_maker() as session:
-        base_query = select(
-            Agent.id,
-            Agent.bot_id,
-            Agent.bot_username,
-            Agent.is_active,
-            Agent.registered,
-            User.name.label("owner_name"),
-            User.subscription_type.label("owner_subscription_type"),
-        ).join(User, User.id == Agent.user_id)
-        count_query = select(func.count(Agent.id)).join(User, User.id == Agent.user_id)
-        if search_value:
-            pattern = f"%{search_value}%"
-            filters = or_(
-                Agent.bot_username.ilike(pattern),
-                User.name.ilike(pattern),
-                cast(Agent.bot_id, String).ilike(pattern),
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            total = await agent_dao.count_for_admin(search_value)
+            rows = await agent_dao.list_for_admin(
+                page=page,
+                page_size=page_size,
+                search_value=search_value,
             )
-            base_query = base_query.where(filters)
-            count_query = count_query.where(filters)
-
-        total = await session.scalar(count_query)
-        rows = (
-            await session.execute(
-                base_query.order_by(desc(Agent.registered), desc(Agent.id))
-                .offset(offset)
-                .limit(page_size)
-            )
-        ).all()
 
     items = [
         {
@@ -302,29 +259,16 @@ async def admin_turnkey_requests(
     _admin=Depends(get_current_admin),
 ):
     search_value = (search or "").strip()
-    offset = (page - 1) * page_size
 
     async with async_session_maker() as session:
-        count_query = select(func.count(TurnkeyAgentRequest.id))
-        base_query = (
-            select(TurnkeyAgentRequest)
-            .order_by(desc(TurnkeyAgentRequest.created_at), desc(TurnkeyAgentRequest.id))
-            .offset(offset)
-            .limit(page_size)
-        )
-        if search_value:
-            pattern = f"%{search_value}%"
-            filters = or_(
-                TurnkeyAgentRequest.phone_number.ilike(pattern),
-                TurnkeyAgentRequest.email.ilike(pattern),
-                TurnkeyAgentRequest.requested_agent.ilike(pattern),
-                TurnkeyAgentRequest.purpose.ilike(pattern),
+        turnkey_request_dao = TurnkeyAgentRequestDAO(session)
+        async with session.begin():
+            total = await turnkey_request_dao.count_for_admin(search_value)
+            items_data = await turnkey_request_dao.list_for_admin(
+                page=page,
+                page_size=page_size,
+                search_value=search_value,
             )
-            count_query = count_query.where(filters)
-            base_query = base_query.where(filters)
-
-        total = await session.scalar(count_query)
-        items_data = (await session.scalars(base_query)).all()
 
     items = [
         {
@@ -376,11 +320,9 @@ async def admin_update_plans(
 @router.get("/promo-codes")
 async def admin_list_promo_codes(_admin=Depends(get_current_admin)):
     async with async_session_maker() as session:
-        rows = (
-            await session.scalars(
-                select(PromoCode).order_by(desc(PromoCode.created_at), desc(PromoCode.id))
-            )
-        ).all()
+        promo_code_dao = PromoCodeDAO(session)
+        async with session.begin():
+            rows = await promo_code_dao.list_all_desc()
 
     return JSONResponse(
         content={"items": [_serialize_promo_code(row) for row in rows]},
@@ -398,18 +340,21 @@ async def admin_create_promo_code(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Promo code is required")
 
     async with async_session_maker() as session:
+        promo_code_dao = PromoCodeDAO(session)
         async with session.begin():
-            existing = await session.scalar(
-                select(PromoCode).where(func.upper(PromoCode.code) == code)
-            )
+            existing = await promo_code_dao.find_by_code_case_insensitive(code)
             if existing:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="Promo code already exists",
                 )
 
-            item = PromoCode(code=code, discount_percent=payload.discount_percent)
-            session.add(item)
+            item = await promo_code_dao.add(
+                {
+                    "code": code,
+                    "discount_percent": payload.discount_percent,
+                }
+            )
             await session.flush()
             await session.refresh(item)
 
@@ -425,11 +370,12 @@ async def admin_delete_promo_code(
     _admin=Depends(get_current_admin),
 ):
     async with async_session_maker() as session:
+        promo_code_dao = PromoCodeDAO(session)
         async with session.begin():
-            item = await session.get(PromoCode, promo_code_id)
+            item = await promo_code_dao.find_one_by_filter(id=promo_code_id)
             if not item:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Promo code not found")
-            await session.delete(item)
+            await promo_code_dao.delete(item)
 
     return JSONResponse(content={"detail": "Promo code deleted"}, status_code=status.HTTP_200_OK)
 

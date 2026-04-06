@@ -7,12 +7,10 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import desc, func, select
 
 from .dao import TelegramLinkChallengeDAO, UserDAO
 from .schemas import *
 from ..alembic.database import async_session_maker
-from ..alembic.models import Agent, TelegramLinkChallenge, User
 from ..config import settings
 from ..router_agents.dao import AgentDAO
 from ..utils.convert import convert_to_dict
@@ -59,6 +57,16 @@ def _normalize_tg_username(username: str) -> str:
     if value.startswith("@"):
         value = value[1:]
     return value.lower()
+
+
+def _serialize_user_public(user) -> dict:
+    user_dict = convert_to_dict(user)
+    # Для JSON-сериализации удаляем неиспользуемые служебные поля.
+    user_dict.pop("registered", None)
+    sub_time: datetime | None = user_dict.get("subscription_end_date")
+    user_dict["subscription_end_date"] = sub_time.isoformat() if sub_time else None
+    user_dict.pop("password", None)
+    return user_dict
 
 
 async def _send_master_bot_link_prompt(telegram_id: int) -> None:
@@ -146,13 +154,7 @@ async def user_by_agentID(user_by_agent: User_by_agent_or_tgID = Depends(), _int
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="User not found for this agent"
                 )
-            user_dict = convert_to_dict(user)
-            # для json сериализации
-            user_dict.pop("registered", None)
-            sub_time: datetime | None = user_dict.get("subscription_end_date")
-            user_dict["subscription_end_date"] = sub_time.isoformat() if sub_time else None
-
-            user_dict.pop("password", None)
+            user_dict = _serialize_user_public(user)
 
     logger.info(f"запрос с {user_by_agent.id} был обработан")
     return JSONResponse(
@@ -173,13 +175,7 @@ async def user_by_tgID(user_by_tg: User_by_agent_or_tgID = Depends(), _internal=
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="User not found for this tg ID"
                 )
-            user_dict = convert_to_dict(user)
-            # для json сериализации
-            user_dict.pop("registered", None)
-            sub_time: datetime | None = user_dict.get("subscription_end_date")
-            user_dict["subscription_end_date"] = sub_time.isoformat() if sub_time else None
-
-            user_dict.pop("password", None)
+            user_dict = _serialize_user_public(user)
 
 
     logger.info(f"запрос с {user_by_tg.id} был обработан")
@@ -295,14 +291,9 @@ async def start_telegram_link(payload: TelegramLinkStartRequest, current_user=De
 
     async with async_session_maker() as session:
         challenge_dao = TelegramLinkChallengeDAO(session)
+        user_dao = UserDAO(session)
         async with session.begin():
-            target_user_result = await session.execute(
-                select(User).where(
-                    func.lower(User.name) == normalized_tg_username,
-                    User.telegram_id.is_not(None),
-                )
-            )
-            target_user = target_user_result.scalar_one_or_none()
+            target_user = await user_dao.find_telegram_user_by_normalized_name(normalized_tg_username)
             if not target_user:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
@@ -313,13 +304,7 @@ async def start_telegram_link(payload: TelegramLinkStartRequest, current_user=De
             code_hash = _hash_link_code(code)
             target_telegram_id = int(target_user.telegram_id)
 
-            stale_result = await session.execute(
-                select(TelegramLinkChallenge).where(
-                    TelegramLinkChallenge.user_id == current_user.id,
-                    TelegramLinkChallenge.status == "pending",
-                )
-            )
-            stale_challenges = stale_result.scalars().all()
+            stale_challenges = await challenge_dao.find_pending_by_user_id(current_user.id)
             for challenge in stale_challenges:
                 await challenge_dao.update(challenge, {"status": "expired"})
 
@@ -358,30 +343,17 @@ async def confirm_telegram_link(payload: TelegramLinkConfirmRequest, _internal=D
 
     async with async_session_maker() as session:
         user_dao = UserDAO(session)
+        agent_dao = AgentDAO(session)
         challenge_dao = TelegramLinkChallengeDAO(session)
         async with session.begin():
-            challenge_result = await session.execute(
-                select(TelegramLinkChallenge)
-                .where(
-                    TelegramLinkChallenge.code_hash == code_hash,
-                    TelegramLinkChallenge.status == "pending",
-                    TelegramLinkChallenge.target_telegram_id == payload.telegram_id,
-                )
-                .order_by(desc(TelegramLinkChallenge.id))
-                .limit(1)
+            challenge = await challenge_dao.find_pending_by_code_and_target(
+                code_hash=code_hash,
+                target_telegram_id=payload.telegram_id,
             )
-            challenge = challenge_result.scalar_one_or_none()
             if not challenge:
-                latest_by_tg_result = await session.execute(
-                    select(TelegramLinkChallenge)
-                    .where(
-                        TelegramLinkChallenge.target_telegram_id == payload.telegram_id,
-                        TelegramLinkChallenge.status == "pending",
-                    )
-                    .order_by(desc(TelegramLinkChallenge.id))
-                    .limit(1)
+                latest_challenge = await challenge_dao.find_latest_pending_by_target_telegram_id(
+                    target_telegram_id=payload.telegram_id
                 )
-                latest_challenge = latest_by_tg_result.scalar_one_or_none()
                 if latest_challenge:
                     new_attempts = max(0, latest_challenge.attempts_left - 1)
                     new_status = "blocked" if new_attempts == 0 else "pending"
@@ -423,10 +395,7 @@ async def confirm_telegram_link(payload: TelegramLinkConfirmRequest, _internal=D
                 # so it can be attached to the authenticated web account.
                 if linked_user.password is None:
                     # Preserve all agents created from Telegram account before linking.
-                    linked_user_agents_result = await session.execute(
-                        select(Agent).where(Agent.user_id == linked_user.id)
-                    )
-                    linked_user_agents = linked_user_agents_result.scalars().all()
+                    linked_user_agents = await agent_dao.find_all_by_user_id(linked_user.id)
                     for linked_agent in linked_user_agents:
                         linked_agent.user_id = user.id
                     await user_dao.update(linked_user, {"telegram_id": None})
@@ -460,14 +429,10 @@ async def confirm_telegram_link(payload: TelegramLinkConfirmRequest, _internal=D
                 {"status": "consumed", "consumed_at": now_utc},
             )
 
-            stale_result = await session.execute(
-                select(TelegramLinkChallenge).where(
-                    TelegramLinkChallenge.user_id == user.id,
-                    TelegramLinkChallenge.status == "pending",
-                    TelegramLinkChallenge.id != challenge.id,
-                )
+            stale_challenges = await challenge_dao.find_pending_by_user_id_except(
+                user_id=user.id,
+                challenge_id=challenge.id,
             )
-            stale_challenges = stale_result.scalars().all()
             for stale in stale_challenges:
                 await challenge_dao.update(stale, {"status": "expired"})
 
