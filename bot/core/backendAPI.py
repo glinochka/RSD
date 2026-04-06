@@ -229,6 +229,13 @@ class APIread(APIbase):
     @classmethod
     async def agentBy_botID(cls, bot_id: int) -> dict:
         return await cls.agent({'bot_id': bot_id})
+
+    @classmethod
+    async def agentFrozenCheck(cls, bot_id: int, user_external_id: str) -> dict:
+        return await cls.agent(
+            {"bot_id": bot_id, "user_external_id": user_external_id},
+            add_url="analytics/frozen/check",
+        )
     
     @classmethod
     async def allAgentsBy_tgID(cls, tg_id: int) -> dict|list:

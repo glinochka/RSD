@@ -116,6 +116,23 @@ export const agentService = {
     return response.data;
   },
 
+  setUserFrozen: async (botId, userExternalId, frozen) => {
+    await apiClient.post(API_ROUTES.AGENTS_ANALYTICS_FROZEN, {
+      bot_id: botId,
+      user_external_id: userExternalId,
+      frozen,
+    });
+  },
+
+  sendTelegramMessageAsOwner: async (botId, userExternalId, message) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_TELEGRAM_SEND_TO_USER, {
+      bot_id: botId,
+      user_external_id: userExternalId,
+      message,
+    });
+    return response.data;
+  },
+
   uploadDocumentByBotId: async (botId, file) => {
     const formData = new FormData();
     formData.append('agent_data', JSON.stringify({ bot_id: botId }));

@@ -15,7 +15,7 @@ from sqlalchemy import Date, cast, func, select
 from .dao import AgentDAO
 from .schemas import *
 from ..alembic.database import async_session_maker
-from ..alembic.models import AgentAnalyticsMessage
+from ..alembic.models import AgentAnalyticsMessage, AgentFrozenUser
 from ..config import settings
 from ..qdrant.search_service import delete_agent_vectors
 from ..router_users.dao import UserDAO
@@ -149,6 +149,32 @@ def _safe_iso(value):
         return str(value)
 
 
+async def _telegram_api_send_message(bot_token: str, chat_id: int, text: str) -> None:
+    """Send a plain text message via Telegram Bot API (sync urllib in thread pool)."""
+    url = f"https://api.telegram.org/bot{quote(bot_token, safe='')}/sendMessage"
+    payload_bytes = json.dumps({"chat_id": chat_id, "text": text}, ensure_ascii=False).encode("utf-8")
+
+    def _post():
+        from urllib.request import Request, urlopen
+
+        req = Request(
+            url,
+            data=payload_bytes,
+            headers={"Content-Type": "application/json; charset=utf-8"},
+            method="POST",
+        )
+        with urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+
+    result = await asyncio.get_running_loop().run_in_executor(None, _post)
+    if not result or result.get("ok") is not True:
+        detail = (result or {}).get("description") or str(result)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Telegram sendMessage: {detail}",
+        )
+
+
 async def _log_analytics_message(
     *,
     session,
@@ -163,13 +189,13 @@ async def _log_analytics_message(
     if not normalized_text:
         return
     normalized_role = (role or "").strip().lower()
-    if normalized_role not in {"user", "agent"}:
+    if normalized_role not in {"user", "agent", "operator"}:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="role must be either 'user' or 'agent'",
+            detail="role must be one of: user, agent, operator",
         )
     normalized_channel = (channel or "telegram").strip().lower()
-    if normalized_channel not in {"telegram", "external_api", "web"}:
+    if normalized_channel not in {"telegram", "external_api", "web", "dashboard"}:
         normalized_channel = "web"
 
     row = AgentAnalyticsMessage(
@@ -794,6 +820,112 @@ async def read_analytics_timeseries(
             )
 
 
+@router.get("/analytics/frozen/check")
+async def analytics_frozen_check(
+    bot_id: int = Query(...),
+    user_external_id: str = Query(..., max_length=128),
+    internal: bool = Depends(is_internal_request),
+):
+    if not internal:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Internal API key required")
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent = await agent_dao.find_one_by_filter(bot_id=bot_id)
+            if not agent:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+            uid = user_external_id.strip()
+            row_id = await session.scalar(
+                select(AgentFrozenUser.id).where(
+                    AgentFrozenUser.agent_id == agent.id,
+                    AgentFrozenUser.user_external_id == uid,
+                )
+            )
+            return JSONResponse(content={"frozen": bool(row_id)}, status_code=status.HTTP_200_OK)
+
+
+@router.post("/analytics/frozen")
+async def analytics_set_user_frozen(
+    payload: AgentFreezeUserPayload,
+    current_user=Depends(get_current_user_required),
+):
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent = await _find_agent_with_access(
+                agent_dao,
+                bot_id=payload.bot_id,
+                current_user=current_user,
+                internal=False,
+            )
+            uid = payload.user_external_id.strip()
+            if payload.frozen:
+                exists = await session.scalar(
+                    select(AgentFrozenUser.id).where(
+                        AgentFrozenUser.agent_id == agent.id,
+                        AgentFrozenUser.user_external_id == uid,
+                    )
+                )
+                if not exists:
+                    session.add(
+                        AgentFrozenUser(
+                            agent_id=agent.id,
+                            user_external_id=uid,
+                        )
+                    )
+            else:
+                row = await session.scalar(
+                    select(AgentFrozenUser).where(
+                        AgentFrozenUser.agent_id == agent.id,
+                        AgentFrozenUser.user_external_id == uid,
+                    )
+                )
+                if row:
+                    await session.delete(row)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/telegram/send_to_user")
+async def telegram_send_to_user_as_owner(
+    payload: AgentTelegramSendToUserPayload,
+    current_user=Depends(get_current_user_required),
+):
+    try:
+        chat_id = int(payload.user_external_id.strip())
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Некорректный Telegram user id",
+        )
+    if chat_id <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Некорректный Telegram user id",
+        )
+    text = payload.message.strip()
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent = await _find_agent_with_access(
+                agent_dao,
+                bot_id=payload.bot_id,
+                current_user=current_user,
+                internal=False,
+            )
+            bot_token = decrypt_token(agent.encrypted_token)
+            await _telegram_api_send_message(bot_token, chat_id, text)
+            await _log_analytics_message(
+                session=session,
+                agent=agent,
+                role="operator",
+                message_text=text,
+                channel="dashboard",
+                user_external_id=str(chat_id),
+                user_display_name=None,
+            )
+    return JSONResponse(content={"ok": True}, status_code=status.HTTP_200_OK)
+
+
 @router.get("/analytics/chats")
 async def read_analytics_chats(
     bot_id: int = Query(...),
@@ -841,6 +973,14 @@ async def read_analytics_chats(
                     status_code=status.HTTP_200_OK,
                 )
 
+            frozen_result = await session.scalars(
+                select(AgentFrozenUser.user_external_id).where(
+                    AgentFrozenUser.agent_id == agent.id,
+                    AgentFrozenUser.user_external_id.in_(user_ids),
+                )
+            )
+            frozen_ids = set(frozen_result.all())
+
             message_rows = (
                 (
                     await session.execute(
@@ -878,6 +1018,7 @@ async def read_analytics_chats(
                         "user_display_name": row["display_name"] or f"User {uid}",
                         "questions_count": int(row["questions"] or 0),
                         "last_message_at": _safe_iso(row["last_message_at"]),
+                        "is_frozen": uid in frozen_ids,
                         "messages": [
                             {
                                 "role": item["role"],

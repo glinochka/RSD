@@ -67,3 +67,15 @@ class AgentAnalyticsMessageLog(BaseModel):
     )
     message_text: str = Field(..., min_length=1, max_length=8000, description="Текст сообщения")
 
+
+class AgentFreezeUserPayload(BaseModel):
+    bot_id: int = Field(..., description="Id бота в Telegram")
+    user_external_id: str = Field(..., max_length=128, description="Внешний id пользователя (Telegram user id)")
+    frozen: bool = Field(default=True, description="True — заморозить, False — снять")
+
+
+class AgentTelegramSendToUserPayload(BaseModel):
+    bot_id: int = Field(..., description="Id бота в Telegram")
+    user_external_id: str = Field(..., max_length=128, description="Telegram user id получателя")
+    message: str = Field(..., min_length=1, max_length=4096, description="Текст сообщения от владельца")
+

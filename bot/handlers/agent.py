@@ -1,4 +1,5 @@
 from aiogram import Router, types
+from fastapi import status
 from services.ai_service import get_answer
 from core.backendAPI import APIread, APIcreate, get_response_status
 agent_router = Router()
@@ -25,6 +26,15 @@ async def handle_agent_message(message: types.Message, agent_config: dict):
         user_display_name = (from_user.full_name or from_user.username or "").strip() or None
     else:
         user_display_name = None
+
+    if user_external_id:
+        frozen_check = await APIread.agentFrozenCheck(agent_id, user_external_id)
+        if get_response_status(frozen_check) == status.HTTP_200_OK and frozen_check.get("frozen"):
+            await message.answer(
+                "Доступ к этому боту для вас временно ограничен владельцем. "
+                "Если вы считаете, что это ошибка, свяжитесь с поддержкой."
+            )
+            return
 
     # 1. ПРОВЕРКА НА /START
     if query == "/start":

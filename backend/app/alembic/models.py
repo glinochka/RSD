@@ -4,7 +4,7 @@ sys.path.insert(0, dirname(dirname(abspath(__file__))))
 
 
 
-from sqlalchemy import BigInteger, Boolean, String, ForeignKey, Text, DateTime, Integer
+from sqlalchemy import BigInteger, Boolean, String, ForeignKey, Text, DateTime, Integer, UniqueConstraint
 from sqlalchemy.orm import  Mapped, mapped_column, relationship
 
 try: from .database import Base
@@ -79,6 +79,25 @@ class Agent(Base):
         back_populates="agent",
         cascade="all, delete-orphan",
     )
+    frozen_users: Mapped[list["AgentFrozenUser"]] = relationship(
+        back_populates="agent",
+        cascade="all, delete-orphan",
+    )
+
+
+class AgentFrozenUser(Base):
+    __tablename__ = "agent_frozen_users"
+    __table_args__ = (
+        UniqueConstraint("agent_id", "user_external_id", name="uq_agent_frozen_user_external"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), index=True, nullable=False)
+    user_external_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    agent: Mapped["Agent"] = relationship(back_populates="frozen_users")
 
 
 class AgentAnalyticsMessage(Base):
@@ -88,7 +107,7 @@ class AgentAnalyticsMessage(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), index=True, nullable=False)
     bot_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
-    role: Mapped[str] = mapped_column(String(16), nullable=False, index=True)  # user | agent
+    role: Mapped[str] = mapped_column(String(16), nullable=False, index=True)  # user | agent | operator
     channel: Mapped[str] = mapped_column(String(32), nullable=False, default="telegram", server_default="telegram")
     user_external_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     user_display_name: Mapped[str | None] = mapped_column(String(128), nullable=True)

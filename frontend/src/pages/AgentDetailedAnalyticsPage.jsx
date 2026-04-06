@@ -65,6 +65,7 @@ const mapChatsPayload = (payload) => {
     name: user.user_display_name || `Пользователь ${user.user_external_id}`,
     questions: Number(user.questions_count || 0),
     lastMessageAt: formatDateTime(user.last_message_at),
+    isFrozen: Boolean(user.is_frozen),
     messages: (Array.isArray(user.messages) ? user.messages : []).map((item, index) => ({
       id: `${user.user_external_id}-${index}-${item.created_at || 'time'}`,
       role: item.role,
@@ -188,7 +189,7 @@ const AnalyticsChart = ({ timeline, selectedDays, onChangeDays, isLoading }) => 
 const AgentDetailedAnalyticsPageContent = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { showError } = useNotification();
+  const { showError, showSuccess } = useNotification();
   const [isLoading, setIsLoading] = useState(true);
   const [selectedSection, setSelectedSection] = useState(ANALYTICS_SECTIONS.OVERVIEW);
   const [agent, setAgent] = useState(null);
@@ -198,6 +199,9 @@ const AgentDetailedAnalyticsPageContent = () => {
   const [isChartLoading, setIsChartLoading] = useState(false);
   const [chatUsers, setChatUsers] = useState([]);
   const [selectedUserId, setSelectedUserId] = useState(null);
+  const [ownerReplyText, setOwnerReplyText] = useState('');
+  const [isSendingOwnerReply, setIsSendingOwnerReply] = useState(false);
+  const [isTogglingFreeze, setIsTogglingFreeze] = useState(false);
 
   const botId = useMemo(() => Number(id), [id]);
 
@@ -256,6 +260,66 @@ const AgentDetailedAnalyticsPageContent = () => {
     () => chatUsers.find((user) => user.id === selectedUserId) || null,
     [chatUsers, selectedUserId]
   );
+
+  const canSendTelegramToUser = Boolean(selectedUser && /^\d+$/.test(String(selectedUser.id)));
+
+  useEffect(() => {
+    setOwnerReplyText('');
+  }, [selectedUserId]);
+
+  const refreshChats = async () => {
+    const chats = await agentService.getAnalyticsChats(botId, {
+      limit_users: 100,
+      messages_per_user: 100,
+    });
+    const mapped = mapChatsPayload(chats);
+    setChatUsers(mapped);
+    setSelectedUserId((prev) => {
+      const exists = mapped.some((u) => u.id === prev);
+      return exists ? prev : mapped[0]?.id || null;
+    });
+  };
+
+  const handleToggleFreeze = async () => {
+    if (!selectedUser) return;
+    setIsTogglingFreeze(true);
+    try {
+      const nextFrozen = !selectedUser.isFrozen;
+      await agentService.setUserFrozen(botId, selectedUser.id, nextFrozen);
+      showSuccess(nextFrozen ? 'Пользователь заморожен' : 'Заморозка снята');
+      setChatUsers((prev) =>
+        prev.map((u) => (u.id === selectedUser.id ? { ...u, isFrozen: nextFrozen } : u))
+      );
+    } catch (error) {
+      showError(error?.message || 'Не удалось изменить статус пользователя');
+    } finally {
+      setIsTogglingFreeze(false);
+    }
+  };
+
+  const handleSendOwnerMessage = async () => {
+    if (!selectedUser) return;
+    const text = ownerReplyText.trim();
+    if (!text) {
+      showError('Введите текст сообщения');
+      return;
+    }
+    if (!canSendTelegramToUser) {
+      showError('Отправка доступна только пользователям из Telegram (числовой id)');
+      return;
+    }
+    setIsSendingOwnerReply(true);
+    try {
+      await agentService.sendTelegramMessageAsOwner(botId, selectedUser.id, text);
+      showSuccess('Сообщение отправлено');
+      setOwnerReplyText('');
+      await refreshChats();
+    } catch (error) {
+      showError(error?.message || 'Не удалось отправить сообщение');
+    } finally {
+      setIsSendingOwnerReply(false);
+    }
+  };
 
   if (isLoading) {
     return <Loading message="Загрузка аналитики..." />;
@@ -332,12 +396,13 @@ const AgentDetailedAnalyticsPageContent = () => {
                       <button
                         key={user.id}
                         type="button"
-                        className={`analytics-user-item ${selectedUserId === user.id ? 'analytics-user-item--active' : ''}`}
+                        className={`analytics-user-item ${selectedUserId === user.id ? 'analytics-user-item--active' : ''} ${user.isFrozen ? 'analytics-user-item--frozen' : ''}`}
                         onClick={() => setSelectedUserId(user.id)}
                       >
                         <strong>{user.name}</strong>
                         <span>{user.questions} вопросов</span>
                         <span>{user.lastMessageAt}</span>
+                        {user.isFrozen ? <span className="analytics-user-frozen-badge">Заморожен</span> : null}
                       </button>
                     ))
                   )}
@@ -349,22 +414,68 @@ const AgentDetailedAnalyticsPageContent = () => {
                   ) : (
                     <>
                       <header className="analytics-chat-thread-header">
-                        <h4>{selectedUser.name}</h4>
-                        <p>Вопросов: {selectedUser.questions}</p>
+                        <div className="analytics-chat-thread-header-text">
+                          <h4>{selectedUser.name}</h4>
+                          <p>Вопросов: {selectedUser.questions}</p>
+                        </div>
+                        <button
+                          type="button"
+                          className={`btn btn-outline analytics-freeze-btn ${selectedUser.isFrozen ? 'analytics-freeze-btn--active' : ''}`}
+                          onClick={handleToggleFreeze}
+                          disabled={isTogglingFreeze}
+                        >
+                          {isTogglingFreeze
+                            ? '...'
+                            : selectedUser.isFrozen
+                              ? 'Разморозить'
+                              : 'Заморозить'}
+                        </button>
                       </header>
                       <div className="analytics-messages-list">
-                        {selectedUser.messages.map((message) => (
-                          <div
-                            key={message.id}
-                            className={`analytics-message-bubble analytics-message-bubble--${message.role}`}
+                        {selectedUser.messages.map((message) => {
+                          const bubbleRole = message.role === 'operator' ? 'operator' : message.role;
+                          const roleLabel =
+                            message.role === 'user'
+                              ? selectedUser.name
+                              : message.role === 'operator'
+                                ? 'Вы (владелец)'
+                                : 'Агент';
+                          return (
+                            <div
+                              key={message.id}
+                              className={`analytics-message-bubble analytics-message-bubble--${bubbleRole}`}
+                            >
+                              <span className="analytics-message-role">{roleLabel}</span>
+                              <p>{message.text}</p>
+                              <time>{message.timestamp}</time>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div className="analytics-chat-composer">
+                        <p className="analytics-chat-composer-hint">
+                          {canSendTelegramToUser
+                            ? 'Сообщение будет доставлено пользователю в Telegram от имени бота.'
+                            : 'Отправка только для диалогов из Telegram (числовой id пользователя).'}
+                        </p>
+                        <div className="analytics-chat-composer-row">
+                          <textarea
+                            className="input-main analytics-chat-composer-input"
+                            rows={2}
+                            placeholder="Текст от вашего лица..."
+                            value={ownerReplyText}
+                            onChange={(e) => setOwnerReplyText(e.target.value)}
+                            disabled={!canSendTelegramToUser || isSendingOwnerReply}
+                          />
+                          <button
+                            type="button"
+                            className="btn btn-black analytics-chat-composer-send"
+                            onClick={handleSendOwnerMessage}
+                            disabled={!canSendTelegramToUser || isSendingOwnerReply}
                           >
-                            <span className="analytics-message-role">
-                              {message.role === 'user' ? selectedUser.name : 'Агент'}
-                            </span>
-                            <p>{message.text}</p>
-                            <time>{message.timestamp}</time>
-                          </div>
-                        ))}
+                            {isSendingOwnerReply ? 'Отправка...' : 'Отправить'}
+                          </button>
+                        </div>
                       </div>
                     </>
                   )}
