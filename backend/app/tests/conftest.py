@@ -40,7 +40,14 @@ def event_loop() -> Generator:
     yield loop
     loop.close()
 
-
+@pytest.fixture(autouse=True)
+def mock_crypto():
+    """Мокаем encrypt_token и decrypt_token для всех тестов"""
+    with patch('app.utils.crypto.encrypt_token') as mock_encrypt:
+        mock_encrypt.side_effect = lambda x: f"mock_encrypted_{x}"
+        with patch('app.utils.crypto.decrypt_token') as mock_decrypt:
+            mock_decrypt.side_effect = lambda x: x.replace("mock_encrypted_", "")
+            yield
 @pytest_asyncio.fixture(scope="function")
 async def test_engine():
     """Создает движок SQLite в памяти и инициализирует схему БД."""
