@@ -3,24 +3,37 @@ from jwt.exceptions import InvalidTokenError
 from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException, status
 from logging import getLogger
+from typing import Literal
+from sqlalchemy import select
 
 logger = getLogger(__name__)
 
-from ..config import get_auth_data
-from ..alembic.models import User
+from ..config import get_auth_data, settings
+from ..alembic.models import User, UserAuthSession
 from ..router_users.dao import UserDAO
 
-def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
+def create_access_token(
+    data: dict,
+    expires_delta: timedelta | None = None,
+    token_kind: Literal["user", "admin"] = "user",
+) -> str:
     to_encode = data.copy()
+    if token_kind == "user" and to_encode.get("admin_web") is True:
+        token_kind = "admin"
     
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.now(timezone.utc) + timedelta(days=30)
+        expire_minutes = (
+            settings.ADMIN_ACCESS_TOKEN_EXPIRE_MINUTES
+            if token_kind == "admin"
+            else settings.ACCESS_TOKEN_EXPIRE_MINUTES
+        )
+        expire = datetime.now(timezone.utc) + timedelta(minutes=expire_minutes)
 
-    to_encode.update({"exp": expire})
+    to_encode.update({"exp": expire, "token_kind": token_kind})
     
-    auth_data = get_auth_data()
+    auth_data = get_auth_data(token_kind)
     secret_key = auth_data['secret_key']
     algorithm = auth_data['algorithm']
 
@@ -31,27 +44,37 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
     encode_jwt = jwt.encode(to_encode, secret_key, algorithm=algorithm)
     return encode_jwt
 
-async def get_user_from_access_token(token: str, user_dao: UserDAO) -> User:
+
+def decode_access_token_payload(token: str, token_kind: Literal["user", "admin"]) -> dict:
     try:
-        auth_data = get_auth_data()
-        secret_key = auth_data['secret_key']
-        algorithm = auth_data['algorithm']
+        auth_data = get_auth_data(token_kind)
+        secret_key = auth_data["secret_key"]
+        algorithm = auth_data["algorithm"]
 
         if isinstance(secret_key, str):
-            secret_key = secret_key.encode('utf-8')
+            secret_key = secret_key.encode("utf-8")
 
-        # Декодируем токен; PyJWT сам проверяет срок действия (exp)
         data = jwt.decode(token, secret_key, algorithms=[algorithm])
-        user_id = data.get('user_id')
-
+        if data.get("token_kind") != token_kind:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Токен не валиден",
+            )
+        return data
     except InvalidTokenError as e:
-        logger.info(f'Токен не валиден: {e}')
+        logger.info("Токен не валиден: %s", e)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Токен не валиден"
+            detail="Токен не валиден",
         )
 
-    if not user_id:
+
+async def get_user_from_access_token(token: str, user_dao: UserDAO) -> User:
+    data = decode_access_token_payload(token, "user")
+    user_id = data.get("user_id")
+    session_id = data.get("sid")
+
+    if not user_id or not session_id:
         logger.info('ID пользователя не найден в токене')
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -81,6 +104,26 @@ async def get_user_from_access_token(token: str, user_dao: UserDAO) -> User:
             detail='Токен истек'
         )
 
+    auth_session = await user_dao._session.scalar(
+        select(UserAuthSession).where(
+            UserAuthSession.id == str(session_id),
+            UserAuthSession.user_id == int(user_id),
+            UserAuthSession.revoked_at.is_(None),
+        )
+    )
+    if not auth_session:
+        logger.info("Сессия пользователя не найдена или отозвана (uid=%s, sid=%s)", user_id, session_id)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Сессия не активна",
+        )
+    if auth_session.expires_at < datetime.now(timezone.utc).replace(tzinfo=None):
+        logger.info("Сессия пользователя истекла (uid=%s, sid=%s)", user_id, session_id)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Сессия истекла",
+        )
+
     user = await user_dao.find_one_by_filter(id=int(user_id))
 
     if not user:
@@ -88,6 +131,12 @@ async def get_user_from_access_token(token: str, user_dao: UserDAO) -> User:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Пользователь не найден"
+        )
+    if user.is_banned:
+        logger.info("Заблокированный пользователь пытался авторизоваться (id=%s)", user_id)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Пользователь заблокирован",
         )
     logger.info("Токен пользователя обработан (id=%s)", user_id)
     return user

@@ -1,7 +1,6 @@
 import asyncio
 import json
 from logging import getLogger
-from secrets import compare_digest
 from urllib.parse import quote
 from urllib.request import urlopen
 from datetime import datetime, timedelta
@@ -12,7 +11,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import Date, cast, func, select
 
-from .dao import AgentDAO
+from .dao import AgentChannelConnectionDAO, AgentDAO
 from .schemas import *
 from ..alembic.database import async_session_maker
 from ..alembic.models import AgentAnalyticsMessage, AgentFrozenUser
@@ -29,6 +28,7 @@ from ..utils.api_keys import generate_agent_external_api_key, hash_agent_externa
 from ..utils.JWT import get_user_from_access_token
 from ..utils.convert import convert_to_dict
 from ..utils.crypto import encrypt_token, decrypt_token
+from ..utils.internal_auth import is_internal_request
 from ..utils.rate_limit import rate_limit
 
 logger = getLogger(__name__)
@@ -60,15 +60,6 @@ async def get_current_user_required(
             detail="Authentication required",
         )
     return current_user
-
-
-def is_internal_request(
-    x_internal_api_key: str | None = Header(default=None, alias="X-Internal-API-Key"),
-) -> bool:
-    configured_key = settings.INTERNAL_API_KEY.strip()
-    if not configured_key or not x_internal_api_key:
-        return False
-    return compare_digest(x_internal_api_key, configured_key)
 
 
 def _assert_access(current_user, internal: bool) -> None:
@@ -196,7 +187,18 @@ async def _log_analytics_message_for_agent_ids(
             detail="role must be one of: user, agent, operator",
         )
     normalized_channel = (channel or "telegram").strip().lower()
-    if normalized_channel not in {"telegram", "external_api", "web", "dashboard"}:
+    if normalized_channel not in {
+        "telegram",
+        "external_api",
+        "web",
+        "dashboard",
+        "telegram_userbot",
+        "whatsapp_userbot",
+        "whatsapp_business_api",
+        "instagram",
+        "tiktok",
+        "pinterest",
+    }:
         normalized_channel = "web"
 
     row = AgentAnalyticsMessage(
@@ -340,6 +342,7 @@ async def create_agent_by_tg_id(
 
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
+        channel_connection_dao = AgentChannelConnectionDAO(session)
         user_dao = UserDAO(session)
         async with session.begin():
             user = await user_dao.find_one_by_filter(telegram_id=new_agent.tg_id)
@@ -358,10 +361,23 @@ async def create_agent_by_tg_id(
             payload = new_agent.model_dump()
             payload["user_id"] = user.id
             del payload["tg_id"]
+            payload["primary_provider"] = "telegram_bot"
             external_api_key = generate_agent_external_api_key()
             payload["encrypted_external_api_key"] = encrypt_token(external_api_key)
             payload["external_api_key_hash"] = hash_agent_external_api_key(external_api_key)
-            await agent_dao.add(payload)
+            created_agent = await agent_dao.add(payload)
+            await session.flush()
+            await channel_connection_dao.add(
+                {
+                    "agent_id": created_agent.id,
+                    "provider": "telegram_bot",
+                    "connection_type": "bot",
+                    "external_id": str(created_agent.bot_id),
+                    "encrypted_credentials": created_agent.encrypted_token,
+                    "is_primary": True,
+                    "is_active": True,
+                }
+            )
     return Response(status_code=status.HTTP_201_CREATED)
 
 
@@ -406,6 +422,7 @@ async def create_agent_by_token(new_agent: NewAgent_byToken, current_user=Depend
 
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
+        channel_connection_dao = AgentChannelConnectionDAO(session)
         async with session.begin():
             duplicate_agent = await agent_dao.find_one_by_filter(bot_id=bot_id)
             if duplicate_agent:
@@ -414,16 +431,30 @@ async def create_agent_by_token(new_agent: NewAgent_byToken, current_user=Depend
                     detail="Этот Telegram бот уже зарегистрирован",
                 )
             external_api_key = generate_agent_external_api_key()
-            await agent_dao.add(
+            created_agent = await agent_dao.add(
                 {
                     "user_id": current_user.id,
                     "bot_id": bot_id,
+                    "primary_provider": "telegram_bot",
+                    "template_type": new_agent.template_type,
                     "encrypted_token": encrypt_token(token_value),
                     "encrypted_external_api_key": encrypt_token(external_api_key),
                     "external_api_key_hash": hash_agent_external_api_key(external_api_key),
                     "bot_username": bot_username,
                     "system_prompt": new_agent.system_prompt.strip(),
                     # New agents should be immediately usable via Telegram webhook.
+                    "is_active": True,
+                }
+            )
+            await session.flush()
+            await channel_connection_dao.add(
+                {
+                    "agent_id": created_agent.id,
+                    "provider": "telegram_bot",
+                    "connection_type": "bot",
+                    "external_id": str(bot_id),
+                    "encrypted_credentials": created_agent.encrypted_token,
+                    "is_primary": True,
                     "is_active": True,
                 }
             )

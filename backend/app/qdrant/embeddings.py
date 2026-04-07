@@ -23,6 +23,8 @@ _cpu_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rsd_cpu")
 _embed_lock = threading.Lock()
 PRIMARY_DENSE_MODEL = "BAAI/bge-m3"
 FALLBACK_DENSE_MODEL = "BAAI/bge-base-en-v1.5"
+EMBEDDING_SCHEMA_VERSION = settings.EMBEDDING_SCHEMA_VERSION
+DEFAULT_EMBEDDING_PROFILE_KEY = settings.EMBEDDING_PROFILE_KEY
 
 
 def _resolve_dense_model_name() -> str:
@@ -90,3 +92,11 @@ def get_dense_vector_size() -> int:
 
 def get_active_dense_model_name() -> str:
     return ACTIVE_DENSE_MODEL
+
+
+def get_active_embedding_profile() -> dict:
+    return {
+        "profile_key": DEFAULT_EMBEDDING_PROFILE_KEY,
+        "schema_version": EMBEDDING_SCHEMA_VERSION,
+        "model_name": ACTIVE_DENSE_MODEL,
+    }

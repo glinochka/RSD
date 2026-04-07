@@ -6,11 +6,12 @@ export const pricingService = {
     const response = await apiClient.get('/api/payments/plans');
     return response.data;
   },
-  createYooKassaPayment: async ({ plan_name, return_url, promo_code }) => {
+  createYooKassaPayment: async ({ plan_name, return_url, promo_code, duration_months }) => {
     const response = await apiClient.post('/api/payments/yookassa/create', {
       plan_name,
       return_url,
       promo_code: promo_code || undefined,
+      duration_months: duration_months || 1,
     });
     return response.data;
   },

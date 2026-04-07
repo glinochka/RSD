@@ -4,11 +4,13 @@
  * Field names and validation match backend (router_users/schemas.py): name, password.
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 
 /** Message for auth UI: apiClient sets error.message from FastAPI detail (normalized). */
 function getAuthErrorMessage(error) {
-  if (error?.message) return error.message;
+  if (error?.message) {
+    return error.message;
+  }
   const data = error?.data ?? error?.originalError?.response?.data;
   if (data?.detail) {
     if (Array.isArray(data.detail)) {
@@ -24,6 +26,7 @@ import { useAuth } from '../context/useAuth';
 import { useNotification } from '../context/useNotification';
 import { useForm } from '../hooks/useForm';
 import { NAVIGATION_ROUTES, SUCCESS_MESSAGES, VALIDATION } from '../config/constants';
+import authService from '../services/authService';
 import AgentChatShowcase from '../components/AgentChatShowcase';
 import '../styles/auth.css';
 
@@ -32,31 +35,100 @@ const AUTH_MEDIA_IMAGE_SRC = null;
 
 const AUTH_FORM_INITIAL = {
   name: '',
+  email: '',
   password: '',
+  verificationCode: '',
+  resetCode: '',
+  resetToken: '',
+  newPassword: '',
+  confirmNewPassword: '',
   consentPersonal: false,
   consentTerms: false,
 };
 
 const Auth = () => {
   const navigate = useNavigate();
-  const { login, register } = useAuth();
+  const { login, register, verifyRegistrationCode } = useAuth();
   const { showError, showSuccess } = useNotification();
   const [isLogin, setIsLogin] = useState(true);
+  const [isAwaitingEmailCode, setIsAwaitingEmailCode] = useState(false);
+  const [recoveryStep, setRecoveryStep] = useState(null);
+  const [resendCooldownUntil, setResendCooldownUntil] = useState(null);
+  const [, setResendTick] = useState(0);
+  const isRecoveryMode = recoveryStep !== null;
+  const isRegister = !isLogin && !isRecoveryMode;
 
-  // Validation rules aligned with backend Pydantic: LoginUser (name 3-30), NewUser (name 3-32), password 6-30
+  useEffect(() => {
+    if (!resendCooldownUntil || resendCooldownUntil <= Date.now()) {
+      return undefined;
+    }
+    const id = setInterval(() => {
+      setResendTick((x) => x + 1);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [resendCooldownUntil]);
+
+  const resendSecondsLeft = resendCooldownUntil
+    ? Math.max(0, Math.ceil((resendCooldownUntil - Date.now()) / 1000))
+    : 0;
+
+  // Validation rules aligned with backend Pydantic.
   const authRules = useMemo(() => {
-    const base = {
+    if (isRecoveryMode) {
+      if (recoveryStep === 'request') {
+        return {
+          email: { required: true, type: 'email', label: 'Email' },
+        };
+      }
+      if (recoveryStep === 'verify') {
+        return {
+          email: { required: true, type: 'email', label: 'Email' },
+          resetCode: {
+            required: true,
+            label: 'Код восстановления',
+            minLength: VALIDATION.EMAIL_CODE_LENGTH,
+            maxLength: VALIDATION.EMAIL_CODE_LENGTH,
+            pattern: /^\d{6}$/,
+            message: 'Введите 6 цифр из письма',
+          },
+        };
+      }
+      return {
+        email: { required: true, type: 'email', label: 'Email' },
+        newPassword: { required: true, type: 'password', label: 'Новый пароль' },
+        confirmNewPassword: { required: true, type: 'password', label: 'Подтверждение пароля' },
+      };
+    }
+
+    const loginRules = {
       name: {
         required: true,
         type: 'username',
         label: 'Имя пользователя',
-        maxLength: isLogin ? VALIDATION.USERNAME_MAX_LENGTH_LOGIN : VALIDATION.USERNAME_MAX_LENGTH_REGISTER,
+        maxLength: VALIDATION.USERNAME_MAX_LENGTH_LOGIN,
       },
       password: { required: true, type: 'password', label: 'Пароль' },
     };
-    if (isLogin) return base;
+    if (isLogin) {
+      return loginRules;
+    }
+    if (isAwaitingEmailCode) {
+      return {
+        email: { required: true, type: 'email', label: 'Email' },
+        password: { required: true, type: 'password', label: 'Пароль' },
+        verificationCode: {
+          required: true,
+          label: 'Код подтверждения',
+          minLength: VALIDATION.EMAIL_CODE_LENGTH,
+          maxLength: VALIDATION.EMAIL_CODE_LENGTH,
+          pattern: /^\d{6}$/,
+          message: 'Введите 6 цифр из письма',
+        },
+      };
+    }
     return {
-      ...base,
+      email: { required: true, type: 'email', label: 'Email' },
+      password: { required: true, type: 'password', label: 'Пароль' },
       consentPersonal: {
         type: 'checkbox',
         required: true,
@@ -70,20 +142,66 @@ const Auth = () => {
         message: 'Примите условия Публичной оферты и Пользовательского соглашения',
       },
     };
-  }, [isLogin]);
+  }, [isAwaitingEmailCode, isLogin, isRecoveryMode, recoveryStep]);
 
   const form = useForm(
     AUTH_FORM_INITIAL,
     async (values) => {
       try {
+        if (isRecoveryMode) {
+          if (recoveryStep === 'request') {
+            await authService.requestPasswordResetCode(values.email);
+            setRecoveryStep('verify');
+            showSuccess('Код восстановления отправлен на email', 3500);
+            return;
+          }
+
+          if (recoveryStep === 'verify') {
+            const verifyResult = await authService.verifyPasswordResetCode(values.email, values.resetCode);
+            form.setFieldValue('resetToken', verifyResult.reset_token);
+            setRecoveryStep('reset');
+            showSuccess('Код подтвержден. Задайте новый пароль.', 3000);
+            return;
+          }
+
+          if (values.newPassword !== values.confirmNewPassword) {
+            showError('Пароли не совпадают');
+            return;
+          }
+          if (!values.resetToken) {
+            showError('Сессия восстановления не найдена. Повторите процесс.');
+            setRecoveryStep('request');
+            return;
+          }
+          await authService.confirmPasswordReset(values.email, values.resetToken, values.newPassword);
+          showSuccess('Пароль успешно изменен. Теперь войдите в систему.', 3500);
+          setRecoveryStep(null);
+          setIsLogin(true);
+          setIsAwaitingEmailCode(false);
+          setResendCooldownUntil(null);
+          form.reset();
+          return;
+        }
+
         if (isLogin) {
           await login(values.name, values.password);
           showSuccess(SUCCESS_MESSAGES.LOGIN_SUCCESS, 3000);
+          navigate(NAVIGATION_ROUTES.AGENTS);
         } else {
-          await register(values.name, values.password);
+          if (!isAwaitingEmailCode) {
+            await register(values.email, values.password);
+            setIsAwaitingEmailCode(true);
+            setResendCooldownUntil(
+              Date.now() + VALIDATION.EMAIL_RESEND_COOLDOWN_SECONDS * 1000
+            );
+            showSuccess('Код подтверждения отправлен на email', 3500);
+            return;
+          }
+
+          await verifyRegistrationCode(values.email, values.verificationCode);
           showSuccess('Регистрация успешна!', 3000);
+          navigate(NAVIGATION_ROUTES.AGENTS);
         }
-        navigate(NAVIGATION_ROUTES.AGENTS);
       } catch (error) {
         showError(getAuthErrorMessage(error));
       }
@@ -93,7 +211,37 @@ const Auth = () => {
 
   const toggleAuthMode = () => {
     form.reset();
+    setIsAwaitingEmailCode(false);
+    setResendCooldownUntil(null);
+    setRecoveryStep(null);
     setIsLogin(!isLogin);
+  };
+
+  const startPasswordRecovery = () => {
+    form.reset();
+    setRecoveryStep('request');
+    setIsAwaitingEmailCode(false);
+    setResendCooldownUntil(null);
+  };
+
+  const cancelPasswordRecovery = () => {
+    form.reset();
+    setRecoveryStep(null);
+    setIsLogin(true);
+    setIsAwaitingEmailCode(false);
+    setResendCooldownUntil(null);
+  };
+
+  const resendEmailCode = async () => {
+    try {
+      await authService.resendRegistrationCode(form.values.email);
+      setResendCooldownUntil(
+        Date.now() + VALIDATION.EMAIL_RESEND_COOLDOWN_SECONDS * 1000
+      );
+      showSuccess('Новый код отправлен на email', 3000);
+    } catch (error) {
+      showError(getAuthErrorMessage(error));
+    }
   };
 
   return (
@@ -106,11 +254,25 @@ const Auth = () => {
         <div className="auth-card">
           <div className="auth-form-side">
             <div className="auth-form-main">
-              <h2>{isLogin ? 'Добро пожаловать' : 'Создать аккаунт'}</h2>
+              <h2>
+                {isRecoveryMode
+                  ? 'Восстановление пароля'
+                  : isLogin
+                    ? 'Добро пожаловать'
+                    : 'Создать аккаунт'}
+              </h2>
               <p className="auth-subtitle">
-                {isLogin
-                  ? 'Войдите в систему для получения доступа к платформе'
-                  : 'Заполните форму для создания нового аккаунта'}
+                {isRecoveryMode
+                  ? recoveryStep === 'request'
+                    ? 'Введите email, и мы отправим код восстановления'
+                    : recoveryStep === 'verify'
+                      ? 'Введите 6-значный код из письма'
+                      : 'Введите и подтвердите новый пароль'
+                  : isLogin
+                    ? 'Войдите в систему для получения доступа к платформе'
+                    : isAwaitingEmailCode
+                      ? 'Введите 6-значный код, отправленный на ваш email'
+                      : 'Заполните форму для создания нового аккаунта'}
               </p>
 
               {/* Google Auth Button */}
@@ -122,27 +284,55 @@ const Auth = () => {
                 Авторизация через Google
               </button>
 
-              {/* Auth Form — fields match backend: name, password */}
+              {/* Auth form */}
               <form className="auth-form" onSubmit={form.handleSubmit}>
-              <div className="form-group">
-                <label htmlFor="name">Имя пользователя:</label>
-                <input
-                  id="name"
-                  type="text"
-                  name="name"
-                  placeholder={isLogin ? 'Имя пользователя' : 'От 3 до 32 символов'}
-                  value={form.values.name}
-                  onChange={form.handleChange}
-                  onBlur={form.handleBlur}
-                  disabled={form.isSubmitting}
-                  className={form.errors.name ? 'error' : ''}
-                  autoComplete="username"
-                />
-                {form.touched.name && form.errors.name && (
-                  <span className="error-message">{form.errors.name}</span>
-                )}
-              </div>
+              {isLogin && !isRecoveryMode && (
+                <div className="form-group">
+                  <label htmlFor="name">Email или имя пользователя:</label>
+                  <input
+                    id="name"
+                    type="text"
+                    name="name"
+                    placeholder="Email или имя пользователя"
+                    value={form.values.name}
+                    onChange={form.handleChange}
+                    onBlur={form.handleBlur}
+                    disabled={form.isSubmitting}
+                    className={form.errors.name ? 'error' : ''}
+                    autoComplete="username"
+                  />
+                  {form.touched.name && form.errors.name && (
+                    <span className="error-message">{form.errors.name}</span>
+                  )}
+                </div>
+              )}
 
+              {(isRegister || isRecoveryMode) && (
+                <div className="form-group">
+                  <label htmlFor="email">Email:</label>
+                  <input
+                    id="email"
+                    type="email"
+                    name="email"
+                    placeholder="example@mail.com"
+                    value={form.values.email}
+                    onChange={form.handleChange}
+                    onBlur={form.handleBlur}
+                    disabled={
+                      form.isSubmitting
+                      || (isRegister && isAwaitingEmailCode)
+                      || (isRecoveryMode && recoveryStep !== 'request')
+                    }
+                    className={form.errors.email ? 'error' : ''}
+                    autoComplete="email"
+                  />
+                  {form.touched.email && form.errors.email && (
+                    <span className="error-message">{form.errors.email}</span>
+                  )}
+                </div>
+              )}
+
+              {!isRecoveryMode && (
               <div className="form-group">
                 <label htmlFor="password">Пароль:</label>
                 <input
@@ -153,7 +343,7 @@ const Auth = () => {
                   value={form.values.password}
                   onChange={form.handleChange}
                   onBlur={form.handleBlur}
-                  disabled={form.isSubmitting}
+                  disabled={form.isSubmitting || (!isLogin && isAwaitingEmailCode)}
                   className={form.errors.password ? 'error' : ''}
                   autoComplete={isLogin ? 'current-password' : 'new-password'}
                 />
@@ -161,8 +351,96 @@ const Auth = () => {
                   <span className="error-message">{form.errors.password}</span>
                 )}
               </div>
+              )}
 
-              {!isLogin && (
+              {isRegister && isAwaitingEmailCode && (
+                <div className="form-group">
+                  <label htmlFor="verificationCode">Код подтверждения:</label>
+                  <input
+                    id="verificationCode"
+                    type="text"
+                    name="verificationCode"
+                    placeholder="6 цифр"
+                    value={form.values.verificationCode}
+                    onChange={form.handleChange}
+                    onBlur={form.handleBlur}
+                    disabled={form.isSubmitting}
+                    className={form.errors.verificationCode ? 'error' : ''}
+                    autoComplete="one-time-code"
+                    inputMode="numeric"
+                    maxLength={VALIDATION.EMAIL_CODE_LENGTH}
+                  />
+                  {form.touched.verificationCode && form.errors.verificationCode && (
+                    <span className="error-message">{form.errors.verificationCode}</span>
+                  )}
+                </div>
+              )}
+
+              {isRecoveryMode && recoveryStep === 'verify' && (
+                <div className="form-group">
+                  <label htmlFor="resetCode">Код восстановления:</label>
+                  <input
+                    id="resetCode"
+                    type="text"
+                    name="resetCode"
+                    placeholder="6 цифр"
+                    value={form.values.resetCode}
+                    onChange={form.handleChange}
+                    onBlur={form.handleBlur}
+                    disabled={form.isSubmitting}
+                    className={form.errors.resetCode ? 'error' : ''}
+                    autoComplete="one-time-code"
+                    inputMode="numeric"
+                    maxLength={VALIDATION.EMAIL_CODE_LENGTH}
+                  />
+                  {form.touched.resetCode && form.errors.resetCode && (
+                    <span className="error-message">{form.errors.resetCode}</span>
+                  )}
+                </div>
+              )}
+
+              {isRecoveryMode && recoveryStep === 'reset' && (
+                <>
+                  <div className="form-group">
+                    <label htmlFor="newPassword">Новый пароль:</label>
+                    <input
+                      id="newPassword"
+                      type="password"
+                      name="newPassword"
+                      placeholder="От 6 до 30 символов"
+                      value={form.values.newPassword}
+                      onChange={form.handleChange}
+                      onBlur={form.handleBlur}
+                      disabled={form.isSubmitting}
+                      className={form.errors.newPassword ? 'error' : ''}
+                      autoComplete="new-password"
+                    />
+                    {form.touched.newPassword && form.errors.newPassword && (
+                      <span className="error-message">{form.errors.newPassword}</span>
+                    )}
+                  </div>
+                  <div className="form-group">
+                    <label htmlFor="confirmNewPassword">Подтвердите пароль:</label>
+                    <input
+                      id="confirmNewPassword"
+                      type="password"
+                      name="confirmNewPassword"
+                      placeholder="Повторите новый пароль"
+                      value={form.values.confirmNewPassword}
+                      onChange={form.handleChange}
+                      onBlur={form.handleBlur}
+                      disabled={form.isSubmitting}
+                      className={form.errors.confirmNewPassword ? 'error' : ''}
+                      autoComplete="new-password"
+                    />
+                    {form.touched.confirmNewPassword && form.errors.confirmNewPassword && (
+                      <span className="error-message">{form.errors.confirmNewPassword}</span>
+                    )}
+                  </div>
+                </>
+              )}
+
+              {isRegister && !isAwaitingEmailCode && (
                 <div className="auth-consents" role="group" aria-label="Согласия при регистрации">
                   <div className="auth-consent-block">
                     <div className="auth-checkbox-row auth-checkbox-row--terms">
@@ -241,13 +519,58 @@ const Auth = () => {
                 className="btn btn-continue"
                 disabled={form.isSubmitting}
               >
-                {form.isSubmitting ? 'Обработка...' : isLogin ? 'Войти' : 'Создать аккаунт'}
+                {form.isSubmitting
+                  ? 'Обработка...'
+                  : isRecoveryMode
+                    ? recoveryStep === 'request'
+                      ? 'Отправить код'
+                      : recoveryStep === 'verify'
+                        ? 'Проверить код'
+                        : 'Сохранить новый пароль'
+                    : isLogin
+                      ? 'Войти'
+                      : isAwaitingEmailCode
+                        ? 'Подтвердить код'
+                        : 'Создать аккаунт'}
               </button>
+              {!isRecoveryMode && isRegister && isAwaitingEmailCode && (
+                <button
+                  type="button"
+                  className="btn btn-continue"
+                  disabled={form.isSubmitting || resendSecondsLeft > 0}
+                  onClick={resendEmailCode}
+                >
+                  {resendSecondsLeft > 0
+                    ? `Повторная отправка через ${resendSecondsLeft} с`
+                    : 'Отправить код повторно'}
+                </button>
+              )}
+              {!isRecoveryMode && isLogin && (
+                <button
+                  type="button"
+                  className="toggle-btn"
+                  onClick={startPasswordRecovery}
+                  disabled={form.isSubmitting}
+                >
+                  Забыли пароль?
+                </button>
+              )}
+              {isRecoveryMode && (
+                <button
+                  type="button"
+                  className="toggle-btn"
+                  onClick={cancelPasswordRecovery}
+                  disabled={form.isSubmitting}
+                >
+                  Назад ко входу
+                </button>
+              )}
               </form>
             </div>
 
             <div className="auth-form-footer">
               {/* Toggle Auth Mode */}
+              {!isRecoveryMode && (
               <div className="auth-toggle">
                 <p>
                   {isLogin ? 'Нет аккаунта?' : 'Уже есть аккаунт?'}
@@ -261,8 +584,9 @@ const Auth = () => {
                   </button>
                 </p>
               </div>
+              )}
 
-              {isLogin && (
+              {isLogin && !isRecoveryMode && (
                 <p className="terms">
                   Продолжая, вы подтверждаете ознакомление с{' '}
                   <Link className="auth-legal-link" to={NAVIGATION_ROUTES.PUBLIC_OFFER}>

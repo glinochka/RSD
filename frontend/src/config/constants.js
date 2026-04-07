@@ -20,6 +20,11 @@ export const API_ROUTES = {
   // Auth (backend: prefix /api/users)
   AUTH_LOGIN: '/api/users/login',
   AUTH_REGISTER: '/api/users/registration',
+  AUTH_REGISTER_RESEND_CODE: '/api/users/registration/resend-code',
+  AUTH_REGISTER_VERIFY: '/api/users/registration/verify',
+  AUTH_PASSWORD_RESET_REQUEST: '/api/users/password-reset/request',
+  AUTH_PASSWORD_RESET_VERIFY: '/api/users/password-reset/verify',
+  AUTH_PASSWORD_RESET_CONFIRM: '/api/users/password-reset/confirm',
   AUTH_LOGOUT: '/api/users/logout',
   AUTH_REFRESH: '/api/users/refresh',
 
@@ -122,10 +127,12 @@ export const VALIDATION = {
   EMAIL_PATTERN: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
   // Auth: must match backend Pydantic (router_users/schemas.py)
   USERNAME_MIN_LENGTH: 3,
-  USERNAME_MAX_LENGTH_LOGIN: 30,   // LoginUser.name
+  USERNAME_MAX_LENGTH_LOGIN: 255,   // LoginUser.name (username or email)
   USERNAME_MAX_LENGTH_REGISTER: 32, // NewUser.name
   PASSWORD_MIN_LENGTH: 6,          // both schemas
   PASSWORD_MAX_LENGTH: 30,          // both schemas
+  EMAIL_CODE_LENGTH: 6,
+  EMAIL_RESEND_COOLDOWN_SECONDS: 120,
   AGENT_NAME_MIN_LENGTH: 2,
   AGENT_NAME_MAX_LENGTH: 50,
   FILE_MAX_SIZE: 10 * 1024 * 1024, // 10MB

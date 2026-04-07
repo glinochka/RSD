@@ -3,7 +3,7 @@
  * Landing page with features overview
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 import MainLayout from '../components/Layout';
@@ -83,6 +83,39 @@ const IMPACT_METRICS = [
   },
 ];
 
+const BUSINESS_SCENARIOS = [
+  {
+    id: 'support',
+    label: 'Поддержка',
+    title: 'Снижайте нагрузку на первую линию',
+    challenge:
+      'Повторяющиеся вопросы о статусах, графике и условиях забирают время команды и растягивают очередь в чате.',
+    outcome:
+      'Агент берёт типовые обращения 24/7, а сотрудники подключаются только к нестандартным и конфликтным кейсам.',
+    firstStep: 'Соберите 10-15 частых вопросов из чатов и добавьте короткие эталонные ответы.',
+  },
+  {
+    id: 'sales',
+    label: 'Продажи',
+    title: 'Квалифицируйте входящие заявки быстрее',
+    challenge:
+      'Менеджеры тратят много времени на первичный контакт и одинаковые уточнения, из-за чего теряются теплые лиды.',
+    outcome:
+      'Агент уточняет ключевые параметры запроса и передает менеджеру уже подготовленный диалог с контекстом.',
+    firstStep: 'Опишите критерии квалификации лида и 3-5 веток первого диалога.',
+  },
+  {
+    id: 'onboarding',
+    label: 'Онбординг',
+    title: 'Ускоряйте обучение новых сотрудников',
+    challenge:
+      'Новички долго ищут ответы в регламентах и отвлекают наставников от работы с клиентами.',
+    outcome:
+      'Агент помогает быстро находить правила и подсказывает шаги по процессу прямо в рабочем чате.',
+    firstStep: 'Загрузите регламенты, FAQ и выделите разделы, которые чаще всего вызывают ошибки.',
+  },
+];
+
 const LAUNCH_STEPS = [
   'Определяете роль агента и собираете 10-15 частых вопросов.',
   'Добавляете базу знаний: документы, правила, тон коммуникации.',
@@ -115,6 +148,12 @@ const FAQ_ITEMS = [
     answer:
       'Часто достаточно от нескольких часов до пары дней: зависит от объёма базы знаний и того, насколько детально вы хотите прогнать тестовые диалоги перед включением для клиентов.',
   },
+  {
+    id: 'faq-5',
+    question: 'Как контролировать качество ответов после запуска?',
+    answer:
+      'Используйте тестовые диалоги и регулярно просматривайте реальные переписки: отмечайте неточные ответы, обновляйте базу знаний и корректируйте промпт. Лучше делать короткие итерации каждую неделю, чем редкие большие изменения.',
+  },
 ];
 
 const getInitials = (name) => {
@@ -133,7 +172,49 @@ const Main = () => {
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
   const [activeTestimonialIndex, setActiveTestimonialIndex] = useState(0);
+  const [activeScenarioId, setActiveScenarioId] = useState(BUSINESS_SCENARIOS[0].id);
   const [openFaqId, setOpenFaqId] = useState(null);
+  const mainContentRef = useRef(null);
+
+  useEffect(() => {
+    const root = mainContentRef.current;
+    if (!root) return undefined;
+
+    const revealItems = root.querySelectorAll('.reveal-on-scroll');
+    if (!revealItems.length) return undefined;
+
+    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const isMobileViewport = window.matchMedia('(max-width: 768px)').matches;
+    if (prefersReducedMotion || isMobileViewport) {
+      revealItems.forEach((item) => item.classList.add('is-visible'));
+      return undefined;
+    }
+
+    if (!('IntersectionObserver' in window)) {
+      revealItems.forEach((item) => item.classList.add('is-visible'));
+      return undefined;
+    }
+
+    root.classList.add('reveal-ready');
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+          entry.target.classList.add('is-visible');
+          observer.unobserve(entry.target);
+        });
+      },
+      {
+        threshold: 0.16,
+        rootMargin: '0px 0px -10% 0px',
+      }
+    );
+
+    revealItems.forEach((item) => observer.observe(item));
+
+    return () => observer.disconnect();
+  }, []);
 
   const handleCreateAgent = () => {
     if (isAuthenticated) {
@@ -150,12 +231,13 @@ const Main = () => {
     setActiveTestimonialIndex((prev) => (prev - 1 + TESTIMONIALS.length) % TESTIMONIALS.length);
 
   const activeTestimonial = TESTIMONIALS[activeTestimonialIndex];
+  const activeScenario = BUSINESS_SCENARIOS.find((scenario) => scenario.id === activeScenarioId) ?? BUSINESS_SCENARIOS[0];
 
   return (
     <MainLayout>
-      <div className="main-content">
+      <div className="main-content" ref={mainContentRef}>
         <section className="hero" aria-labelledby="hero-heading">
-          <div className="hero-content">
+          <div className="hero-content reveal-on-scroll reveal-from-left">
             <h1 id="hero-heading">Ваш бизнес.</h1>
             <div className="highlight">Ваши знания.</div>
             <h2>Ваш сотрудник.</h2>
@@ -175,36 +257,47 @@ const Main = () => {
               </button>
             </div>
           </div>
-          <div className="hero-media">
+          <div className="hero-media reveal-on-scroll reveal-from-right">
             <AgentChatShowcase tone="light" variant="main" />
           </div>
         </section>
 
-        <section className="value-highlights" aria-labelledby="value-highlights-heading">
-          <h2 id="value-highlights-heading" className="section-title">
+        <section className="value-highlights reveal-on-scroll reveal-from-bottom" aria-labelledby="value-highlights-heading">
+          <h2 id="value-highlights-heading" className="section-title reveal-on-scroll reveal-from-bottom">
             Что даёт платформа на практике
           </h2>
-          <p className="section-lead">
+          <p className="section-lead reveal-on-scroll reveal-from-bottom reveal-delay-1">
             Не обещаем «магии» — даём понятный инструмент: вы настраиваете роль, знания и канал общения.
           </p>
           <div className="value-highlights-grid">
-            {VALUE_HIGHLIGHTS.map((block) => (
-              <article key={block.id} className="value-highlight-card">
-                <h3>{block.title}</h3>
-                <p>{block.text}</p>
-              </article>
-            ))}
+            {VALUE_HIGHLIGHTS.map((block, index) => {
+              const revealDirection =
+                index === 0
+                  ? 'reveal-from-left'
+                  : index === 1
+                    ? 'reveal-from-right value-highlight-card--desktop-bottom'
+                    : 'reveal-from-left value-highlight-card--desktop-right';
+              return (
+                <article
+                  key={block.id}
+                  className={`value-highlight-card reveal-on-scroll ${revealDirection}`}
+                >
+                  <h3>{block.title}</h3>
+                  <p>{block.text}</p>
+                </article>
+              );
+            })}
           </div>
         </section>
 
-        <section className="testimonials" aria-labelledby="testimonials-heading">
-          <h2 id="testimonials-heading" className="section-title">
+        <section className="testimonials reveal-on-scroll reveal-from-bottom" aria-labelledby="testimonials-heading">
+          <h2 id="testimonials-heading" className="section-title reveal-on-scroll reveal-from-bottom">
             Как это работает у владельцев бизнеса
           </h2>
-          <p className="section-lead section-lead-tight">
+          <p className="section-lead section-lead-tight reveal-on-scroll reveal-from-bottom reveal-delay-1">
             Ниже — примеры команд, которые уже внедрили агентов в поддержку, продажи и обучение клиентов.
           </p>
-          <div className="testimonial-carousel" aria-live="polite">
+          <div className="testimonial-carousel reveal-on-scroll reveal-from-bottom reveal-delay-1" aria-live="polite">
             <article
               className="testimonial-card"
               aria-label={`Отзыв: ${activeTestimonial.name}, ${activeTestimonial.company}`}
@@ -251,13 +344,13 @@ const Main = () => {
           </div>
         </section>
 
-        <section className="impact-section" aria-labelledby="impact-heading">
-          <h2 id="impact-heading" className="section-title">
+        <section className="impact-section reveal-on-scroll reveal-from-bottom" aria-labelledby="impact-heading">
+          <h2 id="impact-heading" className="section-title reveal-on-scroll reveal-from-bottom">
             Что обычно меняется после внедрения
           </h2>
           <div className="impact-grid">
             {IMPACT_METRICS.map((metric) => (
-              <article key={metric.id} className="impact-card">
+              <article key={metric.id} className="impact-card reveal-on-scroll reveal-from-bottom">
                 <p className="impact-value">{metric.value}</p>
                 <p className="impact-label">{metric.label}</p>
               </article>
@@ -265,29 +358,77 @@ const Main = () => {
           </div>
         </section>
 
-        <section className="launch-roadmap" aria-labelledby="launch-roadmap-heading">
-          <h2 id="launch-roadmap-heading" className="section-title">
+        <section className="scenarios-section reveal-on-scroll reveal-from-bottom" aria-labelledby="scenarios-heading">
+          <h2 id="scenarios-heading" className="section-title reveal-on-scroll reveal-from-bottom">
+            Выберите ваш сценарий внедрения
+          </h2>
+          <p className="section-lead section-lead-tight reveal-on-scroll reveal-from-bottom reveal-delay-1">
+            Нажмите на формат, который вам ближе — увидите типичную задачу, ожидаемый результат и с чего начать в первую
+            очередь.
+          </p>
+          <div className="scenario-tabs reveal-on-scroll reveal-from-bottom reveal-delay-1" role="tablist" aria-label="Сценарии внедрения">
+            {BUSINESS_SCENARIOS.map((scenario) => {
+              const isActive = scenario.id === activeScenario.id;
+              return (
+                <button
+                  key={scenario.id}
+                  type="button"
+                  className={`scenario-tab ${isActive ? 'is-active' : ''}`}
+                  onClick={() => setActiveScenarioId(scenario.id)}
+                  role="tab"
+                  aria-selected={isActive}
+                  aria-controls={`scenario-panel-${scenario.id}`}
+                  id={`scenario-tab-${scenario.id}`}
+                >
+                  {scenario.label}
+                </button>
+              );
+            })}
+          </div>
+          <article
+            className="scenario-card reveal-on-scroll reveal-from-bottom"
+            role="tabpanel"
+            id={`scenario-panel-${activeScenario.id}`}
+            aria-labelledby={`scenario-tab-${activeScenario.id}`}
+          >
+            <h3>{activeScenario.title}</h3>
+            <p>
+              <strong>Типичная ситуация:</strong> {activeScenario.challenge}
+            </p>
+            <p>
+              <strong>Что меняется:</strong> {activeScenario.outcome}
+            </p>
+            <p>
+              <strong>Первый шаг:</strong> {activeScenario.firstStep}
+            </p>
+          </article>
+        </section>
+
+        <section className="launch-roadmap reveal-on-scroll reveal-from-bottom" aria-labelledby="launch-roadmap-heading">
+          <h2 id="launch-roadmap-heading" className="section-title reveal-on-scroll reveal-from-bottom">
             Сценарий запуска за 4 шага
           </h2>
           <ol className="roadmap-list">
             {LAUNCH_STEPS.map((step) => (
-              <li key={step}>{step}</li>
+              <li key={step} className="reveal-on-scroll reveal-from-left">
+                {step}
+              </li>
             ))}
           </ol>
         </section>
 
-        <section className="faq-section" aria-labelledby="faq-heading">
-          <h2 id="faq-heading" className="section-title">
+        <section className="faq-section reveal-on-scroll reveal-from-bottom" aria-labelledby="faq-heading">
+          <h2 id="faq-heading" className="section-title reveal-on-scroll reveal-from-bottom">
             Частые вопросы
           </h2>
-          <p className="section-lead section-lead-tight">
+          <p className="section-lead section-lead-tight reveal-on-scroll reveal-from-bottom reveal-delay-1">
             Коротко о том, как устроен старт и что вы контролируете при работе с агентом.
           </p>
           <div className="faq-list">
             {FAQ_ITEMS.map((item) => {
               const isOpen = openFaqId === item.id;
               return (
-                <div key={item.id} className={`faq-item${isOpen ? ' is-open' : ''}`}>
+                <div key={item.id} className={`faq-item reveal-on-scroll reveal-from-right${isOpen ? ' is-open' : ''}`}>
                   <button
                     type="button"
                     className="faq-summary"
@@ -315,8 +456,8 @@ const Main = () => {
           </div>
         </section>
 
-        <section className="cta-band" aria-labelledby="cta-heading">
-          <div className="cta-band-inner">
+        <section className="cta-band reveal-on-scroll reveal-from-bottom" aria-labelledby="cta-heading">
+          <div className="cta-band-inner reveal-on-scroll reveal-from-bottom">
             <h2 id="cta-heading">Начните с одного агента</h2>
             <p>
               Соберите прототип за несколько минут: роль и базу знаний всегда можно уточнить позже. Если удобнее сначала

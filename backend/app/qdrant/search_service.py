@@ -6,7 +6,7 @@ from config import settings
 
 from openai import AsyncOpenAI
 
-from .embeddings import embed_dense_for_query, run_in_cpu_pool
+from .embeddings import embed_dense_for_query, get_active_embedding_profile, run_in_cpu_pool
 
 
 
@@ -47,12 +47,19 @@ async def search_knowledge_base(query: str, agent_id: int, limit: int = 5) -> Li
         # 2. Генерируем эмбеддинг (вне event loop — не блокируем API)
         dense_vector = await run_in_cpu_pool(embed_dense_for_query, optimized_query)
 
-        # 3. Фильтр по конкретному агенту
+        embedding_profile = get_active_embedding_profile()
+
+        # 3. Фильтр по конкретному агенту и активному профилю эмбеддинга.
+        # Если версия еще не переиндексирована, ниже есть fallback на legacy-поиск.
         search_filter = models.Filter(
             must=[
                 models.FieldCondition(
                     key="agent_id", 
                     match=models.MatchValue(value=agent_id)
+                ),
+                models.FieldCondition(
+                    key="embedding_profile_key",
+                    match=models.MatchValue(value=embedding_profile["profile_key"]),
                 )
             ]
         )
@@ -65,6 +72,24 @@ async def search_knowledge_base(query: str, agent_id: int, limit: int = 5) -> Li
             limit=limit,
             with_payload=True
         )
+
+        # Legacy fallback for documents indexed before embedding profile tagging.
+        if not response.points:
+            legacy_filter = models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="agent_id",
+                        match=models.MatchValue(value=agent_id)
+                    )
+                ]
+            )
+            response = await q_client.query_points(
+                collection_name="agent_documents",
+                query=dense_vector,
+                query_filter=legacy_filter,
+                limit=limit,
+                with_payload=True
+            )
 
         # 5. Сбор результатов (они теперь лежат внутри response.points)
         results = []

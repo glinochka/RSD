@@ -15,7 +15,7 @@ from qdrant_client.http import models
 from config import settings
 
 from ..subscription_plans import get_subscription_plan, UNLIMITED_KNOWLEDGE_BASE_CHUNKS
-from .embeddings import embed_dense_for_chunks, run_in_cpu_pool
+from .embeddings import embed_dense_for_chunks, get_active_embedding_profile, run_in_cpu_pool
 
 
 def get_chunk_limit_by_plan(plan_code: str) -> int:
@@ -35,8 +35,8 @@ qdrant_client = AsyncQdrantClient(url=settings.QDRANT_URL)
 indexing_semaphore = asyncio.Semaphore(settings.EMBEDDING_MAX_CONCURRENT_DOCUMENTS)
 
 text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=1000,
-    chunk_overlap=100,
+    chunk_size=settings.EMBEDDING_CHUNK_SIZE,
+    chunk_overlap=settings.EMBEDDING_CHUNK_OVERLAP,
     separators=["\n\n", "\n", ".", " ", ""]
 )
 
@@ -95,18 +95,26 @@ def fetch_public_url_text_sync(url: str) -> str:
 async def fetch_public_url_text(url: str) -> str:
     return await run_in_cpu_pool(fetch_public_url_text_sync, url)
 
-async def get_current_chunks_count(agent_id: int) -> int:
+async def get_current_chunks_count(agent_id: int, embedding_profile_key: str | None = None) -> int:
     """Считает количество существующих чанков агента в Qdrant."""
     try:
+        must_conditions = [
+            models.FieldCondition(
+                key="agent_id",
+                match=models.MatchValue(value=agent_id)
+            )
+        ]
+        if embedding_profile_key:
+            must_conditions.append(
+                models.FieldCondition(
+                    key="embedding_profile_key",
+                    match=models.MatchValue(value=embedding_profile_key),
+                )
+            )
         result = await qdrant_client.count(
             collection_name="agent_documents",
             count_filter=models.Filter(
-                must=[
-                    models.FieldCondition(
-                        key="agent_id", 
-                        match=models.MatchValue(value=agent_id)
-                    )
-                ]
+                must=must_conditions
             )
         )
         return result.count
@@ -125,6 +133,7 @@ async def _upsert_document_chunks(
     content_hash: str | None,
     source: str,
 ):
+    embedding_profile = get_active_embedding_profile()
     dense_vectors = await run_in_cpu_pool(
         embed_dense_for_chunks,
         chunks,
@@ -138,7 +147,12 @@ async def _upsert_document_chunks(
     for i, chunk_text in enumerate(chunks):
         dense_vector = dense_vectors[i]
         # UUID на основе document_id и индекса чанка
-        point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{document_id}_{i}"))
+        point_id = str(
+            uuid.uuid5(
+                uuid.NAMESPACE_DNS,
+                f"{document_id}_{embedding_profile['profile_key']}_{embedding_profile['schema_version']}_{i}",
+            )
+        )
 
         points.append(
             models.PointStruct(
@@ -150,6 +164,9 @@ async def _upsert_document_chunks(
                     "content_hash": content_hash,
                     "text": chunk_text,
                     "source": source,
+                    "embedding_profile_key": embedding_profile["profile_key"],
+                    "embedding_schema_version": embedding_profile["schema_version"],
+                    "embedding_model_name": embedding_profile["model_name"],
                 }
             )
         )
@@ -245,3 +262,104 @@ async def process_text_source(
             async with session.begin():
                 doc = await docDAO.find_one_by_filter(id=document_id)
                 await docDAO.update(doc, {"status": "error"})
+
+
+async def _collect_document_chunks_from_qdrant(
+    *,
+    agent_runtime_id: int,
+    document_id: int,
+    source_profile_key: str | None = None,
+) -> tuple[list[str], str | None, str | None]:
+    must_conditions = [
+        models.FieldCondition(
+            key="agent_id",
+            match=models.MatchValue(value=agent_runtime_id),
+        ),
+        models.FieldCondition(
+            key="document_id",
+            match=models.MatchValue(value=document_id),
+        ),
+    ]
+    if source_profile_key:
+        must_conditions.append(
+            models.FieldCondition(
+                key="embedding_profile_key",
+                match=models.MatchValue(value=source_profile_key),
+            )
+        )
+
+    all_points = []
+    next_offset = None
+    while True:
+        points, next_offset = await qdrant_client.scroll(
+            collection_name="agent_documents",
+            scroll_filter=models.Filter(must=must_conditions),
+            with_payload=True,
+            with_vectors=False,
+            limit=256,
+            offset=next_offset,
+        )
+        all_points.extend(points)
+        if next_offset is None:
+            break
+
+    # Legacy fallback: allow reading old points that don't have embedding_profile_key payload.
+    if not all_points and source_profile_key:
+        points, _ = await qdrant_client.scroll(
+            collection_name="agent_documents",
+            scroll_filter=models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="agent_id",
+                        match=models.MatchValue(value=agent_runtime_id),
+                    ),
+                    models.FieldCondition(
+                        key="document_id",
+                        match=models.MatchValue(value=document_id),
+                    ),
+                ]
+            ),
+            with_payload=True,
+            with_vectors=False,
+            limit=2048,
+        )
+        all_points.extend(points)
+
+    chunks = []
+    source_name: str | None = None
+    content_hash: str | None = None
+    for point in all_points:
+        payload = point.payload or {}
+        text = (payload.get("text") or "").strip()
+        if not text:
+            continue
+        chunks.append(text)
+        if source_name is None:
+            source_name = payload.get("source")
+        if content_hash is None:
+            content_hash = payload.get("content_hash")
+    return chunks, source_name, content_hash
+
+
+async def reindex_document_from_existing_chunks(
+    *,
+    agent_runtime_id: int,
+    document_id: int,
+    source_profile_key: str | None = None,
+) -> tuple[int, str | None, str | None]:
+    chunks, source_name, content_hash = await _collect_document_chunks_from_qdrant(
+        agent_runtime_id=agent_runtime_id,
+        document_id=document_id,
+        source_profile_key=source_profile_key,
+    )
+    if not chunks:
+        raise ValueError("No existing chunks found in Qdrant for document")
+
+    await _upsert_document_chunks(
+        chunks=chunks,
+        agent_id=agent_runtime_id,
+        document_id=document_id,
+        content_hash=content_hash,
+        source=source_name or f"document:{document_id}",
+    )
+    return len(chunks), source_name, content_hash

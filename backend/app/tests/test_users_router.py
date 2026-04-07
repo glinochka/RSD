@@ -36,53 +36,88 @@ class TestUserRegistration:
     @pytest.mark.asyncio
     async def test_registration_success(self, client, sample_user_data, test_session):
         """Test successful user registration."""
-        response = await client.post(
-            "/api/users/registration",
-            json=sample_user_data
-        )
+        with patch("app.router_users.router._send_registration_email_code", new=AsyncMock()):
+            response = await client.post(
+                "/api/users/registration",
+                json=sample_user_data
+            )
 
         assert response.status_code == 201
         data = response.json()
-        assert "access_token" in data
-        assert data["token_type"] == "bearer"
+        assert data["status"] == "verification_required"
+        assert data["email"] == sample_user_data["email"]
 
         # Verify user was created in database
         async with test_session.begin():
             result = await test_session.execute(
-                select(User).where(User.name == sample_user_data["name"])
+                select(User).where(User.email == sample_user_data["email"])
             )
             user = result.scalar_one_or_none()
             assert user is not None
-            assert user.name == sample_user_data["name"]
+            assert user.email == sample_user_data["email"]
+            assert isinstance(user.name, str)
+            assert len(user.name) >= 3
+            assert user.email_verified is False
+            assert user.email_verification_last_sent_at is not None
 
     @pytest.mark.asyncio
-    async def test_registration_duplicate_name(self, client, sample_user_data, test_session):
-        """Test registration fails when username already exists."""
+    async def test_registration_resend_cooldown(self, client, sample_user_data):
+        """Repeated resend code is blocked for 120s after a successful send."""
+        with patch("app.router_users.router._send_registration_email_code", new=AsyncMock()):
+            first = await client.post("/api/users/registration", json=sample_user_data)
+        assert first.status_code == 201
+
+        with patch("app.router_users.router._send_registration_email_code", new=AsyncMock()):
+            second = await client.post(
+                "/api/users/registration/resend-code",
+                json={"email": sample_user_data["email"]},
+            )
+        assert second.status_code == 429
+        assert "Повторная отправка" in second.json()["detail"]
+        assert second.headers.get("retry-after") is not None
+
+    @pytest.mark.asyncio
+    async def test_registration_repeat_for_existing_user_conflict(self, client, sample_user_data):
+        """Existing account cannot re-register and no additional code should be sent."""
+        send_mock = AsyncMock()
+        with patch("app.router_users.router._send_registration_email_code", new=send_mock):
+            first = await client.post("/api/users/registration", json=sample_user_data)
+            second = await client.post("/api/users/registration", json=sample_user_data)
+        assert first.status_code == 201
+        assert second.status_code == 409
+        assert send_mock.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_registration_duplicate_email(self, client, sample_user_data, test_session):
+        """Test registration fails when email already exists and verified."""
         from app.utils.security import get_password_hash
         from app.router_users.dao import UserDAO
 
         user_dao = UserDAO(test_session)
         async with test_session.begin():
             await user_dao.add({
-                "name": sample_user_data["name"],
+                "name": "existing_user",
+                "email": sample_user_data["email"],
                 "password": get_password_hash("existingpassword"),
+                "email_verified": True,
             })
             await test_session.commit()
 
-        response = await client.post(
-            "/api/users/registration",
-            json=sample_user_data
-        )
+        with patch("app.router_users.router._send_registration_email_code", new=AsyncMock()):
+            response = await client.post(
+                "/api/users/registration",
+                json=sample_user_data
+            )
 
         assert response.status_code == 409
-        assert "Пользователь уже существует" in response.json()["detail"]
+        assert "Email уже используется" in response.json()["detail"]
 
     @pytest.mark.asyncio
-    async def test_registration_short_name(self, client):
-        """Test registration fails with name too short."""
+    async def test_registration_invalid_email(self, client):
+        """Test registration fails with invalid email."""
         response = await client.post(
             "/api/users/registration",
-            json={"name": "ab", "password": "password123"}
+            json={"email": "invalid-email", "password": "password123"}
         )
 
         assert response.status_code == 422
@@ -92,10 +127,119 @@ class TestUserRegistration:
         """Test registration fails with password too short."""
         response = await client.post(
             "/api/users/registration",
-            json={"name": sample_user_data["name"], "password": "123"}
+            json={"email": sample_user_data["email"], "password": "123"}
         )
 
         assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_registration_verify_success(self, client, sample_user_data):
+        """Test successful email verification after registration."""
+        with patch("app.router_users.router._generate_email_code", return_value="123456"), \
+             patch("app.router_users.router._send_registration_email_code", new=AsyncMock()):
+            response = await client.post("/api/users/registration", json=sample_user_data)
+        assert response.status_code == 201
+
+        verify_response = await client.post(
+            "/api/users/registration/verify",
+            json={
+                "email": sample_user_data["email"],
+                "code": "123456",
+            },
+        )
+        assert verify_response.status_code == 200
+        verify_data = verify_response.json()
+        assert "access_token" in verify_data
+        assert verify_data["token_type"] == "bearer"
+
+
+class TestPasswordReset:
+    """Tests for password reset flow endpoints."""
+
+    @pytest.mark.asyncio
+    async def test_password_reset_request_success(self, client, test_session):
+        from app.utils.security import get_password_hash
+        from app.router_users.dao import UserDAO
+
+        user_dao = UserDAO(test_session)
+        email = "restore@example.com"
+        async with test_session.begin():
+            await user_dao.add({
+                "name": "restore_user",
+                "email": email,
+                "email_verified": True,
+                "password": get_password_hash("oldpassword123"),
+            })
+
+        with patch("app.router_users.router._send_password_reset_email_code", new=AsyncMock()):
+            response = await client.post(
+                "/api/users/password-reset/request",
+                json={"email": email},
+            )
+        assert response.status_code == 200
+
+        async with test_session.begin():
+            result = await test_session.execute(select(User).where(User.email == email))
+            user = result.scalar_one_or_none()
+            assert user is not None
+            assert user.password_reset_code_hash is not None
+            assert user.password_reset_attempts_left > 0
+            assert user.password_reset_last_sent_at is not None
+
+    @pytest.mark.asyncio
+    async def test_password_reset_request_user_not_found(self, client):
+        response = await client.post(
+            "/api/users/password-reset/request",
+            json={"email": "not-found@example.com"},
+        )
+        assert response.status_code == 404
+        assert "Пользователь не найден" in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_password_reset_full_flow_success(self, client, test_session):
+        from app.utils.security import get_password_hash
+        from app.router_users.dao import UserDAO
+
+        user_dao = UserDAO(test_session)
+        email = "restore2@example.com"
+        old_password = "oldpassword123"
+        new_password = "newpassword123"
+        async with test_session.begin():
+            await user_dao.add({
+                "name": "restore_user2",
+                "email": email,
+                "email_verified": True,
+                "password": get_password_hash(old_password),
+            })
+
+        with patch("app.router_users.router._generate_password_reset_code", return_value="123456"), \
+             patch("app.router_users.router._send_password_reset_email_code", new=AsyncMock()):
+            request_resp = await client.post(
+                "/api/users/password-reset/request",
+                json={"email": email},
+            )
+        assert request_resp.status_code == 200
+
+        verify_resp = await client.post(
+            "/api/users/password-reset/verify",
+            json={"email": email, "code": "123456"},
+        )
+        assert verify_resp.status_code == 200
+        reset_token = verify_resp.json().get("reset_token")
+        assert reset_token
+
+        confirm_resp = await client.post(
+            "/api/users/password-reset/confirm",
+            json={"email": email, "reset_token": reset_token, "new_password": new_password},
+        )
+        assert confirm_resp.status_code == 200
+
+        login_resp = await client.post(
+            "/api/users/login",
+            json={"name": email, "password": new_password},
+        )
+        assert login_resp.status_code == 200
+        assert "access_token" in login_resp.json()
 
 
 class TestUserLogin:
@@ -118,6 +262,33 @@ class TestUserLogin:
         response = await client.post(
             "/api/users/login",
             json={"name": "loginuser", "password": "correctpassword123"}
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "access_token" in data
+        assert data["token_type"] == "bearer"
+
+    @pytest.mark.asyncio
+    async def test_login_success_by_email(self, client, test_session):
+        """Test successful login using email as login field."""
+        from app.utils.security import get_password_hash
+        from app.router_users.dao import UserDAO
+
+        user_dao = UserDAO(test_session)
+        long_email = "very.long.login.identifier.for.user@example.com"
+        async with test_session.begin():
+            await user_dao.add({
+                "name": "emailuser",
+                "email": long_email,
+                "email_verified": True,
+                "password": get_password_hash("correctpassword123"),
+            })
+            await test_session.commit()
+
+        response = await client.post(
+            "/api/users/login",
+            json={"name": long_email, "password": "correctpassword123"}
         )
 
         assert response.status_code == 200

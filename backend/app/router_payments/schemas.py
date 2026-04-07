@@ -25,12 +25,20 @@ class CreateYooKassaPayment(BaseModel):
     plan_name: str = Field(..., description="Paid subscription plan name")
     return_url: str | None = Field(default=None, description="URL where YooKassa returns user after payment")
     promo_code: str | None = Field(default=None, max_length=64, description="Optional promo code")
+    duration_months: int = Field(default=1, description="Subscription duration in months")
 
     @field_validator("plan_name")
     @classmethod
     def validate_paid_plan_name(cls, value: str) -> str:
         if value not in get_subscription_plan_codes(paid_only=True):
             raise ValueError("Invalid paid subscription plan name")
+        return value
+
+    @field_validator("duration_months")
+    @classmethod
+    def validate_duration_months(cls, value: int) -> int:
+        if value not in (1, 3, 6):
+            raise ValueError("duration_months must be one of 1, 3, 6")
         return value
 
 
