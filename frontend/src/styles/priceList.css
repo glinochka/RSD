@@ -22,41 +22,6 @@
   margin-bottom: 0;
 }
 
-.pricing-promo-after {
-  margin: var(--spacing-2xl) auto 0;
-  max-width: 280px;
-  text-align: center;
-}
-
-.pricing-promo-after-label {
-  display: block;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-light);
-  font-weight: var(--font-weight-normal);
-  margin-bottom: var(--spacing-xs);
-}
-
-.pricing-promo-after input {
-  width: 100%;
-  font-size: var(--font-size-sm);
-  padding: var(--spacing-xs) var(--spacing-sm);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-base);
-  background: var(--color-bg-light);
-  color: var(--color-text);
-}
-
-.pricing-promo-after input::placeholder {
-  color: var(--color-text-light);
-  opacity: 0.85;
-}
-
-.pricing-promo-after input:focus {
-  outline: none;
-  border-color: var(--color-primary);
-  background: var(--color-bg);
-}
-
 .pricing-grid {
   display: flex;
   flex-wrap: wrap;
@@ -214,16 +179,119 @@
 }
 
 .pricing-modal {
-  width: min(560px, 100%);
+  width: min(700px, 100%);
   background: var(--color-bg);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-xl);
-  padding: var(--spacing-xl);
+  padding: var(--spacing-2xl);
 }
 
 .pricing-modal h3 {
   margin: 0 0 var(--spacing-base);
+}
+
+.pricing-duration-list {
+  display: grid;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-base);
+}
+
+.pricing-duration-option {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-base);
+  background: #ffffff;
+  display: grid;
+  grid-template-columns: 18px minmax(90px, 1fr) minmax(110px, auto) minmax(100px, auto) minmax(56px, auto);
+  column-gap: var(--spacing-sm);
+  align-items: center;
+  padding: var(--spacing-base) var(--spacing-lg);
+  color: var(--color-text);
+  cursor: pointer;
+  text-align: left;
+  font-size: var(--font-size-base);
+}
+
+.pricing-duration-option--active {
+  border-color: var(--color-primary);
+  background: #ffffff;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.14);
+}
+
+.pricing-duration-checkpoint {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--color-border);
+  background: transparent;
+  transition: all var(--transition-fast);
+}
+
+.pricing-duration-checkpoint--active {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+}
+
+.pricing-duration-label {
+  font-weight: var(--font-weight-medium);
+  font-size: var(--font-size-base);
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.pricing-duration-monthly {
+  color: var(--color-text-light);
+  font-size: var(--font-size-base);
+  line-height: 1.2;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.pricing-duration-total {
+  color: var(--color-primary);
+  font-weight: var(--font-weight-bold);
+  font-size: var(--font-size-base);
+  line-height: 1.2;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.pricing-duration-discount {
+  color: var(--color-success);
+  font-weight: var(--font-weight-bold);
+  font-size: var(--font-size-base);
+  line-height: 1.2;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.pricing-duration-discount--empty {
+  color: transparent;
+}
+
+.pricing-modal-promo-label {
+  display: block;
+  margin-bottom: var(--spacing-xs);
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+}
+
+.pricing-modal input {
+  width: 100%;
+  font-size: var(--font-size-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-base);
+  background: var(--color-bg-light);
+  color: var(--color-text);
+  margin-bottom: var(--spacing-base);
+}
+
+.pricing-modal input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  background: var(--color-bg);
 }
 
 .pricing-request-form {
@@ -272,7 +340,20 @@
   }
 
   .pricing-modal {
+    width: min(100%, 760px);
     padding: var(--spacing-lg);
+  }
+
+  .pricing-duration-option {
+    grid-template-columns: 18px minmax(80px, 1fr) minmax(96px, auto) minmax(92px, auto) minmax(48px, auto);
+    font-size: var(--font-size-sm);
+    padding: var(--spacing-sm) var(--spacing-base);
+  }
+
+  .pricing-duration-monthly,
+  .pricing-duration-total,
+  .pricing-duration-discount {
+    font-size: var(--font-size-sm);
   }
 
   .pricing-modal-actions {
@@ -296,6 +377,50 @@
   .price-card {
     padding: var(--spacing-lg);
     min-height: 340px;
+  }
+
+  .pricing-duration-option {
+    grid-template-columns: 14px minmax(92px, 1fr) auto;
+    grid-template-rows: auto auto;
+    align-items: start;
+    column-gap: var(--spacing-xs);
+    row-gap: 4px;
+    padding: 8px 10px;
+    font-size: var(--font-size-xs);
+  }
+
+  .pricing-duration-checkpoint {
+    grid-column: 1;
+    grid-row: 1 / 3;
+    margin-top: 4px;
+  }
+
+  .pricing-duration-label {
+    grid-column: 2;
+    grid-row: 1;
+    font-size: var(--font-size-xs);
+  }
+
+  .pricing-duration-discount {
+    grid-column: 3;
+    grid-row: 1;
+    justify-self: end;
+    font-size: var(--font-size-xs);
+  }
+
+  .pricing-duration-monthly {
+    grid-column: 2;
+    grid-row: 2;
+    text-align: left;
+    font-size: var(--font-size-xs);
+  }
+
+  .pricing-duration-total {
+    grid-column: 3;
+    grid-row: 2;
+    justify-self: end;
+    text-align: right;
+    font-size: var(--font-size-xs);
   }
 
   .price-title {

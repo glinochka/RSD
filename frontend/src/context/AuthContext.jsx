@@ -39,8 +39,16 @@ export const AuthProvider = ({ children }) => {
   );
 
   const register = useCallback(
-    async (name, password) => {
-      const response = await authService.register(name, password);
+    async (email, password) => {
+      const response = await authService.register(email, password);
+      return response;
+    },
+    []
+  );
+
+  const verifyRegistrationCode = useCallback(
+    async (email, code) => {
+      const response = await authService.verifyRegistrationCode(email, code);
       setToken(response.token);
       setUser(response.user);
       return response;
@@ -68,6 +76,7 @@ export const AuthProvider = ({ children }) => {
     isLoadingAuth,
     login,
     register,
+    verifyRegistrationCode,
     logout,
     setUser,
   };

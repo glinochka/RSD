@@ -10,7 +10,14 @@ from sqlalchemy.orm import DeclarativeBase, declared_attr
 
 
 DATABASE_URL = get_db_url()
-engine = create_async_engine(DATABASE_URL)
+engine = create_async_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,
+    pool_recycle=1800,
+    pool_size=5,
+    max_overflow=5,
+    pool_timeout=30,
+)
 
 async_session_maker = async_sessionmaker(engine, expire_on_commit=False)
 

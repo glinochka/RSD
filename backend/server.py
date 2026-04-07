@@ -1,7 +1,8 @@
 from contextlib import asynccontextmanager
 import asyncio
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
+from fastapi.responses import JSONResponse
 from logging import getLogger
 from app.logger_config import setup_logger
 setup_logger()
@@ -15,7 +16,9 @@ from app.router_admin import router as admin_router
 from app.origins import origins
 from app.config import settings
 from app.services.subscription_maintenance import downgrade_expired_subscriptions_once
+from app.services.reindex_jobs import run_reindex_worker_forever
 from app.qdrant.embeddings import get_active_dense_model_name, get_dense_vector_size
+from app.utils.internal_auth import is_request_secure
 import uvicorn
 
 
@@ -26,6 +29,7 @@ from qdrant_client.http import models
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     cron_task: asyncio.Task | None = None
+    reindex_task: asyncio.Task | None = None
 
     async def run_subscription_cron():
         while True:
@@ -82,6 +86,7 @@ async def lifespan(app: FastAPI):
         print(f"⚠️ Qdrant Error: {e}")
 
     cron_task = asyncio.create_task(run_subscription_cron())
+    reindex_task = asyncio.create_task(run_reindex_worker_forever())
 
     yield 
 
@@ -89,6 +94,12 @@ async def lifespan(app: FastAPI):
         cron_task.cancel()
         try:
             await cron_task
+        except asyncio.CancelledError:
+            pass
+    if reindex_task:
+        reindex_task.cancel()
+        try:
+            await reindex_task
         except asyncio.CancelledError:
             pass
 
@@ -100,10 +111,31 @@ app = FastAPI(lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins = origins,
-    allow_methods = ['*'],
-    allow_headers = ['*'],
+    allow_methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers = [
+        "Authorization",
+        "Content-Type",
+        "Accept",
+        "Origin",
+        "X-Requested-With",
+        "X-Internal-API-Key",
+        "X-Agent-API-Key",
+    ],
     allow_credentials = True
 )
+
+
+@app.middleware("http")
+async def enforce_secure_transport_for_credentials(request: Request, call_next):
+    sensitive_headers = {"authorization", "x-internal-api-key", "x-agent-api-key"}
+    if any(header in request.headers for header in sensitive_headers):
+        if not is_request_secure(request):
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"detail": "HTTPS is required for credentialed requests"},
+            )
+    return await call_next(request)
+
 
 app.include_router(users_router.router)
 app.include_router(agents_router.router)

@@ -2,6 +2,7 @@ from .alembic.models import Base
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, joinedload
+from sqlalchemy.sql import Select
 
 
 def require_transaction(func):
@@ -17,6 +18,44 @@ class BaseDAO:
 
     def __init__(self, session: AsyncSession):
         self._session = session
+
+    @staticmethod
+    def paginate_query(query: Select, *, page: int, page_size: int) -> Select:
+        offset = (page - 1) * page_size
+        return query.offset(offset).limit(page_size)
+
+    @require_transaction
+    async def scalar_or_default(self, query: Select, default=0):
+        value = await self._session.scalar(query)
+        return default if value is None else value
+
+    @require_transaction
+    async def list_scalars(
+        self,
+        query: Select,
+        *,
+        page: int | None = None,
+        page_size: int | None = None,
+    ) -> list:
+        final_query = query
+        if page is not None and page_size is not None:
+            final_query = self.paginate_query(final_query, page=page, page_size=page_size)
+        result = await self._session.scalars(final_query)
+        return result.all()
+
+    @require_transaction
+    async def list_rows(
+        self,
+        query: Select,
+        *,
+        page: int | None = None,
+        page_size: int | None = None,
+    ) -> list:
+        final_query = query
+        if page is not None and page_size is not None:
+            final_query = self.paginate_query(final_query, page=page, page_size=page_size)
+        result = await self._session.execute(final_query)
+        return result.all()
 
     @require_transaction 
     async def find_one_by_filter(self, load_relations: bool = False, **filters) -> Base:

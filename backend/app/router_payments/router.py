@@ -8,13 +8,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import func, select
 from yookassa import Configuration, Payment
 from yookassa.domain.notification.webhook_notification import WebhookNotificationFactory
 from yookassa.domain.notification.webhook_notification_types import WebhookNotificationEventType
 from yookassa.domain.exceptions import NotFoundError
 from ..alembic.database import async_session_maker
-from ..alembic.models import PaymentTransaction, PromoCode, TurnkeyAgentRequest, WebsitePaymentTransaction
+from ..alembic.models import WebsitePaymentTransaction
 from ..config import settings
 from ..router_users.dao import UserDAO
 from ..subscription_plans import (
@@ -30,10 +29,21 @@ from .schemas import (
     ProcessTelegramPayment,
     YooKassaPaymentStatusResponse,
 )
+from .dao import (
+    PaymentTransactionDAO,
+    PromoCodeDAO,
+    TurnkeyAgentRequestDAO,
+    WebsitePaymentTransactionDAO,
+)
 
 logger = getLogger(__name__)
 router = APIRouter(prefix="/api/payments")
 http_bearer = HTTPBearer(auto_error=False)
+DURATION_DISCOUNT_BY_MONTHS = {
+    1: 0,
+    3: 15,
+    6: 25,
+}
 
 
 async def get_current_user_required(
@@ -73,7 +83,7 @@ def _resolve_confirmation_url(payment: Payment) -> str | None:
     return getattr(confirmation, "confirmation_url", None)
 
 
-def _calculate_new_end_date(current_end_date: date | datetime | None) -> datetime:
+def _calculate_new_end_date(current_end_date: date | datetime | None, duration_months: int = 1) -> datetime:
     """Extend subscription from now or from current end. Handles DB values as date or datetime."""
     now_utc = datetime.now(timezone.utc)
     base_date = now_utc
@@ -89,7 +99,7 @@ def _calculate_new_end_date(current_end_date: date | datetime | None) -> datetim
             )
         if current_end > now_utc:
             base_date = current_end
-    return (base_date + timedelta(days=30)).replace(tzinfo=None)
+    return (base_date + timedelta(days=30 * duration_months)).replace(tzinfo=None)
 
 
 def _normalize_promo_code(value: str | None) -> str | None:
@@ -127,7 +137,8 @@ async def _apply_yookassa_payment_to_subscription(
         )
         return
 
-    new_end_date = _calculate_new_end_date(user.subscription_end_date)
+    duration_months = int(getattr(tx, "duration_months", 1) or 1)
+    new_end_date = _calculate_new_end_date(user.subscription_end_date, duration_months=duration_months)
     await user_dao.update(
         user,
         {
@@ -150,14 +161,15 @@ async def get_subscription_plans():
 @router.post("/turnkey-requests", dependencies=[Depends(rate_limit(max_requests=5, window_seconds=300, scope="turnkey_requests"))])
 async def create_turnkey_request(payload: CreateTurnkeyAgentRequest):
     async with async_session_maker() as session:
+        turnkey_request_dao = TurnkeyAgentRequestDAO(session)
         async with session.begin():
-            session.add(
-                TurnkeyAgentRequest(
-                    phone_number=payload.phone_number,
-                    email=payload.email,
-                    requested_agent=payload.requested_agent,
-                    purpose=payload.purpose,
-                )
+            await turnkey_request_dao.add(
+                {
+                    "phone_number": payload.phone_number,
+                    "email": payload.email,
+                    "requested_agent": payload.requested_agent,
+                    "purpose": payload.purpose,
+                }
             )
     return JSONResponse(
         content={"detail": "Request created"},
@@ -177,13 +189,9 @@ async def process_successful_payment(
     try:
         async with async_session_maker() as session:
             user_dao = UserDAO(session)
+            payment_tx_dao = PaymentTransactionDAO(session)
             async with session.begin():
-                existing_tx = await session.scalar(
-                    select(PaymentTransaction.id).where(
-                        PaymentTransaction.telegram_payment_charge_id == payload.telegram_payment_charge_id
-                    )
-                )
-                if existing_tx:
+                if await payment_tx_dao.exists_by_telegram_charge_id(payload.telegram_payment_charge_id):
                     user = await user_dao.find_one_by_filter(telegram_id=payload.telegram_id)
                     if not user:
                         raise HTTPException(
@@ -209,16 +217,16 @@ async def process_successful_payment(
                     )
 
                 # Reserve unique charge id early to avoid concurrent double processing.
-                session.add(
-                    PaymentTransaction(
-                        telegram_id=payload.telegram_id,
-                        plan_name=payload.plan_name,
-                        currency=payload.currency,
-                        total_amount=payload.total_amount,
-                        telegram_payment_charge_id=payload.telegram_payment_charge_id,
-                        provider_payment_charge_id=payload.provider_payment_charge_id,
-                        invoice_payload=payload.invoice_payload,
-                    )
+                await payment_tx_dao.add(
+                    {
+                        "telegram_id": payload.telegram_id,
+                        "plan_name": payload.plan_name,
+                        "currency": payload.currency,
+                        "total_amount": payload.total_amount,
+                        "telegram_payment_charge_id": payload.telegram_payment_charge_id,
+                        "provider_payment_charge_id": payload.provider_payment_charge_id,
+                        "invoice_payload": payload.invoice_payload,
+                    }
                 )
                 await session.flush()
 
@@ -269,16 +277,18 @@ async def create_yookassa_payment(
             detail="Invalid paid plan",
         )
 
-    original_amount_kopecks = int(selected_plan.get("price_rub_month", 0) or 0) * 100
+    duration_months = int(payload.duration_months or 1)
+    duration_discount_percent = DURATION_DISCOUNT_BY_MONTHS.get(duration_months, 0)
+    original_amount_kopecks = int(selected_plan.get("price_rub_month", 0) or 0) * 100 * duration_months
     normalized_promo = _normalize_promo_code(payload.promo_code)
     applied_discount_percent = 0
     applied_promo_code = None
 
     if normalized_promo:
         async with async_session_maker() as session:
-            promo = await session.scalar(
-                select(PromoCode).where(func.upper(PromoCode.code) == normalized_promo)
-            )
+            promo_dao = PromoCodeDAO(session)
+            async with session.begin():
+                promo = await promo_dao.find_by_code_case_insensitive(normalized_promo)
         if not promo:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -287,13 +297,16 @@ async def create_yookassa_payment(
         applied_discount_percent = int(promo.discount_percent or 0)
         applied_promo_code = promo.code
 
-    discount_kopecks = (original_amount_kopecks * applied_discount_percent) // 100
-    amount_kopecks = max(0, original_amount_kopecks - discount_kopecks)
+    duration_discount_kopecks = (original_amount_kopecks * duration_discount_percent) // 100
+    amount_after_duration_discount = max(0, original_amount_kopecks - duration_discount_kopecks)
+    promo_discount_kopecks = (amount_after_duration_discount * applied_discount_percent) // 100
+    amount_kopecks = max(0, amount_after_duration_discount - promo_discount_kopecks)
 
     # 100% promo flow: activate subscription without external payment gateway.
     if amount_kopecks == 0:
         async with async_session_maker() as session:
             user_dao = UserDAO(session)
+            website_tx_dao = WebsitePaymentTransactionDAO(session)
             async with session.begin():
                 user = await user_dao.find_one_by_filter(id=current_user.id)
                 if not user:
@@ -302,7 +315,10 @@ async def create_yookassa_payment(
                         detail="User not found",
                     )
 
-                new_end_date = _calculate_new_end_date(user.subscription_end_date)
+                new_end_date = _calculate_new_end_date(
+                    user.subscription_end_date,
+                    duration_months=duration_months,
+                )
                 await user_dao.update(
                     user,
                     {
@@ -310,20 +326,21 @@ async def create_yookassa_payment(
                         "subscription_end_date": new_end_date,
                     },
                 )
-                session.add(
-                    WebsitePaymentTransaction(
-                        user_id=current_user.id,
-                        plan_name=payload.plan_name,
-                        currency="RUB",
-                        total_amount=0,
-                        original_total_amount=original_amount_kopecks,
-                        discount_percent=applied_discount_percent,
-                        promo_code=applied_promo_code,
-                        yookassa_payment_id=f"promo-{uuid4()}",
-                        status="succeeded",
-                        is_processed=True,
-                        paid_at=datetime.now(timezone.utc).replace(tzinfo=None),
-                    )
+                await website_tx_dao.add(
+                    {
+                        "user_id": current_user.id,
+                        "plan_name": payload.plan_name,
+                        "currency": "RUB",
+                        "total_amount": 0,
+                        "original_total_amount": original_amount_kopecks,
+                        "discount_percent": applied_discount_percent,
+                        "duration_months": duration_months,
+                        "promo_code": applied_promo_code,
+                        "yookassa_payment_id": f"promo-{uuid4()}",
+                        "status": "succeeded",
+                        "is_processed": True,
+                        "paid_at": datetime.now(timezone.utc).replace(tzinfo=None),
+                    }
                 )
 
         return JSONResponse(
@@ -334,6 +351,8 @@ async def create_yookassa_payment(
                 "plan_name": payload.plan_name,
                 "promo_code": applied_promo_code,
                 "discount_percent": applied_discount_percent,
+                "duration_discount_percent": duration_discount_percent,
+                "duration_months": duration_months,
                 "amount_kopecks": 0,
                 "subscription_activated": True,
             },
@@ -359,10 +378,15 @@ async def create_yookassa_payment(
                 "amount": {"value": amount_rub, "currency": "RUB"},
                 "capture": True,
                 "confirmation": {"type": "redirect", "return_url": return_url},
-                "description": f"Подписка {selected_plan.get('title', payload.plan_name)} на 30 дней",
+                "description": (
+                    f"Подписка {selected_plan.get('title', payload.plan_name)} "
+                    f"на {duration_months} мес."
+                ),
                 "metadata": {
                     "user_id": str(current_user.id),
                     "plan_name": payload.plan_name,
+                    "duration_months": str(duration_months),
+                    "duration_discount_percent": str(duration_discount_percent),
                     "promo_code": applied_promo_code or "",
                     "discount_percent": str(applied_discount_percent),
                 },
@@ -386,19 +410,21 @@ async def create_yookassa_payment(
         )
 
     async with async_session_maker() as session:
+        website_tx_dao = WebsitePaymentTransactionDAO(session)
         async with session.begin():
-            session.add(
-                WebsitePaymentTransaction(
-                    user_id=current_user.id,
-                    plan_name=payload.plan_name,
-                    currency="RUB",
-                    total_amount=amount_kopecks,
-                    original_total_amount=original_amount_kopecks,
-                    discount_percent=applied_discount_percent,
-                    promo_code=applied_promo_code,
-                    yookassa_payment_id=payment_id,
-                    status=payment_status,
-                )
+            await website_tx_dao.add(
+                {
+                    "user_id": current_user.id,
+                    "plan_name": payload.plan_name,
+                    "currency": "RUB",
+                    "total_amount": amount_kopecks,
+                    "original_total_amount": original_amount_kopecks,
+                    "discount_percent": applied_discount_percent,
+                    "duration_months": duration_months,
+                    "promo_code": applied_promo_code,
+                    "yookassa_payment_id": payment_id,
+                    "status": payment_status,
+                }
             )
 
     return JSONResponse(
@@ -409,6 +435,8 @@ async def create_yookassa_payment(
             "plan_name": payload.plan_name,
             "promo_code": applied_promo_code,
             "discount_percent": applied_discount_percent,
+            "duration_discount_percent": duration_discount_percent,
+            "duration_months": duration_months,
             "amount_kopecks": amount_kopecks,
         },
         status_code=status.HTTP_201_CREATED,
@@ -434,14 +462,11 @@ async def get_yookassa_payment_status(
 
     async with async_session_maker() as session:
         user_dao = UserDAO(session)
+        website_tx_dao = WebsitePaymentTransactionDAO(session)
         async with session.begin():
-            tx = await session.scalar(
-                select(WebsitePaymentTransaction)
-                .where(
-                    WebsitePaymentTransaction.yookassa_payment_id == payment_id,
-                    WebsitePaymentTransaction.user_id == current_user.id,
-                )
-                .with_for_update(),
+            tx = await website_tx_dao.find_for_update_by_payment_id(
+                yookassa_payment_id=payment_id,
+                user_id=current_user.id,
             )
             if not tx:
                 raise HTTPException(
@@ -513,11 +538,10 @@ async def yookassa_webhook(request: Request):
 
     async with async_session_maker() as session:
         user_dao = UserDAO(session)
+        website_tx_dao = WebsitePaymentTransactionDAO(session)
         async with session.begin():
-            tx = await session.scalar(
-                select(WebsitePaymentTransaction)
-                .where(WebsitePaymentTransaction.yookassa_payment_id == payment_id)
-                .with_for_update(),
+            tx = await website_tx_dao.find_for_update_by_payment_id(
+                yookassa_payment_id=payment_id
             )
             if not tx:
                 logger.info("YooKassa webhook: no local website tx for payment_id=%s", payment_id)
