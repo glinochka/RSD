@@ -388,16 +388,12 @@ const PriceList = () => {
                       className={`pricing-duration-checkpoint ${selectedDurationMonths === option.months ? 'pricing-duration-checkpoint--active' : ''}`}
                       aria-hidden="true"
                     />
-                    <div className="pricing-duration-body">
-                      <span className="pricing-duration-label">{option.label}</span>
-                      <div className="pricing-duration-price-stack">
-                        <span className="pricing-duration-monthly">{formatRubPrice(optionMonthly)} ₽/мес</span>
-                        <span className="pricing-duration-total">{formatRubPrice(optionTotal)} ₽</span>
-                        {option.discountPercent > 0 ? (
-                          <span className="pricing-duration-discount">-{option.discountPercent}%</span>
-                        ) : null}
-                      </div>
-                    </div>
+                    <span className="pricing-duration-label">{option.label}</span>
+                    <span className="pricing-duration-monthly">{formatRubPrice(optionMonthly)} ₽/мес</span>
+                    <span className="pricing-duration-total">{formatRubPrice(optionTotal)} ₽</span>
+                    <span className={`pricing-duration-discount ${option.discountPercent > 0 ? '' : 'pricing-duration-discount--empty'}`}>
+                      {option.discountPercent > 0 ? `-${option.discountPercent}%` : ''}
+                    </span>
                   </button>
                 );
               })}
