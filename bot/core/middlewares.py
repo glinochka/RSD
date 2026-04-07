@@ -19,6 +19,9 @@ class AgentContextMiddleware(BaseMiddleware):
             "system_prompt": data['system_prompt'],
             "welcome_message": data['welcome_message']
         }
+        # Always inject agent config so handler signature stays valid
+        # even when owner lookup/subscription check fails.
+        data["agent_config"] = agent_config
         if agent_id:
             owner_json = await APIread.userBy_agentID(agent_id)
             if not owner_json.get('error_code'):
@@ -28,7 +31,6 @@ class AgentContextMiddleware(BaseMiddleware):
                 # For Free/неактивных тарифов поле может быть `None`.
                 # В этом случае считаем подписку валидной и пропускаем обработку.
                 if not subscription_end_raw:
-                    data["agent_config"] = agent_config
                     return await handler(event, data)
 
                 subscription_end_date = datetime.fromisoformat(subscription_end_raw)
@@ -48,7 +50,6 @@ class AgentContextMiddleware(BaseMiddleware):
                     return
                 
                 # Если с подпиской всё в порядке, собираем конфиг и пускаем запрос дальше
-                data["agent_config"] = agent_config
             else:
                 print('Http ошибка при получении информации о пользавателе')
     
