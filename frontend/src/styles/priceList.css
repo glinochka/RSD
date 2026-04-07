@@ -179,12 +179,12 @@
 }
 
 .pricing-modal {
-  width: min(560px, 100%);
+  width: min(700px, 100%);
   background: var(--color-bg);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-xl);
-  padding: var(--spacing-xl);
+  padding: var(--spacing-2xl);
 }
 
 .pricing-modal h3 {
@@ -200,20 +200,22 @@
 .pricing-duration-option {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-base);
-  background: var(--color-bg-light);
+  background: #ffffff;
   display: grid;
   grid-template-columns: 18px minmax(90px, 1fr) minmax(90px, auto) minmax(90px, auto) minmax(56px, auto);
   column-gap: var(--spacing-sm);
   align-items: center;
-  padding: var(--spacing-sm) var(--spacing-base);
+  padding: var(--spacing-base) var(--spacing-lg);
   color: var(--color-text);
   cursor: pointer;
   text-align: left;
+  font-size: var(--font-size-base);
 }
 
 .pricing-duration-option--active {
   border-color: var(--color-primary);
-  background: var(--color-bg);
+  background: #ffffff;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.14);
 }
 
 .pricing-duration-checkpoint {
@@ -233,23 +235,26 @@
 
 .pricing-duration-label {
   font-weight: var(--font-weight-medium);
+  font-size: var(--font-size-base);
 }
 
 .pricing-duration-monthly {
   color: var(--color-text-light);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-base);
   text-align: right;
 }
 
 .pricing-duration-total {
   color: var(--color-primary);
-  font-weight: var(--font-weight-semibold);
+  font-weight: var(--font-weight-bold);
+  font-size: var(--font-size-base);
   text-align: right;
 }
 
 .pricing-duration-discount {
   color: var(--color-success);
-  font-weight: var(--font-weight-semibold);
+  font-weight: var(--font-weight-bold);
+  font-size: var(--font-size-base);
   text-align: right;
 }
 
@@ -323,13 +328,14 @@
   }
 
   .pricing-modal {
-    padding: var(--spacing-lg);
+    width: min(760px, 100%);
+    padding: var(--spacing-xl);
   }
 
   .pricing-duration-option {
     grid-template-columns: 18px minmax(70px, 1fr) minmax(78px, auto) minmax(86px, auto) minmax(48px, auto);
-    font-size: var(--font-size-sm);
-    padding: var(--spacing-xs) var(--spacing-sm);
+    font-size: var(--font-size-base);
+    padding: var(--spacing-sm) var(--spacing-base);
   }
 
   .pricing-modal-actions {
@@ -358,6 +364,7 @@
   .pricing-duration-option {
     grid-template-columns: 18px 1fr;
     row-gap: 2px;
+    padding: var(--spacing-sm) var(--spacing-base);
   }
 
   .pricing-duration-monthly,
