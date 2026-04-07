@@ -10,7 +10,7 @@ class NewUser(BaseModel):
     telegram_id: Optional[int] = Field(default=None, description="Id пользователя в телеграме (необязательное поле)")
 
 class LoginUser(BaseModel):
-    name: str = Field(..., min_length=3, max_length=30, description="Имя пользователя: длина от 3 до 30 символов")
+    name: str = Field(..., min_length=3, max_length=255, description="Логин: имя пользователя или email")
     password: str = Field(..., min_length=6, max_length=30, description="Пароль: длина от 6 до 30 символов")
 
 

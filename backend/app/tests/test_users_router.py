@@ -167,6 +167,33 @@ class TestUserLogin:
         assert data["token_type"] == "bearer"
 
     @pytest.mark.asyncio
+    async def test_login_success_by_email(self, client, test_session):
+        """Test successful login using email as login field."""
+        from app.utils.security import get_password_hash
+        from app.router_users.dao import UserDAO
+
+        user_dao = UserDAO(test_session)
+        long_email = "very.long.login.identifier.for.user@example.com"
+        async with test_session.begin():
+            await user_dao.add({
+                "name": "emailuser",
+                "email": long_email,
+                "email_verified": True,
+                "password": get_password_hash("correctpassword123"),
+            })
+            await test_session.commit()
+
+        response = await client.post(
+            "/api/users/login",
+            json={"name": long_email, "password": "correctpassword123"}
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "access_token" in data
+        assert data["token_type"] == "bearer"
+
+    @pytest.mark.asyncio
     async def test_login_wrong_password(self, client, test_session):
         """Test login fails with wrong password."""
         from app.utils.security import get_password_hash

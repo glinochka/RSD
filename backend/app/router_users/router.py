@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from .dao import TelegramLinkChallengeDAO, UserDAO
 from .schemas import *
@@ -136,7 +137,10 @@ def _build_refresh_expiry() -> datetime:
 
 
 def _hash_refresh_token(refresh_token: str) -> str:
-    material = f"{settings.USER_JWT_SECRET_KEY}:{refresh_token.strip()}"
+    jwt_secret = settings.USER_JWT_SECRET_KEY.strip()
+    if not jwt_secret:
+        raise RuntimeError("USER_JWT_SECRET_KEY is not configured")
+    material = f"{jwt_secret}:{refresh_token.strip()}"
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
@@ -403,69 +407,84 @@ async def UpdateUser_by_tgID(user_by_tg: Update_userSubscription, _internal=Depe
 @router.post("/registration", dependencies=[Depends(rate_limit(max_requests=10, window_seconds=60, scope="users_registration"))])
 async def user_registration(new_user: NewUser):
     normalized_email = _validate_email_or_422(new_user.email)
-    verification_code = _generate_email_code()
-    verification_code_hash = _hash_email_code(verification_code)
-    expires_at = _utc_now_naive() + timedelta(minutes=EMAIL_CODE_TTL_MINUTES)
+    verification_code = ""
+    # Retry once on DB uniqueness race (parallel registration requests).
+    for attempt in range(2):
+        verification_code = _generate_email_code()
+        verification_code_hash = _hash_email_code(verification_code)
+        now_utc = _utc_now_naive()
+        expires_at = now_utc + timedelta(minutes=EMAIL_CODE_TTL_MINUTES)
+        try:
+            async with async_session_maker() as session:
+                user_dao = UserDAO(session)
 
-    async with async_session_maker() as session:
-        user_dao = UserDAO(session)
+                async with session.begin():
+                    user_with_email = await user_dao.find_one_by_filter(email=normalized_email)
 
-        async with session.begin():
-            user_with_email = await user_dao.find_one_by_filter(email=normalized_email)
-
-            if user_with_email and user_with_email.email_verified:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Email уже используется"
-                )
-
-            now_utc = _utc_now_naive()
-            if user_with_email and not user_with_email.email_verified:
-                last_sent = user_with_email.email_verification_last_sent_at
-                if last_sent is not None:
-                    elapsed = (now_utc - last_sent).total_seconds()
-                    if elapsed < EMAIL_CODE_RESEND_COOLDOWN_SECONDS:
-                        retry_after = max(1, int(EMAIL_CODE_RESEND_COOLDOWN_SECONDS - elapsed))
+                    if user_with_email and user_with_email.email_verified:
                         raise HTTPException(
-                            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                            detail=(
-                                f"Повторная отправка кода возможна через {retry_after} с. "
-                                "Подождите или используйте код из предыдущего письма."
-                            ),
-                            headers={"Retry-After": str(retry_after)},
+                            status_code=status.HTTP_409_CONFLICT,
+                            detail="Email уже используется"
                         )
 
-            updates = {
-                "email": normalized_email,
-                "password": get_password_hash(new_user.password),
-                "email_verified": False,
-                "email_verification_code_hash": verification_code_hash,
-                "email_verification_expires_at": expires_at,
-                "email_verification_attempts_left": EMAIL_CODE_MAX_ATTEMPTS,
-            }
-            if user_with_email:
-                await user_dao.update(user_with_email, updates)
-            else:
-                generated_name = await _build_unique_username(user_dao, normalized_email)
-                await user_dao.add(
-                    {
-                        "name": generated_name,
-                        **updates,
-                        "telegram_id": new_user.telegram_id,
+                    if user_with_email and not user_with_email.email_verified:
+                        last_sent = user_with_email.email_verification_last_sent_at
+                        if last_sent is not None:
+                            elapsed = (now_utc - last_sent).total_seconds()
+                            if elapsed < EMAIL_CODE_RESEND_COOLDOWN_SECONDS:
+                                retry_after = max(1, int(EMAIL_CODE_RESEND_COOLDOWN_SECONDS - elapsed))
+                                raise HTTPException(
+                                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                                    detail=(
+                                        f"Повторная отправка кода возможна через {retry_after} с. "
+                                        "Подождите или используйте код из предыдущего письма."
+                                    ),
+                                    headers={"Retry-After": str(retry_after)},
+                                )
+
+                    updates = {
+                        "email": normalized_email,
+                        "password": get_password_hash(new_user.password),
+                        "email_verified": False,
+                        "email_verification_code_hash": verification_code_hash,
+                        "email_verification_expires_at": expires_at,
+                        "email_verification_attempts_left": EMAIL_CODE_MAX_ATTEMPTS,
+                        "email_verification_last_sent_at": now_utc,
                     }
+                    if user_with_email:
+                        await user_dao.update(user_with_email, updates)
+                    else:
+                        generated_name = await _build_unique_username(user_dao, normalized_email)
+                        await user_dao.add(
+                            {
+                                "name": generated_name,
+                                **updates,
+                                "telegram_id": new_user.telegram_id,
+                            }
+                        )
+                        # Surface uniqueness races before leaving transaction block.
+                        await session.flush()
+            break
+        except IntegrityError:
+            if attempt == 1:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Email уже используется",
                 )
+            continue
 
-    await _send_registration_email_code(normalized_email, verification_code)
-
-    async with async_session_maker() as session:
-        user_dao = UserDAO(session)
-        async with session.begin():
-            user = await user_dao.find_one_by_filter(email=normalized_email)
-            if user:
-                await user_dao.update(
-                    user,
-                    {"email_verification_last_sent_at": _utc_now_naive()},
-                )
+    try:
+        await _send_registration_email_code(normalized_email, verification_code)
+    except HTTPException as exc:
+        # If sending failed due to transport/provider error, unlock immediate resend.
+        if exc.status_code == status.HTTP_502_BAD_GATEWAY:
+            async with async_session_maker() as session:
+                user_dao = UserDAO(session)
+                async with session.begin():
+                    user = await user_dao.find_one_by_filter(email=normalized_email)
+                    if user and not user.email_verified:
+                        await user_dao.update(user, {"email_verification_last_sent_at": None})
+        raise
 
     logger.info("Код подтверждения регистрации отправлен на email %s", normalized_email)
 

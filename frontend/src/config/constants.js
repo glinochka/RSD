@@ -123,7 +123,7 @@ export const VALIDATION = {
   EMAIL_PATTERN: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
   // Auth: must match backend Pydantic (router_users/schemas.py)
   USERNAME_MIN_LENGTH: 3,
-  USERNAME_MAX_LENGTH_LOGIN: 30,   // LoginUser.name
+  USERNAME_MAX_LENGTH_LOGIN: 255,   // LoginUser.name (username or email)
   USERNAME_MAX_LENGTH_REGISTER: 32, // NewUser.name
   PASSWORD_MIN_LENGTH: 6,          // both schemas
   PASSWORD_MAX_LENGTH: 30,          // both schemas
