@@ -48,24 +48,24 @@ const Auth = () => {
   const [isLogin, setIsLogin] = useState(true);
   const [isAwaitingEmailCode, setIsAwaitingEmailCode] = useState(false);
 
-  // Validation rules aligned with backend Pydantic: LoginUser (name 3-30), NewUser (name 3-32), password 6-30
+  // Validation rules aligned with backend Pydantic.
   const authRules = useMemo(() => {
-    const base = {
+    const loginRules = {
       name: {
         required: true,
         type: 'username',
         label: 'Имя пользователя',
-        maxLength: isLogin ? VALIDATION.USERNAME_MAX_LENGTH_LOGIN : VALIDATION.USERNAME_MAX_LENGTH_REGISTER,
+        maxLength: VALIDATION.USERNAME_MAX_LENGTH_LOGIN,
       },
       password: { required: true, type: 'password', label: 'Пароль' },
     };
     if (isLogin) {
-      return base;
+      return loginRules;
     }
     if (isAwaitingEmailCode) {
       return {
-        ...base,
         email: { required: true, type: 'email', label: 'Email' },
+        password: { required: true, type: 'password', label: 'Пароль' },
         verificationCode: {
           required: true,
           label: 'Код подтверждения',
@@ -77,8 +77,8 @@ const Auth = () => {
       };
     }
     return {
-      ...base,
       email: { required: true, type: 'email', label: 'Email' },
+      password: { required: true, type: 'password', label: 'Пароль' },
       consentPersonal: {
         type: 'checkbox',
         required: true,
@@ -104,13 +104,13 @@ const Auth = () => {
           navigate(NAVIGATION_ROUTES.AGENTS);
         } else {
           if (!isAwaitingEmailCode) {
-            await register(values.name, values.email, values.password);
+            await register(values.email, values.password);
             setIsAwaitingEmailCode(true);
             showSuccess('Код подтверждения отправлен на email', 3500);
             return;
           }
 
-          await verifyRegistrationCode(values.name, values.email, values.verificationCode);
+          await verifyRegistrationCode(values.email, values.verificationCode);
           showSuccess('Регистрация успешна!', 3000);
           navigate(NAVIGATION_ROUTES.AGENTS);
         }
@@ -129,7 +129,7 @@ const Auth = () => {
 
   const resendEmailCode = async () => {
     try {
-      await register(form.values.name, form.values.email, form.values.password);
+      await register(form.values.email, form.values.password);
       showSuccess('Новый код отправлен на email', 3000);
     } catch (error) {
       showError(getAuthErrorMessage(error));
@@ -164,26 +164,28 @@ const Auth = () => {
                 Авторизация через Google
               </button>
 
-              {/* Auth Form — fields match backend: name, password */}
+              {/* Auth form */}
               <form className="auth-form" onSubmit={form.handleSubmit}>
-              <div className="form-group">
-                <label htmlFor="name">Имя пользователя:</label>
-                <input
-                  id="name"
-                  type="text"
-                  name="name"
-                  placeholder={isLogin ? 'Имя пользователя' : 'От 3 до 32 символов'}
-                  value={form.values.name}
-                  onChange={form.handleChange}
-                  onBlur={form.handleBlur}
-                  disabled={form.isSubmitting || (!isLogin && isAwaitingEmailCode)}
-                  className={form.errors.name ? 'error' : ''}
-                  autoComplete="username"
-                />
-                {form.touched.name && form.errors.name && (
-                  <span className="error-message">{form.errors.name}</span>
-                )}
-              </div>
+              {isLogin && (
+                <div className="form-group">
+                  <label htmlFor="name">Email или имя пользователя:</label>
+                  <input
+                    id="name"
+                    type="text"
+                    name="name"
+                    placeholder="Email или имя пользователя"
+                    value={form.values.name}
+                    onChange={form.handleChange}
+                    onBlur={form.handleBlur}
+                    disabled={form.isSubmitting}
+                    className={form.errors.name ? 'error' : ''}
+                    autoComplete="username"
+                  />
+                  {form.touched.name && form.errors.name && (
+                    <span className="error-message">{form.errors.name}</span>
+                  )}
+                </div>
+              )}
 
               {!isLogin && (
                 <div className="form-group">

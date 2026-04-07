@@ -58,6 +58,29 @@ def _validate_email_or_422(raw_email: str) -> str:
     return normalized_email
 
 
+def _build_username_base_from_email(email: str) -> str:
+    local_part = email.split("@", 1)[0].lower()
+    normalized = "".join(ch if (ch.isalnum() or ch == "_") else "_" for ch in local_part)
+    normalized = normalized.strip("_")
+    if not normalized:
+        normalized = "user"
+    if len(normalized) < 3:
+        normalized = f"{normalized}_usr"
+    return normalized[:32]
+
+
+async def _build_unique_username(user_dao: UserDAO, normalized_email: str) -> str:
+    base = _build_username_base_from_email(normalized_email)
+    candidate = base
+    suffix = 1
+    while await user_dao.find_one_by_filter(name=candidate):
+        suffix += 1
+        suffix_text = f"_{suffix}"
+        max_base_len = 32 - len(suffix_text)
+        candidate = f"{base[:max_base_len]}{suffix_text}"
+    return candidate
+
+
 def _format_link_code(raw_code: str) -> str:
     return raw_code
 
@@ -170,14 +193,35 @@ async def _send_registration_email_code(email: str, code: str) -> None:
         "to": email,
         "subject": "Код подтверждения регистрации",
         "text": (
-            "Ваш код подтверждения: "
-            f"{code}\n\n"
-            f"Код действует {EMAIL_CODE_TTL_MINUTES} минут."
+            "RSD - подтверждение email\n\n"
+            f"Ваш код подтверждения: {code}\n"
+            f"Код действует {EMAIL_CODE_TTL_MINUTES} минут.\n\n"
+            "Если вы не запрашивали регистрацию, просто проигнорируйте письмо."
         ),
         "html": (
-            "<p>Ваш код подтверждения:</p>"
-            f"<p><b style='font-size:20px;'>{code}</b></p>"
-            f"<p>Код действует {EMAIL_CODE_TTL_MINUTES} минут.</p>"
+            "<!DOCTYPE html>"
+            "<html><body style='margin:0;padding:0;background:#f5f7fb;font-family:Arial,sans-serif;'>"
+            "<table role='presentation' width='100%' cellspacing='0' cellpadding='0' style='background:#f5f7fb;padding:24px 12px;'>"
+            "<tr><td align='center'>"
+            "<table role='presentation' width='100%' cellspacing='0' cellpadding='0' style='max-width:560px;background:#ffffff;border:1px solid #e8ecf3;border-radius:12px;overflow:hidden;'>"
+            "<tr><td style='padding:24px 24px 8px 24px;'>"
+            "<div style='font-size:20px;font-weight:700;color:#111827;'>Подтверждение регистрации в RSD</div>"
+            "</td></tr>"
+            "<tr><td style='padding:0 24px 8px 24px;color:#374151;font-size:14px;line-height:1.6;'>"
+            "Введите код ниже на странице регистрации."
+            "</td></tr>"
+            "<tr><td style='padding:8px 24px 8px 24px;'>"
+            f"<div style='display:inline-block;background:#111827;color:#ffffff;font-size:28px;font-weight:700;letter-spacing:6px;padding:14px 18px;border-radius:10px;'>{code}</div>"
+            "</td></tr>"
+            "<tr><td style='padding:8px 24px 8px 24px;color:#6b7280;font-size:13px;line-height:1.6;'>"
+            f"Код действует {EMAIL_CODE_TTL_MINUTES} минут."
+            "</td></tr>"
+            "<tr><td style='padding:0 24px 24px 24px;color:#9ca3af;font-size:12px;line-height:1.6;'>"
+            "Если вы не запрашивали регистрацию, просто проигнорируйте это письмо."
+            "</td></tr>"
+            "</table>"
+            "</td></tr></table>"
+            "</body></html>"
         ),
     }
     from_name = settings.MAILOPOST_FROM_NAME.strip()
@@ -330,36 +374,17 @@ async def user_registration(new_user: NewUser):
 
     async with async_session_maker() as session:
         user_dao = UserDAO(session)
-        user_to_update = None
 
         async with session.begin():
-            user_with_name = await user_dao.find_one_by_filter(name=new_user.name)
             user_with_email = await user_dao.find_one_by_filter(email=normalized_email)
 
-            if user_with_name and (user_with_name.email_verified or user_with_name.email != normalized_email):
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Пользователь уже существует"
-                )
             if user_with_email and user_with_email.email_verified:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="Email уже используется"
                 )
-            if user_with_email and user_with_email.name != new_user.name:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Email уже используется"
-                )
-            if user_with_name and user_with_email and user_with_name.id != user_with_email.id:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Найден конфликт регистрационных данных"
-                )
 
-            user_to_update = user_with_name or user_with_email
             updates = {
-                "name": new_user.name,
                 "email": normalized_email,
                 "password": get_password_hash(new_user.password),
                 "email_verified": False,
@@ -367,18 +392,20 @@ async def user_registration(new_user: NewUser):
                 "email_verification_expires_at": expires_at,
                 "email_verification_attempts_left": EMAIL_CODE_MAX_ATTEMPTS,
             }
-            if user_to_update:
-                await user_dao.update(user_to_update, updates)
+            if user_with_email:
+                await user_dao.update(user_with_email, updates)
             else:
+                generated_name = await _build_unique_username(user_dao, normalized_email)
                 await user_dao.add(
                     {
+                        "name": generated_name,
                         **updates,
                         "telegram_id": new_user.telegram_id,
                     }
                 )
 
     await _send_registration_email_code(normalized_email, verification_code)
-    logger.info("Код подтверждения регистрации отправлен пользователю %s", new_user.name)
+    logger.info("Код подтверждения регистрации отправлен на email %s", normalized_email)
 
     return JSONResponse(content={
             "status": "verification_required",
@@ -401,7 +428,7 @@ async def verify_user_registration_code(payload: VerifyRegistrationCodeRequest):
     async with async_session_maker() as session:
         user_dao = UserDAO(session)
         async with session.begin():
-            user = await user_dao.find_one_by_filter(name=payload.name, email=normalized_email)
+            user = await user_dao.find_one_by_filter(email=normalized_email)
             if not user:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
@@ -477,14 +504,17 @@ async def verify_user_registration_code(payload: VerifyRegistrationCodeRequest):
 
 @router.post("/login", dependencies=[Depends(rate_limit(max_requests=10, window_seconds=60, scope="users_login"))])
 async def user_login(login_user: LoginUser):
+    login_value = login_user.name.strip()
     async with async_session_maker() as session:
         user_dao = UserDAO(session)
 
         async with session.begin():
-            user = await user_dao.find_one_by_filter(name=login_user.name)
+            user = await user_dao.find_one_by_filter(name=login_value)
+            if not user and "@" in login_value:
+                user = await user_dao.find_one_by_filter(email=_normalize_email(login_value))
 
     if not user or (not user.password) or (not verify_password(login_user.password, user.password)):
-        logger.info("Неуспешная попытка входа для имени: %s", login_user.name)
+        logger.info("Неуспешная попытка входа для логина: %s", login_value)
         raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Неверные учетные данные"

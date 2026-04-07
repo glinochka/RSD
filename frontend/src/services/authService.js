@@ -7,7 +7,9 @@
  * We normalize to { token, tokenType, user } and the token is stored for the
  * API client interceptor (Authorization: Bearer <access_token>).
  *
- * Payloads: LoginUser / NewUser → { name, password } (see router_users/schemas.py).
+ * Payloads:
+ * - login: { name, password } where name can be username or email
+ * - register: { email, password }
  */
 
 import apiClient from './apiClient';
@@ -43,9 +45,8 @@ export const authService = {
   /**
    * Register step 1: sends verification code to email.
    */
-  register: async (name, email, password) => {
+  register: async (email, password) => {
     const response = await apiClient.post(API_ROUTES.AUTH_REGISTER, {
-      name: name.trim(),
       email: email.trim(),
       password,
     });
@@ -55,13 +56,12 @@ export const authService = {
   /**
    * Register step 2: verifies code and receives tokens.
    */
-  verifyRegistrationCode: async (name, email, code) => {
+  verifyRegistrationCode: async (email, code) => {
     const response = await apiClient.post(API_ROUTES.AUTH_REGISTER_VERIFY, {
-      name: name.trim(),
       email: email.trim(),
       code: code.trim(),
     });
-    return normalizeAuthResponse(response.data, name.trim());
+    return normalizeAuthResponse(response.data, email.trim());
   },
 
   /**

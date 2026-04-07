@@ -50,25 +50,28 @@ class TestUserRegistration:
         # Verify user was created in database
         async with test_session.begin():
             result = await test_session.execute(
-                select(User).where(User.name == sample_user_data["name"])
+                select(User).where(User.email == sample_user_data["email"])
             )
             user = result.scalar_one_or_none()
             assert user is not None
-            assert user.name == sample_user_data["name"]
             assert user.email == sample_user_data["email"]
+            assert isinstance(user.name, str)
+            assert len(user.name) >= 3
             assert user.email_verified is False
 
     @pytest.mark.asyncio
-    async def test_registration_duplicate_name(self, client, sample_user_data, test_session):
-        """Test registration fails when username already exists."""
+    async def test_registration_duplicate_email(self, client, sample_user_data, test_session):
+        """Test registration fails when email already exists and verified."""
         from app.utils.security import get_password_hash
         from app.router_users.dao import UserDAO
 
         user_dao = UserDAO(test_session)
         async with test_session.begin():
             await user_dao.add({
-                "name": sample_user_data["name"],
+                "name": "existing_user",
+                "email": sample_user_data["email"],
                 "password": get_password_hash("existingpassword"),
+                "email_verified": True,
             })
             await test_session.commit()
 
@@ -79,14 +82,14 @@ class TestUserRegistration:
             )
 
         assert response.status_code == 409
-        assert "Пользователь уже существует" in response.json()["detail"]
+        assert "Email уже используется" in response.json()["detail"]
 
     @pytest.mark.asyncio
-    async def test_registration_short_name(self, client):
-        """Test registration fails with name too short."""
+    async def test_registration_invalid_email(self, client):
+        """Test registration fails with invalid email."""
         response = await client.post(
             "/api/users/registration",
-            json={"name": "ab", "email": "ab@example.com", "password": "password123"}
+            json={"email": "invalid-email", "password": "password123"}
         )
 
         assert response.status_code == 422
@@ -96,7 +99,7 @@ class TestUserRegistration:
         """Test registration fails with password too short."""
         response = await client.post(
             "/api/users/registration",
-            json={"name": sample_user_data["name"], "email": sample_user_data["email"], "password": "123"}
+            json={"email": sample_user_data["email"], "password": "123"}
         )
 
         assert response.status_code == 422
@@ -112,7 +115,6 @@ class TestUserRegistration:
         verify_response = await client.post(
             "/api/users/registration/verify",
             json={
-                "name": sample_user_data["name"],
                 "email": sample_user_data["email"],
                 "code": "123456",
             },
