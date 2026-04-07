@@ -873,7 +873,8 @@ async def confirm_password_reset(payload: PasswordResetConfirmRequest):
                     detail="Неверный или устаревший токен восстановления",
                 )
 
-            if user.email != normalized_email:
+            user_email_normalized = _normalize_email(user.email or "")
+            if user_email_normalized != normalized_email:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Сессия восстановления не найдена для указанного email",
