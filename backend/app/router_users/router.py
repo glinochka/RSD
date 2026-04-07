@@ -532,49 +532,33 @@ async def user_registration(new_user: NewUser):
                 async with session.begin():
                     user_with_email = await user_dao.find_one_by_filter(email=normalized_email)
 
-                    if user_with_email and user_with_email.email_verified:
+                    if user_with_email:
+                        last_sent = user_with_email.email_verification_last_sent_at
+                        if user_with_email.email_verified:
+                            detail = "Email уже используется"
+                        else:
+                            detail = "Аккаунт уже создан. Используйте подтверждение кода или вход."
                         raise HTTPException(
                             status_code=status.HTTP_409_CONFLICT,
-                            detail="Email уже используется"
+                            detail=detail,
                         )
 
-                    if user_with_email and not user_with_email.email_verified:
-                        last_sent = user_with_email.email_verification_last_sent_at
-                        if last_sent is not None:
-                            elapsed = (now_utc - last_sent).total_seconds()
-                            if elapsed < EMAIL_CODE_RESEND_COOLDOWN_SECONDS:
-                                retry_after = max(1, int(EMAIL_CODE_RESEND_COOLDOWN_SECONDS - elapsed))
-                                raise HTTPException(
-                                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                                    detail=(
-                                        f"Повторная отправка кода возможна через {retry_after} с. "
-                                        "Подождите или используйте код из предыдущего письма."
-                                    ),
-                                    headers={"Retry-After": str(retry_after)},
-                                )
-
-                    updates = {
-                        "email": normalized_email,
-                        "password": get_password_hash(new_user.password),
-                        "email_verified": False,
-                        "email_verification_code_hash": verification_code_hash,
-                        "email_verification_expires_at": expires_at,
-                        "email_verification_attempts_left": EMAIL_CODE_MAX_ATTEMPTS,
-                        "email_verification_last_sent_at": now_utc,
-                    }
-                    if user_with_email:
-                        await user_dao.update(user_with_email, updates)
-                    else:
-                        generated_name = await _build_unique_username(user_dao, normalized_email)
-                        await user_dao.add(
-                            {
-                                "name": generated_name,
-                                **updates,
-                                "telegram_id": new_user.telegram_id,
-                            }
-                        )
-                        # Surface uniqueness races before leaving transaction block.
-                        await session.flush()
+                    generated_name = await _build_unique_username(user_dao, normalized_email)
+                    await user_dao.add(
+                        {
+                            "name": generated_name,
+                            "email": normalized_email,
+                            "password": get_password_hash(new_user.password),
+                            "email_verified": False,
+                            "email_verification_code_hash": verification_code_hash,
+                            "email_verification_expires_at": expires_at,
+                            "email_verification_attempts_left": EMAIL_CODE_MAX_ATTEMPTS,
+                            "email_verification_last_sent_at": now_utc,
+                            "telegram_id": new_user.telegram_id,
+                        }
+                    )
+                    # Surface uniqueness races before leaving transaction block.
+                    await session.flush()
             break
         except IntegrityError:
             if attempt == 1:
@@ -606,6 +590,84 @@ async def user_registration(new_user: NewUser):
             "expires_in_seconds": EMAIL_CODE_TTL_MINUTES * 60,
         },
         status_code=status.HTTP_201_CREATED)
+
+
+@router.post(
+    "/registration/resend-code",
+    dependencies=[Depends(rate_limit(max_requests=10, window_seconds=60, scope="users_registration_resend"))],
+)
+async def resend_registration_code(payload: RegistrationResendCodeRequest):
+    normalized_email = _validate_email_or_422(payload.email)
+    code = _generate_email_code()
+    code_hash = _hash_email_code(code)
+    now_utc = _utc_now_naive()
+    expires_at = now_utc + timedelta(minutes=EMAIL_CODE_TTL_MINUTES)
+
+    async with async_session_maker() as session:
+        user_dao = UserDAO(session)
+        async with session.begin():
+            user = await user_dao.find_one_by_filter(email=normalized_email)
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Пользователь не найден",
+                )
+            if user.email_verified:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Email уже подтвержден. Выполните вход в систему.",
+                )
+            if user.password is None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Для этого аккаунта регистрация через email недоступна",
+                )
+
+            last_sent = user.email_verification_last_sent_at
+            if last_sent is not None:
+                elapsed = (now_utc - last_sent).total_seconds()
+                if elapsed < EMAIL_CODE_RESEND_COOLDOWN_SECONDS:
+                    retry_after = max(1, int(EMAIL_CODE_RESEND_COOLDOWN_SECONDS - elapsed))
+                    raise HTTPException(
+                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        detail=(
+                            f"Повторная отправка кода возможна через {retry_after} с. "
+                            "Подождите или используйте код из предыдущего письма."
+                        ),
+                        headers={"Retry-After": str(retry_after)},
+                    )
+
+            await user_dao.update(
+                user,
+                {
+                    "email_verification_code_hash": code_hash,
+                    "email_verification_expires_at": expires_at,
+                    "email_verification_attempts_left": EMAIL_CODE_MAX_ATTEMPTS,
+                    "email_verification_last_sent_at": now_utc,
+                },
+            )
+
+    try:
+        await _send_registration_email_code(normalized_email, code)
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_502_BAD_GATEWAY:
+            async with async_session_maker() as session:
+                user_dao = UserDAO(session)
+                async with session.begin():
+                    user = await user_dao.find_one_by_filter(email=normalized_email)
+                    if user and not user.email_verified:
+                        await user_dao.update(user, {"email_verification_last_sent_at": None})
+        raise
+
+    return JSONResponse(
+        content={
+            "status": "verification_required",
+            "detail": "Код подтверждения отправлен на email",
+            "email": normalized_email,
+            "expires_in_seconds": EMAIL_CODE_TTL_MINUTES * 60,
+        },
+        status_code=status.HTTP_200_OK,
+    )
 
 
 @router.post(
@@ -711,13 +773,14 @@ async def request_password_reset(payload: PasswordResetRequest):
         async with session.begin():
             user_for_email = await user_dao.find_one_by_filter(email=normalized_email)
             if not user_for_email:
-                # Generic response to avoid email enumeration.
-                return JSONResponse(
-                    content={
-                        "status": "code_sent_if_exists",
-                        "detail": "Если email существует, код восстановления отправлен.",
-                    },
-                    status_code=status.HTTP_200_OK,
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Пользователь не найден",
+                )
+            if not user_for_email.email_verified:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Email не подтвержден. Восстановление пароля недоступно.",
                 )
 
             if user_for_email.password is None:

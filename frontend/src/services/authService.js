@@ -53,6 +53,13 @@ export const authService = {
     return response.data;
   },
 
+  resendRegistrationCode: async (email) => {
+    const response = await apiClient.post(API_ROUTES.AUTH_REGISTER_RESEND_CODE, {
+      email: email.trim(),
+    });
+    return response.data;
+  },
+
   /**
    * Register step 2: verifies code and receives tokens.
    */

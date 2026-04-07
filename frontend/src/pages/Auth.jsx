@@ -234,7 +234,7 @@ const Auth = () => {
 
   const resendEmailCode = async () => {
     try {
-      await register(form.values.email, form.values.password);
+      await authService.resendRegistrationCode(form.values.email);
       setResendCooldownUntil(
         Date.now() + VALIDATION.EMAIL_RESEND_COOLDOWN_SECONDS * 1000
       );

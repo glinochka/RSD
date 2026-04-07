@@ -36,6 +36,10 @@ class VerifyRegistrationCodeRequest(BaseModel):
     code: str = Field(..., min_length=6, max_length=6, description="6-значный код подтверждения")
 
 
+class RegistrationResendCodeRequest(BaseModel):
+    email: str = Field(..., min_length=5, max_length=255, description="Email пользователя")
+
+
 class PasswordResetRequest(BaseModel):
     email: str = Field(..., min_length=5, max_length=255, description="Email пользователя")
 

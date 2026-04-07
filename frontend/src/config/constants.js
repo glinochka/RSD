@@ -20,6 +20,7 @@ export const API_ROUTES = {
   // Auth (backend: prefix /api/users)
   AUTH_LOGIN: '/api/users/login',
   AUTH_REGISTER: '/api/users/registration',
+  AUTH_REGISTER_RESEND_CODE: '/api/users/registration/resend-code',
   AUTH_REGISTER_VERIFY: '/api/users/registration/verify',
   AUTH_PASSWORD_RESET_REQUEST: '/api/users/password-reset/request',
   AUTH_PASSWORD_RESET_VERIFY: '/api/users/password-reset/verify',

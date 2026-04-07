@@ -62,16 +62,30 @@ class TestUserRegistration:
 
     @pytest.mark.asyncio
     async def test_registration_resend_cooldown(self, client, sample_user_data):
-        """Repeated code send is blocked for 120s after a successful send."""
+        """Repeated resend code is blocked for 120s after a successful send."""
         with patch("app.router_users.router._send_registration_email_code", new=AsyncMock()):
             first = await client.post("/api/users/registration", json=sample_user_data)
         assert first.status_code == 201
 
         with patch("app.router_users.router._send_registration_email_code", new=AsyncMock()):
-            second = await client.post("/api/users/registration", json=sample_user_data)
+            second = await client.post(
+                "/api/users/registration/resend-code",
+                json={"email": sample_user_data["email"]},
+            )
         assert second.status_code == 429
         assert "Повторная отправка" in second.json()["detail"]
         assert second.headers.get("retry-after") is not None
+
+    @pytest.mark.asyncio
+    async def test_registration_repeat_for_existing_user_conflict(self, client, sample_user_data):
+        """Existing account cannot re-register and no additional code should be sent."""
+        send_mock = AsyncMock()
+        with patch("app.router_users.router._send_registration_email_code", new=send_mock):
+            first = await client.post("/api/users/registration", json=sample_user_data)
+            second = await client.post("/api/users/registration", json=sample_user_data)
+        assert first.status_code == 201
+        assert second.status_code == 409
+        assert send_mock.await_count == 1
 
     @pytest.mark.asyncio
     async def test_registration_duplicate_email(self, client, sample_user_data, test_session):
@@ -171,6 +185,15 @@ class TestPasswordReset:
             assert user.password_reset_code_hash is not None
             assert user.password_reset_attempts_left > 0
             assert user.password_reset_last_sent_at is not None
+
+    @pytest.mark.asyncio
+    async def test_password_reset_request_user_not_found(self, client):
+        response = await client.post(
+            "/api/users/password-reset/request",
+            json={"email": "not-found@example.com"},
+        )
+        assert response.status_code == 404
+        assert "Пользователь не найден" in response.json()["detail"]
 
     @pytest.mark.asyncio
     async def test_password_reset_full_flow_success(self, client, test_session):
