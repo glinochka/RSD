@@ -9,7 +9,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from .dao import TelegramLinkChallengeDAO, UserDAO
@@ -958,6 +958,7 @@ async def confirm_password_reset(payload: PasswordResetConfirmRequest):
             await user_dao.update(
                 user,
                 {
+                    "email": normalized_email,
                     "password": get_password_hash(payload.new_password),
                     "password_reset_code_hash": None,
                     "password_reset_expires_at": None,
@@ -988,27 +989,51 @@ async def confirm_password_reset(payload: PasswordResetConfirmRequest):
 @router.post("/login", dependencies=[Depends(rate_limit(max_requests=10, window_seconds=60, scope="users_login"))])
 async def user_login(login_user: LoginUser):
     login_value = login_user.name.strip()
+    matched_user = None
     async with async_session_maker() as session:
         user_dao = UserDAO(session)
 
         async with session.begin():
-            user = await user_dao.find_one_by_filter(name=login_value)
-            if not user and "@" in login_value:
-                user = await user_dao.find_one_by_filter(email=_normalize_email(login_value))
+            candidates = []
+            if "@" in login_value:
+                normalized_email = _normalize_email(login_value)
+                candidates = (
+                    await session.scalars(
+                        select(user_dao.model).where(
+                            user_dao.model.email.is_not(None),
+                            func.lower(func.trim(user_dao.model.email)) == normalized_email,
+                        ).order_by(user_dao.model.id.desc())
+                    )
+                ).all()
+                if len(candidates) > 1:
+                    logger.warning(
+                        "Detected duplicate users for email '%s' (count=%s).",
+                        normalized_email,
+                        len(candidates),
+                    )
+            else:
+                user_by_name = await user_dao.find_one_by_filter(name=login_value)
+                if user_by_name:
+                    candidates = [user_by_name]
 
-    if not user or (not user.password) or (not verify_password(login_user.password, user.password)):
+            for candidate in candidates:
+                if candidate.password and verify_password(login_user.password, candidate.password):
+                    matched_user = candidate
+                    break
+
+    if not matched_user:
         logger.info("Неуспешная попытка входа для логина: %s", login_value)
         raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Неверные учетные данные"
         )
-    if user.is_banned:
+    if matched_user.is_banned:
         logger.info("Заблокированный пользователь попытался войти: %s", login_user.name)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Пользователь заблокирован",
         )
-    if user.email and not user.email_verified:
+    if matched_user.email and not matched_user.email_verified:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Подтвердите email перед входом",
@@ -1018,7 +1043,7 @@ async def user_login(login_user: LoginUser):
 
     async with async_session_maker() as session:
         async with session.begin():
-            access_token, refresh_token = await _issue_user_tokens(session, user.id)
+            access_token, refresh_token = await _issue_user_tokens(session, matched_user.id)
 
     return {
             "access_token": access_token,
