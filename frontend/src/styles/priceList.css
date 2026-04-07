@@ -237,6 +237,7 @@
   font-weight: var(--font-weight-medium);
   font-size: var(--font-size-base);
   min-width: 0;
+  white-space: nowrap;
 }
 
 .pricing-duration-monthly {
@@ -244,6 +245,7 @@
   font-size: var(--font-size-base);
   line-height: 1.2;
   text-align: right;
+  white-space: nowrap;
 }
 
 .pricing-duration-total {
@@ -252,6 +254,7 @@
   font-size: var(--font-size-base);
   line-height: 1.2;
   text-align: right;
+  white-space: nowrap;
 }
 
 .pricing-duration-discount {
@@ -260,6 +263,7 @@
   font-size: var(--font-size-base);
   line-height: 1.2;
   text-align: right;
+  white-space: nowrap;
 }
 
 .pricing-duration-discount--empty {
@@ -336,14 +340,20 @@
   }
 
   .pricing-modal {
-    width: min(760px, 100%);
-    padding: var(--spacing-xl);
+    width: min(100%, 760px);
+    padding: var(--spacing-lg);
   }
 
   .pricing-duration-option {
     grid-template-columns: 18px minmax(80px, 1fr) minmax(96px, auto) minmax(92px, auto) minmax(48px, auto);
-    font-size: var(--font-size-base);
+    font-size: var(--font-size-sm);
     padding: var(--spacing-sm) var(--spacing-base);
+  }
+
+  .pricing-duration-monthly,
+  .pricing-duration-total,
+  .pricing-duration-discount {
+    font-size: var(--font-size-sm);
   }
 
   .pricing-modal-actions {
@@ -370,10 +380,47 @@
   }
 
   .pricing-duration-option {
-    grid-template-columns: 14px minmax(62px, 1fr) minmax(78px, auto) minmax(78px, auto) minmax(38px, auto);
+    grid-template-columns: 14px minmax(92px, 1fr) auto;
+    grid-template-rows: auto auto;
+    align-items: start;
     column-gap: var(--spacing-xs);
-    padding: var(--spacing-sm) var(--spacing-base);
-    font-size: var(--font-size-sm);
+    row-gap: 4px;
+    padding: 8px 10px;
+    font-size: var(--font-size-xs);
+  }
+
+  .pricing-duration-checkpoint {
+    grid-column: 1;
+    grid-row: 1 / 3;
+    margin-top: 4px;
+  }
+
+  .pricing-duration-label {
+    grid-column: 2;
+    grid-row: 1;
+    font-size: var(--font-size-xs);
+  }
+
+  .pricing-duration-discount {
+    grid-column: 3;
+    grid-row: 1;
+    justify-self: end;
+    font-size: var(--font-size-xs);
+  }
+
+  .pricing-duration-monthly {
+    grid-column: 2;
+    grid-row: 2;
+    text-align: left;
+    font-size: var(--font-size-xs);
+  }
+
+  .pricing-duration-total {
+    grid-column: 3;
+    grid-row: 2;
+    justify-self: end;
+    text-align: right;
+    font-size: var(--font-size-xs);
   }
 
   .price-title {

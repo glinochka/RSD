@@ -83,6 +83,39 @@ const IMPACT_METRICS = [
   },
 ];
 
+const BUSINESS_SCENARIOS = [
+  {
+    id: 'support',
+    label: 'Поддержка',
+    title: 'Снижайте нагрузку на первую линию',
+    challenge:
+      'Повторяющиеся вопросы о статусах, графике и условиях забирают время команды и растягивают очередь в чате.',
+    outcome:
+      'Агент берёт типовые обращения 24/7, а сотрудники подключаются только к нестандартным и конфликтным кейсам.',
+    firstStep: 'Соберите 10-15 частых вопросов из чатов и добавьте короткие эталонные ответы.',
+  },
+  {
+    id: 'sales',
+    label: 'Продажи',
+    title: 'Квалифицируйте входящие заявки быстрее',
+    challenge:
+      'Менеджеры тратят много времени на первичный контакт и одинаковые уточнения, из-за чего теряются теплые лиды.',
+    outcome:
+      'Агент уточняет ключевые параметры запроса и передает менеджеру уже подготовленный диалог с контекстом.',
+    firstStep: 'Опишите критерии квалификации лида и 3-5 веток первого диалога.',
+  },
+  {
+    id: 'onboarding',
+    label: 'Онбординг',
+    title: 'Ускоряйте обучение новых сотрудников',
+    challenge:
+      'Новички долго ищут ответы в регламентах и отвлекают наставников от работы с клиентами.',
+    outcome:
+      'Агент помогает быстро находить правила и подсказывает шаги по процессу прямо в рабочем чате.',
+    firstStep: 'Загрузите регламенты, FAQ и выделите разделы, которые чаще всего вызывают ошибки.',
+  },
+];
+
 const LAUNCH_STEPS = [
   'Определяете роль агента и собираете 10-15 частых вопросов.',
   'Добавляете базу знаний: документы, правила, тон коммуникации.',
@@ -115,6 +148,12 @@ const FAQ_ITEMS = [
     answer:
       'Часто достаточно от нескольких часов до пары дней: зависит от объёма базы знаний и того, насколько детально вы хотите прогнать тестовые диалоги перед включением для клиентов.',
   },
+  {
+    id: 'faq-5',
+    question: 'Как контролировать качество ответов после запуска?',
+    answer:
+      'Используйте тестовые диалоги и регулярно просматривайте реальные переписки: отмечайте неточные ответы, обновляйте базу знаний и корректируйте промпт. Лучше делать короткие итерации каждую неделю, чем редкие большие изменения.',
+  },
 ];
 
 const getInitials = (name) => {
@@ -133,6 +172,7 @@ const Main = () => {
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
   const [activeTestimonialIndex, setActiveTestimonialIndex] = useState(0);
+  const [activeScenarioId, setActiveScenarioId] = useState(BUSINESS_SCENARIOS[0].id);
   const [openFaqId, setOpenFaqId] = useState(null);
   const mainContentRef = useRef(null);
 
@@ -190,6 +230,7 @@ const Main = () => {
     setActiveTestimonialIndex((prev) => (prev - 1 + TESTIMONIALS.length) % TESTIMONIALS.length);
 
   const activeTestimonial = TESTIMONIALS[activeTestimonialIndex];
+  const activeScenario = BUSINESS_SCENARIOS.find((scenario) => scenario.id === activeScenarioId) ?? BUSINESS_SCENARIOS[0];
 
   return (
     <MainLayout>
@@ -228,15 +269,23 @@ const Main = () => {
             Не обещаем «магии» — даём понятный инструмент: вы настраиваете роль, знания и канал общения.
           </p>
           <div className="value-highlights-grid">
-            {VALUE_HIGHLIGHTS.map((block, index) => (
-              <article
-                key={block.id}
-                className={`value-highlight-card reveal-on-scroll ${index % 2 === 0 ? 'reveal-from-left' : 'reveal-from-right'}`}
-              >
-                <h3>{block.title}</h3>
-                <p>{block.text}</p>
-              </article>
-            ))}
+            {VALUE_HIGHLIGHTS.map((block, index) => {
+              const revealDirection =
+                index === 0
+                  ? 'reveal-from-left'
+                  : index === 1
+                    ? 'reveal-from-right value-highlight-card--desktop-bottom'
+                    : 'reveal-from-left value-highlight-card--desktop-right';
+              return (
+                <article
+                  key={block.id}
+                  className={`value-highlight-card reveal-on-scroll ${revealDirection}`}
+                >
+                  <h3>{block.title}</h3>
+                  <p>{block.text}</p>
+                </article>
+              );
+            })}
           </div>
         </section>
 
@@ -306,6 +355,52 @@ const Main = () => {
               </article>
             ))}
           </div>
+        </section>
+
+        <section className="scenarios-section reveal-on-scroll reveal-from-bottom" aria-labelledby="scenarios-heading">
+          <h2 id="scenarios-heading" className="section-title reveal-on-scroll reveal-from-bottom">
+            Выберите ваш сценарий внедрения
+          </h2>
+          <p className="section-lead section-lead-tight reveal-on-scroll reveal-from-bottom reveal-delay-1">
+            Нажмите на формат, который вам ближе — увидите типичную задачу, ожидаемый результат и с чего начать в первую
+            очередь.
+          </p>
+          <div className="scenario-tabs reveal-on-scroll reveal-from-bottom reveal-delay-1" role="tablist" aria-label="Сценарии внедрения">
+            {BUSINESS_SCENARIOS.map((scenario) => {
+              const isActive = scenario.id === activeScenario.id;
+              return (
+                <button
+                  key={scenario.id}
+                  type="button"
+                  className={`scenario-tab ${isActive ? 'is-active' : ''}`}
+                  onClick={() => setActiveScenarioId(scenario.id)}
+                  role="tab"
+                  aria-selected={isActive}
+                  aria-controls={`scenario-panel-${scenario.id}`}
+                  id={`scenario-tab-${scenario.id}`}
+                >
+                  {scenario.label}
+                </button>
+              );
+            })}
+          </div>
+          <article
+            className="scenario-card reveal-on-scroll reveal-from-bottom"
+            role="tabpanel"
+            id={`scenario-panel-${activeScenario.id}`}
+            aria-labelledby={`scenario-tab-${activeScenario.id}`}
+          >
+            <h3>{activeScenario.title}</h3>
+            <p>
+              <strong>Типичная ситуация:</strong> {activeScenario.challenge}
+            </p>
+            <p>
+              <strong>Что меняется:</strong> {activeScenario.outcome}
+            </p>
+            <p>
+              <strong>Первый шаг:</strong> {activeScenario.firstStep}
+            </p>
+          </article>
         </section>
 
         <section className="launch-roadmap reveal-on-scroll reveal-from-bottom" aria-labelledby="launch-roadmap-heading">

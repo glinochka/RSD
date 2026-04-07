@@ -189,6 +189,19 @@
   line-height: 1.75;
 }
 
+/* Десктоп: 1 — слева, 2 — снизу, 3 — справа. Только пока блок скрыт — иначе перебивает .is-visible */
+@media (min-width: 769px) {
+  .main-content.reveal-ready
+    .value-highlight-card.reveal-on-scroll.value-highlight-card--desktop-bottom:not(.is-visible) {
+    transform: translate3d(0, 30px, 0);
+  }
+
+  .main-content.reveal-ready
+    .value-highlight-card.reveal-on-scroll.value-highlight-card--desktop-right:not(.is-visible) {
+    transform: translate3d(34px, 0, 0);
+  }
+}
+
 /* Testimonials */
 .testimonials {
   --testimonial-avatar-size: 2rem;
@@ -382,6 +395,77 @@
   font-size: var(--font-size-base);
   color: var(--color-text-light);
   line-height: 1.75;
+}
+
+/* Scenario chooser */
+.scenarios-section {
+  padding: var(--spacing-3xl) 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.scenario-tabs {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-xl);
+}
+
+.scenario-tab {
+  appearance: none;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text-light);
+  font: inherit;
+  font-size: 0.95rem;
+  font-weight: var(--font-weight-medium);
+  border-radius: 999px;
+  padding: 0.55rem 1rem;
+  cursor: pointer;
+  transition: border-color var(--transition-base), background-color var(--transition-base), color var(--transition-base),
+    transform var(--transition-base);
+}
+
+.scenario-tab:hover {
+  border-color: rgba(102, 126, 234, 0.35);
+  color: var(--color-text);
+  transform: translateY(-1px);
+}
+
+.scenario-tab.is-active {
+  background: var(--color-text);
+  color: var(--color-bg);
+  border-color: var(--color-text);
+}
+
+.scenario-card {
+  max-width: 52rem;
+  margin: 0 auto;
+  padding: var(--spacing-xl);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(170deg, var(--color-bg-light) 0%, var(--color-bg) 100%);
+  box-shadow: var(--shadow-sm);
+}
+
+.scenario-card h3 {
+  margin: 0 0 var(--spacing-base);
+  font-size: var(--font-size-xl);
+  color: var(--color-text);
+}
+
+.scenario-card p {
+  margin: 0 0 var(--spacing-base);
+  color: var(--color-text-light);
+  line-height: 1.75;
+}
+
+.scenario-card p:last-child {
+  margin-bottom: 0;
+}
+
+.scenario-card strong {
+  color: var(--color-text);
 }
 
 /* Launch roadmap */
@@ -594,6 +678,10 @@
     font-size: var(--font-size-base);
   }
 
+  .scenario-card {
+    padding: var(--spacing-lg);
+  }
+
   .cta-band {
     padding: var(--spacing-2xl) var(--spacing-lg);
   }
@@ -628,6 +716,15 @@
 
   .testimonial-controls {
     flex-wrap: wrap;
+  }
+
+  .scenario-tabs {
+    justify-content: flex-start;
+  }
+
+  .scenario-tab {
+    font-size: 0.9rem;
+    padding: 0.5rem 0.8rem;
   }
 
   .roadmap-list li {
@@ -671,7 +768,8 @@
 
   .testimonial-dot,
   .testimonial-nav-btn,
-  .testimonial-card {
+  .testimonial-card,
+  .scenario-tab {
     transition: none;
   }
 }
