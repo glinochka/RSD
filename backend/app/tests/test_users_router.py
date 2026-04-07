@@ -58,6 +58,20 @@ class TestUserRegistration:
             assert isinstance(user.name, str)
             assert len(user.name) >= 3
             assert user.email_verified is False
+            assert user.email_verification_last_sent_at is not None
+
+    @pytest.mark.asyncio
+    async def test_registration_resend_cooldown(self, client, sample_user_data):
+        """Repeated code send is blocked for 120s after a successful send."""
+        with patch("app.router_users.router._send_registration_email_code", new=AsyncMock()):
+            first = await client.post("/api/users/registration", json=sample_user_data)
+        assert first.status_code == 201
+
+        with patch("app.router_users.router._send_registration_email_code", new=AsyncMock()):
+            second = await client.post("/api/users/registration", json=sample_user_data)
+        assert second.status_code == 429
+        assert "Повторная отправка" in second.json()["detail"]
+        assert second.headers.get("retry-after") is not None
 
     @pytest.mark.asyncio
     async def test_registration_duplicate_email(self, client, sample_user_data, test_session):

@@ -1,4 +1,5 @@
 import hashlib
+import json
 import re
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -35,8 +36,26 @@ EMAIL_CODE_ALPHABET = "0123456789"
 EMAIL_CODE_LENGTH = 6
 EMAIL_CODE_TTL_MINUTES = 10
 EMAIL_CODE_MAX_ATTEMPTS = 5
+EMAIL_CODE_RESEND_COOLDOWN_SECONDS = 120
 EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 REFRESH_TOKEN_BYTES = 48
+MAILOPOST_RATE_LIMIT_RETRY_RE = re.compile(r"try again in (\d+)\s*seconds?", re.IGNORECASE)
+
+
+def _mailopost_rate_limit_retry_seconds(response: httpx.Response) -> int | None:
+    """Parse 'Try again in N seconds' from MailoPost JSON error body."""
+    try:
+        data = response.json()
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return None
+    for err in data.get("errors") or []:
+        detail = err.get("detail") if isinstance(err, dict) else None
+        if not detail or not isinstance(detail, str):
+            continue
+        match = MAILOPOST_RATE_LIMIT_RETRY_RE.search(detail)
+        if match:
+            return int(match.group(1))
+    return None
 
 
 def _utc_now_naive() -> datetime:
@@ -244,6 +263,22 @@ async def _send_registration_email_code(email: str, code: str) -> None:
             response.status_code,
             response.text[:500],
         )
+        if response.status_code == 429:
+            retry_sec = _mailopost_rate_limit_retry_seconds(response)
+            if retry_sec is not None:
+                minutes = max(1, (retry_sec + 59) // 60)
+                detail = (
+                    f"Сервис рассылки временно ограничил отправку. Повторите через ~{minutes} мин."
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=detail,
+                    headers={"Retry-After": str(retry_sec)},
+                )
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Сервис рассылки временно ограничил отправку. Повторите позже.",
+            )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Не удалось отправить код подтверждения на email",
@@ -384,6 +419,22 @@ async def user_registration(new_user: NewUser):
                     detail="Email уже используется"
                 )
 
+            now_utc = _utc_now_naive()
+            if user_with_email and not user_with_email.email_verified:
+                last_sent = user_with_email.email_verification_last_sent_at
+                if last_sent is not None:
+                    elapsed = (now_utc - last_sent).total_seconds()
+                    if elapsed < EMAIL_CODE_RESEND_COOLDOWN_SECONDS:
+                        retry_after = max(1, int(EMAIL_CODE_RESEND_COOLDOWN_SECONDS - elapsed))
+                        raise HTTPException(
+                            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                            detail=(
+                                f"Повторная отправка кода возможна через {retry_after} с. "
+                                "Подождите или используйте код из предыдущего письма."
+                            ),
+                            headers={"Retry-After": str(retry_after)},
+                        )
+
             updates = {
                 "email": normalized_email,
                 "password": get_password_hash(new_user.password),
@@ -405,6 +456,17 @@ async def user_registration(new_user: NewUser):
                 )
 
     await _send_registration_email_code(normalized_email, verification_code)
+
+    async with async_session_maker() as session:
+        user_dao = UserDAO(session)
+        async with session.begin():
+            user = await user_dao.find_one_by_filter(email=normalized_email)
+            if user:
+                await user_dao.update(
+                    user,
+                    {"email_verification_last_sent_at": _utc_now_naive()},
+                )
+
     logger.info("Код подтверждения регистрации отправлен на email %s", normalized_email)
 
     return JSONResponse(content={

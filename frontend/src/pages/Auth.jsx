@@ -4,7 +4,7 @@
  * Field names and validation match backend (router_users/schemas.py): name, password.
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 
 /** Message for auth UI: apiClient sets error.message from FastAPI detail (normalized). */
 function getAuthErrorMessage(error) {
@@ -47,6 +47,22 @@ const Auth = () => {
   const { showError, showSuccess } = useNotification();
   const [isLogin, setIsLogin] = useState(true);
   const [isAwaitingEmailCode, setIsAwaitingEmailCode] = useState(false);
+  const [resendCooldownUntil, setResendCooldownUntil] = useState(null);
+  const [, setResendTick] = useState(0);
+
+  useEffect(() => {
+    if (!resendCooldownUntil || resendCooldownUntil <= Date.now()) {
+      return undefined;
+    }
+    const id = setInterval(() => {
+      setResendTick((x) => x + 1);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [resendCooldownUntil]);
+
+  const resendSecondsLeft = resendCooldownUntil
+    ? Math.max(0, Math.ceil((resendCooldownUntil - Date.now()) / 1000))
+    : 0;
 
   // Validation rules aligned with backend Pydantic.
   const authRules = useMemo(() => {
@@ -106,6 +122,9 @@ const Auth = () => {
           if (!isAwaitingEmailCode) {
             await register(values.email, values.password);
             setIsAwaitingEmailCode(true);
+            setResendCooldownUntil(
+              Date.now() + VALIDATION.EMAIL_RESEND_COOLDOWN_SECONDS * 1000
+            );
             showSuccess('Код подтверждения отправлен на email', 3500);
             return;
           }
@@ -124,12 +143,16 @@ const Auth = () => {
   const toggleAuthMode = () => {
     form.reset();
     setIsAwaitingEmailCode(false);
+    setResendCooldownUntil(null);
     setIsLogin(!isLogin);
   };
 
   const resendEmailCode = async () => {
     try {
       await register(form.values.email, form.values.password);
+      setResendCooldownUntil(
+        Date.now() + VALIDATION.EMAIL_RESEND_COOLDOWN_SECONDS * 1000
+      );
       showSuccess('Новый код отправлен на email', 3000);
     } catch (error) {
       showError(getAuthErrorMessage(error));
@@ -341,10 +364,12 @@ const Auth = () => {
                 <button
                   type="button"
                   className="btn btn-continue"
-                  disabled={form.isSubmitting}
+                  disabled={form.isSubmitting || resendSecondsLeft > 0}
                   onClick={resendEmailCode}
                 >
-                  Отправить код повторно
+                  {resendSecondsLeft > 0
+                    ? `Повторная отправка через ${resendSecondsLeft} с`
+                    : 'Отправить код повторно'}
                 </button>
               )}
               </form>

@@ -28,6 +28,7 @@ class User(Base):
     email_verification_code_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     email_verification_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     email_verification_attempts_left: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    email_verification_last_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     password: Mapped[str] = mapped_column(String(100), nullable=True)
     
     subscription_type: Mapped[str] = mapped_column(String(50), default="Free")
