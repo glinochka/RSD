@@ -4,6 +4,8 @@ import asyncio
 from datetime import datetime, timezone
 from logging import getLogger
 
+from sqlalchemy.exc import DBAPIError, InterfaceError, OperationalError
+
 from ..alembic.database import async_session_maker
 from ..alembic.models import Agent, ReindexJob
 from ..config import settings
@@ -15,10 +17,48 @@ logger = getLogger(__name__)
 
 REINDEX_POLL_INTERVAL_SECONDS = 5
 REINDEX_ALLOWED_ACTIVE_STATUSES = {"queued", "retrying", "running"}
+REINDEX_MAX_BACKOFF_SECONDS = 60
 
 
 def _utc_now_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _is_transient_database_error(exc: Exception) -> bool:
+    transient_tokens = (
+        "connection was closed",
+        "connection reset",
+        "connection refused",
+        "server closed the connection",
+        "terminating connection",
+        "could not connect",
+    )
+    asyncpg_transient_names = {
+        "ConnectionDoesNotExistError",
+        "ConnectionFailureError",
+        "ConnectionResetError",
+        "CannotConnectNowError",
+        "TooManyConnectionsError",
+    }
+
+    current: BaseException | None = exc
+    depth = 0
+    while current is not None and depth < 8:
+        if isinstance(current, (DBAPIError, OperationalError, InterfaceError, ConnectionError, OSError, TimeoutError)):
+            return True
+
+        current_type = type(current)
+        if current_type.__module__.startswith("asyncpg") and current_type.__name__ in asyncpg_transient_names:
+            return True
+
+        message = str(current).lower()
+        if any(token in message for token in transient_tokens):
+            return True
+
+        current = current.__cause__ or current.__context__
+        depth += 1
+
+    return False
 
 
 def serialize_reindex_job(job: ReindexJob) -> dict:
@@ -224,6 +264,7 @@ async def _process_single_job(job_id: int) -> None:
 
 
 async def run_reindex_worker_forever() -> None:
+    consecutive_db_failures = 0
     while True:
         try:
             job_id: int | None = None
@@ -236,13 +277,29 @@ async def run_reindex_worker_forever() -> None:
                         job_id = job.id
 
             if not job_id:
+                consecutive_db_failures = 0
                 await asyncio.sleep(REINDEX_POLL_INTERVAL_SECONDS)
                 continue
 
             await _process_single_job(job_id)
+            consecutive_db_failures = 0
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
+            if _is_transient_database_error(exc):
+                consecutive_db_failures += 1
+                delay = min(
+                    REINDEX_MAX_BACKOFF_SECONDS,
+                    REINDEX_POLL_INTERVAL_SECONDS * (2 ** min(consecutive_db_failures, 5)),
+                )
+                logger.warning(
+                    "Reindex worker: temporary DB failure (%s). Retrying in %s seconds.",
+                    type(exc).__name__,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+                continue
+
             logger.exception("Reindex worker loop failed")
             await asyncio.sleep(REINDEX_POLL_INTERVAL_SECONDS)
 
