@@ -195,8 +195,9 @@ def _serialize_user_public(user) -> dict:
     user_dict = convert_to_dict(user)
     # Для JSON-сериализации удаляем неиспользуемые служебные поля.
     user_dict.pop("registered", None)
-    sub_time: datetime | None = user_dict.get("subscription_end_date")
-    user_dict["subscription_end_date"] = sub_time.isoformat() if sub_time else None
+    for key, value in list(user_dict.items()):
+        if isinstance(value, datetime):
+            user_dict[key] = value.isoformat()
     user_dict.pop("password", None)
     return user_dict
 
