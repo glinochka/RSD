@@ -35,6 +35,21 @@ class VerifyRegistrationCodeRequest(BaseModel):
     email: str = Field(..., min_length=5, max_length=255, description="Email пользователя")
     code: str = Field(..., min_length=6, max_length=6, description="6-значный код подтверждения")
 
+
+class PasswordResetRequest(BaseModel):
+    email: str = Field(..., min_length=5, max_length=255, description="Email пользователя")
+
+
+class PasswordResetVerifyRequest(BaseModel):
+    email: str = Field(..., min_length=5, max_length=255, description="Email пользователя")
+    code: str = Field(..., min_length=6, max_length=6, description="6-значный код восстановления")
+
+
+class PasswordResetConfirmRequest(BaseModel):
+    email: str = Field(..., min_length=5, max_length=255, description="Email пользователя")
+    reset_token: str = Field(..., min_length=16, max_length=512, description="Токен после проверки кода")
+    new_password: str = Field(..., min_length=6, max_length=30, description="Новый пароль")
+
 class User_from_tg(BaseModel):
     name: str = Field(..., min_length=3, max_length=32, description="Имя пользователя: длина от 3 до 32 символов")
     telegram_id: int = Field(..., description="Id пользователя в телеграме")

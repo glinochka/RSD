@@ -38,6 +38,13 @@ EMAIL_CODE_LENGTH = 6
 EMAIL_CODE_TTL_MINUTES = 10
 EMAIL_CODE_MAX_ATTEMPTS = 5
 EMAIL_CODE_RESEND_COOLDOWN_SECONDS = 120
+PASSWORD_RESET_CODE_ALPHABET = "0123456789"
+PASSWORD_RESET_CODE_LENGTH = 6
+PASSWORD_RESET_CODE_TTL_MINUTES = 10
+PASSWORD_RESET_MAX_ATTEMPTS = 5
+PASSWORD_RESET_RESEND_COOLDOWN_SECONDS = 120
+PASSWORD_RESET_TOKEN_BYTES = 36
+PASSWORD_RESET_TOKEN_TTL_MINUTES = 15
 EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 REFRESH_TOKEN_BYTES = 48
 MAILOPOST_RATE_LIMIT_RETRY_RE = re.compile(r"try again in (\d+)\s*seconds?", re.IGNORECASE)
@@ -123,6 +130,26 @@ def _hash_email_code(raw_code: str) -> str:
     normalized_code = "".join(ch for ch in raw_code.strip() if ch.isdigit())
     peppered_code = f"{settings.SECRET_KEY}:email_verification:{normalized_code}"
     return hashlib.sha256(peppered_code.encode("utf-8")).hexdigest()
+
+
+def _generate_password_reset_code() -> str:
+    return "".join(secrets.choice(PASSWORD_RESET_CODE_ALPHABET) for _ in range(PASSWORD_RESET_CODE_LENGTH))
+
+
+def _hash_password_reset_code(raw_code: str) -> str:
+    normalized_code = "".join(ch for ch in raw_code.strip() if ch.isdigit())
+    peppered_code = f"{settings.SECRET_KEY}:password_reset:{normalized_code}"
+    return hashlib.sha256(peppered_code.encode("utf-8")).hexdigest()
+
+
+def _generate_password_reset_token() -> str:
+    return secrets.token_urlsafe(PASSWORD_RESET_TOKEN_BYTES)
+
+
+def _hash_password_reset_token(raw_token: str) -> str:
+    normalized_token = raw_token.strip()
+    peppered_token = f"{settings.SECRET_KEY}:password_reset_token:{normalized_token}"
+    return hashlib.sha256(peppered_token.encode("utf-8")).hexdigest()
 
 
 def _normalize_tg_username(username: str) -> str:
@@ -286,6 +313,90 @@ async def _send_registration_email_code(email: str, code: str) -> None:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Не удалось отправить код подтверждения на email",
+        )
+
+
+async def _send_password_reset_email_code(email: str, code: str) -> None:
+    api_token = settings.MAILOPOST_API_TOKEN.strip()
+    from_email = settings.MAILOPOST_FROM_EMAIL.strip()
+    base_url = settings.MAILOPOST_API_URL.strip().rstrip("/")
+    if not api_token or not from_email:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Mail sender is not configured",
+        )
+
+    payload = {
+        "from_email": from_email,
+        "to": email,
+        "subject": "Код восстановления пароля",
+        "text": (
+            "RSD - восстановление пароля\n\n"
+            f"Ваш код восстановления: {code}\n"
+            f"Код действует {PASSWORD_RESET_CODE_TTL_MINUTES} минут.\n\n"
+            "Если вы не запрашивали восстановление, просто проигнорируйте письмо."
+        ),
+        "html": (
+            "<!DOCTYPE html>"
+            "<html><body style='margin:0;padding:0;background:#f5f7fb;font-family:Arial,sans-serif;'>"
+            "<table role='presentation' width='100%' cellspacing='0' cellpadding='0' style='background:#f5f7fb;padding:24px 12px;'>"
+            "<tr><td align='center'>"
+            "<table role='presentation' width='100%' cellspacing='0' cellpadding='0' style='max-width:560px;background:#ffffff;border:1px solid #e8ecf3;border-radius:12px;overflow:hidden;'>"
+            "<tr><td style='padding:24px 24px 8px 24px;'>"
+            "<div style='font-size:20px;font-weight:700;color:#111827;'>Восстановление пароля в RSD</div>"
+            "</td></tr>"
+            "<tr><td style='padding:0 24px 8px 24px;color:#374151;font-size:14px;line-height:1.6;'>"
+            "Введите код ниже на странице восстановления пароля."
+            "</td></tr>"
+            "<tr><td style='padding:8px 24px 8px 24px;'>"
+            f"<div style='display:inline-block;background:#111827;color:#ffffff;font-size:28px;font-weight:700;letter-spacing:6px;padding:14px 18px;border-radius:10px;'>{code}</div>"
+            "</td></tr>"
+            "<tr><td style='padding:8px 24px 8px 24px;color:#6b7280;font-size:13px;line-height:1.6;'>"
+            f"Код действует {PASSWORD_RESET_CODE_TTL_MINUTES} минут."
+            "</td></tr>"
+            "<tr><td style='padding:0 24px 24px 24px;color:#9ca3af;font-size:12px;line-height:1.6;'>"
+            "Если вы не запрашивали восстановление, просто проигнорируйте это письмо."
+            "</td></tr>"
+            "</table>"
+            "</td></tr></table>"
+            "</body></html>"
+        ),
+    }
+    from_name = settings.MAILOPOST_FROM_NAME.strip()
+    if from_name:
+        payload["from_name"] = from_name
+
+    headers = {
+        "Authorization": f"Bearer {api_token}",
+        "Content-Type": "application/json",
+    }
+    url = f"{base_url}/email/messages"
+    timeout = httpx.Timeout(settings.MAILOPOST_SEND_TIMEOUT_SECONDS, connect=5.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.post(url, json=payload, headers=headers)
+
+    if not response.is_success:
+        logger.error(
+            "MailoPost password reset send failed: status=%s body=%s",
+            response.status_code,
+            response.text[:500],
+        )
+        if response.status_code == 429:
+            retry_sec = _mailopost_rate_limit_retry_seconds(response)
+            if retry_sec is not None:
+                minutes = max(1, (retry_sec + 59) // 60)
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=f"Сервис рассылки временно ограничил отправку. Повторите через ~{minutes} мин.",
+                    headers={"Retry-After": str(retry_sec)},
+                )
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Сервис рассылки временно ограничил отправку. Повторите позже.",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Не удалось отправить код восстановления на email",
         )
 
 
@@ -579,6 +690,229 @@ async def verify_user_registration_code(payload: VerifyRegistrationCodeRequest):
             "refresh_token": refresh_token,
             "token_type": "bearer",
         },
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@router.post(
+    "/password-reset/request",
+    dependencies=[Depends(rate_limit(max_requests=10, window_seconds=60, scope="users_password_reset_request"))],
+)
+async def request_password_reset(payload: PasswordResetRequest):
+    normalized_email = _validate_email_or_422(payload.email)
+    now_utc = _utc_now_naive()
+    code = _generate_password_reset_code()
+    code_hash = _hash_password_reset_code(code)
+    code_expires_at = now_utc + timedelta(minutes=PASSWORD_RESET_CODE_TTL_MINUTES)
+
+    user_for_email = None
+    async with async_session_maker() as session:
+        user_dao = UserDAO(session)
+        async with session.begin():
+            user_for_email = await user_dao.find_one_by_filter(email=normalized_email)
+            if not user_for_email:
+                # Generic response to avoid email enumeration.
+                return JSONResponse(
+                    content={
+                        "status": "code_sent_if_exists",
+                        "detail": "Если email существует, код восстановления отправлен.",
+                    },
+                    status_code=status.HTTP_200_OK,
+                )
+
+            if user_for_email.password is None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Для этого аккаунта вход по паролю недоступен",
+                )
+
+            last_sent = user_for_email.password_reset_last_sent_at
+            if last_sent is not None:
+                elapsed = (now_utc - last_sent).total_seconds()
+                if elapsed < PASSWORD_RESET_RESEND_COOLDOWN_SECONDS:
+                    retry_after = max(1, int(PASSWORD_RESET_RESEND_COOLDOWN_SECONDS - elapsed))
+                    raise HTTPException(
+                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        detail=(
+                            f"Повторная отправка кода возможна через {retry_after} с. "
+                            "Подождите или используйте код из предыдущего письма."
+                        ),
+                        headers={"Retry-After": str(retry_after)},
+                    )
+
+            await user_dao.update(
+                user_for_email,
+                {
+                    "password_reset_code_hash": code_hash,
+                    "password_reset_expires_at": code_expires_at,
+                    "password_reset_attempts_left": PASSWORD_RESET_MAX_ATTEMPTS,
+                    "password_reset_last_sent_at": now_utc,
+                    "password_reset_token_hash": None,
+                    "password_reset_verified_at": None,
+                },
+            )
+
+    try:
+        await _send_password_reset_email_code(normalized_email, code)
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_502_BAD_GATEWAY:
+            async with async_session_maker() as session:
+                user_dao = UserDAO(session)
+                async with session.begin():
+                    user = await user_dao.find_one_by_filter(email=normalized_email)
+                    if user:
+                        await user_dao.update(user, {"password_reset_last_sent_at": None})
+        raise
+
+    return JSONResponse(
+        content={
+            "status": "code_sent_if_exists",
+            "detail": "Если email существует, код восстановления отправлен.",
+            "expires_in_seconds": PASSWORD_RESET_CODE_TTL_MINUTES * 60,
+        },
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@router.post(
+    "/password-reset/verify",
+    dependencies=[Depends(rate_limit(max_requests=20, window_seconds=60, scope="users_password_reset_verify"))],
+)
+async def verify_password_reset_code(payload: PasswordResetVerifyRequest):
+    normalized_email = _validate_email_or_422(payload.email)
+    code_hash = _hash_password_reset_code(payload.code)
+    now_utc = _utc_now_naive()
+    reset_token = _generate_password_reset_token()
+    reset_token_hash = _hash_password_reset_token(reset_token)
+    token_expires_at = now_utc + timedelta(minutes=PASSWORD_RESET_TOKEN_TTL_MINUTES)
+
+    async with async_session_maker() as session:
+        user_dao = UserDAO(session)
+        async with session.begin():
+            user = await user_dao.find_one_by_filter(email=normalized_email)
+            if not user or not user.password_reset_code_hash or not user.password_reset_expires_at:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Неверный код восстановления",
+                )
+
+            if user.password_reset_expires_at < now_utc:
+                await user_dao.update(
+                    user,
+                    {
+                        "password_reset_code_hash": None,
+                        "password_reset_expires_at": None,
+                        "password_reset_attempts_left": 0,
+                        "password_reset_token_hash": None,
+                        "password_reset_verified_at": None,
+                    },
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Код восстановления истек",
+                )
+
+            if user.password_reset_attempts_left <= 0:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="Превышено число попыток ввода кода",
+                )
+
+            if user.password_reset_code_hash != code_hash:
+                attempts_left = max(0, user.password_reset_attempts_left - 1)
+                await user_dao.update(user, {"password_reset_attempts_left": attempts_left})
+                if attempts_left == 0:
+                    raise HTTPException(
+                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        detail="Превышено число попыток ввода кода",
+                    )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Неверный код. Осталось попыток: {attempts_left}",
+                )
+
+            await user_dao.update(
+                user,
+                {
+                    "password_reset_code_hash": None,
+                    "password_reset_attempts_left": 0,
+                    "password_reset_token_hash": reset_token_hash,
+                    "password_reset_verified_at": now_utc,
+                    "password_reset_expires_at": token_expires_at,
+                },
+            )
+
+    return JSONResponse(
+        content={
+            "status": "verified",
+            "reset_token": reset_token,
+            "expires_in_seconds": PASSWORD_RESET_TOKEN_TTL_MINUTES * 60,
+        },
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@router.post(
+    "/password-reset/confirm",
+    dependencies=[Depends(rate_limit(max_requests=10, window_seconds=60, scope="users_password_reset_confirm"))],
+)
+async def confirm_password_reset(payload: PasswordResetConfirmRequest):
+    normalized_email = _validate_email_or_422(payload.email)
+    token_hash = _hash_password_reset_token(payload.reset_token)
+    now_utc = _utc_now_naive()
+
+    async with async_session_maker() as session:
+        user_dao = UserDAO(session)
+        async with session.begin():
+            user = await user_dao.find_one_by_filter(email=normalized_email)
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Сессия восстановления не найдена",
+                )
+
+            if (
+                not user.password_reset_token_hash
+                or not user.password_reset_expires_at
+                or user.password_reset_token_hash != token_hash
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Неверный или устаревший токен восстановления",
+                )
+
+            if user.password_reset_expires_at < now_utc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Сессия восстановления истекла",
+                )
+
+            await user_dao.update(
+                user,
+                {
+                    "password": get_password_hash(payload.new_password),
+                    "password_reset_code_hash": None,
+                    "password_reset_expires_at": None,
+                    "password_reset_attempts_left": 0,
+                    "password_reset_last_sent_at": None,
+                    "password_reset_token_hash": None,
+                    "password_reset_verified_at": None,
+                },
+            )
+
+            sessions = (
+                await session.scalars(
+                    select(UserAuthSession).where(
+                        UserAuthSession.user_id == user.id,
+                        UserAuthSession.revoked_at.is_(None),
+                    )
+                )
+            ).all()
+            for auth_session in sessions:
+                auth_session.revoked_at = now_utc
+
+    return JSONResponse(
+        content={"status": "password_updated"},
         status_code=status.HTTP_200_OK,
     )
 

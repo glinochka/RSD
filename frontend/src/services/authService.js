@@ -64,6 +64,30 @@ export const authService = {
     return normalizeAuthResponse(response.data, email.trim());
   },
 
+  requestPasswordResetCode: async (email) => {
+    const response = await apiClient.post(API_ROUTES.AUTH_PASSWORD_RESET_REQUEST, {
+      email: email.trim(),
+    });
+    return response.data;
+  },
+
+  verifyPasswordResetCode: async (email, code) => {
+    const response = await apiClient.post(API_ROUTES.AUTH_PASSWORD_RESET_VERIFY, {
+      email: email.trim(),
+      code: code.trim(),
+    });
+    return response.data;
+  },
+
+  confirmPasswordReset: async (email, resetToken, newPassword) => {
+    const response = await apiClient.post(API_ROUTES.AUTH_PASSWORD_RESET_CONFIRM, {
+      email: email.trim(),
+      reset_token: resetToken,
+      new_password: newPassword,
+    });
+    return response.data;
+  },
+
   /**
    * Logout: optional backend call. Local token/user are always cleared by AuthContext.
    * No-op if backend has no logout endpoint (404/405).

@@ -26,6 +26,7 @@ import { useAuth } from '../context/useAuth';
 import { useNotification } from '../context/useNotification';
 import { useForm } from '../hooks/useForm';
 import { NAVIGATION_ROUTES, SUCCESS_MESSAGES, VALIDATION } from '../config/constants';
+import authService from '../services/authService';
 import AgentChatShowcase from '../components/AgentChatShowcase';
 import '../styles/auth.css';
 
@@ -37,6 +38,10 @@ const AUTH_FORM_INITIAL = {
   email: '',
   password: '',
   verificationCode: '',
+  resetCode: '',
+  resetToken: '',
+  newPassword: '',
+  confirmNewPassword: '',
   consentPersonal: false,
   consentTerms: false,
 };
@@ -47,8 +52,11 @@ const Auth = () => {
   const { showError, showSuccess } = useNotification();
   const [isLogin, setIsLogin] = useState(true);
   const [isAwaitingEmailCode, setIsAwaitingEmailCode] = useState(false);
+  const [recoveryStep, setRecoveryStep] = useState(null);
   const [resendCooldownUntil, setResendCooldownUntil] = useState(null);
   const [, setResendTick] = useState(0);
+  const isRecoveryMode = recoveryStep !== null;
+  const isRegister = !isLogin && !isRecoveryMode;
 
   useEffect(() => {
     if (!resendCooldownUntil || resendCooldownUntil <= Date.now()) {
@@ -66,6 +74,32 @@ const Auth = () => {
 
   // Validation rules aligned with backend Pydantic.
   const authRules = useMemo(() => {
+    if (isRecoveryMode) {
+      if (recoveryStep === 'request') {
+        return {
+          email: { required: true, type: 'email', label: 'Email' },
+        };
+      }
+      if (recoveryStep === 'verify') {
+        return {
+          email: { required: true, type: 'email', label: 'Email' },
+          resetCode: {
+            required: true,
+            label: 'Код восстановления',
+            minLength: VALIDATION.EMAIL_CODE_LENGTH,
+            maxLength: VALIDATION.EMAIL_CODE_LENGTH,
+            pattern: /^\d{6}$/,
+            message: 'Введите 6 цифр из письма',
+          },
+        };
+      }
+      return {
+        email: { required: true, type: 'email', label: 'Email' },
+        newPassword: { required: true, type: 'password', label: 'Новый пароль' },
+        confirmNewPassword: { required: true, type: 'password', label: 'Подтверждение пароля' },
+      };
+    }
+
     const loginRules = {
       name: {
         required: true,
@@ -108,12 +142,47 @@ const Auth = () => {
         message: 'Примите условия Публичной оферты и Пользовательского соглашения',
       },
     };
-  }, [isAwaitingEmailCode, isLogin]);
+  }, [isAwaitingEmailCode, isLogin, isRecoveryMode, recoveryStep]);
 
   const form = useForm(
     AUTH_FORM_INITIAL,
     async (values) => {
       try {
+        if (isRecoveryMode) {
+          if (recoveryStep === 'request') {
+            await authService.requestPasswordResetCode(values.email);
+            setRecoveryStep('verify');
+            showSuccess('Код восстановления отправлен на email', 3500);
+            return;
+          }
+
+          if (recoveryStep === 'verify') {
+            const verifyResult = await authService.verifyPasswordResetCode(values.email, values.resetCode);
+            form.setFieldValue('resetToken', verifyResult.reset_token);
+            setRecoveryStep('reset');
+            showSuccess('Код подтвержден. Задайте новый пароль.', 3000);
+            return;
+          }
+
+          if (values.newPassword !== values.confirmNewPassword) {
+            showError('Пароли не совпадают');
+            return;
+          }
+          if (!values.resetToken) {
+            showError('Сессия восстановления не найдена. Повторите процесс.');
+            setRecoveryStep('request');
+            return;
+          }
+          await authService.confirmPasswordReset(values.email, values.resetToken, values.newPassword);
+          showSuccess('Пароль успешно изменен. Теперь войдите в систему.', 3500);
+          setRecoveryStep(null);
+          setIsLogin(true);
+          setIsAwaitingEmailCode(false);
+          setResendCooldownUntil(null);
+          form.reset();
+          return;
+        }
+
         if (isLogin) {
           await login(values.name, values.password);
           showSuccess(SUCCESS_MESSAGES.LOGIN_SUCCESS, 3000);
@@ -144,7 +213,23 @@ const Auth = () => {
     form.reset();
     setIsAwaitingEmailCode(false);
     setResendCooldownUntil(null);
+    setRecoveryStep(null);
     setIsLogin(!isLogin);
+  };
+
+  const startPasswordRecovery = () => {
+    form.reset();
+    setRecoveryStep('request');
+    setIsAwaitingEmailCode(false);
+    setResendCooldownUntil(null);
+  };
+
+  const cancelPasswordRecovery = () => {
+    form.reset();
+    setRecoveryStep(null);
+    setIsLogin(true);
+    setIsAwaitingEmailCode(false);
+    setResendCooldownUntil(null);
   };
 
   const resendEmailCode = async () => {
@@ -169,13 +254,25 @@ const Auth = () => {
         <div className="auth-card">
           <div className="auth-form-side">
             <div className="auth-form-main">
-              <h2>{isLogin ? 'Добро пожаловать' : 'Создать аккаунт'}</h2>
+              <h2>
+                {isRecoveryMode
+                  ? 'Восстановление пароля'
+                  : isLogin
+                    ? 'Добро пожаловать'
+                    : 'Создать аккаунт'}
+              </h2>
               <p className="auth-subtitle">
-                {isLogin
-                  ? 'Войдите в систему для получения доступа к платформе'
-                  : isAwaitingEmailCode
-                    ? 'Введите 6-значный код, отправленный на ваш email'
-                    : 'Заполните форму для создания нового аккаунта'}
+                {isRecoveryMode
+                  ? recoveryStep === 'request'
+                    ? 'Введите email, и мы отправим код восстановления'
+                    : recoveryStep === 'verify'
+                      ? 'Введите 6-значный код из письма'
+                      : 'Введите и подтвердите новый пароль'
+                  : isLogin
+                    ? 'Войдите в систему для получения доступа к платформе'
+                    : isAwaitingEmailCode
+                      ? 'Введите 6-значный код, отправленный на ваш email'
+                      : 'Заполните форму для создания нового аккаунта'}
               </p>
 
               {/* Google Auth Button */}
@@ -189,7 +286,7 @@ const Auth = () => {
 
               {/* Auth form */}
               <form className="auth-form" onSubmit={form.handleSubmit}>
-              {isLogin && (
+              {isLogin && !isRecoveryMode && (
                 <div className="form-group">
                   <label htmlFor="name">Email или имя пользователя:</label>
                   <input
@@ -210,7 +307,7 @@ const Auth = () => {
                 </div>
               )}
 
-              {!isLogin && (
+              {(isRegister || isRecoveryMode) && (
                 <div className="form-group">
                   <label htmlFor="email">Email:</label>
                   <input
@@ -221,7 +318,7 @@ const Auth = () => {
                     value={form.values.email}
                     onChange={form.handleChange}
                     onBlur={form.handleBlur}
-                    disabled={form.isSubmitting || isAwaitingEmailCode}
+                    disabled={form.isSubmitting || (isRegister && isAwaitingEmailCode)}
                     className={form.errors.email ? 'error' : ''}
                     autoComplete="email"
                   />
@@ -231,6 +328,7 @@ const Auth = () => {
                 </div>
               )}
 
+              {!isRecoveryMode && (
               <div className="form-group">
                 <label htmlFor="password">Пароль:</label>
                 <input
@@ -249,8 +347,9 @@ const Auth = () => {
                   <span className="error-message">{form.errors.password}</span>
                 )}
               </div>
+              )}
 
-              {!isLogin && isAwaitingEmailCode && (
+              {isRegister && isAwaitingEmailCode && (
                 <div className="form-group">
                   <label htmlFor="verificationCode">Код подтверждения:</label>
                   <input
@@ -273,7 +372,71 @@ const Auth = () => {
                 </div>
               )}
 
-              {!isLogin && !isAwaitingEmailCode && (
+              {isRecoveryMode && recoveryStep === 'verify' && (
+                <div className="form-group">
+                  <label htmlFor="resetCode">Код восстановления:</label>
+                  <input
+                    id="resetCode"
+                    type="text"
+                    name="resetCode"
+                    placeholder="6 цифр"
+                    value={form.values.resetCode}
+                    onChange={form.handleChange}
+                    onBlur={form.handleBlur}
+                    disabled={form.isSubmitting}
+                    className={form.errors.resetCode ? 'error' : ''}
+                    autoComplete="one-time-code"
+                    inputMode="numeric"
+                    maxLength={VALIDATION.EMAIL_CODE_LENGTH}
+                  />
+                  {form.touched.resetCode && form.errors.resetCode && (
+                    <span className="error-message">{form.errors.resetCode}</span>
+                  )}
+                </div>
+              )}
+
+              {isRecoveryMode && recoveryStep === 'reset' && (
+                <>
+                  <div className="form-group">
+                    <label htmlFor="newPassword">Новый пароль:</label>
+                    <input
+                      id="newPassword"
+                      type="password"
+                      name="newPassword"
+                      placeholder="От 6 до 30 символов"
+                      value={form.values.newPassword}
+                      onChange={form.handleChange}
+                      onBlur={form.handleBlur}
+                      disabled={form.isSubmitting}
+                      className={form.errors.newPassword ? 'error' : ''}
+                      autoComplete="new-password"
+                    />
+                    {form.touched.newPassword && form.errors.newPassword && (
+                      <span className="error-message">{form.errors.newPassword}</span>
+                    )}
+                  </div>
+                  <div className="form-group">
+                    <label htmlFor="confirmNewPassword">Подтвердите пароль:</label>
+                    <input
+                      id="confirmNewPassword"
+                      type="password"
+                      name="confirmNewPassword"
+                      placeholder="Повторите новый пароль"
+                      value={form.values.confirmNewPassword}
+                      onChange={form.handleChange}
+                      onBlur={form.handleBlur}
+                      disabled={form.isSubmitting}
+                      className={form.errors.confirmNewPassword ? 'error' : ''}
+                      autoComplete="new-password"
+                    />
+                    {form.touched.confirmNewPassword && form.errors.confirmNewPassword && (
+                      <span className="error-message">{form.errors.confirmNewPassword}</span>
+                    )}
+                  </div>
+                </>
+              )}
+
+              {isRegister && !isAwaitingEmailCode && (
                 <div className="auth-consents" role="group" aria-label="Согласия при регистрации">
                   <div className="auth-consent-block">
                     <div className="auth-checkbox-row auth-checkbox-row--terms">
@@ -354,13 +517,19 @@ const Auth = () => {
               >
                 {form.isSubmitting
                   ? 'Обработка...'
-                  : isLogin
-                    ? 'Войти'
-                    : isAwaitingEmailCode
-                      ? 'Подтвердить код'
-                      : 'Создать аккаунт'}
+                  : isRecoveryMode
+                    ? recoveryStep === 'request'
+                      ? 'Отправить код'
+                      : recoveryStep === 'verify'
+                        ? 'Проверить код'
+                        : 'Сохранить новый пароль'
+                    : isLogin
+                      ? 'Войти'
+                      : isAwaitingEmailCode
+                        ? 'Подтвердить код'
+                        : 'Создать аккаунт'}
               </button>
-              {!isLogin && isAwaitingEmailCode && (
+              {!isRecoveryMode && isRegister && isAwaitingEmailCode && (
                 <button
                   type="button"
                   className="btn btn-continue"
@@ -372,11 +541,32 @@ const Auth = () => {
                     : 'Отправить код повторно'}
                 </button>
               )}
+              {!isRecoveryMode && isLogin && (
+                <button
+                  type="button"
+                  className="toggle-btn"
+                  onClick={startPasswordRecovery}
+                  disabled={form.isSubmitting}
+                >
+                  Забыли пароль?
+                </button>
+              )}
+              {isRecoveryMode && (
+                <button
+                  type="button"
+                  className="toggle-btn"
+                  onClick={cancelPasswordRecovery}
+                  disabled={form.isSubmitting}
+                >
+                  Назад ко входу
+                </button>
+              )}
               </form>
             </div>
 
             <div className="auth-form-footer">
               {/* Toggle Auth Mode */}
+              {!isRecoveryMode && (
               <div className="auth-toggle">
                 <p>
                   {isLogin ? 'Нет аккаунта?' : 'Уже есть аккаунт?'}
@@ -390,8 +580,9 @@ const Auth = () => {
                   </button>
                 </p>
               </div>
+              )}
 
-              {isLogin && (
+              {isLogin && !isRecoveryMode && (
                 <p className="terms">
                   Продолжая, вы подтверждаете ознакомление с{' '}
                   <Link className="auth-legal-link" to={NAVIGATION_ROUTES.PUBLIC_OFFER}>

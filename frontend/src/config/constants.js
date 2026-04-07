@@ -21,6 +21,9 @@ export const API_ROUTES = {
   AUTH_LOGIN: '/api/users/login',
   AUTH_REGISTER: '/api/users/registration',
   AUTH_REGISTER_VERIFY: '/api/users/registration/verify',
+  AUTH_PASSWORD_RESET_REQUEST: '/api/users/password-reset/request',
+  AUTH_PASSWORD_RESET_VERIFY: '/api/users/password-reset/verify',
+  AUTH_PASSWORD_RESET_CONFIRM: '/api/users/password-reset/confirm',
   AUTH_LOGOUT: '/api/users/logout',
   AUTH_REFRESH: '/api/users/refresh',
 

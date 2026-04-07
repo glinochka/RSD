@@ -139,6 +139,86 @@ class TestUserRegistration:
         assert verify_data["token_type"] == "bearer"
 
 
+class TestPasswordReset:
+    """Tests for password reset flow endpoints."""
+
+    @pytest.mark.asyncio
+    async def test_password_reset_request_success(self, client, test_session):
+        from app.utils.security import get_password_hash
+        from app.router_users.dao import UserDAO
+
+        user_dao = UserDAO(test_session)
+        email = "restore@example.com"
+        async with test_session.begin():
+            await user_dao.add({
+                "name": "restore_user",
+                "email": email,
+                "email_verified": True,
+                "password": get_password_hash("oldpassword123"),
+            })
+
+        with patch("app.router_users.router._send_password_reset_email_code", new=AsyncMock()):
+            response = await client.post(
+                "/api/users/password-reset/request",
+                json={"email": email},
+            )
+        assert response.status_code == 200
+
+        async with test_session.begin():
+            result = await test_session.execute(select(User).where(User.email == email))
+            user = result.scalar_one_or_none()
+            assert user is not None
+            assert user.password_reset_code_hash is not None
+            assert user.password_reset_attempts_left > 0
+            assert user.password_reset_last_sent_at is not None
+
+    @pytest.mark.asyncio
+    async def test_password_reset_full_flow_success(self, client, test_session):
+        from app.utils.security import get_password_hash
+        from app.router_users.dao import UserDAO
+
+        user_dao = UserDAO(test_session)
+        email = "restore2@example.com"
+        old_password = "oldpassword123"
+        new_password = "newpassword123"
+        async with test_session.begin():
+            await user_dao.add({
+                "name": "restore_user2",
+                "email": email,
+                "email_verified": True,
+                "password": get_password_hash(old_password),
+            })
+
+        with patch("app.router_users.router._generate_password_reset_code", return_value="123456"), \
+             patch("app.router_users.router._send_password_reset_email_code", new=AsyncMock()):
+            request_resp = await client.post(
+                "/api/users/password-reset/request",
+                json={"email": email},
+            )
+        assert request_resp.status_code == 200
+
+        verify_resp = await client.post(
+            "/api/users/password-reset/verify",
+            json={"email": email, "code": "123456"},
+        )
+        assert verify_resp.status_code == 200
+        reset_token = verify_resp.json().get("reset_token")
+        assert reset_token
+
+        confirm_resp = await client.post(
+            "/api/users/password-reset/confirm",
+            json={"email": email, "reset_token": reset_token, "new_password": new_password},
+        )
+        assert confirm_resp.status_code == 200
+
+        login_resp = await client.post(
+            "/api/users/login",
+            json={"name": email, "password": new_password},
+        )
+        assert login_resp.status_code == 200
+        assert "access_token" in login_resp.json()
+
+
 class TestUserLogin:
     """Tests for POST /api/users/login endpoint."""
 
