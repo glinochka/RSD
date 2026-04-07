@@ -39,6 +39,11 @@ from .dao import (
 logger = getLogger(__name__)
 router = APIRouter(prefix="/api/payments")
 http_bearer = HTTPBearer(auto_error=False)
+DURATION_DISCOUNT_BY_MONTHS = {
+    1: 0,
+    3: 15,
+    6: 25,
+}
 
 
 async def get_current_user_required(
@@ -78,7 +83,7 @@ def _resolve_confirmation_url(payment: Payment) -> str | None:
     return getattr(confirmation, "confirmation_url", None)
 
 
-def _calculate_new_end_date(current_end_date: date | datetime | None) -> datetime:
+def _calculate_new_end_date(current_end_date: date | datetime | None, duration_months: int = 1) -> datetime:
     """Extend subscription from now or from current end. Handles DB values as date or datetime."""
     now_utc = datetime.now(timezone.utc)
     base_date = now_utc
@@ -94,7 +99,7 @@ def _calculate_new_end_date(current_end_date: date | datetime | None) -> datetim
             )
         if current_end > now_utc:
             base_date = current_end
-    return (base_date + timedelta(days=30)).replace(tzinfo=None)
+    return (base_date + timedelta(days=30 * duration_months)).replace(tzinfo=None)
 
 
 def _normalize_promo_code(value: str | None) -> str | None:
@@ -132,7 +137,8 @@ async def _apply_yookassa_payment_to_subscription(
         )
         return
 
-    new_end_date = _calculate_new_end_date(user.subscription_end_date)
+    duration_months = int(getattr(tx, "duration_months", 1) or 1)
+    new_end_date = _calculate_new_end_date(user.subscription_end_date, duration_months=duration_months)
     await user_dao.update(
         user,
         {
@@ -271,7 +277,9 @@ async def create_yookassa_payment(
             detail="Invalid paid plan",
         )
 
-    original_amount_kopecks = int(selected_plan.get("price_rub_month", 0) or 0) * 100
+    duration_months = int(payload.duration_months or 1)
+    duration_discount_percent = DURATION_DISCOUNT_BY_MONTHS.get(duration_months, 0)
+    original_amount_kopecks = int(selected_plan.get("price_rub_month", 0) or 0) * 100 * duration_months
     normalized_promo = _normalize_promo_code(payload.promo_code)
     applied_discount_percent = 0
     applied_promo_code = None
@@ -289,8 +297,10 @@ async def create_yookassa_payment(
         applied_discount_percent = int(promo.discount_percent or 0)
         applied_promo_code = promo.code
 
-    discount_kopecks = (original_amount_kopecks * applied_discount_percent) // 100
-    amount_kopecks = max(0, original_amount_kopecks - discount_kopecks)
+    duration_discount_kopecks = (original_amount_kopecks * duration_discount_percent) // 100
+    amount_after_duration_discount = max(0, original_amount_kopecks - duration_discount_kopecks)
+    promo_discount_kopecks = (amount_after_duration_discount * applied_discount_percent) // 100
+    amount_kopecks = max(0, amount_after_duration_discount - promo_discount_kopecks)
 
     # 100% promo flow: activate subscription without external payment gateway.
     if amount_kopecks == 0:
@@ -305,7 +315,10 @@ async def create_yookassa_payment(
                         detail="User not found",
                     )
 
-                new_end_date = _calculate_new_end_date(user.subscription_end_date)
+                new_end_date = _calculate_new_end_date(
+                    user.subscription_end_date,
+                    duration_months=duration_months,
+                )
                 await user_dao.update(
                     user,
                     {
@@ -321,6 +334,7 @@ async def create_yookassa_payment(
                         "total_amount": 0,
                         "original_total_amount": original_amount_kopecks,
                         "discount_percent": applied_discount_percent,
+                        "duration_months": duration_months,
                         "promo_code": applied_promo_code,
                         "yookassa_payment_id": f"promo-{uuid4()}",
                         "status": "succeeded",
@@ -337,6 +351,8 @@ async def create_yookassa_payment(
                 "plan_name": payload.plan_name,
                 "promo_code": applied_promo_code,
                 "discount_percent": applied_discount_percent,
+                "duration_discount_percent": duration_discount_percent,
+                "duration_months": duration_months,
                 "amount_kopecks": 0,
                 "subscription_activated": True,
             },
@@ -362,10 +378,15 @@ async def create_yookassa_payment(
                 "amount": {"value": amount_rub, "currency": "RUB"},
                 "capture": True,
                 "confirmation": {"type": "redirect", "return_url": return_url},
-                "description": f"Подписка {selected_plan.get('title', payload.plan_name)} на 30 дней",
+                "description": (
+                    f"Подписка {selected_plan.get('title', payload.plan_name)} "
+                    f"на {duration_months} мес."
+                ),
                 "metadata": {
                     "user_id": str(current_user.id),
                     "plan_name": payload.plan_name,
+                    "duration_months": str(duration_months),
+                    "duration_discount_percent": str(duration_discount_percent),
                     "promo_code": applied_promo_code or "",
                     "discount_percent": str(applied_discount_percent),
                 },
@@ -399,6 +420,7 @@ async def create_yookassa_payment(
                     "total_amount": amount_kopecks,
                     "original_total_amount": original_amount_kopecks,
                     "discount_percent": applied_discount_percent,
+                    "duration_months": duration_months,
                     "promo_code": applied_promo_code,
                     "yookassa_payment_id": payment_id,
                     "status": payment_status,
@@ -413,6 +435,8 @@ async def create_yookassa_payment(
             "plan_name": payload.plan_name,
             "promo_code": applied_promo_code,
             "discount_percent": applied_discount_percent,
+            "duration_discount_percent": duration_discount_percent,
+            "duration_months": duration_months,
             "amount_kopecks": amount_kopecks,
         },
         status_code=status.HTTP_201_CREATED,

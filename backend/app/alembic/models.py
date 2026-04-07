@@ -311,6 +311,7 @@ class WebsitePaymentTransaction(Base):
     total_amount: Mapped[int] = mapped_column(nullable=False)
     original_total_amount: Mapped[int] = mapped_column(nullable=False)
     discount_percent: Mapped[int] = mapped_column(nullable=False, default=0, server_default="0")
+    duration_months: Mapped[int] = mapped_column(nullable=False, default=1, server_default="1")
     promo_code: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     yookassa_payment_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")

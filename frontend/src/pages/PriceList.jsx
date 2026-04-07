@@ -17,6 +17,11 @@ const MARKETING_DISCOUNTS_BY_PLAN = {
   Advanced: 40,
   Pro: 60,
 };
+const DURATION_OPTIONS = [
+  { months: 1, label: '1 месяц', discountPercent: 0 },
+  { months: 3, label: '3 месяца', discountPercent: 15 },
+  { months: 6, label: '6 месяцев', discountPercent: 25 },
+];
 const PLAN_DISPLAY_NAMES = {
   Free: 'Базовый',
   Advanced: 'Продвинутый',
@@ -25,6 +30,13 @@ const PLAN_DISPLAY_NAMES = {
 
 const roundUpToNextHundred = (value) => Math.ceil(value / 100) * 100;
 const formatRubPrice = (value) => Number(value || 0).toLocaleString('ru-RU');
+const getDurationOption = (months) => DURATION_OPTIONS.find((option) => option.months === months) || DURATION_OPTIONS[0];
+const calculateTotalForDuration = (monthlyPrice, months) => {
+  const price = Number(monthlyPrice || 0);
+  const selectedOption = getDurationOption(months);
+  const baseTotal = price * selectedOption.months;
+  return Math.round(baseTotal * (1 - selectedOption.discountPercent / 100));
+};
 
 const PriceList = () => {
   const navigate = useNavigate();
@@ -34,12 +46,15 @@ const PriceList = () => {
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
   const [isSubmittingRequest, setIsSubmittingRequest] = useState(false);
+  const [isPurchaseModalOpen, setIsPurchaseModalOpen] = useState(false);
+  const [selectedPaidPlan, setSelectedPaidPlan] = useState(null);
+  const [selectedDurationMonths, setSelectedDurationMonths] = useState(1);
+  const [purchasePromoCode, setPurchasePromoCode] = useState('');
   const [requestForm, setRequestForm] = useState({
     phoneNumber: '',
     email: '',
     employeeRequest: '',
   });
-  const [promoCode, setPromoCode] = useState('');
 
   const resetRequestForm = () => {
     setRequestForm({
@@ -53,6 +68,14 @@ const PriceList = () => {
     if (isSubmittingRequest) return;
     setIsRequestModalOpen(false);
     resetRequestForm();
+  };
+
+  const handleClosePurchaseModal = () => {
+    if (isProcessingPayment) return;
+    setIsPurchaseModalOpen(false);
+    setSelectedPaidPlan(null);
+    setSelectedDurationMonths(1);
+    setPurchasePromoCode('');
   };
 
   const handleSelectPlan = async (plan) => {
@@ -78,19 +101,42 @@ const PriceList = () => {
       return;
     }
 
+    setSelectedPaidPlan(selectedPlan);
+    setSelectedDurationMonths(1);
+    setPurchasePromoCode('');
+    setIsPurchaseModalOpen(true);
+  };
+
+  const handleSubmitPurchase = async () => {
+    if (!selectedPaidPlan) {
+      showError('Не удалось найти выбранный тариф.');
+      return;
+    }
+
+    if (!isAuthenticated) {
+      navigate(NAVIGATION_ROUTES.AUTH);
+      return;
+    }
+
+    if (!selectedPaidPlan.is_paid) {
+      navigate(NAVIGATION_ROUTES.CREATE_AGENT);
+      return;
+    }
+
     if (isProcessingPayment) return;
     setIsProcessingPayment(true);
     try {
       const returnUrl = `${window.location.origin}${NAVIGATION_ROUTES.PRICING}`;
       const payment = await pricingService.createYooKassaPayment({
-        plan_name: selectedPlan.code,
+        plan_name: selectedPaidPlan.code,
         return_url: returnUrl,
-        promo_code: promoCode.trim() || undefined,
+        promo_code: purchasePromoCode.trim() || undefined,
+        duration_months: selectedDurationMonths,
       });
 
       if (payment?.status === 'succeeded' && !payment?.confirmation_url) {
         showSuccess('Подписка активирована по промокоду.');
-        setPromoCode('');
+        handleClosePurchaseModal();
         setIsProcessingPayment(false);
         return;
       }
@@ -249,6 +295,14 @@ const PriceList = () => {
     ];
   }, [plans]);
 
+  const selectedDurationOption = getDurationOption(selectedDurationMonths);
+  const selectedBaseTotal = selectedPaidPlan
+    ? Number(selectedPaidPlan.price_rub_month || 0) * selectedDurationMonths
+    : 0;
+  const selectedDiscountedTotal = selectedPaidPlan
+    ? calculateTotalForDuration(selectedPaidPlan.price_rub_month, selectedDurationMonths)
+    : 0;
+
   return (
     <MainLayout>
       <div className="pricing-page">
@@ -314,24 +368,65 @@ const PriceList = () => {
             </div>
           ))}
         </div>
-
-        <div className="pricing-promo-after">
-          <label className="pricing-promo-after-label" htmlFor="pricing-promo-input">
-            Есть промокод?
-          </label>
-          <input
-            id="pricing-promo-input"
-            type="text"
-            placeholder="Введите код"
-            value={promoCode}
-            onChange={(event) => setPromoCode(event.target.value.toUpperCase())}
-            maxLength={64}
-            disabled={isProcessingPayment || isSubmittingRequest}
-            autoComplete="off"
-            spellCheck="false"
-          />
-        </div>
       </div>
+      {isPurchaseModalOpen && selectedPaidPlan && (
+        <div className="pricing-modal-overlay" onClick={handleClosePurchaseModal}>
+          <div className="pricing-modal" onClick={(event) => event.stopPropagation()}>
+            <h3>Оформление тарифа «{PLAN_DISPLAY_NAMES[selectedPaidPlan.code] || selectedPaidPlan.code}»</h3>
+            <div className="pricing-duration-list">
+              {DURATION_OPTIONS.map((option) => (
+                <button
+                  type="button"
+                  key={option.months}
+                  className={`pricing-duration-option ${selectedDurationMonths === option.months ? 'pricing-duration-option--active' : ''}`}
+                  onClick={() => setSelectedDurationMonths(option.months)}
+                  disabled={isProcessingPayment}
+                >
+                  <span>{option.label}</span>
+                  {option.discountPercent > 0 ? <span className="pricing-duration-discount">-{option.discountPercent}%</span> : <span>Без скидки</span>}
+                </button>
+              ))}
+            </div>
+
+            <div className="pricing-purchase-summary">
+              <div>
+                <span>Итого</span>
+                <strong>{formatRubPrice(selectedDiscountedTotal)} ₽</strong>
+              </div>
+              {selectedDurationOption.discountPercent > 0 ? (
+                <div className="pricing-purchase-old">
+                  <span>Базовая цена</span>
+                  <span>{formatRubPrice(selectedBaseTotal)} ₽</span>
+                </div>
+              ) : null}
+            </div>
+
+            <label className="pricing-modal-promo-label" htmlFor="pricing-modal-promo-input">
+              Промокод
+            </label>
+            <input
+              id="pricing-modal-promo-input"
+              type="text"
+              placeholder="Введите код"
+              value={purchasePromoCode}
+              onChange={(event) => setPurchasePromoCode(event.target.value.toUpperCase())}
+              maxLength={64}
+              disabled={isProcessingPayment}
+              autoComplete="off"
+              spellCheck="false"
+            />
+
+            <div className="pricing-modal-actions">
+              <button type="button" className="btn btn-black" onClick={handleSubmitPurchase} disabled={isProcessingPayment}>
+                {isProcessingPayment ? 'Переход к оплате...' : 'Перейти к оплате'}
+              </button>
+              <button type="button" className="btn btn-outline" onClick={handleClosePurchaseModal} disabled={isProcessingPayment}>
+                Отмена
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {isRequestModalOpen && (
         <div className="pricing-modal-overlay" onClick={handleCloseRequestModal}>
           <div className="pricing-modal" onClick={(event) => event.stopPropagation()}>
