@@ -3,7 +3,7 @@
  * Landing page with features overview
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 import MainLayout from '../components/Layout';
@@ -134,6 +134,46 @@ const Main = () => {
   const { isAuthenticated } = useAuth();
   const [activeTestimonialIndex, setActiveTestimonialIndex] = useState(0);
   const [openFaqId, setOpenFaqId] = useState(null);
+  const mainContentRef = useRef(null);
+
+  useEffect(() => {
+    const root = mainContentRef.current;
+    if (!root) return undefined;
+
+    const revealItems = root.querySelectorAll('.reveal-on-scroll');
+    if (!revealItems.length) return undefined;
+
+    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (prefersReducedMotion) {
+      revealItems.forEach((item) => item.classList.add('is-visible'));
+      return undefined;
+    }
+
+    if (!('IntersectionObserver' in window)) {
+      revealItems.forEach((item) => item.classList.add('is-visible'));
+      return undefined;
+    }
+
+    root.classList.add('reveal-ready');
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+          entry.target.classList.add('is-visible');
+          observer.unobserve(entry.target);
+        });
+      },
+      {
+        threshold: 0.16,
+        rootMargin: '0px 0px -10% 0px',
+      }
+    );
+
+    revealItems.forEach((item) => observer.observe(item));
+
+    return () => observer.disconnect();
+  }, []);
 
   const handleCreateAgent = () => {
     if (isAuthenticated) {
@@ -153,9 +193,9 @@ const Main = () => {
 
   return (
     <MainLayout>
-      <div className="main-content">
+      <div className="main-content" ref={mainContentRef}>
         <section className="hero" aria-labelledby="hero-heading">
-          <div className="hero-content">
+          <div className="hero-content reveal-on-scroll reveal-from-left">
             <h1 id="hero-heading">Ваш бизнес.</h1>
             <div className="highlight">Ваши знания.</div>
             <h2>Ваш сотрудник.</h2>
@@ -175,21 +215,24 @@ const Main = () => {
               </button>
             </div>
           </div>
-          <div className="hero-media">
+          <div className="hero-media reveal-on-scroll reveal-from-right">
             <AgentChatShowcase tone="light" variant="main" />
           </div>
         </section>
 
-        <section className="value-highlights" aria-labelledby="value-highlights-heading">
-          <h2 id="value-highlights-heading" className="section-title">
+        <section className="value-highlights reveal-on-scroll reveal-from-bottom" aria-labelledby="value-highlights-heading">
+          <h2 id="value-highlights-heading" className="section-title reveal-on-scroll reveal-from-bottom">
             Что даёт платформа на практике
           </h2>
-          <p className="section-lead">
+          <p className="section-lead reveal-on-scroll reveal-from-bottom reveal-delay-1">
             Не обещаем «магии» — даём понятный инструмент: вы настраиваете роль, знания и канал общения.
           </p>
           <div className="value-highlights-grid">
-            {VALUE_HIGHLIGHTS.map((block) => (
-              <article key={block.id} className="value-highlight-card">
+            {VALUE_HIGHLIGHTS.map((block, index) => (
+              <article
+                key={block.id}
+                className={`value-highlight-card reveal-on-scroll ${index % 2 === 0 ? 'reveal-from-left' : 'reveal-from-right'}`}
+              >
                 <h3>{block.title}</h3>
                 <p>{block.text}</p>
               </article>
@@ -197,14 +240,14 @@ const Main = () => {
           </div>
         </section>
 
-        <section className="testimonials" aria-labelledby="testimonials-heading">
-          <h2 id="testimonials-heading" className="section-title">
+        <section className="testimonials reveal-on-scroll reveal-from-bottom" aria-labelledby="testimonials-heading">
+          <h2 id="testimonials-heading" className="section-title reveal-on-scroll reveal-from-bottom">
             Как это работает у владельцев бизнеса
           </h2>
-          <p className="section-lead section-lead-tight">
+          <p className="section-lead section-lead-tight reveal-on-scroll reveal-from-bottom reveal-delay-1">
             Ниже — примеры команд, которые уже внедрили агентов в поддержку, продажи и обучение клиентов.
           </p>
-          <div className="testimonial-carousel" aria-live="polite">
+          <div className="testimonial-carousel reveal-on-scroll reveal-from-bottom reveal-delay-1" aria-live="polite">
             <article
               className="testimonial-card"
               aria-label={`Отзыв: ${activeTestimonial.name}, ${activeTestimonial.company}`}
@@ -251,13 +294,13 @@ const Main = () => {
           </div>
         </section>
 
-        <section className="impact-section" aria-labelledby="impact-heading">
-          <h2 id="impact-heading" className="section-title">
+        <section className="impact-section reveal-on-scroll reveal-from-bottom" aria-labelledby="impact-heading">
+          <h2 id="impact-heading" className="section-title reveal-on-scroll reveal-from-bottom">
             Что обычно меняется после внедрения
           </h2>
           <div className="impact-grid">
             {IMPACT_METRICS.map((metric) => (
-              <article key={metric.id} className="impact-card">
+              <article key={metric.id} className="impact-card reveal-on-scroll reveal-from-bottom">
                 <p className="impact-value">{metric.value}</p>
                 <p className="impact-label">{metric.label}</p>
               </article>
@@ -265,29 +308,31 @@ const Main = () => {
           </div>
         </section>
 
-        <section className="launch-roadmap" aria-labelledby="launch-roadmap-heading">
-          <h2 id="launch-roadmap-heading" className="section-title">
+        <section className="launch-roadmap reveal-on-scroll reveal-from-bottom" aria-labelledby="launch-roadmap-heading">
+          <h2 id="launch-roadmap-heading" className="section-title reveal-on-scroll reveal-from-bottom">
             Сценарий запуска за 4 шага
           </h2>
           <ol className="roadmap-list">
             {LAUNCH_STEPS.map((step) => (
-              <li key={step}>{step}</li>
+              <li key={step} className="reveal-on-scroll reveal-from-left">
+                {step}
+              </li>
             ))}
           </ol>
         </section>
 
-        <section className="faq-section" aria-labelledby="faq-heading">
-          <h2 id="faq-heading" className="section-title">
+        <section className="faq-section reveal-on-scroll reveal-from-bottom" aria-labelledby="faq-heading">
+          <h2 id="faq-heading" className="section-title reveal-on-scroll reveal-from-bottom">
             Частые вопросы
           </h2>
-          <p className="section-lead section-lead-tight">
+          <p className="section-lead section-lead-tight reveal-on-scroll reveal-from-bottom reveal-delay-1">
             Коротко о том, как устроен старт и что вы контролируете при работе с агентом.
           </p>
           <div className="faq-list">
             {FAQ_ITEMS.map((item) => {
               const isOpen = openFaqId === item.id;
               return (
-                <div key={item.id} className={`faq-item${isOpen ? ' is-open' : ''}`}>
+                <div key={item.id} className={`faq-item reveal-on-scroll reveal-from-right${isOpen ? ' is-open' : ''}`}>
                   <button
                     type="button"
                     className="faq-summary"
@@ -315,8 +360,8 @@ const Main = () => {
           </div>
         </section>
 
-        <section className="cta-band" aria-labelledby="cta-heading">
-          <div className="cta-band-inner">
+        <section className="cta-band reveal-on-scroll reveal-from-bottom" aria-labelledby="cta-heading">
+          <div className="cta-band-inner reveal-on-scroll reveal-from-bottom">
             <h2 id="cta-heading">Начните с одного агента</h2>
             <p>
               Соберите прототип за несколько минут: роль и базу знаний всегда можно уточнить позже. Если удобнее сначала
