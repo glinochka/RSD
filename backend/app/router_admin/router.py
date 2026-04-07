@@ -111,9 +111,13 @@ async def admin_login(payload: AdminLoginRequest):
     password = payload.password
 
     is_login_valid = compare_digest(login, settings.ADMIN_WEB_LOGIN.strip())
+    if not is_login_valid:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid admin credentials",
+        )
     is_password_valid = verify_password(password, settings.ADMIN_WEB_PASSWORD_HASH)
-
-    if not is_login_valid or not is_password_valid:
+    if not is_password_valid:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid admin credentials",
