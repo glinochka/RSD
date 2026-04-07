@@ -184,7 +184,8 @@ const Main = () => {
     if (!revealItems.length) return undefined;
 
     const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (prefersReducedMotion) {
+    const isMobileViewport = window.matchMedia('(max-width: 768px)').matches;
+    if (prefersReducedMotion || isMobileViewport) {
       revealItems.forEach((item) => item.classList.add('is-visible'));
       return undefined;
     }
