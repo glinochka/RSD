@@ -31,11 +31,18 @@ const PLAN_DISPLAY_NAMES = {
 const roundUpToNextHundred = (value) => Math.ceil(value / 100) * 100;
 const formatRubPrice = (value) => Number(value || 0).toLocaleString('ru-RU');
 const getDurationOption = (months) => DURATION_OPTIONS.find((option) => option.months === months) || DURATION_OPTIONS[0];
+const roundToPriceEndingNinety = (value) => {
+  const normalized = Number(value || 0);
+  if (normalized <= 0) return 0;
+  return Math.max(90, Math.round((normalized - 90) / 100) * 100 + 90);
+};
+
 const calculateTotalForDuration = (monthlyPrice, months) => {
   const price = Number(monthlyPrice || 0);
   const selectedOption = getDurationOption(months);
   const baseTotal = price * selectedOption.months;
-  return Math.round(baseTotal * (1 - selectedOption.discountPercent / 100));
+  const discountedTotal = Math.round(baseTotal * (1 - selectedOption.discountPercent / 100));
+  return roundToPriceEndingNinety(discountedTotal);
 };
 
 const PriceList = () => {
@@ -295,14 +302,6 @@ const PriceList = () => {
     ];
   }, [plans]);
 
-  const selectedDurationOption = getDurationOption(selectedDurationMonths);
-  const selectedBaseTotal = selectedPaidPlan
-    ? Number(selectedPaidPlan.price_rub_month || 0) * selectedDurationMonths
-    : 0;
-  const selectedDiscountedTotal = selectedPaidPlan
-    ? calculateTotalForDuration(selectedPaidPlan.price_rub_month, selectedDurationMonths)
-    : 0;
-
   return (
     <MainLayout>
       <div className="pricing-page">
@@ -374,31 +373,28 @@ const PriceList = () => {
           <div className="pricing-modal" onClick={(event) => event.stopPropagation()}>
             <h3>Оформление тарифа «{PLAN_DISPLAY_NAMES[selectedPaidPlan.code] || selectedPaidPlan.code}»</h3>
             <div className="pricing-duration-list">
-              {DURATION_OPTIONS.map((option) => (
-                <button
-                  type="button"
-                  key={option.months}
-                  className={`pricing-duration-option ${selectedDurationMonths === option.months ? 'pricing-duration-option--active' : ''}`}
-                  onClick={() => setSelectedDurationMonths(option.months)}
-                  disabled={isProcessingPayment}
-                >
-                  <span>{option.label}</span>
-                  {option.discountPercent > 0 ? <span className="pricing-duration-discount">-{option.discountPercent}%</span> : <span>Без скидки</span>}
-                </button>
-              ))}
-            </div>
-
-            <div className="pricing-purchase-summary">
-              <div>
-                <span>Итого</span>
-                <strong>{formatRubPrice(selectedDiscountedTotal)} ₽</strong>
-              </div>
-              {selectedDurationOption.discountPercent > 0 ? (
-                <div className="pricing-purchase-old">
-                  <span>Базовая цена</span>
-                  <span>{formatRubPrice(selectedBaseTotal)} ₽</span>
-                </div>
-              ) : null}
+              {DURATION_OPTIONS.map((option) => {
+                const optionTotal = calculateTotalForDuration(selectedPaidPlan.price_rub_month, option.months);
+                const optionMonthly = Math.round(optionTotal / option.months);
+                return (
+                  <button
+                    type="button"
+                    key={option.months}
+                    className={`pricing-duration-option ${selectedDurationMonths === option.months ? 'pricing-duration-option--active' : ''}`}
+                    onClick={() => setSelectedDurationMonths(option.months)}
+                    disabled={isProcessingPayment}
+                  >
+                    <span
+                      className={`pricing-duration-checkpoint ${selectedDurationMonths === option.months ? 'pricing-duration-checkpoint--active' : ''}`}
+                      aria-hidden="true"
+                    />
+                    <span className="pricing-duration-label">{option.label}</span>
+                    <span className="pricing-duration-monthly">{formatRubPrice(optionMonthly)} ₽/мес</span>
+                    <span className="pricing-duration-total">{formatRubPrice(optionTotal)} ₽</span>
+                    <span className="pricing-duration-discount">{option.discountPercent > 0 ? `-${option.discountPercent}%` : '0%'}</span>
+                  </button>
+                );
+              })}
             </div>
 
             <label className="pricing-modal-promo-label" htmlFor="pricing-modal-promo-input">

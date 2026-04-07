@@ -201,12 +201,14 @@
   border: 1px solid var(--color-border);
   border-radius: var(--radius-base);
   background: var(--color-bg-light);
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: 18px minmax(90px, 1fr) minmax(90px, auto) minmax(90px, auto) minmax(56px, auto);
+  column-gap: var(--spacing-sm);
   align-items: center;
   padding: var(--spacing-sm) var(--spacing-base);
   color: var(--color-text);
   cursor: pointer;
+  text-align: left;
 }
 
 .pricing-duration-option--active {
@@ -214,34 +216,41 @@
   background: var(--color-bg);
 }
 
+.pricing-duration-checkpoint {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--color-border);
+  background: transparent;
+  transition: all var(--transition-fast);
+}
+
+.pricing-duration-checkpoint--active {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+}
+
+.pricing-duration-label {
+  font-weight: var(--font-weight-medium);
+}
+
+.pricing-duration-monthly {
+  color: var(--color-text-light);
+  font-size: var(--font-size-sm);
+  text-align: right;
+}
+
+.pricing-duration-total {
+  color: var(--color-primary);
+  font-weight: var(--font-weight-semibold);
+  text-align: right;
+}
+
 .pricing-duration-discount {
   color: var(--color-success);
   font-weight: var(--font-weight-semibold);
-}
-
-.pricing-purchase-summary {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-base);
-  padding: var(--spacing-base);
-  margin-bottom: var(--spacing-base);
-  display: grid;
-  gap: var(--spacing-xs);
-}
-
-.pricing-purchase-summary > div {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: var(--spacing-sm);
-}
-
-.pricing-purchase-summary strong {
-  color: var(--color-primary);
-}
-
-.pricing-purchase-old {
-  color: var(--color-text-light);
-  font-size: var(--font-size-sm);
+  text-align: right;
 }
 
 .pricing-modal-promo-label {
@@ -317,6 +326,12 @@
     padding: var(--spacing-lg);
   }
 
+  .pricing-duration-option {
+    grid-template-columns: 18px minmax(70px, 1fr) minmax(78px, auto) minmax(86px, auto) minmax(48px, auto);
+    font-size: var(--font-size-sm);
+    padding: var(--spacing-xs) var(--spacing-sm);
+  }
+
   .pricing-modal-actions {
     flex-direction: column-reverse;
   }
@@ -338,6 +353,18 @@
   .price-card {
     padding: var(--spacing-lg);
     min-height: 340px;
+  }
+
+  .pricing-duration-option {
+    grid-template-columns: 18px 1fr;
+    row-gap: 2px;
+  }
+
+  .pricing-duration-monthly,
+  .pricing-duration-total,
+  .pricing-duration-discount {
+    grid-column: 2;
+    text-align: left;
   }
 
   .price-title {
