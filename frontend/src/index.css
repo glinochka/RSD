@@ -20,6 +20,8 @@
 
   /* Typography */
   --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Helvetica Neue', sans-serif;
+  /* Логотип «RSD» (Navbar, Auth): Audiowide — одно начертание, без синтетического bold */
+  --font-brand-logo: 'Audiowide', sans-serif;
   --font-size-xs: 0.75rem;
   --font-size-sm: 0.875rem;
   --font-size-base: 1rem;
@@ -159,9 +161,11 @@ select {
 
 input[type='text'],
 input[type='email'],
+input[type='tel'],
 input[type='password'],
 input[type='number'],
 input[type='search'],
+input[type='url'],
 textarea,
 select {
   width: 100%;
@@ -175,9 +179,11 @@ select {
 
 input[type='text']:focus,
 input[type='email']:focus,
+input[type='tel']:focus,
 input[type='password']:focus,
 input[type='number']:focus,
 input[type='search']:focus,
+input[type='url']:focus,
 textarea:focus,
 select:focus {
   outline: none;
@@ -187,9 +193,11 @@ select:focus {
 
 input[type='text']:disabled,
 input[type='email']:disabled,
+input[type='tel']:disabled,
 input[type='password']:disabled,
 input[type='number']:disabled,
 input[type='search']:disabled,
+input[type='url']:disabled,
 textarea:disabled,
 select:disabled {
   background-color: var(--color-bg-lighter);
@@ -199,7 +207,9 @@ select:disabled {
 
 input[type='text'].error,
 input[type='email'].error,
+input[type='tel'].error,
 input[type='password'].error,
+input[type='url'].error,
 textarea.error {
   border-color: var(--color-danger);
 }
@@ -283,6 +293,22 @@ label {
   background-color: #059669;
 }
 
+/* ===== FOCUS (без обводки при клике мышью; при навигации с Tab — видимый фокус) ===== */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+button:focus-visible,
+a:focus-visible,
+[type='button']:focus-visible,
+[type='submit']:focus-visible,
+[type='reset']:focus-visible,
+[role='button']:focus-visible,
+[role='tab']:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
 /* ===== CONTAINERS ===== */
 .container {
   max-width: 1200px;
@@ -312,10 +338,6 @@ label {
   .container {
     padding: 0 var(--spacing-base);
   }
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
 }
 
 @media (prefers-color-scheme: light) {

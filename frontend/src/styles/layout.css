@@ -7,9 +7,11 @@
   background-color: #f8f9fa;
 }
 
+/* Единый зазор под navbar; страницы не должны дублировать padding-top на корневой обёртке */
 .layout-main {
+  --layout-gap-after-nav: 1.5rem;
   flex: 1;
-  padding: 2rem 1rem;
+  padding: var(--layout-gap-after-nav) 1rem 2rem;
   max-width: 1200px;
   margin: 0 auto;
   width: 100%;
@@ -17,6 +19,14 @@
 
 @media (max-width: 768px) {
   .layout-main {
-    padding: 1rem;
+    --layout-gap-after-nav: 0.75rem;
+    padding: var(--layout-gap-after-nav) 1rem 1rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .layout-main {
+    --layout-gap-after-nav: 0.5rem;
+    padding: var(--layout-gap-after-nav) 0.75rem 0.75rem;
   }
 }

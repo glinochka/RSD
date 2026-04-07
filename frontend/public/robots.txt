@@ -1,0 +1,9 @@
+# Публичные страницы индексируются; кабинет и конструктор агентов — нет.
+# Краткое описание для LLM: https://rsd-ai.ru/llms.txt
+
+User-agent: *
+Disallow: /agents
+Disallow: /create-agent
+Disallow: /management-portal
+
+Sitemap: https://rsd-ai.ru/sitemap.xml

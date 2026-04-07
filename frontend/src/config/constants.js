@@ -26,6 +26,7 @@ export const API_ROUTES = {
   // Users
   USERS_ME: '/api/users/me',
   USERS_PROFILE: '/api/users/profile',
+  USERS_TELEGRAM_LINK_START: '/api/users/telegram-link/start',
 
   // Agents
   AGENTS_LIST: '/api/agents/allBy_tgID',
@@ -36,7 +37,17 @@ export const API_ROUTES = {
   AGENTS_TOGGLE: '/api/agents/toggle_status',
   AGENTS_AI_IMPROVE_PROMPT: '/api/agents/ai/improve_prompt',
   AGENTS_AI_GENERATE_WELCOME: '/api/agents/ai/generate_welcome',
+  AGENTS_EXTERNAL_CHAT: '/api/agents/external/chat',
+  AGENTS_REGENERATE_EXTERNAL_KEY: '/api/agents/external/regenerate_key',
+  AGENTS_ANALYTICS_SUMMARY: '/api/agents/analytics/summary',
+  AGENTS_ANALYTICS_CHATS: '/api/agents/analytics/chats',
+  AGENTS_ANALYTICS_TIMESERIES: '/api/agents/analytics/timeseries',
+  AGENTS_ANALYTICS_FROZEN: '/api/agents/analytics/frozen',
+  AGENTS_TELEGRAM_SEND_TO_USER: '/api/agents/telegram/send_to_user',
+  AGENTS_TELEGRAM_BROADCAST_RECIPIENTS: '/api/agents/telegram/broadcast_recipients',
+  AGENTS_TELEGRAM_BROADCAST: '/api/agents/telegram/broadcast',
   DOCUMENTS_CREATE: '/api/documents',
+  DOCUMENTS_CREATE_LINK: '/api/documents/link',
   DOCUMENTS_LIST_BY_BOT: '/api/documents/allBy_botID',
   DOCUMENTS_DELETE: (docId) => `/api/documents/${docId}`,
 
@@ -48,10 +59,14 @@ export const API_ROUTES = {
   ADMIN_STATS: '/api/admin/stats',
   ADMIN_USERS: '/api/admin/users',
   ADMIN_AGENTS: '/api/admin/agents',
+  ADMIN_TURNKEY_REQUESTS: '/api/admin/turnkey-requests',
   ADMIN_PLANS: '/api/admin/plans',
+  ADMIN_PROMO_CODES: '/api/admin/promo-codes',
   ADMIN_BAN_USER: (userId) => `/api/admin/users/${userId}/ban`,
   ADMIN_UNBAN_USER: (userId) => `/api/admin/users/${userId}/unban`,
   ADMIN_GIFT_SUBSCRIPTION: (userId) => `/api/admin/users/${userId}/gift-subscription`,
+  ADMIN_DELETE_PROMO_CODE: (promoCodeId) => `/api/admin/promo-codes/${promoCodeId}`,
+  TURNKEY_REQUESTS: '/api/payments/turnkey-requests',
 };
 
 export const AGENT_ROLES = {
@@ -73,10 +88,15 @@ export const NAVIGATION_ROUTES = {
   HOME: '/',
   AUTH: '/auth',
   AGENTS: '/agents',
+  AGENT_ANALYTICS: (id) => `/agents/${id}/analytics`,
   CREATE_AGENT: '/create-agent',
+  DOCUMENTATION: '/documentation',
   EDIT_AGENT: (id) => `/agents/${id}/edit`,
   PRICING: '/pricing',
   MANAGEMENT_PORTAL: '/management-portal',
+  PUBLIC_OFFER: '/public-offer',
+  USER_AGREEMENT: '/user-agreement',
+  PRIVACY_POLICY: '/privacy',
 };
 
 // User-facing messages; backend detail (FastAPI) is preferred when present (see errorUtils).

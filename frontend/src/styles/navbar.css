@@ -2,7 +2,7 @@
 
 .header {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--spacing-xl);
   padding: var(--spacing-lg) var(--spacing-xl);
@@ -15,17 +15,19 @@
 }
 
 .logo {
-  font-size: var(--font-size-2xl);
-  font-weight: var(--font-weight-bold);
+  font-family: var(--font-brand-logo);
+  font-size: 1.625rem;
+  font-weight: 400;
+  font-synthesis: none;
+  line-height: 1;
   text-decoration: none;
   color: var(--color-text);
-  letter-spacing: -0.5px;
-  transition: color var(--transition-base);
+  letter-spacing: 0.02em;
   white-space: nowrap;
 }
 
 .logo:hover {
-  color: var(--color-primary);
+  color: var(--color-text);
 }
 
 /* Navigation */
@@ -37,22 +39,46 @@
 }
 
 .nav a {
+  position: relative;
   color: var(--color-text);
   font-weight: var(--font-weight-medium);
   font-size: var(--font-size-base);
-  padding-bottom: var(--spacing-xs);
-  border-bottom: 2px solid transparent;
-  transition: all var(--transition-base);
+  padding-bottom: calc(var(--spacing-xs) + 2px);
+  border-bottom: none;
+  transition: color var(--transition-base);
+}
+
+/* Линия снизу: скруглённые края (border-bottom так не умеет) */
+.nav a::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  border-radius: 999px;
+  background-color: transparent;
+  transition: background-color var(--transition-base);
 }
 
 .nav a:hover {
-  color: var(--color-primary);
-  border-bottom-color: var(--color-primary);
+  color: var(--color-text);
+}
+
+.nav a:hover::after {
+  background-color: var(--color-text);
 }
 
 .nav a.active {
   color: var(--color-primary);
-  border-bottom-color: var(--color-primary);
+}
+
+.nav a.active::after {
+  background-color: var(--color-primary);
+}
+
+.nav a.active:hover::after {
+  background-color: var(--color-primary);
 }
 
 /* Navbar Actions */
@@ -60,7 +86,9 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  flex-wrap: nowrap;
   gap: var(--spacing-lg);
+  min-width: 0;
 }
 
 /* Profile trigger (person icon, top-right) */
@@ -68,8 +96,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
+  width: 36px;
+  height: 36px;
   padding: 0;
   border-radius: var(--radius-full);
   border: 1px solid var(--color-border);
@@ -98,11 +126,41 @@
 
 .profile-menu-trigger-icon {
   flex-shrink: 0;
+  width: 18px;
+  height: 18px;
 }
 
 .btn-auth {
-  padding: var(--spacing-sm) var(--spacing-lg);
-  font-size: var(--font-size-base);
+  padding: 0.3125rem 0.6875rem;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.25;
+  min-height: 36px;
+  border-radius: var(--radius-full);
+  box-sizing: border-box;
+}
+
+/* Как .auth-form .btn-continue на странице Auth: белый фон, тёмный текст, чёрная обводка при наведении.
+   Grayscale AA: без этого на Windows светлый текст на тёмном кажется визуально «шире», чем тёмный на белом. */
+.navbar-actions .btn.btn-black.btn-auth {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition:
+    background-color 0.3s,
+    color 0.3s,
+    border-color 0.3s;
+}
+
+.navbar-actions .btn.btn-black.btn-auth:hover {
+  transform: none;
+  box-shadow: none;
+  background-color: #fff;
+  color: #2f2f2f;
+  border: 1px solid #2f2f2f;
+}
+
+.navbar-actions .btn.btn-black.btn-auth:active {
+  transform: none;
 }
 
 /* Profile drawer backdrop + panel */
@@ -238,6 +296,81 @@
   line-height: 1.65;
 }
 
+.profile-telegram-link-box {
+  margin-top: var(--spacing-xl);
+  padding-top: var(--spacing-lg);
+  border-top: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.profile-telegram-link-title {
+  margin: 0;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
+.profile-telegram-link-status {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-light);
+  line-height: 1.5;
+}
+
+.profile-telegram-link-status.success {
+  color: var(--color-success);
+}
+
+.profile-telegram-link-code-wrap {
+  margin-top: var(--spacing-xs);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.profile-telegram-link-code {
+  margin: 0;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.08em;
+}
+
+.profile-telegram-link-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.profile-telegram-link-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.profile-telegram-link-input {
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-base);
+  padding: 0.625rem 0.75rem;
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+
+.profile-telegram-link-input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.profile-telegram-link-expire {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-lighter);
+}
+
 .profile-drawer-footer {
   flex-shrink: 0;
   padding: var(--spacing-lg) var(--spacing-xl);
@@ -257,11 +390,18 @@
 .menu-toggle {
   display: none;
   flex-direction: column;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
   gap: var(--spacing-xs);
+  min-width: 36px;
+  min-height: 36px;
+  margin: 0;
   background: none;
   border: none;
   cursor: pointer;
   padding: 0;
+  box-sizing: border-box;
 }
 
 .menu-toggle span {
@@ -287,8 +427,9 @@
 /* Responsive */
 @media (max-width: 768px) {
   .header {
-    padding: var(--spacing-base) var(--spacing-lg);
-    grid-template-columns: auto 1fr auto;
+    padding: var(--spacing-sm) var(--spacing-base);
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: var(--spacing-sm);
   }
 
   .nav {
@@ -314,12 +455,16 @@
     border-bottom: none;
   }
 
+  .nav a::after {
+    display: none;
+  }
+
   .menu-toggle {
     display: flex;
   }
 
   .navbar-actions {
-    gap: var(--spacing-base);
+    gap: var(--spacing-sm);
   }
 
   .profile-drawer {
@@ -329,16 +474,17 @@
 
 @media (max-width: 480px) {
   .header {
-    padding: var(--spacing-base);
-    grid-template-columns: auto 1fr;
+    padding: var(--spacing-sm);
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: var(--spacing-xs);
   }
 
   .logo {
-    font-size: var(--font-size-xl);
+    font-size: 1.35rem;
+    letter-spacing: 0.03em;
   }
 
-  .btn-auth {
-    width: 100%;
-    justify-content: center;
+  .navbar-actions {
+    gap: var(--spacing-base);
   }
 }

@@ -1,0 +1,54 @@
+name: Test Backend
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'backend/**'
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt
+          pip install -r requirements-test.txt
+
+      - name: Run tests
+        env:
+          PYTHONPATH: ./backend 
+          ALGORITHM: HS256
+          SECRET_KEY: {{ secrets.SECRET_KEY }}
+          INTERNAL_API_KEY: test-internal-api-key
+          ENCRYPTION_KEY: test-encryption-key-for-fernet-ci
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USER: test_user
+          DB_PASSWORD: test_password
+          DB_NAME: test_db
+          QDRANT_URL: http://localhost:6333
+          QDRANT_API_KEY: ""
+          DEEPSEEK_API_KEY: fake-deepseek-key
+          MASTER_BOT_TOKEN: fake:token
+          BASE_URL: http://localhost:8000
+          ADMIN_WEB_LOGIN: admin
+          ADMIN_WEB_PASSWORD: admin123
+          API_HOST: localhost
+          API_PORT: 8000
+        run: |
+          cd backend
+          pytest app/tests/ -v --cov=app

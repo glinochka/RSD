@@ -53,6 +53,20 @@ const adminService = {
     return response.data;
   },
 
+  async getTurnkeyRequests(token, { page = 1, pageSize = 10, search = '' } = {}) {
+    const response = await adminClient.get(API_ROUTES.ADMIN_TURNKEY_REQUESTS, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      params: {
+        page,
+        page_size: pageSize,
+        search: search || undefined,
+      },
+    });
+    return response.data;
+  },
+
   async getPlans(token) {
     const response = await adminClient.get(API_ROUTES.ADMIN_PLANS, {
       headers: {
@@ -66,6 +80,40 @@ const adminService = {
     const response = await adminClient.put(
       API_ROUTES.ADMIN_PLANS,
       { plans },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+    return response.data;
+  },
+
+  async getPromoCodes(token) {
+    const response = await adminClient.get(API_ROUTES.ADMIN_PROMO_CODES, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    return response.data;
+  },
+
+  async createPromoCode(token, { code, discount_percent }) {
+    const response = await adminClient.post(
+      API_ROUTES.ADMIN_PROMO_CODES,
+      { code, discount_percent },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+    return response.data;
+  },
+
+  async deletePromoCode(token, promoCodeId) {
+    const response = await adminClient.delete(
+      API_ROUTES.ADMIN_DELETE_PROMO_CODE(promoCodeId),
       {
         headers: {
           Authorization: `Bearer ${token}`,

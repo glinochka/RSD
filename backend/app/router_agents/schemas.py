@@ -32,3 +32,65 @@ class NewAgent_byToken(BaseModel):
 class AgentAIAction(BaseModel):
     bot_id: int = Field(..., description="id бота")
 
+
+class ExternalAgentChatRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=4000, description="Запрос для агента")
+    external_user_id: Optional[str] = Field(
+        None,
+        max_length=128,
+        description="Опциональный ID пользователя во внешней системе",
+    )
+    external_user_name: Optional[str] = Field(
+        None,
+        max_length=128,
+        description="Опциональное имя пользователя во внешней системе",
+    )
+
+
+class AgentAnalyticsMessageLog(BaseModel):
+    bot_id: int = Field(..., description="Id бота")
+    role: str = Field(..., pattern="^(user|agent)$", description="Роль сообщения")
+    channel: str = Field(
+        default="telegram",
+        pattern="^(telegram|external_api|web)$",
+        description="Канал сообщения",
+    )
+    user_external_id: Optional[str] = Field(
+        None,
+        max_length=128,
+        description="ID пользователя во внешнем канале (например, Telegram user id)",
+    )
+    user_display_name: Optional[str] = Field(
+        None,
+        max_length=128,
+        description="Отображаемое имя пользователя",
+    )
+    message_text: str = Field(..., min_length=1, max_length=8000, description="Текст сообщения")
+
+
+class AgentFreezeUserPayload(BaseModel):
+    bot_id: int = Field(..., description="Id бота в Telegram")
+    user_external_id: str = Field(..., max_length=128, description="Внешний id пользователя (Telegram user id)")
+    frozen: bool = Field(default=True, description="True — заморозить, False — снять")
+
+
+class AgentTelegramSendToUserPayload(BaseModel):
+    bot_id: int = Field(..., description="Id бота в Telegram")
+    user_external_id: str = Field(..., max_length=128, description="Telegram user id получателя")
+    message: str = Field(..., min_length=1, max_length=4096, description="Текст сообщения от владельца")
+
+
+class AgentTelegramBroadcastPayload(BaseModel):
+    bot_id: int = Field(..., description="Id бота в Telegram")
+    message: str = Field(..., min_length=1, max_length=4096, description="Текст рассылки от владельца")
+    skip_frozen: bool = Field(
+        default=True,
+        description="Не отправлять пользователям со статусом «заморожен»",
+    )
+    max_recipients: int = Field(
+        default=500,
+        ge=1,
+        le=5000,
+        description="Максимум получателей за один запрос (остальные можно добить повтором)",
+    )
+

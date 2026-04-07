@@ -6,22 +6,140 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
+import { useNotification } from '../context/useNotification';
 import MainLayout from '../components/Layout';
-import { NAVIGATION_ROUTES } from '../config/constants';
+import { NAVIGATION_ROUTES, VALIDATION } from '../config/constants';
 import pricingService from '../services/pricingService';
 import '../styles/priceList.css';
+
+const PENDING_YOOKASSA_PAYMENT_ID_KEY = 'pending_yookassa_payment_id';
+const MARKETING_DISCOUNTS_BY_PLAN = {
+  Advanced: 40,
+  Pro: 60,
+};
+const PLAN_DISPLAY_NAMES = {
+  Free: 'Базовый',
+  Advanced: 'Продвинутый',
+  Pro: 'Про',
+};
+
+const roundUpToNextHundred = (value) => Math.ceil(value / 100) * 100;
+const formatRubPrice = (value) => Number(value || 0).toLocaleString('ru-RU');
 
 const PriceList = () => {
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
+  const { showError, showInfo, showSuccess } = useNotification();
   const [plans, setPlans] = useState([]);
+  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+  const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
+  const [isSubmittingRequest, setIsSubmittingRequest] = useState(false);
+  const [requestForm, setRequestForm] = useState({
+    phoneNumber: '',
+    email: '',
+    employeeRequest: '',
+  });
+  const [promoCode, setPromoCode] = useState('');
 
-  const handleSelectPlan = (planId) => {
+  const resetRequestForm = () => {
+    setRequestForm({
+      phoneNumber: '',
+      email: '',
+      employeeRequest: '',
+    });
+  };
+
+  const handleCloseRequestModal = () => {
+    if (isSubmittingRequest) return;
+    setIsRequestModalOpen(false);
+    resetRequestForm();
+  };
+
+  const handleSelectPlan = async (plan) => {
+    if (!plan) return;
+    if (plan.requestOnly) {
+      setIsRequestModalOpen(true);
+      return;
+    }
+
+    const selectedPlan = plans.find((p) => p?.code === plan.id);
+    if (!selectedPlan) {
+      showError('Не удалось найти выбранный тариф.');
+      return;
+    }
+
     if (!isAuthenticated) {
       navigate(NAVIGATION_ROUTES.AUTH);
       return;
     }
-    navigate(NAVIGATION_ROUTES.CREATE_AGENT);
+
+    if (!selectedPlan.is_paid) {
+      navigate(NAVIGATION_ROUTES.CREATE_AGENT);
+      return;
+    }
+
+    if (isProcessingPayment) return;
+    setIsProcessingPayment(true);
+    try {
+      const returnUrl = `${window.location.origin}${NAVIGATION_ROUTES.PRICING}`;
+      const payment = await pricingService.createYooKassaPayment({
+        plan_name: selectedPlan.code,
+        return_url: returnUrl,
+        promo_code: promoCode.trim() || undefined,
+      });
+
+      if (payment?.status === 'succeeded' && !payment?.confirmation_url) {
+        showSuccess('Подписка активирована по промокоду.');
+        setPromoCode('');
+        setIsProcessingPayment(false);
+        return;
+      }
+
+      if (!payment?.confirmation_url || !payment?.payment_id) {
+        throw new Error('Сервис оплаты вернул некорректный ответ.');
+      }
+
+      localStorage.setItem(PENDING_YOOKASSA_PAYMENT_ID_KEY, payment.payment_id);
+      window.location.href = payment.confirmation_url;
+    } catch (error) {
+      showError(error?.message || 'Не удалось создать платеж. Попробуйте еще раз.');
+      setIsProcessingPayment(false);
+    }
+  };
+
+  const handleSubmitTurnkeyRequest = async (event) => {
+    event.preventDefault();
+    if (isSubmittingRequest) return;
+
+    const phoneNumber = requestForm.phoneNumber.trim();
+    const email = requestForm.email.trim();
+    const employeeRequest = requestForm.employeeRequest.trim();
+
+    if (!phoneNumber || !email || !employeeRequest) {
+      showError('Заполните все поля заявки.');
+      return;
+    }
+    if (!VALIDATION.EMAIL_PATTERN.test(email)) {
+      showError('Введите корректный email.');
+      return;
+    }
+
+    try {
+      setIsSubmittingRequest(true);
+      await pricingService.createTurnkeyRequest({
+        phone_number: phoneNumber,
+        email,
+        requested_agent: employeeRequest,
+        purpose: employeeRequest,
+      });
+      setIsRequestModalOpen(false);
+      resetRequestForm();
+      showSuccess('Заявка успешно создана, мы скоро свяжемся с вами.');
+    } catch (error) {
+      showError(error?.response?.data?.detail || error?.message || 'Не удалось отправить заявку.');
+    } finally {
+      setIsSubmittingRequest(false);
+    }
   };
 
   useEffect(() => {
@@ -39,13 +157,55 @@ const PriceList = () => {
     };
   }, []);
 
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const pendingPaymentId = localStorage.getItem(PENDING_YOOKASSA_PAYMENT_ID_KEY);
+    if (!pendingPaymentId) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const statusData = await pricingService.getYooKassaPaymentStatus(pendingPaymentId);
+        if (cancelled) return;
+
+        if (statusData?.status === 'succeeded') {
+          showSuccess('Оплата прошла успешно. Подписка активирована.');
+          localStorage.removeItem(PENDING_YOOKASSA_PAYMENT_ID_KEY);
+          return;
+        }
+
+        if (statusData?.status === 'pending' || statusData?.status === 'waiting_for_capture') {
+          showInfo('Платеж еще обрабатывается. Проверьте статус чуть позже.');
+          return;
+        }
+
+        showError('Оплата не завершена или была отменена.');
+        localStorage.removeItem(PENDING_YOOKASSA_PAYMENT_ID_KEY);
+      } catch (error) {
+        if (!cancelled) {
+          showError(error?.message || 'Не удалось проверить статус платежа.');
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated, showError, showInfo, showSuccess]);
+
   const uiPlans = useMemo(() => {
     const order = { Free: 1, Advanced: 2, Pro: 3 };
     const sorted = [...plans].sort((a, b) => (order[a?.code] ?? 999) - (order[b?.code] ?? 999));
-    return sorted.map((plan) => {
+    const mapped = sorted.map((plan) => {
       const code = plan?.code;
-      const title = plan?.title || code;
+      const title = PLAN_DISPLAY_NAMES[code] || plan?.title || code;
       const price = Number(plan?.price_rub_month ?? 0);
+      const discountPercent = MARKETING_DISCOUNTS_BY_PLAN[code] ?? null;
+      const isPaid = Boolean(plan?.is_paid);
+      const originalPrice = isPaid && discountPercent
+        ? roundUpToNextHundred(price * (1 + discountPercent / 100))
+        : null;
       const kbLimit = plan?.knowledge_base_chunk_limit;
       const maxAgents = Number(plan?.max_active_agents ?? 0);
       const kbText = kbLimit == null ? 'Безлимит' : `${kbLimit} чанков`;
@@ -55,6 +215,10 @@ const PriceList = () => {
         id: code,
         name: title,
         price,
+        originalPrice,
+        discountPercent: isPaid ? discountPercent : null,
+        isPaid,
+        requestOnly: false,
         currency: '₽',
         period: 'мес',
         per: '',
@@ -64,6 +228,25 @@ const PriceList = () => {
         ],
       };
     });
+    return [
+      ...mapped,
+      {
+        id: 'turnkey',
+        name: 'Агент под ключ',
+        price: 0,
+        originalPrice: null,
+        discountPercent: null,
+        isPaid: false,
+        requestOnly: true,
+        currency: '₽',
+        period: 'мес',
+        per: '',
+        features: [
+          'Разработка и настройка под ваши задачи',
+          'Сопровождение запуска под ключ',
+        ],
+      },
+    ];
   }, [plans]);
 
   return (
@@ -78,10 +261,33 @@ const PriceList = () => {
           {uiPlans.map((plan) => (
             <div key={plan.id} className="price-card">
               <h2 className="price-title">{plan.name}</h2>
+              <div className={`price-old-row ${plan.isPaid && plan.originalPrice ? '' : 'price-old-row--placeholder'}`}>
+                {plan.isPaid && plan.originalPrice ? (
+                  <>
+                  <span className="price-old-value">
+                    {formatRubPrice(plan.originalPrice)}
+                    <span className="currency">{plan.currency}</span>
+                    <span className="period">/{plan.period}</span>
+                  </span>
+                  <span className="price-discount-badge">-{plan.discountPercent}%</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="price-old-value">0 ₽/мес</span>
+                    <span className="price-discount-badge">-0%</span>
+                  </>
+                )}
+              </div>
               <div className="price-value">
-                {plan.price}
-                <span className="currency">{plan.currency}</span>
-                <span className="period">/{plan.period}</span>
+                {plan.requestOnly ? (
+                  <span>По запросу</span>
+                ) : (
+                  <>
+                    {formatRubPrice(plan.price)}
+                    <span className="currency">{plan.currency}</span>
+                    <span className="period">/{plan.period}</span>
+                  </>
+                )}
               </div>
               {plan.per ? <p className="price-per">{plan.per}</p> : null}
 
@@ -96,14 +302,86 @@ const PriceList = () => {
 
               <button
                 className="btn btn-black"
-                onClick={() => handleSelectPlan(plan.id)}
+                onClick={() => handleSelectPlan(plan)}
+                disabled={isProcessingPayment || isSubmittingRequest}
               >
-                Выбрать план
+                {plan.requestOnly
+                  ? 'Оставить заявку'
+                  : isProcessingPayment && plan.price > 0
+                    ? 'Переход к оплате...'
+                    : 'Выбрать план'}
               </button>
             </div>
           ))}
         </div>
+
+        <div className="pricing-promo-after">
+          <label className="pricing-promo-after-label" htmlFor="pricing-promo-input">
+            Есть промокод?
+          </label>
+          <input
+            id="pricing-promo-input"
+            type="text"
+            placeholder="Введите код"
+            value={promoCode}
+            onChange={(event) => setPromoCode(event.target.value.toUpperCase())}
+            maxLength={64}
+            disabled={isProcessingPayment || isSubmittingRequest}
+            autoComplete="off"
+            spellCheck="false"
+          />
+        </div>
       </div>
+      {isRequestModalOpen && (
+        <div className="pricing-modal-overlay" onClick={handleCloseRequestModal}>
+          <div className="pricing-modal" onClick={(event) => event.stopPropagation()}>
+            <h3>Заявка на тариф «Агент под ключ»</h3>
+            <form className="pricing-request-form" onSubmit={handleSubmitTurnkeyRequest}>
+              <label>
+                Номер телефона
+                <input
+                  type="tel"
+                  value={requestForm.phoneNumber}
+                  onChange={(event) => setRequestForm((prev) => ({ ...prev, phoneNumber: event.target.value }))}
+                  placeholder="+7 (900) 000-00-00"
+                  required
+                />
+              </label>
+
+              <label>
+                Электронная почта
+                <input
+                  type="email"
+                  value={requestForm.email}
+                  onChange={(event) => setRequestForm((prev) => ({ ...prev, email: event.target.value }))}
+                  placeholder="name@company.ru"
+                  required
+                />
+              </label>
+
+              <label>
+                Какого сотрудника вы хотите получить
+                <textarea
+                  value={requestForm.employeeRequest}
+                  onChange={(event) => setRequestForm((prev) => ({ ...prev, employeeRequest: event.target.value }))}
+                  placeholder="Опишите роли, задачи и сценарии работы сотрудника"
+                  rows={4}
+                  required
+                />
+              </label>
+
+              <div className="pricing-modal-actions">
+                <button type="submit" className="btn btn-black" disabled={isSubmittingRequest}>
+                  {isSubmittingRequest ? 'Отправка...' : 'Отправить заявку'}
+                </button>
+                <button type="button" className="btn btn-outline" onClick={handleCloseRequestModal}>
+                  Отмена
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </MainLayout>
   );
 };

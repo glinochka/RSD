@@ -150,11 +150,28 @@ class APIcreate(APIbase):
     async def userBy_tgID(cls, name:str, tg_id: int) -> dict:
         data = {'name':name, 'telegram_id': tg_id}
         return await cls.user(data)
+
+    @classmethod
+    async def confirmTelegramLinkCode(
+        cls,
+        code: str,
+        telegram_id: int,
+    ) -> dict:
+        data = {
+            "code": code,
+            "telegram_id": telegram_id,
+        }
+        return await cls.user(data, add_url="telegram-link/confirm")
     
     @classmethod
     async def documentBy_botID(cls, agent_id: int, file_name: str, file_bytes: bytes) -> dict:
         agent_data = {'bot_id': agent_id}
         return await cls.document(data = {'agent_data' : json.dumps(agent_data)}, file_name=file_name, file_bytes = file_bytes)
+
+    @classmethod
+    async def documentLinkBy_botID(cls, agent_id: int, url: str) -> dict:
+        data = {"bot_id": agent_id, "url": url}
+        return await cls.document(data=data, add_url="link")
 
     @classmethod
     async def processSuccessfulPayment(
@@ -177,6 +194,31 @@ class APIcreate(APIbase):
             "invoice_payload": invoice_payload,
         }
         return await cls.payment(data, add_url="process_successful")
+
+    @classmethod
+    async def regenerateExternalAgentApiKey(cls, bot_id: int) -> dict:
+        return await cls.agent({"bot_id": bot_id}, add_url="external/regenerate_key")
+
+    @classmethod
+    async def logAgentAnalyticsMessage(
+        cls,
+        *,
+        bot_id: int,
+        role: str,
+        message_text: str,
+        user_external_id: str | None = None,
+        user_display_name: str | None = None,
+        channel: str = "telegram",
+    ) -> dict:
+        data = {
+            "bot_id": bot_id,
+            "role": role,
+            "message_text": message_text,
+            "channel": channel,
+            "user_external_id": user_external_id,
+            "user_display_name": user_display_name,
+        }
+        return await cls.agent(data, add_url="analytics/messages/log")
     
 
     
@@ -187,6 +229,13 @@ class APIread(APIbase):
     @classmethod
     async def agentBy_botID(cls, bot_id: int) -> dict:
         return await cls.agent({'bot_id': bot_id})
+
+    @classmethod
+    async def agentFrozenCheck(cls, bot_id: int, user_external_id: str) -> dict:
+        return await cls.agent(
+            {"bot_id": bot_id, "user_external_id": user_external_id},
+            add_url="analytics/frozen/check",
+        )
     
     @classmethod
     async def allAgentsBy_tgID(cls, tg_id: int) -> dict|list:

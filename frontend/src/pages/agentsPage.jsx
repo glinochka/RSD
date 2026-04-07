@@ -3,10 +3,11 @@
  * Display user's agents and manage full lifecycle
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import MainLayout from '../components/Layout';
 import Loading from '../components/Loading';
+import AgentsEmptyState from '../components/AgentsEmptyState';
 import { useAsync } from '../hooks/useAsync';
 import agentService from '../services/agentService';
 import { useNotification } from '../context/useNotification';
@@ -15,11 +16,35 @@ import { useAuth } from '../context/useAuth';
 import { validateFile } from '../utils/validation';
 import '../styles/agentsPage.css';
 
-const AgentCard = ({ agent, onManage, onDelete, onToggle }) => {
+const AGENTS_EMPTY_MESSAGE = 'У вас еще нет агентов, создайте прямо сейчас';
+const AGENTS_EMPTY_CTA = 'Создайте прямо сейчас';
+const fileIdentity = (file) => `${file.name}::${file.size}::${file.lastModified}`;
+const linkIdentity = (link) => link.trim().toLowerCase();
+
+const AgentCard = ({ agent, isSelected, onManage, onDelete, onToggle }) => {
   const agentName = agent.bot_username || agent.name || 'Агент';
   const isActive = !!agent.is_active;
+
+  const handleSelect = () => {
+    onManage(agent.bot_id);
+  };
+
+  const handleKeyDown = (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      onManage(agent.bot_id);
+    }
+  };
+
   return (
-    <div className="agent-item">
+    <div
+      className={`agent-item ${isSelected ? 'agent-item--selected' : ''}`}
+      onClick={handleSelect}
+      onKeyDown={handleKeyDown}
+      role="button"
+      tabIndex={0}
+      aria-label={`Выбрать агента ${agentName}`}
+    >
       <div className="agent-info">
         <span
           className={`agent-status-dot ${isActive ? 'agent-status-dot--active' : 'agent-status-dot--inactive'}`}
@@ -33,7 +58,10 @@ const AgentCard = ({ agent, onManage, onDelete, onToggle }) => {
       <div className="agent-actions">
         <button
           className="edit-btn"
-          onClick={() => onManage(agent.bot_id)}
+          onClick={(event) => {
+            event.stopPropagation();
+            onManage(agent.bot_id);
+          }}
           title="Управлять агентом"
           aria-label="Manage agent"
         >
@@ -41,7 +69,10 @@ const AgentCard = ({ agent, onManage, onDelete, onToggle }) => {
         </button>
         <button
           className="edit-btn"
-          onClick={() => onToggle(agent.bot_id)}
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggle(agent.bot_id);
+          }}
           title={isActive ? 'Отключить агента' : 'Включить агента'}
           aria-label={isActive ? 'Disable agent' : 'Enable agent'}
         >
@@ -49,7 +80,10 @@ const AgentCard = ({ agent, onManage, onDelete, onToggle }) => {
         </button>
         <button
           className="delete-btn"
-          onClick={() => onDelete(agent.bot_id)}
+          onClick={(event) => {
+            event.stopPropagation();
+            onDelete(agent.bot_id);
+          }}
           title="Delete agent"
           aria-label="Delete agent"
         >
@@ -73,8 +107,11 @@ const AgentsPageContent = () => {
   const [isGeneratingPrompt, setIsGeneratingPrompt] = useState(false);
   const [isGeneratingWelcome, setIsGeneratingWelcome] = useState(false);
   const [isUploadingDocs, setIsUploadingDocs] = useState(false);
+  const [isUploadingLink, setIsUploadingLink] = useState(false);
+  const [pendingLink, setPendingLink] = useState('');
   const [systemPromptDraft, setSystemPromptDraft] = useState('');
   const [welcomeDraft, setWelcomeDraft] = useState('');
+  const detailsRequestIdRef = useRef(0);
   const { data: agents, isLoading, execute } = useAsync(
     () => agentService.getAll(),
     false
@@ -89,26 +126,41 @@ const AgentsPageContent = () => {
     navigate(NAVIGATION_ROUTES.CREATE_AGENT);
   };
 
+  const handleOpenDetailedAnalytics = () => {
+    if (!selectedBotId) {
+      showError('Сначала выберите агента');
+      return;
+    }
+    navigate(NAVIGATION_ROUTES.AGENT_ANALYTICS(selectedBotId));
+  };
+
   const refreshAgents = async () => {
     const updated = await execute();
     return updated || [];
   };
 
   const loadAgentDetails = async (botId) => {
+    const requestId = detailsRequestIdRef.current + 1;
+    detailsRequestIdRef.current = requestId;
+    setSelectedBotId(botId);
+    setSelectedAgent(null);
+    setDocuments([]);
     setIsLoadingDetails(true);
     try {
       const [agent, docs] = await Promise.all([
         agentService.getById(botId),
         agentService.getDocumentsByBotId(botId),
       ]);
-      setSelectedBotId(botId);
+      if (requestId !== detailsRequestIdRef.current) return;
       setSelectedAgent(agent);
       setSystemPromptDraft(agent.system_prompt || '');
       setWelcomeDraft(agent.welcome_message || '');
       setDocuments(docs || []);
     } catch (error) {
+      if (requestId !== detailsRequestIdRef.current) return;
       showError(error?.message || 'Ошибка при загрузке карточки агента');
     } finally {
+      if (requestId !== detailsRequestIdRef.current) return;
       setIsLoadingDetails(false);
     }
   };
@@ -223,10 +275,11 @@ const AgentsPageContent = () => {
   const handleUploadDocuments = async (event) => {
     const files = Array.from(event.target.files || []);
     if (!selectedBotId || files.length === 0) return;
+    const uniqueFiles = Array.from(new Map(files.map((f) => [fileIdentity(f), f])).values());
 
     const validFiles = [];
     const fileErrors = [];
-    files.forEach((file) => {
+    uniqueFiles.forEach((file) => {
       const check = validateFile(file);
       if (check.isValid) {
         validFiles.push(file);
@@ -253,6 +306,14 @@ const AgentsPageContent = () => {
           );
           break;
         }
+        if (res?.status === 'duplicate') {
+          showSuccess(`Файл ${file.name} уже загружен ранее (статус: ${res?.document_status || 'ready'})`);
+          continue;
+        }
+        if (res?.status === 'reprocessing') {
+          showSuccess(`Файл ${file.name} отправлен на повторную обработку`);
+          continue;
+        }
         showSuccess(`Файл ${file.name} принят к обработке`);
       }
       await loadAgentDetails(selectedBotId);
@@ -261,6 +322,59 @@ const AgentsPageContent = () => {
     } finally {
       setIsUploadingDocs(false);
       event.target.value = '';
+    }
+  };
+
+  const isValidPublicUrl = (value) => {
+    try {
+      const parsed = new URL(value);
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    } catch {
+      return false;
+    }
+  };
+
+  const handleUploadLink = async () => {
+    const normalized = pendingLink.trim();
+    if (!selectedBotId) {
+      return;
+    }
+    if (!normalized) {
+      showError('Введите ссылку для добавления');
+      return;
+    }
+    if (!isValidPublicUrl(normalized)) {
+      showError('Некорректная ссылка. Разрешены только публичные http/https URL');
+      return;
+    }
+
+    setIsUploadingLink(true);
+    try {
+      const res = await agentService.uploadPublicLinkByBotId(selectedBotId, normalized);
+      if (res?.status === 'limit_error') {
+        showError(
+          `Лимит базы знаний превышен: план ${res.current_plan}, лимит ${res.limit}, уже ${res.current_count}, ссылка добавит ${res.new_chunks_count}`
+        );
+        return;
+      }
+      if (res?.status === 'duplicate') {
+        showSuccess(`Ссылка уже добавлена ранее (статус: ${res?.document_status || 'ready'})`);
+        return;
+      }
+      showSuccess('Ссылка принята к обработке');
+      setPendingLink('');
+      await loadAgentDetails(selectedBotId);
+    } catch (error) {
+      showError(error?.message || 'Ошибка при добавлении ссылки');
+    } finally {
+      setIsUploadingLink(false);
+    }
+  };
+
+  const handleLinkKeyDown = (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      handleUploadLink();
     }
   };
 
@@ -276,6 +390,35 @@ const AgentsPageContent = () => {
       }
     } catch (error) {
       showError(error?.message || 'Ошибка при удалении документа');
+    }
+  };
+
+  const handleCopyApiKey = async () => {
+    const key = selectedAgent?.external_api_key;
+    if (!key) {
+      showError('API ключ не найден');
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(key);
+      showSuccess('API ключ скопирован');
+    } catch (error) {
+      showError('Не удалось скопировать API ключ');
+    }
+  };
+
+  const handleRegenerateApiKey = async () => {
+    if (!selectedBotId) return;
+    if (!window.confirm('Вы точно хотите перевыпустить ключ? Нынешний ключ больше не будет активен.')) {
+      return;
+    }
+    try {
+      const updated = await agentService.regenerateExternalKey(selectedBotId);
+      setSelectedAgent((prev) => ({ ...(prev || {}), ...updated }));
+      showSuccess('API ключ перевыпущен');
+    } catch (error) {
+      showError(error?.message || 'Ошибка перевыпуска API ключа');
     }
   };
 
@@ -296,39 +439,25 @@ const AgentsPageContent = () => {
     return <Loading message="Загрузка агентов..." />;
   }
 
-  if (!isAuthenticated) {
-    return (
-      <div className="agents-page-content">
-        <section className="agents-section">
-          <div className="empty-state">
-            <button className="btn btn-black" onClick={handleCreateAgent}>
-              У вас еще нет ни одного ИИ-сотруднника, создайте прямо сейчас
-            </button>
-          </div>
-        </section>
-      </div>
-    );
-  }
-
   const displayAgents = agents || [];
+  const showEmptyAgentsList = !isAuthenticated || displayAgents.length === 0;
 
   return (
     <div className="agents-page-content">
       <section className="agents-section">
         <div className="section-header">
           <h2 className="section-title">Ваши агенты:</h2>
-          <button className="btn btn-black btn-add" onClick={handleCreateAgent}>
+          <button type="button" className="btn btn-black btn-add" onClick={handleCreateAgent}>
             + Новый агент
           </button>
         </div>
 
-        {displayAgents.length === 0 ? (
-          <div className="empty-state">
-            <p>У вас еще нет агентов, создайте прямо сейчас</p>
-            <button className="btn btn-black" onClick={handleCreateAgent}>
-              Создайте прямо сейчас
-            </button>
-          </div>
+        {showEmptyAgentsList ? (
+          <AgentsEmptyState
+            message={AGENTS_EMPTY_MESSAGE}
+            ctaLabel={AGENTS_EMPTY_CTA}
+            onCtaClick={handleCreateAgent}
+          />
         ) : (
           <div className="agents-layout">
             <div className="agents-list">
@@ -336,6 +465,7 @@ const AgentsPageContent = () => {
                 <AgentCard
                   key={agent.bot_id}
                   agent={agent}
+                  isSelected={selectedBotId === agent.bot_id}
                   onManage={loadAgentDetails}
                   onDelete={handleDeleteAgent}
                   onToggle={handleToggleAgent}
@@ -353,6 +483,35 @@ const AgentsPageContent = () => {
                   <div className="agent-management-header">
                     <h3>{selectedAgentName}</h3>
                     <p>ID: {selectedAgent.bot_id}</p>
+                    <button
+                      type="button"
+                      className="btn btn-black analytics-btn"
+                      onClick={handleOpenDetailedAnalytics}
+                    >
+                      Детальная аналитика
+                    </button>
+                  </div>
+
+                  <div className="agent-management-block">
+                    <label>API ключ для внешних интеграций</label>
+                    <div className="api-key-row">
+                      <button
+                        className="btn btn-black"
+                        onClick={handleCopyApiKey}
+                        title="Скопировать API ключ"
+                        aria-label="Copy API key"
+                      >
+                        Скопировать API ключ
+                      </button>
+                      <button
+                        className="btn btn-outline"
+                        onClick={handleRegenerateApiKey}
+                        title="Перевыпустить API ключ"
+                        aria-label="Regenerate API key"
+                      >
+                        Перевыпустить API ключ
+                      </button>
+                    </div>
                   </div>
 
                   <div className="agent-management-block">
@@ -408,7 +567,7 @@ const AgentsPageContent = () => {
 
                   <div className="agent-management-block">
                     <div className="docs-header-row">
-                      <label>База знаний (документы)</label>
+                      <label>База знаний (документы и ссылки)</label>
                       <label className="btn btn-black docs-upload-btn">
                         {isUploadingDocs ? 'Загрузка...' : '+ Добавить файлы'}
                         <input
@@ -421,12 +580,32 @@ const AgentsPageContent = () => {
                         />
                       </label>
                     </div>
+                    <div className="kb-link-row">
+                      <input
+                        type="url"
+                        className="input-main"
+                        value={pendingLink}
+                        onChange={(e) => setPendingLink(e.target.value)}
+                        onKeyDown={handleLinkKeyDown}
+                        placeholder="https://example.com/article"
+                        disabled={isUploadingLink}
+                      />
+                      <button
+                        type="button"
+                        className="btn btn-black"
+                        onClick={handleUploadLink}
+                        disabled={isUploadingLink}
+                      >
+                        {isUploadingLink ? 'Добавление...' : '+ Добавить ссылку'}
+                      </button>
+                    </div>
+                    <p className="docs-empty">Ссылка обрабатывается один раз и не обновляется автоматически</p>
                     {documents.length === 0 ? (
                       <p className="docs-empty">Документы не добавлены</p>
                     ) : (
                       <div className="docs-list-web">
                         {documents.map((doc) => (
-                          <div key={doc.id} className="doc-row">
+                          <div key={`${doc.id}-${linkIdentity(doc.file_name || '')}`} className="doc-row">
                             <div className="doc-meta">
                               <span className="doc-name">{doc.file_name}</span>
                               <span className={`doc-status doc-status--${doc.status}`}>{doc.status}</span>

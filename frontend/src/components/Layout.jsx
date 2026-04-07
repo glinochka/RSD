@@ -5,6 +5,7 @@
 
 import React from 'react';
 import Navbar from './Navbar';
+import Footer from './Footer';
 import '../styles/layout.css';
 
 const MainLayout = ({ children, showNavbar = true }) => {
@@ -14,6 +15,7 @@ const MainLayout = ({ children, showNavbar = true }) => {
       <main className="layout-main">
         {children}
       </main>
+      <Footer />
     </div>
   );
 };

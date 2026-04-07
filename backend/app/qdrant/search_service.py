@@ -1,11 +1,12 @@
 from typing import List, Dict, Any
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models
-from fastembed import TextEmbedding, SparseTextEmbedding
 
 from config import settings
 
 from openai import AsyncOpenAI
+
+from .embeddings import embed_dense_for_query, run_in_cpu_pool
 
 
 
@@ -36,8 +37,6 @@ async def rewrite_query(original_query: str) -> str:
 
 # Инициализируем асинхронный клиент
 q_client = AsyncQdrantClient(url=settings.QDRANT_URL)
-dense_model = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
-sparse_model = SparseTextEmbedding(model_name="prithivida/Splade_PP_en_v1")
 
 async def search_knowledge_base(query: str, agent_id: int, limit: int = 5) -> List[Dict[str, Any]]:
     """Поиск по базе знаний с использованием актуального API query_points."""
@@ -45,8 +44,8 @@ async def search_knowledge_base(query: str, agent_id: int, limit: int = 5) -> Li
         # 1. Переписываем запрос (LLM)
         optimized_query = await rewrite_query(query)
         
-        # 2. Генерируем эмбеддинг
-        dense_vector = list(dense_model.embed([optimized_query]))[0].tolist()
+        # 2. Генерируем эмбеддинг (вне event loop — не блокируем API)
+        dense_vector = await run_in_cpu_pool(embed_dense_for_query, optimized_query)
 
         # 3. Фильтр по конкретному агенту
         search_filter = models.Filter(

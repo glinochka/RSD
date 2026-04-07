@@ -191,6 +191,11 @@
   white-space: nowrap;
 }
 
+.management-table-wrap-text td {
+  white-space: normal;
+  vertical-align: top;
+}
+
 .management-table th {
   color: var(--color-text-light);
   font-weight: var(--font-weight-semibold);
@@ -365,4 +370,22 @@
   display: flex;
   gap: var(--spacing-sm);
   justify-content: flex-end;
+}
+
+.management-promo-form {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(160px, 220px) auto;
+  gap: var(--spacing-base);
+  align-items: end;
+  margin-bottom: var(--spacing-base);
+}
+
+.management-promo-form .btn {
+  height: fit-content;
+}
+
+@media (max-width: 900px) {
+  .management-promo-form {
+    grid-template-columns: 1fr;
+  }
 }

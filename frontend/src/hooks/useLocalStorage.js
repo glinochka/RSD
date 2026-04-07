@@ -14,14 +14,16 @@ export const useLocalStorage = (key, initialValue) => {
   const setValue = useCallback(
     (value) => {
       try {
-        const valueToStore = value instanceof Function ? value(storedValue) : value;
-        setStoredValue(valueToStore);
-        setStorageItem(key, valueToStore);
+        setStoredValue((prevStoredValue) => {
+          const valueToStore = value instanceof Function ? value(prevStoredValue) : value;
+          setStorageItem(key, valueToStore);
+          return valueToStore;
+        });
       } catch (error) {
         console.error(`Error setting localStorage for key "${key}":`, error);
       }
     },
-    [key, storedValue]
+    [key]
   );
 
   const removeValue = useCallback(() => {

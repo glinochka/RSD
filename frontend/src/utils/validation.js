@@ -110,6 +110,13 @@ export const validateForm = (formData, rules) => {
     const rule = rules[field];
     const value = formData[field];
 
+    if (rule.type === 'checkbox' && rule.required) {
+      if (value !== true) {
+        errors[field] = rule.message || `Необходимо отметить: ${rule.label}`;
+      }
+      return;
+    }
+
     if (rule.required && (!value || value.toString().trim() === '')) {
       errors[field] = `${rule.label} обязательно`;
       return;

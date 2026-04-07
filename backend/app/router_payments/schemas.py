@@ -20,3 +20,55 @@ class ProcessTelegramPayment(BaseModel):
             raise ValueError("Invalid paid subscription plan name")
         return value
 
+
+class CreateYooKassaPayment(BaseModel):
+    plan_name: str = Field(..., description="Paid subscription plan name")
+    return_url: str | None = Field(default=None, description="URL where YooKassa returns user after payment")
+    promo_code: str | None = Field(default=None, max_length=64, description="Optional promo code")
+
+    @field_validator("plan_name")
+    @classmethod
+    def validate_paid_plan_name(cls, value: str) -> str:
+        if value not in get_subscription_plan_codes(paid_only=True):
+            raise ValueError("Invalid paid subscription plan name")
+        return value
+
+
+class YooKassaPaymentStatusResponse(BaseModel):
+    payment_id: str
+    status: str
+    plan_name: str
+    subscription_type: str | None = None
+    subscription_end_date: str | None = None
+
+
+class CreateTurnkeyAgentRequest(BaseModel):
+    phone_number: str = Field(..., min_length=5, max_length=32)
+    email: str = Field(..., min_length=5, max_length=255)
+    requested_agent: str = Field(..., min_length=2, max_length=255)
+    purpose: str = Field(..., min_length=5, max_length=2000)
+
+    @field_validator("phone_number")
+    @classmethod
+    def validate_phone_number(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Phone number is required")
+        return cleaned
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        cleaned = value.strip().lower()
+        if "@" not in cleaned or "." not in cleaned.split("@")[-1]:
+            raise ValueError("Invalid email")
+        return cleaned
+
+    @field_validator("requested_agent", "purpose")
+    @classmethod
+    def trim_text_fields(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Field cannot be empty")
+        return cleaned
+

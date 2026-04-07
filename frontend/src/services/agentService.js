@@ -75,6 +75,81 @@ export const agentService = {
     return response.data;
   },
 
+  externalChat: async (message, apiKey) => {
+    const response = await apiClient.post(
+      API_ROUTES.AGENTS_EXTERNAL_CHAT,
+      { message },
+      {
+        headers: {
+          'X-Agent-API-Key': apiKey,
+        },
+      }
+    );
+    return response.data;
+  },
+
+  regenerateExternalKey: async (botId) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_REGENERATE_EXTERNAL_KEY, {
+      bot_id: botId,
+    });
+    return response.data;
+  },
+
+  getAnalyticsSummary: async (botId) => {
+    const response = await apiClient.get(API_ROUTES.AGENTS_ANALYTICS_SUMMARY, {
+      params: { bot_id: botId },
+    });
+    return response.data;
+  },
+
+  getAnalyticsChats: async (botId, params = {}) => {
+    const response = await apiClient.get(API_ROUTES.AGENTS_ANALYTICS_CHATS, {
+      params: { bot_id: botId, ...params },
+    });
+    return response.data;
+  },
+
+  getAnalyticsTimeseries: async (botId, days = 30) => {
+    const response = await apiClient.get(API_ROUTES.AGENTS_ANALYTICS_TIMESERIES, {
+      params: { bot_id: botId, days },
+    });
+    return response.data;
+  },
+
+  setUserFrozen: async (botId, userExternalId, frozen) => {
+    await apiClient.post(API_ROUTES.AGENTS_ANALYTICS_FROZEN, {
+      bot_id: botId,
+      user_external_id: userExternalId,
+      frozen,
+    });
+  },
+
+  sendTelegramMessageAsOwner: async (botId, userExternalId, message) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_TELEGRAM_SEND_TO_USER, {
+      bot_id: botId,
+      user_external_id: userExternalId,
+      message,
+    });
+    return response.data;
+  },
+
+  getTelegramBroadcastRecipients: async (botId) => {
+    const response = await apiClient.get(API_ROUTES.AGENTS_TELEGRAM_BROADCAST_RECIPIENTS, {
+      params: { bot_id: botId },
+    });
+    return response.data;
+  },
+
+  sendTelegramBroadcast: async (botId, message, { skipFrozen = true, maxRecipients = 500 } = {}) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_TELEGRAM_BROADCAST, {
+      bot_id: botId,
+      message,
+      skip_frozen: skipFrozen,
+      max_recipients: maxRecipients,
+    });
+    return response.data;
+  },
+
   uploadDocumentByBotId: async (botId, file) => {
     const formData = new FormData();
     formData.append('agent_data', JSON.stringify({ bot_id: botId }));
@@ -89,6 +164,14 @@ export const agentService = {
         },
       }
     );
+    return response.data;
+  },
+
+  uploadPublicLinkByBotId: async (botId, url) => {
+    const response = await apiClient.post(API_ROUTES.DOCUMENTS_CREATE_LINK, {
+      bot_id: botId,
+      url,
+    });
     return response.data;
   },
 

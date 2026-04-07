@@ -1,5 +1,7 @@
 import os
 import asyncio
+from html import escape as html_escape
+from urllib.parse import urlparse
 from fastapi import status
 from aiogram import Router, F, Bot, types
 from aiogram.exceptions import TelegramBadRequest
@@ -80,6 +82,48 @@ def _normalize_surrogates(text: str) -> str:
     return text.encode("utf-16", "surrogatepass").decode("utf-16", "ignore")
 
 
+def _is_public_http_url(value: str) -> bool:
+    if not value:
+        return False
+    try:
+        parsed = urlparse(value.strip())
+    except Exception:
+        return False
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+async def _handle_link_upload_result(
+    message: types.Message,
+    response_data: dict,
+    *,
+    source_label: str,
+) -> None:
+    if response_data.get("status") == "limit_error":
+        await message.answer(
+            f"🚫 <b>Лимит базы знаний превышен!</b>\n\n"
+            f"Ваш тариф: <b>{html_escape(str(response_data.get('current_plan', 'unknown')))}</b> "
+            f"(макс. {response_data.get('limit', 'unknown')} чанков).\n"
+            f"Уже использовано: {response_data.get('current_count', 'unknown')}.\n"
+            f"{source_label} добавит: {response_data.get('new_chunks_count', 'unknown')}.\n\n"
+            f"Удалите старые источники или повысьте тариф в меню.",
+            parse_mode="HTML",
+        )
+        return
+
+    if response_data.get("status") == "duplicate":
+        await message.answer(
+            f"ℹ️ Источник уже добавлен ранее "
+            f"(статус: {html_escape(str(response_data.get('document_status', 'ready')))}).",
+            parse_mode="HTML",
+        )
+        return
+
+    await message.answer(
+        f"✅ Ссылка принята и обрабатывается ({response_data.get('new_chunks_count', 'unknown')} чанков).",
+        parse_mode="HTML",
+    )
+
+
 def _build_tariffs_text(plans: list[dict], current_plan_code: str) -> str:
     # Keep the numbering stable: Free -> Advanced -> Pro.
     order = {"Free": 1, "Advanced": 2, "Pro": 3}
@@ -123,6 +167,27 @@ def _build_tariffs_text(plans: list[dict], current_plan_code: str) -> str:
 
 def _paid_plans_map(plans: list[dict]) -> dict[str, dict]:
     return {p["code"]: p for p in plans if p.get("is_paid") and p.get("code")}
+
+
+def build_copy_api_key_button(external_api_key: str | None) -> types.InlineKeyboardButton:
+    if not external_api_key:
+        return types.InlineKeyboardButton(
+            text="📋 Скопировать API ключ",
+            callback_data="api_key_unavailable",
+        )
+
+    # New Telegram clients support native clipboard copy for inline button.
+    if hasattr(types, "CopyTextButton"):
+        return types.InlineKeyboardButton(
+            text="📋 Скопировать API ключ",
+            copy_text=types.CopyTextButton(text=external_api_key),
+        )
+
+    # Fallback for older aiogram/Telegram clients.
+    return types.InlineKeyboardButton(
+        text="📋 Скопировать API ключ",
+        switch_inline_query_current_chat=external_api_key,
+    )
 
 
 async def safe_edit_callback_message(
@@ -197,6 +262,34 @@ async def cmd_start(message: types.Message, state: FSMContext):
         build_start_menu_text(message.from_user.first_name),
         reply_markup=get_main_menu()
     )
+
+
+@master_router.message(StateFilter(None), F.text.regexp(r"^\d{6}$"))
+async def link_website_account_by_code(message: types.Message):
+    raw_code = (message.text or "").strip()
+    response = await APIcreate.confirmTelegramLinkCode(
+        code=raw_code,
+        telegram_id=message.from_user.id,
+    )
+    response_status = get_response_status(response)
+
+    if response_status == status.HTTP_200_OK:
+        await message.answer("✅ Telegram успешно привязан к вашему аккаунту на сайте.")
+        return
+
+    if response_status == status.HTTP_409_CONFLICT:
+        await message.answer("Этот Telegram уже привязан к другому аккаунту.")
+        return
+
+    if response_status == status.HTTP_429_TOO_MANY_REQUESTS:
+        await message.answer("Код заблокирован из-за превышения числа попыток. Сгенерируйте новый код на сайте.")
+        return
+
+    if response_status == status.HTTP_400_BAD_REQUEST:
+        await message.answer("Код недействителен или истек. Сгенерируйте новый код в профиле на сайте.")
+        return
+
+    await message.answer("Не удалось привязать аккаунт из-за ошибки сервера. Попробуйте позже.")
 
 @master_router.callback_query(F.data == "start_menu")
 async def back_to_menu(callback: types.CallbackQuery):
@@ -392,7 +485,10 @@ async def process_prompt(message: types.Message, state: FSMContext):
         )
         return 
 
-    await message.answer("Отправь файлы (.pdf, .docx, .txt). Когда закончишь, нажми /start")
+    await message.answer(
+        "Отправь файлы (.pdf, .docx, .txt) или публичные ссылки (http/https).\n"
+        "Когда закончишь, нажми /start."
+    )
     await state.set_state(CreateAgentSG.waiting_docs)
 
 @master_router.message(CreateAgentSG.waiting_docs, F.document)
@@ -425,20 +521,45 @@ async def handle_docs(message: types.Message, state: FSMContext, bot: Bot):
     if response_data['status'] == 'limit_error':
 
         await message.answer(
-            f"🚫 *Лимит базы знаний превышен!*\n\n"
-            f"Ваш тариф: *{response_data['current_plan']}* (макс. {response_data['limit']} чанков).\n"
+            f"🚫 <b>Лимит базы знаний превышен!</b>\n\n"
+            f"Ваш тариф: <b>{html_escape(str(response_data['current_plan']))}</b> "
+            f"(макс. {response_data['limit']} чанков).\n"
             f"Уже использовано: {response_data['current_count']}.\n"
             f"Файл содержит: {response_data['new_chunks_count']}.\n\n"
             f"Удалите старые документы или повысьте тариф в меню.",
-            parse_mode="Markdown"
+            parse_mode="HTML",
         )
         return
 
-
     await message.answer(
-        f"✅ Файл '_{escape_md(file_name)}_' принят и обрабатывается ({response_data['new_chunks_count']} чанков).",
-        parse_mode="Markdown"
+        f"✅ Файл <b>{html_escape(file_name or '')}</b> принят и обрабатывается "
+        f"({response_data['new_chunks_count']} чанков).",
+        parse_mode="HTML",
     )
+
+
+@master_router.message(CreateAgentSG.waiting_docs, F.text)
+async def handle_link_during_agent_creation(message: types.Message, state: FSMContext):
+    url_value = (message.text or "").strip()
+    if not _is_public_http_url(url_value):
+        await message.answer("❌ Нужна корректная публичная ссылка в формате http/https.")
+        return
+
+    data = await state.get_data()
+    agent_id = data.get("agent_id")
+    if not agent_id:
+        await message.answer("Ошибка: потерян ID агента. Начните заново через /start.")
+        await state.clear()
+        return
+
+    response_data = await APIcreate.documentLinkBy_botID(agent_id, url_value)
+    response_status = get_response_status(response_data)
+
+    if response_status != status.HTTP_200_OK:
+        await message.answer("Ошибка сервера при попытке добавить ссылку.")
+        return
+
+    await _handle_link_upload_result(message, response_data, source_label="Ссылка")
 
 # --- МОИ АГЕНТЫ (СПИСОК) ---
 
@@ -523,7 +644,6 @@ async def render_agent_info(callback: types.CallbackQuery, agent_id: int):
     bot_name = escape_md(agent_json['bot_username']) if agent_json['bot_username'] else "Бот"
     status_text = "✅ Активен" if agent_json['is_active'] else "❌ Отключен"
     toggle_label = "🔴 Отключить" if agent_json['is_active'] else "🟢 Включить"
-    
     text = (
         f"🤖 *Управление агентом*\n\n"
         f"ID: `{agent_id}`\n"
@@ -538,6 +658,7 @@ async def render_agent_info(callback: types.CallbackQuery, agent_id: int):
         types.InlineKeyboardButton(text="📝 Изменить промпт", callback_data=f"edit_prompt_{agent_id}"),
         types.InlineKeyboardButton(text="👋 Изменить приветствие", callback_data=f"edit_welcome_{agent_id}")
         ],
+        [types.InlineKeyboardButton(text="🔑 API ключ", callback_data=f"api_menu_{agent_id}")],
         [types.InlineKeyboardButton(text="📚 Редактировать базу знаний", callback_data=f"edit_kb_{agent_id}")],
         [
             types.InlineKeyboardButton(text=toggle_label, callback_data=f"toggle_agent_{agent_id}"),
@@ -547,6 +668,87 @@ async def render_agent_info(callback: types.CallbackQuery, agent_id: int):
     ])
 
     await safe_edit_callback_message(callback, text, reply_markup=kb, parse_mode="Markdown")
+
+
+async def render_api_key_menu(callback: types.CallbackQuery, agent_id: int):
+    agent_json = await APIread.agentBy_botID(agent_id)
+    response_status = get_response_status(agent_json)
+    if response_status != status.HTTP_200_OK:
+        await safe_callback_answer(
+            callback,
+            "Не удалось открыть меню API ключа. Попробуйте позже.",
+            show_alert=True,
+        )
+        return
+
+    external_api_key = agent_json.get("external_api_key")
+    api_key_button = build_copy_api_key_button(external_api_key)
+    kb = types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                api_key_button,
+                types.InlineKeyboardButton(text="♻️ Перевыпустить ключ", callback_data=f"confirm_regen_api_key_{agent_id}"),
+            ],
+            [types.InlineKeyboardButton(text="⬅️ Назад к агенту", callback_data=f"agent_info_{agent_id}")],
+        ]
+    )
+    text = (
+        "🔑 *API ключ агента*\n\n"
+        "Вы можете скопировать API ключ вашего агента, чтобы интегрировать его "
+        "в свой сервис через API-запросы.\n\n"
+        "⚠️ Если вы перевыпустите ключ, старый ключ сразу перестанет работать."
+    )
+    await safe_edit_callback_message(callback, text, reply_markup=kb, parse_mode="Markdown")
+
+
+@master_router.callback_query(F.data.startswith("api_menu_"))
+async def show_api_menu(callback: types.CallbackQuery):
+    agent_id = int(callback.data.split("_")[2])
+    await render_api_key_menu(callback, agent_id)
+
+
+@master_router.callback_query(F.data == "api_key_unavailable")
+async def api_key_unavailable(callback: types.CallbackQuery):
+    await safe_callback_answer(
+        callback,
+        "API ключ временно недоступен. Попробуйте открыть карточку агента еще раз.",
+        show_alert=True,
+    )
+
+
+@master_router.callback_query(F.data.startswith("confirm_regen_api_key_"))
+async def confirm_regenerate_api_key(callback: types.CallbackQuery):
+    agent_id = int(callback.data.split("_")[4])
+    kb = types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(text="✅ Да, перевыпустить", callback_data=f"regen_api_key_{agent_id}"),
+                types.InlineKeyboardButton(text="❌ Отмена", callback_data=f"api_menu_{agent_id}"),
+            ]
+        ]
+    )
+    await safe_edit_callback_message(
+        callback,
+        "⚠️ Вы точно хотите перевыпустить ключ?\n\nНынешний API ключ больше не будет активен.",
+        reply_markup=kb,
+    )
+
+
+@master_router.callback_query(F.data.startswith("regen_api_key_"))
+async def regenerate_api_key(callback: types.CallbackQuery):
+    agent_id = int(callback.data.split("_")[3])
+    result = await APIcreate.regenerateExternalAgentApiKey(agent_id)
+    response_status = get_response_status(result)
+    if response_status != status.HTTP_200_OK:
+        await safe_callback_answer(
+            callback,
+            "Не удалось перевыпустить API ключ. Попробуйте позже.",
+            show_alert=True,
+        )
+        return
+
+    await safe_callback_answer(callback, "API ключ перевыпущен", show_alert=True)
+    await render_api_key_menu(callback, agent_id)
 
 # --- ПЕРЕКЛЮЧЕНИЕ СТАТУСА ---
 
@@ -805,16 +1007,17 @@ async def show_knowledge_base(callback: types.CallbackQuery):
     # Кнопки навигации
    
     builder.row(types.InlineKeyboardButton(text="➕ Добавить файл", callback_data=f"add_doc_{agent_id}"))
+    builder.row(types.InlineKeyboardButton(text="🔗 Добавить ссылку", callback_data=f"add_link_{agent_id}"))
     builder.row(types.InlineKeyboardButton(text="⬅️ Назад к агенту", callback_data=f"agent_info_{agent_id}"))
 
     text = (
         "📚 *Управление базой знаний*\n\n"
-        "Нажмите на файл, который хотите удалить.\n\n"
+        "Нажмите на источник, который хотите удалить.\n\n"
         "Легенда:\n"
         "✅ — Успешно загружен в ИИ\n"
         "⏳ — В процессе обработки\n"
         "❌ — Ошибка чтения файла"
-    ) if all_agent_docs else "📚 *Управление базой знаний*\n\nВ базе данных этого агента пока нет файлов."
+    ) if all_agent_docs else "📚 *Управление базой знаний*\n\nВ базе данных этого агента пока нет источников."
 
     await safe_edit_callback_message(callback, text, reply_markup=builder.as_markup(), parse_mode="Markdown")
 
@@ -840,13 +1043,20 @@ async def confirm_delete_document(callback: types.CallbackQuery):
                 f"Ошибка сервера при попытке получить документ по id", show_alert=True
             )
             return 
-        
+
+    kb_bot_id = doc_json.get("bot_id")
+    if kb_bot_id is None:
+        await callback.answer(
+            "Не удалось открыть подтверждение: у агента не задан bot_id. Обновите сервер или обратитесь в поддержку.",
+            show_alert=True,
+        )
+        return
 
     text = f"⚠️ *ВНИМАНИЕ!*\n\nВы действительно хотите навсегда удалить файл `{escape_md(doc_json['file_name'])}`?\nБот больше не сможет использовать его для ответов."
 
     kb = types.InlineKeyboardMarkup(inline_keyboard=[
         [
-            types.InlineKeyboardButton(text="✅ ОТМЕНА", callback_data=f"edit_kb_{doc_json['agent_id']}"),
+            types.InlineKeyboardButton(text="✅ ОТМЕНА", callback_data=f"edit_kb_{kb_bot_id}"),
             types.InlineKeyboardButton(text="❌ ДА, УДАЛИТЬ", callback_data=f"del_doc_force_{doc_json['id']}")
         ]
     ])
@@ -878,7 +1088,13 @@ async def force_delete_document(callback: types.CallbackQuery):
 
             return 
 
-    agent_id = response_data['agent_id']
+    bot_id = response_data.get("bot_id")
+    if bot_id is None:
+        await callback.answer(
+            "Файл удалён, но не удалось вернуться в меню базы знаний (нет bot_id в ответе сервера). Откройте раздел из карточки агента.",
+            show_alert=True,
+        )
+        return
 
     await callback.answer("✅ Файл успешно удален из базы знаний!", show_alert=True)
 
@@ -886,7 +1102,7 @@ async def force_delete_document(callback: types.CallbackQuery):
     # Возвращаемся обратно в меню базы знаний (генерируем фейковый callback)
     fake_callback = types.CallbackQuery(
         id="0", from_user=callback.from_user, chat_instance="0",
-        message=callback.message, data=f"edit_kb_{agent_id}"
+        message=callback.message, data=f"edit_kb_{bot_id}"
     )
     await show_knowledge_base(fake_callback)
 
@@ -912,6 +1128,27 @@ async def prompt_add_document(callback: types.CallbackQuery, state: FSMContext):
         "Можно отправлять по одному файлу.",
         reply_markup=kb,
         parse_mode="Markdown"
+    )
+
+
+@master_router.callback_query(F.data.startswith("add_link_"))
+async def prompt_add_link(callback: types.CallbackQuery, state: FSMContext):
+    agent_id = int(callback.data.split("_")[2])
+
+    await state.update_data(edit_agent_id=agent_id)
+    await state.set_state(CreateAgentSG.adding_extra_links)
+
+    kb = types.InlineKeyboardMarkup(inline_keyboard=[
+        [types.InlineKeyboardButton(text="❌ Отмена", callback_data=f"edit_kb_{agent_id}")]
+    ])
+
+    await safe_edit_callback_message(
+        callback,
+        "🔗 *Добавление публичной ссылки*\n\n"
+        "Отправьте URL (http/https), который нужно загрузить в базу знаний.\n"
+        "Ссылка обрабатывается один раз и не обновляется автоматически.",
+        reply_markup=kb,
+        parse_mode="Markdown",
     )
 
 # --- ПРИЕМ И ОБРАБОТКА НОВОГО ДОКУМЕНТА ---
@@ -971,6 +1208,60 @@ async def process_extra_document(message: types.Message, state: FSMContext, bot:
 
 
     # 7. Возврат в меню базы знаний (через небольшую паузу, чтобы успели прочитать)
+    await asyncio.sleep(2)
+    fake_callback = types.CallbackQuery(
+        id="0", from_user=message.from_user, chat_instance="0",
+        message=message, data=f"edit_kb_{agent_id}"
+    )
+    await show_knowledge_base(fake_callback)
+
+
+@master_router.message(CreateAgentSG.adding_extra_links, F.text)
+async def process_extra_link(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    agent_id = data.get("edit_agent_id")
+    if not agent_id:
+        await message.answer("Ошибка: потерян ID агента. Начните сначала.")
+        await state.clear()
+        return
+
+    url_value = (message.text or "").strip()
+    if not _is_public_http_url(url_value):
+        await message.answer("❌ Нужна корректная публичная ссылка в формате http/https.")
+        return
+
+    msg = await message.answer("⏳ Проверяю лимиты и анализирую ссылку...")
+    response_data = await APIcreate.documentLinkBy_botID(agent_id, url_value)
+    response_status = get_response_status(response_data)
+
+    if response_status != status.HTTP_200_OK:
+        await msg.edit_text("Ошибка сервера при попытке добавить ссылку.")
+        return
+
+    if response_data.get("status") == "limit_error":
+        await msg.edit_text(
+            f"🚫 <b>Лимит базы знаний превышен!</b>\n\n"
+            f"Ваш тариф: <b>{html_escape(str(response_data.get('current_plan', 'unknown')))}</b> "
+            f"(макс. {response_data.get('limit', 'unknown')} чанков).\n"
+            f"Уже использовано: {response_data.get('current_count', 'unknown')}.\n"
+            f"Ссылка добавит: {response_data.get('new_chunks_count', 'unknown')}.\n\n"
+            f"Удалите старые источники или повысьте тариф в меню.",
+            parse_mode="HTML",
+        )
+        return
+
+    if response_data.get("status") == "duplicate":
+        await msg.edit_text(
+            f"ℹ️ Ссылка уже добавлена ранее "
+            f"(статус: {html_escape(str(response_data.get('document_status', 'ready')))}).",
+            parse_mode="HTML",
+        )
+    else:
+        await msg.edit_text(
+            f"✅ Ссылка принята и обрабатывается ({response_data.get('new_chunks_count', 'unknown')} чанков).",
+            parse_mode="HTML",
+        )
+
     await asyncio.sleep(2)
     fake_callback = types.CallbackQuery(
         id="0", from_user=message.from_user, chat_instance="0",

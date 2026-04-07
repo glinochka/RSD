@@ -1,6 +1,7 @@
 from typing import Literal
 
 from pydantic import BaseModel, Field
+from pydantic import field_validator
 
 
 class AdminLoginRequest(BaseModel):
@@ -28,3 +29,16 @@ class AdminGiftSubscriptionRequest(BaseModel):
     plan_code: Literal["Free", "Advanced", "Pro"] = Field(
         ..., description="Subscription plan to gift"
     )
+
+
+class AdminPromoCodeCreateRequest(BaseModel):
+    code: str = Field(..., min_length=1, max_length=64)
+    discount_percent: int = Field(..., ge=0, le=100)
+
+    @field_validator("code")
+    @classmethod
+    def validate_code(cls, value: str) -> str:
+        cleaned = value.strip().upper()
+        if not cleaned:
+            raise ValueError("Promo code is required")
+        return cleaned

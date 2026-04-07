@@ -25,3 +25,31 @@ class Update_userSubscription(BaseModel):
 
     subscription_type: Optional[Literal['Free', 'Advanced', 'Pro']] = Field(None, description="Тип подписки ('Free', 'Advanced', 'Pro')")
     subscription_end_date: Optional[datetime] = Field(None, description="Дата окончания подписки")
+
+
+class TelegramLinkStartResponse(BaseModel):
+    code: str = Field(..., description="Одноразовый код для привязки Telegram")
+    expires_at: datetime = Field(..., description="UTC время истечения кода")
+    expires_in_seconds: int = Field(..., description="Оставшееся время жизни кода")
+
+
+class TelegramLinkStartRequest(BaseModel):
+    telegram_username: str = Field(
+        ...,
+        min_length=4,
+        max_length=33,
+        pattern=r"^@[A-Za-z0-9_]{3,32}$",
+        description="Username Telegram в формате @username",
+    )
+
+
+class TelegramLinkConfirmRequest(BaseModel):
+    code: str = Field(..., min_length=6, max_length=6, description="Одноразовый 6-значный код из сайта")
+    telegram_id: int = Field(..., description="Telegram ID пользователя")
+
+
+class UserMeResponse(BaseModel):
+    id: int
+    name: str
+    telegram_id: Optional[int] = None
+    is_telegram_linked: bool
