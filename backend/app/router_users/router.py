@@ -864,18 +864,22 @@ async def confirm_password_reset(payload: PasswordResetConfirmRequest):
     async with async_session_maker() as session:
         user_dao = UserDAO(session)
         async with session.begin():
-            user = await user_dao.find_one_by_filter(email=normalized_email)
+            user = await session.scalar(
+                select(user_dao.model).where(user_dao.model.password_reset_token_hash == token_hash)
+            )
             if not user:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Сессия восстановления не найдена",
+                    detail="Неверный или устаревший токен восстановления",
                 )
 
-            if (
-                not user.password_reset_token_hash
-                or not user.password_reset_expires_at
-                or user.password_reset_token_hash != token_hash
-            ):
+            if user.email != normalized_email:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Сессия восстановления не найдена для указанного email",
+                )
+
+            if not user.password_reset_expires_at:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Неверный или устаревший токен восстановления",

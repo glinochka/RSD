@@ -318,7 +318,11 @@ const Auth = () => {
                     value={form.values.email}
                     onChange={form.handleChange}
                     onBlur={form.handleBlur}
-                    disabled={form.isSubmitting || (isRegister && isAwaitingEmailCode)}
+                    disabled={
+                      form.isSubmitting
+                      || (isRegister && isAwaitingEmailCode)
+                      || (isRecoveryMode && recoveryStep !== 'request')
+                    }
                     className={form.errors.email ? 'error' : ''}
                     autoComplete="email"
                   />
