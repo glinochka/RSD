@@ -61,6 +61,21 @@ class TestAdminLogin:
         assert response.status_code == 503
         assert "not configured" in response.json()["detail"]
 
+    @pytest.mark.asyncio
+    async def test_admin_login_invalid_hash_config(self, client):
+        """Test login when admin password hash has invalid format."""
+        with patch('app.router_admin.router.settings') as mock_settings:
+            mock_settings.ADMIN_WEB_LOGIN = "admin"
+            mock_settings.ADMIN_WEB_PASSWORD_HASH = "plain-text-password"
+
+            response = await client.post(
+                "/api/admin/login",
+                json={"login": "admin", "password": "plain-text-password"}
+            )
+
+        assert response.status_code == 503
+        assert "misconfigured" in response.json()["detail"]
+
 
 class TestAdminStats:
     """Tests for GET /api/admin/stats endpoint."""

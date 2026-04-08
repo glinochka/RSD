@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 import jwt
 from jwt.exceptions import InvalidTokenError
+from passlib.exc import UnknownHashError
 
 from .schemas import (
     AdminGiftSubscriptionRequest,
@@ -116,7 +117,14 @@ async def admin_login(payload: AdminLoginRequest):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid admin credentials",
         )
-    is_password_valid = verify_password(password, settings.ADMIN_WEB_PASSWORD_HASH)
+    try:
+        is_password_valid = verify_password(password, settings.ADMIN_WEB_PASSWORD_HASH)
+    except UnknownHashError:
+        logger.exception("ADMIN_WEB_PASSWORD_HASH is invalid and cannot be parsed by passlib")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="ADMIN_WEB_PASSWORD_HASH is misconfigured",
+        )
     if not is_password_valid:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
