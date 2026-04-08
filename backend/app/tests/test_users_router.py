@@ -329,6 +329,38 @@ class TestUserLogin:
         assert response.status_code == 401
         assert "Неверные учетные данные" in response.json()["detail"]
 
+    @pytest.mark.asyncio
+    async def test_login_legacy_plaintext_password_migrates_to_bcrypt(self, client, test_session):
+        """Legacy plain-text password is accepted once and migrated to bcrypt hash."""
+        from app.router_users.dao import UserDAO
+        from app.utils.security import identify_password_hash_scheme
+
+        user_dao = UserDAO(test_session)
+        user_email = "legacy@example.com"
+        legacy_password = "legacy_plain_password"
+
+        async with test_session.begin():
+            await user_dao.add({
+                "name": "legacy_user",
+                "email": user_email,
+                "email_verified": True,
+                "password": legacy_password,
+            })
+
+        login_response = await client.post(
+            "/api/users/login",
+            json={"name": user_email, "password": legacy_password},
+        )
+        assert login_response.status_code == 200
+        assert "access_token" in login_response.json()
+
+        async with test_session.begin():
+            result = await test_session.execute(select(User).where(User.email == user_email))
+            user = result.scalar_one_or_none()
+            assert user is not None
+            assert user.password != legacy_password
+            assert identify_password_hash_scheme(user.password) == "bcrypt"
+
 
 # --- Тесты для /api/users/me (требуют реализации эндпоинта) ---
 # class TestUserMe:
