@@ -14,10 +14,12 @@ import { ENV_CONFIG } from '../config/environment';
 export const AuthContext = createContext(null);
 
 const TOKEN_KEY = ENV_CONFIG.STORAGE_KEYS.TOKEN;
+const REFRESH_TOKEN_KEY = ENV_CONFIG.STORAGE_KEYS.REFRESH_TOKEN;
 const USER_KEY = ENV_CONFIG.STORAGE_KEYS.USER;
 
 export const AuthProvider = ({ children }) => {
   const [token, setToken, removeToken] = useLocalStorage(TOKEN_KEY, null);
+  const [, setRefreshToken, removeRefreshToken] = useLocalStorage(REFRESH_TOKEN_KEY, null);
   const [user, setUser] = useLocalStorage(USER_KEY, null);
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
 
@@ -32,10 +34,11 @@ export const AuthProvider = ({ children }) => {
     async (name, password) => {
       const response = await authService.login(name, password);
       setToken(response.token);
+      setRefreshToken(response.refreshToken);
       setUser(response.user);
       return response;
     },
-    [setToken, setUser]
+    [setRefreshToken, setToken, setUser]
   );
 
   const register = useCallback(
@@ -50,10 +53,11 @@ export const AuthProvider = ({ children }) => {
     async (email, code) => {
       const response = await authService.verifyRegistrationCode(email, code);
       setToken(response.token);
+      setRefreshToken(response.refreshToken);
       setUser(response.user);
       return response;
     },
-    [setToken, setUser]
+    [setRefreshToken, setToken, setUser]
   );
 
   const logout = useCallback(async () => {
@@ -63,9 +67,10 @@ export const AuthProvider = ({ children }) => {
       console.error('Logout error:', error);
     } finally {
       removeToken();
+      removeRefreshToken();
       setUser(null);
     }
-  }, [removeToken, setUser]);
+  }, [removeRefreshToken, removeToken, setUser]);
 
   const isAuthenticated = !!token && !!user;
 

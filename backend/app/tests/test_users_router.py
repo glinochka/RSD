@@ -362,6 +362,82 @@ class TestUserLogin:
             assert identify_password_hash_scheme(user.password) == "bcrypt"
 
 
+class TestUserSessionLifecycle:
+    """Tests for refresh/logout/me session behavior."""
+
+    @pytest.mark.asyncio
+    async def test_refresh_rotates_refresh_token(self, client, test_session):
+        from app.utils.security import get_password_hash
+        from app.router_users.dao import UserDAO
+
+        user_dao = UserDAO(test_session)
+        email = "refresh@example.com"
+        password = "correctpassword123"
+        async with test_session.begin():
+            await user_dao.add({
+                "name": "refreshuser",
+                "email": email,
+                "email_verified": True,
+                "password": get_password_hash(password),
+            })
+
+        login_response = await client.post(
+            "/api/users/login",
+            json={"name": email, "password": password},
+        )
+        assert login_response.status_code == 200
+        login_data = login_response.json()
+        first_refresh_token = login_data["refresh_token"]
+
+        refresh_response = await client.post(
+            "/api/users/refresh",
+            json={"refresh_token": first_refresh_token},
+        )
+        assert refresh_response.status_code == 200
+        refresh_data = refresh_response.json()
+        assert refresh_data["access_token"]
+        assert refresh_data["token_type"] == "bearer"
+        assert refresh_data["refresh_token"] != first_refresh_token
+
+        replay_old_refresh = await client.post(
+            "/api/users/refresh",
+            json={"refresh_token": first_refresh_token},
+        )
+        assert replay_old_refresh.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_logout_revokes_current_session(self, client, test_session):
+        from app.utils.security import get_password_hash
+        from app.router_users.dao import UserDAO
+
+        user_dao = UserDAO(test_session)
+        email = "logout@example.com"
+        password = "correctpassword123"
+        async with test_session.begin():
+            await user_dao.add({
+                "name": "logoutuser",
+                "email": email,
+                "email_verified": True,
+                "password": get_password_hash(password),
+            })
+
+        login_response = await client.post(
+            "/api/users/login",
+            json={"name": email, "password": password},
+        )
+        assert login_response.status_code == 200
+        access_token = login_response.json()["access_token"]
+        auth_headers = {"Authorization": f"Bearer {access_token}"}
+
+        me_before_logout = await client.get("/api/users/me", headers=auth_headers)
+        assert me_before_logout.status_code == 200
+
+        logout_response = await client.post("/api/users/logout", headers=auth_headers)
+        assert logout_response.status_code == 204
+
+        me_after_logout = await client.get("/api/users/me", headers=auth_headers)
+        assert me_after_logout.status_code == 401
+
 # --- Тесты для /api/users/me (требуют реализации эндпоинта) ---
 # class TestUserMe:
 #     @pytest.mark.asyncio

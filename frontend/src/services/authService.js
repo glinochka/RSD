@@ -3,8 +3,8 @@
  * Handles the full auth lifecycle per backend app/router_users/router.py.
  *
  * Backend returns on successful login/registration:
- *   { "access_token": "<jwt>", "token_type": "bearer" }
- * We normalize to { token, tokenType, user } and the token is stored for the
+ *   { "access_token": "<jwt>", "refresh_token": "<token>", "token_type": "bearer" }
+ * We normalize to { token, refreshToken, tokenType, user } and the token pair is stored for the
  * API client interceptor (Authorization: Bearer <access_token>).
  *
  * Payloads:
@@ -18,12 +18,17 @@ import { API_ROUTES } from '../config/constants';
 /** Normalize backend auth response to a shape used by AuthContext and storage */
 function normalizeAuthResponse(data, userName) {
   const token = data?.access_token ?? data?.token ?? null;
+  const refreshToken = data?.refresh_token ?? null;
   const tokenType = data?.token_type ?? 'bearer';
   if (!token) {
     throw new Error('Сервер не вернул токен доступа');
   }
+  if (!refreshToken) {
+    throw new Error('Сервер не вернул refresh token');
+  }
   return {
     token,
+    refreshToken,
     tokenType,
     user: { name: userName },
   };
@@ -114,8 +119,7 @@ export const authService = {
    * Refresh token (if backend implements it). Not used by default.
    */
   refreshToken: async () => {
-    const response = await apiClient.post(API_ROUTES.AUTH_REFRESH);
-    return response.data;
+    throw new Error('authService.refreshToken is deprecated. Use API client interceptor refresh flow.');
   },
 
   /**

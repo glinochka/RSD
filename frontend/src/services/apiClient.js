@@ -3,8 +3,9 @@
  * Centralized API client. baseURL from ENV_CONFIG.API.BASE_URL; CORS: backend/app/origins.py.
  *
  * Auth lifecycle (backend router_users/router.py):
- * - Login/register return { access_token, token_type: "bearer" }. AuthContext stores
- *   access_token under ENV_CONFIG.STORAGE_KEYS.TOKEN.
+ * - Login/register return { access_token, refresh_token, token_type: "bearer" }.
+ * - AuthContext stores both tokens. This client sends Bearer access_token and, on 401,
+ *   performs one silent refresh using refresh_token, then retries the original request.
  * - This request interceptor reads that token and sets Authorization: Bearer <access_token>
  *   on every request so protected routes receive the JWT.
  * - On 401, the response interceptor clears token/user and redirects to /auth.
@@ -12,15 +13,19 @@
 
 import axios from 'axios';
 import { ENV_CONFIG } from '../config/environment';
-import { HTTP_STATUS, ERROR_MESSAGES } from '../config/constants';
-import { getStorageItem, removeStorageItem } from '../utils/storage';
+import { API_ROUTES, HTTP_STATUS, ERROR_MESSAGES } from '../config/constants';
+import { getStorageItem, removeStorageItem, setStorageItem } from '../utils/storage';
 import { normalizeDetail } from '../utils/errorUtils';
 
 const TOKEN_KEY = ENV_CONFIG.STORAGE_KEYS.TOKEN;
+const REFRESH_TOKEN_KEY = ENV_CONFIG.STORAGE_KEYS.REFRESH_TOKEN;
 const USER_KEY = ENV_CONFIG.STORAGE_KEYS.USER;
+const REFRESH_RETRY_FLAG = '_retriedWithRefreshedToken';
 
 const isAuthRequest = (url) =>
-  url != null && (url.includes('/login') || url.includes('/registration'));
+  url !== null &&
+  url !== undefined &&
+  (url.includes('/login') || url.includes('/registration') || url.includes('/refresh'));
 
 class APIClient {
   constructor() {
@@ -31,8 +36,66 @@ class APIClient {
         'Content-Type': 'application/json',
       },
     });
+    this.isRefreshing = false;
+    this.refreshQueue = [];
 
     this.setupInterceptors();
+  }
+
+  queueRefreshWaiter() {
+    return new Promise((resolve, reject) => {
+      this.refreshQueue.push({ resolve, reject });
+    });
+  }
+
+  flushRefreshQueue(error, nextAccessToken) {
+    this.refreshQueue.forEach(({ resolve, reject }) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(nextAccessToken);
+    });
+    this.refreshQueue = [];
+  }
+
+  clearAuthStorage() {
+    removeStorageItem(TOKEN_KEY);
+    removeStorageItem(REFRESH_TOKEN_KEY);
+    removeStorageItem(USER_KEY);
+  }
+
+  redirectToAuth() {
+    if (window.location.pathname !== '/auth') {
+      window.location.href = '/auth';
+    }
+  }
+
+  async refreshAccessToken() {
+    const refreshToken = getStorageItem(REFRESH_TOKEN_KEY);
+    if (!refreshToken) {
+      throw new Error('Refresh token is missing');
+    }
+
+    const refreshUrl = `${ENV_CONFIG.API.BASE_URL}${API_ROUTES.AUTH_REFRESH}`;
+    const response = await axios.post(
+      refreshUrl,
+      { refresh_token: refreshToken },
+      {
+        timeout: ENV_CONFIG.API.TIMEOUT,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
+
+    const nextAccessToken = response?.data?.access_token;
+    const nextRefreshToken = response?.data?.refresh_token;
+    if (!nextAccessToken || !nextRefreshToken) {
+      throw new Error('Token refresh response is invalid');
+    }
+
+    setStorageItem(TOKEN_KEY, nextAccessToken);
+    setStorageItem(REFRESH_TOKEN_KEY, nextRefreshToken);
+    return nextAccessToken;
   }
 
   /**
@@ -73,18 +136,52 @@ class APIClient {
   /**
    * Handle response errors with proper status code handling
    */
-  handleResponseError(error) {
+  async handleResponseError(error) {
     const status = error.response?.status;
     const data = error.response?.data;
     const requestUrl = error.response?.config?.url ?? error.config?.url;
+    const originalRequest = error.response?.config ?? error.config;
 
     if (status === HTTP_STATUS.UNAUTHORIZED) {
-      removeStorageItem(TOKEN_KEY);
-      removeStorageItem(USER_KEY);
-      // Only redirect when the 401 is from a protected request (e.g. expired token).
-      // Login/register 401 (user not found, wrong password) stay on auth page so the user sees the message.
-      if (!isAuthRequest(requestUrl)) {
-        window.location.href = '/auth';
+      const canAttemptRefresh =
+        !!originalRequest &&
+        !isAuthRequest(requestUrl) &&
+        !originalRequest[REFRESH_RETRY_FLAG] &&
+        !!getStorageItem(REFRESH_TOKEN_KEY);
+
+      if (canAttemptRefresh) {
+        if (this.isRefreshing) {
+          try {
+            const queuedToken = await this.queueRefreshWaiter();
+            originalRequest.headers = originalRequest.headers ?? {};
+            originalRequest.headers.Authorization = `Bearer ${queuedToken}`;
+            originalRequest[REFRESH_RETRY_FLAG] = true;
+            return this.client(originalRequest);
+          } catch {
+            this.clearAuthStorage();
+            this.redirectToAuth();
+          }
+        }
+
+        this.isRefreshing = true;
+        try {
+          const nextAccessToken = await this.refreshAccessToken();
+          this.flushRefreshQueue(null, nextAccessToken);
+          originalRequest.headers = originalRequest.headers ?? {};
+          originalRequest.headers.Authorization = `Bearer ${nextAccessToken}`;
+          originalRequest[REFRESH_RETRY_FLAG] = true;
+          return this.client(originalRequest);
+        } catch (refreshError) {
+          this.flushRefreshQueue(refreshError, null);
+          this.clearAuthStorage();
+          this.redirectToAuth();
+        } finally {
+          this.isRefreshing = false;
+        }
+      } else if (!isAuthRequest(requestUrl)) {
+        // Protected request failed and cannot be refreshed -> force clean re-login.
+        this.clearAuthStorage();
+        this.redirectToAuth();
       }
     }
 
@@ -114,10 +211,12 @@ class APIClient {
    */
   getErrorMessage(status, data) {
     const rawDetail = data?.detail ?? data?.message;
-    if (rawDetail != null) {
+    if (rawDetail !== null && rawDetail !== undefined) {
       const normalized =
         typeof rawDetail === 'string' ? rawDetail : normalizeDetail(rawDetail);
-      if (normalized) return normalized;
+      if (normalized) {
+        return normalized;
+      }
     }
 
     switch (status) {

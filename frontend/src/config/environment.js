@@ -17,12 +17,18 @@ const defaultBaseUrl = 'http://localhost:8000';
 const viteApiBase = import.meta.env.VITE_API_BASE_URL;
 
 const normalizeApiBaseUrl = (rawBaseUrl) => {
-  if (rawBaseUrl === undefined || rawBaseUrl === null) return defaultBaseUrl;
+  if (rawBaseUrl === undefined || rawBaseUrl === null) {
+    return defaultBaseUrl;
+  }
   const trimmed = String(rawBaseUrl).trim();
-  if (trimmed === '') return '';
+  if (trimmed === '') {
+    return '';
+  }
 
   // Keep same-origin mode safe even if env was set to `/api`.
-  if (trimmed === '/api') return '';
+  if (trimmed === '/api') {
+    return '';
+  }
 
   // Remove trailing slash and optional `/api` suffix (e.g. https://api.site.com/api).
   const noTrailingSlash = trimmed.replace(/\/+$/, '');
@@ -56,6 +62,7 @@ export const ENV_CONFIG = {
   // Storage Keys
   STORAGE_KEYS: {
     TOKEN: 'token',
+    REFRESH_TOKEN: 'refresh_token',
     USER: 'user',
     ADMIN_TOKEN: 'admin_token',
     THEME: 'theme',
