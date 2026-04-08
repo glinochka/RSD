@@ -159,6 +159,15 @@ def _normalize_tg_username(username: str) -> str:
     return value.lower()
 
 
+def _password_candidates(raw_password: str) -> list[str]:
+    """Generate password variants for tolerant login verification."""
+    candidates = [raw_password]
+    stripped = raw_password.strip()
+    if stripped != raw_password:
+        candidates.append(stripped)
+    return candidates
+
+
 def _build_refresh_expiry() -> datetime:
     return _utc_now_naive() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
 
@@ -1018,8 +1027,18 @@ async def user_login(login_user: LoginUser):
                     candidates = [user_by_name]
 
             for candidate in candidates:
-                if candidate.password and verify_password(login_user.password, candidate.password):
-                    matched_user = candidate
+                if not candidate.password:
+                    continue
+                for password_candidate in _password_candidates(login_user.password):
+                    try:
+                        if verify_password(password_candidate, candidate.password):
+                            matched_user = candidate
+                            break
+                    except (ValueError, TypeError):
+                        # Keep login flow resilient for malformed legacy hashes.
+                        logger.warning("Invalid password hash for user_id=%s during login", candidate.id)
+                        continue
+                if matched_user:
                     break
 
     if not matched_user:
