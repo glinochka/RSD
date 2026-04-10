@@ -33,6 +33,8 @@ jobs:
           PYTHONPATH: ./backend 
           ALGORITHM: HS256
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          USER_JWT_SECRET_KEY: 798cd1b6cb25d52ce4e49824b01b5b22a117325ad327161c50ad5a8c2898fc89
+          ADMIN_JWT_SECRET_KEY: 49f53158c1d7074372655dd0ed25ed35a6abfd1311621670907977abd025a06f
           INTERNAL_API_KEY: test-internal-api-key
           ENCRYPTION_KEY: test-encryption-key-for-fernet-ci
           DB_HOST: localhost
