@@ -22,7 +22,7 @@ from ..utils.convert import convert_to_dict
 from ..utils.internal_auth import verify_internal_key
 from ..utils.JWT import create_access_token, decode_access_token_payload, get_user_from_access_token
 from ..utils.rate_limit import rate_limit
-from ..utils.security import get_password_hash, identify_password_hash_scheme, verify_password
+from ..utils.security import get_password_hash, verify_password
 
 logger = getLogger(__name__)
 
@@ -1000,7 +1000,6 @@ async def confirm_password_reset(payload: PasswordResetConfirmRequest):
 async def user_login(login_user: LoginUser):
     login_value = login_user.name.strip()
     matched_user = None
-    matched_via_legacy_plaintext = False
     async with async_session_maker() as session:
         user_dao = UserDAO(session)
 
@@ -1030,29 +1029,14 @@ async def user_login(login_user: LoginUser):
             for candidate in candidates:
                 if not candidate.password:
                     continue
-                hash_scheme = identify_password_hash_scheme(candidate.password)
-                if hash_scheme is None:
-                    logger.warning(
-                        "Unsupported/unknown password hash scheme for user_id=%s (hash_len=%s)",
-                        candidate.id,
-                        len(candidate.password),
-                    )
                 for password_candidate in _password_candidates(login_user.password):
                     try:
                         if verify_password(password_candidate, candidate.password):
                             matched_user = candidate
                             break
                     except (ValueError, TypeError):
-                        # Gracefully migrate legacy plain-text passwords after successful login.
-                        if password_candidate == candidate.password:
-                            matched_user = candidate
-                            matched_via_legacy_plaintext = True
-                            candidate.password = get_password_hash(password_candidate)
-                            logger.warning(
-                                "Migrated legacy plain-text password to bcrypt for user_id=%s during login",
-                                candidate.id,
-                            )
-                            break
+                        # Keep login flow resilient for malformed legacy hashes.
+                        logger.warning("Invalid password hash for user_id=%s during login", candidate.id)
                         continue
                 if matched_user:
                     break
@@ -1076,11 +1060,6 @@ async def user_login(login_user: LoginUser):
         )
 
     logger.info(f"{login_user.name} вошел в систему")
-    if matched_via_legacy_plaintext:
-        logger.info(
-            "User_id=%s authenticated via legacy plain-text fallback; password hash migrated",
-            matched_user.id,
-        )
 
     async with async_session_maker() as session:
         async with session.begin():
