@@ -43,6 +43,12 @@ services:
             QDRANT_URL: ${QDRANT_URL}
             DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
             INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+            TELEGRAM_PROXY_TYPE: ${TELEGRAM_PROXY_TYPE}
+            TELEGRAM_PROXY_HOST: ${TELEGRAM_PROXY_HOST}
+            TELEGRAM_PROXY_PORT: ${TELEGRAM_PROXY_PORT}
+            TELEGRAM_PROXY_USERNAME: ${TELEGRAM_PROXY_USERNAME}
+            TELEGRAM_PROXY_PASSWORD: ${TELEGRAM_PROXY_PASSWORD}
+            TELEGRAM_CONNECT_TIMEOUT_SECONDS: ${TELEGRAM_CONNECT_TIMEOUT_SECONDS:-30}
         ports:
             - '8000:8000'
         depends_on:
@@ -88,6 +94,8 @@ services:
     bot:
         build: ./bot
         container_name: rsd_bot
+        env_file:
+            - .env
         depends_on:
             - backend
         environment:
@@ -100,6 +108,12 @@ services:
             API_HOST: ${API_HOST}
             API_PORT: ${API_PORT}
             INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+            TELEGRAM_PROXY_TYPE: ${TELEGRAM_PROXY_TYPE}
+            TELEGRAM_PROXY_HOST: ${TELEGRAM_PROXY_HOST}
+            TELEGRAM_PROXY_PORT: ${TELEGRAM_PROXY_PORT}
+            TELEGRAM_PROXY_USERNAME: ${TELEGRAM_PROXY_USERNAME}
+            TELEGRAM_PROXY_PASSWORD: ${TELEGRAM_PROXY_PASSWORD}
+            TELEGRAM_CONNECT_TIMEOUT_SECONDS: ${TELEGRAM_CONNECT_TIMEOUT_SECONDS:-30}
         command: >
             python main.py
         ports:
