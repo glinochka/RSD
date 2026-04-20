@@ -148,6 +148,11 @@ class AgentFreezeUserPayload(AgentLookup):
 
 class AgentTelegramSendToUserPayload(AgentLookup):
     user_external_id: str = Field(..., max_length=128, description="Telegram user id получателя")
+    preferred_channel: Optional[str] = Field(
+        default=None,
+        pattern="^(telegram|telegram_userbot)$",
+        description="Предпочитаемый telegram-канал доставки",
+    )
     message: str = Field(..., min_length=1, max_length=4096, description="Текст сообщения от владельца")
 
 

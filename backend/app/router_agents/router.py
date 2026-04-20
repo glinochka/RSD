@@ -548,12 +548,13 @@ async def _log_analytics_message(
     )
 
 
-async def _list_telegram_broadcast_recipient_ids(session, telegram_bot_id: int) -> list[str]:
+async def _list_telegram_broadcast_recipient_ids(session, telegram_bot_id: int) -> list[dict]:
     rows = (
         (
             await session.execute(
                 select(
                     AgentAnalyticsMessage.user_external_id.label("uid"),
+                    AgentAnalyticsMessage.channel.label("channel"),
                     func.max(AgentAnalyticsMessage.created_at).label("last_at"),
                 )
                 .where(
@@ -562,14 +563,23 @@ async def _list_telegram_broadcast_recipient_ids(session, telegram_bot_id: int) 
                     AgentAnalyticsMessage.channel.in_(["telegram", "telegram_userbot"]),
                     AgentAnalyticsMessage.user_external_id.is_not(None),
                 )
-                .group_by(AgentAnalyticsMessage.user_external_id)
+                .group_by(AgentAnalyticsMessage.user_external_id, AgentAnalyticsMessage.channel)
                 .order_by(func.max(AgentAnalyticsMessage.created_at).desc())
             )
         )
         .mappings()
         .all()
     )
-    return [str(r["uid"]) for r in rows if r["uid"] and str(r["uid"]).isdigit()]
+    recipients = []
+    for row in rows:
+        uid = row.get("uid")
+        channel = (row.get("channel") or "").strip().lower()
+        if not uid or not str(uid).isdigit():
+            continue
+        if channel not in {"telegram", "telegram_userbot"}:
+            continue
+        recipients.append({"user_external_id": str(uid), "channel": channel})
+    return recipients
 
 
 async def get_agent_by_external_api_key(
@@ -1947,21 +1957,28 @@ async def telegram_send_to_user_as_owner(
             )
             telegram_channel = await _get_telegram_bot_channel_for_agent(session, agent.id)
             userbot_channel = await _get_telegram_userbot_channel_for_agent(session, agent.id)
+            preferred_channel = (payload.preferred_channel or "").strip().lower()
             send_errors: list[str] = []
             delivered = False
-            if telegram_channel and telegram_channel.encrypted_credentials:
-                try:
-                    bot_token = decrypt_token(telegram_channel.encrypted_credentials)
-                    await _telegram_api_send_message(bot_token, chat_id, text)
-                    delivered = True
-                except HTTPException as exc:
-                    send_errors.append(str(exc.detail))
-            if (not delivered) and userbot_channel and userbot_channel.encrypted_credentials:
-                try:
-                    await _telegram_userbot_send_message(userbot_channel.encrypted_credentials, chat_id, text)
-                    delivered = True
-                except HTTPException as exc:
-                    send_errors.append(str(exc.detail))
+            if preferred_channel in {"", "telegram"}:
+                if telegram_channel and telegram_channel.encrypted_credentials:
+                    try:
+                        bot_token = decrypt_token(telegram_channel.encrypted_credentials)
+                        await _telegram_api_send_message(bot_token, chat_id, text)
+                        delivered = True
+                    except HTTPException as exc:
+                        send_errors.append(str(exc.detail))
+                elif preferred_channel == "telegram":
+                    send_errors.append("bot-канал не подключен")
+            if (not delivered) and preferred_channel in {"", "telegram_userbot"}:
+                if userbot_channel and userbot_channel.encrypted_credentials:
+                    try:
+                        await _telegram_userbot_send_message(userbot_channel.encrypted_credentials, chat_id, text)
+                        delivered = True
+                    except HTTPException as exc:
+                        send_errors.append(str(exc.detail))
+                elif preferred_channel == "telegram_userbot":
+                    send_errors.append("userbot-канал не подключен")
             if not delivered:
                 joined_errors = "; ".join([err for err in send_errors if err]) or "каналы недоступны"
                 raise HTTPException(
@@ -2003,8 +2020,8 @@ async def telegram_broadcast_recipients(
                 internal=False,
             )
             analytics_namespace_id = agent.bot_id if agent.bot_id is not None else agent.id
-            recipient_ids = await _list_telegram_broadcast_recipient_ids(session, analytics_namespace_id)
-            if not recipient_ids:
+            recipients = await _list_telegram_broadcast_recipient_ids(session, analytics_namespace_id)
+            if not recipients:
                 return JSONResponse(
                     content={
                         "agent_id": agent.id,
@@ -2015,6 +2032,7 @@ async def telegram_broadcast_recipients(
                     },
                     status_code=status.HTTP_200_OK,
                 )
+            recipient_ids = [r["user_external_id"] for r in recipients]
             frozen_rows = await session.scalars(
                 select(AgentFrozenUser.user_external_id).where(
                     AgentFrozenUser.agent_id == agent.id,
@@ -2022,13 +2040,13 @@ async def telegram_broadcast_recipients(
                 )
             )
             frozen_set = set(frozen_rows.all())
-            frozen_among = len(frozen_set)
-            eligible = len([uid for uid in recipient_ids if uid not in frozen_set])
+            frozen_among = len([r for r in recipients if r["user_external_id"] in frozen_set])
+            eligible = len([r for r in recipients if r["user_external_id"] not in frozen_set])
             return JSONResponse(
                 content={
                     "agent_id": agent.id,
                     "bot_id": agent.bot_id,
-                    "telegram_users_total": len(recipient_ids),
+                    "telegram_users_total": len(recipients),
                     "frozen_among_telegram": frozen_among,
                     "eligible_when_skip_frozen": eligible,
                 },
@@ -2062,7 +2080,7 @@ async def telegram_broadcast_as_owner(
                 internal=False,
             )
             analytics_namespace_id = agent.bot_id if agent.bot_id is not None else agent.id
-            recipient_ids = await _list_telegram_broadcast_recipient_ids(session, analytics_namespace_id)
+            recipients = await _list_telegram_broadcast_recipient_ids(session, analytics_namespace_id)
             agent_pk = agent.id
             telegram_bot_id = analytics_namespace_id
             telegram_channel = await _get_telegram_bot_channel_for_agent(session, agent.id)
@@ -2083,6 +2101,7 @@ async def telegram_broadcast_as_owner(
                     detail="У агента нет активного Telegram bot/userbot канала для рассылки",
                 )
 
+    recipient_ids = [r["user_external_id"] for r in recipients]
     frozen_set: set[str] = set()
     if payload.skip_frozen and recipient_ids:
         async with async_session_maker() as session:
@@ -2095,36 +2114,47 @@ async def telegram_broadcast_as_owner(
                 )
                 frozen_set = set(frozen_rows.all())
 
-    skipped_frozen = sum(1 for uid in recipient_ids if payload.skip_frozen and uid in frozen_set)
-    eligible_ids = [uid for uid in recipient_ids if not (payload.skip_frozen and uid in frozen_set)]
-    to_send = eligible_ids[:max_n]
-    truncated_over_limit = max(0, len(eligible_ids) - max_n)
+    skipped_frozen = sum(
+        1 for recipient in recipients
+        if payload.skip_frozen and recipient["user_external_id"] in frozen_set
+    )
+    eligible_recipients = [
+        recipient
+        for recipient in recipients
+        if not (payload.skip_frozen and recipient["user_external_id"] in frozen_set)
+    ]
+    to_send = eligible_recipients[:max_n]
+    truncated_over_limit = max(0, len(eligible_recipients) - max_n)
 
     sent = 0
     failed = 0
     errors: list[dict] = []
     throttle_seconds = 0.05
 
-    for uid in to_send:
+    for recipient in to_send:
+        uid = recipient["user_external_id"]
+        channel = recipient["channel"]
         chat_id = int(uid)
         try:
-            delivered = False
-            send_errors: list[str] = []
-            if bot_token:
-                try:
-                    await _telegram_api_send_message(bot_token, chat_id, text)
-                    delivered = True
-                except HTTPException as exc:
-                    send_errors.append(str(exc.detail))
-            if (not delivered) and userbot_bundle:
-                try:
-                    await _telegram_userbot_send_message(userbot_bundle, chat_id, text)
-                    delivered = True
-                except HTTPException as exc:
-                    send_errors.append(str(exc.detail))
-            if not delivered:
-                detail = "; ".join([item for item in send_errors if item]) or "каналы недоступны"
-                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=detail)
+            if channel == "telegram":
+                if not bot_token:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail="bot-канал не подключен",
+                    )
+                await _telegram_api_send_message(bot_token, chat_id, text)
+            elif channel == "telegram_userbot":
+                if not userbot_bundle:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail="userbot-канал не подключен",
+                    )
+                await _telegram_userbot_send_message(userbot_bundle, chat_id, text)
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Неподдерживаемый канал рассылки: {channel}",
+                )
             sent += 1
             async with async_session_maker() as log_session:
                 async with log_session.begin():
@@ -2142,11 +2172,11 @@ async def telegram_broadcast_as_owner(
             failed += 1
             detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
             if len(errors) < 25:
-                errors.append({"user_external_id": uid, "detail": detail})
+                errors.append({"user_external_id": uid, "channel": channel, "detail": detail})
         except Exception as exc:
             failed += 1
             if len(errors) < 25:
-                errors.append({"user_external_id": uid, "detail": str(exc)})
+                errors.append({"user_external_id": uid, "channel": channel, "detail": str(exc)})
         await asyncio.sleep(throttle_seconds)
 
     return JSONResponse(
@@ -2196,6 +2226,7 @@ async def read_analytics_chats(
                     await session.execute(
                         select(
                             AgentAnalyticsMessage.user_external_id.label("uid"),
+                            AgentAnalyticsMessage.channel.label("channel"),
                             func.max(AgentAnalyticsMessage.user_display_name).label("display_name"),
                             func.count(AgentAnalyticsMessage.id).label("questions"),
                             func.max(AgentAnalyticsMessage.created_at).label("last_message_at"),
@@ -2203,7 +2234,11 @@ async def read_analytics_chats(
                             AgentAnalyticsMessage.bot_id == analytics_namespace_id,
                             AgentAnalyticsMessage.role == "user",
                             AgentAnalyticsMessage.user_external_id.is_not(None),
-                        ).group_by(AgentAnalyticsMessage.user_external_id).order_by(
+                            AgentAnalyticsMessage.channel.in_(["telegram", "telegram_userbot"]),
+                        ).group_by(
+                            AgentAnalyticsMessage.user_external_id,
+                            AgentAnalyticsMessage.channel,
+                        ).order_by(
                             func.max(AgentAnalyticsMessage.created_at).desc()
                         ).limit(limit_users)
                     )
@@ -2212,13 +2247,18 @@ async def read_analytics_chats(
                 .all()
             )
 
-            user_ids = [row["uid"] for row in user_rows if row["uid"]]
-            if not user_ids:
+            chat_keys = [
+                (row["uid"], row["channel"])
+                for row in user_rows
+                if row["uid"] and row["channel"] in {"telegram", "telegram_userbot"}
+            ]
+            if not chat_keys:
                 return JSONResponse(
                     content={"agent_id": agent.id, "bot_id": agent.bot_id, "users": []},
                     status_code=status.HTTP_200_OK,
                 )
 
+            user_ids = list({uid for uid, _ in chat_keys})
             frozen_result = await session.scalars(
                 select(AgentFrozenUser.user_external_id).where(
                     AgentFrozenUser.agent_id == agent.id,
@@ -2240,6 +2280,7 @@ async def read_analytics_chats(
                         ).where(
                             AgentAnalyticsMessage.bot_id == analytics_namespace_id,
                             AgentAnalyticsMessage.user_external_id.in_(user_ids),
+                            AgentAnalyticsMessage.channel.in_(["telegram", "telegram_userbot", "dashboard"]),
                         ).order_by(AgentAnalyticsMessage.created_at.asc())
                     )
                 )
@@ -2249,17 +2290,27 @@ async def read_analytics_chats(
 
             grouped_messages = defaultdict(list)
             for row in message_rows:
-                grouped_messages[row["user_external_id"]].append(row)
+                row_channel = row["channel"]
+                if row_channel == "dashboard":
+                    # Dashboard replies should appear in both Telegram chat threads of the user.
+                    grouped_messages[(row["user_external_id"], "telegram")].append(row)
+                    grouped_messages[(row["user_external_id"], "telegram_userbot")].append(row)
+                else:
+                    grouped_messages[(row["user_external_id"], row_channel)].append(row)
 
             users_payload = []
             for row in user_rows:
                 uid = row["uid"]
-                items = grouped_messages.get(uid, [])
+                chat_channel = row["channel"]
+                chat_key = f"{chat_channel}:{uid}"
+                items = grouped_messages.get((uid, chat_channel), [])
                 if messages_per_user > 0 and len(items) > messages_per_user:
                     items = items[-messages_per_user:]
 
                 users_payload.append(
                     {
+                        "chat_key": chat_key,
+                        "chat_channel": chat_channel,
                         "user_external_id": uid,
                         "user_display_name": row["display_name"] or f"User {uid}",
                         "questions_count": int(row["questions"] or 0),

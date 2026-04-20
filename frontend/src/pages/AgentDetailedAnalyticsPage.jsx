@@ -44,6 +44,12 @@ const formatDateShort = (value) => {
   }).format(date);
 };
 
+const channelLabel = (channel) => {
+  if (channel === 'telegram_userbot') return 'Telegram userbot';
+  if (channel === 'telegram') return 'Telegram bot';
+  return channel || 'unknown';
+};
+
 const buildOverviewMetrics = (summary, docsCount) => {
   const totalUsers = Number(summary?.unique_users || 0);
   const totalQuestions = Number(summary?.total_questions || 0);
@@ -122,13 +128,15 @@ const BroadcastLimitSelect = ({ value, onChange, disabled, options }) => {
 const mapChatsPayload = (payload) => {
   const users = Array.isArray(payload?.users) ? payload.users : [];
   return users.map((user) => ({
-    id: user.user_external_id,
+    id: user.chat_key || `${user.chat_channel || 'telegram'}:${user.user_external_id}`,
+    userExternalId: user.user_external_id,
+    channel: user.chat_channel || 'telegram',
     name: user.user_display_name || `Пользователь ${user.user_external_id}`,
     questions: Number(user.questions_count || 0),
     lastMessageAt: formatDateTime(user.last_message_at),
     isFrozen: Boolean(user.is_frozen),
     messages: (Array.isArray(user.messages) ? user.messages : []).map((item, index) => ({
-      id: `${user.user_external_id}-${index}-${item.created_at || 'time'}`,
+      id: `${user.chat_key || user.user_external_id}-${index}-${item.created_at || 'time'}`,
       role: item.role,
       text: item.text,
       timestamp: formatDateTime(item.created_at),
@@ -358,7 +366,11 @@ const AgentDetailedAnalyticsPageContent = () => {
     [chatUsers, selectedUserId]
   );
 
-  const canSendTelegramToUser = Boolean(selectedUser && /^\d+$/.test(String(selectedUser.id)));
+  const canSendTelegramToUser = Boolean(
+    selectedUser &&
+      /^\d+$/.test(String(selectedUser.userExternalId)) &&
+      ['telegram', 'telegram_userbot'].includes(selectedUser.channel)
+  );
 
   useEffect(() => {
     setOwnerReplyText('');
@@ -382,7 +394,7 @@ const AgentDetailedAnalyticsPageContent = () => {
     setIsTogglingFreeze(true);
     try {
       const nextFrozen = !selectedUser.isFrozen;
-      await agentService.setUserFrozen(botId, selectedUser.id, nextFrozen);
+      await agentService.setUserFrozen(botId, selectedUser.userExternalId, nextFrozen);
       showSuccess(nextFrozen ? 'Пользователь заморожен' : 'Заморозка снята');
       setChatUsers((prev) =>
         prev.map((u) => (u.id === selectedUser.id ? { ...u, isFrozen: nextFrozen } : u))
@@ -407,7 +419,12 @@ const AgentDetailedAnalyticsPageContent = () => {
     }
     setIsSendingOwnerReply(true);
     try {
-      await agentService.sendTelegramMessageAsOwner(botId, selectedUser.id, text);
+      await agentService.sendTelegramMessageAsOwner(
+        botId,
+        selectedUser.userExternalId,
+        text,
+        selectedUser.channel
+      );
       showSuccess('Сообщение отправлено');
       setOwnerReplyText('');
       await refreshChats();
@@ -432,7 +449,7 @@ const AgentDetailedAnalyticsPageContent = () => {
     const noun = n === 1 ? 'получателю' : 'получателям';
     if (
       !window.confirm(
-        `Отправить сообщение ${n} ${noun}? Сообщения уйдут от имени бота в Telegram. Отменить рассылку будет нельзя.`
+        `Отправить сообщение ${n} ${noun}? Сообщения уйдут в Telegram по каналам чатов (bot/userbot). Отменить рассылку будет нельзя.`
       )
     ) {
       return;
@@ -549,6 +566,7 @@ const AgentDetailedAnalyticsPageContent = () => {
                         onClick={() => setSelectedUserId(user.id)}
                       >
                         <strong>{user.name}</strong>
+                        <span>{channelLabel(user.channel)}</span>
                         <span>{user.questions} вопросов</span>
                         <span>{user.lastMessageAt}</span>
                         {user.isFrozen ? <span className="analytics-user-frozen-badge">Заморожен</span> : null}
@@ -565,7 +583,9 @@ const AgentDetailedAnalyticsPageContent = () => {
                       <header className="analytics-chat-thread-header">
                         <div className="analytics-chat-thread-header-text">
                           <h4>{selectedUser.name}</h4>
-                          <p>Вопросов: {selectedUser.questions}</p>
+                          <p>
+                            Вопросов: {selectedUser.questions} · {channelLabel(selectedUser.channel)}
+                          </p>
                         </div>
                         <button
                           type="button"
@@ -604,7 +624,7 @@ const AgentDetailedAnalyticsPageContent = () => {
                       <div className="analytics-chat-composer">
                         <p className="analytics-chat-composer-hint">
                           {canSendTelegramToUser
-                            ? 'Сообщение будет доставлено пользователю в Telegram от имени бота.'
+                            ? `Сообщение будет доставлено в выбранный чат (${channelLabel(selectedUser.channel)}).`
                             : 'Отправка только для диалогов из Telegram (числовой id пользователя).'}
                         </p>
                         <div className="analytics-chat-composer-row">
@@ -635,8 +655,8 @@ const AgentDetailedAnalyticsPageContent = () => {
             <section className="analytics-broadcast">
               <h3>Рассылка в Telegram</h3>
               <p className="analytics-note">
-                Одно и то же сообщение от вашего лица (как в чатах) получат выбранные пользователи, которые писали боту
-                в Telegram. Пользователи из других каналов сюда не попадают.
+                Одно и то же сообщение от вашего лица (как в чатах) получат пользователи из Telegram bot и Telegram
+                userbot диалогов.
               </p>
 
               {broadcastStatsLoading ? (
@@ -723,7 +743,7 @@ const AgentDetailedAnalyticsPageContent = () => {
                   <ul>
                     {broadcastResult.errors.map((err, idx) => (
                       <li key={`${err.user_external_id}-${idx}`}>
-                        <code>{err.user_external_id}</code>: {err.detail}
+                        <code>{err.user_external_id}</code> ({channelLabel(err.channel)}): {err.detail}
                       </li>
                     ))}
                   </ul>

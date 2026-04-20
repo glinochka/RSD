@@ -174,10 +174,11 @@ export const agentService = {
     });
   },
 
-  sendTelegramMessageAsOwner: async (agentId, userExternalId, message) => {
+  sendTelegramMessageAsOwner: async (agentId, userExternalId, message, preferredChannel = null) => {
     const response = await apiClient.post(API_ROUTES.AGENTS_TELEGRAM_SEND_TO_USER, {
       agent_id: agentId,
       user_external_id: userExternalId,
+      preferred_channel: preferredChannel,
       message,
     });
     return response.data;
