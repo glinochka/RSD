@@ -18,3 +18,5 @@ python-multipart>=0.0.7
 yookassa>=3.7.0
 telethon>=1.36.0
 PySocks>=1.7.1
+# Telethon ignores the proxy= tuple unless python-socks is installed (see telegrambaseclient.py).
+python-socks[asyncio]>=2.4.3
