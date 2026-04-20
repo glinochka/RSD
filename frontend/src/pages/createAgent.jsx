@@ -26,11 +26,7 @@ const CreateAgentContent = () => {
   const [pendingLink, setPendingLink] = useState('');
   const [uploadedLinks, setUploadedLinks] = useState([]);
   const [showAuthModal, setShowAuthModal] = useState(false);
-  /** Можно включить оба канала; сохранить можно только если заполнены выбранные. */
-  const [useBotChannel, setUseBotChannel] = useState(true);
-  const [useUserbotChannel, setUseUserbotChannel] = useState(false);
-  /** Если подключены оба: какой канал станет «основным» (см. подсказку в форме). */
-  const [primaryOnCreate, setPrimaryOnCreate] = useState('bot');
+  const [connectionType, setConnectionType] = useState('bot_api');
   const [userbotAuthToken, setUserbotAuthToken] = useState('');
   const [isSendingCode, setIsSendingCode] = useState(false);
   const [isVerifyingCode, setIsVerifyingCode] = useState(false);
@@ -71,123 +67,62 @@ const CreateAgentContent = () => {
           return;
         }
 
-        if (!useBotChannel && !useUserbotChannel) {
-          showError('Выберите хотя бы один канал: Telegram бот и/или Telegram userbot');
+        const isBotMode = connectionType === 'bot_api';
+        const isUserbotMode = connectionType === 'userbot';
+
+        if (isBotMode && !values.bot_token?.trim()) {
+          form.setFieldError('bot_token', 'API ключ Telegram бота обязателен');
+          return;
+        }
+        if (isUserbotMode && !values.api_id?.toString().trim()) {
+          form.setFieldError('api_id', 'API ID обязателен');
+          return;
+        }
+        if (isUserbotMode && !values.api_hash?.trim()) {
+          form.setFieldError('api_hash', 'API hash обязателен');
+          return;
+        }
+        if (isUserbotMode && !values.phone_number?.trim()) {
+          form.setFieldError('phone_number', 'Номер телефона обязателен');
+          return;
+        }
+        if (isUserbotMode && (!values.session_string?.trim() || !isUserbotVerified)) {
+          form.setFieldError('verify_code', 'Сначала подтвердите код и сохраните userbot-сессию');
           return;
         }
 
-        let createdAgent;
-        let fallbackBotId = NaN;
+        const createdAgent = await agentService.createEmpty({
+          system_prompt: values.system_prompt.trim(),
+        });
+        const agentId = createdAgent?.id;
+        if (!Number.isFinite(agentId)) {
+          showError('Не удалось определить id агента после создания');
+          return;
+        }
 
-        const onlyBot = useBotChannel && !useUserbotChannel;
-        const onlyUserbot = !useBotChannel && useUserbotChannel;
-        const bothChannels = useBotChannel && useUserbotChannel;
-
-        if (onlyBot) {
-          if (!values.bot_token?.trim()) {
-            form.setFieldError('bot_token', 'API ключ Telegram бота обязателен');
-            return;
-          }
-          createdAgent = await agentService.create({
+        if (isBotMode) {
+          await agentService.addBotChannel({
+            agent_id: agentId,
             bot_token: values.bot_token.trim(),
-            system_prompt: values.system_prompt.trim(),
+            make_primary: true,
           });
-          fallbackBotId = Number(values.bot_token.split(':', 1)[0]);
-        } else if (onlyUserbot) {
-          if (!values.api_id?.toString().trim()) {
-            form.setFieldError('api_id', 'API ID обязателен');
-            return;
-          }
-          if (!values.api_hash?.trim()) {
-            form.setFieldError('api_hash', 'API hash обязателен');
-            return;
-          }
-          if (!values.phone_number?.trim()) {
-            form.setFieldError('phone_number', 'Номер телефона обязателен');
-            return;
-          }
-          if (!values.session_string?.trim() || !isUserbotVerified) {
-            form.setFieldError('verify_code', 'Сначала подтвердите код и сохраните userbot-сессию');
-            return;
-          }
-          createdAgent = await agentService.createUserbot({
+        }
+        if (isUserbotMode) {
+          await agentService.addUserbotChannel({
+            agent_id: agentId,
             api_id: Number(values.api_id),
             api_hash: values.api_hash.trim(),
             session_string: values.session_string.trim(),
-            system_prompt: values.system_prompt.trim(),
+            make_primary: true,
           });
-        } else if (bothChannels) {
-          if (!values.bot_token?.trim()) {
-            form.setFieldError('bot_token', 'API ключ Telegram бота обязателен');
-            return;
-          }
-          if (!values.api_id?.toString().trim()) {
-            form.setFieldError('api_id', 'API ID обязателен');
-            return;
-          }
-          if (!values.api_hash?.trim()) {
-            form.setFieldError('api_hash', 'API hash обязателен');
-            return;
-          }
-          if (!values.phone_number?.trim()) {
-            form.setFieldError('phone_number', 'Номер телефона обязателен');
-            return;
-          }
-          if (!values.session_string?.trim() || !isUserbotVerified) {
-            form.setFieldError('verify_code', 'Сначала подтвердите код и сохраните userbot-сессию');
-            return;
-          }
-          if (primaryOnCreate === 'bot') {
-            createdAgent = await agentService.create({
-              bot_token: values.bot_token.trim(),
-              system_prompt: values.system_prompt.trim(),
-            });
-            fallbackBotId = Number(values.bot_token.split(':', 1)[0]);
-            const botIdForSecond = createdAgent?.bot_id ?? fallbackBotId;
-            if (!Number.isFinite(botIdForSecond)) {
-              showError('Не удалось определить bot_id после создания агента');
-              return;
-            }
-            await agentService.addUserbotChannel({
-              bot_id: botIdForSecond,
-              api_id: Number(values.api_id),
-              api_hash: values.api_hash.trim(),
-              session_string: values.session_string.trim(),
-              make_primary: false,
-            });
-          } else {
-            createdAgent = await agentService.createUserbot({
-              api_id: Number(values.api_id),
-              api_hash: values.api_hash.trim(),
-              session_string: values.session_string.trim(),
-              system_prompt: values.system_prompt.trim(),
-            });
-            const agentBotId = createdAgent?.bot_id;
-            if (!Number.isFinite(agentBotId)) {
-              showError('Не удалось определить bot_id после создания агента');
-              return;
-            }
-            await agentService.addBotChannel({
-              bot_id: agentBotId,
-              bot_token: values.bot_token.trim(),
-              make_primary: false,
-            });
-          }
-        }
-
-        const botId = createdAgent?.bot_id ?? fallbackBotId;
-
-        if (!Number.isFinite(botId)) {
-          showError('Не удалось определить bot_id после создания агента');
-          return;
         }
 
         for (const file of uploadedFiles) {
-          await agentService.uploadDocumentByBotId(botId, file);
+          await agentService.uploadDocumentByBotId(agentId, file);
         }
 
         for (const link of uploadedLinks) {
-          await agentService.uploadPublicLinkByBotId(botId, link);
+          await agentService.uploadPublicLinkByBotId(agentId, link);
         }
 
         showSuccess('Агент успешно создан!');
@@ -213,18 +148,13 @@ const CreateAgentContent = () => {
     form.setFieldError('verify_code', undefined);
   };
 
-  const toggleBotChannel = (checked) => {
-    setUseBotChannel(checked);
-    if (!checked) {
+  const handleConnectionTypeChange = (type) => {
+    setConnectionType(type);
+    if (type === 'bot_api') {
+      clearUserbotLocalState();
+    } else {
       form.setFieldValue('bot_token', '');
       form.setFieldError('bot_token', undefined);
-    }
-  };
-
-  const toggleUserbotChannel = (checked) => {
-    setUseUserbotChannel(checked);
-    if (!checked) {
-      clearUserbotLocalState();
     }
   };
 
@@ -380,64 +310,28 @@ const CreateAgentContent = () => {
 
           <form id="agent-form" className="agent-form" onSubmit={form.handleSubmit}>
             <div className="form-group">
-              <label>Каналы Telegram (можно выбрать оба):</label>
-              <p className="help-text">
-                Нужен хотя бы один канал. Если включены оба, укажите данные для каждого и выберите, какой канал будет основным.
-              </p>
-              <div className="channel-select-row">
-                <label className="channel-select-label">
-                  <input
-                    type="checkbox"
-                    checked={useBotChannel}
-                    onChange={(e) => toggleBotChannel(e.target.checked)}
-                    disabled={form.isSubmitting}
-                  />
-                  <span>Подключить Telegram бота</span>
-                </label>
-                <label className="channel-select-label">
-                  <input
-                    type="checkbox"
-                    checked={useUserbotChannel}
-                    onChange={(e) => toggleUserbotChannel(e.target.checked)}
-                    disabled={form.isSubmitting}
-                  />
-                  <span>Подключить Telegram userbot</span>
-                </label>
+              <label>Тип подключения Telegram:</label>
+              <div className="connection-type-grid">
+                <button
+                  type="button"
+                  className={`connection-type-card ${connectionType === 'bot_api' ? 'active' : ''}`}
+                  onClick={() => handleConnectionTypeChange('bot_api')}
+                  disabled={form.isSubmitting}
+                >
+                  Telegram бот
+                </button>
+                <button
+                  type="button"
+                  className={`connection-type-card ${connectionType === 'userbot' ? 'active' : ''}`}
+                  onClick={() => handleConnectionTypeChange('userbot')}
+                  disabled={form.isSubmitting}
+                >
+                  Telegram юзербот
+                </button>
               </div>
-              {useBotChannel && useUserbotChannel && (
-                <div className="primary-on-create-block">
-                  <span className="primary-on-create-title">Основной канал при создании:</span>
-                  <label className="channel-select-label">
-                    <input
-                      type="radio"
-                      name="primaryOnCreate"
-                      value="bot"
-                      checked={primaryOnCreate === 'bot'}
-                      onChange={() => setPrimaryOnCreate('bot')}
-                      disabled={form.isSubmitting}
-                    />
-                    <span>Telegram бот</span>
-                  </label>
-                  <label className="channel-select-label">
-                    <input
-                      type="radio"
-                      name="primaryOnCreate"
-                      value="userbot"
-                      checked={primaryOnCreate === 'userbot'}
-                      onChange={() => setPrimaryOnCreate('userbot')}
-                      disabled={form.isSubmitting}
-                    />
-                    <span>Telegram userbot</span>
-                  </label>
-                  <p className="help-text">
-                    Основной канал задаёт идентификатор агента в списке и служебные поля (например токен для вебхука бота).
-                    Второй канал остаётся дополнительным; позже его можно сделать основным в разделе «Управлять каналами».
-                  </p>
-                </div>
-              )}
             </div>
 
-            {useBotChannel && (
+            {connectionType === 'bot_api' && (
               <div className="form-group">
                 <label htmlFor="bot_token">API ключ Telegram бота:</label>
                 <input
@@ -457,7 +351,7 @@ const CreateAgentContent = () => {
               </div>
             )}
 
-            {useUserbotChannel && (
+            {connectionType === 'userbot' && (
               <div className="form-group">
                 <label htmlFor="api_id">Telegram API ID:</label>
                 <input

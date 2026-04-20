@@ -158,6 +158,11 @@ async def _sync_agent_primary_fields(
             item.updated_at = now
 
     updates = {"primary_provider": primary.provider}
+    primary_external_id = (primary.external_id or "").strip()
+    if primary_external_id.isdigit():
+        updates["bot_id"] = int(primary_external_id)
+    elif primary.provider == "telegram_bot":
+        updates["bot_id"] = None
     # Keep legacy field in sync for Telegram bot flow used by webhook and bot service.
     if primary.provider == "telegram_bot" and primary.encrypted_credentials:
         updates["encrypted_token"] = primary.encrypted_credentials
@@ -249,13 +254,26 @@ async def _sync_telegram_bot_webhook(bot_token: str, bot_id: int, enabled: bool)
 async def _find_agent_with_access(
     agent_dao: AgentDAO,
     *,
-    bot_id: int,
+    agent_id: int | None = None,
+    bot_id: int | None = None,
+    session=None,
     current_user,
     internal: bool,
 ):
-    agent = await agent_dao.find_one_by_filter(bot_id=bot_id)
-    if not agent and 0 < bot_id <= MAX_INT32:
-        agent = await agent_dao.find_one_by_filter(id=bot_id)
+    agent = None
+    if agent_id is not None:
+        agent = await agent_dao.find_one_by_filter(id=agent_id)
+    elif bot_id is not None:
+        if session is not None:
+            agent, _ = await _find_agent_by_lookup_id(
+                session=session,
+                agent_dao=agent_dao,
+                lookup_id=bot_id,
+            )
+        else:
+            agent = await agent_dao.find_one_by_filter(bot_id=bot_id)
+            if not agent and 0 < bot_id <= MAX_INT32:
+                agent = await agent_dao.find_one_by_filter(id=bot_id)
     if not agent:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
     if current_user and agent.user_id != current_user.id:
@@ -287,6 +305,10 @@ async def _find_agent_by_lookup_id(
         if resolved_channel:
             agent = await agent_dao.find_one_by_filter(id=resolved_channel.agent_id)
     return agent, resolved_channel
+
+
+def _resolve_lookup(agent_lookup: AgentLookup) -> tuple[int | None, int | None]:
+    return agent_lookup.agent_id, agent_lookup.bot_id
 
 
 def _safe_iso(value):
@@ -462,10 +484,11 @@ async def _log_analytics_message(
     user_external_id: str | None = None,
     user_display_name: str | None = None,
 ) -> None:
+    resolved_channel_id = agent.bot_id if agent.bot_id is not None else agent.id
     await _log_analytics_message_for_agent_ids(
         session=session,
         agent_id=agent.id,
-        telegram_bot_id=agent.bot_id,
+        telegram_bot_id=resolved_channel_id,
         role=role,
         message_text=message_text,
         channel=channel,
@@ -525,6 +548,7 @@ async def list_userbot_clients(internal: bool = Depends(is_internal_request)):
                 (
                     await session.execute(
                         select(
+                            Agent.id.label("agent_id"),
                             Agent.bot_id,
                             Agent.system_prompt,
                             Agent.welcome_message,
@@ -546,9 +570,11 @@ async def list_userbot_clients(internal: bool = Depends(is_internal_request)):
 
     payload = []
     for row in rows:
+        resolved_lookup_id = row["bot_id"] if row["bot_id"] is not None else row["agent_id"]
         payload.append(
             {
-                "bot_id": int(row["bot_id"]),
+                "agent_id": int(row["agent_id"]),
+                "bot_id": int(resolved_lookup_id),
                 "system_prompt": row["system_prompt"] or "",
                 "welcome_message": row["welcome_message"],
                 "encrypted_userbot_bundle": row["encrypted_credentials"],
@@ -560,19 +586,29 @@ async def list_userbot_clients(internal: bool = Depends(is_internal_request)):
 
 @router.get("")
 async def read_agent(
-    bot_id: int = Query(...),
+    agent_id: int | None = Query(default=None),
+    bot_id: int | None = Query(default=None),
     current_user=Depends(get_current_user_optional),
     internal: bool = Depends(is_internal_request),
 ):
     _assert_access(current_user, internal)
+    if agent_id is None and bot_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Query parameter 'agent_id' or 'bot_id' is required",
+        )
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
         async with session.begin():
-            found_agent, resolved_channel = await _find_agent_by_lookup_id(
-                session=session,
-                agent_dao=agent_dao,
-                lookup_id=bot_id,
-            )
+            resolved_channel = None
+            if agent_id is not None:
+                found_agent = await agent_dao.find_one_by_filter(id=agent_id)
+            else:
+                found_agent, resolved_channel = await _find_agent_by_lookup_id(
+                    session=session,
+                    agent_dao=agent_dao,
+                    lookup_id=bot_id,
+                )
             if not found_agent:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
             if current_user and found_agent.user_id != current_user.id:
@@ -619,6 +655,38 @@ async def read_all_agents(
             return JSONResponse(
                 content=[_serialize_agent(agent, include_encrypted_token=internal) for agent in (user.agents or [])],
                 status_code=status.HTTP_200_OK,
+            )
+
+
+@router.post("")
+async def create_empty_agent(
+    payload: CreateEmptyAgent,
+    current_user=Depends(get_current_user_required),
+):
+    if current_user.is_banned:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            external_api_key = generate_agent_external_api_key()
+            created_agent = await agent_dao.add(
+                {
+                    "user_id": current_user.id,
+                    "bot_id": None,
+                    "primary_provider": "none",
+                    "template_type": payload.template_type,
+                    "encrypted_token": encrypt_token(f"agent:{current_user.id}:{datetime.utcnow().timestamp()}"),
+                    "encrypted_external_api_key": encrypt_token(external_api_key),
+                    "external_api_key_hash": hash_agent_external_api_key(external_api_key),
+                    "bot_username": None,
+                    "system_prompt": payload.system_prompt.strip(),
+                    "is_active": False,
+                }
+            )
+            await session.flush()
+            return JSONResponse(
+                content=_serialize_agent(created_agent, include_external_api_key=True),
+                status_code=status.HTTP_201_CREATED,
             )
 
 
@@ -999,15 +1067,23 @@ async def verify_userbot_code(
 
 @router.get("/channels")
 async def list_agent_channels(
-    bot_id: int = Query(...),
+    agent_id: int | None = Query(default=None),
+    bot_id: int | None = Query(default=None),
     current_user=Depends(get_current_user_required),
 ):
+    if agent_id is None and bot_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Query parameter 'agent_id' or 'bot_id' is required",
+        )
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
         async with session.begin():
             agent = await _find_agent_with_access(
                 agent_dao,
+                agent_id=agent_id,
                 bot_id=bot_id,
+                session=session,
                 current_user=current_user,
                 internal=False,
             )
@@ -1015,6 +1091,7 @@ async def list_agent_channels(
             channels = await _list_agent_channels(session, agent.id)
             return JSONResponse(
                 content={
+                    "agent_id": agent.id,
                     "bot_id": agent.bot_id,
                     "channels": [_serialize_channel_connection(item) for item in channels],
                 },
@@ -1053,9 +1130,12 @@ async def add_agent_telegram_bot_channel(
         agent_dao = AgentDAO(session)
         channel_connection_dao = AgentChannelConnectionDAO(session)
         async with session.begin():
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
             agent = await _find_agent_with_access(
                 agent_dao,
-                bot_id=payload.bot_id,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
                 current_user=current_user,
                 internal=False,
             )
@@ -1111,6 +1191,7 @@ async def add_agent_telegram_bot_channel(
             channels = await _list_agent_channels(session, agent.id)
             return JSONResponse(
                 content={
+                    "agent_id": agent.id,
                     "bot_id": agent.bot_id,
                     "channels": [_serialize_channel_connection(item) for item in channels],
                 },
@@ -1152,9 +1233,12 @@ async def add_agent_userbot_channel(
         agent_dao = AgentDAO(session)
         channel_connection_dao = AgentChannelConnectionDAO(session)
         async with session.begin():
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
             agent = await _find_agent_with_access(
                 agent_dao,
-                bot_id=payload.bot_id,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
                 current_user=current_user,
                 internal=False,
             )
@@ -1205,6 +1289,7 @@ async def add_agent_userbot_channel(
             channels = await _list_agent_channels(session, agent.id)
             return JSONResponse(
                 content={
+                    "agent_id": agent.id,
                     "bot_id": agent.bot_id,
                     "channels": [_serialize_channel_connection(item) for item in channels],
                 },
@@ -1220,9 +1305,12 @@ async def delete_agent_channel(
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
         async with session.begin():
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
             agent = await _find_agent_with_access(
                 agent_dao,
-                bot_id=payload.bot_id,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
                 current_user=current_user,
                 internal=False,
             )
@@ -1263,6 +1351,7 @@ async def delete_agent_channel(
             channels = await _list_agent_channels(session, agent.id)
             return JSONResponse(
                 content={
+                    "agent_id": agent.id,
                     "bot_id": agent.bot_id,
                     "channels": [_serialize_channel_connection(item) for item in channels],
                 },
@@ -1280,13 +1369,20 @@ async def update_by_bot_id(
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
         async with session.begin():
-            agent = await agent_dao.find_one_by_filter(bot_id=new_data.bot_id)
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(new_data)
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
+                current_user=current_user,
+                internal=internal,
+            )
             if not agent:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-            if current_user and agent.user_id != current_user.id:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
             updates = new_data.model_dump(exclude_none=True)
             updates.pop("bot_id", None)
+            updates.pop("agent_id", None)
             await agent_dao.update(agent, updates)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -1301,11 +1397,15 @@ async def toggle_status(
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
         async with session.begin():
-            agent = await agent_dao.find_one_by_filter(bot_id=agent_id.bot_id)
-            if not agent:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-            if current_user and agent.user_id != current_user.id:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(agent_id)
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
+                current_user=current_user,
+                internal=internal,
+            )
             new_status = not agent.is_active
             await agent_dao.update(agent, {"is_active": new_status})
 
@@ -1333,12 +1433,17 @@ async def delete_by_bot_id(
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
         async with session.begin():
-            agent = await agent_dao.find_one_by_filter(bot_id=agent_id.bot_id)
-            if not agent:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-            if current_user and agent.user_id != current_user.id:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-            is_deleted_vectors = await delete_agent_vectors(agent_id.bot_id)
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(agent_id)
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
+                current_user=current_user,
+                internal=internal,
+            )
+            vector_namespace_id = agent.bot_id if agent.bot_id is not None else agent.id
+            is_deleted_vectors = await delete_agent_vectors(vector_namespace_id)
             if not is_deleted_vectors:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1358,11 +1463,15 @@ async def ai_improve_prompt(
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
         async with session.begin():
-            agent = await agent_dao.find_one_by_filter(bot_id=payload.bot_id)
-            if not agent:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-            if current_user and agent.user_id != current_user.id:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
+                current_user=current_user,
+                internal=internal,
+            )
 
             try:
                 improved_prompt = await improve_prompt_with_ai(agent.system_prompt or "")
@@ -1374,7 +1483,7 @@ async def ai_improve_prompt(
 
             await agent_dao.update(agent, {"system_prompt": improved_prompt})
             return JSONResponse(
-                content={"bot_id": agent.bot_id, "system_prompt": improved_prompt},
+                content={"agent_id": agent.id, "bot_id": agent.bot_id, "system_prompt": improved_prompt},
                 status_code=status.HTTP_200_OK,
             )
 
@@ -1389,11 +1498,15 @@ async def ai_generate_welcome(
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
         async with session.begin():
-            agent = await agent_dao.find_one_by_filter(bot_id=payload.bot_id)
-            if not agent:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-            if current_user and agent.user_id != current_user.id:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
+                current_user=current_user,
+                internal=internal,
+            )
 
             try:
                 welcome_message = await generate_welcome_with_ai(agent.system_prompt or "")
@@ -1405,7 +1518,7 @@ async def ai_generate_welcome(
 
             await agent_dao.update(agent, {"welcome_message": welcome_message})
             return JSONResponse(
-                content={"bot_id": agent.bot_id, "welcome_message": welcome_message},
+                content={"agent_id": agent.id, "bot_id": agent.bot_id, "welcome_message": welcome_message},
                 status_code=status.HTTP_200_OK,
             )
 
@@ -1420,11 +1533,15 @@ async def regenerate_external_api_key(
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
         async with session.begin():
-            agent = await agent_dao.find_one_by_filter(bot_id=payload.bot_id)
-            if not agent:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-            if current_user and agent.user_id != current_user.id:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
+                current_user=current_user,
+                internal=internal,
+            )
             await _regenerate_external_api_key(agent, agent_dao)
             return JSONResponse(
                 content=_serialize_agent(agent, include_external_api_key=True, include_encrypted_token=internal),
@@ -1442,9 +1559,12 @@ async def log_analytics_message(
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
         async with session.begin():
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
             agent = await _find_agent_with_access(
                 agent_dao,
-                bot_id=payload.bot_id,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
                 current_user=current_user,
                 internal=internal,
             )
@@ -1462,25 +1582,34 @@ async def log_analytics_message(
 
 @router.get("/analytics/summary")
 async def read_analytics_summary(
-    bot_id: int = Query(...),
+    agent_id: int | None = Query(default=None),
+    bot_id: int | None = Query(default=None),
     current_user=Depends(get_current_user_optional),
     internal: bool = Depends(is_internal_request),
 ):
     _assert_access(current_user, internal)
+    if agent_id is None and bot_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Query parameter 'agent_id' or 'bot_id' is required",
+        )
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
         async with session.begin():
             agent = await _find_agent_with_access(
                 agent_dao,
+                agent_id=agent_id,
                 bot_id=bot_id,
+                session=session,
                 current_user=current_user,
                 internal=internal,
             )
+            analytics_namespace_id = agent.bot_id if agent.bot_id is not None else agent.id
 
             total_questions = (
                 await session.scalar(
                     select(func.count(AgentAnalyticsMessage.id)).where(
-                        AgentAnalyticsMessage.bot_id == agent.bot_id,
+                        AgentAnalyticsMessage.bot_id == analytics_namespace_id,
                         AgentAnalyticsMessage.role == "user",
                     )
                 )
@@ -1489,7 +1618,7 @@ async def read_analytics_summary(
             unique_users = (
                 await session.scalar(
                     select(func.count(func.distinct(AgentAnalyticsMessage.user_external_id))).where(
-                        AgentAnalyticsMessage.bot_id == agent.bot_id,
+                        AgentAnalyticsMessage.bot_id == analytics_namespace_id,
                         AgentAnalyticsMessage.role == "user",
                         AgentAnalyticsMessage.user_external_id.is_not(None),
                     )
@@ -1505,7 +1634,7 @@ async def read_analytics_summary(
                             func.max(AgentAnalyticsMessage.created_at).label("last_at"),
                             func.count(AgentAnalyticsMessage.id).label("questions"),
                         ).where(
-                            AgentAnalyticsMessage.bot_id == agent.bot_id,
+                            AgentAnalyticsMessage.bot_id == analytics_namespace_id,
                             AgentAnalyticsMessage.role == "user",
                             AgentAnalyticsMessage.user_external_id.is_not(None),
                         ).group_by(AgentAnalyticsMessage.user_external_id)
@@ -1529,6 +1658,7 @@ async def read_analytics_summary(
 
             return JSONResponse(
                 content={
+                    "agent_id": agent.id,
                     "bot_id": agent.bot_id,
                     "unique_users": unique_users,
                     "total_questions": total_questions,
@@ -1542,21 +1672,30 @@ async def read_analytics_summary(
 
 @router.get("/analytics/timeseries")
 async def read_analytics_timeseries(
-    bot_id: int = Query(...),
+    agent_id: int | None = Query(default=None),
+    bot_id: int | None = Query(default=None),
     days: int = Query(default=30, ge=7, le=90),
     current_user=Depends(get_current_user_optional),
     internal: bool = Depends(is_internal_request),
 ):
     _assert_access(current_user, internal)
+    if agent_id is None and bot_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Query parameter 'agent_id' or 'bot_id' is required",
+        )
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
         async with session.begin():
             agent = await _find_agent_with_access(
                 agent_dao,
+                agent_id=agent_id,
                 bot_id=bot_id,
+                session=session,
                 current_user=current_user,
                 internal=internal,
             )
+            analytics_namespace_id = agent.bot_id if agent.bot_id is not None else agent.id
 
             first_seen_rows = (
                 (
@@ -1565,7 +1704,7 @@ async def read_analytics_timeseries(
                             AgentAnalyticsMessage.user_external_id.label("uid"),
                             func.min(AgentAnalyticsMessage.created_at).label("first_at"),
                         ).where(
-                            AgentAnalyticsMessage.bot_id == agent.bot_id,
+                            AgentAnalyticsMessage.bot_id == analytics_namespace_id,
                             AgentAnalyticsMessage.role == "user",
                             AgentAnalyticsMessage.user_external_id.is_not(None),
                         ).group_by(AgentAnalyticsMessage.user_external_id)
@@ -1586,7 +1725,7 @@ async def read_analytics_timeseries(
                             func.count(AgentAnalyticsMessage.id).label("questions_today"),
                             func.count(func.distinct(AgentAnalyticsMessage.user_external_id)).label("users_today"),
                         ).where(
-                            AgentAnalyticsMessage.bot_id == agent.bot_id,
+                            AgentAnalyticsMessage.bot_id == analytics_namespace_id,
                             AgentAnalyticsMessage.role == "user",
                             AgentAnalyticsMessage.user_external_id.is_not(None),
                         ).group_by(day_bucket)
@@ -1635,6 +1774,7 @@ async def read_analytics_timeseries(
 
             return JSONResponse(
                 content={
+                    "agent_id": agent.id,
                     "bot_id": agent.bot_id,
                     "days": days,
                     "timeline": timeline,
@@ -1645,16 +1785,29 @@ async def read_analytics_timeseries(
 
 @router.get("/analytics/frozen/check")
 async def analytics_frozen_check(
-    bot_id: int = Query(...),
+    agent_id: int | None = Query(default=None),
+    bot_id: int | None = Query(default=None),
     user_external_id: str = Query(..., max_length=128),
     internal: bool = Depends(is_internal_request),
 ):
     if not internal:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Internal API key required")
+    if agent_id is None and bot_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Query parameter 'agent_id' or 'bot_id' is required",
+        )
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
         async with session.begin():
-            agent = await agent_dao.find_one_by_filter(bot_id=bot_id)
+            if agent_id is not None:
+                agent = await agent_dao.find_one_by_filter(id=agent_id)
+            else:
+                agent, _ = await _find_agent_by_lookup_id(
+                    session=session,
+                    agent_dao=agent_dao,
+                    lookup_id=bot_id,
+                )
             if not agent:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
             uid = user_external_id.strip()
@@ -1675,9 +1828,12 @@ async def analytics_set_user_frozen(
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
         async with session.begin():
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
             agent = await _find_agent_with_access(
                 agent_dao,
-                bot_id=payload.bot_id,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
                 current_user=current_user,
                 internal=False,
             )
@@ -1729,9 +1885,12 @@ async def telegram_send_to_user_as_owner(
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
         async with session.begin():
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
             agent = await _find_agent_with_access(
                 agent_dao,
-                bot_id=payload.bot_id,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
                 current_user=current_user,
                 internal=False,
             )
@@ -1757,15 +1916,23 @@ async def telegram_send_to_user_as_owner(
 
 @router.get("/telegram/broadcast_recipients")
 async def telegram_broadcast_recipients(
-    bot_id: int = Query(...),
+    agent_id: int | None = Query(default=None),
+    bot_id: int | None = Query(default=None),
     current_user=Depends(get_current_user_required),
 ):
+    if agent_id is None and bot_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Query parameter 'agent_id' or 'bot_id' is required",
+        )
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
         async with session.begin():
             agent = await _find_agent_with_access(
                 agent_dao,
+                agent_id=agent_id,
                 bot_id=bot_id,
+                session=session,
                 current_user=current_user,
                 internal=False,
             )
@@ -1816,9 +1983,12 @@ async def telegram_broadcast_as_owner(
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
         async with session.begin():
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
             agent = await _find_agent_with_access(
                 agent_dao,
-                bot_id=payload.bot_id,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
                 current_user=current_user,
                 internal=False,
             )
@@ -1899,22 +2069,31 @@ async def telegram_broadcast_as_owner(
 
 @router.get("/analytics/chats")
 async def read_analytics_chats(
-    bot_id: int = Query(...),
+    agent_id: int | None = Query(default=None),
+    bot_id: int | None = Query(default=None),
     limit_users: int = Query(default=100, ge=1, le=500),
     messages_per_user: int = Query(default=50, ge=1, le=200),
     current_user=Depends(get_current_user_optional),
     internal: bool = Depends(is_internal_request),
 ):
     _assert_access(current_user, internal)
+    if agent_id is None and bot_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Query parameter 'agent_id' or 'bot_id' is required",
+        )
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
         async with session.begin():
             agent = await _find_agent_with_access(
                 agent_dao,
+                agent_id=agent_id,
                 bot_id=bot_id,
+                session=session,
                 current_user=current_user,
                 internal=internal,
             )
+            analytics_namespace_id = agent.bot_id if agent.bot_id is not None else agent.id
 
             user_rows = (
                 (
@@ -1925,7 +2104,7 @@ async def read_analytics_chats(
                             func.count(AgentAnalyticsMessage.id).label("questions"),
                             func.max(AgentAnalyticsMessage.created_at).label("last_message_at"),
                         ).where(
-                            AgentAnalyticsMessage.bot_id == agent.bot_id,
+                            AgentAnalyticsMessage.bot_id == analytics_namespace_id,
                             AgentAnalyticsMessage.role == "user",
                             AgentAnalyticsMessage.user_external_id.is_not(None),
                         ).group_by(AgentAnalyticsMessage.user_external_id).order_by(
@@ -1940,7 +2119,7 @@ async def read_analytics_chats(
             user_ids = [row["uid"] for row in user_rows if row["uid"]]
             if not user_ids:
                 return JSONResponse(
-                    content={"bot_id": agent.bot_id, "users": []},
+                    content={"agent_id": agent.id, "bot_id": agent.bot_id, "users": []},
                     status_code=status.HTTP_200_OK,
                 )
 
@@ -1963,7 +2142,7 @@ async def read_analytics_chats(
                             AgentAnalyticsMessage.message_text,
                             AgentAnalyticsMessage.created_at,
                         ).where(
-                            AgentAnalyticsMessage.bot_id == agent.bot_id,
+                            AgentAnalyticsMessage.bot_id == analytics_namespace_id,
                             AgentAnalyticsMessage.user_external_id.in_(user_ids),
                         ).order_by(AgentAnalyticsMessage.created_at.asc())
                     )
@@ -2003,7 +2182,7 @@ async def read_analytics_chats(
                 )
 
             return JSONResponse(
-                content={"bot_id": agent.bot_id, "users": users_payload},
+                content={"agent_id": agent.id, "bot_id": agent.bot_id, "users": users_payload},
                 status_code=status.HTTP_200_OK,
             )
 

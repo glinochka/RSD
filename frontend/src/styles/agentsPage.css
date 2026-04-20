@@ -335,11 +335,6 @@
   font-size: var(--font-size-sm);
 }
 
-.channel-primary-help {
-  margin: 0;
-  line-height: 1.45;
-}
-
 .auth-modal-actions {
   display: flex;
   justify-content: flex-end;

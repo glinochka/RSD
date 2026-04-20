@@ -35,6 +35,7 @@ export const API_ROUTES = {
 
   // Agents
   AGENTS_LIST: '/api/agents/allBy_tgID',
+  AGENTS_CREATE_EMPTY: '/api/agents',
   AGENTS_CREATE: '/api/agents/by_token',
   AGENTS_CREATE_USERBOT: '/api/agents/by_userbot_session',
   AGENTS_USERBOT_REQUEST_CODE: '/api/agents/userbot/request_code',

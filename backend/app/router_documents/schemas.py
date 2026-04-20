@@ -1,16 +1,25 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
-class Agent_by_botID(BaseModel):
-    bot_id: int = Field(..., description="id бота")
+class AgentLookup(BaseModel):
+    agent_id: int | None = Field(default=None, gt=0, description="Внутренний id агента")
+    bot_id: int | None = Field(default=None, description="Legacy Telegram id канала")
+
+    @model_validator(mode="after")
+    def validate_lookup(self):
+        if self.agent_id is None and self.bot_id is None:
+            raise ValueError("Either agent_id or bot_id is required")
+        return self
 
 
-class PublicLinkSource(BaseModel):
-    bot_id: int = Field(..., description="id бота")
+class Agent_by_botID(AgentLookup):
+    pass
+
+
+class PublicLinkSource(AgentLookup):
     url: str = Field(..., description="Публичная ссылка (http/https)")
 
 
-class ReindexJobCreateRequest(BaseModel):
-    bot_id: int = Field(..., description="Telegram bot id агента")
+class ReindexJobCreateRequest(AgentLookup):
     # Manual trigger only: if omitted, uses active profile from backend config.
     target_embedding_profile_key: str | None = Field(
         default=None,

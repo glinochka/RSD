@@ -1,9 +1,20 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional
 
-class UpdateAgent(BaseModel):
+
+class AgentLookup(BaseModel):
+    agent_id: Optional[int] = Field(None, gt=0, description="Внутренний id агента")
+    bot_id: Optional[int] = Field(None, description="Legacy id (Telegram id канала)")
+
+    @model_validator(mode="after")
+    def validate_lookup(self):
+        if self.agent_id is None and self.bot_id is None:
+            raise ValueError("Either agent_id or bot_id is required")
+        return self
+
+
+class UpdateAgent(AgentLookup):
     name: Optional[str]  = Field(None, min_length=3, max_length=100, description="Имя агента: длина от 3 до 30 символов")
-    bot_id: int = Field(..., description="Id бота")
     system_prompt: Optional[str] = Field(None, description="Промпт")
     welcome_message: Optional[str] = Field(None, min_length=3, description="Начальное сообщение бота: длина от 3 символов")
 
@@ -22,8 +33,8 @@ class NewAgent_byUserWith_tgID(BaseModel):
     )
 
 
-class Agent_by_botID(BaseModel):
-    bot_id: int = Field(..., description="id бота")
+class Agent_by_botID(AgentLookup):
+    pass
 
 class User_by_agent_or_tgID(BaseModel):
     id: int = Field(..., description="id")
@@ -51,26 +62,32 @@ class NewAgent_byUserbotSession(BaseModel):
     )
 
 
-class AgentChannelsByBotId(BaseModel):
-    bot_id: int = Field(..., description="Id агента")
+class CreateEmptyAgent(BaseModel):
+    system_prompt: Optional[str] = Field(default="Ты — полезный ассистент.", min_length=1, description="System prompt for agent")
+    template_type: str = Field(
+        default="qa",
+        pattern="^(qa|function_calling|lead_generation|content_factory)$",
+        description="Тип шаблона агента",
+    )
 
 
-class AddTelegramBotChannel(BaseModel):
-    bot_id: int = Field(..., description="Id агента")
+class AgentChannelsByBotId(AgentLookup):
+    pass
+
+
+class AddTelegramBotChannel(AgentLookup):
     bot_token: str = Field(..., min_length=10, max_length=500, description="API token from BotFather")
     make_primary: bool = Field(default=False, description="Сделать канал основным")
 
 
-class AddTelegramUserbotChannel(BaseModel):
-    bot_id: int = Field(..., description="Id агента")
+class AddTelegramUserbotChannel(AgentLookup):
     api_id: int = Field(..., gt=0, description="Telegram API ID from my.telegram.org")
     api_hash: str = Field(..., min_length=16, max_length=128, description="Telegram API hash")
     session_string: str = Field(..., min_length=10, max_length=65535, description="Telethon StringSession")
     make_primary: bool = Field(default=False, description="Сделать канал основным")
 
 
-class DeleteAgentChannel(BaseModel):
-    bot_id: int = Field(..., description="Id агента")
+class DeleteAgentChannel(AgentLookup):
     connection_id: int = Field(..., gt=0, description="Id подключения канала")
 
 
@@ -86,8 +103,8 @@ class UserbotVerifyCode(BaseModel):
     password: Optional[str] = Field(None, min_length=1, max_length=128, description="Telegram 2FA password")
 
 
-class AgentAIAction(BaseModel):
-    bot_id: int = Field(..., description="id бота")
+class AgentAIAction(AgentLookup):
+    pass
 
 
 class ExternalAgentChatRequest(BaseModel):
@@ -104,8 +121,7 @@ class ExternalAgentChatRequest(BaseModel):
     )
 
 
-class AgentAnalyticsMessageLog(BaseModel):
-    bot_id: int = Field(..., description="Id бота")
+class AgentAnalyticsMessageLog(AgentLookup):
     role: str = Field(..., pattern="^(user|agent)$", description="Роль сообщения")
     channel: str = Field(
         default="telegram",
@@ -125,20 +141,17 @@ class AgentAnalyticsMessageLog(BaseModel):
     message_text: str = Field(..., min_length=1, max_length=8000, description="Текст сообщения")
 
 
-class AgentFreezeUserPayload(BaseModel):
-    bot_id: int = Field(..., description="Id бота в Telegram")
+class AgentFreezeUserPayload(AgentLookup):
     user_external_id: str = Field(..., max_length=128, description="Внешний id пользователя (Telegram user id)")
     frozen: bool = Field(default=True, description="True — заморозить, False — снять")
 
 
-class AgentTelegramSendToUserPayload(BaseModel):
-    bot_id: int = Field(..., description="Id бота в Telegram")
+class AgentTelegramSendToUserPayload(AgentLookup):
     user_external_id: str = Field(..., max_length=128, description="Telegram user id получателя")
     message: str = Field(..., min_length=1, max_length=4096, description="Текст сообщения от владельца")
 
 
-class AgentTelegramBroadcastPayload(BaseModel):
-    bot_id: int = Field(..., description="Id бота в Telegram")
+class AgentTelegramBroadcastPayload(AgentLookup):
     message: str = Field(..., min_length=1, max_length=4096, description="Текст рассылки от владельца")
     skip_frozen: bool = Field(
         default=True,

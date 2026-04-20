@@ -32,13 +32,13 @@ const AgentCard = ({ agent, isSelected, onManage, onDelete, onToggle }) => {
   const isActive = !!agent.is_active;
 
   const handleSelect = () => {
-    onManage(agent.bot_id);
+    onManage(agent.id);
   };
 
   const handleKeyDown = (event) => {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
-      onManage(agent.bot_id);
+      onManage(agent.id);
     }
   };
 
@@ -66,7 +66,7 @@ const AgentCard = ({ agent, isSelected, onManage, onDelete, onToggle }) => {
           className="edit-btn"
           onClick={(event) => {
             event.stopPropagation();
-            onManage(agent.bot_id);
+            onManage(agent.id);
           }}
           title="Управлять агентом"
           aria-label="Manage agent"
@@ -77,7 +77,7 @@ const AgentCard = ({ agent, isSelected, onManage, onDelete, onToggle }) => {
           className="edit-btn"
           onClick={(event) => {
             event.stopPropagation();
-            onToggle(agent.bot_id);
+            onToggle(agent.id);
           }}
           title={isActive ? 'Отключить агента' : 'Включить агента'}
           aria-label={isActive ? 'Disable agent' : 'Enable agent'}
@@ -88,7 +88,7 @@ const AgentCard = ({ agent, isSelected, onManage, onDelete, onToggle }) => {
           className="delete-btn"
           onClick={(event) => {
             event.stopPropagation();
-            onDelete(agent.bot_id);
+            onDelete(agent.id);
           }}
           title="Delete agent"
           aria-label="Delete agent"
@@ -203,7 +203,7 @@ const AgentsPageContent = () => {
         setSelectedAgent(null);
         setDocuments([]);
         if (updatedAgents.length > 0) {
-          await loadAgentDetails(updatedAgents[0].bot_id);
+          await loadAgentDetails(updatedAgents[0].id);
         }
       }
     } catch (error) {
@@ -496,7 +496,7 @@ const AgentsPageContent = () => {
     if (!window.confirm('Удалить этот канал подключения?')) return;
     setIsSavingChannel(true);
     try {
-      const res = await agentService.removeChannel({ bot_id: selectedBotId, connection_id: connectionId });
+      const res = await agentService.removeChannel({ agent_id: selectedBotId, connection_id: connectionId });
       const list = res?.channels || [];
       setChannels(list);
       setSelectedAgent((prev) => (prev ? { ...prev, channels: list } : prev));
@@ -518,7 +518,7 @@ const AgentsPageContent = () => {
     setIsSavingChannel(true);
     try {
       const res = await agentService.addBotChannel({
-        bot_id: selectedBotId,
+        agent_id: selectedBotId,
         bot_token: botTokenDraft.trim(),
         make_primary: makePrimaryChannel,
       });
@@ -595,7 +595,7 @@ const AgentsPageContent = () => {
     setIsSavingChannel(true);
     try {
       const res = await agentService.addUserbotChannel({
-        bot_id: selectedBotId,
+        agent_id: selectedBotId,
         api_id: Number(userbotApiId),
         api_hash: userbotApiHash.trim(),
         session_string: userbotSessionString.trim(),
@@ -618,13 +618,13 @@ const AgentsPageContent = () => {
     if (!isAuthenticated) return;
     const list = agents || [];
     if (list.length > 0 && !selectedBotId) {
-      loadAgentDetails(list[0].bot_id);
+      loadAgentDetails(list[0].id);
     }
   }, [agents, isAuthenticated, selectedBotId]);
 
   const selectedAgentName = useMemo(() => {
     if (!selectedAgent) return '';
-    return selectedAgent.bot_username ? `@${selectedAgent.bot_username}` : `Агент #${selectedAgent.bot_id}`;
+    return selectedAgent.bot_username ? `@${selectedAgent.bot_username}` : `Агент #${selectedAgent.id}`;
   }, [selectedAgent]);
 
   if (isLoading && isAuthenticated) {
@@ -655,9 +655,9 @@ const AgentsPageContent = () => {
             <div className="agents-list">
               {displayAgents.map((agent) => (
                 <AgentCard
-                  key={agent.bot_id}
+                  key={agent.id}
                   agent={agent}
-                  isSelected={selectedBotId === agent.bot_id}
+                  isSelected={selectedBotId === agent.id}
                   onManage={loadAgentDetails}
                   onDelete={handleDeleteAgent}
                   onToggle={handleToggleAgent}
@@ -674,7 +674,7 @@ const AgentsPageContent = () => {
                 <>
                   <div className="agent-management-header">
                     <h3>{selectedAgentName}</h3>
-                    <p>ID: {selectedAgent.bot_id}</p>
+                    <p>ID: {selectedAgent.id}</p>
                     <button
                       type="button"
                       className="btn btn-black analytics-btn"
@@ -922,11 +922,6 @@ const AgentsPageContent = () => {
                       />
                       Сделать канал основным
                     </label>
-                    <p className="help-text channel-primary-help">
-                      Основной канал — тот, по которому агент числится в списке (поле ID) и с которым связаны
-                      служебные данные: для бота это токен и вебхук, для userbot — аккаунт сессии. Остальные каналы
-                      остаются дополнительными входами сообщений.
-                    </p>
                     <button
                       type="button"
                       className="btn btn-black"
@@ -1003,11 +998,6 @@ const AgentsPageContent = () => {
                       />
                       Сделать канал основным
                     </label>
-                    <p className="help-text channel-primary-help">
-                      Основной канал — тот, по которому агент числится в списке (поле ID) и с которым связаны
-                      служебные данные: для бота это токен и вебхук, для userbot — аккаунт сессии. Остальные каналы
-                      остаются дополнительными входами сообщений.
-                    </p>
                     <button
                       type="button"
                       className="btn btn-black"
