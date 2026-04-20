@@ -54,6 +54,10 @@
   padding: var(--spacing-xl);
 }
 
+.documentation-content section {
+  scroll-margin-top: 5.5rem;
+}
+
 .documentation-content section + section {
   margin-top: var(--spacing-2xl);
 }
@@ -101,12 +105,122 @@
   font-size: 0.9rem;
 }
 
+.documentation-content p code,
+.documentation-content li code {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 @media (max-width: 980px) {
   .documentation-page {
     grid-template-columns: 1fr;
+    gap: var(--spacing-base);
+    padding: 0 0 var(--spacing-xl);
   }
 
   .documentation-sidebar {
     position: static;
+    padding: var(--spacing-base) var(--spacing-sm);
+  }
+
+  .documentation-sidebar h2 {
+    font-size: var(--font-size-sm);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--color-text-light);
+    margin-bottom: var(--spacing-xs);
+  }
+
+  .documentation-sidebar nav {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: var(--spacing-xs);
+    padding-bottom: 2px;
+    margin: 0 calc(-1 * var(--spacing-sm));
+    padding-left: var(--spacing-sm);
+    padding-right: var(--spacing-sm);
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+
+  .documentation-sidebar nav::-webkit-scrollbar {
+    height: 4px;
+  }
+
+  .documentation-sidebar nav::-webkit-scrollbar-thumb {
+    background: var(--color-border);
+    border-radius: 999px;
+  }
+
+  .doc-nav-link {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    padding: var(--spacing-xs) var(--spacing-base);
+    white-space: nowrap;
+    font-size: var(--font-size-sm);
+  }
+
+  .documentation-content {
+    padding: var(--spacing-base);
+  }
+
+  .documentation-content section + section {
+    margin-top: var(--spacing-xl);
+  }
+
+  .documentation-content h1 {
+    font-size: var(--font-size-2xl);
+    line-height: 1.2;
+  }
+
+  .documentation-content h2 {
+    font-size: var(--font-size-xl);
+    line-height: 1.25;
+  }
+
+  .documentation-content h3 {
+    font-size: var(--font-size-base);
+  }
+
+  .documentation-content pre {
+    padding: var(--spacing-sm) var(--spacing-base);
+    font-size: 0.75rem;
+    line-height: 1.45;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+
+  .documentation-content pre code {
+    font-size: inherit;
+    white-space: pre;
+    overflow-wrap: normal;
+    word-break: normal;
+  }
+}
+
+@media (max-width: 480px) {
+  .documentation-content section {
+    scroll-margin-top: 4.75rem;
+  }
+
+  .documentation-page {
+    padding: 0 0 var(--spacing-lg);
+  }
+
+  .documentation-content {
+    padding: var(--spacing-sm) var(--spacing-sm);
+    border-radius: var(--radius-md);
+  }
+
+  .documentation-sidebar {
+    border-radius: var(--radius-md);
+  }
+
+  .documentation-content ol,
+  .documentation-content ul {
+    padding-left: 1.1rem;
   }
 }
