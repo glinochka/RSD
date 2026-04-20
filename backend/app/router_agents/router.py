@@ -6,15 +6,17 @@ from urllib.request import urlopen
 from datetime import datetime, timedelta
 from collections import defaultdict
 
+import jwt
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from jwt.exceptions import InvalidTokenError
 from sqlalchemy import Date, cast, func, select
 
 from .dao import AgentChannelConnectionDAO, AgentDAO
 from .schemas import *
 from ..alembic.database import async_session_maker
-from ..alembic.models import AgentAnalyticsMessage, AgentFrozenUser
+from ..alembic.models import Agent, AgentAnalyticsMessage, AgentChannelConnection, AgentFrozenUser
 from ..config import settings
 from ..qdrant.search_service import delete_agent_vectors
 from ..router_users.dao import UserDAO
@@ -35,6 +37,7 @@ logger = getLogger(__name__)
 router = APIRouter(prefix="/api/agents")
 http_bearer = HTTPBearer(auto_error=False)
 MAX_INT32 = 2_147_483_647
+USERBOT_AUTH_TOKEN_TTL_MINUTES = 10
 
 
 async def get_current_user_optional(
@@ -138,6 +141,95 @@ def _safe_iso(value):
         return value.isoformat(sep=" ", timespec="seconds")
     except Exception:
         return str(value)
+
+
+def _create_userbot_auth_token(
+    *,
+    api_id: int,
+    api_hash: str,
+    phone_number: str,
+    phone_code_hash: str,
+    encrypted_pending_session: str,
+) -> str:
+    now = datetime.utcnow()
+    payload = {
+        "scope": "userbot_auth",
+        "api_id": api_id,
+        "encrypted_api_hash": encrypt_token(api_hash),
+        "phone_number": phone_number,
+        "phone_code_hash": phone_code_hash,
+        "encrypted_pending_session": encrypted_pending_session,
+        "exp": now + timedelta(minutes=USERBOT_AUTH_TOKEN_TTL_MINUTES),
+        "iat": now,
+    }
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+
+def _decode_userbot_auth_token(auth_token: str) -> dict:
+    try:
+        data = jwt.decode(auth_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+    except InvalidTokenError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Невалидный или просроченный токен подтверждения userbot",
+        )
+    if data.get("scope") != "userbot_auth":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Некорректный scope токена подтверждения userbot",
+        )
+    return data
+
+
+def _create_telethon_client(api_id: int, api_hash: str, session_string: str = ""):
+    from telethon import TelegramClient, connection
+    from telethon.sessions import StringSession
+
+    if settings.ALLOW_INSECURE_INTERNAL_API:
+        # Keep current env behavior: no MTProxy by default, direct Telegram access.
+        return TelegramClient(StringSession(session_string), api_id, api_hash)
+    return TelegramClient(
+        StringSession(session_string),
+        api_id,
+        api_hash,
+        connection=connection.ConnectionTcpFull,
+    )
+
+
+async def _validate_userbot_session(api_id: int, api_hash: str, session_string: str):
+    try:
+        import telethon  # noqa: F401
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Telethon не установлен на сервере: {exc}",
+        )
+
+    client = _create_telethon_client(api_id=api_id, api_hash=api_hash, session_string=session_string)
+    try:
+        await client.connect()
+        is_authorized = await client.is_user_authorized()
+        if not is_authorized:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="StringSession не авторизована. Сначала подтвердите вход через код Telegram.",
+            )
+        me = await client.get_me()
+        if not me:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Telethon не смог получить профиль пользователя",
+            )
+        return me
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Не удалось проверить userbot-сессию через Telethon: {exc}",
+        )
+    finally:
+        await client.disconnect()
 
 
 async def _telegram_api_send_message(bot_token: str, chat_id: int, text: str) -> None:
@@ -272,6 +364,51 @@ async def get_agent_by_external_api_key(
             if not agent:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
             return agent
+
+
+@router.get("/internal/userbot_clients")
+async def list_userbot_clients(internal: bool = Depends(is_internal_request)):
+    """List active userbot channel configs for bot service (internal only)."""
+    if not internal:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Internal API key required")
+
+    async with async_session_maker() as session:
+        async with session.begin():
+            rows = (
+                (
+                    await session.execute(
+                        select(
+                            Agent.bot_id,
+                            Agent.system_prompt,
+                            Agent.welcome_message,
+                            AgentChannelConnection.encrypted_credentials,
+                        )
+                        .join(AgentChannelConnection, AgentChannelConnection.agent_id == Agent.id)
+                        .where(
+                            Agent.is_active.is_(True),
+                            AgentChannelConnection.provider == "telegram_userbot",
+                            AgentChannelConnection.connection_type == "userbot",
+                            AgentChannelConnection.is_active.is_(True),
+                            AgentChannelConnection.encrypted_credentials.is_not(None),
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+            )
+
+    payload = []
+    for row in rows:
+        payload.append(
+            {
+                "bot_id": int(row["bot_id"]),
+                "system_prompt": row["system_prompt"] or "",
+                "welcome_message": row["welcome_message"],
+                "encrypted_userbot_bundle": row["encrypted_credentials"],
+            }
+        )
+
+    return JSONResponse(content=payload, status_code=status.HTTP_200_OK)
 
 
 @router.get("")
@@ -491,6 +628,253 @@ async def create_agent_by_token(new_agent: NewAgent_byToken, current_user=Depend
     return JSONResponse(content={"bot_id": bot_id}, status_code=status.HTTP_201_CREATED)
 
 
+@router.post("/by_userbot_session")
+async def create_agent_by_userbot_session(
+    new_agent: NewAgent_byUserbotSession, current_user=Depends(get_current_user_required)
+):
+    if current_user.is_banned:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
+
+    api_id = new_agent.api_id
+    api_hash = new_agent.api_hash.strip()
+    session_string = new_agent.session_string.strip()
+    me = await _validate_userbot_session(api_id=api_id, api_hash=api_hash, session_string=session_string)
+
+    telegram_user_id = getattr(me, "id", None)
+    if telegram_user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Telethon не вернул идентификатор userbot",
+        )
+
+    username = getattr(me, "username", None)
+    if username:
+        bot_username = username
+    else:
+        first_name = (getattr(me, "first_name", "") or "").strip()
+        last_name = (getattr(me, "last_name", "") or "").strip()
+        fallback_name = " ".join(part for part in [first_name, last_name] if part).strip()
+        bot_username = fallback_name or f"user_{telegram_user_id}"
+
+    userbot_bundle = encrypt_token(
+        json.dumps(
+            {
+                "api_id": api_id,
+                "api_hash": api_hash,
+                "session_string": session_string,
+                "phone_number": None,
+                "telegram_user_id": telegram_user_id,
+            },
+            ensure_ascii=False,
+        )
+    )
+
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        channel_connection_dao = AgentChannelConnectionDAO(session)
+        async with session.begin():
+            duplicate_agent = await agent_dao.find_one_by_filter(bot_id=telegram_user_id)
+            if duplicate_agent:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Этот Telegram userbot уже зарегистрирован",
+                )
+            duplicate_connection = await channel_connection_dao.find_one_by_filter(
+                provider="telegram_userbot",
+                external_id=str(telegram_user_id),
+            )
+            if duplicate_connection:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Этот Telegram userbot уже подключен к другому агенту",
+                )
+
+            external_api_key = generate_agent_external_api_key()
+            created_agent = await agent_dao.add(
+                {
+                    "user_id": current_user.id,
+                    "bot_id": telegram_user_id,
+                    "primary_provider": "telegram_userbot",
+                    "template_type": new_agent.template_type,
+                    "encrypted_token": encrypt_token(session_string),
+                    "encrypted_external_api_key": encrypt_token(external_api_key),
+                    "external_api_key_hash": hash_agent_external_api_key(external_api_key),
+                    "bot_username": bot_username,
+                    "system_prompt": new_agent.system_prompt.strip(),
+                    "is_active": True,
+                }
+            )
+            await session.flush()
+            await channel_connection_dao.add(
+                {
+                    "agent_id": created_agent.id,
+                    "provider": "telegram_userbot",
+                    "connection_type": "userbot",
+                    "external_id": str(telegram_user_id),
+                    "encrypted_credentials": userbot_bundle,
+                    "is_primary": True,
+                    "is_active": True,
+                }
+            )
+
+    return JSONResponse(
+        content={"bot_id": telegram_user_id, "connection_type": "telegram_userbot"},
+        status_code=status.HTTP_201_CREATED,
+    )
+
+
+@router.post("/userbot/request_code")
+async def request_userbot_code(
+    payload: UserbotRequestCode, current_user=Depends(get_current_user_required)
+):
+    if current_user.is_banned:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
+
+    api_id = payload.api_id
+    api_hash = payload.api_hash.strip()
+    phone_number = payload.phone_number.strip()
+
+    try:
+        from telethon.errors import FloodWaitError
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Telethon не установлен на сервере: {exc}",
+        )
+
+    client = _create_telethon_client(api_id=api_id, api_hash=api_hash)
+    phone_code_hash = None
+    pending_session_string = ""
+    try:
+        await client.connect()
+        sent = await client.send_code_request(phone=phone_number)
+        phone_code_hash = getattr(sent, "phone_code_hash", None)
+        if not phone_code_hash:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Telegram не вернул phone_code_hash",
+            )
+        pending_session_string = client.session.save()
+    except FloodWaitError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Слишком много попыток. Подождите {exc.seconds} сек",
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Не удалось отправить код подтверждения Telegram: {exc}",
+        )
+    finally:
+        await client.disconnect()
+
+    auth_token = _create_userbot_auth_token(
+        api_id=api_id,
+        api_hash=api_hash,
+        phone_number=phone_number,
+        phone_code_hash=phone_code_hash,
+        encrypted_pending_session=encrypt_token(pending_session_string),
+    )
+    return JSONResponse(content={"auth_token": auth_token}, status_code=status.HTTP_200_OK)
+
+
+@router.post("/userbot/verify_code")
+async def verify_userbot_code(
+    payload: UserbotVerifyCode, current_user=Depends(get_current_user_required)
+):
+    if current_user.is_banned:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
+
+    token_data = _decode_userbot_auth_token(payload.auth_token.strip())
+    api_id = int(token_data["api_id"])
+    api_hash = decrypt_token(token_data["encrypted_api_hash"])
+    phone_number = token_data["phone_number"]
+    phone_code_hash = token_data["phone_code_hash"]
+    pending_session_enc = token_data.get("encrypted_pending_session")
+    pending_session = decrypt_token(pending_session_enc) if pending_session_enc else ""
+
+    code = "".join(ch for ch in payload.code.strip() if ch.isdigit())
+    password = payload.password.strip() if payload.password else None
+    if not code:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Введите код подтверждения (цифры из Telegram)",
+        )
+
+    try:
+        from telethon.errors import (
+            PhoneCodeExpiredError,
+            PhoneCodeInvalidError,
+            SessionPasswordNeededError,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Telethon не установлен на сервере: {exc}",
+        )
+
+    client = _create_telethon_client(
+        api_id=api_id,
+        api_hash=api_hash,
+        session_string=pending_session or "",
+    )
+    try:
+        await client.connect()
+        try:
+            await client.sign_in(phone=phone_number, code=code, phone_code_hash=phone_code_hash)
+        except SessionPasswordNeededError:
+            if not password:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Для этого аккаунта включен пароль 2FA. Передайте поле password.",
+                )
+            await client.sign_in(password=password)
+        except PhoneCodeInvalidError:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Неверный код подтверждения Telegram",
+            )
+        except PhoneCodeExpiredError:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Код подтверждения Telegram истек. Запросите новый код.",
+            )
+
+        me = await client.get_me()
+        if not me:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Telethon не смог получить профиль пользователя после входа",
+            )
+        session_string = client.session.save()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("userbot verify_code failed: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Не удалось подтвердить код Telegram: {exc}",
+        )
+    finally:
+        await client.disconnect()
+
+    return JSONResponse(
+        content={
+            "session_string": session_string,
+            "api_id": api_id,
+            "api_hash": api_hash,
+            "phone_number": phone_number,
+            "telegram_id": getattr(me, "id", None),
+            "username": getattr(me, "username", None),
+            "first_name": getattr(me, "first_name", None),
+            "last_name": getattr(me, "last_name", None),
+        },
+        status_code=status.HTTP_200_OK,
+    )
+
+
 @router.patch("/by_botID")
 async def update_by_bot_id(
     new_data: UpdateAgent,
@@ -530,8 +914,8 @@ async def toggle_status(
             new_status = not agent.is_active
             await agent_dao.update(agent, {"is_active": new_status})
 
-            # Keep Telegram webhook in sync with `is_active`.
-            if settings.BASE_URL:
+            # Keep Telegram webhook in sync only for Telegram Bot API agents.
+            if settings.BASE_URL and (agent.primary_provider or "").strip().lower() == "telegram_bot":
                 agent_token = decrypt_token(agent.encrypted_token)
                 webhook_url = f"{settings.BASE_URL}/webhook/{agent.bot_id}"
 

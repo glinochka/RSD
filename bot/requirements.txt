@@ -7,3 +7,4 @@ httpx
 openai
 qdrant-client
 python-multipart
+telethon>=1.36.0

@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from aiogram import Bot, Dispatcher
@@ -11,6 +12,7 @@ from handlers.agent import agent_router
 from handlers.master import master_router 
 from core.backendAPI import *
 from core.config import settings
+from core.userbot_manager import UserbotManager
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -18,10 +20,12 @@ logger = logging.getLogger(__name__)
 master_bot = None
 master_dp = None
 agent_dp = None
+userbot_manager: UserbotManager | None = None
+userbot_task: asyncio.Task | None = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global master_bot, master_dp, agent_dp
+    global master_bot, master_dp, agent_dp, userbot_manager, userbot_task
     
     logger.info("🚀 LIFESPAN START")
     
@@ -39,11 +43,19 @@ async def lifespan(app: FastAPI):
         logger.info(f"✅ Вебхук установлен: {webhook_url}")
     except Exception as e:
         logger.error(f"❌ Ошибка установки вебхука: {e}")
+
+    userbot_manager = UserbotManager()
+    userbot_task = asyncio.create_task(userbot_manager.run_forever())
+    logger.info("✅ UserbotManager запущен")
     
     yield
     
     # Shutdown
     logger.info("🛑 LIFESPAN STOP")
+    if userbot_manager:
+        await userbot_manager.shutdown()
+        userbot_manager = None
+    userbot_task = None
     if master_dp:
         await master_dp.storage.close()
     if agent_dp:

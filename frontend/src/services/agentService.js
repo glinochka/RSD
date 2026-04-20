@@ -33,6 +33,21 @@ export const agentService = {
     return response.data;
   },
 
+  createUserbot: async (agentData) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_CREATE_USERBOT, agentData);
+    return response.data;
+  },
+
+  requestUserbotCode: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_USERBOT_REQUEST_CODE, data);
+    return response.data;
+  },
+
+  verifyUserbotCode: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_USERBOT_VERIFY_CODE, data);
+    return response.data;
+  },
+
   /**
    * Update agent
    */

@@ -26,14 +26,16 @@ const CreateAgentContent = () => {
   const [pendingLink, setPendingLink] = useState('');
   const [uploadedLinks, setUploadedLinks] = useState([]);
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [connectionType, setConnectionType] = useState('bot_api');
+  const [userbotAuthToken, setUserbotAuthToken] = useState('');
+  const [isSendingCode, setIsSendingCode] = useState(false);
+  const [isVerifyingCode, setIsVerifyingCode] = useState(false);
+  const [isUserbotVerified, setIsUserbotVerified] = useState(false);
+  const [verifiedUserbotLabel, setVerifiedUserbotLabel] = useState('');
 
   const isEditMode = !!agentId;
 
   const validationRules = {
-    bot_token: {
-      required: true,
-      label: 'API ключ Telegram бота',
-    },
     system_prompt: {
       required: true,
       label: 'Системный промпт',
@@ -45,6 +47,12 @@ const CreateAgentContent = () => {
   const form = useForm(
     {
       bot_token: '',
+      api_id: '',
+      api_hash: '',
+      phone_number: '',
+      verify_code: '',
+      password_2fa: '',
+      session_string: '',
       system_prompt: '',
     },
     async (values) => {
@@ -59,12 +67,44 @@ const CreateAgentContent = () => {
           return;
         }
 
-        const createdAgent = await agentService.create({
-          bot_token: values.bot_token.trim(),
-          system_prompt: values.system_prompt.trim(),
-        });
+        let createdAgent;
+        let fallbackBotId = NaN;
 
-        const fallbackBotId = Number(values.bot_token.split(':', 1)[0]);
+        if (connectionType === 'bot_api') {
+          if (!values.bot_token?.trim()) {
+            form.setFieldError('bot_token', 'API ключ Telegram бота обязателен');
+            return;
+          }
+          createdAgent = await agentService.create({
+            bot_token: values.bot_token.trim(),
+            system_prompt: values.system_prompt.trim(),
+          });
+          fallbackBotId = Number(values.bot_token.split(':', 1)[0]);
+        } else {
+          if (!values.api_id?.toString().trim()) {
+            form.setFieldError('api_id', 'API ID обязателен');
+            return;
+          }
+          if (!values.api_hash?.trim()) {
+            form.setFieldError('api_hash', 'API hash обязателен');
+            return;
+          }
+          if (!values.phone_number?.trim()) {
+            form.setFieldError('phone_number', 'Номер телефона обязателен');
+            return;
+          }
+          if (!values.session_string?.trim() || !isUserbotVerified) {
+            form.setFieldError('verify_code', 'Сначала подтвердите код и сохраните userbot-сессию');
+            return;
+          }
+          createdAgent = await agentService.createUserbot({
+            api_id: Number(values.api_id),
+            api_hash: values.api_hash.trim(),
+            session_string: values.session_string.trim(),
+            system_prompt: values.system_prompt.trim(),
+          });
+        }
+
         const botId = createdAgent?.bot_id ?? fallbackBotId;
 
         if (!Number.isFinite(botId)) {
@@ -89,6 +129,90 @@ const CreateAgentContent = () => {
     },
     validationRules
   );
+
+  const handleConnectionTypeChange = (type) => {
+    setConnectionType(type);
+    if (type === 'bot_api') {
+      setUserbotAuthToken('');
+      setIsUserbotVerified(false);
+      setVerifiedUserbotLabel('');
+      form.setFieldValue('api_id', '');
+      form.setFieldValue('api_hash', '');
+      form.setFieldValue('phone_number', '');
+      form.setFieldValue('verify_code', '');
+      form.setFieldValue('password_2fa', '');
+      form.setFieldValue('session_string', '');
+      form.setFieldError('verify_code', undefined);
+    } else {
+      form.setFieldValue('bot_token', '');
+      form.setFieldError('bot_token', undefined);
+    }
+  };
+
+  const handleUserbotRequestCode = async () => {
+    if (!form.values.api_id?.toString().trim()) {
+      form.setFieldError('api_id', 'API ID обязателен');
+      return;
+    }
+    if (!form.values.api_hash?.trim()) {
+      form.setFieldError('api_hash', 'API hash обязателен');
+      return;
+    }
+    if (!form.values.phone_number?.trim()) {
+      form.setFieldError('phone_number', 'Номер телефона обязателен');
+      return;
+    }
+
+    setIsSendingCode(true);
+    try {
+      const response = await agentService.requestUserbotCode({
+        api_id: Number(form.values.api_id),
+        api_hash: form.values.api_hash.trim(),
+        phone_number: form.values.phone_number.trim(),
+      });
+      setUserbotAuthToken(response.auth_token);
+      setIsUserbotVerified(false);
+      setVerifiedUserbotLabel('');
+      form.setFieldValue('session_string', '');
+      showSuccess('Код подтверждения отправлен в Telegram');
+    } catch (error) {
+      showError(error.message || 'Не удалось отправить код Telegram');
+    } finally {
+      setIsSendingCode(false);
+    }
+  };
+
+  const handleUserbotVerifyCode = async () => {
+    if (!userbotAuthToken) {
+      showError('Сначала запросите код подтверждения');
+      return;
+    }
+    if (!form.values.verify_code?.trim()) {
+      form.setFieldError('verify_code', 'Введите код подтверждения');
+      return;
+    }
+
+    setIsVerifyingCode(true);
+    try {
+      const response = await agentService.verifyUserbotCode({
+        auth_token: userbotAuthToken,
+        code: form.values.verify_code.trim(),
+        password: form.values.password_2fa?.trim() || undefined,
+      });
+      form.setFieldValue('session_string', response.session_string || '');
+      setIsUserbotVerified(true);
+      const label = response.username
+        ? `@${response.username}`
+        : [response.first_name, response.last_name].filter(Boolean).join(' ') || `id: ${response.telegram_id}`;
+      setVerifiedUserbotLabel(label);
+      showSuccess('Userbot успешно подтвержден');
+    } catch (error) {
+      setIsUserbotVerified(false);
+      showError(error.message || 'Не удалось подтвердить код');
+    } finally {
+      setIsVerifyingCode(false);
+    }
+  };
 
   const handleFileUpload = (e) => {
     const files = Array.from(e.target.files || []);
@@ -176,24 +300,151 @@ const CreateAgentContent = () => {
           </section>
 
           <form id="agent-form" className="agent-form" onSubmit={form.handleSubmit}>
-            {/* Bot Token */}
             <div className="form-group">
-              <label htmlFor="bot_token">API ключ Telegram бота:</label>
-              <input
-                id="bot_token"
-                type="text"
-                name="bot_token"
-                placeholder="Введите API ключ Telegram бота, его можно получить в BotFather"
-                className={`input-main ${form.errors.bot_token ? 'error' : ''}`}
-                value={form.values.bot_token}
-                onChange={form.handleChange}
-                onBlur={form.handleBlur}
-                disabled={form.isSubmitting}
-              />
-              {form.touched.bot_token && form.errors.bot_token && (
-                <span className="error-message">{form.errors.bot_token}</span>
-              )}
+              <label>Тип подключения Telegram:</label>
+              <div className="connection-type-grid">
+                <button
+                  type="button"
+                  className={`connection-type-card ${connectionType === 'bot_api' ? 'active' : ''}`}
+                  onClick={() => handleConnectionTypeChange('bot_api')}
+                  disabled={form.isSubmitting}
+                >
+                  Telegram бот
+                </button>
+                <button
+                  type="button"
+                  className={`connection-type-card ${connectionType === 'userbot' ? 'active' : ''}`}
+                  onClick={() => handleConnectionTypeChange('userbot')}
+                  disabled={form.isSubmitting}
+                >
+                  Telegram юзербот
+                </button>
+              </div>
             </div>
+
+            {connectionType === 'bot_api' && (
+              <div className="form-group">
+                <label htmlFor="bot_token">API ключ Telegram бота:</label>
+                <input
+                  id="bot_token"
+                  type="text"
+                  name="bot_token"
+                  placeholder="Введите API ключ Telegram бота, его можно получить в BotFather"
+                  className={`input-main ${form.errors.bot_token ? 'error' : ''}`}
+                  value={form.values.bot_token}
+                  onChange={form.handleChange}
+                  onBlur={form.handleBlur}
+                  disabled={form.isSubmitting}
+                />
+                {form.errors.bot_token && (
+                  <span className="error-message">{form.errors.bot_token}</span>
+                )}
+              </div>
+            )}
+
+            {connectionType === 'userbot' && (
+              <div className="form-group">
+                <label htmlFor="api_id">Telegram API ID:</label>
+                <input
+                  id="api_id"
+                  type="number"
+                  name="api_id"
+                  placeholder="Введите API ID из my.telegram.org"
+                  className={`input-main ${form.errors.api_id ? 'error' : ''}`}
+                  value={form.values.api_id}
+                  onChange={form.handleChange}
+                  disabled={form.isSubmitting}
+                />
+                {form.errors.api_id && (
+                  <span className="error-message">{form.errors.api_id}</span>
+                )}
+
+                <label htmlFor="api_hash" className="mt-input">Telegram API hash:</label>
+                <input
+                  id="api_hash"
+                  type="text"
+                  name="api_hash"
+                  placeholder="Введите API hash из my.telegram.org"
+                  className={`input-main ${form.errors.api_hash ? 'error' : ''}`}
+                  value={form.values.api_hash}
+                  onChange={form.handleChange}
+                  disabled={form.isSubmitting}
+                />
+                {form.errors.api_hash && (
+                  <span className="error-message">{form.errors.api_hash}</span>
+                )}
+
+                <label htmlFor="phone_number" className="mt-input">Номер телефона:</label>
+                <input
+                  id="phone_number"
+                  type="text"
+                  name="phone_number"
+                  placeholder="+79990001122"
+                  className={`input-main ${form.errors.phone_number ? 'error' : ''}`}
+                  value={form.values.phone_number}
+                  onChange={form.handleChange}
+                  disabled={form.isSubmitting}
+                />
+                {form.errors.phone_number && (
+                  <span className="error-message">{form.errors.phone_number}</span>
+                )}
+
+                <div className="channel-actions-row">
+                  <button
+                    type="button"
+                    className="btn btn-black"
+                    onClick={handleUserbotRequestCode}
+                    disabled={form.isSubmitting || isSendingCode}
+                  >
+                    {isSendingCode ? 'Отправка...' : 'Отправить код'}
+                  </button>
+                </div>
+
+                <label htmlFor="verify_code" className="mt-input">Код из Telegram:</label>
+                <input
+                  id="verify_code"
+                  type="text"
+                  name="verify_code"
+                  placeholder="12345"
+                  className={`input-main ${form.errors.verify_code ? 'error' : ''}`}
+                  value={form.values.verify_code}
+                  onChange={form.handleChange}
+                  disabled={form.isSubmitting}
+                />
+                {form.errors.verify_code && (
+                  <span className="error-message">{form.errors.verify_code}</span>
+                )}
+
+                <label htmlFor="password_2fa" className="mt-input">Пароль 2FA (если включен):</label>
+                <input
+                  id="password_2fa"
+                  type="password"
+                  name="password_2fa"
+                  placeholder="Введите пароль 2FA при необходимости"
+                  className="input-main"
+                  value={form.values.password_2fa}
+                  onChange={form.handleChange}
+                  disabled={form.isSubmitting}
+                />
+
+                <div className="channel-actions-row">
+                  <button
+                    type="button"
+                    className="btn btn-black"
+                    onClick={handleUserbotVerifyCode}
+                    disabled={form.isSubmitting || isVerifyingCode}
+                  >
+                    {isVerifyingCode ? 'Проверка...' : 'Подтвердить код'}
+                  </button>
+                </div>
+
+                {isUserbotVerified && (
+                  <p className="help-text userbot-success">
+                    Userbot подтвержден: {verifiedUserbotLabel || 'успешно'}
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* System prompt */}
             <div className="form-group">

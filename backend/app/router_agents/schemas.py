@@ -39,6 +39,30 @@ class NewAgent_byToken(BaseModel):
     )
 
 
+class NewAgent_byUserbotSession(BaseModel):
+    api_id: int = Field(..., gt=0, description="Telegram API ID from my.telegram.org")
+    api_hash: str = Field(..., min_length=16, max_length=128, description="Telegram API hash")
+    session_string: str = Field(..., min_length=10, max_length=65535, description="Telethon StringSession")
+    system_prompt: str = Field(..., min_length=1, description="System prompt for agent")
+    template_type: str = Field(
+        default="qa",
+        pattern="^(qa|function_calling|lead_generation|content_factory)$",
+        description="Тип шаблона агента",
+    )
+
+
+class UserbotRequestCode(BaseModel):
+    api_id: int = Field(..., gt=0, description="Telegram API ID from my.telegram.org")
+    api_hash: str = Field(..., min_length=16, max_length=128, description="Telegram API hash")
+    phone_number: str = Field(..., min_length=5, max_length=32, description="Telegram phone number")
+
+
+class UserbotVerifyCode(BaseModel):
+    auth_token: str = Field(..., min_length=20, max_length=4096, description="Temporary auth token")
+    code: str = Field(..., min_length=3, max_length=12, description="Telegram code from message")
+    password: Optional[str] = Field(None, min_length=1, max_length=128, description="Telegram 2FA password")
+
+
 class AgentAIAction(BaseModel):
     bot_id: int = Field(..., description="id бота")
 
