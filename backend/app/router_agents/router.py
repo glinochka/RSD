@@ -192,6 +192,11 @@ def _create_telethon_client(api_id: int, api_hash: str, session_string: str = ""
     proxy_username = (settings.TELEGRAM_PROXY_USERNAME or "").strip() or None
     proxy_password = (settings.TELEGRAM_PROXY_PASSWORD or "").strip() or None
 
+    client_kwargs = {
+        # Telegram/proxy routes can be slow; default 10s often causes false timeout errors.
+        "timeout": float(settings.TELEGRAM_CONNECT_TIMEOUT_SECONDS),
+    }
+
     if proxy_type in {"socks5", "socks4", "http"} and proxy_host and proxy_port > 0:
         socks_type = {
             "socks5": socks.SOCKS5,
@@ -203,8 +208,9 @@ def _create_telethon_client(api_id: int, api_hash: str, session_string: str = ""
             api_id,
             api_hash,
             proxy=(socks_type, proxy_host, proxy_port, True, proxy_username, proxy_password),
+            **client_kwargs,
         )
-    return TelegramClient(StringSession(session_string), api_id, api_hash)
+    return TelegramClient(StringSession(session_string), api_id, api_hash, **client_kwargs)
 
 
 async def _validate_userbot_session(api_id: int, api_hash: str, session_string: str):

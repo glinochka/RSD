@@ -27,6 +27,11 @@ def _make_client(session_string: str, api_id: int, api_hash: str) -> TelegramCli
     proxy_username = (settings.TELEGRAM_PROXY_USERNAME or "").strip() or None
     proxy_password = (settings.TELEGRAM_PROXY_PASSWORD or "").strip() or None
 
+    client_kwargs = {
+        # Keep connection setup tolerant to slower Telegram/proxy handshakes.
+        "timeout": float(settings.TELEGRAM_CONNECT_TIMEOUT_SECONDS),
+    }
+
     if proxy_type in {"socks5", "socks4", "http"} and proxy_host and proxy_port > 0:
         socks_type = {
             "socks5": socks.SOCKS5,
@@ -38,8 +43,9 @@ def _make_client(session_string: str, api_id: int, api_hash: str) -> TelegramCli
             api_id,
             api_hash,
             proxy=(socks_type, proxy_host, proxy_port, True, proxy_username, proxy_password),
+            **client_kwargs,
         )
-    return TelegramClient(StringSession(session_string), api_id, api_hash)
+    return TelegramClient(StringSession(session_string), api_id, api_hash, **client_kwargs)
 
 
 async def _fetch_userbot_configs() -> list[dict[str, Any]]:

@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     TELEGRAM_PROXY_PORT: int = 0
     TELEGRAM_PROXY_USERNAME: str = ""
     TELEGRAM_PROXY_PASSWORD: str = ""
+    TELEGRAM_CONNECT_TIMEOUT_SECONDS: float = 30.0
 
 settings = Settings()
 if not os.path.exists('/.dockerenv'):
