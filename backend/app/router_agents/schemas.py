@@ -11,7 +11,7 @@ class NewAgent_byUserWith_tgID(BaseModel):
     tg_id: int = Field(..., description="tg id")
     bot_id: int = Field(..., description="bot id from telegram")
     bot_username: str = Field(..., min_length=3, max_length=100, description="Имя агента: длина от 3 до 30 символов")
-    encrypted_token: str = Field(..., min_length=3, max_length=500, description="Зашифрованный токен бота")
+    encrypted_token: str = Field(..., min_length=3, max_length=65535, description="Зашифрованный токен бота")
 
     system_prompt: Optional[str] = Field(None,description="Промпт")
     welcome_message: Optional[str] = Field(None,min_length=3, description="Начальное сообщение бота: длина от 3 символов")
