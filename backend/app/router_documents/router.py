@@ -79,8 +79,11 @@ def _serialize_document(document, bot_id: int | None = None) -> dict:
 
 
 async def _find_agent_by_lookup(agent_dao: AgentDAO, *, agent_id: int | None, bot_id: int | None):
-    if agent_id is not None:
+    if agent_id is not None and 0 < agent_id <= MAX_INT32:
         return await agent_dao.find_one_by_filter(load_relations=True, id=agent_id)
+    # Backward-compat: some legacy callers still pass Telegram channel id as `agent_id`.
+    if agent_id is not None and (bot_id is None):
+        bot_id = agent_id
     if bot_id is None:
         return None
     found_agent = await agent_dao.find_one_by_filter(load_relations=True, bot_id=bot_id)
@@ -186,6 +189,11 @@ async def get_context(
     internal: bool = Depends(is_internal_request),
 ):
     _assert_access(current_user, internal)
+    if agent_id is None and bot_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Query parameter 'agent_id' or 'bot_id' is required",
+        )
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
         async with session.begin():

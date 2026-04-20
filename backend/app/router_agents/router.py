@@ -214,6 +214,18 @@ async def _get_telegram_bot_channel_for_agent(session, agent_id: int) -> AgentCh
     )
 
 
+async def _get_telegram_userbot_channel_for_agent(session, agent_id: int) -> AgentChannelConnection | None:
+    return await session.scalar(
+        select(AgentChannelConnection).where(
+            AgentChannelConnection.agent_id == agent_id,
+            AgentChannelConnection.provider == "telegram_userbot",
+            AgentChannelConnection.connection_type == "userbot",
+            AgentChannelConnection.is_active.is_(True),
+            AgentChannelConnection.encrypted_credentials.is_not(None),
+        )
+    )
+
+
 async def _telegram_get_me(bot_token: str) -> dict:
     url = f"https://api.telegram.org/bot{quote(bot_token, safe='')}/getMe"
 
@@ -249,6 +261,45 @@ async def _sync_telegram_bot_webhook(bot_token: str, bot_id: int, enabled: bool)
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Не удалось синхронизировать webhook Telegram: {result}",
         )
+
+
+async def _telegram_userbot_send_message(encrypted_bundle: str, chat_id: int, text: str) -> None:
+    try:
+        raw = decrypt_token(encrypted_bundle)
+        data = json.loads(raw)
+        api_id = int(data.get("api_id"))
+        api_hash = str(data.get("api_hash") or "").strip()
+        session_string = str(data.get("session_string") or "").strip()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Некорректные credentials userbot-канала: {exc}",
+        )
+
+    if not api_id or not api_hash or not session_string:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="В userbot-канале отсутствуют api_id/api_hash/session_string",
+        )
+
+    client = _create_telethon_client(api_id=api_id, api_hash=api_hash, session_string=session_string)
+    try:
+        await client.connect()
+        if not await client.is_user_authorized():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Userbot session не авторизована",
+            )
+        await client.send_message(chat_id, text)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Telegram userbot send_message: {exc}",
+        )
+    finally:
+        await client.disconnect()
 
 
 async def _find_agent_with_access(
@@ -508,7 +559,7 @@ async def _list_telegram_broadcast_recipient_ids(session, telegram_bot_id: int) 
                 .where(
                     AgentAnalyticsMessage.bot_id == telegram_bot_id,
                     AgentAnalyticsMessage.role == "user",
-                    AgentAnalyticsMessage.channel == "telegram",
+                    AgentAnalyticsMessage.channel.in_(["telegram", "telegram_userbot"]),
                     AgentAnalyticsMessage.user_external_id.is_not(None),
                 )
                 .group_by(AgentAnalyticsMessage.user_external_id)
@@ -1895,13 +1946,28 @@ async def telegram_send_to_user_as_owner(
                 internal=False,
             )
             telegram_channel = await _get_telegram_bot_channel_for_agent(session, agent.id)
-            if not telegram_channel or not telegram_channel.encrypted_credentials:
+            userbot_channel = await _get_telegram_userbot_channel_for_agent(session, agent.id)
+            send_errors: list[str] = []
+            delivered = False
+            if telegram_channel and telegram_channel.encrypted_credentials:
+                try:
+                    bot_token = decrypt_token(telegram_channel.encrypted_credentials)
+                    await _telegram_api_send_message(bot_token, chat_id, text)
+                    delivered = True
+                except HTTPException as exc:
+                    send_errors.append(str(exc.detail))
+            if (not delivered) and userbot_channel and userbot_channel.encrypted_credentials:
+                try:
+                    await _telegram_userbot_send_message(userbot_channel.encrypted_credentials, chat_id, text)
+                    delivered = True
+                except HTTPException as exc:
+                    send_errors.append(str(exc.detail))
+            if not delivered:
+                joined_errors = "; ".join([err for err in send_errors if err]) or "каналы недоступны"
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="У агента не подключен активный Telegram бот-канал",
+                    detail=f"Не удалось отправить сообщение через bot/userbot: {joined_errors}",
                 )
-            bot_token = decrypt_token(telegram_channel.encrypted_credentials)
-            await _telegram_api_send_message(bot_token, chat_id, text)
             await _log_analytics_message(
                 session=session,
                 agent=agent,
@@ -1936,10 +2002,12 @@ async def telegram_broadcast_recipients(
                 current_user=current_user,
                 internal=False,
             )
-            recipient_ids = await _list_telegram_broadcast_recipient_ids(session, agent.bot_id)
+            analytics_namespace_id = agent.bot_id if agent.bot_id is not None else agent.id
+            recipient_ids = await _list_telegram_broadcast_recipient_ids(session, analytics_namespace_id)
             if not recipient_ids:
                 return JSONResponse(
                     content={
+                        "agent_id": agent.id,
                         "bot_id": agent.bot_id,
                         "telegram_users_total": 0,
                         "frozen_among_telegram": 0,
@@ -1958,6 +2026,7 @@ async def telegram_broadcast_recipients(
             eligible = len([uid for uid in recipient_ids if uid not in frozen_set])
             return JSONResponse(
                 content={
+                    "agent_id": agent.id,
                     "bot_id": agent.bot_id,
                     "telegram_users_total": len(recipient_ids),
                     "frozen_among_telegram": frozen_among,
@@ -1992,16 +2061,27 @@ async def telegram_broadcast_as_owner(
                 current_user=current_user,
                 internal=False,
             )
-            recipient_ids = await _list_telegram_broadcast_recipient_ids(session, agent.bot_id)
+            analytics_namespace_id = agent.bot_id if agent.bot_id is not None else agent.id
+            recipient_ids = await _list_telegram_broadcast_recipient_ids(session, analytics_namespace_id)
             agent_pk = agent.id
-            telegram_bot_id = agent.bot_id
+            telegram_bot_id = analytics_namespace_id
             telegram_channel = await _get_telegram_bot_channel_for_agent(session, agent.id)
-            if not telegram_channel or not telegram_channel.encrypted_credentials:
+            userbot_channel = await _get_telegram_userbot_channel_for_agent(session, agent.id)
+            bot_token = (
+                decrypt_token(telegram_channel.encrypted_credentials)
+                if telegram_channel and telegram_channel.encrypted_credentials
+                else None
+            )
+            userbot_bundle = (
+                userbot_channel.encrypted_credentials
+                if userbot_channel and userbot_channel.encrypted_credentials
+                else None
+            )
+            if not bot_token and not userbot_bundle:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="У агента не подключен активный Telegram бот-канал",
+                    detail="У агента нет активного Telegram bot/userbot канала для рассылки",
                 )
-            bot_token = decrypt_token(telegram_channel.encrypted_credentials)
 
     frozen_set: set[str] = set()
     if payload.skip_frozen and recipient_ids:
@@ -2028,7 +2108,23 @@ async def telegram_broadcast_as_owner(
     for uid in to_send:
         chat_id = int(uid)
         try:
-            await _telegram_api_send_message(bot_token, chat_id, text)
+            delivered = False
+            send_errors: list[str] = []
+            if bot_token:
+                try:
+                    await _telegram_api_send_message(bot_token, chat_id, text)
+                    delivered = True
+                except HTTPException as exc:
+                    send_errors.append(str(exc.detail))
+            if (not delivered) and userbot_bundle:
+                try:
+                    await _telegram_userbot_send_message(userbot_bundle, chat_id, text)
+                    delivered = True
+                except HTTPException as exc:
+                    send_errors.append(str(exc.detail))
+            if not delivered:
+                detail = "; ".join([item for item in send_errors if item]) or "каналы недоступны"
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=detail)
             sent += 1
             async with async_session_maker() as log_session:
                 async with log_session.begin():
