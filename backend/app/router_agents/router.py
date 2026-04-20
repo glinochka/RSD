@@ -182,18 +182,29 @@ def _decode_userbot_auth_token(auth_token: str) -> dict:
 
 
 def _create_telethon_client(api_id: int, api_hash: str, session_string: str = ""):
-    from telethon import TelegramClient, connection
+    import socks
+    from telethon import TelegramClient
     from telethon.sessions import StringSession
 
-    if settings.ALLOW_INSECURE_INTERNAL_API:
-        # Keep current env behavior: no MTProxy by default, direct Telegram access.
-        return TelegramClient(StringSession(session_string), api_id, api_hash)
-    return TelegramClient(
-        StringSession(session_string),
-        api_id,
-        api_hash,
-        connection=connection.ConnectionTcpFull,
-    )
+    proxy_type = (settings.TELEGRAM_PROXY_TYPE or "none").strip().lower()
+    proxy_host = (settings.TELEGRAM_PROXY_HOST or "").strip()
+    proxy_port = int(settings.TELEGRAM_PROXY_PORT or 0)
+    proxy_username = (settings.TELEGRAM_PROXY_USERNAME or "").strip() or None
+    proxy_password = (settings.TELEGRAM_PROXY_PASSWORD or "").strip() or None
+
+    if proxy_type in {"socks5", "socks4", "http"} and proxy_host and proxy_port > 0:
+        socks_type = {
+            "socks5": socks.SOCKS5,
+            "socks4": socks.SOCKS4,
+            "http": socks.HTTP,
+        }[proxy_type]
+        return TelegramClient(
+            StringSession(session_string),
+            api_id,
+            api_hash,
+            proxy=(socks_type, proxy_host, proxy_port, True, proxy_username, proxy_password),
+        )
+    return TelegramClient(StringSession(session_string), api_id, api_hash)
 
 
 async def _validate_userbot_session(api_id: int, api_hash: str, session_string: str):

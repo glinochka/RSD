@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     EMBEDDING_SCHEMA_VERSION: int = 1
     EMBEDDING_CHUNK_SIZE: int = 1000
     EMBEDDING_CHUNK_OVERLAP: int = 100
+    TELEGRAM_PROXY_TYPE: str = "none"
+    TELEGRAM_PROXY_HOST: str = ""
+    TELEGRAM_PROXY_PORT: int = 0
+    TELEGRAM_PROXY_USERNAME: str = ""
+    TELEGRAM_PROXY_PASSWORD: str = ""
 
     model_config = SettingsConfigDict(
         env_file= Path(__file__).parent.parent.parent / '.env',  

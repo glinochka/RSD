@@ -17,3 +17,4 @@ openai>=1.14.0
 python-multipart>=0.0.7
 yookassa>=3.7.0
 telethon>=1.36.0
+PySocks>=1.7.1

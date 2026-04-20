@@ -8,7 +8,8 @@ from typing import Any
 
 import httpx
 from fastapi import status
-from telethon import TelegramClient, connection, events
+import socks
+from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 
 from core.backendAPI import APIcreate, APIread, get_response_status
@@ -20,18 +21,23 @@ logger = logging.getLogger(__name__)
 
 
 def _make_client(session_string: str, api_id: int, api_hash: str) -> TelegramClient:
-    if settings.TELEGRAM_MTPROXY_HOST:
-        proxy = (
-            settings.TELEGRAM_MTPROXY_HOST,
-            int(settings.TELEGRAM_MTPROXY_PORT),
-            settings.TELEGRAM_MTPROXY_SECRET,
-        )
+    proxy_type = (settings.TELEGRAM_PROXY_TYPE or "none").strip().lower()
+    proxy_host = (settings.TELEGRAM_PROXY_HOST or "").strip()
+    proxy_port = int(settings.TELEGRAM_PROXY_PORT or 0)
+    proxy_username = (settings.TELEGRAM_PROXY_USERNAME or "").strip() or None
+    proxy_password = (settings.TELEGRAM_PROXY_PASSWORD or "").strip() or None
+
+    if proxy_type in {"socks5", "socks4", "http"} and proxy_host and proxy_port > 0:
+        socks_type = {
+            "socks5": socks.SOCKS5,
+            "socks4": socks.SOCKS4,
+            "http": socks.HTTP,
+        }[proxy_type]
         return TelegramClient(
             StringSession(session_string),
             api_id,
             api_hash,
-            connection=connection.ConnectionTcpMTProxyRandomizedIntermediate,
-            proxy=proxy,
+            proxy=(socks_type, proxy_host, proxy_port, True, proxy_username, proxy_password),
         )
     return TelegramClient(StringSession(session_string), api_id, api_hash)
 

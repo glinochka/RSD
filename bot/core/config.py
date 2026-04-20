@@ -11,9 +11,11 @@ class Settings(BaseSettings):
     API_HOST: str
     INTERNAL_API_KEY: str = ""
     USERBOT_POLL_INTERVAL_SECONDS: int = 30
-    TELEGRAM_MTPROXY_HOST: str = ""
-    TELEGRAM_MTPROXY_PORT: int = 443
-    TELEGRAM_MTPROXY_SECRET: str = ""
+    TELEGRAM_PROXY_TYPE: str = "none"
+    TELEGRAM_PROXY_HOST: str = ""
+    TELEGRAM_PROXY_PORT: int = 0
+    TELEGRAM_PROXY_USERNAME: str = ""
+    TELEGRAM_PROXY_PASSWORD: str = ""
 
 settings = Settings()
 if not os.path.exists('/.dockerenv'):
