@@ -6,6 +6,9 @@
 import apiClient from './apiClient';
 import { API_ROUTES } from '../config/constants';
 
+/** Telethon + SOCKS can exceed default API timeout (30s); avoid axios abort → nginx 499. */
+const USERBOT_TELETHON_TIMEOUT_MS = 120_000;
+
 export const agentService = {
   /**
    * Get all agents for current user
@@ -34,17 +37,23 @@ export const agentService = {
   },
 
   createUserbot: async (agentData) => {
-    const response = await apiClient.post(API_ROUTES.AGENTS_CREATE_USERBOT, agentData);
+    const response = await apiClient.post(API_ROUTES.AGENTS_CREATE_USERBOT, agentData, {
+      timeout: USERBOT_TELETHON_TIMEOUT_MS,
+    });
     return response.data;
   },
 
   requestUserbotCode: async (data) => {
-    const response = await apiClient.post(API_ROUTES.AGENTS_USERBOT_REQUEST_CODE, data);
+    const response = await apiClient.post(API_ROUTES.AGENTS_USERBOT_REQUEST_CODE, data, {
+      timeout: USERBOT_TELETHON_TIMEOUT_MS,
+    });
     return response.data;
   },
 
   verifyUserbotCode: async (data) => {
-    const response = await apiClient.post(API_ROUTES.AGENTS_USERBOT_VERIFY_CODE, data);
+    const response = await apiClient.post(API_ROUTES.AGENTS_USERBOT_VERIFY_CODE, data, {
+      timeout: USERBOT_TELETHON_TIMEOUT_MS,
+    });
     return response.data;
   },
 
