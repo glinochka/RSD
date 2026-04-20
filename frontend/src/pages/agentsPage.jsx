@@ -20,6 +20,12 @@ const AGENTS_EMPTY_MESSAGE = 'У вас еще нет агентов, созда
 const AGENTS_EMPTY_CTA = 'Создайте прямо сейчас';
 const fileIdentity = (file) => `${file.name}::${file.size}::${file.lastModified}`;
 const linkIdentity = (link) => link.trim().toLowerCase();
+const channelLabel = (channel) => {
+  if (!channel) return 'Канал';
+  if (channel.provider === 'telegram_bot') return 'Telegram бот';
+  if (channel.provider === 'telegram_userbot') return 'Telegram userbot';
+  return channel.provider || 'Канал';
+};
 
 const AgentCard = ({ agent, isSelected, onManage, onDelete, onToggle }) => {
   const agentName = agent.bot_username || agent.name || 'Агент';
@@ -111,6 +117,22 @@ const AgentsPageContent = () => {
   const [pendingLink, setPendingLink] = useState('');
   const [systemPromptDraft, setSystemPromptDraft] = useState('');
   const [welcomeDraft, setWelcomeDraft] = useState('');
+  const [channels, setChannels] = useState([]);
+  const [isChannelsModalOpen, setIsChannelsModalOpen] = useState(false);
+  const [channelModalTab, setChannelModalTab] = useState('bot');
+  const [isLoadingChannels, setIsLoadingChannels] = useState(false);
+  const [isSavingChannel, setIsSavingChannel] = useState(false);
+  const [botTokenDraft, setBotTokenDraft] = useState('');
+  const [makePrimaryChannel, setMakePrimaryChannel] = useState(false);
+  const [userbotApiId, setUserbotApiId] = useState('');
+  const [userbotApiHash, setUserbotApiHash] = useState('');
+  const [userbotPhone, setUserbotPhone] = useState('');
+  const [userbotCode, setUserbotCode] = useState('');
+  const [userbotPassword, setUserbotPassword] = useState('');
+  const [userbotAuthToken, setUserbotAuthToken] = useState('');
+  const [userbotSessionString, setUserbotSessionString] = useState('');
+  const [isSendingUserbotCode, setIsSendingUserbotCode] = useState(false);
+  const [isVerifyingUserbotCode, setIsVerifyingUserbotCode] = useState(false);
   const detailsRequestIdRef = useRef(0);
   const { data: agents, isLoading, execute } = useAsync(
     () => agentService.getAll(),
@@ -145,6 +167,7 @@ const AgentsPageContent = () => {
     setSelectedBotId(botId);
     setSelectedAgent(null);
     setDocuments([]);
+    setChannels([]);
     setIsLoadingDetails(true);
     try {
       const [agent, docs] = await Promise.all([
@@ -156,6 +179,7 @@ const AgentsPageContent = () => {
       setSystemPromptDraft(agent.system_prompt || '');
       setWelcomeDraft(agent.welcome_message || '');
       setDocuments(docs || []);
+      setChannels(agent.channels || []);
     } catch (error) {
       if (requestId !== detailsRequestIdRef.current) return;
       showError(error?.message || 'Ошибка при загрузке карточки агента');
@@ -422,6 +446,174 @@ const AgentsPageContent = () => {
     }
   };
 
+  const resetChannelModalFields = () => {
+    setBotTokenDraft('');
+    setMakePrimaryChannel(false);
+    setUserbotApiId('');
+    setUserbotApiHash('');
+    setUserbotPhone('');
+    setUserbotCode('');
+    setUserbotPassword('');
+    setUserbotAuthToken('');
+    setUserbotSessionString('');
+    setIsSendingUserbotCode(false);
+    setIsVerifyingUserbotCode(false);
+  };
+
+  const refreshChannels = async (botId) => {
+    const data = await agentService.getChannels(botId);
+    const list = data?.channels || [];
+    setChannels(list);
+    setSelectedAgent((prev) => (prev ? { ...prev, channels: list } : prev));
+    return list;
+  };
+
+  const handleOpenChannelsModal = async () => {
+    if (!selectedBotId) {
+      showError('Сначала выберите агента');
+      return;
+    }
+    resetChannelModalFields();
+    setChannelModalTab('bot');
+    setIsChannelsModalOpen(true);
+    setIsLoadingChannels(true);
+    try {
+      await refreshChannels(selectedBotId);
+    } catch (error) {
+      showError(error?.message || 'Не удалось загрузить каналы подключения');
+    } finally {
+      setIsLoadingChannels(false);
+    }
+  };
+
+  const handleCloseChannelsModal = () => {
+    setIsChannelsModalOpen(false);
+    resetChannelModalFields();
+  };
+
+  const handleRemoveChannel = async (connectionId) => {
+    if (!selectedBotId) return;
+    if (!window.confirm('Удалить этот канал подключения?')) return;
+    setIsSavingChannel(true);
+    try {
+      const res = await agentService.removeChannel({ bot_id: selectedBotId, connection_id: connectionId });
+      const list = res?.channels || [];
+      setChannels(list);
+      setSelectedAgent((prev) => (prev ? { ...prev, channels: list } : prev));
+      showSuccess('Канал успешно удален');
+      await loadAgentDetails(selectedBotId);
+    } catch (error) {
+      showError(error?.message || 'Ошибка при удалении канала');
+    } finally {
+      setIsSavingChannel(false);
+    }
+  };
+
+  const handleAddBotChannel = async () => {
+    if (!selectedBotId) return;
+    if (!botTokenDraft.trim()) {
+      showError('Введите API ключ Telegram бота');
+      return;
+    }
+    setIsSavingChannel(true);
+    try {
+      const res = await agentService.addBotChannel({
+        bot_id: selectedBotId,
+        bot_token: botTokenDraft.trim(),
+        make_primary: makePrimaryChannel,
+      });
+      const list = res?.channels || [];
+      setChannels(list);
+      setSelectedAgent((prev) => (prev ? { ...prev, channels: list } : prev));
+      showSuccess('Telegram бот подключен');
+      await loadAgentDetails(selectedBotId);
+      resetChannelModalFields();
+    } catch (error) {
+      showError(error?.message || 'Ошибка при подключении Telegram бота');
+    } finally {
+      setIsSavingChannel(false);
+    }
+  };
+
+  const handleRequestUserbotCode = async () => {
+    if (!userbotApiId.trim() || !userbotApiHash.trim() || !userbotPhone.trim()) {
+      showError('Заполните API ID, API hash и номер телефона');
+      return;
+    }
+    setIsSendingUserbotCode(true);
+    try {
+      const response = await agentService.requestUserbotCode({
+        api_id: Number(userbotApiId),
+        api_hash: userbotApiHash.trim(),
+        phone_number: userbotPhone.trim(),
+      });
+      setUserbotAuthToken(response?.auth_token || '');
+      setUserbotSessionString('');
+      showSuccess('Код подтверждения отправлен в Telegram');
+    } catch (error) {
+      showError(error?.message || 'Не удалось отправить код Telegram');
+    } finally {
+      setIsSendingUserbotCode(false);
+    }
+  };
+
+  const handleVerifyUserbotCode = async () => {
+    if (!userbotAuthToken) {
+      showError('Сначала отправьте код подтверждения');
+      return;
+    }
+    if (!userbotCode.trim()) {
+      showError('Введите код из Telegram');
+      return;
+    }
+    setIsVerifyingUserbotCode(true);
+    try {
+      const response = await agentService.verifyUserbotCode({
+        auth_token: userbotAuthToken,
+        code: userbotCode.trim(),
+        password: userbotPassword.trim() || undefined,
+      });
+      setUserbotSessionString(response?.session_string || '');
+      showSuccess('Код подтвержден, можно подключать userbot');
+    } catch (error) {
+      showError(error?.message || 'Не удалось подтвердить код');
+    } finally {
+      setIsVerifyingUserbotCode(false);
+    }
+  };
+
+  const handleAddUserbotChannel = async () => {
+    if (!selectedBotId) return;
+    if (!userbotApiId.trim() || !userbotApiHash.trim()) {
+      showError('Заполните API ID и API hash');
+      return;
+    }
+    if (!userbotSessionString.trim()) {
+      showError('Сначала подтвердите код Telegram и получите session string');
+      return;
+    }
+    setIsSavingChannel(true);
+    try {
+      const res = await agentService.addUserbotChannel({
+        bot_id: selectedBotId,
+        api_id: Number(userbotApiId),
+        api_hash: userbotApiHash.trim(),
+        session_string: userbotSessionString.trim(),
+        make_primary: makePrimaryChannel,
+      });
+      const list = res?.channels || [];
+      setChannels(list);
+      setSelectedAgent((prev) => (prev ? { ...prev, channels: list } : prev));
+      showSuccess('Telegram userbot подключен');
+      await loadAgentDetails(selectedBotId);
+      resetChannelModalFields();
+    } catch (error) {
+      showError(error?.message || 'Ошибка при подключении userbot');
+    } finally {
+      setIsSavingChannel(false);
+    }
+  };
+
   useEffect(() => {
     if (!isAuthenticated) return;
     const list = agents || [];
@@ -512,6 +704,33 @@ const AgentsPageContent = () => {
                         Перевыпустить API ключ
                       </button>
                     </div>
+                  </div>
+
+                  <div className="agent-management-block">
+                    <div className="docs-header-row">
+                      <label>Каналы Telegram</label>
+                      <button type="button" className="btn btn-outline" onClick={handleOpenChannelsModal}>
+                        Управлять каналами
+                      </button>
+                    </div>
+                    {channels.length === 0 ? (
+                      <p className="docs-empty">Каналы пока не подключены</p>
+                    ) : (
+                      <div className="docs-list-web">
+                        {channels.map((channel) => (
+                          <div key={channel.id} className="doc-row">
+                            <div className="doc-meta">
+                              <span className="doc-name">
+                                {channelLabel(channel)} · {channel.external_id}
+                              </span>
+                              <span className={`doc-status ${channel.is_primary ? 'doc-status--ready' : ''}`}>
+                                {channel.is_primary ? 'основной' : 'дополнительный'}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   <div className="agent-management-block">
@@ -629,6 +848,177 @@ const AgentsPageContent = () => {
           </div>
         )}
       </section>
+
+      {isChannelsModalOpen && (
+        <div className="auth-modal-backdrop">
+          <div className="auth-modal channels-modal">
+            <h3 className="auth-modal-title">Управление каналами подключения</h3>
+            {isLoadingChannels ? (
+              <p className="help-text">Загрузка каналов...</p>
+            ) : (
+              <>
+                <div className="channel-modal-list">
+                  {channels.length === 0 ? (
+                    <p className="help-text">Подключений пока нет</p>
+                  ) : (
+                    channels.map((channel) => (
+                      <div key={channel.id} className="doc-row">
+                        <div className="doc-meta">
+                          <span className="doc-name">
+                            {channelLabel(channel)} · {channel.external_id}
+                          </span>
+                          <span className={`doc-status ${channel.is_primary ? 'doc-status--ready' : ''}`}>
+                            {channel.is_primary ? 'основной' : 'дополнительный'}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          className="delete-btn"
+                          disabled={isSavingChannel}
+                          onClick={() => handleRemoveChannel(channel.id)}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <div className="connection-type-grid channels-tabs">
+                  <button
+                    type="button"
+                    className={`connection-type-card ${channelModalTab === 'bot' ? 'active' : ''}`}
+                    onClick={() => setChannelModalTab('bot')}
+                    disabled={isSavingChannel}
+                  >
+                    Telegram бот
+                  </button>
+                  <button
+                    type="button"
+                    className={`connection-type-card ${channelModalTab === 'userbot' ? 'active' : ''}`}
+                    onClick={() => setChannelModalTab('userbot')}
+                    disabled={isSavingChannel}
+                  >
+                    Telegram userbot
+                  </button>
+                </div>
+
+                {channelModalTab === 'bot' ? (
+                  <div className="agent-management-block">
+                    <input
+                      type="text"
+                      className="input-main"
+                      placeholder="API ключ Telegram бота"
+                      value={botTokenDraft}
+                      onChange={(event) => setBotTokenDraft(event.target.value)}
+                      disabled={isSavingChannel}
+                    />
+                    <label className="channel-primary-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={makePrimaryChannel}
+                        onChange={(event) => setMakePrimaryChannel(event.target.checked)}
+                        disabled={isSavingChannel}
+                      />
+                      Сделать канал основным
+                    </label>
+                    <button
+                      type="button"
+                      className="btn btn-black"
+                      onClick={handleAddBotChannel}
+                      disabled={isSavingChannel}
+                    >
+                      {isSavingChannel ? 'Сохранение...' : 'Подключить Telegram бота'}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="agent-management-block">
+                    <input
+                      type="number"
+                      className="input-main"
+                      placeholder="API ID"
+                      value={userbotApiId}
+                      onChange={(event) => setUserbotApiId(event.target.value)}
+                      disabled={isSavingChannel}
+                    />
+                    <input
+                      type="text"
+                      className="input-main"
+                      placeholder="API hash"
+                      value={userbotApiHash}
+                      onChange={(event) => setUserbotApiHash(event.target.value)}
+                      disabled={isSavingChannel}
+                    />
+                    <input
+                      type="text"
+                      className="input-main"
+                      placeholder="+79990001122"
+                      value={userbotPhone}
+                      onChange={(event) => setUserbotPhone(event.target.value)}
+                      disabled={isSavingChannel}
+                    />
+                    <button
+                      type="button"
+                      className="btn btn-outline"
+                      onClick={handleRequestUserbotCode}
+                      disabled={isSavingChannel || isSendingUserbotCode}
+                    >
+                      {isSendingUserbotCode ? 'Отправка...' : 'Отправить код'}
+                    </button>
+                    <input
+                      type="text"
+                      className="input-main"
+                      placeholder="Код из Telegram"
+                      value={userbotCode}
+                      onChange={(event) => setUserbotCode(event.target.value)}
+                      disabled={isSavingChannel}
+                    />
+                    <input
+                      type="password"
+                      className="input-main"
+                      placeholder="Пароль 2FA (если есть)"
+                      value={userbotPassword}
+                      onChange={(event) => setUserbotPassword(event.target.value)}
+                      disabled={isSavingChannel}
+                    />
+                    <button
+                      type="button"
+                      className="btn btn-outline"
+                      onClick={handleVerifyUserbotCode}
+                      disabled={isSavingChannel || isVerifyingUserbotCode}
+                    >
+                      {isVerifyingUserbotCode ? 'Проверка...' : 'Подтвердить код'}
+                    </button>
+                    <label className="channel-primary-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={makePrimaryChannel}
+                        onChange={(event) => setMakePrimaryChannel(event.target.checked)}
+                        disabled={isSavingChannel}
+                      />
+                      Сделать канал основным
+                    </label>
+                    <button
+                      type="button"
+                      className="btn btn-black"
+                      onClick={handleAddUserbotChannel}
+                      disabled={isSavingChannel}
+                    >
+                      {isSavingChannel ? 'Сохранение...' : 'Подключить Telegram userbot'}
+                    </button>
+                  </div>
+                )}
+
+                <div className="auth-modal-actions">
+                  <button type="button" className="btn btn-black" onClick={handleCloseChannelsModal}>
+                    Закрыть
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

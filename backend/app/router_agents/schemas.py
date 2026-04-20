@@ -51,6 +51,29 @@ class NewAgent_byUserbotSession(BaseModel):
     )
 
 
+class AgentChannelsByBotId(BaseModel):
+    bot_id: int = Field(..., description="Id агента")
+
+
+class AddTelegramBotChannel(BaseModel):
+    bot_id: int = Field(..., description="Id агента")
+    bot_token: str = Field(..., min_length=10, max_length=500, description="API token from BotFather")
+    make_primary: bool = Field(default=False, description="Сделать канал основным")
+
+
+class AddTelegramUserbotChannel(BaseModel):
+    bot_id: int = Field(..., description="Id агента")
+    api_id: int = Field(..., gt=0, description="Telegram API ID from my.telegram.org")
+    api_hash: str = Field(..., min_length=16, max_length=128, description="Telegram API hash")
+    session_string: str = Field(..., min_length=10, max_length=65535, description="Telethon StringSession")
+    make_primary: bool = Field(default=False, description="Сделать канал основным")
+
+
+class DeleteAgentChannel(BaseModel):
+    bot_id: int = Field(..., description="Id агента")
+    connection_id: int = Field(..., gt=0, description="Id подключения канала")
+
+
 class UserbotRequestCode(BaseModel):
     api_id: int = Field(..., gt=0, description="Telegram API ID from my.telegram.org")
     api_hash: str = Field(..., min_length=16, max_length=128, description="Telegram API hash")

@@ -115,6 +115,137 @@ def _serialize_agent(agent, *, include_external_api_key: bool = False, include_e
     return data
 
 
+def _serialize_channel_connection(connection: AgentChannelConnection) -> dict:
+    return {
+        "id": connection.id,
+        "provider": connection.provider,
+        "connection_type": connection.connection_type,
+        "external_id": connection.external_id,
+        "is_primary": bool(connection.is_primary),
+        "is_active": bool(connection.is_active),
+        "created_at": _safe_iso(connection.created_at),
+        "updated_at": _safe_iso(connection.updated_at),
+    }
+
+
+async def _list_agent_channels(session, agent_id: int) -> list[AgentChannelConnection]:
+    rows = await session.scalars(
+        select(AgentChannelConnection)
+        .where(AgentChannelConnection.agent_id == agent_id)
+        .order_by(AgentChannelConnection.created_at.asc(), AgentChannelConnection.id.asc())
+    )
+    return list(rows.all())
+
+
+async def _sync_agent_primary_fields(
+    *,
+    agent,
+    agent_dao: AgentDAO,
+    session,
+):
+    channels = await _list_agent_channels(session, agent.id)
+    if not channels:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="У агента должен быть минимум один канал подключения",
+        )
+    primary = next((item for item in channels if item.is_primary), None) or channels[0]
+    now = datetime.utcnow()
+    for item in channels:
+        should_be_primary = item.id == primary.id
+        if bool(item.is_primary) != should_be_primary:
+            item.is_primary = should_be_primary
+            item.updated_at = now
+
+    updates = {"primary_provider": primary.provider}
+    # Keep legacy field in sync for Telegram bot flow used by webhook and bot service.
+    if primary.provider == "telegram_bot" and primary.encrypted_credentials:
+        updates["encrypted_token"] = primary.encrypted_credentials
+    await agent_dao.update(agent, updates)
+    return primary
+
+
+async def _ensure_single_primary_flag(
+    *,
+    session,
+    agent_id: int,
+):
+    channels = await _list_agent_channels(session, agent_id)
+    if not channels:
+        return
+    now = datetime.utcnow()
+    primary = next((item for item in channels if item.is_primary), None) or channels[0]
+    for item in channels:
+        target = item.id == primary.id
+        if bool(item.is_primary) != target:
+            item.is_primary = target
+            item.updated_at = now
+
+
+async def _set_primary_channel(
+    *,
+    session,
+    agent_id: int,
+    connection_id: int,
+):
+    rows = await session.scalars(
+        select(AgentChannelConnection).where(AgentChannelConnection.agent_id == agent_id)
+    )
+    now = datetime.utcnow()
+    for row in rows.all():
+        row.is_primary = row.id == connection_id
+        row.updated_at = now
+
+
+async def _get_telegram_bot_channel_for_agent(session, agent_id: int) -> AgentChannelConnection | None:
+    return await session.scalar(
+        select(AgentChannelConnection).where(
+            AgentChannelConnection.agent_id == agent_id,
+            AgentChannelConnection.provider == "telegram_bot",
+            AgentChannelConnection.connection_type == "bot",
+            AgentChannelConnection.is_active.is_(True),
+            AgentChannelConnection.encrypted_credentials.is_not(None),
+        )
+    )
+
+
+async def _telegram_get_me(bot_token: str) -> dict:
+    url = f"https://api.telegram.org/bot{quote(bot_token, safe='')}/getMe"
+
+    def _fetch():
+        with urlopen(url, timeout=15) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+
+    return await asyncio.get_running_loop().run_in_executor(None, _fetch)
+
+
+async def _sync_telegram_bot_webhook(bot_token: str, bot_id: int, enabled: bool) -> None:
+    if not settings.BASE_URL:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="BASE_URL is not configured for webhook setup",
+        )
+    if enabled:
+        webhook_url = f"{settings.BASE_URL}/webhook/{bot_id}"
+        request_url = (
+            f"https://api.telegram.org/bot{quote(bot_token, safe='')}/setWebhook"
+            f"?url={quote(webhook_url, safe='')}&drop_pending_updates=true"
+        )
+    else:
+        request_url = f"https://api.telegram.org/bot{quote(bot_token, safe='')}/deleteWebhook"
+
+    def _call():
+        with urlopen(request_url, timeout=15) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+
+    result = await asyncio.get_running_loop().run_in_executor(None, _call)
+    if not result or result.get("ok") is not True:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Не удалось синхронизировать webhook Telegram: {result}",
+        )
+
+
 async def _find_agent_with_access(
     agent_dao: AgentDAO,
     *,
@@ -132,6 +263,30 @@ async def _find_agent_with_access(
     if current_user is None and not internal:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
     return agent
+
+
+async def _find_agent_by_lookup_id(
+    *,
+    session,
+    agent_dao: AgentDAO,
+    lookup_id: int,
+):
+    agent = await agent_dao.find_one_by_filter(bot_id=lookup_id)
+    resolved_channel: AgentChannelConnection | None = None
+    if not agent and 0 < lookup_id <= MAX_INT32:
+        agent = await agent_dao.find_one_by_filter(id=lookup_id)
+    if not agent:
+        resolved_channel = await session.scalar(
+            select(AgentChannelConnection).where(
+                AgentChannelConnection.provider == "telegram_bot",
+                AgentChannelConnection.connection_type == "bot",
+                AgentChannelConnection.external_id == str(lookup_id),
+                AgentChannelConnection.is_active.is_(True),
+            )
+        )
+        if resolved_channel:
+            agent = await agent_dao.find_one_by_filter(id=resolved_channel.agent_id)
+    return agent, resolved_channel
 
 
 def _safe_iso(value):
@@ -413,23 +568,29 @@ async def read_agent(
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
         async with session.begin():
-            found_agent = await agent_dao.find_one_by_filter(bot_id=bot_id)
-            # Fallback: Telegram webhook path sometimes carries internal Agent primary key.
-            # If we can't find by Telegram bot_id, try by DB id only in int32 range.
-            # Agents.id is INTEGER, while Telegram bot_id can exceed int32.
-            if not found_agent and 0 < bot_id <= MAX_INT32:
-                found_agent = await agent_dao.find_one_by_filter(id=bot_id)
+            found_agent, resolved_channel = await _find_agent_by_lookup_id(
+                session=session,
+                agent_dao=agent_dao,
+                lookup_id=bot_id,
+            )
             if not found_agent:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
             if current_user and found_agent.user_id != current_user.id:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
             await _ensure_external_api_key(found_agent, agent_dao)
+            await _ensure_single_primary_flag(session=session, agent_id=found_agent.id)
+            channels = await _list_agent_channels(session, found_agent.id)
+            payload = _serialize_agent(
+                found_agent,
+                include_external_api_key=True,
+                include_encrypted_token=internal,
+            )
+            payload["channels"] = [_serialize_channel_connection(item) for item in channels]
+            if internal and resolved_channel and resolved_channel.encrypted_credentials:
+                # Internal webhook lookup by Telegram Bot ID must return that bot token.
+                payload["encrypted_token"] = resolved_channel.encrypted_credentials
             return JSONResponse(
-                content=_serialize_agent(
-                    found_agent,
-                    include_external_api_key=True,
-                    include_encrypted_token=internal,
-                ),
+                content=payload,
                 status_code=status.HTTP_200_OK,
             )
 
@@ -517,17 +678,8 @@ async def create_agent_by_token(new_agent: NewAgent_byToken, current_user=Depend
 
     token_value = new_agent.bot_token.strip()
 
-    async def telegram_get_me(bot_token: str) -> dict:
-        url = f"https://api.telegram.org/bot{quote(bot_token, safe='')}/getMe"
-
-        def _fetch():
-            with urlopen(url, timeout=15) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-
-        return await asyncio.get_running_loop().run_in_executor(None, _fetch)
-
     try:
-        me = await telegram_get_me(token_value)
+        me = await _telegram_get_me(token_value)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -588,34 +740,12 @@ async def create_agent_by_token(new_agent: NewAgent_byToken, current_user=Depend
                 }
             )
 
-    # Configure Telegram webhook so updates reach `bot/main.py` handler.
-    # If BASE_URL is not set, it's impossible to register a public webhook URL.
-    if not settings.BASE_URL:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="BASE_URL is not configured for webhook setup",
-        )
-
     try:
-        webhook_url = f"{settings.BASE_URL}/webhook/{bot_id}"
-        # setWebhook accepts `url` and optional `drop_pending_updates`.
-        set_webhook_url = (
-            f"https://api.telegram.org/bot{quote(token_value, safe='')}/setWebhook"
-            f"?url={quote(webhook_url, safe='')}&drop_pending_updates=true"
-        )
-
-        def _set_webhook():
-            with urlopen(set_webhook_url, timeout=15) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-
-        webhook_result = await asyncio.get_running_loop().run_in_executor(None, _set_webhook)
-        if not webhook_result or webhook_result.get("ok") is not True:
-            raise RuntimeError(webhook_result)
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Не удалось установить webhook Telegram: {e}",
-        )
+        await _sync_telegram_bot_webhook(token_value, bot_id, enabled=True)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
 
     return JSONResponse(content={"bot_id": bot_id}, status_code=status.HTTP_201_CREATED)
 
@@ -867,6 +997,279 @@ async def verify_userbot_code(
     )
 
 
+@router.get("/channels")
+async def list_agent_channels(
+    bot_id: int = Query(...),
+    current_user=Depends(get_current_user_required),
+):
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent = await _find_agent_with_access(
+                agent_dao,
+                bot_id=bot_id,
+                current_user=current_user,
+                internal=False,
+            )
+            await _ensure_single_primary_flag(session=session, agent_id=agent.id)
+            channels = await _list_agent_channels(session, agent.id)
+            return JSONResponse(
+                content={
+                    "bot_id": agent.bot_id,
+                    "channels": [_serialize_channel_connection(item) for item in channels],
+                },
+                status_code=status.HTTP_200_OK,
+            )
+
+
+@router.post("/channels/by_token")
+async def add_agent_telegram_bot_channel(
+    payload: AddTelegramBotChannel,
+    current_user=Depends(get_current_user_required),
+):
+    token_value = payload.bot_token.strip()
+    try:
+        me = await _telegram_get_me(token_value)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Не удалось связаться с Telegram для проверки токена: {exc}",
+        )
+    if not me or me.get("ok") is not True:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Некорректный API ключ Telegram бота",
+        )
+    result = me.get("result") or {}
+    telegram_bot_id = result.get("id")
+    bot_username = result.get("username")
+    if telegram_bot_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Telegram не вернул bot id по указанному токену",
+        )
+
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        channel_connection_dao = AgentChannelConnectionDAO(session)
+        async with session.begin():
+            agent = await _find_agent_with_access(
+                agent_dao,
+                bot_id=payload.bot_id,
+                current_user=current_user,
+                internal=False,
+            )
+            existing_bot_channel = await session.scalar(
+                select(AgentChannelConnection).where(
+                    AgentChannelConnection.agent_id == agent.id,
+                    AgentChannelConnection.provider == "telegram_bot",
+                    AgentChannelConnection.connection_type == "bot",
+                )
+            )
+            if existing_bot_channel:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="У агента уже подключен Telegram бот-канал",
+                )
+            duplicate_connection = await channel_connection_dao.find_one_by_filter(
+                provider="telegram_bot",
+                external_id=str(telegram_bot_id),
+            )
+            if duplicate_connection:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Этот Telegram бот уже подключен к другому агенту",
+                )
+
+            now = datetime.utcnow()
+            created_connection = await channel_connection_dao.add(
+                {
+                    "agent_id": agent.id,
+                    "provider": "telegram_bot",
+                    "connection_type": "bot",
+                    "external_id": str(telegram_bot_id),
+                    "encrypted_credentials": encrypt_token(token_value),
+                    "is_primary": bool(payload.make_primary),
+                    "is_active": True,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            )
+            await session.flush()
+            if payload.make_primary:
+                await _set_primary_channel(
+                    session=session,
+                    agent_id=agent.id,
+                    connection_id=created_connection.id,
+                )
+                await agent_dao.update(agent, {"bot_username": bot_username or agent.bot_username})
+            await _sync_agent_primary_fields(agent=agent, agent_dao=agent_dao, session=session)
+
+            if agent.is_active:
+                await _sync_telegram_bot_webhook(token_value, int(created_connection.external_id), enabled=True)
+
+            channels = await _list_agent_channels(session, agent.id)
+            return JSONResponse(
+                content={
+                    "bot_id": agent.bot_id,
+                    "channels": [_serialize_channel_connection(item) for item in channels],
+                },
+                status_code=status.HTTP_201_CREATED,
+            )
+
+
+@router.post("/channels/by_userbot_session")
+async def add_agent_userbot_channel(
+    payload: AddTelegramUserbotChannel,
+    current_user=Depends(get_current_user_required),
+):
+    api_id = payload.api_id
+    api_hash = payload.api_hash.strip()
+    session_string = payload.session_string.strip()
+    me = await _validate_userbot_session(api_id=api_id, api_hash=api_hash, session_string=session_string)
+
+    telegram_user_id = getattr(me, "id", None)
+    if telegram_user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Telethon не вернул идентификатор userbot",
+        )
+
+    userbot_bundle = encrypt_token(
+        json.dumps(
+            {
+                "api_id": api_id,
+                "api_hash": api_hash,
+                "session_string": session_string,
+                "phone_number": None,
+                "telegram_user_id": telegram_user_id,
+            },
+            ensure_ascii=False,
+        )
+    )
+
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        channel_connection_dao = AgentChannelConnectionDAO(session)
+        async with session.begin():
+            agent = await _find_agent_with_access(
+                agent_dao,
+                bot_id=payload.bot_id,
+                current_user=current_user,
+                internal=False,
+            )
+            existing_userbot_channel = await session.scalar(
+                select(AgentChannelConnection).where(
+                    AgentChannelConnection.agent_id == agent.id,
+                    AgentChannelConnection.provider == "telegram_userbot",
+                    AgentChannelConnection.connection_type == "userbot",
+                )
+            )
+            if existing_userbot_channel:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="У агента уже подключен Telegram userbot-канал",
+                )
+            duplicate_connection = await channel_connection_dao.find_one_by_filter(
+                provider="telegram_userbot",
+                external_id=str(telegram_user_id),
+            )
+            if duplicate_connection:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Этот Telegram userbot уже подключен к другому агенту",
+                )
+
+            now = datetime.utcnow()
+            created_connection = await channel_connection_dao.add(
+                {
+                    "agent_id": agent.id,
+                    "provider": "telegram_userbot",
+                    "connection_type": "userbot",
+                    "external_id": str(telegram_user_id),
+                    "encrypted_credentials": userbot_bundle,
+                    "is_primary": bool(payload.make_primary),
+                    "is_active": True,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            )
+            await session.flush()
+            if payload.make_primary:
+                await _set_primary_channel(
+                    session=session,
+                    agent_id=agent.id,
+                    connection_id=created_connection.id,
+                )
+            await _sync_agent_primary_fields(agent=agent, agent_dao=agent_dao, session=session)
+            channels = await _list_agent_channels(session, agent.id)
+            return JSONResponse(
+                content={
+                    "bot_id": agent.bot_id,
+                    "channels": [_serialize_channel_connection(item) for item in channels],
+                },
+                status_code=status.HTTP_201_CREATED,
+            )
+
+
+@router.delete("/channels")
+async def delete_agent_channel(
+    payload: DeleteAgentChannel = Depends(),
+    current_user=Depends(get_current_user_required),
+):
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent = await _find_agent_with_access(
+                agent_dao,
+                bot_id=payload.bot_id,
+                current_user=current_user,
+                internal=False,
+            )
+            channel = await session.scalar(
+                select(AgentChannelConnection).where(
+                    AgentChannelConnection.id == payload.connection_id,
+                    AgentChannelConnection.agent_id == agent.id,
+                )
+            )
+            if not channel:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Канал подключения не найден")
+
+            channels_before = await _list_agent_channels(session, agent.id)
+            if len(channels_before) <= 1:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Нельзя удалить единственный канал агента. Подключите новый канал сначала.",
+                )
+
+            if channel.provider == "telegram_bot" and channel.encrypted_credentials:
+                bot_token = decrypt_token(channel.encrypted_credentials)
+                try:
+                    await _sync_telegram_bot_webhook(bot_token, int(channel.external_id), enabled=False)
+                except HTTPException:
+                    # Do not block channel deletion if webhook is already detached.
+                    pass
+
+            deleting_primary = bool(channel.is_primary)
+            await session.delete(channel)
+            await session.flush()
+
+            channels_after = await _list_agent_channels(session, agent.id)
+            if deleting_primary and channels_after:
+                channels_after[0].is_primary = True
+                channels_after[0].updated_at = datetime.utcnow()
+
+            await _sync_agent_primary_fields(agent=agent, agent_dao=agent_dao, session=session)
+            channels = await _list_agent_channels(session, agent.id)
+            return JSONResponse(
+                content={
+                    "bot_id": agent.bot_id,
+                    "channels": [_serialize_channel_connection(item) for item in channels],
+                },
+                status_code=status.HTTP_200_OK,
+            )
+
+
 @router.patch("/by_botID")
 async def update_by_bot_id(
     new_data: UpdateAgent,
@@ -906,50 +1309,16 @@ async def toggle_status(
             new_status = not agent.is_active
             await agent_dao.update(agent, {"is_active": new_status})
 
-            # Keep Telegram webhook in sync only for Telegram Bot API agents.
-            if settings.BASE_URL and (agent.primary_provider or "").strip().lower() == "telegram_bot":
-                agent_token = decrypt_token(agent.encrypted_token)
-                webhook_url = f"{settings.BASE_URL}/webhook/{agent.bot_id}"
+            telegram_channel = await _get_telegram_bot_channel_for_agent(session, agent.id)
+            if telegram_channel and telegram_channel.encrypted_credentials:
+                agent_token = decrypt_token(telegram_channel.encrypted_credentials)
+                await _sync_telegram_bot_webhook(agent_token, int(telegram_channel.external_id), enabled=new_status)
 
-                try:
-                    if new_status:
-                        set_webhook_url = (
-                            f"https://api.telegram.org/bot{quote(agent_token, safe='')}/setWebhook"
-                            f"?url={quote(webhook_url, safe='')}&drop_pending_updates=true"
-                        )
-
-                        def _set_webhook():
-                            with urlopen(set_webhook_url, timeout=15) as resp:
-                                return json.loads(resp.read().decode("utf-8"))
-
-                        webhook_result = await asyncio.get_running_loop().run_in_executor(
-                            None, _set_webhook
-                        )
-                        if not webhook_result or webhook_result.get("ok") is not True:
-                            raise RuntimeError(webhook_result)
-                    else:
-                        delete_webhook_url = (
-                            f"https://api.telegram.org/bot{quote(agent_token, safe='')}/deleteWebhook"
-                        )
-
-                        def _delete_webhook():
-                            with urlopen(delete_webhook_url, timeout=15) as resp:
-                                return json.loads(resp.read().decode("utf-8"))
-
-                        delete_result = await asyncio.get_running_loop().run_in_executor(
-                            None, _delete_webhook
-                        )
-                        if not delete_result or delete_result.get("ok") is not True:
-                            raise RuntimeError(delete_result)
-                except Exception as e:
-                    # Rollback is complicated; fail loudly so UI won't lie about status.
-                    raise HTTPException(
-                        status_code=status.HTTP_502_BAD_GATEWAY,
-                        detail=f"Не удалось синхронизировать webhook Telegram: {e}",
-                    )
-
+            channels = await _list_agent_channels(session, agent.id)
+            payload = _serialize_agent(agent, include_external_api_key=True, include_encrypted_token=internal)
+            payload["channels"] = [_serialize_channel_connection(item) for item in channels]
             return JSONResponse(
-                content=_serialize_agent(agent, include_external_api_key=True, include_encrypted_token=internal),
+                content=payload,
                 status_code=status.HTTP_200_OK,
             )
 
@@ -1366,7 +1735,13 @@ async def telegram_send_to_user_as_owner(
                 current_user=current_user,
                 internal=False,
             )
-            bot_token = decrypt_token(agent.encrypted_token)
+            telegram_channel = await _get_telegram_bot_channel_for_agent(session, agent.id)
+            if not telegram_channel or not telegram_channel.encrypted_credentials:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="У агента не подключен активный Telegram бот-канал",
+                )
+            bot_token = decrypt_token(telegram_channel.encrypted_credentials)
             await _telegram_api_send_message(bot_token, chat_id, text)
             await _log_analytics_message(
                 session=session,
@@ -1450,7 +1825,13 @@ async def telegram_broadcast_as_owner(
             recipient_ids = await _list_telegram_broadcast_recipient_ids(session, agent.bot_id)
             agent_pk = agent.id
             telegram_bot_id = agent.bot_id
-            bot_token = decrypt_token(agent.encrypted_token)
+            telegram_channel = await _get_telegram_bot_channel_for_agent(session, agent.id)
+            if not telegram_channel or not telegram_channel.encrypted_credentials:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="У агента не подключен активный Telegram бот-канал",
+                )
+            bot_token = decrypt_token(telegram_channel.encrypted_credentials)
 
     frozen_set: set[str] = set()
     if payload.skip_frozen and recipient_ids:

@@ -57,6 +57,32 @@ export const agentService = {
     return response.data;
   },
 
+  getChannels: async (botId) => {
+    const response = await apiClient.get(API_ROUTES.AGENTS_CHANNELS_LIST, {
+      params: { bot_id: botId },
+    });
+    return response.data;
+  },
+
+  addBotChannel: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_CHANNELS_ADD_BOT, data);
+    return response.data;
+  },
+
+  addUserbotChannel: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_CHANNELS_ADD_USERBOT, data, {
+      timeout: USERBOT_TELETHON_TIMEOUT_MS,
+    });
+    return response.data;
+  },
+
+  removeChannel: async ({ bot_id, connection_id }) => {
+    const response = await apiClient.delete(API_ROUTES.AGENTS_CHANNELS_DELETE, {
+      params: { bot_id, connection_id },
+    });
+    return response.data;
+  },
+
   /**
    * Update agent
    */
