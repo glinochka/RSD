@@ -24,6 +24,7 @@ const channelLabel = (channel) => {
   if (!channel) return 'Канал';
   if (channel.provider === 'telegram_bot') return 'Telegram бот';
   if (channel.provider === 'telegram_userbot') return 'Telegram userbot';
+  if (channel.provider === 'whatsapp_business_api') return 'WhatsApp Business API';
   return channel.provider || 'Канал';
 };
 
@@ -133,6 +134,10 @@ const AgentsPageContent = () => {
   const [userbotSessionString, setUserbotSessionString] = useState('');
   const [isSendingUserbotCode, setIsSendingUserbotCode] = useState(false);
   const [isVerifyingUserbotCode, setIsVerifyingUserbotCode] = useState(false);
+  const [whatsappPhoneNumberId, setWhatsappPhoneNumberId] = useState('');
+  const [whatsappAccessToken, setWhatsappAccessToken] = useState('');
+  const [whatsappBusinessAccountId, setWhatsappBusinessAccountId] = useState('');
+  const [whatsappVerifyToken, setWhatsappVerifyToken] = useState('');
   const detailsRequestIdRef = useRef(0);
   const { data: agents, isLoading, execute } = useAsync(
     () => agentService.getAll(),
@@ -458,6 +463,10 @@ const AgentsPageContent = () => {
     setUserbotSessionString('');
     setIsSendingUserbotCode(false);
     setIsVerifyingUserbotCode(false);
+    setWhatsappPhoneNumberId('');
+    setWhatsappAccessToken('');
+    setWhatsappBusinessAccountId('');
+    setWhatsappVerifyToken('');
   };
 
   const refreshChannels = async (botId) => {
@@ -614,6 +623,39 @@ const AgentsPageContent = () => {
     }
   };
 
+  const handleAddWhatsAppBusinessApiChannel = async () => {
+    if (!selectedBotId) return;
+    if (!whatsappPhoneNumberId.trim()) {
+      showError('Введите WhatsApp Phone Number ID');
+      return;
+    }
+    if (!whatsappAccessToken.trim()) {
+      showError('Введите WhatsApp Access Token');
+      return;
+    }
+    setIsSavingChannel(true);
+    try {
+      const res = await agentService.addWhatsAppBusinessApiChannel({
+        agent_id: selectedBotId,
+        phone_number_id: whatsappPhoneNumberId.trim(),
+        access_token: whatsappAccessToken.trim(),
+        business_account_id: whatsappBusinessAccountId.trim() || undefined,
+        verify_token: whatsappVerifyToken.trim() || undefined,
+        make_primary: makePrimaryChannel,
+      });
+      const list = res?.channels || [];
+      setChannels(list);
+      setSelectedAgent((prev) => (prev ? { ...prev, channels: list } : prev));
+      showSuccess('WhatsApp Business API канал подключен');
+      await loadAgentDetails(selectedBotId);
+      resetChannelModalFields();
+    } catch (error) {
+      showError(error?.message || 'Ошибка при подключении WhatsApp Business API');
+    } finally {
+      setIsSavingChannel(false);
+    }
+  };
+
   useEffect(() => {
     if (!isAuthenticated) return;
     const list = agents || [];
@@ -708,7 +750,7 @@ const AgentsPageContent = () => {
 
                   <div className="agent-management-block">
                     <div className="docs-header-row">
-                      <label>Каналы Telegram</label>
+                      <label>Каналы подключения</label>
                       <button type="button" className="btn btn-outline" onClick={handleOpenChannelsModal}>
                         Управлять каналами
                       </button>
@@ -901,6 +943,14 @@ const AgentsPageContent = () => {
                   >
                     Telegram userbot
                   </button>
+                  <button
+                    type="button"
+                    className={`connection-type-card ${channelModalTab === 'whatsapp' ? 'active' : ''}`}
+                    onClick={() => setChannelModalTab('whatsapp')}
+                    disabled={isSavingChannel}
+                  >
+                    WhatsApp Business API
+                  </button>
                 </div>
 
                 {channelModalTab === 'bot' ? (
@@ -931,7 +981,7 @@ const AgentsPageContent = () => {
                       {isSavingChannel ? 'Сохранение...' : 'Подключить Telegram бота'}
                     </button>
                   </div>
-                ) : (
+                ) : channelModalTab === 'userbot' ? (
                   <div className="agent-management-block">
                     <input
                       type="number"
@@ -1005,6 +1055,58 @@ const AgentsPageContent = () => {
                       disabled={isSavingChannel}
                     >
                       {isSavingChannel ? 'Сохранение...' : 'Подключить Telegram userbot'}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="agent-management-block">
+                    <input
+                      type="text"
+                      className="input-main"
+                      placeholder="WhatsApp Phone Number ID"
+                      value={whatsappPhoneNumberId}
+                      onChange={(event) => setWhatsappPhoneNumberId(event.target.value)}
+                      disabled={isSavingChannel}
+                    />
+                    <input
+                      type="password"
+                      className="input-main"
+                      placeholder="WhatsApp Access Token"
+                      value={whatsappAccessToken}
+                      onChange={(event) => setWhatsappAccessToken(event.target.value)}
+                      disabled={isSavingChannel}
+                    />
+                    <input
+                      type="text"
+                      className="input-main"
+                      placeholder="WhatsApp Business Account ID (опционально)"
+                      value={whatsappBusinessAccountId}
+                      onChange={(event) => setWhatsappBusinessAccountId(event.target.value)}
+                      disabled={isSavingChannel}
+                    />
+                    <input
+                      type="text"
+                      className="input-main"
+                      placeholder="Webhook Verify Token (опционально)"
+                      value={whatsappVerifyToken}
+                      onChange={(event) => setWhatsappVerifyToken(event.target.value)}
+                      disabled={isSavingChannel}
+                    />
+                    <label className="channel-primary-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={makePrimaryChannel}
+                        onChange={(event) => setMakePrimaryChannel(event.target.checked)}
+                        disabled={isSavingChannel}
+                      />
+                      Сделать канал основным
+                    </label>
+                    <button
+                      type="button"
+                      className="btn btn-black"
+                      onClick={handleAddWhatsAppBusinessApiChannel}
+                      disabled={isSavingChannel}
+                    >
+                      {isSavingChannel ? 'Сохранение...' : 'Подключить WhatsApp Business API'}
                     </button>
                   </div>
                 )}

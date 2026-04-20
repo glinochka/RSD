@@ -2,7 +2,7 @@ import asyncio
 import json
 from logging import getLogger
 from urllib.parse import quote
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 from datetime import datetime, timedelta
 from collections import defaultdict
 
@@ -261,6 +261,26 @@ async def _sync_telegram_bot_webhook(bot_token: str, bot_id: int, enabled: bool)
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Не удалось синхронизировать webhook Telegram: {result}",
         )
+
+
+async def _waba_get_phone_number_info(phone_number_id: str, access_token: str) -> dict:
+    request_url = (
+        f"https://graph.facebook.com/v22.0/{quote(phone_number_id, safe='')}"
+        "?fields=id,display_phone_number,verified_name,quality_rating"
+    )
+    request = Request(
+        request_url,
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+        },
+    )
+
+    def _fetch():
+        with urlopen(request, timeout=20) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+
+    return await asyncio.get_running_loop().run_in_executor(None, _fetch)
 
 
 async def _map_telegram_userbot_access_hashes(
@@ -1460,6 +1480,25 @@ async def add_agent_whatsapp_business_api_channel(
     access_token = payload.access_token.strip()
     business_account_id = payload.business_account_id.strip() if payload.business_account_id else None
     verify_token = payload.verify_token.strip() if payload.verify_token else None
+    if not phone_number_id.isdigit():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Phone Number ID должен содержать только цифры",
+        )
+    try:
+        waba_phone_info = await _waba_get_phone_number_info(phone_number_id, access_token)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Не удалось проверить доступ к WhatsApp Business API. Проверьте access token и phone_number_id",
+        )
+    resolved_phone_number_id = str(waba_phone_info.get("id") or "").strip()
+    if not resolved_phone_number_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Meta Graph API не вернул id номера. Проверьте access token и phone_number_id",
+        )
+    phone_number_id = resolved_phone_number_id
 
     encrypted_bundle = encrypt_token(
         json.dumps(
@@ -1468,6 +1507,9 @@ async def add_agent_whatsapp_business_api_channel(
                 "access_token": access_token,
                 "business_account_id": business_account_id,
                 "verify_token": verify_token,
+                "display_phone_number": waba_phone_info.get("display_phone_number"),
+                "verified_name": waba_phone_info.get("verified_name"),
+                "quality_rating": waba_phone_info.get("quality_rating"),
             },
             ensure_ascii=False,
         )
