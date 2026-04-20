@@ -458,6 +458,7 @@ async def _telegram_api_send_message(bot_token: str, chat_id: int, text: str) ->
     payload_bytes = json.dumps({"chat_id": chat_id, "text": text}, ensure_ascii=False).encode("utf-8")
 
     def _post():
+        from urllib.error import HTTPError, URLError
         from urllib.request import Request, urlopen
 
         req = Request(
@@ -466,10 +467,29 @@ async def _telegram_api_send_message(bot_token: str, chat_id: int, text: str) ->
             headers={"Content-Type": "application/json; charset=utf-8"},
             method="POST",
         )
-        with urlopen(req, timeout=30) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+        try:
+            with urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except HTTPError as exc:
+            body = ""
+            try:
+                body = exc.read().decode("utf-8")
+            except Exception:
+                body = str(exc)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Telegram sendMessage HTTP {exc.code}: {body}",
+            ) from exc
+        except URLError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Telegram sendMessage transport error: {exc}",
+            ) from exc
 
-    result = await asyncio.get_running_loop().run_in_executor(None, _post)
+    try:
+        result = await asyncio.get_running_loop().run_in_executor(None, _post)
+    except HTTPException:
+        raise
     if not result or result.get("ok") is not True:
         detail = (result or {}).get("description") or str(result)
         raise HTTPException(
