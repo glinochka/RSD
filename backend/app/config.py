@@ -45,17 +45,6 @@ class Settings(BaseSettings):
     EMBEDDING_SCHEMA_VERSION: int = 1
     EMBEDDING_CHUNK_SIZE: int = 1000
     EMBEDDING_CHUNK_OVERLAP: int = 100
-    TELEGRAM_PROXY_TYPE: str = "none"
-    TELEGRAM_PROXY_HOST: str = ""
-    TELEGRAM_PROXY_PORT: int = 0
-    TELEGRAM_PROXY_USERNAME: str = ""
-    TELEGRAM_PROXY_PASSWORD: str = ""
-    TELEGRAM_CONNECT_TIMEOUT_SECONDS: float = 30.0
-    # When Telegram is blocked: set to false so request_code does not waste time on direct DC connect.
-    TELEGRAM_ALLOW_DIRECT_FALLBACK: bool = True
-    # Max wall time for POST /userbot/request_code (keep below frontend axios ~120s and nginx proxy_read).
-    TELEGRAM_USERBOT_REQUEST_DEADLINE_SECONDS: float = 110.0
-
     model_config = SettingsConfigDict(
         env_file= Path(__file__).parent.parent.parent / '.env',  
         env_file_encoding='utf-8',

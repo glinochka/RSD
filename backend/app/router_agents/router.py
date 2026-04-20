@@ -181,43 +181,11 @@ def _decode_userbot_auth_token(auth_token: str) -> dict:
     return data
 
 
-def _has_telegram_proxy_config() -> bool:
-    proxy_type = (settings.TELEGRAM_PROXY_TYPE or "none").strip().lower()
-    proxy_host = (settings.TELEGRAM_PROXY_HOST or "").strip()
-    proxy_port = int(settings.TELEGRAM_PROXY_PORT or 0)
-    return proxy_type in {"socks5", "socks4", "http"} and bool(proxy_host) and proxy_port > 0
-
-
-def _create_telethon_client(api_id: int, api_hash: str, session_string: str = "", disable_proxy: bool = False):
-    import socks
+def _create_telethon_client(api_id: int, api_hash: str, session_string: str = ""):
     from telethon import TelegramClient
     from telethon.sessions import StringSession
 
-    proxy_type = (settings.TELEGRAM_PROXY_TYPE or "none").strip().lower()
-    proxy_host = (settings.TELEGRAM_PROXY_HOST or "").strip()
-    proxy_port = int(settings.TELEGRAM_PROXY_PORT or 0)
-    proxy_username = (settings.TELEGRAM_PROXY_USERNAME or "").strip() or None
-    proxy_password = (settings.TELEGRAM_PROXY_PASSWORD or "").strip() or None
-
-    client_kwargs = {
-        # Telegram/proxy routes can be slow; default 10s often causes false timeout errors.
-        "timeout": float(settings.TELEGRAM_CONNECT_TIMEOUT_SECONDS),
-    }
-
-    if not disable_proxy and proxy_type in {"socks5", "socks4", "http"} and proxy_host and proxy_port > 0:
-        socks_type = {
-            "socks5": socks.SOCKS5,
-            "socks4": socks.SOCKS4,
-            "http": socks.HTTP,
-        }[proxy_type]
-        return TelegramClient(
-            StringSession(session_string),
-            api_id,
-            api_hash,
-            proxy=(socks_type, proxy_host, proxy_port, True, proxy_username, proxy_password),
-            **client_kwargs,
-        )
-    return TelegramClient(StringSession(session_string), api_id, api_hash, **client_kwargs)
+    return TelegramClient(StringSession(session_string), api_id, api_hash)
 
 
 async def _validate_userbot_session(api_id: int, api_hash: str, session_string: str):
@@ -759,7 +727,6 @@ async def request_userbot_code(
     phone_number = payload.phone_number.strip()
 
     try:
-        import socks
         from telethon.errors import FloodWaitError
     except Exception as exc:
         raise HTTPException(
@@ -767,117 +734,33 @@ async def request_userbot_code(
             detail=f"Telethon не установлен на сервере: {exc}",
         )
 
-    async def _attempt_send_code(*, disable_proxy: bool) -> tuple[str, str]:
-        client = _create_telethon_client(api_id=api_id, api_hash=api_hash, disable_proxy=disable_proxy)
-        try:
-            await client.connect()
-            sent = await client.send_code_request(phone=phone_number)
-            phone_code_hash_local = getattr(sent, "phone_code_hash", None)
-            if not phone_code_hash_local:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Telegram не вернул phone_code_hash",
-                )
-            pending_session_local = client.session.save()
-            return phone_code_hash_local, pending_session_local
-        finally:
-            await client.disconnect()
-
-    async def _run_send_code() -> tuple[str, str]:
-        uses_proxy = _has_telegram_proxy_config()
-        try:
-            return await _attempt_send_code(disable_proxy=False)
-        except FloodWaitError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=f"Слишком много попыток. Подождите {exc.seconds} сек",
-            )
-        except HTTPException:
-            raise
-        except socks.GeneralProxyError as exc:
-            if uses_proxy and settings.TELEGRAM_ALLOW_DIRECT_FALLBACK:
-                logger.warning("userbot request_code: прокси не сработал (%s), повтор без прокси", exc)
-                try:
-                    return await _attempt_send_code(disable_proxy=True)
-                except FloodWaitError as exc2:
-                    raise HTTPException(
-                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                        detail=f"Слишком много попыток. Подождите {exc2.seconds} сек",
-                    )
-                except HTTPException:
-                    raise
-                except Exception as direct_exc:
-                    raise HTTPException(
-                        status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                        detail=(
-                            "Прокси не ответил, прямой доступ к Telegram тоже не сработал "
-                            f"(часто из‑за блокировки в стране). Прокси: {exc}; прямой: {direct_exc}"
-                        ),
-                    )
-            if uses_proxy:
-                raise HTTPException(
-                    status_code=status.HTTP_502_BAD_GATEWAY,
-                    detail=(
-                        f"SOCKS-прокси {settings.TELEGRAM_PROXY_HOST}:{settings.TELEGRAM_PROXY_PORT} недоступен: {exc}. "
-                        "Проверьте логин/пароль, тип SOCKS5 и whitelist IP вашего сервера у провайдера прокси."
-                    ),
-                )
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Не удалось отправить код подтверждения Telegram: {exc}",
-            )
-        except (TimeoutError, asyncio.TimeoutError) as exc:
-            if uses_proxy and settings.TELEGRAM_ALLOW_DIRECT_FALLBACK:
-                logger.warning("userbot request_code: таймаут через прокси (%s), повтор без прокси", exc)
-                try:
-                    return await _attempt_send_code(disable_proxy=True)
-                except FloodWaitError as exc2:
-                    raise HTTPException(
-                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                        detail=f"Слишком много попыток. Подождите {exc2.seconds} сек",
-                    )
-                except HTTPException:
-                    raise
-                except Exception as direct_exc:
-                    raise HTTPException(
-                        status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                        detail=(
-                            "Таймаут через прокси, прямой доступ к Telegram тоже не сработал. "
-                            f"Прокси: {exc}; прямой: {direct_exc}"
-                        ),
-                    )
-            if uses_proxy:
-                raise HTTPException(
-                    status_code=status.HTTP_502_BAD_GATEWAY,
-                    detail=(
-                        f"Таймаут при подключении через прокси {settings.TELEGRAM_PROXY_HOST}:"
-                        f"{settings.TELEGRAM_PROXY_PORT}: {exc}. "
-                        "При блокировке Telegram отключите повтор без прокси: TELEGRAM_ALLOW_DIRECT_FALLBACK=false."
-                    ),
-                )
-            raise HTTPException(
-                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                detail=f"Таймаут при подключении к Telegram: {exc}",
-            )
-        except Exception as exc:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Не удалось отправить код подтверждения Telegram: {exc}",
-            )
-
+    client = _create_telethon_client(api_id=api_id, api_hash=api_hash)
     phone_code_hash = None
     pending_session_string = ""
-    deadline = max(10.0, float(settings.TELEGRAM_USERBOT_REQUEST_DEADLINE_SECONDS))
     try:
-        phone_code_hash, pending_session_string = await asyncio.wait_for(_run_send_code(), timeout=deadline)
-    except asyncio.TimeoutError:
+        await client.connect()
+        sent = await client.send_code_request(phone=phone_number)
+        phone_code_hash = getattr(sent, "phone_code_hash", None)
+        if not phone_code_hash:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Telegram не вернул phone_code_hash",
+            )
+        pending_session_string = client.session.save()
+    except FloodWaitError as exc:
         raise HTTPException(
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail=(
-                f"Превышено время ожидания ({deadline:.0f} с). Часто это прокси или блокировка Telegram. "
-                "Увеличьте TELEGRAM_USERBOT_REQUEST_DEADLINE_SECONDS или проверьте прокси / whitelist IP сервера."
-            ),
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Слишком много попыток. Подождите {exc.seconds} сек",
         )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Не удалось отправить код подтверждения Telegram: {exc}",
+        )
+    finally:
+        await client.disconnect()
 
     auth_token = _create_userbot_auth_token(
         api_id=api_id,

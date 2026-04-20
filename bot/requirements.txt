@@ -8,5 +8,3 @@ openai
 qdrant-client
 python-multipart
 telethon>=1.36.0
-PySocks>=1.7.1
-python-socks[asyncio]>=2.4.3

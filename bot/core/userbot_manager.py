@@ -8,7 +8,6 @@ from typing import Any
 
 import httpx
 from fastapi import status
-import socks
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 
@@ -21,56 +20,24 @@ logger = logging.getLogger(__name__)
 
 
 def _make_client(session_string: str, api_id: int, api_hash: str) -> TelegramClient:
-    proxy_type = (settings.TELEGRAM_PROXY_TYPE or "none").strip().lower()
-    proxy_host = (settings.TELEGRAM_PROXY_HOST or "").strip()
-    proxy_port = int(settings.TELEGRAM_PROXY_PORT or 0)
-    proxy_username = (settings.TELEGRAM_PROXY_USERNAME or "").strip() or None
-    proxy_password = (settings.TELEGRAM_PROXY_PASSWORD or "").strip() or None
-
-    client_kwargs = {
-        # Keep connection setup tolerant to slower Telegram/proxy handshakes.
-        "timeout": float(settings.TELEGRAM_CONNECT_TIMEOUT_SECONDS),
-    }
-
-    if proxy_type in {"socks5", "socks4", "http"} and proxy_host and proxy_port > 0:
-        socks_type = {
-            "socks5": socks.SOCKS5,
-            "socks4": socks.SOCKS4,
-            "http": socks.HTTP,
-        }[proxy_type]
-        return TelegramClient(
-            StringSession(session_string),
-            api_id,
-            api_hash,
-            proxy=(socks_type, proxy_host, proxy_port, True, proxy_username, proxy_password),
-            **client_kwargs,
-        )
-    return TelegramClient(StringSession(session_string), api_id, api_hash, **client_kwargs)
+    return TelegramClient(StringSession(session_string), api_id, api_hash)
 
 
 async def _fetch_userbot_configs() -> list[dict[str, Any]]:
     url = f"http://{settings.API_HOST}:{settings.API_PORT}/api/agents/internal/userbot_clients"
     headers = {"X-Internal-API-Key": settings.INTERNAL_API_KEY}
-    # Backend can be busy on Telethon; avoid noisy tracebacks and short read timeouts.
-    timeout = httpx.Timeout(120.0, connect=20.0)
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.get(url, headers=headers)
-            if not response.is_success:
-                logger.warning(
-                    "userbot_clients: HTTP %s %s",
-                    response.status_code,
-                    response.text[:500],
-                )
-                return []
-            data = response.json()
-            return data if isinstance(data, list) else []
-    except httpx.ReadTimeout:
-        logger.warning("userbot_clients: read timeout from backend (will retry next cycle)")
-        return []
-    except httpx.ConnectTimeout:
-        logger.warning("userbot_clients: connect timeout to backend (will retry next cycle)")
-        return []
+    timeout = httpx.Timeout(60.0, connect=15.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.get(url, headers=headers)
+        if not response.is_success:
+            logger.warning(
+                "userbot_clients: HTTP %s %s",
+                response.status_code,
+                response.text[:500],
+            )
+            return []
+        data = response.json()
+        return data if isinstance(data, list) else []
 
 
 async def _handle_private_message(
