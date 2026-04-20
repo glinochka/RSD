@@ -4,14 +4,16 @@
   margin: 0 auto;
   padding: 0 0 var(--spacing-2xl);
   display: grid;
-  grid-template-columns: 280px 1fr;
+  grid-template-columns: 280px minmax(0, 1fr);
   gap: var(--spacing-xl);
+  min-width: 0;
 }
 
 .documentation-sidebar {
   position: sticky;
   top: 88px;
   align-self: start;
+  min-width: 0;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   background: var(--color-bg);
@@ -48,6 +50,8 @@
 }
 
 .documentation-content {
+  min-width: 0;
+  max-width: 100%;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   background: var(--color-bg);
@@ -80,6 +84,7 @@
 .documentation-content p,
 .documentation-content li {
   color: var(--color-text-light);
+  overflow-wrap: break-word;
 }
 
 .documentation-content ol,
@@ -120,7 +125,9 @@
 
   .documentation-sidebar {
     position: static;
+    max-width: 100%;
     padding: var(--spacing-base) var(--spacing-sm);
+    overflow-x: hidden;
   }
 
   .documentation-sidebar h2 {
@@ -137,9 +144,8 @@
     overflow-x: auto;
     gap: var(--spacing-xs);
     padding-bottom: 2px;
-    margin: 0 calc(-1 * var(--spacing-sm));
-    padding-left: var(--spacing-sm);
-    padding-right: var(--spacing-sm);
+    max-width: 100%;
+    min-width: 0;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: thin;
   }
