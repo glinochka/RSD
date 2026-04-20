@@ -76,6 +76,11 @@ export const agentService = {
     return response.data;
   },
 
+  addWhatsAppBusinessApiChannel: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_CHANNELS_ADD_WHATSAPP_BUSINESS_API, data);
+    return response.data;
+  },
+
   removeChannel: async ({ agent_id, connection_id }) => {
     const response = await apiClient.delete(API_ROUTES.AGENTS_CHANNELS_DELETE, {
       params: { agent_id, connection_id },

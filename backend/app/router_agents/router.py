@@ -1451,6 +1451,96 @@ async def add_agent_userbot_channel(
             )
 
 
+@router.post("/channels/by_whatsapp_business_api")
+async def add_agent_whatsapp_business_api_channel(
+    payload: AddWhatsAppBusinessApiChannel,
+    current_user=Depends(get_current_user_required),
+):
+    phone_number_id = payload.phone_number_id.strip()
+    access_token = payload.access_token.strip()
+    business_account_id = payload.business_account_id.strip() if payload.business_account_id else None
+    verify_token = payload.verify_token.strip() if payload.verify_token else None
+
+    encrypted_bundle = encrypt_token(
+        json.dumps(
+            {
+                "phone_number_id": phone_number_id,
+                "access_token": access_token,
+                "business_account_id": business_account_id,
+                "verify_token": verify_token,
+            },
+            ensure_ascii=False,
+        )
+    )
+
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        channel_connection_dao = AgentChannelConnectionDAO(session)
+        async with session.begin():
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
+                current_user=current_user,
+                internal=False,
+            )
+            existing_whatsapp_channel = await session.scalar(
+                select(AgentChannelConnection).where(
+                    AgentChannelConnection.agent_id == agent.id,
+                    AgentChannelConnection.provider == "whatsapp_business_api",
+                    AgentChannelConnection.connection_type == "api",
+                )
+            )
+            if existing_whatsapp_channel:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="У агента уже подключен канал WhatsApp Business API",
+                )
+            duplicate_connection = await channel_connection_dao.find_one_by_filter(
+                provider="whatsapp_business_api",
+                external_id=phone_number_id,
+            )
+            if duplicate_connection:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Этот WhatsApp phone_number_id уже подключен к другому агенту",
+                )
+
+            now = datetime.utcnow()
+            created_connection = await channel_connection_dao.add(
+                {
+                    "agent_id": agent.id,
+                    "provider": "whatsapp_business_api",
+                    "connection_type": "api",
+                    "external_id": phone_number_id,
+                    "encrypted_credentials": encrypted_bundle,
+                    "is_primary": bool(payload.make_primary),
+                    "is_active": True,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            )
+            await session.flush()
+            if payload.make_primary:
+                await _set_primary_channel(
+                    session=session,
+                    agent_id=agent.id,
+                    connection_id=created_connection.id,
+                )
+            await _sync_agent_primary_fields(agent=agent, agent_dao=agent_dao, session=session)
+            channels = await _list_agent_channels(session, agent.id)
+            return JSONResponse(
+                content={
+                    "agent_id": agent.id,
+                    "bot_id": agent.bot_id,
+                    "channels": [_serialize_channel_connection(item) for item in channels],
+                },
+                status_code=status.HTTP_201_CREATED,
+            )
+
+
 @router.delete("/channels")
 async def delete_agent_channel(
     payload: DeleteAgentChannel = Depends(),

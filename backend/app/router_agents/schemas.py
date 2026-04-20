@@ -87,6 +87,34 @@ class AddTelegramUserbotChannel(AgentLookup):
     make_primary: bool = Field(default=False, description="Сделать канал основным")
 
 
+class AddWhatsAppBusinessApiChannel(AgentLookup):
+    phone_number_id: str = Field(
+        ...,
+        min_length=3,
+        max_length=128,
+        description="Phone Number ID из Meta WhatsApp Business API",
+    )
+    access_token: str = Field(
+        ...,
+        min_length=10,
+        max_length=4096,
+        description="Постоянный access token для WhatsApp Business API",
+    )
+    business_account_id: Optional[str] = Field(
+        default=None,
+        min_length=3,
+        max_length=128,
+        description="Опциональный WhatsApp Business Account ID",
+    )
+    verify_token: Optional[str] = Field(
+        default=None,
+        min_length=3,
+        max_length=255,
+        description="Опциональный verify token для webhook-валидации",
+    )
+    make_primary: bool = Field(default=False, description="Сделать канал основным")
+
+
 class DeleteAgentChannel(AgentLookup):
     connection_id: int = Field(..., gt=0, description="Id подключения канала")
 
