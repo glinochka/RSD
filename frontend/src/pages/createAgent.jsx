@@ -26,7 +26,8 @@ const CreateAgentContent = () => {
   const [pendingLink, setPendingLink] = useState('');
   const [uploadedLinks, setUploadedLinks] = useState([]);
   const [showAuthModal, setShowAuthModal] = useState(false);
-  const [connectionType, setConnectionType] = useState('bot_api');
+  const [useBotChannel, setUseBotChannel] = useState(true);
+  const [useUserbotChannel, setUseUserbotChannel] = useState(false);
   const [userbotAuthToken, setUserbotAuthToken] = useState('');
   const [isSendingCode, setIsSendingCode] = useState(false);
   const [isVerifyingCode, setIsVerifyingCode] = useState(false);
@@ -67,8 +68,13 @@ const CreateAgentContent = () => {
           return;
         }
 
-        const isBotMode = connectionType === 'bot_api';
-        const isUserbotMode = connectionType === 'userbot';
+        const isBotMode = useBotChannel;
+        const isUserbotMode = useUserbotChannel;
+
+        if (!isBotMode && !isUserbotMode) {
+          showError('Выберите хотя бы один способ подключения Telegram');
+          return;
+        }
 
         if (isBotMode && !values.bot_token?.trim()) {
           form.setFieldError('bot_token', 'API ключ Telegram бота обязателен');
@@ -113,7 +119,7 @@ const CreateAgentContent = () => {
             api_id: Number(values.api_id),
             api_hash: values.api_hash.trim(),
             session_string: values.session_string.trim(),
-            make_primary: true,
+            make_primary: !isBotMode,
           });
         }
 
@@ -148,14 +154,25 @@ const CreateAgentContent = () => {
     form.setFieldError('verify_code', undefined);
   };
 
-  const handleConnectionTypeChange = (type) => {
-    setConnectionType(type);
-    if (type === 'bot_api') {
-      clearUserbotLocalState();
-    } else {
-      form.setFieldValue('bot_token', '');
-      form.setFieldError('bot_token', undefined);
-    }
+  const toggleBotChannel = () => {
+    setUseBotChannel((prev) => {
+      const next = !prev;
+      if (!next) {
+        form.setFieldValue('bot_token', '');
+        form.setFieldError('bot_token', undefined);
+      }
+      return next;
+    });
+  };
+
+  const toggleUserbotChannel = () => {
+    setUseUserbotChannel((prev) => {
+      const next = !prev;
+      if (!next) {
+        clearUserbotLocalState();
+      }
+      return next;
+    });
   };
 
   const handleUserbotRequestCode = async () => {
@@ -314,16 +331,16 @@ const CreateAgentContent = () => {
               <div className="connection-type-grid">
                 <button
                   type="button"
-                  className={`connection-type-card ${connectionType === 'bot_api' ? 'active' : ''}`}
-                  onClick={() => handleConnectionTypeChange('bot_api')}
+                  className={`connection-type-card ${useBotChannel ? 'active' : ''}`}
+                  onClick={toggleBotChannel}
                   disabled={form.isSubmitting}
                 >
                   Telegram бот
                 </button>
                 <button
                   type="button"
-                  className={`connection-type-card ${connectionType === 'userbot' ? 'active' : ''}`}
-                  onClick={() => handleConnectionTypeChange('userbot')}
+                  className={`connection-type-card ${useUserbotChannel ? 'active' : ''}`}
+                  onClick={toggleUserbotChannel}
                   disabled={form.isSubmitting}
                 >
                   Telegram юзербот
@@ -331,7 +348,7 @@ const CreateAgentContent = () => {
               </div>
             </div>
 
-            {connectionType === 'bot_api' && (
+            {useBotChannel && (
               <div className="form-group">
                 <label htmlFor="bot_token">API ключ Telegram бота:</label>
                 <input
@@ -351,7 +368,7 @@ const CreateAgentContent = () => {
               </div>
             )}
 
-            {connectionType === 'userbot' && (
+            {useUserbotChannel && (
               <div className="form-group">
                 <label htmlFor="api_id">Telegram API ID:</label>
                 <input

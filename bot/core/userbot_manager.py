@@ -10,6 +10,7 @@ import httpx
 from fastapi import status
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
+from telethon.tl.types import User
 
 from core.backendAPI import APIcreate, APIread, get_response_status
 from core.config import settings
@@ -60,6 +61,11 @@ async def _handle_private_message(
     user_external_id = str(getattr(sender, "id", None) or "")
     if not user_external_id:
         return
+    peer_access_hash: int | None = None
+    if isinstance(sender, User):
+        ah = getattr(sender, "access_hash", None)
+        if ah is not None:
+            peer_access_hash = int(ah)
     user_display_name = (
         (getattr(sender, "first_name", "") or "").strip()
         + " "
@@ -87,6 +93,7 @@ async def _handle_private_message(
             user_external_id=user_external_id,
             user_display_name=user_display_name,
             channel="telegram_userbot",
+            telegram_peer_access_hash=peer_access_hash,
         )
     except Exception:
         pass
@@ -107,6 +114,7 @@ async def _handle_private_message(
             user_external_id=user_external_id,
             user_display_name=user_display_name,
             channel="telegram_userbot",
+            telegram_peer_access_hash=peer_access_hash,
         )
     except Exception:
         pass

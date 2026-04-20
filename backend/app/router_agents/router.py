@@ -263,7 +263,66 @@ async def _sync_telegram_bot_webhook(bot_token: str, bot_id: int, enabled: bool)
         )
 
 
-async def _telegram_userbot_send_message(encrypted_bundle: str, chat_id: int, text: str) -> None:
+async def _map_telegram_userbot_access_hashes(
+    session,
+    *,
+    analytics_namespace_id: int,
+    user_external_ids: list[str],
+) -> dict[str, int]:
+    """Latest known access_hash per user for Telethon InputPeerUser (backend session has no entity cache)."""
+    if not user_external_ids:
+        return {}
+    rows = (
+        (
+            await session.execute(
+                select(
+                    AgentAnalyticsMessage.user_external_id,
+                    AgentAnalyticsMessage.telegram_peer_access_hash,
+                    AgentAnalyticsMessage.created_at,
+                )
+                .where(
+                    AgentAnalyticsMessage.bot_id == analytics_namespace_id,
+                    AgentAnalyticsMessage.channel == "telegram_userbot",
+                    AgentAnalyticsMessage.user_external_id.in_(user_external_ids),
+                    AgentAnalyticsMessage.telegram_peer_access_hash.is_not(None),
+                )
+                .order_by(AgentAnalyticsMessage.created_at.desc())
+            )
+        )
+        .all()
+    )
+    out: dict[str, int] = {}
+    for uid, h, _ in rows:
+        if not uid or h is None:
+            continue
+        key = str(uid)
+        if key not in out:
+            out[key] = int(h)
+    return out
+
+
+async def _latest_telegram_userbot_access_hash(
+    session,
+    *,
+    analytics_namespace_id: int,
+    user_external_id: str,
+) -> int | None:
+    ids = [user_external_id.strip()] if (user_external_id or "").strip() else []
+    m = await _map_telegram_userbot_access_hashes(
+        session, analytics_namespace_id=analytics_namespace_id, user_external_ids=ids
+    )
+    return m.get(ids[0]) if ids else None
+
+
+async def _telegram_userbot_send_message(
+    encrypted_bundle: str,
+    chat_id: int,
+    text: str,
+    *,
+    access_hash: int | None = None,
+) -> None:
+    from telethon.tl.types import InputPeerUser
+
     try:
         raw = decrypt_token(encrypted_bundle)
         data = json.loads(raw)
@@ -290,7 +349,17 @@ async def _telegram_userbot_send_message(encrypted_bundle: str, chat_id: int, te
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Userbot session не авторизована",
             )
-        await client.send_message(chat_id, text)
+        if access_hash is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    "Нет telegram_peer_access_hash для этого пользователя. "
+                    "Пусть пользователь снова напишет агенту в userbot (после обновления сервера), "
+                    "чтобы сохранился access_hash для отправки."
+                ),
+            )
+        peer = InputPeerUser(user_id=int(chat_id), access_hash=int(access_hash))
+        await client.send_message(peer, text)
     except HTTPException:
         raise
     except Exception as exc:
@@ -508,6 +577,7 @@ async def _log_analytics_message_for_agent_ids(
     channel: str = "telegram",
     user_external_id: str | None = None,
     user_display_name: str | None = None,
+    telegram_peer_access_hash: int | None = None,
 ) -> None:
     normalized_text = (message_text or "").strip()
     if not normalized_text:
@@ -540,6 +610,7 @@ async def _log_analytics_message_for_agent_ids(
         channel=normalized_channel,
         user_external_id=(user_external_id or None),
         user_display_name=(user_display_name or None),
+        telegram_peer_access_hash=telegram_peer_access_hash,
         message_text=normalized_text,
     )
     session.add(row)
@@ -554,6 +625,7 @@ async def _log_analytics_message(
     channel: str = "telegram",
     user_external_id: str | None = None,
     user_display_name: str | None = None,
+    telegram_peer_access_hash: int | None = None,
 ) -> None:
     resolved_channel_id = agent.bot_id if agent.bot_id is not None else agent.id
     await _log_analytics_message_for_agent_ids(
@@ -565,6 +637,7 @@ async def _log_analytics_message(
         channel=channel,
         user_external_id=user_external_id,
         user_display_name=user_display_name,
+        telegram_peer_access_hash=telegram_peer_access_hash,
     )
 
 
@@ -1657,6 +1730,7 @@ async def log_analytics_message(
                 channel=payload.channel,
                 user_external_id=payload.user_external_id,
                 user_display_name=payload.user_display_name,
+                telegram_peer_access_hash=payload.telegram_peer_access_hash,
             )
     return Response(status_code=status.HTTP_201_CREATED)
 
@@ -1978,6 +2052,7 @@ async def telegram_send_to_user_as_owner(
             telegram_channel = await _get_telegram_bot_channel_for_agent(session, agent.id)
             userbot_channel = await _get_telegram_userbot_channel_for_agent(session, agent.id)
             preferred_channel = (payload.preferred_channel or "").strip().lower()
+            analytics_namespace_id = agent.bot_id if agent.bot_id is not None else agent.id
             send_errors: list[str] = []
             delivered = False
             if preferred_channel in {"", "telegram"}:
@@ -1993,7 +2068,17 @@ async def telegram_send_to_user_as_owner(
             if (not delivered) and preferred_channel in {"", "telegram_userbot"}:
                 if userbot_channel and userbot_channel.encrypted_credentials:
                     try:
-                        await _telegram_userbot_send_message(userbot_channel.encrypted_credentials, chat_id, text)
+                        peer_hash = await _latest_telegram_userbot_access_hash(
+                            session,
+                            analytics_namespace_id=analytics_namespace_id,
+                            user_external_id=payload.user_external_id.strip(),
+                        )
+                        await _telegram_userbot_send_message(
+                            userbot_channel.encrypted_credentials,
+                            chat_id,
+                            text,
+                            access_hash=peer_hash,
+                        )
                         delivered = True
                     except HTTPException as exc:
                         send_errors.append(str(exc.detail))
@@ -2146,6 +2231,17 @@ async def telegram_broadcast_as_owner(
     to_send = eligible_recipients[:max_n]
     truncated_over_limit = max(0, len(eligible_recipients) - max_n)
 
+    userbot_uids = [r["user_external_id"] for r in to_send if r["channel"] == "telegram_userbot"]
+    userbot_access: dict[str, int] = {}
+    if userbot_uids:
+        async with async_session_maker() as session:
+            async with session.begin():
+                userbot_access = await _map_telegram_userbot_access_hashes(
+                    session,
+                    analytics_namespace_id=telegram_bot_id,
+                    user_external_ids=userbot_uids,
+                )
+
     sent = 0
     failed = 0
     errors: list[dict] = []
@@ -2169,7 +2265,13 @@ async def telegram_broadcast_as_owner(
                         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                         detail="userbot-канал не подключен",
                     )
-                await _telegram_userbot_send_message(userbot_bundle, chat_id, text)
+                peer_hash = userbot_access.get(uid)
+                await _telegram_userbot_send_message(
+                    userbot_bundle,
+                    chat_id,
+                    text,
+                    access_hash=peer_hash,
+                )
             else:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

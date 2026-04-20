@@ -139,6 +139,10 @@ class AgentAnalyticsMessageLog(AgentLookup):
         description="Отображаемое имя пользователя",
     )
     message_text: str = Field(..., min_length=1, max_length=8000, description="Текст сообщения")
+    telegram_peer_access_hash: Optional[int] = Field(
+        default=None,
+        description="Telegram access_hash для InputPeerUser (userbot), если известен",
+    )
 
 
 class AgentFreezeUserPayload(AgentLookup):

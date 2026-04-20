@@ -167,6 +167,7 @@ class AgentAnalyticsMessage(Base):
     channel: Mapped[str] = mapped_column(String(32), nullable=False, default="telegram", server_default="telegram")
     user_external_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     user_display_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    telegram_peer_access_hash: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     message_text: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
 
