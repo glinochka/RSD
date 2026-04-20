@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     TELEGRAM_PROXY_USERNAME: str = ""
     TELEGRAM_PROXY_PASSWORD: str = ""
     TELEGRAM_CONNECT_TIMEOUT_SECONDS: float = 30.0
+    # When Telegram is blocked: set to false so request_code does not waste time on direct DC connect.
+    TELEGRAM_ALLOW_DIRECT_FALLBACK: bool = True
+    # Max wall time for POST /userbot/request_code (avoids nginx/browser 499 while Telethon retries).
+    TELEGRAM_USERBOT_REQUEST_DEADLINE_SECONDS: float = 55.0
 
     model_config = SettingsConfigDict(
         env_file= Path(__file__).parent.parent.parent / '.env',  

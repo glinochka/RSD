@@ -51,18 +51,26 @@ def _make_client(session_string: str, api_id: int, api_hash: str) -> TelegramCli
 async def _fetch_userbot_configs() -> list[dict[str, Any]]:
     url = f"http://{settings.API_HOST}:{settings.API_PORT}/api/agents/internal/userbot_clients"
     headers = {"X-Internal-API-Key": settings.INTERNAL_API_KEY}
-    timeout = httpx.Timeout(60.0, connect=15.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.get(url, headers=headers)
-        if not response.is_success:
-            logger.warning(
-                "userbot_clients: HTTP %s %s",
-                response.status_code,
-                response.text[:500],
-            )
-            return []
-        data = response.json()
-        return data if isinstance(data, list) else []
+    # Backend can be busy on Telethon; avoid noisy tracebacks and short read timeouts.
+    timeout = httpx.Timeout(120.0, connect=20.0)
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(url, headers=headers)
+            if not response.is_success:
+                logger.warning(
+                    "userbot_clients: HTTP %s %s",
+                    response.status_code,
+                    response.text[:500],
+                )
+                return []
+            data = response.json()
+            return data if isinstance(data, list) else []
+    except httpx.ReadTimeout:
+        logger.warning("userbot_clients: read timeout from backend (will retry next cycle)")
+        return []
+    except httpx.ConnectTimeout:
+        logger.warning("userbot_clients: connect timeout to backend (will retry next cycle)")
+        return []
 
 
 async def _handle_private_message(
