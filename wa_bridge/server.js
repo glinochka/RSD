@@ -22,6 +22,11 @@ const VERIFY_WINDOW_SECONDS = Number.parseFloat(process.env.WA_USERBOT_VERIFY_WI
 const VERIFY_LIMIT = Number.parseInt(process.env.WA_USERBOT_VERIFY_PER_PHONE_LIMIT || '10', 10);
 const DATA_DIR = process.env.WA_USERBOT_DATA_DIR || '/data/wa-auth';
 const HTTP_PORT = Number.parseInt(process.env.PORT || '8090', 10);
+const WA_BROWSER_SIGNATURE = [
+  String(process.env.WA_USERBOT_BROWSER_PLATFORM || 'Windows').trim() || 'Windows',
+  String(process.env.WA_USERBOT_BROWSER_NAME || 'Edge').trim() || 'Edge',
+  String(process.env.WA_USERBOT_BROWSER_VERSION || '127.0.0.0').trim() || '127.0.0.0',
+];
 
 if (!BRIDGE_API_KEY) {
   throw new Error('WA_USERBOT_BRIDGE_API_KEY must be set');
@@ -152,7 +157,7 @@ async function createAuthSession(phoneNumber) {
     logger: pino({ level: 'silent' }),
     markOnlineOnConnect: false,
     printQRInTerminal: false,
-    browser: ['RSD', 'Chrome', '1.0.0'],
+    browser: WA_BROWSER_SIGNATURE,
   });
 
   const session = {
