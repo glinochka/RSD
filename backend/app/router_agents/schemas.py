@@ -167,6 +167,10 @@ class WhatsAppUserbotVerifyCode(BaseModel):
     code: Optional[str] = Field(None, min_length=1, max_length=64, description="Verification code from WhatsApp flow")
 
 
+class WhatsAppUserbotAuthStatus(BaseModel):
+    auth_token: str = Field(..., min_length=20, max_length=4096, description="Temporary auth token")
+
+
 class AgentAIAction(AgentLookup):
     pass
 

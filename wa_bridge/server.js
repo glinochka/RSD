@@ -250,6 +250,17 @@ async function createAuthSession(phoneNumber, authMethod = 'pairing_code') {
 
   sock.ev.on('creds.update', saveCreds);
   sock.ev.on('connection.update', (update) => {
+    if (session.authMethod === 'qr' && update.qr) {
+      session.qrCode = String(update.qr);
+      qrcode
+        .toDataURL(session.qrCode)
+        .then((value) => {
+          session.qrDataUrl = value;
+        })
+        .catch(() => {
+          // keep previous QR if conversion failed
+        });
+    }
     if (update.connection === 'open') {
       if (sock.authState?.creds?.registered) {
         session.status = 'paired';
@@ -443,6 +454,32 @@ app.post('/auth/verify_code', enforceApiKey, async (req, res) => {
   } catch (error) {
     logger.error({ err: error }, 'verify_code failed');
     return res.status(error.status || 500).json({ detail: error.message || 'verify_code failed' });
+  }
+});
+
+app.post('/auth/status', enforceApiKey, async (req, res) => {
+  try {
+    cleanupExpired();
+    const authId = String(req.body?.auth_id || '').trim();
+    if (!authId) {
+      return res.status(422).json({ detail: 'auth_id is required' });
+    }
+    const session = authSessions.get(authId);
+    if (!session || session.expiresAt <= nowMs()) {
+      return res.status(404).json({ detail: 'Сессия подтверждения не найдена или истекла' });
+    }
+    return res.status(200).json({
+      auth_id: authId,
+      status: session.status || 'pending',
+      auth_method: session.authMethod || 'pairing_code',
+      qr_data_url: session.qrDataUrl || null,
+      pairing_code: session.pairingCode || null,
+      last_error: session.lastError || null,
+      expires_in_seconds: Math.max(0, Math.floor((session.expiresAt - nowMs()) / 1000)),
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'auth/status failed');
+    return res.status(error.status || 500).json({ detail: error.message || 'auth/status failed' });
   }
 });
 

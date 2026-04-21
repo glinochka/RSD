@@ -67,6 +67,11 @@ export const agentService = {
     return response.data;
   },
 
+  whatsappUserbotAuthStatus: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_WHATSAPP_USERBOT_AUTH_STATUS, data);
+    return response.data;
+  },
+
   getChannels: async (agentId) => {
     const response = await apiClient.get(API_ROUTES.AGENTS_CHANNELS_LIST, {
       params: { agent_id: agentId },

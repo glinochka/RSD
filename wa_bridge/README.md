@@ -4,6 +4,7 @@ Bridge-сервис для backend-роутов:
 
 - `POST /auth/request_code`
 - `POST /auth/verify_code`
+- `POST /auth/status`
 
 ## Назначение
 
@@ -90,3 +91,14 @@ curl -X POST http://localhost:8090/auth/verify_code \
 Для `pairing_code` режима `code` должен совпадать с `pairing_code`.
 Для `qr` режима поле `code` можно не передавать.
 Если подтверждение на телефоне еще не завершено — bridge вернет `409`.
+
+### Auth status
+
+```bash
+curl -X POST http://localhost:8090/auth/status \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-key" \
+  -d '{"auth_id":"wauth_..."}'
+```
+
+Возвращает текущий `status`, актуальный `qr_data_url` (для qr-режима), `last_error` и TTL.

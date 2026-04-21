@@ -3,7 +3,7 @@
  * Form for creating or editing agents
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import MainLayout from '../components/Layout';
 import { useForm } from '../hooks/useForm';
@@ -45,6 +45,7 @@ const CreateAgentContent = () => {
   const [isWhatsappUserbotVerified, setIsWhatsappUserbotVerified] = useState(false);
   const [verifiedWhatsappUserbotLabel, setVerifiedWhatsappUserbotLabel] = useState('');
   const [whatsappUserbotPairingCode, setWhatsappUserbotPairingCode] = useState('');
+  const whatsappUserbotLastAuthStatusRef = useRef('');
 
   const isEditMode = !!agentId;
 
@@ -278,6 +279,7 @@ const CreateAgentContent = () => {
         setIsVerifyingWhatsappUserbotCode(false);
         setIsWhatsappUserbotVerified(false);
         setVerifiedWhatsappUserbotLabel('');
+        whatsappUserbotLastAuthStatusRef.current = '';
         form.setFieldValue('whatsapp_userbot_phone_number', '');
         form.setFieldValue('whatsapp_userbot_session_string', '');
         form.setFieldValue('whatsapp_userbot_client_label', '');
@@ -362,6 +364,7 @@ const CreateAgentContent = () => {
     setWhatsappUserbotQrDataUrl('');
     setIsWhatsappUserbotVerified(false);
     setVerifiedWhatsappUserbotLabel('');
+    whatsappUserbotLastAuthStatusRef.current = '';
     form.setFieldValue('whatsapp_userbot_session_string', '');
     form.setFieldError('whatsapp_userbot_session_string', undefined);
   };
@@ -384,6 +387,7 @@ const CreateAgentContent = () => {
       setWhatsappUserbotVerifyCode((response.auth_method || whatsappUserbotAuthMethod) === 'pairing_code' ? (response.pairing_code || '') : '');
       setIsWhatsappUserbotVerified(false);
       setVerifiedWhatsappUserbotLabel('');
+      whatsappUserbotLastAuthStatusRef.current = '';
       form.setFieldValue('whatsapp_userbot_session_string', '');
       showSuccess(
         response.hint ||
@@ -427,6 +431,52 @@ const CreateAgentContent = () => {
       setIsVerifyingWhatsappUserbotCode(false);
     }
   };
+
+  useEffect(() => {
+    if (whatsappUserbotMode !== 'simple') return undefined;
+    if (whatsappUserbotAuthMethod !== 'qr') return undefined;
+    if (!whatsappUserbotAuthToken) return undefined;
+    if (isWhatsappUserbotVerified) return undefined;
+
+    let cancelled = false;
+    const pollStatus = async () => {
+      try {
+        const response = await agentService.whatsappUserbotAuthStatus({
+          auth_token: whatsappUserbotAuthToken,
+        });
+        if (cancelled) return;
+        if (response?.qr_data_url) {
+          setWhatsappUserbotQrDataUrl(response.qr_data_url);
+        }
+        const nextStatus = String(response?.status || '').trim().toLowerCase();
+        const prevStatus = whatsappUserbotLastAuthStatusRef.current;
+        if (nextStatus && nextStatus !== prevStatus) {
+          if (nextStatus === 'paired') {
+            showSuccess('QR подтвержден в WhatsApp. Нажмите «Проверить подключение».');
+          } else if (nextStatus === 'failed') {
+            showError(response?.last_error || 'Сессия WhatsApp завершилась с ошибкой. Запросите новый QR.');
+          }
+        }
+        whatsappUserbotLastAuthStatusRef.current = nextStatus;
+      } catch {
+        // Ignore intermittent polling failures; user can still verify manually.
+      }
+    };
+
+    pollStatus();
+    const intervalId = window.setInterval(pollStatus, 4000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [
+    whatsappUserbotMode,
+    whatsappUserbotAuthMethod,
+    whatsappUserbotAuthToken,
+    isWhatsappUserbotVerified,
+    showError,
+    showSuccess,
+  ]);
 
   const handleFileUpload = (e) => {
     const files = Array.from(e.target.files || []);

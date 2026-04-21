@@ -147,6 +147,7 @@ const AgentsPageContent = () => {
   const [isSendingWhatsappUserbotCode, setIsSendingWhatsappUserbotCode] = useState(false);
   const [isVerifyingWhatsappUserbotCode, setIsVerifyingWhatsappUserbotCode] = useState(false);
   const [isWhatsappUserbotVerified, setIsWhatsappUserbotVerified] = useState(false);
+  const whatsappUserbotLastAuthStatusRef = useRef('');
   const [whatsappPhoneNumberId, setWhatsappPhoneNumberId] = useState('');
   const [whatsappAccessToken, setWhatsappAccessToken] = useState('');
   const [whatsappBusinessAccountId, setWhatsappBusinessAccountId] = useState('');
@@ -485,6 +486,7 @@ const AgentsPageContent = () => {
     setWhatsappUserbotVerifyCode('');
     setWhatsappUserbotPairingCode('');
     setWhatsappUserbotQrDataUrl('');
+    whatsappUserbotLastAuthStatusRef.current = '';
     setIsSendingWhatsappUserbotCode(false);
     setIsVerifyingWhatsappUserbotCode(false);
     setIsWhatsappUserbotVerified(false);
@@ -727,6 +729,7 @@ const AgentsPageContent = () => {
     setWhatsappUserbotQrDataUrl('');
     setWhatsappUserbotSessionString('');
     setIsWhatsappUserbotVerified(false);
+    whatsappUserbotLastAuthStatusRef.current = '';
   };
 
   const handleRequestWhatsappUserbotCode = async () => {
@@ -751,6 +754,7 @@ const AgentsPageContent = () => {
       );
       setWhatsappUserbotSessionString('');
       setIsWhatsappUserbotVerified(false);
+      whatsappUserbotLastAuthStatusRef.current = '';
       showSuccess(
         response?.hint ||
           ((response?.auth_method || whatsappUserbotAuthMethod) === 'qr'
@@ -792,6 +796,52 @@ const AgentsPageContent = () => {
       setIsVerifyingWhatsappUserbotCode(false);
     }
   };
+
+  useEffect(() => {
+    if (whatsappUserbotMode !== 'simple') return undefined;
+    if (whatsappUserbotAuthMethod !== 'qr') return undefined;
+    if (!whatsappUserbotAuthToken) return undefined;
+    if (isWhatsappUserbotVerified) return undefined;
+
+    let cancelled = false;
+    const pollStatus = async () => {
+      try {
+        const response = await agentService.whatsappUserbotAuthStatus({
+          auth_token: whatsappUserbotAuthToken,
+        });
+        if (cancelled) return;
+        if (response?.qr_data_url) {
+          setWhatsappUserbotQrDataUrl(response.qr_data_url);
+        }
+        const nextStatus = String(response?.status || '').trim().toLowerCase();
+        const prevStatus = whatsappUserbotLastAuthStatusRef.current;
+        if (nextStatus && nextStatus !== prevStatus) {
+          if (nextStatus === 'paired') {
+            showSuccess('QR подтвержден в WhatsApp. Нажмите «Проверить подключение».');
+          } else if (nextStatus === 'failed') {
+            showError(response?.last_error || 'Сессия WhatsApp завершилась с ошибкой. Запросите новый QR.');
+          }
+        }
+        whatsappUserbotLastAuthStatusRef.current = nextStatus;
+      } catch {
+        // Ignore intermittent polling failures; user can still verify manually.
+      }
+    };
+
+    pollStatus();
+    const intervalId = window.setInterval(pollStatus, 4000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [
+    whatsappUserbotMode,
+    whatsappUserbotAuthMethod,
+    whatsappUserbotAuthToken,
+    isWhatsappUserbotVerified,
+    showError,
+    showSuccess,
+  ]);
 
   useEffect(() => {
     if (!isAuthenticated) return;

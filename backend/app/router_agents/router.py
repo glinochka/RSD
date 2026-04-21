@@ -1496,6 +1496,33 @@ async def verify_whatsapp_userbot_code(
     )
 
 
+@router.post("/whatsapp_userbot/auth_status")
+async def whatsapp_userbot_auth_status(
+    payload: WhatsAppUserbotAuthStatus, current_user=Depends(get_current_user_required)
+):
+    if current_user.is_banned:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
+
+    token_data = _decode_whatsapp_userbot_auth_token(payload.auth_token.strip())
+    bridge_auth_id = decrypt_token(token_data["encrypted_bridge_auth_id"])
+    result = await _wa_userbot_bridge_post(
+        "auth/status",
+        {
+            "auth_id": bridge_auth_id,
+        },
+    )
+    return JSONResponse(
+        content={
+            "status": result.get("status") or "pending",
+            "auth_method": result.get("auth_method") or "pairing_code",
+            "qr_data_url": result.get("qr_data_url"),
+            "pairing_code": result.get("pairing_code"),
+            "last_error": result.get("last_error"),
+        },
+        status_code=status.HTTP_200_OK,
+    )
+
+
 @router.get("/channels")
 async def list_agent_channels(
     agent_id: int | None = Query(default=None),

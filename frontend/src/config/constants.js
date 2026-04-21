@@ -42,6 +42,7 @@ export const API_ROUTES = {
   AGENTS_USERBOT_VERIFY_CODE: '/api/agents/userbot/verify_code',
   AGENTS_WHATSAPP_USERBOT_REQUEST_CODE: '/api/agents/whatsapp_userbot/request_code',
   AGENTS_WHATSAPP_USERBOT_VERIFY_CODE: '/api/agents/whatsapp_userbot/verify_code',
+  AGENTS_WHATSAPP_USERBOT_AUTH_STATUS: '/api/agents/whatsapp_userbot/auth_status',
   AGENTS_CHANNELS_LIST: '/api/agents/channels',
   AGENTS_CHANNELS_ADD_BOT: '/api/agents/channels/by_token',
   AGENTS_CHANNELS_ADD_USERBOT: '/api/agents/channels/by_userbot_session',
