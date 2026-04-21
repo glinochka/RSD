@@ -544,6 +544,7 @@ const CreateAgentContent = () => {
           </section>
 
           <form id="agent-form" className="agent-form" onSubmit={form.handleSubmit}>
+            <h3 className="agent-form-section-title">Подключение</h3>
             <div className="form-group">
               <label>Тип подключения:</label>
               <div className="connection-type-grid connection-type-grid--channels">
@@ -584,6 +585,7 @@ const CreateAgentContent = () => {
 
             {useBotChannel && (
               <div className="form-group">
+                <h3 className="agent-form-channel-title">Telegram бот</h3>
                 <label htmlFor="bot_token">API ключ Telegram бота:</label>
                 <input
                   id="bot_token"
@@ -604,6 +606,7 @@ const CreateAgentContent = () => {
 
             {useUserbotChannel && (
               <div className="form-group">
+                <h3 className="agent-form-channel-title">Telegram юзербот</h3>
                 <label htmlFor="api_id">Telegram API ID:</label>
                 <input
                   id="api_id"
@@ -712,6 +715,7 @@ const CreateAgentContent = () => {
 
             {useWhatsAppBusinessApiChannel && (
               <div className="form-group">
+                <h3 className="agent-form-channel-title">WhatsApp Business API</h3>
                 <label htmlFor="whatsapp_phone_number_id">WhatsApp Phone Number ID:</label>
                 <input
                   id="whatsapp_phone_number_id"
@@ -778,6 +782,7 @@ const CreateAgentContent = () => {
 
             {useWhatsAppUserbotChannel && (
               <div className="form-group">
+                <h3 className="agent-form-channel-title">WhatsApp userbot</h3>
                 <label>Режим подключения WhatsApp userbot:</label>
                 <div className="connection-type-grid connection-type-grid--pair">
                   <button
