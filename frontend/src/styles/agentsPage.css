@@ -321,9 +321,14 @@
   box-shadow: 0 20px 40px rgba(47, 47, 47, 0.18);
 }
 
-/* Scroll the overlay (viewport-wide) instead of a small inner box */
+/*
+ * Scroll the overlay (viewport-wide). Short modals stay vertically centered via
+ * flex + ::before/::after spacers; tall content grows the overlay and scrolls.
+ */
 .auth-modal-backdrop.channels-modal-backdrop {
-  display: block;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   overflow-x: hidden;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
@@ -338,11 +343,21 @@
   box-sizing: border-box;
 }
 
+.auth-modal-backdrop.channels-modal-backdrop::before,
+.auth-modal-backdrop.channels-modal-backdrop::after {
+  content: '';
+  flex: 1 1 0;
+  min-height: var(--spacing-lg);
+  width: 100%;
+  pointer-events: none;
+}
+
 .auth-modal-backdrop.channels-modal-backdrop .auth-modal.channels-modal {
   margin-left: auto;
   margin-right: auto;
-  margin-top: var(--spacing-xl);
-  margin-bottom: var(--spacing-xl);
+  margin-top: 0;
+  margin-bottom: 0;
+  flex-shrink: 0;
 }
 
 .auth-modal-title {
@@ -478,11 +493,6 @@
     padding-right: max(var(--spacing-xl), env(safe-area-inset-right, 0px));
     padding-bottom: max(var(--spacing-lg), env(safe-area-inset-bottom, 0px));
     padding-left: max(var(--spacing-xl), env(safe-area-inset-left, 0px));
-  }
-
-  .auth-modal-backdrop.channels-modal-backdrop .auth-modal.channels-modal {
-    margin-top: var(--spacing-lg);
-    margin-bottom: var(--spacing-lg);
   }
 
   .auth-modal.channels-modal {
