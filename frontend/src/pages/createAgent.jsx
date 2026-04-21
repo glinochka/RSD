@@ -380,7 +380,7 @@ const CreateAgentContent = () => {
         response.hint || 'QR готов. Отсканируйте его в WhatsApp и затем нажмите «Проверить подключение».'
       );
     } catch (error) {
-      showError(error.message || 'Не удалось запросить код WhatsApp');
+      showError(error.message || 'Не удалось запросить QR-код WhatsApp');
     } finally {
       setIsSendingWhatsappUserbotCode(false);
     }
@@ -815,7 +815,7 @@ const CreateAgentContent = () => {
                         onClick={handleWhatsappUserbotRequestCode}
                         disabled={form.isSubmitting || isSendingWhatsappUserbotCode}
                       >
-                        {isSendingWhatsappUserbotCode ? 'Отправка...' : 'Запросить код'}
+                        {isSendingWhatsappUserbotCode ? 'Отправка...' : 'Запросить QR-код'}
                       </button>
                     </div>
 
