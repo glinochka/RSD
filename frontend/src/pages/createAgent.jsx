@@ -309,6 +309,9 @@ const CreateAgentContent = () => {
       setIsUserbotVerified(false);
       setVerifiedUserbotLabel('');
       form.setFieldValue('session_string', '');
+      form.setFieldValue('verify_code', '');
+      form.setFieldValue('password_2fa', '');
+      form.setFieldError('verify_code', undefined);
       showSuccess('Код подтверждения отправлен в Telegram');
     } catch (error) {
       showError(error.message || 'Не удалось отправить код Telegram');
@@ -657,43 +660,47 @@ const CreateAgentContent = () => {
                   </button>
                 </div>
 
-                <label htmlFor="verify_code" className="mt-input">Код из Telegram:</label>
-                <input
-                  id="verify_code"
-                  type="text"
-                  name="verify_code"
-                  placeholder="12345"
-                  className={`input-main ${form.errors.verify_code ? 'error' : ''}`}
-                  value={form.values.verify_code}
-                  onChange={form.handleChange}
-                  disabled={form.isSubmitting}
-                />
-                {form.errors.verify_code && (
-                  <span className="error-message">{form.errors.verify_code}</span>
-                )}
+                {userbotAuthToken ? (
+                  <>
+                    <label htmlFor="verify_code" className="mt-input">Код из Telegram:</label>
+                    <input
+                      id="verify_code"
+                      type="text"
+                      name="verify_code"
+                      placeholder="12345"
+                      className={`input-main ${form.errors.verify_code ? 'error' : ''}`}
+                      value={form.values.verify_code}
+                      onChange={form.handleChange}
+                      disabled={form.isSubmitting}
+                    />
+                    {form.errors.verify_code && (
+                      <span className="error-message">{form.errors.verify_code}</span>
+                    )}
 
-                <label htmlFor="password_2fa" className="mt-input">Пароль 2FA (если включен):</label>
-                <input
-                  id="password_2fa"
-                  type="password"
-                  name="password_2fa"
-                  placeholder="Введите пароль 2FA при необходимости"
-                  className="input-main"
-                  value={form.values.password_2fa}
-                  onChange={form.handleChange}
-                  disabled={form.isSubmitting}
-                />
+                    <label htmlFor="password_2fa" className="mt-input">Пароль 2FA (если включен):</label>
+                    <input
+                      id="password_2fa"
+                      type="password"
+                      name="password_2fa"
+                      placeholder="Введите пароль 2FA при необходимости"
+                      className="input-main"
+                      value={form.values.password_2fa}
+                      onChange={form.handleChange}
+                      disabled={form.isSubmitting}
+                    />
 
-                <div className="channel-actions-row">
-                  <button
-                    type="button"
-                    className="btn btn-black"
-                    onClick={handleUserbotVerifyCode}
-                    disabled={form.isSubmitting || isVerifyingCode}
-                  >
-                    {isVerifyingCode ? 'Проверка...' : 'Подтвердить код'}
-                  </button>
-                </div>
+                    <div className="channel-actions-row">
+                      <button
+                        type="button"
+                        className="btn btn-black"
+                        onClick={handleUserbotVerifyCode}
+                        disabled={form.isSubmitting || isVerifyingCode}
+                      >
+                        {isVerifyingCode ? 'Проверка...' : 'Подтвердить код'}
+                      </button>
+                    </div>
+                  </>
+                ) : null}
 
                 {isUserbotVerified && (
                   <p className="help-text userbot-success">
@@ -835,16 +842,18 @@ const CreateAgentContent = () => {
                       </div>
                     ) : null}
 
-                    <div className="channel-actions-row">
-                      <button
-                        type="button"
-                        className="btn btn-black"
-                        onClick={handleWhatsappUserbotVerifyCode}
-                        disabled={form.isSubmitting || isVerifyingWhatsappUserbotCode}
-                      >
-                        {isVerifyingWhatsappUserbotCode ? 'Проверка...' : 'Проверить подключение'}
-                      </button>
-                    </div>
+                    {whatsappUserbotAuthToken ? (
+                      <div className="channel-actions-row">
+                        <button
+                          type="button"
+                          className="btn btn-black"
+                          onClick={handleWhatsappUserbotVerifyCode}
+                          disabled={form.isSubmitting || isVerifyingWhatsappUserbotCode}
+                        >
+                          {isVerifyingWhatsappUserbotCode ? 'Проверка...' : 'Проверить подключение'}
+                        </button>
+                      </div>
+                    ) : null}
 
                     {isWhatsappUserbotVerified && (
                       <p className="help-text userbot-success">

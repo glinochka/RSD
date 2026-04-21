@@ -160,6 +160,17 @@ const AgentsPageContent = () => {
     execute();
   }, [isAuthenticated]);
 
+  useEffect(() => {
+    if (!isChannelsModalOpen) {
+      return;
+    }
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isChannelsModalOpen]);
+
   const handleCreateAgent = () => {
     navigate(NAVIGATION_ROUTES.CREATE_AGENT);
   };
@@ -1052,13 +1063,13 @@ const AgentsPageContent = () => {
       </section>
 
       {isChannelsModalOpen && (
-        <div className="auth-modal-backdrop">
+        <div className="auth-modal-backdrop channels-modal-backdrop">
           <div className="auth-modal channels-modal">
             <h3 className="auth-modal-title">Управление каналами подключения</h3>
             {isLoadingChannels ? (
               <p className="help-text">Загрузка каналов...</p>
             ) : (
-              <>
+              <div className="channels-modal__body">
                 <div className="channel-modal-list">
                   {channels.length === 0 ? (
                     <p className="help-text">Подключений пока нет</p>
@@ -1086,7 +1097,7 @@ const AgentsPageContent = () => {
                   )}
                 </div>
 
-                <div className="connection-type-grid channels-tabs">
+                <div className="connection-type-grid connection-type-grid--channels channels-tabs">
                   <button
                     type="button"
                     className={`connection-type-card ${channelModalTab === 'bot' ? 'active' : ''}`}
@@ -1227,7 +1238,7 @@ const AgentsPageContent = () => {
                   </div>
                 ) : channelModalTab === 'whatsapp_userbot' ? (
                   <div className="agent-management-block">
-                    <div className="connection-type-grid channels-tabs">
+                    <div className="connection-type-grid connection-type-grid--pair channels-tabs">
                       <button
                         type="button"
                         className={`connection-type-card ${whatsappUserbotMode === 'simple' ? 'active' : ''}`}
@@ -1386,7 +1397,7 @@ const AgentsPageContent = () => {
                     Закрыть
                   </button>
                 </div>
-              </>
+              </div>
             )}
           </div>
         </div>

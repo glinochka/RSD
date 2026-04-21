@@ -91,7 +91,7 @@
 
 .connection-type-card {
   border: 1px solid var(--color-border);
-  background-color: var(--color-bg-light);
+  background-color: #ffffff;
   border-radius: var(--radius-base);
   padding: var(--spacing-base);
   cursor: pointer;
