@@ -253,6 +253,7 @@ async function createAuthSocket(session) {
       DisconnectReason.connectionLost,
       DisconnectReason.timedOut,
       515,
+      505,
       408,
       428,
     ]);
