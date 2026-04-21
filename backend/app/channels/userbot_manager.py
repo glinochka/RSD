@@ -6,16 +6,17 @@ import json
 import logging
 from typing import Any
 
-import httpx
-from fastapi import status
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl.types import User
 
-from core.backendAPI import APIcreate, APIread, get_response_status
-from core.config import settings
-from core.crypto import decrypt_token
-from services.ai_service import get_answer
+from sqlalchemy import select
+
+from ..alembic.database import async_session_maker
+from ..alembic.models import Agent, AgentChannelConnection
+from ..config import settings
+from ..utils.crypto import decrypt_token
+from .message_processor import Channel, MessageRequest, get_message_processor
 
 logger = logging.getLogger(__name__)
 
@@ -25,20 +26,41 @@ def _make_client(session_string: str, api_id: int, api_hash: str) -> TelegramCli
 
 
 async def _fetch_userbot_configs() -> list[dict[str, Any]]:
-    url = f"http://{settings.API_HOST}:{settings.API_PORT}/api/agents/internal/userbot_clients"
-    headers = {"X-Internal-API-Key": settings.INTERNAL_API_KEY}
-    timeout = httpx.Timeout(60.0, connect=15.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.get(url, headers=headers)
-        if not response.is_success:
-            logger.warning(
-                "userbot_clients: HTTP %s %s",
-                response.status_code,
-                response.text[:500],
+    async with async_session_maker() as session:
+        async with session.begin():
+            rows = (
+                (
+                    await session.execute(
+                        select(
+                            Agent.id.label("agent_id"),
+                            Agent.bot_id,
+                            Agent.system_prompt,
+                            Agent.welcome_message,
+                            AgentChannelConnection.encrypted_credentials,
+                        )
+                        .join(AgentChannelConnection, AgentChannelConnection.agent_id == Agent.id)
+                        .where(
+                            Agent.is_active.is_(True),
+                            AgentChannelConnection.provider == "telegram_userbot",
+                            AgentChannelConnection.connection_type == "userbot",
+                            AgentChannelConnection.is_active.is_(True),
+                            AgentChannelConnection.encrypted_credentials.is_not(None),
+                        )
+                    )
+                )
+                .mappings()
+                .all()
             )
-            return []
-        data = response.json()
-        return data if isinstance(data, list) else []
+    return [
+        {
+            "agent_id": int(row["agent_id"]),
+            "bot_id": int(row["bot_id"] if row["bot_id"] is not None else row["agent_id"]),
+            "system_prompt": row["system_prompt"] or "",
+            "welcome_message": row["welcome_message"],
+            "encrypted_userbot_bundle": row["encrypted_credentials"],
+        }
+        for row in rows
+    ]
 
 
 async def _handle_private_message(
@@ -61,64 +83,31 @@ async def _handle_private_message(
     user_external_id = str(getattr(sender, "id", None) or "")
     if not user_external_id:
         return
+
     peer_access_hash: int | None = None
     if isinstance(sender, User):
         ah = getattr(sender, "access_hash", None)
         if ah is not None:
             peer_access_hash = int(ah)
+
     user_display_name = (
         (getattr(sender, "first_name", "") or "").strip()
         + " "
         + (getattr(sender, "last_name", "") or "").strip()
     ).strip() or getattr(sender, "username", None)
 
-    frozen_check = await APIread.agentFrozenCheck(bot_id, user_external_id)
-    if get_response_status(frozen_check) == status.HTTP_200_OK and frozen_check.get("frozen"):
-        await event.respond(
-            "Доступ к этому агенту для вас временно ограничен владельцем. "
-            "Если это ошибка, обратитесь в поддержку."
-        )
-        return
-
-    if query == "/start":
-        text = welcome_message or "Здравствуйте! Чем я могу вам помочь?"
-        await event.respond(text)
-        return
-
-    try:
-        await APIcreate.logAgentAnalyticsMessage(
-            bot_id=bot_id,
-            role="user",
-            message_text=query,
-            user_external_id=user_external_id,
-            user_display_name=user_display_name,
-            channel="telegram_userbot",
-            telegram_peer_access_hash=peer_access_hash,
-        )
-    except Exception:
-        pass
-
-    context = await APIread.contextBy_botID(bot_id, query)
-    get_response_status(context)
-    if isinstance(context, dict) and context.get("error_code"):
-        context_list: list = []
-    else:
-        context_list = context if isinstance(context, list) else []
-
-    answer = await get_answer(query, context_list, system_prompt)
-    try:
-        await APIcreate.logAgentAnalyticsMessage(
-            bot_id=bot_id,
-            role="agent",
-            message_text=answer,
-            user_external_id=user_external_id,
-            user_display_name=user_display_name,
-            channel="telegram_userbot",
-            telegram_peer_access_hash=peer_access_hash,
-        )
-    except Exception:
-        pass
-    await event.respond(answer)
+    request = MessageRequest(
+        bot_id=bot_id,
+        query=query,
+        user_external_id=user_external_id,
+        channel=Channel.TELEGRAM_USERBOT,
+        system_prompt=system_prompt,
+        welcome_message=welcome_message,
+        user_display_name=user_display_name,
+        telegram_peer_access_hash=peer_access_hash,
+    )
+    response = await get_message_processor().process(request)
+    await event.respond(response.text)
 
 
 async def _run_one_client(cfg: dict[str, Any]) -> None:

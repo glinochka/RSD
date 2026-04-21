@@ -7,12 +7,13 @@ import logging
 from typing import Any
 
 import httpx
-from fastapi import status
+from sqlalchemy import select
 
-from core.backendAPI import APIcreate, APIread, get_response_status
-from core.config import settings
-from core.crypto import decrypt_token
-from services.ai_service import get_answer
+from ..alembic.database import async_session_maker
+from ..alembic.models import Agent, AgentChannelConnection
+from ..config import settings
+from ..utils.crypto import decrypt_token
+from .message_processor import Channel, MessageRequest, get_message_processor
 
 logger = logging.getLogger(__name__)
 
@@ -48,20 +49,45 @@ async def _bridge_post(path: str, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _fetch_whatsapp_configs() -> list[dict[str, Any]]:
-    url = f"http://{settings.API_HOST}:{settings.API_PORT}/api/agents/internal/whatsapp_userbot_clients"
-    headers = {"X-Internal-API-Key": settings.INTERNAL_API_KEY}
-    timeout = httpx.Timeout(60.0, connect=15.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.get(url, headers=headers)
-        if not response.is_success:
-            logger.warning(
-                "whatsapp_userbot_clients: HTTP %s %s",
-                response.status_code,
-                response.text[:500],
+    async with async_session_maker() as session:
+        async with session.begin():
+            rows = (
+                (
+                    await session.execute(
+                        select(
+                            Agent.id.label("agent_id"),
+                            Agent.bot_id,
+                            Agent.system_prompt,
+                            Agent.welcome_message,
+                            AgentChannelConnection.id.label("connection_id"),
+                            AgentChannelConnection.external_id.label("phone_number"),
+                            AgentChannelConnection.encrypted_credentials,
+                        )
+                        .join(AgentChannelConnection, AgentChannelConnection.agent_id == Agent.id)
+                        .where(
+                            Agent.is_active.is_(True),
+                            AgentChannelConnection.provider == "whatsapp_userbot",
+                            AgentChannelConnection.connection_type == "userbot",
+                            AgentChannelConnection.is_active.is_(True),
+                            AgentChannelConnection.encrypted_credentials.is_not(None),
+                        )
+                    )
+                )
+                .mappings()
+                .all()
             )
-            return []
-        data = response.json()
-        return data if isinstance(data, list) else []
+    return [
+        {
+            "agent_id": int(row["agent_id"]),
+            "bot_id": int(row["bot_id"] if row["bot_id"] is not None else row["agent_id"]),
+            "connection_id": int(row["connection_id"]),
+            "phone_number": row["phone_number"] or "",
+            "system_prompt": row["system_prompt"] or "",
+            "welcome_message": row["welcome_message"],
+            "encrypted_credentials": row["encrypted_credentials"],
+        }
+        for row in rows
+    ]
 
 
 def _extract_text(message: dict[str, Any]) -> str:
@@ -83,13 +109,11 @@ def _external_user_id_from_jid(remote_jid: str) -> str:
     return jid
 
 
-async def _process_incoming(
-    cfg: dict[str, Any],
-    incoming: dict[str, Any],
-) -> None:
+async def _process_incoming(cfg: dict[str, Any], incoming: dict[str, Any]) -> None:
     remote_jid = str(incoming.get("remote_jid") or "").strip()
     if not remote_jid:
         return
+
     if str(incoming.get("from_me") or "").lower() == "true":
         return
 
@@ -98,77 +122,25 @@ async def _process_incoming(
         return
 
     bot_id = int(cfg["bot_id"])
-    system_prompt = cfg.get("system_prompt") or ""
-    welcome = cfg.get("welcome_message")
-    push_name = str(incoming.get("push_name") or "").strip() or None
-    user_external_id = _external_user_id_from_jid(remote_jid)
-    user_display_name = push_name or user_external_id
+    request = MessageRequest(
+        bot_id=bot_id,
+        query=text,
+        user_external_id=_external_user_id_from_jid(remote_jid),
+        channel=Channel.WHATSAPP_USERBOT,
+        system_prompt=cfg.get("system_prompt") or "",
+        welcome_message=cfg.get("welcome_message"),
+        user_display_name=str(incoming.get("push_name") or "").strip() or None,
+    )
+    response = await get_message_processor().process(request)
 
-    frozen_check = await APIread.agentFrozenCheck(bot_id, user_external_id)
-    if get_response_status(frozen_check) == status.HTTP_200_OK and frozen_check.get("frozen"):
-        await _bridge_post(
-            "session/send",
-            {
-                "connection_id": cfg["connection_id"],
-                "to_jid": remote_jid,
-                "text": (
-                    "Доступ к этому агенту для вас временно ограничен владельцем. "
-                    "Если это ошибка, обратитесь в поддержку."
-                ),
-            },
-        )
-        return
-
-    if text == "/start":
-        await _bridge_post(
-            "session/send",
-            {
-                "connection_id": cfg["connection_id"],
-                "to_jid": remote_jid,
-                "text": welcome or "Здравствуйте! Чем я могу вам помочь?",
-            },
-        )
-        return
-
-    try:
-        await APIcreate.logAgentAnalyticsMessage(
-            bot_id=bot_id,
-            role="user",
-            message_text=text,
-            user_external_id=user_external_id,
-            user_display_name=user_display_name,
-            channel="whatsapp_userbot",
-        )
-    except Exception:
-        pass
-
-    context = await APIread.contextBy_botID(bot_id, text)
-    get_response_status(context)
-    if isinstance(context, dict) and context.get("error_code"):
-        context_list: list = []
-    else:
-        context_list = context if isinstance(context, list) else []
-
-    answer = await get_answer(text, context_list, system_prompt)
     await _bridge_post(
         "session/send",
         {
             "connection_id": cfg["connection_id"],
             "to_jid": remote_jid,
-            "text": answer,
+            "text": response.text,
         },
     )
-    try:
-        await APIcreate.logAgentAnalyticsMessage(
-            bot_id=bot_id,
-            role="agent",
-            message_text=answer,
-            user_external_id=user_external_id,
-            user_display_name=user_display_name,
-            channel="whatsapp_userbot",
-        )
-    except Exception:
-        pass
 
 
 async def _run_one_client(cfg: dict[str, Any], stop: asyncio.Event) -> None:
