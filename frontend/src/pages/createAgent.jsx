@@ -543,7 +543,7 @@ const CreateAgentContent = () => {
           <form id="agent-form" className="agent-form" onSubmit={form.handleSubmit}>
             <div className="form-group">
               <label>Тип подключения:</label>
-              <div className="connection-type-grid">
+              <div className="connection-type-grid connection-type-grid--channels">
                 <button
                   type="button"
                   className={`connection-type-card ${useBotChannel ? 'active' : ''}`}
@@ -772,7 +772,7 @@ const CreateAgentContent = () => {
             {useWhatsAppUserbotChannel && (
               <div className="form-group">
                 <label>Режим подключения WhatsApp userbot:</label>
-                <div className="connection-type-grid">
+                <div className="connection-type-grid connection-type-grid--pair">
                   <button
                     type="button"
                     className={`connection-type-card ${whatsappUserbotMode === 'simple' ? 'active' : ''}`}
@@ -791,7 +791,9 @@ const CreateAgentContent = () => {
                   </button>
                 </div>
 
-                <label htmlFor="whatsapp_userbot_phone_number">Номер WhatsApp userbot:</label>
+                <label htmlFor="whatsapp_userbot_phone_number" className="mt-input">
+                  Номер WhatsApp userbot:
+                </label>
                 <input
                   id="whatsapp_userbot_phone_number"
                   type="text"
