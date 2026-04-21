@@ -464,14 +464,14 @@
     grid-template-columns: 1fr;
   }
 
-  /* Channels modal: safe areas, full width, touch-friendly */
+  /* Channels modal: safe areas, side gutters, vertically centered */
   .channels-modal-backdrop {
-    align-items: flex-start;
+    align-items: center;
     justify-content: center;
-    padding-top: max(var(--spacing-sm), env(safe-area-inset-top, 0px));
-    padding-right: max(var(--spacing-sm), env(safe-area-inset-right, 0px));
-    padding-bottom: max(var(--spacing-sm), env(safe-area-inset-bottom, 0px));
-    padding-left: max(var(--spacing-sm), env(safe-area-inset-left, 0px));
+    padding-top: max(var(--spacing-xl), calc(env(safe-area-inset-top, 0px) + var(--spacing-base)));
+    padding-right: max(var(--spacing-xl), env(safe-area-inset-right, 0px));
+    padding-bottom: max(var(--spacing-lg), env(safe-area-inset-bottom, 0px));
+    padding-left: max(var(--spacing-xl), env(safe-area-inset-left, 0px));
   }
 
   .auth-modal.channels-modal {
@@ -480,12 +480,18 @@
     max-width: 100%;
     padding: var(--spacing-base);
     max-height: min(
-      94vh,
-      calc(100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - var(--spacing-sm) * 2)
+      90vh,
+      calc(
+        100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - var(--spacing-xl) * 2 -
+          var(--spacing-lg)
+      )
     );
     max-height: min(
-      94dvh,
-      calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - var(--spacing-sm) * 2)
+      90dvh,
+      calc(
+        100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - var(--spacing-xl) * 2 -
+          var(--spacing-lg)
+      )
     );
   }
 
