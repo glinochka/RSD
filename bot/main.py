@@ -13,6 +13,7 @@ from handlers.master import master_router
 from core.backendAPI import *
 from core.config import settings
 from core.userbot_manager import UserbotManager
+from core.whatsapp_userbot_manager import WhatsAppUserbotManager
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -22,10 +23,12 @@ master_dp = None
 agent_dp = None
 userbot_manager: UserbotManager | None = None
 userbot_task: asyncio.Task | None = None
+whatsapp_userbot_manager: WhatsAppUserbotManager | None = None
+whatsapp_userbot_task: asyncio.Task | None = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global master_bot, master_dp, agent_dp, userbot_manager, userbot_task
+    global master_bot, master_dp, agent_dp, userbot_manager, userbot_task, whatsapp_userbot_manager, whatsapp_userbot_task
     
     logger.info("🚀 LIFESPAN START")
     
@@ -47,6 +50,9 @@ async def lifespan(app: FastAPI):
     userbot_manager = UserbotManager()
     userbot_task = asyncio.create_task(userbot_manager.run_forever())
     logger.info("✅ UserbotManager запущен")
+    whatsapp_userbot_manager = WhatsAppUserbotManager()
+    whatsapp_userbot_task = asyncio.create_task(whatsapp_userbot_manager.run_forever())
+    logger.info("✅ WhatsAppUserbotManager запущен")
     
     yield
     
@@ -56,6 +62,10 @@ async def lifespan(app: FastAPI):
         await userbot_manager.shutdown()
         userbot_manager = None
     userbot_task = None
+    if whatsapp_userbot_manager:
+        await whatsapp_userbot_manager.shutdown()
+        whatsapp_userbot_manager = None
+    whatsapp_userbot_task = None
     if master_dp:
         await master_dp.storage.close()
     if agent_dp:

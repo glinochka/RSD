@@ -32,6 +32,7 @@ from ..utils.convert import convert_to_dict
 from ..utils.crypto import encrypt_token, decrypt_token
 from ..utils.internal_auth import is_internal_request
 from ..utils.rate_limit import rate_limit
+from ..utils.whatsapp_session import decode_whatsapp_session_bundle
 
 logger = getLogger(__name__)
 router = APIRouter(prefix="/api/agents")
@@ -545,8 +546,12 @@ async def _wa_userbot_bridge_post(path: str, payload: dict) -> dict:
         "Accept": "application/json",
     }
     bridge_api_key = (settings.WHATSAPP_USERBOT_BRIDGE_API_KEY or "").strip()
-    if bridge_api_key:
-        headers["X-API-Key"] = bridge_api_key
+    if not bridge_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="WhatsApp userbot bridge API key не настроен на сервере",
+        )
+    headers["X-API-Key"] = bridge_api_key
     request = Request(url, data=body, headers=headers, method="POST")
 
     def _post():
@@ -578,6 +583,34 @@ async def _wa_userbot_bridge_post(path: str, payload: dict) -> dict:
             detail="WhatsApp userbot bridge вернул неожиданный ответ",
         )
     return result
+
+
+def _validate_whatsapp_session_string(
+    *,
+    session_string: str,
+    expected_phone: str | None = None,
+) -> tuple[str, dict]:
+    normalized = (session_string or "").strip()
+    if not normalized:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Сессия WhatsApp userbot пуста",
+        )
+    try:
+        bundle = decode_whatsapp_session_bundle(normalized, settings.WA_USERBOT_SESSION_SECRET)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Некорректная сессия WhatsApp userbot: {exc}",
+        ) from exc
+
+    bundle_phone = str(bundle.get("phone_number") or "").strip()
+    if expected_phone and bundle_phone and bundle_phone != expected_phone.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Номер телефона в сессии не совпадает с указанным",
+        )
+    return bundle_phone or (expected_phone or "").strip(), bundle
 
 
 def _create_telethon_client(api_id: int, api_hash: str, session_string: str = ""):
@@ -834,6 +867,58 @@ async def list_userbot_clients(internal: bool = Depends(is_internal_request)):
                 "system_prompt": row["system_prompt"] or "",
                 "welcome_message": row["welcome_message"],
                 "encrypted_userbot_bundle": row["encrypted_credentials"],
+            }
+        )
+
+    return JSONResponse(content=payload, status_code=status.HTTP_200_OK)
+
+
+@router.get("/internal/whatsapp_userbot_clients")
+async def list_whatsapp_userbot_clients(internal: bool = Depends(is_internal_request)):
+    """List active WhatsApp userbot channel configs for bot service (internal only)."""
+    if not internal:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Internal API key required")
+
+    async with async_session_maker() as session:
+        async with session.begin():
+            rows = (
+                (
+                    await session.execute(
+                        select(
+                            Agent.id.label("agent_id"),
+                            Agent.bot_id,
+                            Agent.system_prompt,
+                            Agent.welcome_message,
+                            AgentChannelConnection.id.label("connection_id"),
+                            AgentChannelConnection.external_id.label("phone_number"),
+                            AgentChannelConnection.encrypted_credentials,
+                        )
+                        .join(AgentChannelConnection, AgentChannelConnection.agent_id == Agent.id)
+                        .where(
+                            Agent.is_active.is_(True),
+                            AgentChannelConnection.provider == "whatsapp_userbot",
+                            AgentChannelConnection.connection_type == "userbot",
+                            AgentChannelConnection.is_active.is_(True),
+                            AgentChannelConnection.encrypted_credentials.is_not(None),
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+            )
+
+    payload = []
+    for row in rows:
+        resolved_lookup_id = row["bot_id"] if row["bot_id"] is not None else row["agent_id"]
+        payload.append(
+            {
+                "agent_id": int(row["agent_id"]),
+                "bot_id": int(resolved_lookup_id),
+                "connection_id": int(row["connection_id"]),
+                "phone_number": row["phone_number"] or "",
+                "system_prompt": row["system_prompt"] or "",
+                "welcome_message": row["welcome_message"],
+                "encrypted_credentials": row["encrypted_credentials"],
             }
         )
 
@@ -1390,12 +1475,11 @@ async def verify_whatsapp_userbot_code(
         },
     )
     session_string = str(result.get("session_string") or "").strip()
-    if not session_string:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="WhatsApp userbot bridge не вернул session_string",
-        )
     normalized_phone = str(result.get("phone_number") or phone_number).strip()
+    normalized_phone, _ = _validate_whatsapp_session_string(
+        session_string=session_string,
+        expected_phone=normalized_phone,
+    )
 
     return JSONResponse(
         content={
@@ -1766,6 +1850,10 @@ async def add_agent_whatsapp_userbot_channel(
             detail="Некорректный номер WhatsApp userbot",
         )
 
+    normalized_phone, _ = _validate_whatsapp_session_string(
+        session_string=session_string,
+        expected_phone=normalized_phone,
+    )
     encrypted_bundle = encrypt_token(
         json.dumps(
             {
