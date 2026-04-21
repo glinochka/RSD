@@ -6,12 +6,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 
 from ..alembic.database import async_session_maker
 from ..alembic.models import Agent, AgentAnalyticsMessage, AgentFrozenUser, User
 from ..qdrant.search_service import search_knowledge_base
 from ..services.ai_authoring import generate_answer_with_context
+from ..utils.agent_lookup import agent_by_lookup_id_filter
 
 logger = logging.getLogger(__name__)
 
@@ -130,9 +131,7 @@ class MessageProcessor:
         async with async_session_maker() as session:
             async with session.begin():
                 return await session.scalar(
-                    select(Agent).where(
-                        or_(Agent.bot_id == lookup_bot_id, Agent.id == lookup_bot_id)
-                    )
+                    select(Agent).where(agent_by_lookup_id_filter(lookup_bot_id))
                 )
 
     async def _is_subscription_valid(self, agent_id: int) -> bool:
