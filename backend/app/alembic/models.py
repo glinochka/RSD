@@ -56,6 +56,10 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    error_reports: Mapped[list["UserErrorReport"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
 
 class UserAuthSession(Base):
@@ -339,4 +343,16 @@ class PromoCode(Base):
     code: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     discount_percent: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+
+
+class UserErrorReport(Base):
+    __tablename__ = "user_error_reports"
+    __table_args__ = {"extend_existing": True}
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+
+    user: Mapped["User"] = relationship(back_populates="error_reports")
 

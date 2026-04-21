@@ -12,7 +12,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
-from .dao import TelegramLinkChallengeDAO, UserDAO
+from .dao import TelegramLinkChallengeDAO, UserDAO, UserErrorReportDAO
 from .schemas import *
 from ..alembic.database import async_session_maker
 from ..alembic.models import UserAuthSession
@@ -1174,6 +1174,22 @@ async def user_me(current_user=Depends(get_current_user_required)):
         },
         status_code=status.HTTP_200_OK,
     )
+
+
+@router.post(
+    "/error-reports",
+    dependencies=[Depends(rate_limit(max_requests=10, window_seconds=60, scope="users_error_reports"))],
+)
+async def create_user_error_report(
+    payload: UserErrorReportCreateRequest,
+    current_user=Depends(get_current_user_required),
+):
+    async with async_session_maker() as session:
+        report_dao = UserErrorReportDAO(session)
+        async with session.begin():
+            await report_dao.add({"user_id": current_user.id, "description": payload.description})
+
+    return Response(status_code=status.HTTP_201_CREATED)
 
 
 @router.post("/telegram-link/start")

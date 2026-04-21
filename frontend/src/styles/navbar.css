@@ -386,6 +386,69 @@
   justify-content: center;
 }
 
+.profile-error-report-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1060;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-lg);
+  background-color: rgba(47, 47, 47, 0.45);
+}
+
+.profile-error-report-dialog {
+  width: min(100%, 26rem);
+  max-height: min(90vh, 32rem);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  padding: var(--spacing-xl);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-bg);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-md);
+}
+
+.profile-error-report-title {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-text);
+}
+
+.profile-error-report-hint {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-light);
+  line-height: 1.55;
+}
+
+.profile-error-report-textarea {
+  width: 100%;
+  min-height: 8rem;
+  resize: vertical;
+  box-sizing: border-box;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-base);
+  padding: 0.625rem 0.75rem;
+  font-size: var(--font-size-sm);
+  font-family: inherit;
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+
+.profile-error-report-textarea:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.profile-error-report-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
 /* Menu Toggle (Mobile) */
 .menu-toggle {
   display: none;

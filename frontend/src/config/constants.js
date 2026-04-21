@@ -32,6 +32,7 @@ export const API_ROUTES = {
   USERS_ME: '/api/users/me',
   USERS_PROFILE: '/api/users/profile',
   USERS_TELEGRAM_LINK_START: '/api/users/telegram-link/start',
+  USER_ERROR_REPORTS: '/api/users/error-reports',
 
   // Agents
   AGENTS_LIST: '/api/agents/allBy_tgID',
@@ -84,6 +85,7 @@ export const API_ROUTES = {
   ADMIN_UNBAN_USER: (userId) => `/api/admin/users/${userId}/unban`,
   ADMIN_GIFT_SUBSCRIPTION: (userId) => `/api/admin/users/${userId}/gift-subscription`,
   ADMIN_DELETE_PROMO_CODE: (promoCodeId) => `/api/admin/promo-codes/${promoCodeId}`,
+  ADMIN_ERROR_REPORTS: '/api/admin/error-reports',
   TURNKEY_REQUESTS: '/api/payments/turnkey-requests',
 };
 
