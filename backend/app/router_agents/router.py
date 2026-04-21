@@ -2859,7 +2859,9 @@ async def read_analytics_chats(
                             AgentAnalyticsMessage.bot_id == analytics_namespace_id,
                             AgentAnalyticsMessage.role == "user",
                             AgentAnalyticsMessage.user_external_id.is_not(None),
-                            AgentAnalyticsMessage.channel.in_(["telegram", "telegram_userbot"]),
+                            AgentAnalyticsMessage.channel.in_(
+                                ["telegram", "telegram_userbot", "whatsapp_userbot"]
+                            ),
                         ).group_by(
                             AgentAnalyticsMessage.user_external_id,
                             AgentAnalyticsMessage.channel,
@@ -2875,7 +2877,7 @@ async def read_analytics_chats(
             chat_keys = [
                 (row["uid"], row["channel"])
                 for row in user_rows
-                if row["uid"] and row["channel"] in {"telegram", "telegram_userbot"}
+                if row["uid"] and row["channel"] in {"telegram", "telegram_userbot", "whatsapp_userbot"}
             ]
             if not chat_keys:
                 return JSONResponse(
@@ -2905,7 +2907,9 @@ async def read_analytics_chats(
                         ).where(
                             AgentAnalyticsMessage.bot_id == analytics_namespace_id,
                             AgentAnalyticsMessage.user_external_id.in_(user_ids),
-                            AgentAnalyticsMessage.channel.in_(["telegram", "telegram_userbot", "dashboard"]),
+                            AgentAnalyticsMessage.channel.in_(
+                                ["telegram", "telegram_userbot", "whatsapp_userbot", "dashboard"]
+                            ),
                         ).order_by(AgentAnalyticsMessage.created_at.asc())
                     )
                 )
