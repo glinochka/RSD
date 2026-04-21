@@ -191,6 +191,7 @@ async function waitForPairingCode(sock, phoneDigits, timeoutMs = 30000) {
 async function waitForQrCode(sock, timeoutMs = 45000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
+      sock.ev.off('connection.update', onUpdate);
       reject(new Error('Не удалось получить QR code: timeout'));
     }, timeoutMs);
     const onUpdate = (update) => {
@@ -199,13 +200,57 @@ async function waitForQrCode(sock, timeoutMs = 45000) {
         sock.ev.off('connection.update', onUpdate);
         resolve(String(update.qr));
       }
-      if (update?.connection === 'open' && !sock.authState?.creds?.registered) {
-        clearTimeout(timer);
-        sock.ev.off('connection.update', onUpdate);
-        reject(new Error('Подключение открыто без QR; повторите попытку'));
-      }
+      // Не отклоняем при connection: open + !registered: после скана QR Baileys
+      // часто открывает сокет до creds.registered (и даёт 515 + реконнект).
+      // Раньше это давало ложное «Подключение открыто без QR».
     };
     sock.ev.on('connection.update', onUpdate);
+  });
+}
+
+/** После реконнекта нужен либо новый QR, либо уже завершённая регистрация (без второго кадра QR). */
+async function waitForQrOrAuthComplete(sock, session, timeoutMs = 60000) {
+  if (sock.authState?.creds?.registered) {
+    return { kind: 'auth' };
+  }
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error('Не удалось получить QR или завершить вход WhatsApp: timeout'));
+    }, timeoutMs);
+    const cleanup = () => {
+      clearTimeout(timer);
+      sock.ev.off('connection.update', onConn);
+      sock.ev.off('creds.update', onCreds);
+    };
+    const finishAuth = () => {
+      cleanup();
+      resolve({ kind: 'auth' });
+    };
+    const tryFinishAuth = () => {
+      if (sock.authState?.creds?.registered) {
+        finishAuth();
+      }
+    };
+    const onCreds = () => tryFinishAuth();
+    const onConn = async (update) => {
+      if (update?.qr) {
+        const qr = String(update.qr);
+        session.qrCode = qr;
+        try {
+          session.qrDataUrl = await qrcode.toDataURL(qr);
+        } catch {
+          // keep text QR at least
+        }
+        cleanup();
+        resolve({ kind: 'qr', qr });
+        return;
+      }
+      tryFinishAuth();
+    };
+    sock.ev.on('connection.update', onConn);
+    sock.ev.on('creds.update', onCreds);
+    tryFinishAuth();
   });
 }
 
@@ -264,8 +309,7 @@ async function createAuthSocket(session) {
       }
       const nextSock = await createAuthSocket(session);
       if (session.authMethod === 'qr') {
-        session.qrCode = await waitForQrCode(nextSock);
-        session.qrDataUrl = await qrcode.toDataURL(session.qrCode);
+        await waitForQrOrAuthComplete(nextSock, session, 60000);
       }
     } catch (error) {
       session.status = 'failed';
