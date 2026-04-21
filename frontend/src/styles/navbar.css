@@ -399,10 +399,10 @@
 
 .profile-error-report-dialog {
   width: min(100%, 26rem);
-  max-height: min(90vh, 32rem);
+  max-height: min(90vh, 36rem);
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-md);
+  gap: var(--spacing-lg);
   padding: var(--spacing-xl);
   border-radius: var(--radius-lg);
   background-color: var(--color-bg);
@@ -410,29 +410,38 @@
   box-shadow: var(--shadow-md);
 }
 
+.profile-error-report-intro {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-base);
+}
+
 .profile-error-report-title {
   margin: 0;
   font-size: var(--font-size-lg);
   font-weight: var(--font-weight-bold);
   color: var(--color-text);
+  line-height: 1.35;
 }
 
 .profile-error-report-hint {
   margin: 0;
   font-size: var(--font-size-sm);
   color: var(--color-text-light);
-  line-height: 1.55;
+  line-height: 1.6;
 }
 
 .profile-error-report-textarea {
   width: 100%;
-  min-height: 8rem;
+  min-height: 9rem;
+  margin: 0;
   resize: vertical;
   box-sizing: border-box;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-base);
-  padding: 0.625rem 0.75rem;
+  padding: var(--spacing-base);
   font-size: var(--font-size-sm);
+  line-height: 1.5;
   font-family: inherit;
   color: var(--color-text);
   background: var(--color-bg);
@@ -446,7 +455,11 @@
 .profile-error-report-actions {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-sm);
+  gap: var(--spacing-base);
+}
+
+.profile-error-report-actions .profile-drawer-btn {
+  min-height: 44px;
 }
 
 /* Menu Toggle (Mobile) */

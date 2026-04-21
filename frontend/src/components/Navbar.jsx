@@ -461,12 +461,14 @@ const Navbar = () => {
             aria-labelledby="profile-error-report-title"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 id="profile-error-report-title" className="profile-error-report-title">
-              Сообщить об ошибке
-            </h3>
-            <p className="profile-error-report-hint">
-              Опишите, что пошло не так: страница, действия и ожидаемый результат. Минимум 10 символов.
-            </p>
+            <div className="profile-error-report-intro">
+              <h3 id="profile-error-report-title" className="profile-error-report-title">
+                Сообщить об ошибке
+              </h3>
+              <p className="profile-error-report-hint">
+                Опишите, что пошло не так: страница, действия и ожидаемый результат. Минимум 10 символов.
+              </p>
+            </div>
             <textarea
               className="profile-error-report-textarea"
               value={errorReportText}
