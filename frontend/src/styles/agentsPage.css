@@ -326,6 +326,8 @@
  * flex + ::before/::after spacers; tall content grows the overlay and scrolls.
  */
 .auth-modal-backdrop.channels-modal-backdrop {
+  /* Match .header in navbar.css: vertical padding ×2 + logo cap-height + border */
+  --navbar-sticky-h: calc(var(--spacing-lg) * 2 + 1.625rem + 1px);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -334,7 +336,10 @@
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
   padding: var(--spacing-lg);
-  padding-top: max(var(--spacing-lg), env(safe-area-inset-top, 0px));
+  padding-top: max(
+    var(--spacing-lg),
+    calc(env(safe-area-inset-top, 0px) + var(--navbar-sticky-h) + var(--spacing-md))
+  );
   padding-bottom: max(var(--spacing-lg), env(safe-area-inset-bottom, 0px));
   padding-left: max(var(--spacing-lg), env(safe-area-inset-left, 0px));
   padding-right: max(var(--spacing-lg), env(safe-area-inset-right, 0px));
@@ -487,9 +492,13 @@
     grid-template-columns: 1fr;
   }
 
-  /* Channels modal: wider gutters on small screens; height grows with content (scroll on backdrop) */
+  /* Channels modal: wider gutters; navbar height uses compact .header padding */
   .auth-modal-backdrop.channels-modal-backdrop {
-    padding-top: max(var(--spacing-xl), calc(env(safe-area-inset-top, 0px) + var(--spacing-base)));
+    --navbar-sticky-h: calc(var(--spacing-sm) * 2 + 1.625rem + 1px);
+    padding-top: max(
+      var(--spacing-xl),
+      calc(env(safe-area-inset-top, 0px) + var(--navbar-sticky-h) + var(--spacing-md))
+    );
     padding-right: max(var(--spacing-xl), env(safe-area-inset-right, 0px));
     padding-bottom: max(var(--spacing-lg), env(safe-area-inset-bottom, 0px));
     padding-left: max(var(--spacing-xl), env(safe-area-inset-left, 0px));
@@ -547,5 +556,9 @@
 
   .agent-name {
     font-size: var(--font-size-base);
+  }
+
+  .auth-modal-backdrop.channels-modal-backdrop {
+    --navbar-sticky-h: calc(var(--spacing-sm) * 2 + 1.35rem + 1px);
   }
 }
