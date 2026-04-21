@@ -65,12 +65,6 @@ function normalizePhone(phone) {
   return `+${digits}`;
 }
 
-function normalizeCode(value) {
-  const text = String(value || '').trim();
-  const compact = text.replace(/\D/g, '');
-  return compact || text;
-}
-
 function enforceApiKey(req, res, next) {
   const key = String(req.header('X-API-Key') || '').trim();
   if (key !== BRIDGE_API_KEY) {
@@ -269,8 +263,9 @@ async function createAuthSocket(session) {
         // ignore
       }
       const nextSock = await createAuthSocket(session);
-      if (session.authMethod === 'pairing_code') {
-        session.pairingCode = await waitForPairingCode(nextSock, session.phoneDigits);
+      if (session.authMethod === 'qr') {
+        session.qrCode = await waitForQrCode(nextSock);
+        session.qrDataUrl = await qrcode.toDataURL(session.qrCode);
       }
     } catch (error) {
       session.status = 'failed';
@@ -314,7 +309,7 @@ async function createAuthSocket(session) {
   return sock;
 }
 
-async function createAuthSession(phoneNumber, authMethod = 'pairing_code') {
+async function createAuthSession(phoneNumber, authMethod = 'qr') {
   const authId = `wauth_${crypto.randomBytes(18).toString('base64url')}`;
   const sessionDir = path.join(DATA_DIR, authId);
   await fs.mkdir(sessionDir, { recursive: true });
@@ -424,11 +419,6 @@ app.post('/auth/request_code', enforceApiKey, async (req, res) => {
   try {
     cleanupExpired();
     const phoneNumber = normalizePhone(req.body?.phone_number);
-    const authMethodRaw = String(req.body?.auth_method || 'pairing_code').trim().toLowerCase();
-    if (authMethodRaw !== 'pairing_code' && authMethodRaw !== 'qr') {
-      return res.status(422).json({ detail: 'auth_method must be pairing_code or qr' });
-    }
-    const authMethod = authMethodRaw;
     rateLimit(
       requestRate,
       `request:${phoneNumber}`,
@@ -437,16 +427,11 @@ app.post('/auth/request_code', enforceApiKey, async (req, res) => {
       'Слишком много запросов кода для этого номера. Попробуйте позже.'
     );
 
-    const session = await createAuthSession(phoneNumber, authMethod);
+    const session = await createAuthSession(phoneNumber, 'qr');
     return res.status(200).json({
       auth_id: session.authId,
-      auth_method: authMethod,
-      delivery: authMethod === 'qr' ? 'qr' : 'pairing_code',
-      hint:
-        authMethod === 'qr'
-          ? 'Откройте WhatsApp на телефоне -> Связанные устройства -> Привязать устройство и отсканируйте QR.'
-          : 'Откройте WhatsApp на телефоне -> Связанные устройства -> Привязать устройство и введите pairing code.',
-      pairing_code: session.pairingCode,
+      delivery: 'qr',
+      hint: 'Откройте WhatsApp на телефоне -> Связанные устройства -> Привязать устройство и отсканируйте QR.',
       qr_data_url: session.qrDataUrl,
       expires_in_seconds: AUTH_TTL_SECONDS,
     });
@@ -461,7 +446,6 @@ app.post('/auth/verify_code', enforceApiKey, async (req, res) => {
     cleanupExpired();
     const authId = String(req.body?.auth_id || '').trim();
     const phoneNumber = normalizePhone(req.body?.phone_number);
-    const code = normalizeCode(req.body?.code);
     if (!authId) {
       return res.status(422).json({ detail: 'auth_id is required' });
     }
@@ -484,22 +468,10 @@ app.post('/auth/verify_code', enforceApiKey, async (req, res) => {
       authSessions.delete(authId);
       return res.status(429).json({ detail: 'Превышено число попыток подтверждения' });
     }
-    if (session.authMethod !== 'qr') {
-      if (!code) {
-        return res.status(422).json({ detail: 'code is required for pairing_code method' });
-      }
-      if (normalizeCode(session.pairingCode) !== code) {
-        session.attemptsLeft -= 1;
-        return res.status(422).json({ detail: 'Неверный pairing code' });
-      }
-    }
     const isReady = await waitForSessionReady(session, 15000);
     if (!isReady) {
       return res.status(409).json({
-        detail:
-          session.authMethod === 'qr'
-            ? 'Подтверждение в WhatsApp еще не завершено. Отсканируйте QR на телефоне и повторите проверку.'
-            : 'Подтверждение в WhatsApp еще не завершено. Введите pairing code на телефоне и повторите проверку.',
+        detail: 'Подтверждение в WhatsApp еще не завершено. Отсканируйте QR на телефоне и повторите проверку.',
         status: session.status || 'pending',
         last_error: session.lastError || null,
         last_disconnect_code: session.lastDisconnectCode || null,
@@ -539,9 +511,7 @@ app.post('/auth/status', enforceApiKey, async (req, res) => {
     return res.status(200).json({
       auth_id: authId,
       status: session.status || 'pending',
-      auth_method: session.authMethod || 'pairing_code',
       qr_data_url: session.qrDataUrl || null,
-      pairing_code: session.pairingCode || null,
       last_error: session.lastError || null,
       last_disconnect_code: session.lastDisconnectCode || null,
       expires_in_seconds: Math.max(0, Math.floor((session.expiresAt - nowMs()) / 1000)),

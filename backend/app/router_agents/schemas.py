@@ -155,11 +155,6 @@ class UserbotVerifyCode(BaseModel):
 
 class WhatsAppUserbotRequestCode(BaseModel):
     phone_number: str = Field(..., min_length=5, max_length=32, description="WhatsApp phone number")
-    auth_method: str = Field(
-        default="pairing_code",
-        pattern="^(pairing_code|qr)$",
-        description="Способ авторизации WhatsApp userbot",
-    )
 
 
 class WhatsAppUserbotVerifyCode(BaseModel):

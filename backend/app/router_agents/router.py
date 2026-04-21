@@ -1414,12 +1414,6 @@ async def request_whatsapp_userbot_code(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
 
     phone_number = payload.phone_number.strip()
-    auth_method = (payload.auth_method or "pairing_code").strip().lower()
-    if auth_method not in {"pairing_code", "qr"}:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Некорректный метод авторизации WhatsApp userbot",
-        )
     if len([ch for ch in phone_number if ch.isdigit()]) < 5:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -1430,7 +1424,6 @@ async def request_whatsapp_userbot_code(
         "auth/request_code",
         {
             "phone_number": phone_number,
-            "auth_method": auth_method,
         },
     )
     bridge_auth_id = str(result.get("auth_id") or result.get("session_id") or "").strip()
@@ -1448,10 +1441,8 @@ async def request_whatsapp_userbot_code(
         content={
             "auth_token": auth_token,
             "phone_number": phone_number,
-            "auth_method": result.get("auth_method") or auth_method,
             "delivery": result.get("delivery"),
             "hint": result.get("hint"),
-            "pairing_code": result.get("pairing_code"),
             "qr_data_url": result.get("qr_data_url"),
         },
         status_code=status.HTTP_200_OK,
@@ -1514,9 +1505,7 @@ async def whatsapp_userbot_auth_status(
     return JSONResponse(
         content={
             "status": result.get("status") or "pending",
-            "auth_method": result.get("auth_method") or "pairing_code",
             "qr_data_url": result.get("qr_data_url"),
-            "pairing_code": result.get("pairing_code"),
             "last_error": result.get("last_error"),
             "last_disconnect_code": result.get("last_disconnect_code"),
         },

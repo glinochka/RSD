@@ -37,14 +37,11 @@ const CreateAgentContent = () => {
   const [verifiedUserbotLabel, setVerifiedUserbotLabel] = useState('');
   const [whatsappUserbotMode, setWhatsappUserbotMode] = useState('simple');
   const [whatsappUserbotAuthToken, setWhatsappUserbotAuthToken] = useState('');
-  const [whatsappUserbotAuthMethod, setWhatsappUserbotAuthMethod] = useState('qr');
-  const [whatsappUserbotVerifyCode, setWhatsappUserbotVerifyCode] = useState('');
   const [whatsappUserbotQrDataUrl, setWhatsappUserbotQrDataUrl] = useState('');
   const [isSendingWhatsappUserbotCode, setIsSendingWhatsappUserbotCode] = useState(false);
   const [isVerifyingWhatsappUserbotCode, setIsVerifyingWhatsappUserbotCode] = useState(false);
   const [isWhatsappUserbotVerified, setIsWhatsappUserbotVerified] = useState(false);
   const [verifiedWhatsappUserbotLabel, setVerifiedWhatsappUserbotLabel] = useState('');
-  const [whatsappUserbotPairingCode, setWhatsappUserbotPairingCode] = useState('');
   const whatsappUserbotLastAuthStatusRef = useRef('');
 
   const isEditMode = !!agentId;
@@ -271,9 +268,6 @@ const CreateAgentContent = () => {
       if (!next) {
         setWhatsappUserbotMode('simple');
         setWhatsappUserbotAuthToken('');
-        setWhatsappUserbotAuthMethod('qr');
-        setWhatsappUserbotVerifyCode('');
-        setWhatsappUserbotPairingCode('');
         setWhatsappUserbotQrDataUrl('');
         setIsSendingWhatsappUserbotCode(false);
         setIsVerifyingWhatsappUserbotCode(false);
@@ -358,9 +352,6 @@ const CreateAgentContent = () => {
   const switchWhatsappUserbotMode = (mode) => {
     setWhatsappUserbotMode(mode);
     setWhatsappUserbotAuthToken('');
-    setWhatsappUserbotAuthMethod('qr');
-    setWhatsappUserbotVerifyCode('');
-    setWhatsappUserbotPairingCode('');
     setWhatsappUserbotQrDataUrl('');
     setIsWhatsappUserbotVerified(false);
     setVerifiedWhatsappUserbotLabel('');
@@ -378,22 +369,15 @@ const CreateAgentContent = () => {
     try {
       const response = await agentService.requestWhatsAppUserbotCode({
         phone_number: form.values.whatsapp_userbot_phone_number.trim(),
-        auth_method: whatsappUserbotAuthMethod,
       });
       setWhatsappUserbotAuthToken(response.auth_token);
-      setWhatsappUserbotAuthMethod(response.auth_method || whatsappUserbotAuthMethod);
-      setWhatsappUserbotPairingCode(response.pairing_code || '');
       setWhatsappUserbotQrDataUrl(response.qr_data_url || '');
-      setWhatsappUserbotVerifyCode((response.auth_method || whatsappUserbotAuthMethod) === 'pairing_code' ? (response.pairing_code || '') : '');
       setIsWhatsappUserbotVerified(false);
       setVerifiedWhatsappUserbotLabel('');
       whatsappUserbotLastAuthStatusRef.current = '';
       form.setFieldValue('whatsapp_userbot_session_string', '');
       showSuccess(
-        response.hint ||
-          ((response.auth_method || whatsappUserbotAuthMethod) === 'qr'
-            ? 'QR готов. Отсканируйте его в WhatsApp и затем нажмите «Проверить подключение».'
-            : 'Pairing-код получен. Введите его в WhatsApp на телефоне, затем нажмите «Подтвердить код».')
+        response.hint || 'QR готов. Отсканируйте его в WhatsApp и затем нажмите «Проверить подключение».'
       );
     } catch (error) {
       showError(error.message || 'Не удалось запросить код WhatsApp');
@@ -407,15 +391,10 @@ const CreateAgentContent = () => {
       showError('Сначала запросите код подтверждения WhatsApp');
       return;
     }
-    if (whatsappUserbotAuthMethod === 'pairing_code' && !whatsappUserbotVerifyCode.trim()) {
-      showError('Введите код подтверждения WhatsApp');
-      return;
-    }
     setIsVerifyingWhatsappUserbotCode(true);
     try {
       const response = await agentService.verifyWhatsAppUserbotCode({
         auth_token: whatsappUserbotAuthToken,
-        code: whatsappUserbotAuthMethod === 'pairing_code' ? whatsappUserbotVerifyCode.trim() : undefined,
       });
       form.setFieldValue('whatsapp_userbot_session_string', response.session_string || '');
       if (response.phone_number) {
@@ -434,7 +413,6 @@ const CreateAgentContent = () => {
 
   useEffect(() => {
     if (whatsappUserbotMode !== 'simple') return undefined;
-    if (whatsappUserbotAuthMethod !== 'qr') return undefined;
     if (!whatsappUserbotAuthToken) return undefined;
     if (isWhatsappUserbotVerified) return undefined;
 
@@ -471,7 +449,6 @@ const CreateAgentContent = () => {
     };
   }, [
     whatsappUserbotMode,
-    whatsappUserbotAuthMethod,
     whatsappUserbotAuthToken,
     isWhatsappUserbotVerified,
     showError,
@@ -831,25 +808,6 @@ const CreateAgentContent = () => {
 
                 {whatsappUserbotMode === 'simple' ? (
                   <>
-                    <div className="connection-type-grid channels-tabs">
-                      <button
-                        type="button"
-                        className={`connection-type-card ${whatsappUserbotAuthMethod === 'qr' ? 'active' : ''}`}
-                        onClick={() => setWhatsappUserbotAuthMethod('qr')}
-                        disabled={form.isSubmitting || isSendingWhatsappUserbotCode}
-                      >
-                        QR-код
-                      </button>
-                      <button
-                        type="button"
-                        className={`connection-type-card ${whatsappUserbotAuthMethod === 'pairing_code' ? 'active' : ''}`}
-                        onClick={() => setWhatsappUserbotAuthMethod('pairing_code')}
-                        disabled={form.isSubmitting || isSendingWhatsappUserbotCode}
-                      >
-                        Pairing-код
-                      </button>
-                    </div>
-
                     <div className="channel-actions-row">
                       <button
                         type="button"
@@ -862,48 +820,17 @@ const CreateAgentContent = () => {
                     </div>
 
                     {whatsappUserbotQrDataUrl ? (
-                      <div className="help-text" style={{ marginTop: 'var(--spacing-base)' }}>
-                        <p><strong>QR для подключения:</strong></p>
+                      <div className="wa-qr-card">
+                        <p className="wa-qr-title"><strong>QR для подключения</strong></p>
                         <img
                           src={whatsappUserbotQrDataUrl}
                           alt="WhatsApp QR"
-                          style={{ width: '220px', maxWidth: '100%', background: '#fff', padding: '8px', borderRadius: '8px' }}
+                          className="wa-qr-image"
                         />
-                        <p style={{ marginTop: 'var(--spacing-sm)' }}>
+                        <p className="wa-qr-hint">
                           Откройте WhatsApp → Настройки → Связанные устройства → Привязать устройство и отсканируйте QR.
                         </p>
                       </div>
-                    ) : null}
-
-                    {whatsappUserbotPairingCode ? (
-                      <div className="help-text" style={{ marginTop: 'var(--spacing-base)' }}>
-                        <p>
-                          <strong>Pairing-код:</strong>{' '}
-                          <code style={{ fontSize: '1.1em', letterSpacing: '0.05em' }}>{whatsappUserbotPairingCode}</code>
-                        </p>
-                        <p>
-                          На телефоне откройте WhatsApp → Настройки → Связанные устройства → Привязать устройство и введите
-                          этот код. После подтверждения в WhatsApp нажмите «Подтвердить код» ниже (тот же код).
-                        </p>
-                      </div>
-                    ) : null}
-
-                    {whatsappUserbotAuthMethod === 'pairing_code' ? (
-                      <>
-                        <label htmlFor="whatsapp_userbot_verify_code" className="mt-input">
-                          Тот же pairing-код для подтверждения на сайте:
-                        </label>
-                        <input
-                          id="whatsapp_userbot_verify_code"
-                          type="text"
-                          name="whatsapp_userbot_verify_code"
-                          placeholder="Введите код/подтверждение"
-                          className="input-main"
-                          value={whatsappUserbotVerifyCode}
-                          onChange={(e) => setWhatsappUserbotVerifyCode(e.target.value)}
-                          disabled={form.isSubmitting}
-                        />
-                      </>
                     ) : null}
 
                     <div className="channel-actions-row">
@@ -913,11 +840,7 @@ const CreateAgentContent = () => {
                         onClick={handleWhatsappUserbotVerifyCode}
                         disabled={form.isSubmitting || isVerifyingWhatsappUserbotCode}
                       >
-                        {isVerifyingWhatsappUserbotCode
-                          ? 'Проверка...'
-                          : whatsappUserbotAuthMethod === 'qr'
-                            ? 'Проверить подключение'
-                            : 'Подтвердить код'}
+                        {isVerifyingWhatsappUserbotCode ? 'Проверка...' : 'Проверить подключение'}
                       </button>
                     </div>
 
