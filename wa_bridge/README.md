@@ -15,9 +15,10 @@ Bridge-сервис для backend-роутов:
 
 ## Важно
 
-Текущая реализация использует `@whiskeysockets/baileys` и реальный WhatsApp pairing flow.
-Пользователь получает `pairing_code` в интерфейсе вашего продукта и вводит его в приложении WhatsApp
-(`Связанные устройства` -> `Привязать устройство`).
+Текущая реализация использует `@whiskeysockets/baileys` и поддерживает оба режима:
+
+- `pairing_code` — получить код и ввести его на телефоне;
+- `qr` — получить `qr_data_url` и отсканировать QR в WhatsApp (`Связанные устройства` -> `Привязать устройство`).
 
 ## ENV
 
@@ -63,7 +64,19 @@ curl -X POST http://localhost:8090/auth/request_code \
   -d '{"phone_number":"+79990001122"}'
 ```
 
-Ответ вернет `pairing_code`. Пользователь должен ввести его в WhatsApp на телефоне.
+Пример запроса для QR-режима:
+
+```bash
+curl -X POST http://localhost:8090/auth/request_code \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-key" \
+  -d '{"phone_number":"+79990001122","auth_method":"qr"}'
+```
+
+Ответ вернет:
+
+- `pairing_code` для `pairing_code` режима;
+- `qr_data_url` для `qr` режима.
 
 ### Verify code
 
@@ -74,5 +87,6 @@ curl -X POST http://localhost:8090/auth/verify_code \
   -d '{"auth_id":"wauth_...","phone_number":"+79990001122","code":"123456"}'
 ```
 
-`code` должен совпадать с `pairing_code` из предыдущего шага.
-Если pairing на телефоне еще не завершен — bridge вернет `409`.
+Для `pairing_code` режима `code` должен совпадать с `pairing_code`.
+Для `qr` режима поле `code` можно не передавать.
+Если подтверждение на телефоне еще не завершено — bridge вернет `409`.

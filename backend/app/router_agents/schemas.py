@@ -155,11 +155,16 @@ class UserbotVerifyCode(BaseModel):
 
 class WhatsAppUserbotRequestCode(BaseModel):
     phone_number: str = Field(..., min_length=5, max_length=32, description="WhatsApp phone number")
+    auth_method: str = Field(
+        default="pairing_code",
+        pattern="^(pairing_code|qr)$",
+        description="Способ авторизации WhatsApp userbot",
+    )
 
 
 class WhatsAppUserbotVerifyCode(BaseModel):
     auth_token: str = Field(..., min_length=20, max_length=4096, description="Temporary auth token")
-    code: str = Field(..., min_length=3, max_length=64, description="Verification code from WhatsApp flow")
+    code: Optional[str] = Field(None, min_length=1, max_length=64, description="Verification code from WhatsApp flow")
 
 
 class AgentAIAction(AgentLookup):

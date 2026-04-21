@@ -1414,6 +1414,12 @@ async def request_whatsapp_userbot_code(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
 
     phone_number = payload.phone_number.strip()
+    auth_method = (payload.auth_method or "pairing_code").strip().lower()
+    if auth_method not in {"pairing_code", "qr"}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Некорректный метод авторизации WhatsApp userbot",
+        )
     if len([ch for ch in phone_number if ch.isdigit()]) < 5:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -1424,6 +1430,7 @@ async def request_whatsapp_userbot_code(
         "auth/request_code",
         {
             "phone_number": phone_number,
+            "auth_method": auth_method,
         },
     )
     bridge_auth_id = str(result.get("auth_id") or result.get("session_id") or "").strip()
@@ -1441,9 +1448,11 @@ async def request_whatsapp_userbot_code(
         content={
             "auth_token": auth_token,
             "phone_number": phone_number,
+            "auth_method": result.get("auth_method") or auth_method,
             "delivery": result.get("delivery"),
             "hint": result.get("hint"),
             "pairing_code": result.get("pairing_code"),
+            "qr_data_url": result.get("qr_data_url"),
         },
         status_code=status.HTTP_200_OK,
     )
@@ -1459,19 +1468,14 @@ async def verify_whatsapp_userbot_code(
     token_data = _decode_whatsapp_userbot_auth_token(payload.auth_token.strip())
     phone_number = str(token_data.get("phone_number") or "").strip()
     bridge_auth_id = decrypt_token(token_data["encrypted_bridge_auth_id"])
-    code = payload.code.strip()
-    if not code:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Введите код подтверждения WhatsApp",
-        )
+    code = payload.code.strip() if payload.code else ""
 
     result = await _wa_userbot_bridge_post(
         "auth/verify_code",
         {
             "auth_id": bridge_auth_id,
             "phone_number": phone_number,
-            "code": code,
+            "code": code or None,
         },
     )
     session_string = str(result.get("session_string") or "").strip()
