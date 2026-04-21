@@ -43,6 +43,9 @@ services:
             QDRANT_URL: ${QDRANT_URL}
             DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
             INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+            WHATSAPP_USERBOT_BRIDGE_URL: ${WHATSAPP_USERBOT_BRIDGE_URL:-http://wa_bridge:8090}
+            WHATSAPP_USERBOT_BRIDGE_API_KEY: ${WHATSAPP_USERBOT_BRIDGE_API_KEY:-}
+            WHATSAPP_USERBOT_BRIDGE_TIMEOUT_SECONDS: ${WHATSAPP_USERBOT_BRIDGE_TIMEOUT_SECONDS:-25}
         ports:
             - '8000:8000'
         depends_on:
@@ -50,6 +53,8 @@ services:
                 condition: service_started
             postgres:
                 condition: service_healthy
+            wa_bridge:
+                condition: service_started
             
         networks:
             - rsd_network
@@ -110,6 +115,20 @@ services:
             - rsd_network
         volumes:
             - ./bot:/app
+
+    wa_bridge:
+        build: ./wa_bridge
+        container_name: rsd_wa_bridge
+        environment:
+            WA_USERBOT_BRIDGE_API_KEY: ${WHATSAPP_USERBOT_BRIDGE_API_KEY:-}
+            WA_USERBOT_AUTH_TTL_SECONDS: ${WA_USERBOT_AUTH_TTL_SECONDS:-600}
+            WA_USERBOT_AUTH_MAX_ATTEMPTS: ${WA_USERBOT_AUTH_MAX_ATTEMPTS:-5}
+            WA_USERBOT_SESSION_SECRET: ${WA_USERBOT_SESSION_SECRET:-dev-wa-bridge-secret}
+            WA_USERBOT_DEV_EXPOSE_CODE: ${WA_USERBOT_DEV_EXPOSE_CODE:-true}
+        ports:
+            - "8090:8090"
+        networks:
+            - rsd_network
 
     qdrant:
         restart: on-failure
