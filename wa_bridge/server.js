@@ -215,6 +215,23 @@ async function waitForQrCode(sock, timeoutMs = 45000) {
   });
 }
 
+async function waitForSessionReady(session, timeoutMs = 15000) {
+  const started = nowMs();
+  while (nowMs() - started < timeoutMs) {
+    const registered = Boolean(session?.sock?.authState?.creds?.registered);
+    const hasUser = Boolean(session?.user?.id || session?.sock?.user?.id);
+    const connected = session?.status === 'paired' || session?.status === 'connected';
+    if (registered || (connected && hasUser)) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  const registered = Boolean(session?.sock?.authState?.creds?.registered);
+  const hasUser = Boolean(session?.user?.id || session?.sock?.user?.id);
+  const connected = session?.status === 'paired' || session?.status === 'connected';
+  return registered || (connected && hasUser);
+}
+
 async function createAuthSocket(session) {
   const { state, saveCreds } = await useMultiFileAuthState(session.sessionDir);
   const versionInfo = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 0] }));
@@ -475,12 +492,16 @@ app.post('/auth/verify_code', enforceApiKey, async (req, res) => {
         return res.status(422).json({ detail: 'Неверный pairing code' });
       }
     }
-    if (!session.sock?.authState?.creds?.registered) {
+    const isReady = await waitForSessionReady(session, 15000);
+    if (!isReady) {
       return res.status(409).json({
         detail:
           session.authMethod === 'qr'
             ? 'Подтверждение в WhatsApp еще не завершено. Отсканируйте QR на телефоне и повторите проверку.'
             : 'Подтверждение в WhatsApp еще не завершено. Введите pairing code на телефоне и повторите проверку.',
+        status: session.status || 'pending',
+        last_error: session.lastError || null,
+        last_disconnect_code: session.lastDisconnectCode || null,
       });
     }
 
