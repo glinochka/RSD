@@ -102,10 +102,15 @@ def _extract_text(message: dict[str, Any]) -> str:
     return str(text).strip()
 
 
-def _external_user_id_from_jid(remote_jid: str) -> str:
+def _user_external_id_for_whatsapp_analytics(remote_jid: str) -> str:
+    """Полный JID как во входящем сообщении Baileys (…@s.whatsapp.net или …@lid и т.д.).
+
+    Раньше сохранялась только локальная часть до «@» — при @lid или смене PN/LID
+    ответы с дашборда уходили на неверный JID (в мессенджере не появлялись).
+    """
     jid = str(remote_jid or "").strip()
-    if "@" in jid:
-        return jid.split("@", 1)[0]
+    if len(jid) > 128:
+        return jid[:128]
     return jid
 
 
@@ -125,7 +130,7 @@ async def _process_incoming(cfg: dict[str, Any], incoming: dict[str, Any]) -> No
     request = MessageRequest(
         bot_id=bot_id,
         query=text,
-        user_external_id=_external_user_id_from_jid(remote_jid),
+        user_external_id=_user_external_id_for_whatsapp_analytics(remote_jid),
         channel=Channel.WHATSAPP_USERBOT,
         system_prompt=cfg.get("system_prompt") or "",
         welcome_message=cfg.get("welcome_message"),

@@ -321,10 +321,28 @@
   box-shadow: 0 20px 40px rgba(47, 47, 47, 0.18);
 }
 
-.channels-modal-backdrop {
+/* Scroll the overlay (viewport-wide) instead of a small inner box */
+.auth-modal-backdrop.channels-modal-backdrop {
+  display: block;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   padding: var(--spacing-lg);
-  align-items: center;
-  justify-content: center;
+  padding-top: max(var(--spacing-lg), env(safe-area-inset-top, 0px));
+  padding-bottom: max(var(--spacing-lg), env(safe-area-inset-bottom, 0px));
+  padding-left: max(var(--spacing-lg), env(safe-area-inset-left, 0px));
+  padding-right: max(var(--spacing-lg), env(safe-area-inset-right, 0px));
+  min-height: 100vh;
+  min-height: 100dvh;
+  box-sizing: border-box;
+}
+
+.auth-modal-backdrop.channels-modal-backdrop .auth-modal.channels-modal {
+  margin-left: auto;
+  margin-right: auto;
+  margin-top: var(--spacing-xl);
+  margin-bottom: var(--spacing-xl);
 }
 
 .auth-modal-title {
@@ -339,32 +357,22 @@
 .channels-modal {
   display: flex;
   flex-direction: column;
-  max-width: min(1120px, calc(100vw - 32px));
-  width: min(1120px, calc(100vw - 32px));
-  max-height: min(92vh, calc(100vh - 32px));
-  max-height: min(92vh, calc(100dvh - 32px));
-  min-height: 0;
-  overflow: hidden;
+  gap: var(--spacing-base);
+  max-width: 720px;
+  width: calc(100% - 32px);
+  box-sizing: border-box;
 }
 
 .channels-modal__body {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
   display: flex;
   flex-direction: column;
   gap: var(--spacing-base);
-  overscroll-behavior: contain;
 }
 
 .channel-modal-list {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-sm);
-  max-height: 220px;
-  overflow: auto;
 }
 
 .channels-tabs {
@@ -464,14 +472,17 @@
     grid-template-columns: 1fr;
   }
 
-  /* Channels modal: safe areas, side gutters, vertically centered */
-  .channels-modal-backdrop {
-    align-items: center;
-    justify-content: center;
+  /* Channels modal: wider gutters on small screens; height grows with content (scroll on backdrop) */
+  .auth-modal-backdrop.channels-modal-backdrop {
     padding-top: max(var(--spacing-xl), calc(env(safe-area-inset-top, 0px) + var(--spacing-base)));
     padding-right: max(var(--spacing-xl), env(safe-area-inset-right, 0px));
     padding-bottom: max(var(--spacing-lg), env(safe-area-inset-bottom, 0px));
     padding-left: max(var(--spacing-xl), env(safe-area-inset-left, 0px));
+  }
+
+  .auth-modal-backdrop.channels-modal-backdrop .auth-modal.channels-modal {
+    margin-top: var(--spacing-lg);
+    margin-bottom: var(--spacing-lg);
   }
 
   .auth-modal.channels-modal {
@@ -479,20 +490,6 @@
     width: 100%;
     max-width: 100%;
     padding: var(--spacing-base);
-    max-height: min(
-      90vh,
-      calc(
-        100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - var(--spacing-xl) * 2 -
-          var(--spacing-lg)
-      )
-    );
-    max-height: min(
-      90dvh,
-      calc(
-        100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - var(--spacing-xl) * 2 -
-          var(--spacing-lg)
-      )
-    );
   }
 
   .channels-modal > .auth-modal-title {
@@ -510,10 +507,6 @@
     box-sizing: border-box;
     word-break: break-word;
     touch-action: manipulation;
-  }
-
-  .channel-modal-list {
-    max-height: min(200px, 32vh);
   }
 
   .channels-modal .auth-modal-actions {

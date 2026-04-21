@@ -240,6 +240,7 @@ async def _get_whatsapp_userbot_channel_for_agent(session, agent_id: int) -> Age
 
 
 def _whatsapp_user_external_to_jid(user_external_id: str) -> str:
+    """Полный JID из аналитики (предпочтительно) или только цифры номера (старые записи)."""
     raw = (user_external_id or "").strip()
     if not raw:
         raise HTTPException(

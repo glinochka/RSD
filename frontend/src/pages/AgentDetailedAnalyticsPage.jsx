@@ -402,7 +402,7 @@ const AgentDetailedAnalyticsPageContent = () => {
         const raw = String(selectedUser.userExternalId || '').trim();
         if (!raw) return false;
         if (selectedUser.channel === 'whatsapp_userbot') {
-          if (raw.includes('@')) return true;
+          if (raw.includes('@')) return raw.length <= 128;
           const digits = raw.replace(/\D/g, '');
           return digits.length >= 5 && digits.length <= 20;
         }
