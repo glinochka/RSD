@@ -57,6 +57,16 @@ export const agentService = {
     return response.data;
   },
 
+  requestWhatsAppUserbotCode: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_WHATSAPP_USERBOT_REQUEST_CODE, data);
+    return response.data;
+  },
+
+  verifyWhatsAppUserbotCode: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_WHATSAPP_USERBOT_VERIFY_CODE, data);
+    return response.data;
+  },
+
   getChannels: async (agentId) => {
     const response = await apiClient.get(API_ROUTES.AGENTS_CHANNELS_LIST, {
       params: { agent_id: agentId },

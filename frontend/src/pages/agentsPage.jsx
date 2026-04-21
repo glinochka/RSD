@@ -138,6 +138,12 @@ const AgentsPageContent = () => {
   const [whatsappUserbotPhone, setWhatsappUserbotPhone] = useState('');
   const [whatsappUserbotSessionString, setWhatsappUserbotSessionString] = useState('');
   const [whatsappUserbotClientLabel, setWhatsappUserbotClientLabel] = useState('');
+  const [whatsappUserbotMode, setWhatsappUserbotMode] = useState('simple');
+  const [whatsappUserbotAuthToken, setWhatsappUserbotAuthToken] = useState('');
+  const [whatsappUserbotVerifyCode, setWhatsappUserbotVerifyCode] = useState('');
+  const [isSendingWhatsappUserbotCode, setIsSendingWhatsappUserbotCode] = useState(false);
+  const [isVerifyingWhatsappUserbotCode, setIsVerifyingWhatsappUserbotCode] = useState(false);
+  const [isWhatsappUserbotVerified, setIsWhatsappUserbotVerified] = useState(false);
   const [whatsappPhoneNumberId, setWhatsappPhoneNumberId] = useState('');
   const [whatsappAccessToken, setWhatsappAccessToken] = useState('');
   const [whatsappBusinessAccountId, setWhatsappBusinessAccountId] = useState('');
@@ -470,6 +476,12 @@ const AgentsPageContent = () => {
     setWhatsappUserbotPhone('');
     setWhatsappUserbotSessionString('');
     setWhatsappUserbotClientLabel('');
+    setWhatsappUserbotMode('simple');
+    setWhatsappUserbotAuthToken('');
+    setWhatsappUserbotVerifyCode('');
+    setIsSendingWhatsappUserbotCode(false);
+    setIsVerifyingWhatsappUserbotCode(false);
+    setIsWhatsappUserbotVerified(false);
     setWhatsappPhoneNumberId('');
     setWhatsappAccessToken('');
     setWhatsappBusinessAccountId('');
@@ -669,7 +681,12 @@ const AgentsPageContent = () => {
       showError('Введите номер WhatsApp userbot');
       return;
     }
-    if (!whatsappUserbotSessionString.trim()) {
+    if (whatsappUserbotMode === 'simple') {
+      if (!whatsappUserbotSessionString.trim() || !isWhatsappUserbotVerified) {
+        showError('Сначала подтвердите код и инициализируйте WhatsApp userbot-сессию');
+        return;
+      }
+    } else if (!whatsappUserbotSessionString.trim()) {
       showError('Введите session string WhatsApp userbot');
       return;
     }
@@ -692,6 +709,64 @@ const AgentsPageContent = () => {
       showError(error?.message || 'Ошибка при подключении WhatsApp userbot');
     } finally {
       setIsSavingChannel(false);
+    }
+  };
+
+  const switchWhatsappUserbotMode = (mode) => {
+    setWhatsappUserbotMode(mode);
+    setWhatsappUserbotAuthToken('');
+    setWhatsappUserbotVerifyCode('');
+    setWhatsappUserbotSessionString('');
+    setIsWhatsappUserbotVerified(false);
+  };
+
+  const handleRequestWhatsappUserbotCode = async () => {
+    if (!whatsappUserbotPhone.trim()) {
+      showError('Введите номер WhatsApp userbot');
+      return;
+    }
+    setIsSendingWhatsappUserbotCode(true);
+    try {
+      const response = await agentService.requestWhatsAppUserbotCode({
+        phone_number: whatsappUserbotPhone.trim(),
+      });
+      setWhatsappUserbotAuthToken(response?.auth_token || '');
+      setWhatsappUserbotSessionString('');
+      setIsWhatsappUserbotVerified(false);
+      showSuccess(response?.hint || 'Код подтверждения WhatsApp запрошен');
+    } catch (error) {
+      showError(error?.message || 'Не удалось запросить код WhatsApp');
+    } finally {
+      setIsSendingWhatsappUserbotCode(false);
+    }
+  };
+
+  const handleVerifyWhatsappUserbotCode = async () => {
+    if (!whatsappUserbotAuthToken) {
+      showError('Сначала запросите код подтверждения WhatsApp');
+      return;
+    }
+    if (!whatsappUserbotVerifyCode.trim()) {
+      showError('Введите код подтверждения WhatsApp');
+      return;
+    }
+    setIsVerifyingWhatsappUserbotCode(true);
+    try {
+      const response = await agentService.verifyWhatsAppUserbotCode({
+        auth_token: whatsappUserbotAuthToken,
+        code: whatsappUserbotVerifyCode.trim(),
+      });
+      setWhatsappUserbotSessionString(response?.session_string || '');
+      if (response?.phone_number) {
+        setWhatsappUserbotPhone(response.phone_number);
+      }
+      setIsWhatsappUserbotVerified(true);
+      showSuccess('WhatsApp userbot успешно инициализирован');
+    } catch (error) {
+      setIsWhatsappUserbotVerified(false);
+      showError(error?.message || 'Не удалось подтвердить код WhatsApp');
+    } finally {
+      setIsVerifyingWhatsappUserbotCode(false);
     }
   };
 
@@ -1106,6 +1181,25 @@ const AgentsPageContent = () => {
                   </div>
                 ) : channelModalTab === 'whatsapp_userbot' ? (
                   <div className="agent-management-block">
+                    <div className="connection-type-grid channels-tabs">
+                      <button
+                        type="button"
+                        className={`connection-type-card ${whatsappUserbotMode === 'simple' ? 'active' : ''}`}
+                        onClick={() => switchWhatsappUserbotMode('simple')}
+                        disabled={isSavingChannel}
+                      >
+                        Простое подключение
+                      </button>
+                      <button
+                        type="button"
+                        className={`connection-type-card ${whatsappUserbotMode === 'expert' ? 'active' : ''}`}
+                        onClick={() => switchWhatsappUserbotMode('expert')}
+                        disabled={isSavingChannel}
+                      >
+                        Режим эксперта
+                      </button>
+                    </div>
+
                     <input
                       type="text"
                       className="input-main"
@@ -1114,14 +1208,45 @@ const AgentsPageContent = () => {
                       onChange={(event) => setWhatsappUserbotPhone(event.target.value)}
                       disabled={isSavingChannel}
                     />
-                    <textarea
-                      className="input-main textarea"
-                      rows={4}
-                      placeholder="Session string WhatsApp userbot"
-                      value={whatsappUserbotSessionString}
-                      onChange={(event) => setWhatsappUserbotSessionString(event.target.value)}
-                      disabled={isSavingChannel}
-                    />
+
+                    {whatsappUserbotMode === 'simple' ? (
+                      <>
+                        <button
+                          type="button"
+                          className="btn btn-outline"
+                          onClick={handleRequestWhatsappUserbotCode}
+                          disabled={isSavingChannel || isSendingWhatsappUserbotCode}
+                        >
+                          {isSendingWhatsappUserbotCode ? 'Отправка...' : 'Запросить код'}
+                        </button>
+                        <input
+                          type="text"
+                          className="input-main"
+                          placeholder="Код подтверждения WhatsApp"
+                          value={whatsappUserbotVerifyCode}
+                          onChange={(event) => setWhatsappUserbotVerifyCode(event.target.value)}
+                          disabled={isSavingChannel}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-outline"
+                          onClick={handleVerifyWhatsappUserbotCode}
+                          disabled={isSavingChannel || isVerifyingWhatsappUserbotCode}
+                        >
+                          {isVerifyingWhatsappUserbotCode ? 'Проверка...' : 'Подтвердить код'}
+                        </button>
+                      </>
+                    ) : (
+                      <textarea
+                        className="input-main textarea"
+                        rows={4}
+                        placeholder="Session string WhatsApp userbot"
+                        value={whatsappUserbotSessionString}
+                        onChange={(event) => setWhatsappUserbotSessionString(event.target.value)}
+                        disabled={isSavingChannel}
+                      />
+                    )}
+
                     <input
                       type="text"
                       className="input-main"
@@ -1147,6 +1272,9 @@ const AgentsPageContent = () => {
                     >
                       {isSavingChannel ? 'Сохранение...' : 'Подключить WhatsApp userbot'}
                     </button>
+                    {whatsappUserbotMode === 'simple' && isWhatsappUserbotVerified ? (
+                      <p className="help-text userbot-success">Сессия успешно инициализирована</p>
+                    ) : null}
                   </div>
                 ) : (
                   <div className="agent-management-block">

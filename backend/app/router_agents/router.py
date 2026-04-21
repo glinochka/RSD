@@ -498,6 +498,88 @@ def _decode_userbot_auth_token(auth_token: str) -> dict:
     return data
 
 
+def _create_whatsapp_userbot_auth_token(
+    *,
+    phone_number: str,
+    bridge_auth_id: str,
+) -> str:
+    now = datetime.utcnow()
+    payload = {
+        "scope": "whatsapp_userbot_auth",
+        "phone_number": phone_number,
+        "encrypted_bridge_auth_id": encrypt_token(bridge_auth_id),
+        "exp": now + timedelta(minutes=USERBOT_AUTH_TOKEN_TTL_MINUTES),
+        "iat": now,
+    }
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+
+def _decode_whatsapp_userbot_auth_token(auth_token: str) -> dict:
+    try:
+        data = jwt.decode(auth_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+    except InvalidTokenError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Невалидный или просроченный токен подтверждения WhatsApp userbot",
+        )
+    if data.get("scope") != "whatsapp_userbot_auth":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Некорректный scope токена подтверждения WhatsApp userbot",
+        )
+    return data
+
+
+async def _wa_userbot_bridge_post(path: str, payload: dict) -> dict:
+    base = (settings.WHATSAPP_USERBOT_BRIDGE_URL or "").strip().rstrip("/")
+    if not base:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="WhatsApp userbot bridge не настроен на сервере",
+        )
+
+    url = f"{base}/{path.lstrip('/')}"
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    headers = {
+        "Content-Type": "application/json; charset=utf-8",
+        "Accept": "application/json",
+    }
+    bridge_api_key = (settings.WHATSAPP_USERBOT_BRIDGE_API_KEY or "").strip()
+    if bridge_api_key:
+        headers["X-API-Key"] = bridge_api_key
+    request = Request(url, data=body, headers=headers, method="POST")
+
+    def _post():
+        from urllib.error import HTTPError, URLError
+
+        try:
+            with urlopen(request, timeout=float(settings.WHATSAPP_USERBOT_BRIDGE_TIMEOUT_SECONDS)) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except HTTPError as exc:
+            detail = ""
+            try:
+                detail = exc.read().decode("utf-8")
+            except Exception:
+                detail = str(exc)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"WhatsApp userbot bridge HTTP {exc.code}: {detail}",
+            ) from exc
+        except URLError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"WhatsApp userbot bridge transport error: {exc}",
+            ) from exc
+
+    result = await asyncio.get_running_loop().run_in_executor(None, _post)
+    if not isinstance(result, dict):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="WhatsApp userbot bridge вернул неожиданный ответ",
+        )
+    return result
+
+
 def _create_telethon_client(api_id: int, api_hash: str, session_string: str = ""):
     from telethon import TelegramClient
     from telethon.sessions import StringSession
@@ -1234,6 +1316,92 @@ async def verify_userbot_code(
             "username": getattr(me, "username", None),
             "first_name": getattr(me, "first_name", None),
             "last_name": getattr(me, "last_name", None),
+        },
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@router.post("/whatsapp_userbot/request_code")
+async def request_whatsapp_userbot_code(
+    payload: WhatsAppUserbotRequestCode, current_user=Depends(get_current_user_required)
+):
+    if current_user.is_banned:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
+
+    phone_number = payload.phone_number.strip()
+    if len([ch for ch in phone_number if ch.isdigit()]) < 5:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Некорректный номер WhatsApp",
+        )
+
+    result = await _wa_userbot_bridge_post(
+        "auth/request_code",
+        {
+            "phone_number": phone_number,
+        },
+    )
+    bridge_auth_id = str(result.get("auth_id") or result.get("session_id") or "").strip()
+    if not bridge_auth_id:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="WhatsApp userbot bridge не вернул auth_id",
+        )
+
+    auth_token = _create_whatsapp_userbot_auth_token(
+        phone_number=phone_number,
+        bridge_auth_id=bridge_auth_id,
+    )
+    return JSONResponse(
+        content={
+            "auth_token": auth_token,
+            "phone_number": phone_number,
+            "delivery": result.get("delivery"),
+            "hint": result.get("hint"),
+        },
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@router.post("/whatsapp_userbot/verify_code")
+async def verify_whatsapp_userbot_code(
+    payload: WhatsAppUserbotVerifyCode, current_user=Depends(get_current_user_required)
+):
+    if current_user.is_banned:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
+
+    token_data = _decode_whatsapp_userbot_auth_token(payload.auth_token.strip())
+    phone_number = str(token_data.get("phone_number") or "").strip()
+    bridge_auth_id = decrypt_token(token_data["encrypted_bridge_auth_id"])
+    code = payload.code.strip()
+    if not code:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Введите код подтверждения WhatsApp",
+        )
+
+    result = await _wa_userbot_bridge_post(
+        "auth/verify_code",
+        {
+            "auth_id": bridge_auth_id,
+            "phone_number": phone_number,
+            "code": code,
+        },
+    )
+    session_string = str(result.get("session_string") or "").strip()
+    if not session_string:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="WhatsApp userbot bridge не вернул session_string",
+        )
+    normalized_phone = str(result.get("phone_number") or phone_number).strip()
+
+    return JSONResponse(
+        content={
+            "session_string": session_string,
+            "phone_number": normalized_phone,
+            "external_user_id": result.get("external_user_id"),
+            "display_name": result.get("display_name"),
         },
         status_code=status.HTTP_200_OK,
     )

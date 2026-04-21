@@ -153,6 +153,15 @@ class UserbotVerifyCode(BaseModel):
     password: Optional[str] = Field(None, min_length=1, max_length=128, description="Telegram 2FA password")
 
 
+class WhatsAppUserbotRequestCode(BaseModel):
+    phone_number: str = Field(..., min_length=5, max_length=32, description="WhatsApp phone number")
+
+
+class WhatsAppUserbotVerifyCode(BaseModel):
+    auth_token: str = Field(..., min_length=20, max_length=4096, description="Temporary auth token")
+    code: str = Field(..., min_length=3, max_length=64, description="Verification code from WhatsApp flow")
+
+
 class AgentAIAction(AgentLookup):
     pass
 
