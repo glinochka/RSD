@@ -11,25 +11,66 @@ from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw.strip())
+    except Exception:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw.strip())
+    except Exception:
+        return default
+
+
+def _rate_limit_key(bucket: str, phone: str) -> str:
+    return f"{bucket}:{phone}"
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
 APP_TITLE = "WhatsApp Userbot Bridge"
-AUTH_TTL_SECONDS = int(os.getenv("WA_USERBOT_AUTH_TTL_SECONDS", "600"))
-AUTH_MAX_ATTEMPTS = int(os.getenv("WA_USERBOT_AUTH_MAX_ATTEMPTS", "5"))
+APP_ENV = os.getenv("WA_USERBOT_ENV", "production").strip().lower()
+AUTH_TTL_SECONDS = _env_int("WA_USERBOT_AUTH_TTL_SECONDS", 600)
+AUTH_MAX_ATTEMPTS = _env_int("WA_USERBOT_AUTH_MAX_ATTEMPTS", 5)
 BRIDGE_API_KEY = os.getenv("WA_USERBOT_BRIDGE_API_KEY", "").strip()
 SESSION_SECRET = os.getenv("WA_USERBOT_SESSION_SECRET", "wa-bridge-dev-secret")
-DEV_EXPOSE_CODE_IN_HINT = os.getenv("WA_USERBOT_DEV_EXPOSE_CODE", "true").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
+DEV_EXPOSE_CODE_IN_HINT = _env_flag("WA_USERBOT_DEV_EXPOSE_CODE", default=False)
+REQUESTS_PER_PHONE_WINDOW_SECONDS = _env_float("WA_USERBOT_REQUEST_WINDOW_SECONDS", 60.0)
+REQUESTS_PER_PHONE_LIMIT = _env_int("WA_USERBOT_REQUESTS_PER_PHONE_LIMIT", 5)
+VERIFY_PER_PHONE_WINDOW_SECONDS = _env_float("WA_USERBOT_VERIFY_WINDOW_SECONDS", 60.0)
+VERIFY_PER_PHONE_LIMIT = _env_int("WA_USERBOT_VERIFY_PER_PHONE_LIMIT", 10)
 
 app = FastAPI(title=APP_TITLE)
 _auth_store_lock = Lock()
 _auth_store: dict[str, dict] = {}
+_request_rate: dict[str, list[datetime]] = {}
+_verify_rate: dict[str, list[datetime]] = {}
+
+
+if APP_ENV in {"prod", "production"}:
+    if not BRIDGE_API_KEY:
+        raise RuntimeError("WA_USERBOT_BRIDGE_API_KEY must be set in production")
+    if SESSION_SECRET == "wa-bridge-dev-secret" or len(SESSION_SECRET) < 32:
+        raise RuntimeError("WA_USERBOT_SESSION_SECRET must be a strong secret in production")
+    if DEV_EXPOSE_CODE_IN_HINT:
+        raise RuntimeError("WA_USERBOT_DEV_EXPOSE_CODE must be false in production")
 
 
 class RequestCodePayload(BaseModel):
@@ -65,7 +106,7 @@ def _sign_payload(payload: dict) -> str:
 
 
 def _authorize_bridge(x_api_key: str | None) -> None:
-    if BRIDGE_API_KEY and (x_api_key or "").strip() != BRIDGE_API_KEY:
+    if (x_api_key or "").strip() != BRIDGE_API_KEY:
         raise HTTPException(status_code=401, detail="Invalid bridge API key")
 
 
@@ -74,6 +115,35 @@ def _cleanup_expired() -> None:
     expired = [auth_id for auth_id, item in _auth_store.items() if item["expires_at"] <= now]
     for auth_id in expired:
         _auth_store.pop(auth_id, None)
+
+
+def _cleanup_rate_bucket(bucket: dict[str, list[datetime]], now: datetime, window_seconds: float) -> None:
+    border = now - timedelta(seconds=max(1.0, window_seconds))
+    stale_keys = []
+    for key, times in bucket.items():
+        keep = [ts for ts in times if ts > border]
+        if keep:
+            bucket[key] = keep
+        else:
+            stale_keys.append(key)
+    for key in stale_keys:
+        bucket.pop(key, None)
+
+
+def _assert_rate_limit(
+    *,
+    bucket: dict[str, list[datetime]],
+    key: str,
+    limit: int,
+    window_seconds: float,
+    detail: str,
+) -> None:
+    now = _utc_now()
+    _cleanup_rate_bucket(bucket, now, window_seconds)
+    values = bucket.setdefault(key, [])
+    if len(values) >= max(1, limit):
+        raise HTTPException(status_code=429, detail=detail)
+    values.append(now)
 
 
 @app.get("/health")
@@ -85,6 +155,14 @@ async def health():
 async def request_code(payload: RequestCodePayload, x_api_key: str | None = Header(default=None, alias="X-API-Key")):
     _authorize_bridge(x_api_key)
     normalized_phone = _normalize_phone(payload.phone_number)
+    with _auth_store_lock:
+        _assert_rate_limit(
+            bucket=_request_rate,
+            key=_rate_limit_key("request", normalized_phone),
+            limit=REQUESTS_PER_PHONE_LIMIT,
+            window_seconds=REQUESTS_PER_PHONE_WINDOW_SECONDS,
+            detail="Слишком много запросов кода для этого номера. Попробуйте позже.",
+        )
     verification_code = "".join(secrets.choice("0123456789") for _ in range(6))
     auth_id = f"wauth_{secrets.token_urlsafe(18)}"
     now = _utc_now()
@@ -119,6 +197,13 @@ async def verify_code(payload: VerifyCodePayload, x_api_key: str | None = Header
     auth_id = payload.auth_id.strip()
 
     with _auth_store_lock:
+        _assert_rate_limit(
+            bucket=_verify_rate,
+            key=_rate_limit_key("verify", normalized_phone),
+            limit=VERIFY_PER_PHONE_LIMIT,
+            window_seconds=VERIFY_PER_PHONE_WINDOW_SECONDS,
+            detail="Слишком много попыток подтверждения. Попробуйте позже.",
+        )
         _cleanup_expired()
         pending = _auth_store.get(auth_id)
         if not pending:

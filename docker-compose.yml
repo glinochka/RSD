@@ -54,7 +54,7 @@ services:
             postgres:
                 condition: service_healthy
             wa_bridge:
-                condition: service_started
+                condition: service_healthy
             
         networks:
             - rsd_network
@@ -119,14 +119,23 @@ services:
     wa_bridge:
         build: ./wa_bridge
         container_name: rsd_wa_bridge
+        restart: unless-stopped
         environment:
+            WA_USERBOT_ENV: ${WA_USERBOT_ENV:-production}
             WA_USERBOT_BRIDGE_API_KEY: ${WHATSAPP_USERBOT_BRIDGE_API_KEY:-}
             WA_USERBOT_AUTH_TTL_SECONDS: ${WA_USERBOT_AUTH_TTL_SECONDS:-600}
             WA_USERBOT_AUTH_MAX_ATTEMPTS: ${WA_USERBOT_AUTH_MAX_ATTEMPTS:-5}
-            WA_USERBOT_SESSION_SECRET: ${WA_USERBOT_SESSION_SECRET:-dev-wa-bridge-secret}
-            WA_USERBOT_DEV_EXPOSE_CODE: ${WA_USERBOT_DEV_EXPOSE_CODE:-true}
-        ports:
-            - "8090:8090"
+            WA_USERBOT_REQUEST_WINDOW_SECONDS: ${WA_USERBOT_REQUEST_WINDOW_SECONDS:-60}
+            WA_USERBOT_REQUESTS_PER_PHONE_LIMIT: ${WA_USERBOT_REQUESTS_PER_PHONE_LIMIT:-5}
+            WA_USERBOT_VERIFY_WINDOW_SECONDS: ${WA_USERBOT_VERIFY_WINDOW_SECONDS:-60}
+            WA_USERBOT_VERIFY_PER_PHONE_LIMIT: ${WA_USERBOT_VERIFY_PER_PHONE_LIMIT:-10}
+            WA_USERBOT_SESSION_SECRET: ${WA_USERBOT_SESSION_SECRET:-}
+            WA_USERBOT_DEV_EXPOSE_CODE: ${WA_USERBOT_DEV_EXPOSE_CODE:-false}
+        healthcheck:
+            test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=3)"]
+            interval: 10s
+            timeout: 5s
+            retries: 5
         networks:
             - rsd_network
 
