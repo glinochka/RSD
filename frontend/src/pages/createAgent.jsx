@@ -42,6 +42,7 @@ const CreateAgentContent = () => {
   const [isVerifyingWhatsappUserbotCode, setIsVerifyingWhatsappUserbotCode] = useState(false);
   const [isWhatsappUserbotVerified, setIsWhatsappUserbotVerified] = useState(false);
   const [verifiedWhatsappUserbotLabel, setVerifiedWhatsappUserbotLabel] = useState('');
+  const [whatsappUserbotPairingCode, setWhatsappUserbotPairingCode] = useState('');
 
   const isEditMode = !!agentId;
 
@@ -351,6 +352,7 @@ const CreateAgentContent = () => {
     setWhatsappUserbotMode(mode);
     setWhatsappUserbotAuthToken('');
     setWhatsappUserbotVerifyCode('');
+    setWhatsappUserbotPairingCode('');
     setIsWhatsappUserbotVerified(false);
     setVerifiedWhatsappUserbotLabel('');
     form.setFieldValue('whatsapp_userbot_session_string', '');
@@ -368,10 +370,12 @@ const CreateAgentContent = () => {
         phone_number: form.values.whatsapp_userbot_phone_number.trim(),
       });
       setWhatsappUserbotAuthToken(response.auth_token);
+      setWhatsappUserbotPairingCode(response.pairing_code || '');
+      setWhatsappUserbotVerifyCode(response.pairing_code || '');
       setIsWhatsappUserbotVerified(false);
       setVerifiedWhatsappUserbotLabel('');
       form.setFieldValue('whatsapp_userbot_session_string', '');
-      showSuccess(response.hint || 'Код подтверждения WhatsApp запрошен');
+      showSuccess(response.hint || 'Pairing-код получен. Введите его в WhatsApp на телефоне, затем нажмите «Подтвердить код».');
     } catch (error) {
       showError(error.message || 'Не удалось запросить код WhatsApp');
     } finally {
@@ -773,8 +777,21 @@ const CreateAgentContent = () => {
                       </button>
                     </div>
 
+                    {whatsappUserbotPairingCode ? (
+                      <div className="help-text" style={{ marginTop: 'var(--spacing-base)' }}>
+                        <p>
+                          <strong>Pairing-код:</strong>{' '}
+                          <code style={{ fontSize: '1.1em', letterSpacing: '0.05em' }}>{whatsappUserbotPairingCode}</code>
+                        </p>
+                        <p>
+                          На телефоне откройте WhatsApp → Настройки → Связанные устройства → Привязать устройство и введите
+                          этот код. После подтверждения в WhatsApp нажмите «Подтвердить код» ниже (тот же код).
+                        </p>
+                      </div>
+                    ) : null}
+
                     <label htmlFor="whatsapp_userbot_verify_code" className="mt-input">
-                      Код подтверждения WhatsApp:
+                      Тот же pairing-код для подтверждения на сайте:
                     </label>
                     <input
                       id="whatsapp_userbot_verify_code"

@@ -141,6 +141,7 @@ const AgentsPageContent = () => {
   const [whatsappUserbotMode, setWhatsappUserbotMode] = useState('simple');
   const [whatsappUserbotAuthToken, setWhatsappUserbotAuthToken] = useState('');
   const [whatsappUserbotVerifyCode, setWhatsappUserbotVerifyCode] = useState('');
+  const [whatsappUserbotPairingCode, setWhatsappUserbotPairingCode] = useState('');
   const [isSendingWhatsappUserbotCode, setIsSendingWhatsappUserbotCode] = useState(false);
   const [isVerifyingWhatsappUserbotCode, setIsVerifyingWhatsappUserbotCode] = useState(false);
   const [isWhatsappUserbotVerified, setIsWhatsappUserbotVerified] = useState(false);
@@ -479,6 +480,7 @@ const AgentsPageContent = () => {
     setWhatsappUserbotMode('simple');
     setWhatsappUserbotAuthToken('');
     setWhatsappUserbotVerifyCode('');
+    setWhatsappUserbotPairingCode('');
     setIsSendingWhatsappUserbotCode(false);
     setIsVerifyingWhatsappUserbotCode(false);
     setIsWhatsappUserbotVerified(false);
@@ -716,6 +718,7 @@ const AgentsPageContent = () => {
     setWhatsappUserbotMode(mode);
     setWhatsappUserbotAuthToken('');
     setWhatsappUserbotVerifyCode('');
+    setWhatsappUserbotPairingCode('');
     setWhatsappUserbotSessionString('');
     setIsWhatsappUserbotVerified(false);
   };
@@ -731,9 +734,14 @@ const AgentsPageContent = () => {
         phone_number: whatsappUserbotPhone.trim(),
       });
       setWhatsappUserbotAuthToken(response?.auth_token || '');
+      setWhatsappUserbotPairingCode(response?.pairing_code || '');
+      setWhatsappUserbotVerifyCode(response?.pairing_code || '');
       setWhatsappUserbotSessionString('');
       setIsWhatsappUserbotVerified(false);
-      showSuccess(response?.hint || 'Код подтверждения WhatsApp запрошен');
+      showSuccess(
+        response?.hint ||
+          'Pairing-код получен. Введите его в WhatsApp на телефоне, затем нажмите «Подтвердить код».'
+      );
     } catch (error) {
       showError(error?.message || 'Не удалось запросить код WhatsApp');
     } finally {
@@ -1219,10 +1227,21 @@ const AgentsPageContent = () => {
                         >
                           {isSendingWhatsappUserbotCode ? 'Отправка...' : 'Запросить код'}
                         </button>
+                        {whatsappUserbotPairingCode ? (
+                          <p className="help-text">
+                            <strong>Pairing-код:</strong>{' '}
+                            <code style={{ fontSize: '1.05em', letterSpacing: '0.05em' }}>
+                              {whatsappUserbotPairingCode}
+                            </code>
+                            <br />
+                            На телефоне: WhatsApp → Настройки → Связанные устройства → Привязать устройство — введите этот
+                            код. Затем нажмите «Подтвердить код» (тот же код).
+                          </p>
+                        ) : null}
                         <input
                           type="text"
                           className="input-main"
-                          placeholder="Код подтверждения WhatsApp"
+                          placeholder="Тот же pairing-код для подтверждения на сайте"
                           value={whatsappUserbotVerifyCode}
                           onChange={(event) => setWhatsappUserbotVerifyCode(event.target.value)}
                           disabled={isSavingChannel}

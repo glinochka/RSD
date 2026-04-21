@@ -1358,6 +1358,7 @@ async def request_whatsapp_userbot_code(
             "phone_number": phone_number,
             "delivery": result.get("delivery"),
             "hint": result.get("hint"),
+            "pairing_code": result.get("pairing_code"),
         },
         status_code=status.HTTP_200_OK,
     )
