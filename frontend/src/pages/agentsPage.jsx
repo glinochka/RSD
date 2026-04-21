@@ -24,6 +24,7 @@ const channelLabel = (channel) => {
   if (!channel) return 'Канал';
   if (channel.provider === 'telegram_bot') return 'Telegram бот';
   if (channel.provider === 'telegram_userbot') return 'Telegram userbot';
+  if (channel.provider === 'whatsapp_userbot') return 'WhatsApp userbot';
   if (channel.provider === 'whatsapp_business_api') return 'WhatsApp Business API';
   return channel.provider || 'Канал';
 };
@@ -134,6 +135,9 @@ const AgentsPageContent = () => {
   const [userbotSessionString, setUserbotSessionString] = useState('');
   const [isSendingUserbotCode, setIsSendingUserbotCode] = useState(false);
   const [isVerifyingUserbotCode, setIsVerifyingUserbotCode] = useState(false);
+  const [whatsappUserbotPhone, setWhatsappUserbotPhone] = useState('');
+  const [whatsappUserbotSessionString, setWhatsappUserbotSessionString] = useState('');
+  const [whatsappUserbotClientLabel, setWhatsappUserbotClientLabel] = useState('');
   const [whatsappPhoneNumberId, setWhatsappPhoneNumberId] = useState('');
   const [whatsappAccessToken, setWhatsappAccessToken] = useState('');
   const [whatsappBusinessAccountId, setWhatsappBusinessAccountId] = useState('');
@@ -463,6 +467,9 @@ const AgentsPageContent = () => {
     setUserbotSessionString('');
     setIsSendingUserbotCode(false);
     setIsVerifyingUserbotCode(false);
+    setWhatsappUserbotPhone('');
+    setWhatsappUserbotSessionString('');
+    setWhatsappUserbotClientLabel('');
     setWhatsappPhoneNumberId('');
     setWhatsappAccessToken('');
     setWhatsappBusinessAccountId('');
@@ -651,6 +658,38 @@ const AgentsPageContent = () => {
       resetChannelModalFields();
     } catch (error) {
       showError(error?.message || 'Ошибка при подключении WhatsApp Business API');
+    } finally {
+      setIsSavingChannel(false);
+    }
+  };
+
+  const handleAddWhatsAppUserbotChannel = async () => {
+    if (!selectedBotId) return;
+    if (!whatsappUserbotPhone.trim()) {
+      showError('Введите номер WhatsApp userbot');
+      return;
+    }
+    if (!whatsappUserbotSessionString.trim()) {
+      showError('Введите session string WhatsApp userbot');
+      return;
+    }
+    setIsSavingChannel(true);
+    try {
+      const res = await agentService.addWhatsAppUserbotChannel({
+        agent_id: selectedBotId,
+        phone_number: whatsappUserbotPhone.trim(),
+        session_string: whatsappUserbotSessionString.trim(),
+        client_label: whatsappUserbotClientLabel.trim() || undefined,
+        make_primary: makePrimaryChannel,
+      });
+      const list = res?.channels || [];
+      setChannels(list);
+      setSelectedAgent((prev) => (prev ? { ...prev, channels: list } : prev));
+      showSuccess('WhatsApp userbot канал подключен');
+      await loadAgentDetails(selectedBotId);
+      resetChannelModalFields();
+    } catch (error) {
+      showError(error?.message || 'Ошибка при подключении WhatsApp userbot');
     } finally {
       setIsSavingChannel(false);
     }
@@ -945,6 +984,14 @@ const AgentsPageContent = () => {
                   </button>
                   <button
                     type="button"
+                    className={`connection-type-card ${channelModalTab === 'whatsapp_userbot' ? 'active' : ''}`}
+                    onClick={() => setChannelModalTab('whatsapp_userbot')}
+                    disabled={isSavingChannel}
+                  >
+                    WhatsApp userbot
+                  </button>
+                  <button
+                    type="button"
                     className={`connection-type-card ${channelModalTab === 'whatsapp' ? 'active' : ''}`}
                     onClick={() => setChannelModalTab('whatsapp')}
                     disabled={isSavingChannel}
@@ -1055,6 +1102,50 @@ const AgentsPageContent = () => {
                       disabled={isSavingChannel}
                     >
                       {isSavingChannel ? 'Сохранение...' : 'Подключить Telegram userbot'}
+                    </button>
+                  </div>
+                ) : channelModalTab === 'whatsapp_userbot' ? (
+                  <div className="agent-management-block">
+                    <input
+                      type="text"
+                      className="input-main"
+                      placeholder="Номер WhatsApp userbot (+79990001122)"
+                      value={whatsappUserbotPhone}
+                      onChange={(event) => setWhatsappUserbotPhone(event.target.value)}
+                      disabled={isSavingChannel}
+                    />
+                    <textarea
+                      className="input-main textarea"
+                      rows={4}
+                      placeholder="Session string WhatsApp userbot"
+                      value={whatsappUserbotSessionString}
+                      onChange={(event) => setWhatsappUserbotSessionString(event.target.value)}
+                      disabled={isSavingChannel}
+                    />
+                    <input
+                      type="text"
+                      className="input-main"
+                      placeholder="Название клиента (опционально)"
+                      value={whatsappUserbotClientLabel}
+                      onChange={(event) => setWhatsappUserbotClientLabel(event.target.value)}
+                      disabled={isSavingChannel}
+                    />
+                    <label className="channel-primary-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={makePrimaryChannel}
+                        onChange={(event) => setMakePrimaryChannel(event.target.checked)}
+                        disabled={isSavingChannel}
+                      />
+                      Сделать канал основным
+                    </label>
+                    <button
+                      type="button"
+                      className="btn btn-black"
+                      onClick={handleAddWhatsAppUserbotChannel}
+                      disabled={isSavingChannel}
+                    >
+                      {isSavingChannel ? 'Сохранение...' : 'Подключить WhatsApp userbot'}
                     </button>
                   </div>
                 ) : (

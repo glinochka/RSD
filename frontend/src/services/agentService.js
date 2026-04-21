@@ -76,6 +76,11 @@ export const agentService = {
     return response.data;
   },
 
+  addWhatsAppUserbotChannel: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_CHANNELS_ADD_WHATSAPP_USERBOT, data);
+    return response.data;
+  },
+
   addWhatsAppBusinessApiChannel: async (data) => {
     const response = await apiClient.post(API_ROUTES.AGENTS_CHANNELS_ADD_WHATSAPP_BUSINESS_API, data);
     return response.data;

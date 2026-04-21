@@ -115,6 +115,28 @@ class AddWhatsAppBusinessApiChannel(AgentLookup):
     make_primary: bool = Field(default=False, description="Сделать канал основным")
 
 
+class AddWhatsAppUserbotChannel(AgentLookup):
+    phone_number: str = Field(
+        ...,
+        min_length=5,
+        max_length=32,
+        description="Номер WhatsApp аккаунта в международном формате",
+    )
+    session_string: str = Field(
+        ...,
+        min_length=10,
+        max_length=65535,
+        description="Сериализованная сессия WhatsApp userbot",
+    )
+    client_label: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        description="Опциональное имя клиента/устройства",
+    )
+    make_primary: bool = Field(default=False, description="Сделать канал основным")
+
+
 class DeleteAgentChannel(AgentLookup):
     connection_id: int = Field(..., gt=0, description="Id подключения канала")
 

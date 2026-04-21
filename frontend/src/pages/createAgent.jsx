@@ -28,6 +28,7 @@ const CreateAgentContent = () => {
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [useBotChannel, setUseBotChannel] = useState(true);
   const [useUserbotChannel, setUseUserbotChannel] = useState(false);
+  const [useWhatsAppUserbotChannel, setUseWhatsAppUserbotChannel] = useState(false);
   const [useWhatsAppBusinessApiChannel, setUseWhatsAppBusinessApiChannel] = useState(false);
   const [userbotAuthToken, setUserbotAuthToken] = useState('');
   const [isSendingCode, setIsSendingCode] = useState(false);
@@ -55,6 +56,9 @@ const CreateAgentContent = () => {
       verify_code: '',
       password_2fa: '',
       session_string: '',
+      whatsapp_userbot_phone_number: '',
+      whatsapp_userbot_session_string: '',
+      whatsapp_userbot_client_label: '',
       whatsapp_phone_number_id: '',
       whatsapp_access_token: '',
       whatsapp_business_account_id: '',
@@ -75,9 +79,10 @@ const CreateAgentContent = () => {
 
         const isBotMode = useBotChannel;
         const isUserbotMode = useUserbotChannel;
+        const isWhatsAppUserbotMode = useWhatsAppUserbotChannel;
         const isWhatsAppBusinessApiMode = useWhatsAppBusinessApiChannel;
 
-        if (!isBotMode && !isUserbotMode && !isWhatsAppBusinessApiMode) {
+        if (!isBotMode && !isUserbotMode && !isWhatsAppUserbotMode && !isWhatsAppBusinessApiMode) {
           showError('Выберите хотя бы один способ подключения');
           return;
         }
@@ -102,6 +107,14 @@ const CreateAgentContent = () => {
           form.setFieldError('verify_code', 'Сначала подтвердите код и сохраните userbot-сессию');
           return;
         }
+        if (isWhatsAppUserbotMode && !values.whatsapp_userbot_phone_number?.trim()) {
+          form.setFieldError('whatsapp_userbot_phone_number', 'Номер WhatsApp обязателен');
+          return;
+        }
+        if (isWhatsAppUserbotMode && !values.whatsapp_userbot_session_string?.trim()) {
+          form.setFieldError('whatsapp_userbot_session_string', 'Session string WhatsApp userbot обязателен');
+          return;
+        }
         if (isWhatsAppBusinessApiMode && !values.whatsapp_phone_number_id?.trim()) {
           form.setFieldError('whatsapp_phone_number_id', 'Phone Number ID обязателен');
           return;
@@ -124,7 +137,9 @@ const CreateAgentContent = () => {
           ? 'telegram_bot'
           : isUserbotMode
             ? 'telegram_userbot'
-            : 'whatsapp_business_api';
+            : isWhatsAppUserbotMode
+              ? 'whatsapp_userbot'
+              : 'whatsapp_business_api';
 
         if (isBotMode) {
           await agentService.addBotChannel({
@@ -140,6 +155,15 @@ const CreateAgentContent = () => {
             api_hash: values.api_hash.trim(),
             session_string: values.session_string.trim(),
             make_primary: primaryProvider === 'telegram_userbot',
+          });
+        }
+        if (isWhatsAppUserbotMode) {
+          await agentService.addWhatsAppUserbotChannel({
+            agent_id: agentId,
+            phone_number: values.whatsapp_userbot_phone_number.trim(),
+            session_string: values.whatsapp_userbot_session_string.trim(),
+            client_label: values.whatsapp_userbot_client_label?.trim() || undefined,
+            make_primary: primaryProvider === 'whatsapp_userbot',
           });
         }
         if (isWhatsAppBusinessApiMode) {
@@ -215,6 +239,20 @@ const CreateAgentContent = () => {
         form.setFieldValue('whatsapp_verify_token', '');
         form.setFieldError('whatsapp_phone_number_id', undefined);
         form.setFieldError('whatsapp_access_token', undefined);
+      }
+      return next;
+    });
+  };
+
+  const toggleWhatsAppUserbotChannel = () => {
+    setUseWhatsAppUserbotChannel((prev) => {
+      const next = !prev;
+      if (!next) {
+        form.setFieldValue('whatsapp_userbot_phone_number', '');
+        form.setFieldValue('whatsapp_userbot_session_string', '');
+        form.setFieldValue('whatsapp_userbot_client_label', '');
+        form.setFieldError('whatsapp_userbot_phone_number', undefined);
+        form.setFieldError('whatsapp_userbot_session_string', undefined);
       }
       return next;
     });
@@ -389,6 +427,14 @@ const CreateAgentContent = () => {
                   disabled={form.isSubmitting}
                 >
                   Telegram юзербот
+                </button>
+                <button
+                  type="button"
+                  className={`connection-type-card ${useWhatsAppUserbotChannel ? 'active' : ''}`}
+                  onClick={toggleWhatsAppUserbotChannel}
+                  disabled={form.isSubmitting}
+                >
+                  WhatsApp userbot
                 </button>
                 <button
                   type="button"
@@ -587,6 +633,60 @@ const CreateAgentContent = () => {
 
                 <p className="help-text">
                   Данные сохраняются как канал агента и используются для интеграции WhatsApp Business API.
+                </p>
+              </div>
+            )}
+
+            {useWhatsAppUserbotChannel && (
+              <div className="form-group">
+                <label htmlFor="whatsapp_userbot_phone_number">Номер WhatsApp userbot:</label>
+                <input
+                  id="whatsapp_userbot_phone_number"
+                  type="text"
+                  name="whatsapp_userbot_phone_number"
+                  placeholder="+79990001122"
+                  className={`input-main ${form.errors.whatsapp_userbot_phone_number ? 'error' : ''}`}
+                  value={form.values.whatsapp_userbot_phone_number}
+                  onChange={form.handleChange}
+                  disabled={form.isSubmitting}
+                />
+                {form.errors.whatsapp_userbot_phone_number && (
+                  <span className="error-message">{form.errors.whatsapp_userbot_phone_number}</span>
+                )}
+
+                <label htmlFor="whatsapp_userbot_session_string" className="mt-input">
+                  Session string WhatsApp userbot:
+                </label>
+                <textarea
+                  id="whatsapp_userbot_session_string"
+                  name="whatsapp_userbot_session_string"
+                  placeholder="Вставьте сериализованную сессию userbot"
+                  className={`input-main textarea ${form.errors.whatsapp_userbot_session_string ? 'error' : ''}`}
+                  value={form.values.whatsapp_userbot_session_string}
+                  onChange={form.handleChange}
+                  disabled={form.isSubmitting}
+                  rows="4"
+                ></textarea>
+                {form.errors.whatsapp_userbot_session_string && (
+                  <span className="error-message">{form.errors.whatsapp_userbot_session_string}</span>
+                )}
+
+                <label htmlFor="whatsapp_userbot_client_label" className="mt-input">
+                  Название клиента (опционально):
+                </label>
+                <input
+                  id="whatsapp_userbot_client_label"
+                  type="text"
+                  name="whatsapp_userbot_client_label"
+                  placeholder="Например: WA MultiDevice Session #1"
+                  className="input-main"
+                  value={form.values.whatsapp_userbot_client_label}
+                  onChange={form.handleChange}
+                  disabled={form.isSubmitting}
+                />
+
+                <p className="help-text">
+                  Используйте только свою userbot-сессию. Это не официальный канал Meta.
                 </p>
               </div>
             )}

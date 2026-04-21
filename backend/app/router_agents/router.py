@@ -1583,6 +1583,99 @@ async def add_agent_whatsapp_business_api_channel(
             )
 
 
+@router.post("/channels/by_whatsapp_userbot")
+async def add_agent_whatsapp_userbot_channel(
+    payload: AddWhatsAppUserbotChannel,
+    current_user=Depends(get_current_user_required),
+):
+    normalized_phone = payload.phone_number.strip()
+    session_string = payload.session_string.strip()
+    client_label = payload.client_label.strip() if payload.client_label else None
+    if len([ch for ch in normalized_phone if ch.isdigit()]) < 5:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Некорректный номер WhatsApp userbot",
+        )
+
+    encrypted_bundle = encrypt_token(
+        json.dumps(
+            {
+                "phone_number": normalized_phone,
+                "session_string": session_string,
+                "client_label": client_label,
+            },
+            ensure_ascii=False,
+        )
+    )
+
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        channel_connection_dao = AgentChannelConnectionDAO(session)
+        async with session.begin():
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
+                current_user=current_user,
+                internal=False,
+            )
+            existing_whatsapp_userbot_channel = await session.scalar(
+                select(AgentChannelConnection).where(
+                    AgentChannelConnection.agent_id == agent.id,
+                    AgentChannelConnection.provider == "whatsapp_userbot",
+                    AgentChannelConnection.connection_type == "userbot",
+                )
+            )
+            if existing_whatsapp_userbot_channel:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="У агента уже подключен WhatsApp userbot-канал",
+                )
+            duplicate_connection = await channel_connection_dao.find_one_by_filter(
+                provider="whatsapp_userbot",
+                external_id=normalized_phone,
+            )
+            if duplicate_connection:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Этот WhatsApp userbot уже подключен к другому агенту",
+                )
+
+            now = datetime.utcnow()
+            created_connection = await channel_connection_dao.add(
+                {
+                    "agent_id": agent.id,
+                    "provider": "whatsapp_userbot",
+                    "connection_type": "userbot",
+                    "external_id": normalized_phone,
+                    "encrypted_credentials": encrypted_bundle,
+                    "is_primary": bool(payload.make_primary),
+                    "is_active": True,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            )
+            await session.flush()
+            if payload.make_primary:
+                await _set_primary_channel(
+                    session=session,
+                    agent_id=agent.id,
+                    connection_id=created_connection.id,
+                )
+            await _sync_agent_primary_fields(agent=agent, agent_dao=agent_dao, session=session)
+            channels = await _list_agent_channels(session, agent.id)
+            return JSONResponse(
+                content={
+                    "agent_id": agent.id,
+                    "bot_id": agent.bot_id,
+                    "channels": [_serialize_channel_connection(item) for item in channels],
+                },
+                status_code=status.HTTP_201_CREATED,
+            )
+
+
 @router.delete("/channels")
 async def delete_agent_channel(
     payload: DeleteAgentChannel = Depends(),
