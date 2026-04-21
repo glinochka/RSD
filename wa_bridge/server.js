@@ -437,9 +437,15 @@ async function connectRuntimeSession(connectionId, sessionString) {
     for (const item of items) {
       const remoteJid = String(item?.key?.remoteJid || '').trim();
       if (!remoteJid) continue;
+      const remoteJidAltRaw = item?.key?.remoteJidAlt;
+      const remoteJidAlt =
+        remoteJidAltRaw !== undefined && remoteJidAltRaw !== null
+          ? String(remoteJidAltRaw).trim()
+          : '';
       runtime.queue.push({
         id: item?.key?.id || null,
         remote_jid: remoteJid,
+        remote_jid_alt: remoteJidAlt || null,
         from_me: Boolean(item?.key?.fromMe),
         push_name: item?.pushName || null,
         message_timestamp: item?.messageTimestamp || null,
@@ -614,6 +620,20 @@ app.post('/session/pull', enforceApiKey, async (req, res) => {
   }
 });
 
+async function resolveOutgoingJid(sock, toJid) {
+  const raw = String(toJid || '').trim();
+  if (!raw) return raw;
+  try {
+    const [result] = await sock.onWhatsApp(raw);
+    if (result && result.exists && result.jid) {
+      return String(result.jid);
+    }
+  } catch (err) {
+    logger.warn({ err, toJid: raw }, 'resolveOutgoingJid: onWhatsApp failed');
+  }
+  return raw;
+}
+
 app.post('/session/send', enforceApiKey, async (req, res) => {
   try {
     const connectionId = String(req.body?.connection_id || '').trim();
@@ -626,7 +646,8 @@ app.post('/session/send', enforceApiKey, async (req, res) => {
     if (!runtime?.sock) {
       return res.status(404).json({ detail: 'Runtime session not found' });
     }
-    await runtime.sock.sendMessage(toJid, { text });
+    const resolved = await resolveOutgoingJid(runtime.sock, toJid);
+    await runtime.sock.sendMessage(resolved, { text });
     return res.status(200).json({ status: 'ok' });
   } catch (error) {
     logger.error({ err: error }, 'session/send failed');

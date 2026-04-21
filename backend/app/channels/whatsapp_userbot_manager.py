@@ -6,46 +6,23 @@ import json
 import logging
 from typing import Any
 
-import httpx
 from sqlalchemy import select
 
 from ..alembic.database import async_session_maker
 from ..alembic.models import Agent, AgentChannelConnection
 from ..config import settings
 from ..utils.crypto import decrypt_token
+from ..utils.wa_bridge_client import wa_bridge_post
 from .message_processor import Channel, MessageRequest, get_message_processor
 
 logger = logging.getLogger(__name__)
 
 
-def _bridge_headers() -> dict[str, str]:
-    api_key = (settings.WHATSAPP_USERBOT_BRIDGE_API_KEY or "").strip()
-    if not api_key:
-        raise RuntimeError("WHATSAPP_USERBOT_BRIDGE_API_KEY is not configured")
-    return {"X-API-Key": api_key}
-
-
-def _bridge_base_url() -> str:
-    base = (settings.WHATSAPP_USERBOT_BRIDGE_URL or "").strip().rstrip("/")
-    if not base:
-        raise RuntimeError("WHATSAPP_USERBOT_BRIDGE_URL is not configured")
-    return base
-
-
 async def _bridge_post(path: str, payload: dict[str, Any]) -> dict[str, Any]:
-    url = f"{_bridge_base_url()}/{path.lstrip('/')}"
-    timeout = httpx.Timeout(
-        float(settings.WHATSAPP_USERBOT_BRIDGE_TIMEOUT_SECONDS),
-        connect=min(20.0, float(settings.WHATSAPP_USERBOT_BRIDGE_TIMEOUT_SECONDS)),
-    )
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.post(url, json=payload, headers=_bridge_headers())
-    if not response.is_success:
-        raise RuntimeError(f"wa_bridge {path} failed: HTTP {response.status_code} {response.text[:300]}")
-    data = response.json()
-    if not isinstance(data, dict):
-        raise RuntimeError(f"wa_bridge {path} returned unexpected payload")
-    return data
+    try:
+        return await wa_bridge_post(path, payload)
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from exc
 
 
 async def _fetch_whatsapp_configs() -> list[dict[str, Any]]:
@@ -102,21 +79,18 @@ def _extract_text(message: dict[str, Any]) -> str:
     return str(text).strip()
 
 
-def _user_external_id_for_whatsapp_analytics(remote_jid: str) -> str:
-    """Полный JID как во входящем сообщении Baileys (…@s.whatsapp.net или …@lid и т.д.).
-
-    Раньше сохранялась только локальная часть до «@» — при @lid или смене PN/LID
-    ответы с дашборда уходили на неверный JID (в мессенджере не появлялись).
-    """
-    jid = str(remote_jid or "").strip()
-    if len(jid) > 128:
-        return jid[:128]
-    return jid
+def _user_external_id_for_whatsapp_analytics(jid: str) -> str:
+    """JID для аналитики: предпочтительно тот же, что уходит в session/send (полная строка, ≤128)."""
+    out = str(jid or "").strip()
+    if len(out) > 128:
+        return out[:128]
+    return out
 
 
 async def _process_incoming(cfg: dict[str, Any], incoming: dict[str, Any]) -> None:
     remote_jid = str(incoming.get("remote_jid") or "").strip()
-    if not remote_jid:
+    remote_jid_alt = str(incoming.get("remote_jid_alt") or "").strip()
+    if not remote_jid and not remote_jid_alt:
         return
 
     if str(incoming.get("from_me") or "").lower() == "true":
@@ -126,11 +100,16 @@ async def _process_incoming(cfg: dict[str, Any], incoming: dict[str, Any]) -> No
     if not text:
         return
 
+    # PN в remoteJidAlt при входящем @lid — иначе ответ уходит не в тот «тред» в клиенте WhatsApp.
+    canonical_jid = (remote_jid_alt or remote_jid).strip()
+    if not canonical_jid:
+        return
+
     bot_id = int(cfg["bot_id"])
     request = MessageRequest(
         bot_id=bot_id,
         query=text,
-        user_external_id=_user_external_id_for_whatsapp_analytics(remote_jid),
+        user_external_id=_user_external_id_for_whatsapp_analytics(canonical_jid),
         channel=Channel.WHATSAPP_USERBOT,
         system_prompt=cfg.get("system_prompt") or "",
         welcome_message=cfg.get("welcome_message"),
@@ -142,7 +121,7 @@ async def _process_incoming(cfg: dict[str, Any], incoming: dict[str, Any]) -> No
         "session/send",
         {
             "connection_id": cfg["connection_id"],
-            "to_jid": remote_jid,
+            "to_jid": canonical_jid,
             "text": response.text,
         },
     )

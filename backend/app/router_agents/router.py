@@ -596,57 +596,21 @@ def _decode_whatsapp_userbot_auth_token(auth_token: str) -> dict:
 
 
 async def _wa_userbot_bridge_post(path: str, payload: dict) -> dict:
-    base = (settings.WHATSAPP_USERBOT_BRIDGE_URL or "").strip().rstrip("/")
-    if not base:
+    """Тот же транспорт, что и у WhatsAppUserbotManager (httpx), без urllib."""
+    from ..utils.wa_bridge_client import wa_bridge_post
+
+    try:
+        return await wa_bridge_post(path, payload)
+    except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="WhatsApp userbot bridge не настроен на сервере",
-        )
-
-    url = f"{base}/{path.lstrip('/')}"
-    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    headers = {
-        "Content-Type": "application/json; charset=utf-8",
-        "Accept": "application/json",
-    }
-    bridge_api_key = (settings.WHATSAPP_USERBOT_BRIDGE_API_KEY or "").strip()
-    if not bridge_api_key:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="WhatsApp userbot bridge API key не настроен на сервере",
-        )
-    headers["X-API-Key"] = bridge_api_key
-    request = Request(url, data=body, headers=headers, method="POST")
-
-    def _post():
-        from urllib.error import HTTPError, URLError
-
-        try:
-            with urlopen(request, timeout=float(settings.WHATSAPP_USERBOT_BRIDGE_TIMEOUT_SECONDS)) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-        except HTTPError as exc:
-            detail = ""
-            try:
-                detail = exc.read().decode("utf-8")
-            except Exception:
-                detail = str(exc)
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"WhatsApp userbot bridge HTTP {exc.code}: {detail}",
-            ) from exc
-        except URLError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"WhatsApp userbot bridge transport error: {exc}",
-            ) from exc
-
-    result = await asyncio.get_running_loop().run_in_executor(None, _post)
-    if not isinstance(result, dict):
+            detail=str(exc),
+        ) from exc
+    except RuntimeError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="WhatsApp userbot bridge вернул неожиданный ответ",
-        )
-    return result
+            detail=str(exc),
+        ) from exc
 
 
 def _validate_whatsapp_session_string(
