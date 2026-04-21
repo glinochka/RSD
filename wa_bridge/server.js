@@ -8,6 +8,8 @@ const {
   default: makeWASocket,
   useMultiFileAuthState,
   fetchLatestBaileysVersion,
+  DisconnectReason,
+  Browsers,
 } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 
@@ -24,9 +26,9 @@ const VERIFY_LIMIT = Number.parseInt(process.env.WA_USERBOT_VERIFY_PER_PHONE_LIM
 const DATA_DIR = process.env.WA_USERBOT_DATA_DIR || '/data/wa-auth';
 const HTTP_PORT = Number.parseInt(process.env.PORT || '8090', 10);
 const WA_BROWSER_SIGNATURE = [
-  String(process.env.WA_USERBOT_BROWSER_PLATFORM || 'Windows').trim() || 'Windows',
-  String(process.env.WA_USERBOT_BROWSER_NAME || 'Edge').trim() || 'Edge',
-  String(process.env.WA_USERBOT_BROWSER_VERSION || '127.0.0.0').trim() || '127.0.0.0',
+  String(process.env.WA_USERBOT_BROWSER_PLATFORM || 'Ubuntu').trim() || 'Ubuntu',
+  String(process.env.WA_USERBOT_BROWSER_NAME || 'Chrome').trim() || 'Chrome',
+  String(process.env.WA_USERBOT_BROWSER_VERSION || '122.0.0.0').trim() || '122.0.0.0',
 ];
 
 if (!BRIDGE_API_KEY) {
@@ -213,12 +215,8 @@ async function waitForQrCode(sock, timeoutMs = 45000) {
   });
 }
 
-async function createAuthSession(phoneNumber, authMethod = 'pairing_code') {
-  const authId = `wauth_${crypto.randomBytes(18).toString('base64url')}`;
-  const sessionDir = path.join(DATA_DIR, authId);
-  await fs.mkdir(sessionDir, { recursive: true });
-
-  const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
+async function createAuthSocket(session) {
+  const { state, saveCreds } = await useMultiFileAuthState(session.sessionDir);
   const versionInfo = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 0] }));
   const sock = makeWASocket({
     auth: state,
@@ -226,30 +224,46 @@ async function createAuthSession(phoneNumber, authMethod = 'pairing_code') {
     logger: pino({ level: 'silent' }),
     markOnlineOnConnect: false,
     printQRInTerminal: false,
-    browser: WA_BROWSER_SIGNATURE,
+    browser: WA_BROWSER_SIGNATURE[0] ? WA_BROWSER_SIGNATURE : Browsers.ubuntu('Chrome'),
   });
+  session.sock = sock;
 
-  const session = {
-    authId,
-    phoneNumber,
-    phoneDigits: phoneNumber.replace(/\D/g, ''),
-    sessionDir,
-    sock,
-    pairingCode: null,
-    qrCode: null,
-    qrDataUrl: null,
-    authMethod,
-    status: 'pending',
-    user: null,
-    attemptsLeft: AUTH_MAX_ATTEMPTS,
-    createdAt: nowMs(),
-    expiresAt: nowMs() + AUTH_TTL_SECONDS * 1000,
-    lastError: null,
+  const reconnectIfNeeded = async (statusCode) => {
+    if (session.reconnecting) return;
+    const reconnectable = new Set([
+      DisconnectReason.restartRequired,
+      DisconnectReason.connectionClosed,
+      DisconnectReason.connectionLost,
+      DisconnectReason.timedOut,
+      515,
+      408,
+      428,
+    ]);
+    if (!reconnectable.has(statusCode)) return;
+    if (session.expiresAt <= nowMs()) return;
+    if (sock.authState?.creds?.registered) return;
+    session.reconnecting = true;
+    session.status = 'reconnecting';
+    try {
+      try {
+        sock.end(new Error('reconnect required'));
+      } catch {
+        // ignore
+      }
+      const nextSock = await createAuthSocket(session);
+      if (session.authMethod === 'pairing_code') {
+        session.pairingCode = await waitForPairingCode(nextSock, session.phoneDigits);
+      }
+    } catch (error) {
+      session.status = 'failed';
+      session.lastError = `Reconnect failed: ${error?.message || error}`;
+    } finally {
+      session.reconnecting = false;
+    }
   };
-  authSessions.set(authId, session);
 
   sock.ev.on('creds.update', saveCreds);
-  sock.ev.on('connection.update', (update) => {
+  sock.ev.on('connection.update', async (update) => {
     if (session.authMethod === 'qr' && update.qr) {
       session.qrCode = String(update.qr);
       qrcode
@@ -270,13 +284,45 @@ async function createAuthSession(phoneNumber, authMethod = 'pairing_code') {
       session.user = sock.user || null;
     } else if (update.connection === 'close') {
       const statusCode = new Boom(update.lastDisconnect?.error)?.output?.statusCode;
-      if (statusCode && statusCode >= 400 && statusCode < 500) {
+      session.lastDisconnectCode = statusCode || null;
+      session.lastError = `WhatsApp disconnect (${statusCode || 'unknown'})`;
+      await reconnectIfNeeded(statusCode || 0);
+      if (!session.reconnecting) {
         session.status = 'failed';
-        session.lastError = `WhatsApp disconnect (${statusCode})`;
       }
     }
   });
 
+  return sock;
+}
+
+async function createAuthSession(phoneNumber, authMethod = 'pairing_code') {
+  const authId = `wauth_${crypto.randomBytes(18).toString('base64url')}`;
+  const sessionDir = path.join(DATA_DIR, authId);
+  await fs.mkdir(sessionDir, { recursive: true });
+
+  const session = {
+    authId,
+    phoneNumber,
+    phoneDigits: phoneNumber.replace(/\D/g, ''),
+    sessionDir,
+    sock: null,
+    pairingCode: null,
+    qrCode: null,
+    qrDataUrl: null,
+    authMethod,
+    status: 'pending',
+    user: null,
+    attemptsLeft: AUTH_MAX_ATTEMPTS,
+    createdAt: nowMs(),
+    expiresAt: nowMs() + AUTH_TTL_SECONDS * 1000,
+    lastError: null,
+    lastDisconnectCode: null,
+    reconnecting: false,
+  };
+  authSessions.set(authId, session);
+
+  const sock = await createAuthSocket(session);
   if (authMethod === 'qr') {
     session.qrCode = await waitForQrCode(sock);
     session.qrDataUrl = await qrcode.toDataURL(session.qrCode);
@@ -475,6 +521,7 @@ app.post('/auth/status', enforceApiKey, async (req, res) => {
       qr_data_url: session.qrDataUrl || null,
       pairing_code: session.pairingCode || null,
       last_error: session.lastError || null,
+      last_disconnect_code: session.lastDisconnectCode || null,
       expires_in_seconds: Math.max(0, Math.floor((session.expiresAt - nowMs()) / 1000)),
     });
   } catch (error) {

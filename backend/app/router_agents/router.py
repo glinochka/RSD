@@ -1518,6 +1518,7 @@ async def whatsapp_userbot_auth_status(
             "qr_data_url": result.get("qr_data_url"),
             "pairing_code": result.get("pairing_code"),
             "last_error": result.get("last_error"),
+            "last_disconnect_code": result.get("last_disconnect_code"),
         },
         status_code=status.HTTP_200_OK,
     )
