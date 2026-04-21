@@ -1,3 +1,4 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pathlib import Path
 from typing import Literal
@@ -28,6 +29,17 @@ class Settings(BaseSettings):
     BASE_URL: str | None = None
     ADMIN_WEB_LOGIN: str = ""
     ADMIN_WEB_PASSWORD_HASH: str = ""
+
+    @field_validator("ADMIN_WEB_PASSWORD_HASH", mode="before")
+    @classmethod
+    def unescape_compose_dollars_in_admin_hash(cls, v: object) -> object:
+        # Docker Compose interpolates `$name` in env values; bcrypt hashes look like `$2b$12$...`.
+        # Store `$$` for a literal `$` in `.env`, then collapse here (also works when Compose
+        # already collapsed `$$` → `$` before injecting into the container).
+        if isinstance(v, str) and "$$" in v:
+            return v.replace("$$", "$")
+        return v
+
     YOOKASSA_SHOP_ID: str = ""
     YOOKASSA_SECRET_KEY: str = ""
     YOOKASSA_RETURN_URL: str | None = None

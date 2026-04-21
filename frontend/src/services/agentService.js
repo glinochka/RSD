@@ -226,6 +226,32 @@ export const agentService = {
     return response.data;
   },
 
+  sendWhatsappUserbotMessageAsOwner: async (agentId, userExternalId, message) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_WHATSAPP_USERBOT_SEND_TO_USER, {
+      agent_id: agentId,
+      user_external_id: userExternalId,
+      message,
+    });
+    return response.data;
+  },
+
+  getWhatsappUserbotBroadcastRecipients: async (agentId) => {
+    const response = await apiClient.get(API_ROUTES.AGENTS_WHATSAPP_USERBOT_BROADCAST_RECIPIENTS, {
+      params: { agent_id: agentId },
+    });
+    return response.data;
+  },
+
+  sendWhatsappUserbotBroadcast: async (agentId, message, { skipFrozen = true, maxRecipients = 500 } = {}) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_WHATSAPP_USERBOT_BROADCAST, {
+      agent_id: agentId,
+      message,
+      skip_frozen: skipFrozen,
+      max_recipients: maxRecipients,
+    });
+    return response.data;
+  },
+
   uploadDocumentByBotId: async (agentId, file) => {
     const formData = new FormData();
     formData.append('agent_data', JSON.stringify({ agent_id: agentId }));

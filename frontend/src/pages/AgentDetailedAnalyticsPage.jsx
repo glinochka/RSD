@@ -280,6 +280,11 @@ const AgentDetailedAnalyticsPageContent = () => {
   const [broadcastMaxRecipients, setBroadcastMaxRecipients] = useState(500);
   const [isBroadcasting, setIsBroadcasting] = useState(false);
   const [broadcastResult, setBroadcastResult] = useState(null);
+  const [waBroadcastStats, setWaBroadcastStats] = useState(null);
+  const [waBroadcastStatsLoading, setWaBroadcastStatsLoading] = useState(false);
+  const [waBroadcastBody, setWaBroadcastBody] = useState('');
+  const [waBroadcastResult, setWaBroadcastResult] = useState(null);
+  const [isWaBroadcasting, setIsWaBroadcasting] = useState(false);
 
   const botId = useMemo(() => Number(id), [id]);
 
@@ -290,6 +295,14 @@ const AgentDetailedAnalyticsPageContent = () => {
       : Number(broadcastStats.telegram_users_total || 0);
     return Math.min(base, broadcastMaxRecipients);
   }, [broadcastStats, broadcastSkipFrozen, broadcastMaxRecipients]);
+
+  const plannedWaBroadcastRecipients = useMemo(() => {
+    if (!waBroadcastStats) return 0;
+    const base = broadcastSkipFrozen
+      ? Number(waBroadcastStats.eligible_when_skip_frozen || 0)
+      : Number(waBroadcastStats.whatsapp_userbot_users_total || 0);
+    return Math.min(base, broadcastMaxRecipients);
+  }, [waBroadcastStats, broadcastSkipFrozen, broadcastMaxRecipients]);
 
   useEffect(() => {
     if (!Number.isFinite(botId) || botId <= 0) {
@@ -354,13 +367,28 @@ const AgentDetailedAnalyticsPageContent = () => {
         setBroadcastStats(data);
       } catch (error) {
         setBroadcastStats(null);
-        showError(error?.message || 'Не удалось загрузить данные рассылки');
+        showError(error?.message || 'Не удалось загрузить данные рассылки (Telegram)');
       } finally {
         setBroadcastStatsLoading(false);
       }
     };
 
+    const loadWaBroadcastStats = async () => {
+      setWaBroadcastStatsLoading(true);
+      setWaBroadcastResult(null);
+      try {
+        const data = await agentService.getWhatsappUserbotBroadcastRecipients(botId);
+        setWaBroadcastStats(data);
+      } catch (error) {
+        setWaBroadcastStats(null);
+        showError(error?.message || 'Не удалось загрузить данные рассылки (WhatsApp userbot)');
+      } finally {
+        setWaBroadcastStatsLoading(false);
+      }
+    };
+
     loadBroadcastStats();
+    loadWaBroadcastStats();
   }, [selectedSection, botId, showError]);
 
   const selectedUser = useMemo(
@@ -368,10 +396,20 @@ const AgentDetailedAnalyticsPageContent = () => {
     [chatUsers, selectedUserId]
   );
 
-  const canSendTelegramToUser = Boolean(
+  const canSendOwnerToUser = Boolean(
     selectedUser &&
-      /^\d+$/.test(String(selectedUser.userExternalId)) &&
-      ['telegram', 'telegram_userbot'].includes(selectedUser.channel)
+      (() => {
+        const raw = String(selectedUser.userExternalId || '').trim();
+        if (!raw) return false;
+        if (selectedUser.channel === 'whatsapp_userbot') {
+          if (raw.includes('@')) return true;
+          const digits = raw.replace(/\D/g, '');
+          return digits.length >= 5 && digits.length <= 20;
+        }
+        return (
+          ['telegram', 'telegram_userbot'].includes(selectedUser.channel) && /^\d+$/.test(raw)
+        );
+      })()
   );
 
   useEffect(() => {
@@ -415,18 +453,22 @@ const AgentDetailedAnalyticsPageContent = () => {
       showError('Введите текст сообщения');
       return;
     }
-    if (!canSendTelegramToUser) {
-      showError('Отправка доступна только пользователям из Telegram (числовой id)');
+    if (!canSendOwnerToUser) {
+      showError('Отправка недоступна для этого диалога (проверьте канал и id получателя)');
       return;
     }
     setIsSendingOwnerReply(true);
     try {
-      await agentService.sendTelegramMessageAsOwner(
-        botId,
-        selectedUser.userExternalId,
-        text,
-        selectedUser.channel
-      );
+      if (selectedUser.channel === 'whatsapp_userbot') {
+        await agentService.sendWhatsappUserbotMessageAsOwner(botId, selectedUser.userExternalId, text);
+      } else {
+        await agentService.sendTelegramMessageAsOwner(
+          botId,
+          selectedUser.userExternalId,
+          text,
+          selectedUser.channel
+        );
+      }
       showSuccess('Сообщение отправлено');
       setOwnerReplyText('');
       await refreshChats();
@@ -479,6 +521,50 @@ const AgentDetailedAnalyticsPageContent = () => {
       showError(error?.message || 'Рассылка не удалась');
     } finally {
       setIsBroadcasting(false);
+    }
+  };
+
+  const handleWaBroadcastSend = async () => {
+    const text = waBroadcastBody.trim();
+    if (!text) {
+      showError('Введите текст сообщения');
+      return;
+    }
+    if (plannedWaBroadcastRecipients <= 0) {
+      showError('Нет получателей для рассылки в WhatsApp userbot');
+      return;
+    }
+    const n = plannedWaBroadcastRecipients;
+    const noun = n === 1 ? 'получателю' : 'получателям';
+    if (
+      !window.confirm(
+        `Отправить сообщение в WhatsApp ${n} ${noun} с подключённого userbot? Отменить будет нельзя.`
+      )
+    ) {
+      return;
+    }
+    setIsWaBroadcasting(true);
+    setWaBroadcastResult(null);
+    try {
+      const result = await agentService.sendWhatsappUserbotBroadcast(botId, text, {
+        skipFrozen: broadcastSkipFrozen,
+        maxRecipients: broadcastMaxRecipients,
+      });
+      setWaBroadcastResult(result);
+      setWaBroadcastBody('');
+      const parts = [
+        `отправлено ${result.sent}`,
+        result.failed ? `ошибок ${result.failed}` : null,
+        result.skipped_frozen ? `пропущено замороженных ${result.skipped_frozen}` : null,
+      ].filter(Boolean);
+      showSuccess(`Рассылка WhatsApp завершена: ${parts.join(', ')}`);
+      const data = await agentService.getWhatsappUserbotBroadcastRecipients(botId);
+      setWaBroadcastStats(data);
+      await refreshChats();
+    } catch (error) {
+      showError(error?.message || 'Рассылка WhatsApp не удалась');
+    } finally {
+      setIsWaBroadcasting(false);
     }
   };
 
@@ -625,9 +711,9 @@ const AgentDetailedAnalyticsPageContent = () => {
                       </div>
                       <div className="analytics-chat-composer">
                         <p className="analytics-chat-composer-hint">
-                          {canSendTelegramToUser
+                          {canSendOwnerToUser
                             ? `Сообщение будет доставлено в выбранный чат (${channelLabel(selectedUser.channel)}).`
-                            : 'Отправка только для диалогов из Telegram (числовой id пользователя).'}
+                            : 'Отправка: Telegram — числовой id; WhatsApp userbot — номер (или полный JID).'}
                         </p>
                         <div className="analytics-chat-composer-row">
                           <textarea
@@ -636,13 +722,13 @@ const AgentDetailedAnalyticsPageContent = () => {
                             placeholder="Текст от вашего лица..."
                             value={ownerReplyText}
                             onChange={(e) => setOwnerReplyText(e.target.value)}
-                            disabled={!canSendTelegramToUser || isSendingOwnerReply}
+                            disabled={!canSendOwnerToUser || isSendingOwnerReply}
                           />
                           <button
                             type="button"
                             className="btn btn-black analytics-chat-composer-send"
                             onClick={handleSendOwnerMessage}
-                            disabled={!canSendTelegramToUser || isSendingOwnerReply}
+                            disabled={!canSendOwnerToUser || isSendingOwnerReply}
                           >
                             {isSendingOwnerReply ? 'Отправка...' : 'Отправить'}
                           </button>
@@ -654,6 +740,7 @@ const AgentDetailedAnalyticsPageContent = () => {
               </div>
             </section>
           ) : (
+            <>
             <section className="analytics-broadcast">
               <h3>Рассылка в Telegram</h3>
               <p className="analytics-note">
@@ -700,7 +787,7 @@ const AgentDetailedAnalyticsPageContent = () => {
                     type="checkbox"
                     checked={broadcastSkipFrozen}
                     onChange={(e) => setBroadcastSkipFrozen(e.target.checked)}
-                    disabled={isBroadcasting}
+                    disabled={isBroadcasting || isWaBroadcasting}
                   />
                   Не отправлять замороженным пользователям
                 </label>
@@ -709,14 +796,14 @@ const AgentDetailedAnalyticsPageContent = () => {
                   <BroadcastLimitSelect
                     value={broadcastMaxRecipients}
                     onChange={setBroadcastMaxRecipients}
-                    disabled={isBroadcasting}
+                    disabled={isBroadcasting || isWaBroadcasting}
                     options={BROADCAST_LIMIT_OPTIONS}
                   />
                 </label>
               </div>
 
               <p className="analytics-broadcast-planned">
-                Будет отправлено сообщений:{' '}
+                Будет отправлено сообщений (Telegram):{' '}
                 <strong>{formatNumber(plannedBroadcastRecipients)}</strong>
               </p>
 
@@ -727,15 +814,15 @@ const AgentDetailedAnalyticsPageContent = () => {
                   placeholder="Текст рассылки..."
                   value={broadcastBody}
                   onChange={(e) => setBroadcastBody(e.target.value)}
-                  disabled={isBroadcasting}
+                  disabled={isBroadcasting || isWaBroadcasting}
                 />
                 <button
                   type="button"
                   className="btn btn-black analytics-broadcast-send"
                   onClick={handleBroadcastSend}
-                  disabled={isBroadcasting || plannedBroadcastRecipients <= 0}
+                  disabled={isBroadcasting || isWaBroadcasting || plannedBroadcastRecipients <= 0}
                 >
-                  {isBroadcasting ? 'Отправка...' : 'Разослать'}
+                  {isBroadcasting ? 'Отправка...' : 'Разослать в Telegram'}
                 </button>
               </div>
 
@@ -752,6 +839,84 @@ const AgentDetailedAnalyticsPageContent = () => {
                 </div>
               ) : null}
             </section>
+
+            <section className="analytics-broadcast">
+              <h3>Рассылка в WhatsApp (userbot)</h3>
+              <p className="analytics-note">
+                Сообщения уходят с того же WhatsApp userbot, который подключён к агенту. Нужен запущенный сервис
+                userbot на сервере (как для входящих). Аудитория — пользователи, с которыми уже был диалог в этом
+                канале (по аналитике).
+              </p>
+
+              {waBroadcastStatsLoading ? (
+                <p className="analytics-broadcast-muted">Загрузка аудитории WhatsApp...</p>
+              ) : waBroadcastStats ? (
+                <div className="analytics-broadcast-stats">
+                  <article className="analytics-broadcast-stat">
+                    <span className="analytics-broadcast-stat-value">
+                      {formatNumber(Number(waBroadcastStats.whatsapp_userbot_users_total || 0))}
+                    </span>
+                    <span className="analytics-broadcast-stat-label">Всего в WhatsApp userbot (по аналитике)</span>
+                  </article>
+                  <article className="analytics-broadcast-stat">
+                    <span className="analytics-broadcast-stat-value">
+                      {formatNumber(Number(waBroadcastStats.frozen_among_whatsapp_userbot || 0))}
+                    </span>
+                    <span className="analytics-broadcast-stat-label">Заморожено среди них</span>
+                  </article>
+                  <article className="analytics-broadcast-stat">
+                    <span className="analytics-broadcast-stat-value">
+                      {formatNumber(Number(waBroadcastStats.eligible_when_skip_frozen || 0))}
+                    </span>
+                    <span className="analytics-broadcast-stat-label">Доступно при пропуске замороженных</span>
+                  </article>
+                </div>
+              ) : (
+                <p className="analytics-broadcast-muted">Не удалось загрузить аудиторию WhatsApp</p>
+              )}
+
+              <div className="analytics-broadcast-warning" role="note">
+                Между отправками в WhatsApp стоит пауза (~0,35 с), чтобы снизить риск ограничений со стороны WhatsApp.
+              </div>
+
+              <p className="analytics-broadcast-planned">
+                Будет отправлено сообщений (WhatsApp):{' '}
+                <strong>{formatNumber(plannedWaBroadcastRecipients)}</strong>
+              </p>
+
+              <div className="analytics-broadcast-composer">
+                <textarea
+                  className="input-main analytics-broadcast-textarea"
+                  rows={5}
+                  placeholder="Текст рассылки в WhatsApp..."
+                  value={waBroadcastBody}
+                  onChange={(e) => setWaBroadcastBody(e.target.value)}
+                  disabled={isBroadcasting || isWaBroadcasting}
+                />
+                <button
+                  type="button"
+                  className="btn btn-black analytics-broadcast-send"
+                  onClick={handleWaBroadcastSend}
+                  disabled={isBroadcasting || isWaBroadcasting || plannedWaBroadcastRecipients <= 0}
+                >
+                  {isWaBroadcasting ? 'Отправка...' : 'Разослать в WhatsApp'}
+                </button>
+              </div>
+
+              {waBroadcastResult && waBroadcastResult.errors?.length > 0 ? (
+                <div className="analytics-broadcast-errors">
+                  <h4>Ошибки доставки WhatsApp (фрагмент)</h4>
+                  <ul>
+                    {waBroadcastResult.errors.map((err, idx) => (
+                      <li key={`wa-${err.user_external_id}-${idx}`}>
+                        <code>{err.user_external_id}</code> ({channelLabel(err.channel)}): {err.detail}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </section>
+            </>
           )}
         </div>
       </div>

@@ -227,6 +227,69 @@ async def _get_telegram_userbot_channel_for_agent(session, agent_id: int) -> Age
     )
 
 
+async def _get_whatsapp_userbot_channel_for_agent(session, agent_id: int) -> AgentChannelConnection | None:
+    return await session.scalar(
+        select(AgentChannelConnection).where(
+            AgentChannelConnection.agent_id == agent_id,
+            AgentChannelConnection.provider == "whatsapp_userbot",
+            AgentChannelConnection.connection_type == "userbot",
+            AgentChannelConnection.is_active.is_(True),
+            AgentChannelConnection.encrypted_credentials.is_not(None),
+        )
+    )
+
+
+def _whatsapp_user_external_to_jid(user_external_id: str) -> str:
+    raw = (user_external_id or "").strip()
+    if not raw:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Пустой идентификатор получателя WhatsApp",
+        )
+    if "@" in raw:
+        return raw
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if len(digits) < 5:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Некорректный номер или JID WhatsApp (нужны цифры номера или полный JID)",
+        )
+    return f"{digits}@s.whatsapp.net"
+
+
+async def _list_whatsapp_userbot_broadcast_recipients(session, analytics_namespace_id: int) -> list[dict]:
+    rows = (
+        (
+            await session.execute(
+                select(
+                    AgentAnalyticsMessage.user_external_id.label("uid"),
+                    func.max(AgentAnalyticsMessage.created_at).label("last_at"),
+                )
+                .where(
+                    AgentAnalyticsMessage.bot_id == analytics_namespace_id,
+                    AgentAnalyticsMessage.role == "user",
+                    AgentAnalyticsMessage.channel == "whatsapp_userbot",
+                    AgentAnalyticsMessage.user_external_id.is_not(None),
+                )
+                .group_by(AgentAnalyticsMessage.user_external_id)
+                .order_by(func.max(AgentAnalyticsMessage.created_at).desc())
+            )
+        )
+        .mappings()
+        .all()
+    )
+    recipients: list[dict] = []
+    for row in rows:
+        uid = row.get("uid")
+        if not uid:
+            continue
+        uid_s = str(uid).strip()
+        if not uid_s:
+            continue
+        recipients.append({"user_external_id": uid_s, "channel": "whatsapp_userbot"})
+    return recipients
+
+
 async def _telegram_get_me(bot_token: str) -> dict:
     url = f"https://api.telegram.org/bot{quote(bot_token, safe='')}/getMe"
 
@@ -2818,6 +2881,240 @@ async def telegram_broadcast_as_owner(
     )
 
 
+@router.post("/whatsapp_userbot/send_to_user")
+async def whatsapp_userbot_send_to_user_as_owner(
+    payload: AgentWhatsappUserbotSendToUserPayload,
+    current_user=Depends(get_current_user_required),
+):
+    text = payload.message.strip()
+    if not text:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Сообщение пустое",
+        )
+    to_jid = _whatsapp_user_external_to_jid(payload.user_external_id)
+    ext_id = payload.user_external_id.strip()
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
+                current_user=current_user,
+                internal=False,
+            )
+            wa_channel = await _get_whatsapp_userbot_channel_for_agent(session, agent.id)
+            if not wa_channel:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="У агента нет активного канала WhatsApp userbot",
+                )
+            connection_id = int(wa_channel.id)
+            agent_pk = int(agent.id)
+            analytics_namespace_id = int(agent.bot_id if agent.bot_id is not None else agent.id)
+
+    await _wa_userbot_bridge_post(
+        "session/send",
+        {
+            "connection_id": connection_id,
+            "to_jid": to_jid,
+            "text": text,
+        },
+    )
+
+    async with async_session_maker() as log_session:
+        async with log_session.begin():
+            await _log_analytics_message_for_agent_ids(
+                session=log_session,
+                agent_id=agent_pk,
+                telegram_bot_id=analytics_namespace_id,
+                role="operator",
+                message_text=text,
+                channel="dashboard",
+                user_external_id=ext_id,
+                user_display_name=None,
+            )
+    return JSONResponse(content={"ok": True}, status_code=status.HTTP_200_OK)
+
+
+@router.get("/whatsapp_userbot/broadcast_recipients")
+async def whatsapp_userbot_broadcast_recipients(
+    agent_id: int | None = Query(default=None),
+    bot_id: int | None = Query(default=None),
+    current_user=Depends(get_current_user_required),
+):
+    if agent_id is None and bot_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Query parameter 'agent_id' or 'bot_id' is required",
+        )
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=agent_id,
+                bot_id=bot_id,
+                session=session,
+                current_user=current_user,
+                internal=False,
+            )
+            analytics_namespace_id = agent.bot_id if agent.bot_id is not None else agent.id
+            recipients = await _list_whatsapp_userbot_broadcast_recipients(session, analytics_namespace_id)
+            if not recipients:
+                return JSONResponse(
+                    content={
+                        "agent_id": agent.id,
+                        "bot_id": agent.bot_id,
+                        "whatsapp_userbot_users_total": 0,
+                        "frozen_among_whatsapp_userbot": 0,
+                        "eligible_when_skip_frozen": 0,
+                    },
+                    status_code=status.HTTP_200_OK,
+                )
+            recipient_ids = [r["user_external_id"] for r in recipients]
+            frozen_rows = await session.scalars(
+                select(AgentFrozenUser.user_external_id).where(
+                    AgentFrozenUser.agent_id == agent.id,
+                    AgentFrozenUser.user_external_id.in_(recipient_ids),
+                )
+            )
+            frozen_set = set(frozen_rows.all())
+            frozen_among = len([r for r in recipients if r["user_external_id"] in frozen_set])
+            eligible = len([r for r in recipients if r["user_external_id"] not in frozen_set])
+            return JSONResponse(
+                content={
+                    "agent_id": agent.id,
+                    "bot_id": agent.bot_id,
+                    "whatsapp_userbot_users_total": len(recipients),
+                    "frozen_among_whatsapp_userbot": frozen_among,
+                    "eligible_when_skip_frozen": eligible,
+                },
+                status_code=status.HTTP_200_OK,
+            )
+
+
+@router.post("/whatsapp_userbot/broadcast")
+async def whatsapp_userbot_broadcast_as_owner(
+    payload: AgentWhatsappUserbotBroadcastPayload,
+    current_user=Depends(get_current_user_required),
+):
+    text = payload.message.strip()
+    if not text:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Сообщение пустое",
+        )
+    max_n = payload.max_recipients
+
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
+                current_user=current_user,
+                internal=False,
+            )
+            analytics_namespace_id = agent.bot_id if agent.bot_id is not None else agent.id
+            recipients = await _list_whatsapp_userbot_broadcast_recipients(session, analytics_namespace_id)
+            agent_pk = agent.id
+            telegram_bot_id = analytics_namespace_id
+            wa_channel = await _get_whatsapp_userbot_channel_for_agent(session, agent.id)
+            if not wa_channel:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="У агента нет активного канала WhatsApp userbot для рассылки",
+                )
+            connection_id = int(wa_channel.id)
+
+    recipient_ids = [r["user_external_id"] for r in recipients]
+    frozen_set: set[str] = set()
+    if payload.skip_frozen and recipient_ids:
+        async with async_session_maker() as session:
+            async with session.begin():
+                frozen_rows = await session.scalars(
+                    select(AgentFrozenUser.user_external_id).where(
+                        AgentFrozenUser.agent_id == agent_pk,
+                        AgentFrozenUser.user_external_id.in_(recipient_ids),
+                    )
+                )
+                frozen_set = set(frozen_rows.all())
+
+    skipped_frozen = sum(
+        1 for recipient in recipients
+        if payload.skip_frozen and recipient["user_external_id"] in frozen_set
+    )
+    eligible_recipients = [
+        recipient
+        for recipient in recipients
+        if not (payload.skip_frozen and recipient["user_external_id"] in frozen_set)
+    ]
+    to_send = eligible_recipients[:max_n]
+    truncated_over_limit = max(0, len(eligible_recipients) - max_n)
+
+    sent = 0
+    failed = 0
+    errors: list[dict] = []
+    throttle_seconds = 0.35
+
+    for recipient in to_send:
+        uid = recipient["user_external_id"]
+        channel = recipient["channel"]
+        try:
+            to_jid = _whatsapp_user_external_to_jid(uid)
+            await _wa_userbot_bridge_post(
+                "session/send",
+                {
+                    "connection_id": connection_id,
+                    "to_jid": to_jid,
+                    "text": text,
+                },
+            )
+            sent += 1
+            async with async_session_maker() as log_session:
+                async with log_session.begin():
+                    await _log_analytics_message_for_agent_ids(
+                        session=log_session,
+                        agent_id=agent_pk,
+                        telegram_bot_id=telegram_bot_id,
+                        role="operator",
+                        message_text=text,
+                        channel="dashboard",
+                        user_external_id=uid,
+                        user_display_name=None,
+                    )
+        except HTTPException as exc:
+            failed += 1
+            detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+            if len(errors) < 25:
+                errors.append({"user_external_id": uid, "channel": channel, "detail": detail})
+        except Exception as exc:
+            failed += 1
+            if len(errors) < 25:
+                errors.append({"user_external_id": uid, "channel": channel, "detail": str(exc)})
+        await asyncio.sleep(throttle_seconds)
+
+    return JSONResponse(
+        content={
+            "ok": True,
+            "sent": sent,
+            "failed": failed,
+            "skipped_frozen": skipped_frozen,
+            "truncated_over_limit": truncated_over_limit,
+            "attempted": len(to_send),
+            "errors": errors,
+        },
+        status_code=status.HTTP_200_OK,
+    )
+
+
 @router.get("/analytics/chats")
 async def read_analytics_chats(
     agent_id: int | None = Query(default=None),
@@ -2921,9 +3218,10 @@ async def read_analytics_chats(
             for row in message_rows:
                 row_channel = row["channel"]
                 if row_channel == "dashboard":
-                    # Dashboard replies should appear in both Telegram chat threads of the user.
+                    # Ответы из кабинета показываем в потоке того канала, куда писал пользователь.
                     grouped_messages[(row["user_external_id"], "telegram")].append(row)
                     grouped_messages[(row["user_external_id"], "telegram_userbot")].append(row)
+                    grouped_messages[(row["user_external_id"], "whatsapp_userbot")].append(row)
                 else:
                     grouped_messages[(row["user_external_id"], row_channel)].append(row)
 
