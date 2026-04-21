@@ -1,6 +1,6 @@
 # WhatsApp Userbot Bridge
 
-Минимальный bridge-сервис для backend-роутов:
+Bridge-сервис для backend-роутов:
 
 - `POST /auth/request_code`
 - `POST /auth/verify_code`
@@ -15,9 +15,9 @@
 
 ## Важно
 
-Текущая реализация — dev bridge (in-memory), чтобы flow работал end-to-end.
-Для production замените внутреннюю логику на реальную интеграцию WA SDK.
-По умолчанию bridge запускается в `WA_USERBOT_ENV=production` и требует безопасную конфигурацию.
+Текущая реализация использует `@whiskeysockets/baileys` и реальный WhatsApp pairing flow.
+Пользователь получает `pairing_code` в интерфейсе вашего продукта и вводит его в приложении WhatsApp
+(`Связанные устройства` -> `Привязать устройство`).
 
 ## ENV
 
@@ -31,6 +31,7 @@
 - `WA_USERBOT_VERIFY_PER_PHONE_LIMIT` — лимит verify на номер в окне
 - `WA_USERBOT_SESSION_SECRET` — секрет подписи session_string (в production обязателен, >= 32 символов)
 - `WA_USERBOT_DEV_EXPOSE_CODE` — показывать dev code в `hint` (`true/false`, в production должен быть `false`)
+- `WA_USERBOT_DATA_DIR` — директория хранения auth state (по умолчанию `/data/wa-auth`)
 
 ## Production checklist
 
@@ -38,18 +39,17 @@
 2. Установите отдельный длинный `WA_USERBOT_SESSION_SECRET` (>= 32 символов).
 3. Оставьте `WA_USERBOT_DEV_EXPOSE_CODE=false`.
 4. Не публикуйте bridge наружу; держите его только в docker-сети (в compose порт наружу не проброшен).
-5. Настройте реальный WA SDK/provider вместо dev in-memory логики.
+5. Учтите, что WA userbot может нарушать правила платформы WhatsApp и приводить к блокировке номера.
 
 ## Local run
 
 ```bash
 cd wa_bridge
-pip install -r requirements.txt
-# Для локального dev можно так:
+npm install
 export WA_USERBOT_ENV=development
 export WA_USERBOT_BRIDGE_API_KEY=dev-key
 export WA_USERBOT_SESSION_SECRET=dev-super-secret-should-be-long
-uvicorn server:app --host 0.0.0.0 --port 8090
+node server.js
 ```
 
 ## API примеры
@@ -63,6 +63,8 @@ curl -X POST http://localhost:8090/auth/request_code \
   -d '{"phone_number":"+79990001122"}'
 ```
 
+Ответ вернет `pairing_code`. Пользователь должен ввести его в WhatsApp на телефоне.
+
 ### Verify code
 
 ```bash
@@ -71,3 +73,6 @@ curl -X POST http://localhost:8090/auth/verify_code \
   -H "X-API-Key: your-key" \
   -d '{"auth_id":"wauth_...","phone_number":"+79990001122","code":"123456"}'
 ```
+
+`code` должен совпадать с `pairing_code` из предыдущего шага.
+Если pairing на телефоне еще не завершен — bridge вернет `409`.
