@@ -69,6 +69,7 @@ export const API_ROUTES = {
   AGENTS_WHATSAPP_USERBOT_BROADCAST_RECIPIENTS: '/api/agents/whatsapp_userbot/broadcast_recipients',
   AGENTS_WHATSAPP_USERBOT_BROADCAST: '/api/agents/whatsapp_userbot/broadcast',
   AGENTS_CRM_CONNECT: '/api/agents/crm/connect',
+  AGENTS_CRM_VALIDATE: '/api/agents/crm/validate',
   AGENTS_CRM_HEALTH: '/api/agents/crm/health',
   DOCUMENTS_CREATE: '/api/documents',
   DOCUMENTS_CREATE_LINK: '/api/documents/link',

@@ -1342,6 +1342,35 @@ async def connect_crm(
             )
 
 
+@router.post("/crm/validate")
+async def validate_crm_connection(
+    payload: AgentCrmValidatePayload,
+    current_user=Depends(get_current_user_required),
+):
+    provider_name = (payload.provider or "").strip().lower()
+    base_url = _normalize_crm_base_url(payload.account_base_url)
+    access_token = payload.access_token.strip()
+
+    try:
+        provider = build_provider(provider_name, base_url=base_url, access_token=access_token)
+        health = await provider.validate_connection()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"CRM credentials validation failed: {exc}",
+        )
+
+    return JSONResponse(
+        content={
+            "ok": bool(health.ok),
+            "provider": health.provider,
+            "external_id": health.external_id,
+            "details": health.details,
+        },
+        status_code=status.HTTP_200_OK,
+    )
+
+
 @router.get("/crm/health")
 async def crm_health(
     agent_id: int | None = Query(default=None),

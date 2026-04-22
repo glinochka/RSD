@@ -16,6 +16,29 @@ import '../styles/createAgent.css';
 
 const fileIdentity = (file) => `${file.name}::${file.size}::${file.lastModified}`;
 const linkIdentity = (link) => link.trim().toLowerCase();
+const CRM_TOOL_OPTIONS = [
+  { value: 'find_contact', label: 'Поиск контактов' },
+  { value: 'create_contact', label: 'Создание контакта' },
+  { value: 'find_lead', label: 'Поиск сделок' },
+  { value: 'create_lead', label: 'Создание сделки' },
+  { value: 'update_lead', label: 'Изменение сделки' },
+  { value: 'add_note', label: 'Добавление заметки' },
+  { value: 'create_task', label: 'Создание задачи' },
+  { value: 'assign_owner', label: 'Назначение ответственного' },
+];
+
+const parseAllowedTools = (raw) =>
+  Array.from(
+    new Set(
+      String(raw || '')
+        .split(',')
+        .map((tool) => tool.trim())
+        .filter(Boolean)
+    )
+  );
+
+const buildCrmValidationSignature = (provider, baseUrl, token) =>
+  `${String(provider || '').trim().toLowerCase()}|${String(baseUrl || '').trim()}|${String(token || '').trim()}`;
 
 const CreateAgentContent = () => {
   const navigate = useNavigate();
@@ -42,6 +65,9 @@ const CreateAgentContent = () => {
   const [isVerifyingWhatsappUserbotCode, setIsVerifyingWhatsappUserbotCode] = useState(false);
   const [isWhatsappUserbotVerified, setIsWhatsappUserbotVerified] = useState(false);
   const [verifiedWhatsappUserbotLabel, setVerifiedWhatsappUserbotLabel] = useState('');
+  const [isValidatingCrm, setIsValidatingCrm] = useState(false);
+  const [crmValidationResult, setCrmValidationResult] = useState(null);
+  const [crmValidationSignature, setCrmValidationSignature] = useState('');
   const whatsappUserbotLastAuthStatusRef = useRef('');
 
   const isEditMode = !!agentId;
@@ -158,17 +184,21 @@ const CreateAgentContent = () => {
           form.setFieldError('crm_access_token', 'Access token CRM обязателен');
           return;
         }
+        if (selectedTemplate === 'crm_admin') {
+          const currentSignature = buildCrmValidationSignature(
+            values.crm_provider,
+            values.crm_account_base_url,
+            values.crm_access_token
+          );
+          if (!crmValidationResult?.ok || crmValidationSignature !== currentSignature) {
+            showError('Перед сохранением выполните и пройдите проверку подключения CRM.');
+            return;
+          }
+        }
         const templateConfig = selectedTemplate === 'crm_admin'
           ? {
               crm_provider: values.crm_provider?.trim() || 'amocrm',
-              allowed_tools: Array.from(
-                new Set(
-                  (values.crm_allowed_tools || '')
-                    .split(',')
-                    .map((tool) => tool.trim())
-                    .filter(Boolean)
-                )
-              ),
+              allowed_tools: parseAllowedTools(values.crm_allowed_tools),
               confirmation_policy: values.crm_confirmation_policy?.trim() || 'confirm_risky',
               fallback_mode: values.crm_fallback_mode?.trim() || 'ask_clarifying_question',
             }
@@ -571,6 +601,67 @@ const CreateAgentContent = () => {
     navigate(NAVIGATION_ROUTES.AUTH);
   };
 
+  const toggleCrmTool = (toolName) => {
+    const selected = parseAllowedTools(form.values.crm_allowed_tools);
+    const hasTool = selected.includes(toolName);
+    const next = hasTool ? selected.filter((item) => item !== toolName) : [...selected, toolName];
+    form.setFieldValue('crm_allowed_tools', next.join(', '));
+  };
+
+  const handleValidateCrm = async () => {
+    if (!form.values.crm_account_base_url?.trim()) {
+      form.setFieldError('crm_account_base_url', 'Base URL CRM обязателен');
+      return;
+    }
+    if (!form.values.crm_access_token?.trim()) {
+      form.setFieldError('crm_access_token', 'Access token CRM обязателен');
+      return;
+    }
+    setIsValidatingCrm(true);
+    try {
+      const response = await agentService.validateCrm({
+        provider: form.values.crm_provider?.trim() || 'amocrm',
+        account_base_url: form.values.crm_account_base_url.trim(),
+        access_token: form.values.crm_access_token.trim(),
+      });
+      const signature = buildCrmValidationSignature(
+        form.values.crm_provider,
+        form.values.crm_account_base_url,
+        form.values.crm_access_token
+      );
+      setCrmValidationSignature(signature);
+      setCrmValidationResult(response);
+      showSuccess('Подключение CRM успешно проверено');
+    } catch (error) {
+      setCrmValidationResult({ ok: false, error: error.message || 'Ошибка валидации CRM' });
+      showError(error.message || 'Не удалось проверить подключение CRM');
+    } finally {
+      setIsValidatingCrm(false);
+    }
+  };
+
+  useEffect(() => {
+    if (form.values.template_type !== 'crm_admin') {
+      setCrmValidationResult(null);
+      setCrmValidationSignature('');
+      return;
+    }
+    const currentSignature = buildCrmValidationSignature(
+      form.values.crm_provider,
+      form.values.crm_account_base_url,
+      form.values.crm_access_token
+    );
+    if (crmValidationSignature && crmValidationSignature !== currentSignature) {
+      setCrmValidationResult(null);
+    }
+  }, [
+    form.values.template_type,
+    form.values.crm_provider,
+    form.values.crm_account_base_url,
+    form.values.crm_access_token,
+    crmValidationSignature,
+  ]);
+
   return (
     <MainLayout>
       <div className="create-agent-page">
@@ -655,19 +746,51 @@ const CreateAgentContent = () => {
                   <span className="error-message">{form.errors.crm_access_token}</span>
                 )}
 
+                <div className="channel-actions-row">
+                  <button
+                    type="button"
+                    className="btn btn-black"
+                    onClick={handleValidateCrm}
+                    disabled={form.isSubmitting || isValidatingCrm}
+                  >
+                    {isValidatingCrm ? 'Проверка...' : 'Проверить подключение CRM'}
+                  </button>
+                </div>
+
+                {crmValidationResult?.ok ? (
+                  <p className="help-text userbot-success">
+                    CRM проверена: {crmValidationResult.provider} ({crmValidationResult.external_id || 'ok'})
+                  </p>
+                ) : null}
+                {crmValidationResult && crmValidationResult.ok === false ? (
+                  <p className="error-message">
+                    {crmValidationResult.error || 'Проверка CRM завершилась с ошибкой'}
+                  </p>
+                ) : null}
+
                 <label htmlFor="crm_allowed_tools" className="mt-input">
-                  Разрешенные инструменты (через запятую):
+                  Разрешенные действия CRM:
                 </label>
-                <input
-                  id="crm_allowed_tools"
-                  type="text"
-                  name="crm_allowed_tools"
-                  className="input-main"
-                  value={form.values.crm_allowed_tools}
-                  onChange={form.handleChange}
-                  disabled={form.isSubmitting}
-                  placeholder="find_contact, create_contact, create_lead"
-                />
+                <div className="connection-type-grid connection-type-grid--channels">
+                  {CRM_TOOL_OPTIONS.map((tool) => {
+                    const selectedTools = parseAllowedTools(form.values.crm_allowed_tools);
+                    const active = selectedTools.includes(tool.value);
+                    return (
+                      <button
+                        key={tool.value}
+                        type="button"
+                        className={`connection-type-card ${active ? 'active' : ''}`}
+                        onClick={() => toggleCrmTool(tool.value)}
+                        disabled={form.isSubmitting}
+                      >
+                        {tool.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="help-text">
+                  Выбрано: {parseAllowedTools(form.values.crm_allowed_tools).join(', ') || 'ничего'}
+                </p>
 
                 <label htmlFor="crm_confirmation_policy" className="mt-input">
                   Политика подтверждения:

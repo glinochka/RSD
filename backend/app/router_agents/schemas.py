@@ -330,3 +330,23 @@ class AgentCrmHealthPayload(AgentLookup):
         description="Опционально: конкретный CRM провайдер",
     )
 
+
+class AgentCrmValidatePayload(BaseModel):
+    provider: str = Field(
+        ...,
+        pattern="^(amocrm)$",
+        description="CRM провайдер (пока только amoCRM)",
+    )
+    account_base_url: str = Field(
+        ...,
+        min_length=10,
+        max_length=255,
+        description="Базовый URL аккаунта CRM (например https://example.amocrm.ru)",
+    )
+    access_token: str = Field(
+        ...,
+        min_length=20,
+        max_length=4096,
+        description="OAuth access token CRM",
+    )
+

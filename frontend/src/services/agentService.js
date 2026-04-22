@@ -257,6 +257,11 @@ export const agentService = {
     return response.data;
   },
 
+  validateCrm: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_CRM_VALIDATE, data);
+    return response.data;
+  },
+
   getCrmHealth: async ({ agent_id = null, bot_id = null, provider = null } = {}) => {
     const response = await apiClient.get(API_ROUTES.AGENTS_CRM_HEALTH, {
       params: {
