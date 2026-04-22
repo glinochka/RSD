@@ -12,9 +12,8 @@ from ..alembic.database import async_session_maker
 from ..alembic.models import Agent, AgentAnalyticsMessage, AgentFrozenUser, User
 from ..qdrant.search_service import search_knowledge_base
 from ..services.ai_authoring import generate_answer_with_context
-from ..utils.agent_lookup import agent_by_lookup_id_filter
-
 logger = logging.getLogger(__name__)
+MAX_INT32 = 2_147_483_647
 
 
 class Channel(str, Enum):
@@ -130,9 +129,13 @@ class MessageProcessor:
     async def _resolve_agent(self, lookup_bot_id: int):
         async with async_session_maker() as session:
             async with session.begin():
-                return await session.scalar(
-                    select(Agent).where(agent_by_lookup_id_filter(lookup_bot_id))
-                )
+                # Resolve by public channel id first to avoid ambiguous `id OR bot_id` matches.
+                agent = await session.scalar(select(Agent).where(Agent.bot_id == lookup_bot_id))
+                if agent is not None:
+                    return agent
+                if 0 < lookup_bot_id <= MAX_INT32:
+                    return await session.scalar(select(Agent).where(Agent.id == lookup_bot_id))
+                return None
 
     async def _is_subscription_valid(self, agent_id: int) -> bool:
         try:

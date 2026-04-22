@@ -258,6 +258,41 @@ def _whatsapp_user_external_to_jid(user_external_id: str) -> str:
     return f"{digits}@s.whatsapp.net"
 
 
+async def _ensure_whatsapp_userbot_session(connection_id: int, encrypted_credentials: str) -> None:
+    """Убедиться, что wa_bridge имеет активную runtime сессию для данного connection_id.
+
+    Менеджер (whatsapp_userbot_manager.py) обычно поддерживает сессию через polling,
+    но если он не запущен или перезапускался, сессии может не быть в runtimeSessions Map.
+    Эта функция вызывает session/connect чтобы гарантировать наличие сессии перед отправкой.
+    """
+    if not encrypted_credentials:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Отсутствуют credentials для WhatsApp канала",
+        )
+    try:
+        bundle = json.loads(decrypt_token(encrypted_credentials))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Не удалось расшифровать credentials WhatsApp: {exc}",
+        ) from exc
+    session_string = str(bundle.get("session_string") or "").strip()
+    if not session_string:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Отсутствует session_string в credentials WhatsApp",
+        )
+    # Вызываем session/connect для установки/восстановления сессии в wa_bridge
+    await _wa_userbot_bridge_post(
+        "session/connect",
+        {
+            "connection_id": connection_id,
+            "session_string": session_string,
+        },
+    )
+
+
 async def _list_whatsapp_userbot_broadcast_recipients(session, analytics_namespace_id: int) -> list[dict]:
     rows = (
         (
@@ -565,12 +600,14 @@ def _decode_userbot_auth_token(auth_token: str) -> dict:
 
 def _create_whatsapp_userbot_auth_token(
     *,
+    user_id: int,
     phone_number: str,
     bridge_auth_id: str,
 ) -> str:
     now = datetime.utcnow()
     payload = {
         "scope": "whatsapp_userbot_auth",
+        "user_id": int(user_id),
         "phone_number": phone_number,
         "encrypted_bridge_auth_id": encrypt_token(bridge_auth_id),
         "exp": now + timedelta(minutes=USERBOT_AUTH_TOKEN_TTL_MINUTES),
@@ -591,6 +628,12 @@ def _decode_whatsapp_userbot_auth_token(auth_token: str) -> dict:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Некорректный scope токена подтверждения WhatsApp userbot",
+        )
+    token_user_id = data.get("user_id")
+    if not isinstance(token_user_id, int) or token_user_id <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Токен подтверждения WhatsApp userbot не привязан к пользователю",
         )
     return data
 
@@ -1498,6 +1541,7 @@ async def request_whatsapp_userbot_code(
         )
 
     auth_token = _create_whatsapp_userbot_auth_token(
+        user_id=current_user.id,
         phone_number=phone_number,
         bridge_auth_id=bridge_auth_id,
     )
@@ -1521,6 +1565,11 @@ async def verify_whatsapp_userbot_code(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
 
     token_data = _decode_whatsapp_userbot_auth_token(payload.auth_token.strip())
+    if int(token_data["user_id"]) != int(current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Токен подтверждения WhatsApp userbot принадлежит другому пользователю",
+        )
     phone_number = str(token_data.get("phone_number") or "").strip()
     bridge_auth_id = decrypt_token(token_data["encrypted_bridge_auth_id"])
     code = payload.code.strip() if payload.code else ""
@@ -1559,6 +1608,11 @@ async def whatsapp_userbot_auth_status(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
 
     token_data = _decode_whatsapp_userbot_auth_token(payload.auth_token.strip())
+    if int(token_data["user_id"]) != int(current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Токен подтверждения WhatsApp userbot принадлежит другому пользователю",
+        )
     bridge_auth_id = decrypt_token(token_data["encrypted_bridge_auth_id"])
     result = await _wa_userbot_bridge_post(
         "auth/status",
@@ -2916,6 +2970,10 @@ async def whatsapp_userbot_send_to_user_as_owner(
             connection_id = int(wa_channel.id)
             agent_pk = int(agent.id)
             analytics_namespace_id = int(agent.bot_id if agent.bot_id is not None else agent.id)
+            encrypted_credentials = str(wa_channel.encrypted_credentials or "")
+
+    # Убедимся что сессия активна в wa_bridge перед отправкой
+    await _ensure_whatsapp_userbot_session(connection_id, encrypted_credentials)
 
     await _wa_userbot_bridge_post(
         "session/send",
@@ -3034,6 +3092,10 @@ async def whatsapp_userbot_broadcast_as_owner(
                     detail="У агента нет активного канала WhatsApp userbot для рассылки",
                 )
             connection_id = int(wa_channel.id)
+            encrypted_credentials = str(wa_channel.encrypted_credentials or "")
+
+    # Убедимся что сессия активна в wa_bridge перед началом рассылки
+    await _ensure_whatsapp_userbot_session(connection_id, encrypted_credentials)
 
     recipient_ids = [r["user_external_id"] for r in recipients]
     frozen_set: set[str] = set()

@@ -16,6 +16,7 @@ from ..alembic.database import async_session_maker
 from ..alembic.models import Agent, AgentChannelConnection
 from ..config import settings
 from ..utils.crypto import decrypt_token
+from .leader_lock import PgLeaderLock
 from .message_processor import Channel, MessageRequest, get_message_processor
 
 logger = logging.getLogger(__name__)
@@ -157,50 +158,65 @@ class UserbotManager:
     def __init__(self) -> None:
         self._stop = asyncio.Event()
         self._tasks: dict[int, asyncio.Task[None]] = {}
+        self._leader_lock = PgLeaderLock(20_001, "telegram_userbot_manager")
 
-    async def shutdown(self) -> None:
-        self._stop.set()
+    async def _cancel_all_tasks(self) -> None:
         for task in list(self._tasks.values()):
             task.cancel()
         if self._tasks:
             await asyncio.gather(*self._tasks.values(), return_exceptions=True)
         self._tasks.clear()
 
+    async def shutdown(self) -> None:
+        self._stop.set()
+        await self._cancel_all_tasks()
+        await self._leader_lock.release()
+
     async def run_forever(self) -> None:
         interval = max(10, int(settings.USERBOT_POLL_INTERVAL_SECONDS))
         logger.info("UserbotManager polling every %s sec", interval)
-        while not self._stop.is_set():
-            try:
-                configs = await _fetch_userbot_configs()
-                wanted = {int(c["bot_id"]) for c in configs if c.get("bot_id") is not None}
+        try:
+            while not self._stop.is_set():
+                try:
+                    is_leader = await self._leader_lock.ensure_acquired()
+                    if not is_leader:
+                        if self._tasks:
+                            await self._cancel_all_tasks()
+                        logger.info("userbot: another replica holds leader lock, waiting")
+                    else:
+                        configs = await _fetch_userbot_configs()
+                        wanted = {int(c["bot_id"]) for c in configs if c.get("bot_id") is not None}
 
-                for bot_id in list(self._tasks):
-                    if bot_id not in wanted:
-                        task = self._tasks.pop(bot_id)
-                        task.cancel()
-                        try:
-                            await task
-                        except asyncio.CancelledError:
-                            pass
-                        logger.info("userbot: removed bot_id=%s", bot_id)
+                        for bot_id in list(self._tasks):
+                            if bot_id not in wanted:
+                                task = self._tasks.pop(bot_id)
+                                task.cancel()
+                                try:
+                                    await task
+                                except asyncio.CancelledError:
+                                    pass
+                                logger.info("userbot: removed bot_id=%s", bot_id)
 
-                by_id = {int(c["bot_id"]): c for c in configs if c.get("bot_id") is not None}
-                for bot_id, cfg in by_id.items():
-                    existing = self._tasks.get(bot_id)
-                    if existing and existing.done():
-                        self._tasks.pop(bot_id, None)
-                        try:
-                            existing.result()
-                        except Exception:
-                            logger.exception("userbot: previous worker crashed bot_id=%s", bot_id)
-                        existing = None
-                    if existing is None:
-                        self._tasks[bot_id] = asyncio.create_task(_run_one_client(cfg))
-                        logger.info("userbot: started worker bot_id=%s", bot_id)
-            except Exception:
-                logger.exception("UserbotManager cycle failed")
+                        by_id = {int(c["bot_id"]): c for c in configs if c.get("bot_id") is not None}
+                        for bot_id, cfg in by_id.items():
+                            existing = self._tasks.get(bot_id)
+                            if existing and existing.done():
+                                self._tasks.pop(bot_id, None)
+                                try:
+                                    existing.result()
+                                except Exception:
+                                    logger.exception("userbot: previous worker crashed bot_id=%s", bot_id)
+                                existing = None
+                            if existing is None:
+                                self._tasks[bot_id] = asyncio.create_task(_run_one_client(cfg))
+                                logger.info("userbot: started worker bot_id=%s", bot_id)
+                except Exception:
+                    logger.exception("UserbotManager cycle failed")
 
-            try:
-                await asyncio.wait_for(self._stop.wait(), timeout=interval)
-            except asyncio.TimeoutError:
-                continue
+                try:
+                    await asyncio.wait_for(self._stop.wait(), timeout=interval)
+                except asyncio.TimeoutError:
+                    continue
+        finally:
+            await self._cancel_all_tasks()
+            await self._leader_lock.release()
