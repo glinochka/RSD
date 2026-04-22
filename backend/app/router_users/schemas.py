@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from datetime import datetime
 from typing import Optional, Literal
 
@@ -94,3 +94,14 @@ class UserMeResponse(BaseModel):
     name: str
     telegram_id: Optional[int] = None
     is_telegram_linked: bool
+
+
+class UserErrorReportCreateRequest(BaseModel):
+    description: str = Field(..., min_length=10, max_length=8000)
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def strip_description(cls, value: str) -> str:
+        if isinstance(value, str):
+            return value.strip()
+        return value

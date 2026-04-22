@@ -1,6 +1,7 @@
-from ..alembic.models import TelegramLinkChallenge, User
+from ..alembic.models import TelegramLinkChallenge, User, UserErrorReport
 from ..BaseDAO import BaseDAO
 from sqlalchemy import String, cast, desc, func, or_, select
+from sqlalchemy.orm import joinedload
 
 
 class UserDAO(BaseDAO):
@@ -109,3 +110,48 @@ class TelegramLinkChallengeDAO(BaseDAO):
         )
         result = await self._session.scalars(query)
         return result.all()
+
+
+class UserErrorReportDAO(BaseDAO):
+    model = UserErrorReport
+
+    async def count_for_admin(self, search_value: str | None = None) -> int:
+        query = select(func.count(self.model.id))
+        if search_value:
+            pattern = f"%{search_value}%"
+            query = (
+                select(func.count(self.model.id))
+                .select_from(self.model)
+                .join(User, User.id == self.model.user_id)
+                .where(
+                    or_(
+                        self.model.description.ilike(pattern),
+                        User.name.ilike(pattern),
+                        User.email.ilike(pattern),
+                    )
+                )
+            )
+        return await self.scalar_or_default(query, 0)
+
+    async def list_for_admin(
+        self,
+        *,
+        page: int,
+        page_size: int,
+        search_value: str | None = None,
+    ) -> list[UserErrorReport]:
+        query = (
+            select(self.model)
+            .options(joinedload(self.model.user))
+            .order_by(desc(self.model.created_at), desc(self.model.id))
+        )
+        if search_value:
+            pattern = f"%{search_value}%"
+            query = query.join(User).where(
+                or_(
+                    self.model.description.ilike(pattern),
+                    User.name.ilike(pattern),
+                    User.email.ilike(pattern),
+                )
+            )
+        return await self.list_scalars(query, page=page, page_size=page_size)

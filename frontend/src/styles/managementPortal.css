@@ -389,3 +389,14 @@
     grid-template-columns: 1fr;
   }
 }
+
+.management-cell-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.management-cell-muted {
+  font-size: var(--font-size-xs, 0.75rem);
+  color: var(--color-text-lighter);
+}

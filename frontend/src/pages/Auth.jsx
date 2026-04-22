@@ -27,6 +27,7 @@ import { useNotification } from '../context/useNotification';
 import { useForm } from '../hooks/useForm';
 import { NAVIGATION_ROUTES, SUCCESS_MESSAGES, VALIDATION } from '../config/constants';
 import authService from '../services/authService';
+import { reachYandexGoal, YM_GOALS } from '../utils/yandexMetrika';
 import AgentChatShowcase from '../components/AgentChatShowcase';
 import '../styles/auth.css';
 
@@ -199,6 +200,7 @@ const Auth = () => {
           }
 
           await verifyRegistrationCode(values.email, values.verificationCode);
+          reachYandexGoal(YM_GOALS.REGISTRATION_SUCCESS);
           showSuccess('Регистрация успешна!', 3000);
           navigate(NAVIGATION_ROUTES.AGENTS);
         }

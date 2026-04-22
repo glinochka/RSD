@@ -3,7 +3,7 @@
  * Form for creating or editing agents
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import MainLayout from '../components/Layout';
 import { useForm } from '../hooks/useForm';
@@ -26,14 +26,27 @@ const CreateAgentContent = () => {
   const [pendingLink, setPendingLink] = useState('');
   const [uploadedLinks, setUploadedLinks] = useState([]);
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [useBotChannel, setUseBotChannel] = useState(true);
+  const [useUserbotChannel, setUseUserbotChannel] = useState(false);
+  const [useWhatsAppUserbotChannel, setUseWhatsAppUserbotChannel] = useState(false);
+  const [useWhatsAppBusinessApiChannel, setUseWhatsAppBusinessApiChannel] = useState(false);
+  const [userbotAuthToken, setUserbotAuthToken] = useState('');
+  const [isSendingCode, setIsSendingCode] = useState(false);
+  const [isVerifyingCode, setIsVerifyingCode] = useState(false);
+  const [isUserbotVerified, setIsUserbotVerified] = useState(false);
+  const [verifiedUserbotLabel, setVerifiedUserbotLabel] = useState('');
+  const [whatsappUserbotMode, setWhatsappUserbotMode] = useState('simple');
+  const [whatsappUserbotAuthToken, setWhatsappUserbotAuthToken] = useState('');
+  const [whatsappUserbotQrDataUrl, setWhatsappUserbotQrDataUrl] = useState('');
+  const [isSendingWhatsappUserbotCode, setIsSendingWhatsappUserbotCode] = useState(false);
+  const [isVerifyingWhatsappUserbotCode, setIsVerifyingWhatsappUserbotCode] = useState(false);
+  const [isWhatsappUserbotVerified, setIsWhatsappUserbotVerified] = useState(false);
+  const [verifiedWhatsappUserbotLabel, setVerifiedWhatsappUserbotLabel] = useState('');
+  const whatsappUserbotLastAuthStatusRef = useRef('');
 
   const isEditMode = !!agentId;
 
   const validationRules = {
-    bot_token: {
-      required: true,
-      label: 'API ключ Telegram бота',
-    },
     system_prompt: {
       required: true,
       label: 'Системный промпт',
@@ -45,6 +58,19 @@ const CreateAgentContent = () => {
   const form = useForm(
     {
       bot_token: '',
+      api_id: '',
+      api_hash: '',
+      phone_number: '',
+      verify_code: '',
+      password_2fa: '',
+      session_string: '',
+      whatsapp_userbot_phone_number: '',
+      whatsapp_userbot_session_string: '',
+      whatsapp_userbot_client_label: '',
+      whatsapp_phone_number_id: '',
+      whatsapp_access_token: '',
+      whatsapp_business_account_id: '',
+      whatsapp_verify_token: '',
       system_prompt: '',
     },
     async (values) => {
@@ -59,25 +85,122 @@ const CreateAgentContent = () => {
           return;
         }
 
-        const createdAgent = await agentService.create({
-          bot_token: values.bot_token.trim(),
-          system_prompt: values.system_prompt.trim(),
-        });
+        const isBotMode = useBotChannel;
+        const isUserbotMode = useUserbotChannel;
+        const isWhatsAppUserbotMode = useWhatsAppUserbotChannel;
+        const isWhatsAppBusinessApiMode = useWhatsAppBusinessApiChannel;
 
-        const fallbackBotId = Number(values.bot_token.split(':', 1)[0]);
-        const botId = createdAgent?.bot_id ?? fallbackBotId;
-
-        if (!Number.isFinite(botId)) {
-          showError('Не удалось определить bot_id после создания агента');
+        if (!isBotMode && !isUserbotMode && !isWhatsAppUserbotMode && !isWhatsAppBusinessApiMode) {
+          showError('Выберите хотя бы один способ подключения');
           return;
         }
 
+        if (isBotMode && !values.bot_token?.trim()) {
+          form.setFieldError('bot_token', 'API ключ Telegram бота обязателен');
+          return;
+        }
+        if (isUserbotMode && !values.api_id?.toString().trim()) {
+          form.setFieldError('api_id', 'API ID обязателен');
+          return;
+        }
+        if (isUserbotMode && !values.api_hash?.trim()) {
+          form.setFieldError('api_hash', 'API hash обязателен');
+          return;
+        }
+        if (isUserbotMode && !values.phone_number?.trim()) {
+          form.setFieldError('phone_number', 'Номер телефона обязателен');
+          return;
+        }
+        if (isUserbotMode && (!values.session_string?.trim() || !isUserbotVerified)) {
+          form.setFieldError('verify_code', 'Сначала подтвердите код и сохраните userbot-сессию');
+          return;
+        }
+        if (isWhatsAppUserbotMode && !values.whatsapp_userbot_phone_number?.trim()) {
+          form.setFieldError('whatsapp_userbot_phone_number', 'Номер WhatsApp обязателен');
+          return;
+        }
+        if (isWhatsAppUserbotMode) {
+          if (whatsappUserbotMode === 'simple') {
+            if (!values.whatsapp_userbot_session_string?.trim() || !isWhatsappUserbotVerified) {
+              form.setFieldError(
+                'whatsapp_userbot_session_string',
+                'Сначала подтвердите код и инициализируйте WhatsApp userbot-сессию'
+              );
+              return;
+            }
+          } else if (!values.whatsapp_userbot_session_string?.trim()) {
+            form.setFieldError('whatsapp_userbot_session_string', 'Session string WhatsApp userbot обязателен');
+            return;
+          }
+        }
+        if (isWhatsAppBusinessApiMode && !values.whatsapp_phone_number_id?.trim()) {
+          form.setFieldError('whatsapp_phone_number_id', 'Phone Number ID обязателен');
+          return;
+        }
+        if (isWhatsAppBusinessApiMode && !values.whatsapp_access_token?.trim()) {
+          form.setFieldError('whatsapp_access_token', 'Access Token обязателен');
+          return;
+        }
+
+        const createdAgent = await agentService.createEmpty({
+          system_prompt: values.system_prompt.trim(),
+        });
+        const agentId = createdAgent?.id;
+        if (!Number.isFinite(agentId)) {
+          showError('Не удалось определить id агента после создания');
+          return;
+        }
+
+        const primaryProvider = isBotMode
+          ? 'telegram_bot'
+          : isUserbotMode
+            ? 'telegram_userbot'
+            : isWhatsAppUserbotMode
+              ? 'whatsapp_userbot'
+              : 'whatsapp_business_api';
+
+        if (isBotMode) {
+          await agentService.addBotChannel({
+            agent_id: agentId,
+            bot_token: values.bot_token.trim(),
+            make_primary: primaryProvider === 'telegram_bot',
+          });
+        }
+        if (isUserbotMode) {
+          await agentService.addUserbotChannel({
+            agent_id: agentId,
+            api_id: Number(values.api_id),
+            api_hash: values.api_hash.trim(),
+            session_string: values.session_string.trim(),
+            make_primary: primaryProvider === 'telegram_userbot',
+          });
+        }
+        if (isWhatsAppUserbotMode) {
+          await agentService.addWhatsAppUserbotChannel({
+            agent_id: agentId,
+            phone_number: values.whatsapp_userbot_phone_number.trim(),
+            session_string: values.whatsapp_userbot_session_string.trim(),
+            client_label: values.whatsapp_userbot_client_label?.trim() || undefined,
+            make_primary: primaryProvider === 'whatsapp_userbot',
+          });
+        }
+        if (isWhatsAppBusinessApiMode) {
+          await agentService.addWhatsAppBusinessApiChannel({
+            agent_id: agentId,
+            phone_number_id: values.whatsapp_phone_number_id.trim(),
+            access_token: values.whatsapp_access_token.trim(),
+            business_account_id: values.whatsapp_business_account_id?.trim() || undefined,
+            verify_token: values.whatsapp_verify_token?.trim() || undefined,
+            make_primary: primaryProvider === 'whatsapp_business_api',
+          });
+        }
+
         for (const file of uploadedFiles) {
-          await agentService.uploadDocumentByBotId(botId, file);
+          await agentService.uploadDocumentByBotId(agentId, file);
         }
 
         for (const link of uploadedLinks) {
-          await agentService.uploadPublicLinkByBotId(botId, link);
+          await agentService.uploadPublicLinkByBotId(agentId, link);
         }
 
         showSuccess('Агент успешно создан!');
@@ -89,6 +212,251 @@ const CreateAgentContent = () => {
     },
     validationRules
   );
+
+  const clearUserbotLocalState = () => {
+    setUserbotAuthToken('');
+    setIsUserbotVerified(false);
+    setVerifiedUserbotLabel('');
+    form.setFieldValue('api_id', '');
+    form.setFieldValue('api_hash', '');
+    form.setFieldValue('phone_number', '');
+    form.setFieldValue('verify_code', '');
+    form.setFieldValue('password_2fa', '');
+    form.setFieldValue('session_string', '');
+    form.setFieldError('verify_code', undefined);
+  };
+
+  const toggleBotChannel = () => {
+    setUseBotChannel((prev) => {
+      const next = !prev;
+      if (!next) {
+        form.setFieldValue('bot_token', '');
+        form.setFieldError('bot_token', undefined);
+      }
+      return next;
+    });
+  };
+
+  const toggleUserbotChannel = () => {
+    setUseUserbotChannel((prev) => {
+      const next = !prev;
+      if (!next) {
+        clearUserbotLocalState();
+      }
+      return next;
+    });
+  };
+
+  const toggleWhatsAppBusinessApiChannel = () => {
+    setUseWhatsAppBusinessApiChannel((prev) => {
+      const next = !prev;
+      if (!next) {
+        form.setFieldValue('whatsapp_phone_number_id', '');
+        form.setFieldValue('whatsapp_access_token', '');
+        form.setFieldValue('whatsapp_business_account_id', '');
+        form.setFieldValue('whatsapp_verify_token', '');
+        form.setFieldError('whatsapp_phone_number_id', undefined);
+        form.setFieldError('whatsapp_access_token', undefined);
+      }
+      return next;
+    });
+  };
+
+  const toggleWhatsAppUserbotChannel = () => {
+    setUseWhatsAppUserbotChannel((prev) => {
+      const next = !prev;
+      if (!next) {
+        setWhatsappUserbotMode('simple');
+        setWhatsappUserbotAuthToken('');
+        setWhatsappUserbotQrDataUrl('');
+        setIsSendingWhatsappUserbotCode(false);
+        setIsVerifyingWhatsappUserbotCode(false);
+        setIsWhatsappUserbotVerified(false);
+        setVerifiedWhatsappUserbotLabel('');
+        whatsappUserbotLastAuthStatusRef.current = '';
+        form.setFieldValue('whatsapp_userbot_phone_number', '');
+        form.setFieldValue('whatsapp_userbot_session_string', '');
+        form.setFieldValue('whatsapp_userbot_client_label', '');
+        form.setFieldError('whatsapp_userbot_phone_number', undefined);
+        form.setFieldError('whatsapp_userbot_session_string', undefined);
+      }
+      return next;
+    });
+  };
+
+  const handleUserbotRequestCode = async () => {
+    if (!form.values.api_id?.toString().trim()) {
+      form.setFieldError('api_id', 'API ID обязателен');
+      return;
+    }
+    if (!form.values.api_hash?.trim()) {
+      form.setFieldError('api_hash', 'API hash обязателен');
+      return;
+    }
+    if (!form.values.phone_number?.trim()) {
+      form.setFieldError('phone_number', 'Номер телефона обязателен');
+      return;
+    }
+
+    setIsSendingCode(true);
+    try {
+      const response = await agentService.requestUserbotCode({
+        api_id: Number(form.values.api_id),
+        api_hash: form.values.api_hash.trim(),
+        phone_number: form.values.phone_number.trim(),
+      });
+      setUserbotAuthToken(response.auth_token);
+      setIsUserbotVerified(false);
+      setVerifiedUserbotLabel('');
+      form.setFieldValue('session_string', '');
+      form.setFieldValue('verify_code', '');
+      form.setFieldValue('password_2fa', '');
+      form.setFieldError('verify_code', undefined);
+      showSuccess('Код подтверждения отправлен в Telegram');
+    } catch (error) {
+      showError(error.message || 'Не удалось отправить код Telegram');
+    } finally {
+      setIsSendingCode(false);
+    }
+  };
+
+  const handleUserbotVerifyCode = async () => {
+    if (!userbotAuthToken) {
+      showError('Сначала запросите код подтверждения');
+      return;
+    }
+    if (!form.values.verify_code?.trim()) {
+      form.setFieldError('verify_code', 'Введите код подтверждения');
+      return;
+    }
+
+    setIsVerifyingCode(true);
+    try {
+      const response = await agentService.verifyUserbotCode({
+        auth_token: userbotAuthToken,
+        code: form.values.verify_code.trim(),
+        password: form.values.password_2fa?.trim() || undefined,
+      });
+      form.setFieldValue('session_string', response.session_string || '');
+      setIsUserbotVerified(true);
+      const label = response.username
+        ? `@${response.username}`
+        : [response.first_name, response.last_name].filter(Boolean).join(' ') || `id: ${response.telegram_id}`;
+      setVerifiedUserbotLabel(label);
+      showSuccess('Userbot успешно подтвержден');
+    } catch (error) {
+      setIsUserbotVerified(false);
+      showError(error.message || 'Не удалось подтвердить код');
+    } finally {
+      setIsVerifyingCode(false);
+    }
+  };
+
+  const switchWhatsappUserbotMode = (mode) => {
+    setWhatsappUserbotMode(mode);
+    setWhatsappUserbotAuthToken('');
+    setWhatsappUserbotQrDataUrl('');
+    setIsWhatsappUserbotVerified(false);
+    setVerifiedWhatsappUserbotLabel('');
+    whatsappUserbotLastAuthStatusRef.current = '';
+    form.setFieldValue('whatsapp_userbot_session_string', '');
+    form.setFieldError('whatsapp_userbot_session_string', undefined);
+  };
+
+  const handleWhatsappUserbotRequestCode = async () => {
+    if (!form.values.whatsapp_userbot_phone_number?.trim()) {
+      form.setFieldError('whatsapp_userbot_phone_number', 'Номер WhatsApp обязателен');
+      return;
+    }
+    setIsSendingWhatsappUserbotCode(true);
+    try {
+      const response = await agentService.requestWhatsAppUserbotCode({
+        phone_number: form.values.whatsapp_userbot_phone_number.trim(),
+      });
+      setWhatsappUserbotAuthToken(response.auth_token);
+      setWhatsappUserbotQrDataUrl(response.qr_data_url || '');
+      setIsWhatsappUserbotVerified(false);
+      setVerifiedWhatsappUserbotLabel('');
+      whatsappUserbotLastAuthStatusRef.current = '';
+      form.setFieldValue('whatsapp_userbot_session_string', '');
+      showSuccess(
+        response.hint || 'QR готов. Отсканируйте его в WhatsApp и затем нажмите «Проверить подключение».'
+      );
+    } catch (error) {
+      showError(error.message || 'Не удалось запросить QR-код WhatsApp');
+    } finally {
+      setIsSendingWhatsappUserbotCode(false);
+    }
+  };
+
+  const handleWhatsappUserbotVerifyCode = async () => {
+    if (!whatsappUserbotAuthToken) {
+      showError('Сначала запросите код подтверждения WhatsApp');
+      return;
+    }
+    setIsVerifyingWhatsappUserbotCode(true);
+    try {
+      const response = await agentService.verifyWhatsAppUserbotCode({
+        auth_token: whatsappUserbotAuthToken,
+      });
+      form.setFieldValue('whatsapp_userbot_session_string', response.session_string || '');
+      if (response.phone_number) {
+        form.setFieldValue('whatsapp_userbot_phone_number', response.phone_number);
+      }
+      setIsWhatsappUserbotVerified(true);
+      setVerifiedWhatsappUserbotLabel(response.display_name || response.phone_number || 'успешно');
+      showSuccess('WhatsApp userbot успешно инициализирован');
+    } catch (error) {
+      setIsWhatsappUserbotVerified(false);
+      showError(error.message || 'Не удалось подтвердить код WhatsApp');
+    } finally {
+      setIsVerifyingWhatsappUserbotCode(false);
+    }
+  };
+
+  useEffect(() => {
+    if (whatsappUserbotMode !== 'simple') return undefined;
+    if (!whatsappUserbotAuthToken) return undefined;
+    if (isWhatsappUserbotVerified) return undefined;
+
+    let cancelled = false;
+    const pollStatus = async () => {
+      try {
+        const response = await agentService.whatsappUserbotAuthStatus({
+          auth_token: whatsappUserbotAuthToken,
+        });
+        if (cancelled) return;
+        if (response?.qr_data_url) {
+          setWhatsappUserbotQrDataUrl(response.qr_data_url);
+        }
+        const nextStatus = String(response?.status || '').trim().toLowerCase();
+        const prevStatus = whatsappUserbotLastAuthStatusRef.current;
+        if (nextStatus && nextStatus !== prevStatus) {
+          if (nextStatus === 'paired') {
+            showSuccess('QR подтвержден в WhatsApp. Нажмите «Проверить подключение».');
+          } else if (nextStatus === 'failed') {
+            showError(response?.last_error || 'Сессия WhatsApp завершилась с ошибкой. Запросите новый QR.');
+          }
+        }
+        whatsappUserbotLastAuthStatusRef.current = nextStatus;
+      } catch {
+        // Ignore intermittent polling failures; user can still verify manually.
+      }
+    };
+
+    pollStatus();
+    const intervalId = window.setInterval(pollStatus, 4000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [
+    whatsappUserbotMode,
+    whatsappUserbotAuthToken,
+    isWhatsappUserbotVerified,
+    showError,
+    showSuccess,
+  ]);
 
   const handleFileUpload = (e) => {
     const files = Array.from(e.target.files || []);
@@ -176,24 +544,368 @@ const CreateAgentContent = () => {
           </section>
 
           <form id="agent-form" className="agent-form" onSubmit={form.handleSubmit}>
-            {/* Bot Token */}
+            <h3 className="agent-form-section-title">Подключение</h3>
             <div className="form-group">
-              <label htmlFor="bot_token">API ключ Telegram бота:</label>
-              <input
-                id="bot_token"
-                type="text"
-                name="bot_token"
-                placeholder="Введите API ключ Telegram бота, его можно получить в BotFather"
-                className={`input-main ${form.errors.bot_token ? 'error' : ''}`}
-                value={form.values.bot_token}
-                onChange={form.handleChange}
-                onBlur={form.handleBlur}
-                disabled={form.isSubmitting}
-              />
-              {form.touched.bot_token && form.errors.bot_token && (
-                <span className="error-message">{form.errors.bot_token}</span>
-              )}
+              <label>Тип подключения:</label>
+              <div className="connection-type-grid connection-type-grid--channels">
+                <button
+                  type="button"
+                  className={`connection-type-card ${useBotChannel ? 'active' : ''}`}
+                  onClick={toggleBotChannel}
+                  disabled={form.isSubmitting}
+                >
+                  Telegram бот
+                </button>
+                <button
+                  type="button"
+                  className={`connection-type-card ${useUserbotChannel ? 'active' : ''}`}
+                  onClick={toggleUserbotChannel}
+                  disabled={form.isSubmitting}
+                >
+                  Telegram юзербот
+                </button>
+                <button
+                  type="button"
+                  className={`connection-type-card ${useWhatsAppUserbotChannel ? 'active' : ''}`}
+                  onClick={toggleWhatsAppUserbotChannel}
+                  disabled={form.isSubmitting}
+                >
+                  WhatsApp userbot
+                </button>
+                <button
+                  type="button"
+                  className={`connection-type-card ${useWhatsAppBusinessApiChannel ? 'active' : ''}`}
+                  onClick={toggleWhatsAppBusinessApiChannel}
+                  disabled={form.isSubmitting}
+                >
+                  WhatsApp Business API
+                </button>
+              </div>
             </div>
+
+            {useBotChannel && (
+              <div className="form-group">
+                <h3 className="agent-form-channel-title">Telegram бот</h3>
+                <label htmlFor="bot_token">API ключ Telegram бота:</label>
+                <input
+                  id="bot_token"
+                  type="text"
+                  name="bot_token"
+                  placeholder="Введите API ключ Telegram бота, его можно получить в BotFather"
+                  className={`input-main ${form.errors.bot_token ? 'error' : ''}`}
+                  value={form.values.bot_token}
+                  onChange={form.handleChange}
+                  onBlur={form.handleBlur}
+                  disabled={form.isSubmitting}
+                />
+                {form.errors.bot_token && (
+                  <span className="error-message">{form.errors.bot_token}</span>
+                )}
+              </div>
+            )}
+
+            {useUserbotChannel && (
+              <div className="form-group">
+                <h3 className="agent-form-channel-title">Telegram юзербот</h3>
+                <label htmlFor="api_id">Telegram API ID:</label>
+                <input
+                  id="api_id"
+                  type="number"
+                  name="api_id"
+                  placeholder="Введите API ID из my.telegram.org"
+                  className={`input-main ${form.errors.api_id ? 'error' : ''}`}
+                  value={form.values.api_id}
+                  onChange={form.handleChange}
+                  disabled={form.isSubmitting}
+                />
+                {form.errors.api_id && (
+                  <span className="error-message">{form.errors.api_id}</span>
+                )}
+
+                <label htmlFor="api_hash" className="mt-input">Telegram API hash:</label>
+                <input
+                  id="api_hash"
+                  type="text"
+                  name="api_hash"
+                  placeholder="Введите API hash из my.telegram.org"
+                  className={`input-main ${form.errors.api_hash ? 'error' : ''}`}
+                  value={form.values.api_hash}
+                  onChange={form.handleChange}
+                  disabled={form.isSubmitting}
+                />
+                {form.errors.api_hash && (
+                  <span className="error-message">{form.errors.api_hash}</span>
+                )}
+
+                <label htmlFor="phone_number" className="mt-input">Номер телефона:</label>
+                <input
+                  id="phone_number"
+                  type="text"
+                  name="phone_number"
+                  placeholder="+79990001122"
+                  className={`input-main ${form.errors.phone_number ? 'error' : ''}`}
+                  value={form.values.phone_number}
+                  onChange={form.handleChange}
+                  disabled={form.isSubmitting}
+                />
+                {form.errors.phone_number && (
+                  <span className="error-message">{form.errors.phone_number}</span>
+                )}
+
+                <div className="channel-actions-row">
+                  <button
+                    type="button"
+                    className="btn btn-black"
+                    onClick={handleUserbotRequestCode}
+                    disabled={form.isSubmitting || isSendingCode}
+                  >
+                    {isSendingCode ? 'Отправка...' : 'Отправить код'}
+                  </button>
+                </div>
+
+                {userbotAuthToken ? (
+                  <>
+                    <label htmlFor="verify_code" className="mt-input">Код из Telegram:</label>
+                    <input
+                      id="verify_code"
+                      type="text"
+                      name="verify_code"
+                      placeholder="12345"
+                      className={`input-main ${form.errors.verify_code ? 'error' : ''}`}
+                      value={form.values.verify_code}
+                      onChange={form.handleChange}
+                      disabled={form.isSubmitting}
+                    />
+                    {form.errors.verify_code && (
+                      <span className="error-message">{form.errors.verify_code}</span>
+                    )}
+
+                    <label htmlFor="password_2fa" className="mt-input">Пароль 2FA (если включен):</label>
+                    <input
+                      id="password_2fa"
+                      type="password"
+                      name="password_2fa"
+                      placeholder="Введите пароль 2FA при необходимости"
+                      className="input-main"
+                      value={form.values.password_2fa}
+                      onChange={form.handleChange}
+                      disabled={form.isSubmitting}
+                    />
+
+                    <div className="channel-actions-row">
+                      <button
+                        type="button"
+                        className="btn btn-black"
+                        onClick={handleUserbotVerifyCode}
+                        disabled={form.isSubmitting || isVerifyingCode}
+                      >
+                        {isVerifyingCode ? 'Проверка...' : 'Подтвердить код'}
+                      </button>
+                    </div>
+                  </>
+                ) : null}
+
+                {isUserbotVerified && (
+                  <p className="help-text userbot-success">
+                    Userbot подтвержден: {verifiedUserbotLabel || 'успешно'}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {useWhatsAppBusinessApiChannel && (
+              <div className="form-group">
+                <h3 className="agent-form-channel-title">WhatsApp Business API</h3>
+                <label htmlFor="whatsapp_phone_number_id">WhatsApp Phone Number ID:</label>
+                <input
+                  id="whatsapp_phone_number_id"
+                  type="text"
+                  name="whatsapp_phone_number_id"
+                  placeholder="Например: 123456789012345"
+                  className={`input-main ${form.errors.whatsapp_phone_number_id ? 'error' : ''}`}
+                  value={form.values.whatsapp_phone_number_id}
+                  onChange={form.handleChange}
+                  disabled={form.isSubmitting}
+                />
+                {form.errors.whatsapp_phone_number_id && (
+                  <span className="error-message">{form.errors.whatsapp_phone_number_id}</span>
+                )}
+
+                <label htmlFor="whatsapp_access_token" className="mt-input">WhatsApp Access Token:</label>
+                <input
+                  id="whatsapp_access_token"
+                  type="password"
+                  name="whatsapp_access_token"
+                  placeholder="Введите постоянный токен Meta"
+                  className={`input-main ${form.errors.whatsapp_access_token ? 'error' : ''}`}
+                  value={form.values.whatsapp_access_token}
+                  onChange={form.handleChange}
+                  disabled={form.isSubmitting}
+                />
+                {form.errors.whatsapp_access_token && (
+                  <span className="error-message">{form.errors.whatsapp_access_token}</span>
+                )}
+
+                <label htmlFor="whatsapp_business_account_id" className="mt-input">
+                  WhatsApp Business Account ID (опционально):
+                </label>
+                <input
+                  id="whatsapp_business_account_id"
+                  type="text"
+                  name="whatsapp_business_account_id"
+                  placeholder="Например: 987654321098765"
+                  className="input-main"
+                  value={form.values.whatsapp_business_account_id}
+                  onChange={form.handleChange}
+                  disabled={form.isSubmitting}
+                />
+
+                <label htmlFor="whatsapp_verify_token" className="mt-input">
+                  Webhook Verify Token (опционально):
+                </label>
+                <input
+                  id="whatsapp_verify_token"
+                  type="text"
+                  name="whatsapp_verify_token"
+                  placeholder="Токен для проверки webhook"
+                  className="input-main"
+                  value={form.values.whatsapp_verify_token}
+                  onChange={form.handleChange}
+                  disabled={form.isSubmitting}
+                />
+
+                <p className="help-text">
+                  Данные сохраняются как канал агента и используются для интеграции WhatsApp Business API.
+                </p>
+              </div>
+            )}
+
+            {useWhatsAppUserbotChannel && (
+              <div className="form-group">
+                <h3 className="agent-form-channel-title">WhatsApp userbot</h3>
+                <label>Режим подключения WhatsApp userbot:</label>
+                <div className="connection-type-grid connection-type-grid--pair">
+                  <button
+                    type="button"
+                    className={`connection-type-card ${whatsappUserbotMode === 'simple' ? 'active' : ''}`}
+                    onClick={() => switchWhatsappUserbotMode('simple')}
+                    disabled={form.isSubmitting}
+                  >
+                    Простое подключение
+                  </button>
+                  <button
+                    type="button"
+                    className={`connection-type-card ${whatsappUserbotMode === 'expert' ? 'active' : ''}`}
+                    onClick={() => switchWhatsappUserbotMode('expert')}
+                    disabled={form.isSubmitting}
+                  >
+                    Режим эксперта
+                  </button>
+                </div>
+
+                <label htmlFor="whatsapp_userbot_phone_number" className="mt-input">
+                  Номер WhatsApp userbot:
+                </label>
+                <input
+                  id="whatsapp_userbot_phone_number"
+                  type="text"
+                  name="whatsapp_userbot_phone_number"
+                  placeholder="+79990001122"
+                  className={`input-main ${form.errors.whatsapp_userbot_phone_number ? 'error' : ''}`}
+                  value={form.values.whatsapp_userbot_phone_number}
+                  onChange={form.handleChange}
+                  disabled={form.isSubmitting}
+                />
+                {form.errors.whatsapp_userbot_phone_number && (
+                  <span className="error-message">{form.errors.whatsapp_userbot_phone_number}</span>
+                )}
+
+                {whatsappUserbotMode === 'simple' ? (
+                  <>
+                    <div className="channel-actions-row">
+                      <button
+                        type="button"
+                        className="btn btn-black"
+                        onClick={handleWhatsappUserbotRequestCode}
+                        disabled={form.isSubmitting || isSendingWhatsappUserbotCode}
+                      >
+                        {isSendingWhatsappUserbotCode ? 'Отправка...' : 'Запросить QR-код'}
+                      </button>
+                    </div>
+
+                    {whatsappUserbotQrDataUrl ? (
+                      <div className="wa-qr-card">
+                        <p className="wa-qr-title"><strong>QR для подключения</strong></p>
+                        <img
+                          src={whatsappUserbotQrDataUrl}
+                          alt="WhatsApp QR"
+                          className="wa-qr-image"
+                        />
+                        <p className="wa-qr-hint">
+                          Откройте WhatsApp → Настройки → Связанные устройства → Привязать устройство и отсканируйте QR.
+                        </p>
+                      </div>
+                    ) : null}
+
+                    {whatsappUserbotAuthToken ? (
+                      <div className="channel-actions-row">
+                        <button
+                          type="button"
+                          className="btn btn-black"
+                          onClick={handleWhatsappUserbotVerifyCode}
+                          disabled={form.isSubmitting || isVerifyingWhatsappUserbotCode}
+                        >
+                          {isVerifyingWhatsappUserbotCode ? 'Проверка...' : 'Проверить подключение'}
+                        </button>
+                      </div>
+                    ) : null}
+
+                    {isWhatsappUserbotVerified && (
+                      <p className="help-text userbot-success">
+                        WhatsApp userbot подтвержден: {verifiedWhatsappUserbotLabel || 'успешно'}
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <label htmlFor="whatsapp_userbot_session_string" className="mt-input">
+                      Session string WhatsApp userbot:
+                    </label>
+                    <textarea
+                      id="whatsapp_userbot_session_string"
+                      name="whatsapp_userbot_session_string"
+                      placeholder="Вставьте сериализованную сессию userbot"
+                      className={`input-main textarea ${form.errors.whatsapp_userbot_session_string ? 'error' : ''}`}
+                      value={form.values.whatsapp_userbot_session_string}
+                      onChange={form.handleChange}
+                      disabled={form.isSubmitting}
+                      rows="4"
+                    ></textarea>
+                    {form.errors.whatsapp_userbot_session_string && (
+                      <span className="error-message">{form.errors.whatsapp_userbot_session_string}</span>
+                    )}
+                  </>
+                )}
+
+                <label htmlFor="whatsapp_userbot_client_label" className="mt-input">
+                  Название клиента (опционально):
+                </label>
+                <input
+                  id="whatsapp_userbot_client_label"
+                  type="text"
+                  name="whatsapp_userbot_client_label"
+                  placeholder="Например: WA MultiDevice Session #1"
+                  className="input-main"
+                  value={form.values.whatsapp_userbot_client_label}
+                  onChange={form.handleChange}
+                  disabled={form.isSubmitting}
+                />
+
+                <p className="help-text">
+                  Используйте только свою userbot-сессию. Это не официальный канал Meta.
+                </p>
+              </div>
+            )}
 
             {/* System prompt */}
             <div className="form-group">

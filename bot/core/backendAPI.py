@@ -209,6 +209,7 @@ class APIcreate(APIbase):
         user_external_id: str | None = None,
         user_display_name: str | None = None,
         channel: str = "telegram",
+        telegram_peer_access_hash: int | None = None,
     ) -> dict:
         data = {
             "bot_id": bot_id,
@@ -218,6 +219,8 @@ class APIcreate(APIbase):
             "user_external_id": user_external_id,
             "user_display_name": user_display_name,
         }
+        if telegram_peer_access_hash is not None:
+            data["telegram_peer_access_hash"] = telegram_peer_access_hash
         return await cls.agent(data, add_url="analytics/messages/log")
     
 

@@ -42,6 +42,7 @@ from ..utils.internal_auth import is_internal_request
 logger = getLogger(__name__)
 router = APIRouter(prefix="/api/documents")
 http_bearer = HTTPBearer(auto_error=False)
+MAX_INT32 = 2_147_483_647
 
 
 async def get_current_user_optional(
@@ -75,6 +76,22 @@ def _serialize_document(document, bot_id: int | None = None) -> dict:
         data["bot_id"] = resolved_bot_id
     # Convert date/datetime to ISO strings for JSONResponse.
     return jsonable_encoder(data)
+
+
+async def _find_agent_by_lookup(agent_dao: AgentDAO, *, agent_id: int | None, bot_id: int | None):
+    if agent_id is not None and 0 < agent_id <= MAX_INT32:
+        found_by_id = await agent_dao.find_one_by_filter(load_relations=True, id=agent_id)
+        if found_by_id:
+            return found_by_id
+    # Backward-compat: some legacy callers still pass Telegram channel id as `agent_id`.
+    if agent_id is not None and (bot_id is None):
+        bot_id = agent_id
+    if bot_id is None:
+        return None
+    found_agent = await agent_dao.find_one_by_filter(load_relations=True, bot_id=bot_id)
+    if not found_agent and 0 < bot_id <= MAX_INT32:
+        found_agent = await agent_dao.find_one_by_filter(load_relations=True, id=bot_id)
+    return found_agent
 
 def _save_upload_to_temp_with_hash(file: UploadFile, suffix: str) -> tuple[str, str]:
     hasher = hashlib.sha256()
@@ -146,7 +163,11 @@ async def read_all_documents(
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
         async with session.begin():
-            found_agent = await agent_dao.find_one_by_filter(load_relations=True, bot_id=agent.bot_id)
+            found_agent = await _find_agent_by_lookup(
+                agent_dao,
+                agent_id=agent.agent_id,
+                bot_id=agent.bot_id,
+            )
             if not found_agent:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
             if current_user and found_agent.user_id != current_user.id:
@@ -163,22 +184,29 @@ async def read_all_documents(
 # Must be registered before GET /{doc_id}, otherwise "getContextBy_agentID" is parsed as doc_id.
 @router.api_route("/getContextBy_agentID", methods=["GET", "POST"])
 async def get_context(
-    agent_id: int,
-    query: str,
+    agent_id: int | None = Query(default=None),
+    bot_id: int | None = Query(default=None),
+    query: str = Query(...),
     current_user=Depends(get_current_user_optional),
     internal: bool = Depends(is_internal_request),
 ):
     _assert_access(current_user, internal)
+    if agent_id is None and bot_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Query parameter 'agent_id' or 'bot_id' is required",
+        )
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
         async with session.begin():
-            agent = await agent_dao.find_one_by_filter(bot_id=agent_id)
+            agent = await _find_agent_by_lookup(agent_dao, agent_id=agent_id, bot_id=bot_id)
             if not agent:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
             if current_user and agent.user_id != current_user.id:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
 
-    context = await search_knowledge_base(query, agent_id=agent_id)
+    vector_namespace_id = agent.bot_id if agent.bot_id is not None else agent.id
+    context = await search_knowledge_base(query, agent_id=vector_namespace_id)
     return JSONResponse(content=context, status_code=status.HTTP_200_OK)
 
 
@@ -240,12 +268,15 @@ async def upload_document(
 ):
     _assert_access(current_user, internal)
     agent_by_id = Agent_by_botID.model_validate_json(agent_data)
-    agent_id = agent_by_id.bot_id
 
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
         async with session.begin():
-            agent = await agent_dao.find_one_by_filter(load_relations=True, bot_id=agent_id)
+            agent = await _find_agent_by_lookup(
+                agent_dao,
+                agent_id=agent_by_id.agent_id,
+                bot_id=agent_by_id.bot_id,
+            )
             if not agent:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
             if current_user and agent.user_id != current_user.id:
@@ -253,6 +284,7 @@ async def upload_document(
             user = agent.user
             if not user:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found for this agent")
+            vector_namespace_id = agent.bot_id if agent.bot_id is not None else agent.id
 
     current_plan = user.subscription_type
     limit = get_chunk_limit_by_plan(current_plan)
@@ -293,7 +325,7 @@ async def upload_document(
             background_tasks.add_task(
                 process_document,
                 file_path=temp_path,
-                agent_id=agent_id,
+                agent_id=vector_namespace_id,
                 document_id=existing_doc.id,
                 content_hash=content_hash,
                 source_name=file.filename,
@@ -324,7 +356,7 @@ async def upload_document(
     chunks = text_splitter.split_text(text)
     new_chunks_count = len(chunks)
     current_count = await get_current_chunks_count(
-        agent_id,
+        vector_namespace_id,
         embedding_profile_key=embedding_profile["profile_key"],
     )
 
@@ -381,7 +413,7 @@ async def upload_document(
         background_tasks.add_task(
             process_document,
             file_path=temp_path,
-            agent_id=agent_id,
+            agent_id=vector_namespace_id,
             document_id=doc.id,
             content_hash=content_hash,
             source_name=file.filename,
@@ -406,12 +438,14 @@ async def upload_public_link(
 ):
     _assert_access(current_user, internal)
     normalized_url = _validate_public_url(payload.url)
-    agent_id = payload.bot_id
-
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
         async with session.begin():
-            agent = await agent_dao.find_one_by_filter(load_relations=True, bot_id=agent_id)
+            agent = await _find_agent_by_lookup(
+                agent_dao,
+                agent_id=payload.agent_id,
+                bot_id=payload.bot_id,
+            )
             if not agent:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
             if current_user and agent.user_id != current_user.id:
@@ -419,6 +453,7 @@ async def upload_public_link(
             user = agent.user
             if not user:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found for this agent")
+            vector_namespace_id = agent.bot_id if agent.bot_id is not None else agent.id
 
     current_plan = user.subscription_type
     limit = get_chunk_limit_by_plan(current_plan)
@@ -470,7 +505,7 @@ async def upload_public_link(
         )
 
     current_count = await get_current_chunks_count(
-        agent_id,
+        vector_namespace_id,
         embedding_profile_key=embedding_profile["profile_key"],
     )
     if current_count + new_chunks_count > limit:
@@ -524,7 +559,7 @@ async def upload_public_link(
         process_text_source,
         text=text,
         source_name=normalized_url,
-        agent_id=agent_id,
+        agent_id=vector_namespace_id,
         document_id=doc.id,
         content_hash=content_hash,
     )
@@ -548,7 +583,11 @@ async def create_manual_reindex_job(
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
         async with session.begin():
-            agent = await agent_dao.find_one_by_filter(bot_id=payload.bot_id)
+            agent = await _find_agent_by_lookup(
+                agent_dao,
+                agent_id=payload.agent_id,
+                bot_id=payload.bot_id,
+            )
             if not agent:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
             if current_user and agent.user_id != current_user.id:
@@ -569,7 +608,8 @@ async def create_manual_reindex_job(
 
 @router.get("/reindex-jobs")
 async def list_reindex_jobs(
-    bot_id: int = Query(...),
+    agent_id: int | None = Query(default=None),
+    bot_id: int | None = Query(default=None),
     current_user=Depends(get_current_user_optional),
     internal: bool = Depends(is_internal_request),
 ):
@@ -578,7 +618,7 @@ async def list_reindex_jobs(
         agent_dao = AgentDAO(session)
         job_dao = ReindexJobDAO(session)
         async with session.begin():
-            agent = await agent_dao.find_one_by_filter(bot_id=bot_id)
+            agent = await _find_agent_by_lookup(agent_dao, agent_id=agent_id, bot_id=bot_id)
             if not agent:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
             if current_user and agent.user_id != current_user.id:
@@ -587,7 +627,8 @@ async def list_reindex_jobs(
 
     return JSONResponse(
         content={
-            "bot_id": bot_id,
+            "agent_id": agent.id,
+            "bot_id": agent.bot_id,
             "jobs": [serialize_reindex_job(job) for job in jobs],
         },
         status_code=status.HTTP_200_OK,

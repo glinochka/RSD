@@ -11,6 +11,7 @@ const MENU_ITEMS = [
   { id: 'users', label: 'Пользователи' },
   { id: 'agents', label: 'Агенты' },
   { id: 'turnkeyRequests', label: 'Заявки под ключ' },
+  { id: 'errorReports', label: 'Сообщения об ошибках' },
   { id: 'billing', label: 'Тарифы' },
   { id: 'promoCodes', label: 'Промокоды' },
 ];
@@ -50,6 +51,14 @@ const ManagementPortal = () => {
     search: '',
   });
   const [requestsState, setRequestsState] = useState({
+    items: [],
+    page: 1,
+    pageSize: 10,
+    totalPages: 1,
+    total: 0,
+    search: '',
+  });
+  const [errorReportsState, setErrorReportsState] = useState({
     items: [],
     page: 1,
     pageSize: 10,
@@ -119,6 +128,7 @@ const ManagementPortal = () => {
         activeSection !== 'users'
         && activeSection !== 'agents'
         && activeSection !== 'turnkeyRequests'
+        && activeSection !== 'errorReports'
       ) return;
 
       try {
@@ -160,6 +170,18 @@ const ManagementPortal = () => {
             total: data.pagination?.total ?? 0,
             totalPages: data.pagination?.total_pages ?? 1,
           }));
+        } else if (activeSection === 'errorReports') {
+          const data = await adminService.getErrorReports(adminToken, {
+            page: errorReportsState.page,
+            pageSize: errorReportsState.pageSize,
+            search: errorReportsState.search,
+          });
+          setErrorReportsState((prev) => ({
+            ...prev,
+            items: data.items ?? [],
+            total: data.pagination?.total ?? 0,
+            totalPages: data.pagination?.total_pages ?? 1,
+          }));
         }
       } catch (err) {
         setError(formatError(err));
@@ -180,6 +202,9 @@ const ManagementPortal = () => {
     requestsState.page,
     requestsState.pageSize,
     requestsState.search,
+    errorReportsState.page,
+    errorReportsState.pageSize,
+    errorReportsState.search,
   ]);
 
   useEffect(() => {
@@ -684,6 +709,76 @@ const ManagementPortal = () => {
     </>
   );
 
+  const renderErrorReports = () => (
+    <>
+      <div className="management-content-head">
+        <h2>Сообщения об ошибках</h2>
+        <div className="management-inline-controls">
+          <input
+            type="text"
+            placeholder="Поиск по тексту, имени или email"
+            value={errorReportsState.search}
+            onChange={(e) => setErrorReportsState((prev) => ({ ...prev, page: 1, search: e.target.value }))}
+          />
+        </div>
+      </div>
+      {error && <div className="management-error">{error}</div>}
+      {isLoadingTable ? <p>Загрузка сообщений...</p> : (
+        <>
+          <div className="management-table-wrap">
+            <table className="management-table management-table-wrap-text">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Дата</th>
+                  <th>Пользователь</th>
+                  <th>Описание</th>
+                </tr>
+              </thead>
+              <tbody>
+                {errorReportsState.items.map((row) => (
+                  <tr key={row.id}>
+                    <td>{row.id}</td>
+                    <td>{row.created_at ? new Date(row.created_at).toLocaleString() : '-'}</td>
+                    <td>
+                      <div className="management-cell-stack">
+                        <span>{row.user?.name ?? '—'}</span>
+                        <span className="management-cell-muted">{row.user?.email || '—'}</span>
+                      </div>
+                    </td>
+                    <td>{row.description}</td>
+                  </tr>
+                ))}
+                {errorReportsState.items.length === 0 && (
+                  <tr><td colSpan={4}>Сообщений пока нет</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <div className="management-pagination">
+            <button
+              type="button"
+              className="btn btn-outline"
+              disabled={errorReportsState.page <= 1}
+              onClick={() => setErrorReportsState((prev) => ({ ...prev, page: prev.page - 1 }))}
+            >
+              Назад
+            </button>
+            <span>Стр. {errorReportsState.page} из {errorReportsState.totalPages} (всего: {errorReportsState.total})</span>
+            <button
+              type="button"
+              className="btn btn-outline"
+              disabled={errorReportsState.page >= errorReportsState.totalPages}
+              onClick={() => setErrorReportsState((prev) => ({ ...prev, page: prev.page + 1 }))}
+            >
+              Вперед
+            </button>
+          </div>
+        </>
+      )}
+    </>
+  );
+
   const renderTurnkeyRequests = () => (
     <>
       <div className="management-content-head">
@@ -1018,6 +1113,7 @@ const ManagementPortal = () => {
             {activeSection === 'users' && renderUsers()}
             {activeSection === 'agents' && renderAgents()}
             {activeSection === 'turnkeyRequests' && renderTurnkeyRequests()}
+            {activeSection === 'errorReports' && renderErrorReports()}
             {activeSection === 'billing' && renderBilling()}
             {activeSection === 'promoCodes' && renderPromoCodes()}
           </section>

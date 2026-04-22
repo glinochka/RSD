@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 import jwt
 from jwt.exceptions import InvalidTokenError
+from passlib.exc import UnknownHashError
 
 from .schemas import (
     AdminGiftSubscriptionRequest,
@@ -22,7 +23,7 @@ from ..router_agents.dao import AgentDAO
 from ..router_documents.dao import DocumentDAO
 from ..router_payments.dao import PaymentTransactionDAO, PromoCodeDAO, TurnkeyAgentRequestDAO
 from ..router_payments.router import _calculate_new_end_date
-from ..router_users.dao import UserDAO
+from ..router_users.dao import UserDAO, UserErrorReportDAO
 from ..subscription_plans import (
     get_all_subscription_plans,
     get_subscription_plan,
@@ -116,7 +117,14 @@ async def admin_login(payload: AdminLoginRequest):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid admin credentials",
         )
-    is_password_valid = verify_password(password, settings.ADMIN_WEB_PASSWORD_HASH)
+    try:
+        is_password_valid = verify_password(password, settings.ADMIN_WEB_PASSWORD_HASH)
+    except UnknownHashError:
+        logger.exception("ADMIN_WEB_PASSWORD_HASH is invalid and cannot be parsed by passlib")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="ADMIN_WEB_PASSWORD_HASH is misconfigured",
+        )
     if not is_password_valid:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -291,6 +299,55 @@ async def admin_turnkey_requests(
         }
         for item in items_data
     ]
+
+    return JSONResponse(
+        content={
+            "items": items,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": total or 0,
+                "total_pages": max(1, ((total or 0) + page_size - 1) // page_size),
+            },
+        },
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@router.get("/error-reports")
+async def admin_error_reports(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=100),
+    search: str | None = Query(default=None),
+    _admin=Depends(get_current_admin),
+):
+    search_value = (search or "").strip()
+
+    async with async_session_maker() as session:
+        report_dao = UserErrorReportDAO(session)
+        async with session.begin():
+            total = await report_dao.count_for_admin(search_value or None)
+            rows = await report_dao.list_for_admin(
+                page=page,
+                page_size=page_size,
+                search_value=search_value or None,
+            )
+
+    items = []
+    for row in rows:
+        u = row.user
+        items.append(
+            {
+                "id": row.id,
+                "description": row.description,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+                "user": {
+                    "id": u.id,
+                    "name": u.name,
+                    "email": u.email,
+                },
+            }
+        )
 
     return JSONResponse(
         content={

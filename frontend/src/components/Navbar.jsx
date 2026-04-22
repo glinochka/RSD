@@ -8,7 +8,9 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 import { useNotification } from '../context/useNotification';
 import authService from '../services/authService';
+import errorReportService from '../services/errorReportService';
 import { NAVIGATION_ROUTES } from '../config/constants';
+import { normalizeDetail } from '../utils/errorUtils';
 import '../styles/navbar.css';
 
 function ProfilePersonIcon({ className }) {
@@ -44,6 +46,9 @@ const Navbar = () => {
   const [telegramLinkRemainingSeconds, setTelegramLinkRemainingSeconds] = useState(0);
   const [isStartingTelegramLink, setIsStartingTelegramLink] = useState(false);
   const [isCheckingTelegramLink, setIsCheckingTelegramLink] = useState(false);
+  const [isErrorReportOpen, setIsErrorReportOpen] = useState(false);
+  const [errorReportText, setErrorReportText] = useState('');
+  const [isSendingErrorReport, setIsSendingErrorReport] = useState(false);
   const profilePanelId = useId();
   const profilePanelRef = useRef(null);
 
@@ -63,7 +68,11 @@ const Navbar = () => {
     setIsMenuOpen(!isMenuOpen);
   };
 
-  const closeProfile = () => setIsProfileOpen(false);
+  const closeProfile = () => {
+    setIsErrorReportOpen(false);
+    setErrorReportText('');
+    setIsProfileOpen(false);
+  };
 
   const toggleProfile = () => {
     setIsMenuOpen(false);
@@ -74,7 +83,13 @@ const Navbar = () => {
     if (!isProfileOpen) return undefined;
 
     const onKeyDown = (e) => {
-      if (e.key === 'Escape') closeProfile();
+      if (e.key !== 'Escape') return;
+      if (isErrorReportOpen) {
+        setIsErrorReportOpen(false);
+        setErrorReportText('');
+        return;
+      }
+      closeProfile();
     };
 
     document.addEventListener('keydown', onKeyDown);
@@ -85,7 +100,7 @@ const Navbar = () => {
       document.removeEventListener('keydown', onKeyDown);
       document.body.style.overflow = prevOverflow;
     };
-  }, [isProfileOpen]);
+  }, [isProfileOpen, isErrorReportOpen]);
 
   useEffect(() => {
     if (!isProfileOpen) return;
@@ -203,6 +218,29 @@ const Navbar = () => {
       showError(error?.message || 'Не удалось проверить статус привязки');
     } finally {
       setIsCheckingTelegramLink(false);
+    }
+  };
+
+  const handleSubmitErrorReport = async () => {
+    const text = errorReportText.trim();
+    if (text.length < 10) {
+      showError('Опишите проблему не менее чем в 10 символах');
+      return;
+    }
+    try {
+      setIsSendingErrorReport(true);
+      await errorReportService.submit(text);
+      setIsErrorReportOpen(false);
+      setErrorReportText('');
+      showSuccess('Спасибо, мы получили ваше сообщение', 4000);
+    } catch (error) {
+      const msg =
+        normalizeDetail(error?.response?.data?.detail) ||
+        error?.message ||
+        'Не удалось отправить сообщение';
+      showError(msg);
+    } finally {
+      setIsSendingErrorReport(false);
     }
   };
 
@@ -389,6 +427,13 @@ const Navbar = () => {
             </div>
 
             <div className="profile-drawer-footer">
+              <button
+                type="button"
+                className="btn btn-outline profile-drawer-btn"
+                onClick={() => setIsErrorReportOpen(true)}
+              >
+                Сообщить об ошибке
+              </button>
               <button type="button" className="btn btn-black profile-drawer-btn" onClick={handleLogout}>
                 Выйти
               </button>
@@ -398,6 +443,64 @@ const Navbar = () => {
             </div>
           </aside>
         </>
+      )}
+
+      {isAuthenticated && isErrorReportOpen && (
+        <div
+          className="profile-error-report-overlay"
+          role="presentation"
+          onClick={() => {
+            setIsErrorReportOpen(false);
+            setErrorReportText('');
+          }}
+        >
+          <div
+            className="profile-error-report-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="profile-error-report-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="profile-error-report-intro">
+              <h3 id="profile-error-report-title" className="profile-error-report-title">
+                Сообщить об ошибке
+              </h3>
+              <p className="profile-error-report-hint">
+                Опишите, что пошло не так: страница, действия и ожидаемый результат. Минимум 10 символов.
+              </p>
+            </div>
+            <textarea
+              className="profile-error-report-textarea"
+              value={errorReportText}
+              onChange={(e) => setErrorReportText(e.target.value)}
+              rows={6}
+              maxLength={8000}
+              placeholder="Например: на странице «Мои агенты» после нажатия…"
+              disabled={isSendingErrorReport}
+            />
+            <div className="profile-error-report-actions">
+              <button
+                type="button"
+                className="btn btn-black profile-drawer-btn"
+                disabled={isSendingErrorReport || errorReportText.trim().length < 10}
+                onClick={handleSubmitErrorReport}
+              >
+                {isSendingErrorReport ? 'Отправка...' : 'Отправить'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-outline profile-drawer-btn"
+                disabled={isSendingErrorReport}
+                onClick={() => {
+                  setIsErrorReportOpen(false);
+                  setErrorReportText('');
+                }}
+              >
+                Отмена
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );

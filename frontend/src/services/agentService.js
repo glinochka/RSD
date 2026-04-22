@@ -6,6 +6,9 @@
 import apiClient from './apiClient';
 import { API_ROUTES } from '../config/constants';
 
+/** Telethon + SOCKS can exceed default API timeout (30s); avoid axios abort → nginx 499. */
+const USERBOT_TELETHON_TIMEOUT_MS = 120_000;
+
 export const agentService = {
   /**
    * Get all agents for current user
@@ -20,7 +23,7 @@ export const agentService = {
    */
   getById: async (id) => {
     const response = await apiClient.get(API_ROUTES.AGENTS_DETAIL, {
-      params: { bot_id: id },
+      params: { agent_id: id },
     });
     return response.data;
   },
@@ -28,17 +31,89 @@ export const agentService = {
   /**
    * Create new agent
    */
-  create: async (agentData) => {
-    const response = await apiClient.post(API_ROUTES.AGENTS_CREATE, agentData);
+  createEmpty: async (agentData) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_CREATE_EMPTY, agentData);
+    return response.data;
+  },
+
+  createUserbot: async (agentData) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_CREATE_USERBOT, agentData, {
+      timeout: USERBOT_TELETHON_TIMEOUT_MS,
+    });
+    return response.data;
+  },
+
+  requestUserbotCode: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_USERBOT_REQUEST_CODE, data, {
+      timeout: USERBOT_TELETHON_TIMEOUT_MS,
+    });
+    return response.data;
+  },
+
+  verifyUserbotCode: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_USERBOT_VERIFY_CODE, data, {
+      timeout: USERBOT_TELETHON_TIMEOUT_MS,
+    });
+    return response.data;
+  },
+
+  requestWhatsAppUserbotCode: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_WHATSAPP_USERBOT_REQUEST_CODE, data);
+    return response.data;
+  },
+
+  verifyWhatsAppUserbotCode: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_WHATSAPP_USERBOT_VERIFY_CODE, data);
+    return response.data;
+  },
+
+  whatsappUserbotAuthStatus: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_WHATSAPP_USERBOT_AUTH_STATUS, data);
+    return response.data;
+  },
+
+  getChannels: async (agentId) => {
+    const response = await apiClient.get(API_ROUTES.AGENTS_CHANNELS_LIST, {
+      params: { agent_id: agentId },
+    });
+    return response.data;
+  },
+
+  addBotChannel: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_CHANNELS_ADD_BOT, data);
+    return response.data;
+  },
+
+  addUserbotChannel: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_CHANNELS_ADD_USERBOT, data, {
+      timeout: USERBOT_TELETHON_TIMEOUT_MS,
+    });
+    return response.data;
+  },
+
+  addWhatsAppUserbotChannel: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_CHANNELS_ADD_WHATSAPP_USERBOT, data);
+    return response.data;
+  },
+
+  addWhatsAppBusinessApiChannel: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_CHANNELS_ADD_WHATSAPP_BUSINESS_API, data);
+    return response.data;
+  },
+
+  removeChannel: async ({ agent_id, connection_id }) => {
+    const response = await apiClient.delete(API_ROUTES.AGENTS_CHANNELS_DELETE, {
+      params: { agent_id, connection_id },
+    });
     return response.data;
   },
 
   /**
    * Update agent
    */
-  update: async (botId, agentData) => {
+  update: async (agentId, agentData) => {
     const response = await apiClient.patch(API_ROUTES.AGENTS_UPDATE, {
-      bot_id: botId,
+      agent_id: agentId,
       ...agentData,
     });
     return response.data;
@@ -47,30 +122,30 @@ export const agentService = {
   /**
    * Delete agent
    */
-  delete: async (botId) => {
+  delete: async (agentId) => {
     const response = await apiClient.delete(API_ROUTES.AGENTS_DELETE, {
-      params: { bot_id: botId },
+      params: { agent_id: agentId },
     });
     return response.data;
   },
 
-  toggleStatus: async (botId) => {
+  toggleStatus: async (agentId) => {
     const response = await apiClient.patch(API_ROUTES.AGENTS_TOGGLE, {
-      bot_id: botId,
+      agent_id: agentId,
     });
     return response.data;
   },
 
-  aiImprovePrompt: async (botId) => {
+  aiImprovePrompt: async (agentId) => {
     const response = await apiClient.post(API_ROUTES.AGENTS_AI_IMPROVE_PROMPT, {
-      bot_id: botId,
+      agent_id: agentId,
     });
     return response.data;
   },
 
-  aiGenerateWelcome: async (botId) => {
+  aiGenerateWelcome: async (agentId) => {
     const response = await apiClient.post(API_ROUTES.AGENTS_AI_GENERATE_WELCOME, {
-      bot_id: botId,
+      agent_id: agentId,
     });
     return response.data;
   },
@@ -88,61 +163,62 @@ export const agentService = {
     return response.data;
   },
 
-  regenerateExternalKey: async (botId) => {
+  regenerateExternalKey: async (agentId) => {
     const response = await apiClient.post(API_ROUTES.AGENTS_REGENERATE_EXTERNAL_KEY, {
-      bot_id: botId,
+      agent_id: agentId,
     });
     return response.data;
   },
 
-  getAnalyticsSummary: async (botId) => {
+  getAnalyticsSummary: async (agentId) => {
     const response = await apiClient.get(API_ROUTES.AGENTS_ANALYTICS_SUMMARY, {
-      params: { bot_id: botId },
+      params: { agent_id: agentId },
     });
     return response.data;
   },
 
-  getAnalyticsChats: async (botId, params = {}) => {
+  getAnalyticsChats: async (agentId, params = {}) => {
     const response = await apiClient.get(API_ROUTES.AGENTS_ANALYTICS_CHATS, {
-      params: { bot_id: botId, ...params },
+      params: { agent_id: agentId, ...params },
     });
     return response.data;
   },
 
-  getAnalyticsTimeseries: async (botId, days = 30) => {
+  getAnalyticsTimeseries: async (agentId, days = 30) => {
     const response = await apiClient.get(API_ROUTES.AGENTS_ANALYTICS_TIMESERIES, {
-      params: { bot_id: botId, days },
+      params: { agent_id: agentId, days },
     });
     return response.data;
   },
 
-  setUserFrozen: async (botId, userExternalId, frozen) => {
+  setUserFrozen: async (agentId, userExternalId, frozen) => {
     await apiClient.post(API_ROUTES.AGENTS_ANALYTICS_FROZEN, {
-      bot_id: botId,
+      agent_id: agentId,
       user_external_id: userExternalId,
       frozen,
     });
   },
 
-  sendTelegramMessageAsOwner: async (botId, userExternalId, message) => {
+  sendTelegramMessageAsOwner: async (agentId, userExternalId, message, preferredChannel = null) => {
     const response = await apiClient.post(API_ROUTES.AGENTS_TELEGRAM_SEND_TO_USER, {
-      bot_id: botId,
+      agent_id: agentId,
       user_external_id: userExternalId,
+      preferred_channel: preferredChannel,
       message,
     });
     return response.data;
   },
 
-  getTelegramBroadcastRecipients: async (botId) => {
+  getTelegramBroadcastRecipients: async (agentId) => {
     const response = await apiClient.get(API_ROUTES.AGENTS_TELEGRAM_BROADCAST_RECIPIENTS, {
-      params: { bot_id: botId },
+      params: { agent_id: agentId },
     });
     return response.data;
   },
 
-  sendTelegramBroadcast: async (botId, message, { skipFrozen = true, maxRecipients = 500 } = {}) => {
+  sendTelegramBroadcast: async (agentId, message, { skipFrozen = true, maxRecipients = 500 } = {}) => {
     const response = await apiClient.post(API_ROUTES.AGENTS_TELEGRAM_BROADCAST, {
-      bot_id: botId,
+      agent_id: agentId,
       message,
       skip_frozen: skipFrozen,
       max_recipients: maxRecipients,
@@ -150,9 +226,35 @@ export const agentService = {
     return response.data;
   },
 
-  uploadDocumentByBotId: async (botId, file) => {
+  sendWhatsappUserbotMessageAsOwner: async (agentId, userExternalId, message) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_WHATSAPP_USERBOT_SEND_TO_USER, {
+      agent_id: agentId,
+      user_external_id: userExternalId,
+      message,
+    });
+    return response.data;
+  },
+
+  getWhatsappUserbotBroadcastRecipients: async (agentId) => {
+    const response = await apiClient.get(API_ROUTES.AGENTS_WHATSAPP_USERBOT_BROADCAST_RECIPIENTS, {
+      params: { agent_id: agentId },
+    });
+    return response.data;
+  },
+
+  sendWhatsappUserbotBroadcast: async (agentId, message, { skipFrozen = true, maxRecipients = 500 } = {}) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_WHATSAPP_USERBOT_BROADCAST, {
+      agent_id: agentId,
+      message,
+      skip_frozen: skipFrozen,
+      max_recipients: maxRecipients,
+    });
+    return response.data;
+  },
+
+  uploadDocumentByBotId: async (agentId, file) => {
     const formData = new FormData();
-    formData.append('agent_data', JSON.stringify({ bot_id: botId }));
+    formData.append('agent_data', JSON.stringify({ agent_id: agentId }));
     formData.append('file', file);
 
     const response = await apiClient.post(
@@ -167,17 +269,17 @@ export const agentService = {
     return response.data;
   },
 
-  uploadPublicLinkByBotId: async (botId, url) => {
+  uploadPublicLinkByBotId: async (agentId, url) => {
     const response = await apiClient.post(API_ROUTES.DOCUMENTS_CREATE_LINK, {
-      bot_id: botId,
+      agent_id: agentId,
       url,
     });
     return response.data;
   },
 
-  getDocumentsByBotId: async (botId) => {
+  getDocumentsByBotId: async (agentId) => {
     const response = await apiClient.get(API_ROUTES.DOCUMENTS_LIST_BY_BOT, {
-      params: { bot_id: botId },
+      params: { agent_id: agentId },
     });
     return response.data;
   },

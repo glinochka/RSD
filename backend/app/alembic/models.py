@@ -56,6 +56,10 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    error_reports: Mapped[list["UserErrorReport"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
 
 class UserAuthSession(Base):
@@ -94,8 +98,8 @@ class Agent(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey('users.id', ondelete="CASCADE"))
     
     bot_username: Mapped[str] = mapped_column(String(100), nullable=True)
-    encrypted_token: Mapped[str] = mapped_column(String(500), unique=True)
-    encrypted_external_api_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    encrypted_token: Mapped[str] = mapped_column(Text, unique=True)
+    encrypted_external_api_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     external_api_key_hash: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
     bot_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=True) 
     primary_provider: Mapped[str] = mapped_column(
@@ -167,6 +171,7 @@ class AgentAnalyticsMessage(Base):
     channel: Mapped[str] = mapped_column(String(32), nullable=False, default="telegram", server_default="telegram")
     user_external_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     user_display_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    telegram_peer_access_hash: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     message_text: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
 
@@ -338,4 +343,16 @@ class PromoCode(Base):
     code: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     discount_percent: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+
+
+class UserErrorReport(Base):
+    __tablename__ = "user_error_reports"
+    __table_args__ = {"extend_existing": True}
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+
+    user: Mapped["User"] = relationship(back_populates="error_reports")
 

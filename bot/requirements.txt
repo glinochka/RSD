@@ -7,3 +7,4 @@ httpx
 openai
 qdrant-client
 python-multipart
+slowapi

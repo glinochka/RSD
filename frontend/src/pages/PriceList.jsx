@@ -10,6 +10,7 @@ import { useNotification } from '../context/useNotification';
 import MainLayout from '../components/Layout';
 import { NAVIGATION_ROUTES, VALIDATION } from '../config/constants';
 import pricingService from '../services/pricingService';
+import { reachYandexGoal, YM_GOALS } from '../utils/yandexMetrika';
 import '../styles/priceList.css';
 
 const PENDING_YOOKASSA_PAYMENT_ID_KEY = 'pending_yookassa_payment_id';
@@ -142,6 +143,7 @@ const PriceList = () => {
       });
 
       if (payment?.status === 'succeeded' && !payment?.confirmation_url) {
+        reachYandexGoal(YM_GOALS.TARIFF_PURCHASE_SUCCESS);
         showSuccess('Подписка активирована по промокоду.');
         handleClosePurchaseModal();
         setIsProcessingPayment(false);
@@ -223,6 +225,7 @@ const PriceList = () => {
         if (cancelled) return;
 
         if (statusData?.status === 'succeeded') {
+          reachYandexGoal(YM_GOALS.TARIFF_PURCHASE_SUCCESS);
           showSuccess('Оплата прошла успешно. Подписка активирована.');
           localStorage.removeItem(PENDING_YOOKASSA_PAYMENT_ID_KEY);
           return;
