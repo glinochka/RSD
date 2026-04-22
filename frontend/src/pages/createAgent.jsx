@@ -47,12 +47,12 @@ const TEMPLATE_TYPE_HELP = {
 };
 
 const TEMPLATE_TYPE_SELECT_OPTIONS = [
-  { value: 'qa', label: 'Консультант (RAG QA)' },
+  { value: 'qa', label: 'Консультант (Вопрос-Ответ)' },
   {
     value: 'crm_admin',
     label: (
       <span className="select-option-label-with-badge">
-        Администратор CRM
+        Администратор (Интеграция с CRM)
         <span className="beta-badge">BETA</span>
       </span>
     ),
