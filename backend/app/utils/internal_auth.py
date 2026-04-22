@@ -99,11 +99,18 @@ def build_internal_request_signature(
     return _compute_signature(payload=payload, secret=secret)
 
 
-async def verify_internal_signature(
-    request: Request,
-    x_internal_timestamp: str | None = Header(default=None, alias="X-Internal-Timestamp"),
-    x_internal_signature: str | None = Header(default=None, alias="X-Internal-Signature"),
-) -> None:
+async def verify_internal_signature(request: Request) -> None:
+    """
+    Validate HMAC signature on internal bot→backend calls.
+
+    Note: This must read headers from ``request`` because several routes invoke
+    ``await verify_internal_signature(request)`` directly. Using ``Header(...)``
+    defaults on optional parameters would leave those defaults as unresolved
+    ``Header`` objects when FastAPI dependency injection is bypassed.
+    """
+    x_internal_timestamp = request.headers.get("x-internal-timestamp")
+    x_internal_signature = request.headers.get("x-internal-signature")
+
     secret = settings.INTERNAL_REQUEST_SIGNING_SECRET.strip() or settings.INTERNAL_API_KEY.strip()
     if not secret:
         raise HTTPException(
