@@ -2676,12 +2676,14 @@ async def telegram_send_to_user_as_owner(
             analytics_namespace_id = agent.bot_id if agent.bot_id is not None else agent.id
             send_errors: list[str] = []
             delivered = False
+            delivered_channel: str | None = None
             if preferred_channel in {"", "telegram"}:
                 if telegram_channel and telegram_channel.encrypted_credentials:
                     try:
                         bot_token = decrypt_token(telegram_channel.encrypted_credentials)
                         await _telegram_api_send_message(bot_token, chat_id, text)
                         delivered = True
+                        delivered_channel = "telegram"
                     except HTTPException as exc:
                         send_errors.append(str(exc.detail))
                 elif preferred_channel == "telegram":
@@ -2701,6 +2703,7 @@ async def telegram_send_to_user_as_owner(
                             access_hash=peer_hash,
                         )
                         delivered = True
+                        delivered_channel = "telegram_userbot"
                     except HTTPException as exc:
                         send_errors.append(str(exc.detail))
                 elif preferred_channel == "telegram_userbot":
@@ -2716,7 +2719,7 @@ async def telegram_send_to_user_as_owner(
                 agent=agent,
                 role="operator",
                 message_text=text,
-                channel="dashboard",
+                channel=delivered_channel or "dashboard",
                 user_external_id=str(chat_id),
                 user_display_name=None,
             )
@@ -2992,7 +2995,7 @@ async def whatsapp_userbot_send_to_user_as_owner(
                 telegram_bot_id=analytics_namespace_id,
                 role="operator",
                 message_text=text,
-                channel="dashboard",
+                channel="whatsapp_userbot",
                 user_external_id=ext_id,
                 user_display_name=None,
             )

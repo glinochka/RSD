@@ -768,6 +768,10 @@
   font-size: 0.9em;
 }
 
+.analytics-broadcast--whatsapp {
+  margin-top: var(--spacing-xl);
+}
+
 @media (max-width: 768px) {
   .agent-analytics-header {
     flex-direction: column;

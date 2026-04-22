@@ -741,7 +741,7 @@ const AgentDetailedAnalyticsPageContent = () => {
             </section>
           ) : (
             <>
-            <section className="analytics-broadcast">
+            <section className="analytics-broadcast analytics-broadcast--whatsapp">
               <h3>Рассылка в Telegram</h3>
               <p className="analytics-note">
                 Одно и то же сообщение от вашего лица (как в чатах) получат пользователи из Telegram bot и Telegram
