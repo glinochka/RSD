@@ -15,10 +15,13 @@ from sqlalchemy.pool import StaticPool
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
  
 # --- ЗАГРУЗКА ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ---
-env_path = Path(__file__).parent.parent / ".env"
-if not env_path.exists():
-    env_path = Path(__file__).parent / ".env"
-
+# Ищем .env: backend/app/.env, app/tests/.env, корень репозитория (часто один общий .env)
+_env_candidates = [
+    Path(__file__).parent.parent / ".env",
+    Path(__file__).parent / ".env",
+    Path(__file__).resolve().parents[3] / ".env",
+]
+env_path = next((p for p in _env_candidates if p.exists()), _env_candidates[0])
 load_dotenv(env_path, override=True)
 
 # Проверка критических переменных
@@ -116,49 +119,52 @@ async def client(test_engine, test_session) -> AsyncGenerator[AsyncClient, None]
                 return token.replace("mock_encrypted_", "")
             return token
 
+        def mock_encrypt_crm_credentials(payload: str) -> str:
+            return f"crmv1:mock_crm_{payload}"
+
         with patch('app.utils.crypto.encrypt_token', side_effect=mock_encrypt_token):
             with patch('app.utils.crypto.decrypt_token', side_effect=mock_decrypt_token):
-                
-                # --- 4. ПАТЧИНГ БАЗЫ ДАННЫХ ---
-                with patch('app.alembic.database.async_session_maker') as mock_factory:
-                    mock_factory.return_value.__aenter__.return_value = test_session
-                    mock_factory.return_value.__aexit__.return_value = None
-                    
-                    from fastapi import FastAPI
-                    from fastapi.middleware.cors import CORSMiddleware
-                    
-                    try:
-                        from app.origins import origins
-                    except ImportError:
-                        origins = ["*"]
+                with patch('app.utils.crypto.encrypt_crm_credentials', side_effect=mock_encrypt_crm_credentials):
+                    # --- 4. ПАТЧИНГ БАЗЫ ДАННЫХ ---
+                    with patch('app.alembic.database.async_session_maker') as mock_factory:
+                        mock_factory.return_value.__aenter__.return_value = test_session
+                        mock_factory.return_value.__aexit__.return_value = None
 
-                    # Теперь импортируем роутеры. Они подхватят наши моки из sys.modules
-                    from app.router_users.router import router as users_router
-                    from app.router_agents.router import router as agents_router
-                    from app.router_documents.router import router as documents_router
-                    from app.router_payments.router import router as payments_router
-                    from app.router_admin.router import router as admin_router
+                        from fastapi import FastAPI
+                        from fastapi.middleware.cors import CORSMiddleware
+                        
+                        try:
+                            from app.origins import origins
+                        except ImportError:
+                            origins = ["*"]
 
-                    test_app = FastAPI()
-                    test_app.add_middleware(
-                        CORSMiddleware,
-                        allow_origins=origins,
-                        allow_methods=['*'],
-                        allow_headers=['*'],
-                        allow_credentials=True
-                    )
+                        # Теперь импортируем роутеры. Они подхватят наши моки из sys.modules
+                        from app.router_users.router import router as users_router
+                        from app.router_agents.router import router as agents_router
+                        from app.router_documents.router import router as documents_router
+                        from app.router_payments.router import router as payments_router
+                        from app.router_admin.router import router as admin_router
 
-                    test_app.include_router(users_router)
-                    test_app.include_router(agents_router)
-                    test_app.include_router(documents_router)
-                    test_app.include_router(payments_router)
-                    test_app.include_router(admin_router)
+                        test_app = FastAPI()
+                        test_app.add_middleware(
+                            CORSMiddleware,
+                            allow_origins=origins,
+                            allow_methods=['*'],
+                            allow_headers=['*'],
+                            allow_credentials=True
+                        )
 
-                    async with AsyncClient(
-                        transport=ASGITransport(app=test_app),
-                        base_url="http://test"
-                    ) as ac:
-                        yield ac
+                        test_app.include_router(users_router)
+                        test_app.include_router(agents_router)
+                        test_app.include_router(documents_router)
+                        test_app.include_router(payments_router)
+                        test_app.include_router(admin_router)
+
+                        async with AsyncClient(
+                            transport=ASGITransport(app=test_app),
+                            base_url="http://test"
+                        ) as ac:
+                            yield ac
 
 @pytest_asyncio.fixture(scope="function")
 async def test_user(test_session) -> Generator:

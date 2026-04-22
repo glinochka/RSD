@@ -8,6 +8,18 @@ import httpx
 from .base import CRMConnectionHealth, CRMProvider
 
 
+def _as_object_dict(data: Any) -> dict[str, Any]:
+    """amoCRM v4 batch endpoints return a JSON list; the CRM contract exposes dict results."""
+    if isinstance(data, dict):
+        return data
+    if isinstance(data, list):
+        if not data:
+            return {}
+        first = data[0]
+        return first if isinstance(first, dict) else {"items": data}
+    return {"value": data}
+
+
 class AmoCRMProvider(CRMProvider):
     provider_name = "amocrm"
 
@@ -57,7 +69,8 @@ class AmoCRMProvider(CRMProvider):
         if email:
             custom_fields_values.append({"field_code": "EMAIL", "values": [{"value": email}]})
         body = [{"name": name, "custom_fields_values": custom_fields_values or None}]
-        return await self._request("POST", "/api/v4/contacts", json_body=body)
+        data = await self._request("POST", "/api/v4/contacts", json_body=body)
+        return _as_object_dict(data)
 
     async def find_lead(self, *, query: str) -> dict[str, Any]:
         return await self._request("GET", "/api/v4/leads", params={"query": query})
@@ -66,22 +79,25 @@ class AmoCRMProvider(CRMProvider):
         payload: dict[str, Any] = {"name": name}
         if price is not None:
             payload["price"] = int(price)
-        return await self._request("POST", "/api/v4/leads", json_body=[payload])
+        data = await self._request("POST", "/api/v4/leads", json_body=[payload])
+        return _as_object_dict(data)
 
     async def update_lead(self, *, lead_id: int, fields: dict[str, Any]) -> dict[str, Any]:
         payload = {"id": int(lead_id), **fields}
-        return await self._request("PATCH", "/api/v4/leads", json_body=[payload])
+        data = await self._request("PATCH", "/api/v4/leads", json_body=[payload])
+        return _as_object_dict(data)
 
     async def add_note(self, *, entity_type: str, entity_id: int, text: str) -> dict[str, Any]:
         normalized = (entity_type or "").strip().lower()
         if normalized not in {"lead", "contact", "company"}:
             raise RuntimeError("Unsupported entity_type for note")
         path_entity = f"{normalized}s" if normalized != "company" else "companies"
-        return await self._request(
+        data = await self._request(
             "POST",
             f"/api/v4/{path_entity}/{int(entity_id)}/notes",
             json_body=[{"note_type": "common", "params": {"text": text}}],
         )
+        return _as_object_dict(data)
 
     async def create_task(
         self,
@@ -100,7 +116,8 @@ class AmoCRMProvider(CRMProvider):
         }
         if responsible_user_id is not None:
             payload["responsible_user_id"] = int(responsible_user_id)
-        return await self._request("POST", "/api/v4/tasks", json_body=[payload])
+        data = await self._request("POST", "/api/v4/tasks", json_body=[payload])
+        return _as_object_dict(data)
 
     async def assign_owner(self, *, entity_type: str, entity_id: int, responsible_user_id: int) -> dict[str, Any]:
         normalized = (entity_type or "").strip().lower()
@@ -108,4 +125,5 @@ class AmoCRMProvider(CRMProvider):
             raise RuntimeError("Unsupported entity_type for assign_owner")
         path_entity = f"{normalized}s" if normalized != "company" else "companies"
         payload = [{"id": int(entity_id), "responsible_user_id": int(responsible_user_id)}]
-        return await self._request("PATCH", f"/api/v4/{path_entity}", json_body=payload)
+        data = await self._request("PATCH", f"/api/v4/{path_entity}", json_body=payload)
+        return _as_object_dict(data)
