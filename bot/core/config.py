@@ -10,6 +10,7 @@ class Settings(BaseSettings):
 
     API_HOST: str
     INTERNAL_API_KEY: str = ""
+    INTERNAL_REQUEST_SIGNING_SECRET: str = ""
     USERBOT_POLL_INTERVAL_SECONDS: int = 30
     WHATSAPP_USERBOT_BRIDGE_URL: str = ""
     WHATSAPP_USERBOT_BRIDGE_API_KEY: str = ""

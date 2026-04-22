@@ -21,6 +21,12 @@ const formatNumber = (value) => {
   return new Intl.NumberFormat('ru-RU').format(value);
 };
 
+const formatPercent = (value) => {
+  const numeric = Number(value || 0);
+  if (!Number.isFinite(numeric)) return '0%';
+  return `${numeric.toFixed(1)}%`;
+};
+
 const formatDateTime = (value) => {
   if (!value) return '';
   const date = new Date(value);
@@ -66,6 +72,42 @@ const buildOverviewMetrics = (summary, docsCount) => {
     { id: 'avg', label: 'Среднее вопросов на пользователя', value: avgQuestionsPerUser.toFixed(1) },
     { id: 'qualified', label: 'Доля квалифицированных лидов', value: `${conversionToQualified.toFixed(1)}%` },
     { id: 'docs', label: 'Документов в базе знаний', value: formatNumber(docsCount) },
+  ];
+};
+
+const buildCrmActionMetrics = (crmActions) => {
+  if (!crmActions) return [];
+  return [
+    {
+      id: 'crm-tool-calls',
+      label: 'Всего CRM tool calls',
+      value: formatNumber(Number(crmActions.tool_calls_total || 0)),
+    },
+    {
+      id: 'crm-success-share',
+      label: 'Доля успешных tool calls',
+      value: formatPercent(crmActions.success_share_percent),
+    },
+    {
+      id: 'crm-latency',
+      label: 'Средняя latency CRM операций',
+      value: `${formatNumber(Number(crmActions.avg_latency_ms || 0))} мс`,
+    },
+    {
+      id: 'crm-p95-latency',
+      label: 'P95 latency CRM операций',
+      value: `${formatNumber(Number(crmActions.p95_latency_ms || 0))} мс`,
+    },
+    {
+      id: 'crm-fallback',
+      label: 'Частота fallback-to-text',
+      value: formatPercent(crmActions.fallback_frequency_percent),
+    },
+    {
+      id: 'crm-error-budget',
+      label: 'Использование error budget',
+      value: formatPercent(crmActions?.error_budget?.used_percent),
+    },
   ];
 };
 
@@ -265,6 +307,8 @@ const AgentDetailedAnalyticsPageContent = () => {
   const [selectedSection, setSelectedSection] = useState(ANALYTICS_SECTIONS.OVERVIEW);
   const [agent, setAgent] = useState(null);
   const [metrics, setMetrics] = useState([]);
+  const [crmActionMetrics, setCrmActionMetrics] = useState([]);
+  const [crmActions, setCrmActions] = useState(null);
   const [timeline, setTimeline] = useState([]);
   const [selectedDays, setSelectedDays] = useState(30);
   const [isChartLoading, setIsChartLoading] = useState(false);
@@ -314,17 +358,20 @@ const AgentDetailedAnalyticsPageContent = () => {
     const loadData = async () => {
       setIsLoading(true);
       try {
-        const [agentData, docs, summary, chats] = await Promise.all([
+        const [agentData, docs, summary, chats, crmActionsPayload] = await Promise.all([
           agentService.getById(botId),
           agentService.getDocumentsByBotId(botId),
           agentService.getAnalyticsSummary(botId),
           agentService.getAnalyticsChats(botId, { limit_users: 100, messages_per_user: 100 }),
+          agentService.getAnalyticsCrmActions(botId),
         ]);
         const mappedUsers = mapChatsPayload(chats);
         setAgent(agentData);
         setChatUsers(mappedUsers);
         setSelectedUserId(mappedUsers[0]?.id || null);
         setMetrics(buildOverviewMetrics(summary, docs?.length || 0));
+        setCrmActions(crmActionsPayload || null);
+        setCrmActionMetrics(buildCrmActionMetrics(crmActionsPayload));
       } catch (error) {
         showError(error?.message || 'Не удалось загрузить аналитику агента');
         navigate(NAVIGATION_ROUTES.AGENTS);
@@ -631,6 +678,41 @@ const AgentDetailedAnalyticsPageContent = () => {
                   </article>
                 ))}
               </div>
+              <section className="analytics-crm-actions">
+                <h4>CRM действия агента</h4>
+                <div className="analytics-metrics-grid">
+                  {crmActionMetrics.map((metric) => (
+                    <article key={metric.id} className="analytics-metric-card analytics-metric-card--crm">
+                      <p className="analytics-metric-value">{metric.value}</p>
+                      <p className="analytics-metric-label">{metric.label}</p>
+                    </article>
+                  ))}
+                </div>
+                <div className="analytics-crm-breakdown">
+                  <article className="analytics-crm-breakdown-card">
+                    <h5>Топ CRM tools</h5>
+                    <ul>
+                      {(Array.isArray(crmActions?.by_tool) ? crmActions.by_tool : []).slice(0, 6).map((item) => (
+                        <li key={item.tool_name}>
+                          <span>{item.tool_name}</span>
+                          <strong>{formatNumber(Number(item.count || 0))}</strong>
+                        </li>
+                      ))}
+                    </ul>
+                  </article>
+                  <article className="analytics-crm-breakdown-card">
+                    <h5>Статусы вызовов</h5>
+                    <ul>
+                      {(Array.isArray(crmActions?.by_status) ? crmActions.by_status : []).slice(0, 6).map((item) => (
+                        <li key={item.tool_status}>
+                          <span>{item.tool_status}</span>
+                          <strong>{formatNumber(Number(item.count || 0))}</strong>
+                        </li>
+                      ))}
+                    </ul>
+                  </article>
+                </div>
+              </section>
               <AnalyticsChart
                 timeline={timeline}
                 selectedDays={selectedDays}

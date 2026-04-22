@@ -16,6 +16,132 @@ import '../styles/createAgent.css';
 
 const fileIdentity = (file) => `${file.name}::${file.size}::${file.lastModified}`;
 const linkIdentity = (link) => link.trim().toLowerCase();
+const CRM_TOOL_OPTIONS = [
+  { value: 'find_contact', label: 'Поиск контактов' },
+  { value: 'create_contact', label: 'Создание контакта' },
+  { value: 'find_lead', label: 'Поиск сделок' },
+  { value: 'create_lead', label: 'Создание сделки' },
+  { value: 'update_lead', label: 'Изменение сделки' },
+  { value: 'add_note', label: 'Добавление заметки' },
+  { value: 'create_task', label: 'Создание задачи' },
+  { value: 'assign_owner', label: 'Назначение ответственного' },
+];
+
+const parseAllowedTools = (raw) =>
+  Array.from(
+    new Set(
+      String(raw || '')
+        .split(',')
+        .map((tool) => tool.trim())
+        .filter(Boolean)
+    )
+  );
+
+const buildCrmValidationSignature = (provider, baseUrl, token) =>
+  `${String(provider || '').trim().toLowerCase()}|${String(baseUrl || '').trim()}|${String(token || '').trim()}`;
+
+const TEMPLATE_TYPE_HELP = {
+  qa: 'Агент отвечает на вопросы по подключённой базе знаний (RAG): поиск по документам и выдержки в ответах. Подходит для поддержки и консультаций.',
+  crm_admin:
+    'Агент работает по шаблону администратора CRM: поиск и создание контактов, сделок, задач и другое в соответствии с настройками ниже. Перед сохранением проверьте подключение к CRM. Функция в статусе BETA.',
+};
+
+const TEMPLATE_TYPE_SELECT_OPTIONS = [
+  { value: 'qa', label: 'Консультант (Вопрос-Ответ)' },
+  {
+    value: 'crm_admin',
+    label: (
+      <span className="select-option-label-with-badge">
+        Администратор (Интеграция с CRM)
+        <span className="beta-badge">BETA</span>
+      </span>
+    ),
+  },
+];
+
+const CustomSelect = ({
+  id,
+  name,
+  value,
+  options,
+  onChange,
+  disabled = false,
+  className = '',
+  error = false,
+}) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const selectRef = useRef(null);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const handleOutsideClick = (event) => {
+      if (!selectRef.current?.contains(event.target)) {
+        setIsOpen(false);
+      }
+    };
+    const handleEscape = (event) => {
+      if (event.key === 'Escape') {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [isOpen]);
+
+  const selectedOption = options.find((option) => option.value === value) || options[0];
+  const buttonClassName = [
+    'custom-select-trigger',
+    className,
+    error ? 'error' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  const handleSelectOption = (nextValue) => {
+    onChange({
+      target: {
+        name,
+        value: nextValue,
+      },
+    });
+    setIsOpen(false);
+  };
+
+  return (
+    <div className={`custom-select ${disabled ? 'disabled' : ''}`} ref={selectRef}>
+      <button
+        id={id}
+        type="button"
+        className={buttonClassName}
+        onClick={() => setIsOpen((prev) => !prev)}
+        disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
+      >
+        <span className="custom-select-value">{selectedOption?.label || ''}</span>
+        <span className={`custom-select-arrow ${isOpen ? 'open' : ''}`} aria-hidden="true" />
+      </button>
+      {isOpen && !disabled && (
+        <div className="custom-select-dropdown" role="listbox" aria-labelledby={id}>
+          {options.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              className={`custom-select-option ${option.value === value ? 'selected' : ''}`}
+              onClick={() => handleSelectOption(option.value)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
 
 const CreateAgentContent = () => {
   const navigate = useNavigate();
@@ -42,6 +168,9 @@ const CreateAgentContent = () => {
   const [isVerifyingWhatsappUserbotCode, setIsVerifyingWhatsappUserbotCode] = useState(false);
   const [isWhatsappUserbotVerified, setIsWhatsappUserbotVerified] = useState(false);
   const [verifiedWhatsappUserbotLabel, setVerifiedWhatsappUserbotLabel] = useState('');
+  const [isValidatingCrm, setIsValidatingCrm] = useState(false);
+  const [crmValidationResult, setCrmValidationResult] = useState(null);
+  const [crmValidationSignature, setCrmValidationSignature] = useState('');
   const whatsappUserbotLastAuthStatusRef = useRef('');
 
   const isEditMode = !!agentId;
@@ -71,6 +200,13 @@ const CreateAgentContent = () => {
       whatsapp_access_token: '',
       whatsapp_business_account_id: '',
       whatsapp_verify_token: '',
+      template_type: 'qa',
+      crm_provider: 'amocrm',
+      crm_account_base_url: '',
+      crm_access_token: '',
+      crm_allowed_tools: 'find_contact, create_contact, find_lead, create_lead, update_lead, add_note, create_task, assign_owner',
+      crm_confirmation_policy: 'confirm_risky',
+      crm_fallback_mode: 'ask_clarifying_question',
       system_prompt: '',
     },
     async (values) => {
@@ -142,13 +278,53 @@ const CreateAgentContent = () => {
           return;
         }
 
+        const selectedTemplate = values.template_type?.trim() || 'qa';
+        if (selectedTemplate === 'crm_admin' && !values.crm_account_base_url?.trim()) {
+          form.setFieldError('crm_account_base_url', 'Base URL CRM обязателен');
+          return;
+        }
+        if (selectedTemplate === 'crm_admin' && !values.crm_access_token?.trim()) {
+          form.setFieldError('crm_access_token', 'Access token CRM обязателен');
+          return;
+        }
+        if (selectedTemplate === 'crm_admin') {
+          const currentSignature = buildCrmValidationSignature(
+            values.crm_provider,
+            values.crm_account_base_url,
+            values.crm_access_token
+          );
+          if (!crmValidationResult?.ok || crmValidationSignature !== currentSignature) {
+            showError('Перед сохранением выполните и пройдите проверку подключения CRM.');
+            return;
+          }
+        }
+        const templateConfig = selectedTemplate === 'crm_admin'
+          ? {
+              crm_provider: values.crm_provider?.trim() || 'amocrm',
+              allowed_tools: parseAllowedTools(values.crm_allowed_tools),
+              confirmation_policy: values.crm_confirmation_policy?.trim() || 'confirm_risky',
+              fallback_mode: values.crm_fallback_mode?.trim() || 'ask_clarifying_question',
+            }
+          : undefined;
+
         const createdAgent = await agentService.createEmpty({
           system_prompt: values.system_prompt.trim(),
+          template_type: selectedTemplate,
+          template_config: templateConfig,
         });
         const agentId = createdAgent?.id;
         if (!Number.isFinite(agentId)) {
           showError('Не удалось определить id агента после создания');
           return;
+        }
+
+        if (selectedTemplate === 'crm_admin') {
+          await agentService.connectCrm({
+            agent_id: agentId,
+            provider: values.crm_provider?.trim() || 'amocrm',
+            account_base_url: values.crm_account_base_url.trim(),
+            access_token: values.crm_access_token.trim(),
+          });
         }
 
         const primaryProvider = isBotMode
@@ -528,6 +704,67 @@ const CreateAgentContent = () => {
     navigate(NAVIGATION_ROUTES.AUTH);
   };
 
+  const toggleCrmTool = (toolName) => {
+    const selected = parseAllowedTools(form.values.crm_allowed_tools);
+    const hasTool = selected.includes(toolName);
+    const next = hasTool ? selected.filter((item) => item !== toolName) : [...selected, toolName];
+    form.setFieldValue('crm_allowed_tools', next.join(', '));
+  };
+
+  const handleValidateCrm = async () => {
+    if (!form.values.crm_account_base_url?.trim()) {
+      form.setFieldError('crm_account_base_url', 'Base URL CRM обязателен');
+      return;
+    }
+    if (!form.values.crm_access_token?.trim()) {
+      form.setFieldError('crm_access_token', 'Access token CRM обязателен');
+      return;
+    }
+    setIsValidatingCrm(true);
+    try {
+      const response = await agentService.validateCrm({
+        provider: form.values.crm_provider?.trim() || 'amocrm',
+        account_base_url: form.values.crm_account_base_url.trim(),
+        access_token: form.values.crm_access_token.trim(),
+      });
+      const signature = buildCrmValidationSignature(
+        form.values.crm_provider,
+        form.values.crm_account_base_url,
+        form.values.crm_access_token
+      );
+      setCrmValidationSignature(signature);
+      setCrmValidationResult(response);
+      showSuccess('Подключение CRM успешно проверено');
+    } catch (error) {
+      setCrmValidationResult({ ok: false, error: error.message || 'Ошибка валидации CRM' });
+      showError(error.message || 'Не удалось проверить подключение CRM');
+    } finally {
+      setIsValidatingCrm(false);
+    }
+  };
+
+  useEffect(() => {
+    if (form.values.template_type !== 'crm_admin') {
+      setCrmValidationResult(null);
+      setCrmValidationSignature('');
+      return;
+    }
+    const currentSignature = buildCrmValidationSignature(
+      form.values.crm_provider,
+      form.values.crm_account_base_url,
+      form.values.crm_access_token
+    );
+    if (crmValidationSignature && crmValidationSignature !== currentSignature) {
+      setCrmValidationResult(null);
+    }
+  }, [
+    form.values.template_type,
+    form.values.crm_provider,
+    form.values.crm_account_base_url,
+    form.values.crm_access_token,
+    crmValidationSignature,
+  ]);
+
   return (
     <MainLayout>
       <div className="create-agent-page">
@@ -545,6 +782,158 @@ const CreateAgentContent = () => {
 
           <form id="agent-form" className="agent-form" onSubmit={form.handleSubmit}>
             <h3 className="agent-form-section-title">Подключение</h3>
+            <div className="form-group">
+              <label htmlFor="template_type">Шаблон агента:</label>
+              <CustomSelect
+                id="template_type"
+                name="template_type"
+                className="input-main"
+                value={form.values.template_type}
+                onChange={form.handleChange}
+                options={TEMPLATE_TYPE_SELECT_OPTIONS}
+                disabled={form.isSubmitting}
+              />
+              <p className="help-text">
+                {TEMPLATE_TYPE_HELP[form.values.template_type] || TEMPLATE_TYPE_HELP.qa}
+              </p>
+            </div>
+
+            {form.values.template_type === 'crm_admin' && (
+              <div className="form-group">
+                <h3 className="agent-form-channel-title">Конфигурация CRM шаблона</h3>
+                <label htmlFor="crm_provider">CRM провайдер:</label>
+                <CustomSelect
+                  id="crm_provider"
+                  name="crm_provider"
+                  className="input-main"
+                  value={form.values.crm_provider}
+                  onChange={form.handleChange}
+                  options={[
+                    { value: 'amocrm', label: 'amoCRM' },
+                    { value: 'bitrix24', label: 'Bitrix24' },
+                  ]}
+                  disabled={form.isSubmitting}
+                />
+
+                <label htmlFor="crm_account_base_url" className="mt-input">
+                  Base URL аккаунта CRM:
+                </label>
+                <input
+                  id="crm_account_base_url"
+                  type="text"
+                  name="crm_account_base_url"
+                  className={`input-main ${form.errors.crm_account_base_url ? 'error' : ''}`}
+                  value={form.values.crm_account_base_url}
+                  onChange={form.handleChange}
+                  disabled={form.isSubmitting}
+                  placeholder={
+                    form.values.crm_provider === 'bitrix24'
+                      ? 'https://your-portal.bitrix24.ru/rest'
+                      : 'https://example.amocrm.ru'
+                  }
+                />
+                {form.errors.crm_account_base_url && (
+                  <span className="error-message">{form.errors.crm_account_base_url}</span>
+                )}
+
+                <label htmlFor="crm_access_token" className="mt-input">
+                  Access token CRM:
+                </label>
+                <input
+                  id="crm_access_token"
+                  type="password"
+                  name="crm_access_token"
+                  className={`input-main ${form.errors.crm_access_token ? 'error' : ''}`}
+                  value={form.values.crm_access_token}
+                  onChange={form.handleChange}
+                  disabled={form.isSubmitting}
+                  placeholder="Вставьте OAuth access token"
+                />
+                {form.errors.crm_access_token && (
+                  <span className="error-message">{form.errors.crm_access_token}</span>
+                )}
+
+                <div className="channel-actions-row">
+                  <button
+                    type="button"
+                    className="btn btn-black"
+                    onClick={handleValidateCrm}
+                    disabled={form.isSubmitting || isValidatingCrm}
+                  >
+                    {isValidatingCrm ? 'Проверка...' : 'Проверить подключение CRM'}
+                  </button>
+                </div>
+
+                {crmValidationResult?.ok ? (
+                  <p className="help-text userbot-success">
+                    CRM проверена: {crmValidationResult.provider} ({crmValidationResult.external_id || 'ok'})
+                  </p>
+                ) : null}
+                {crmValidationResult && crmValidationResult.ok === false ? (
+                  <p className="error-message">
+                    {crmValidationResult.error || 'Проверка CRM завершилась с ошибкой'}
+                  </p>
+                ) : null}
+
+                <label htmlFor="crm_allowed_tools" className="mt-input">
+                  Разрешенные действия CRM:
+                </label>
+                <div className="connection-type-grid connection-type-grid--channels">
+                  {CRM_TOOL_OPTIONS.map((tool) => {
+                    const selectedTools = parseAllowedTools(form.values.crm_allowed_tools);
+                    const active = selectedTools.includes(tool.value);
+                    return (
+                      <button
+                        key={tool.value}
+                        type="button"
+                        className={`connection-type-card ${active ? 'active' : ''}`}
+                        onClick={() => toggleCrmTool(tool.value)}
+                        disabled={form.isSubmitting}
+                      >
+                        {tool.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="help-text">
+                  Выбрано: {parseAllowedTools(form.values.crm_allowed_tools).join(', ') || 'ничего'}
+                </p>
+
+                <label htmlFor="crm_confirmation_policy" className="mt-input">
+                  Политика подтверждения:
+                </label>
+                <CustomSelect
+                  id="crm_confirmation_policy"
+                  name="crm_confirmation_policy"
+                  className="input-main"
+                  value={form.values.crm_confirmation_policy}
+                  onChange={form.handleChange}
+                  options={[
+                    { value: 'confirm_risky', label: 'Подтверждать рискованные действия' },
+                    { value: 'always_confirm', label: 'Подтверждать каждое действие' },
+                    { value: 'never_confirm', label: 'Без подтверждений' },
+                  ]}
+                  disabled={form.isSubmitting}
+                />
+
+                <label htmlFor="crm_fallback_mode" className="mt-input">
+                  Режим fallback:
+                </label>
+                <CustomSelect
+                  id="crm_fallback_mode"
+                  name="crm_fallback_mode"
+                  className="input-main"
+                  value={form.values.crm_fallback_mode}
+                  onChange={form.handleChange}
+                  options={[
+                    { value: 'ask_clarifying_question', label: 'Задавать уточняющие вопросы' },
+                    { value: 'text_only', label: 'Только текстовый ответ' },
+                  ]}
+                  disabled={form.isSubmitting}
+                />
+              </div>
+            )}
+
             <div className="form-group">
               <label>Тип подключения:</label>
               <div className="connection-type-grid connection-type-grid--channels">
@@ -570,15 +959,21 @@ const CreateAgentContent = () => {
                   onClick={toggleWhatsAppUserbotChannel}
                   disabled={form.isSubmitting}
                 >
-                  WhatsApp userbot
+                  WhatsApp юзербот
                 </button>
                 <button
                   type="button"
-                  className={`connection-type-card ${useWhatsAppBusinessApiChannel ? 'active' : ''}`}
+                  className={`connection-type-card connection-type-card--with-beta ${useWhatsAppBusinessApiChannel ? 'active' : ''}`}
                   onClick={toggleWhatsAppBusinessApiChannel}
                   disabled={form.isSubmitting}
                 >
-                  WhatsApp Business API
+                  <span className="connection-type-card-label connection-type-card-label--stacked-wa-api">
+                    <span className="connection-type-card-label__row">WhatsApp Business</span>
+                    <span className="connection-type-card-label__row connection-type-card-label__row--api-beta">
+                      API
+                      <span className="beta-badge">BETA</span>
+                    </span>
+                  </span>
                 </button>
               </div>
             </div>

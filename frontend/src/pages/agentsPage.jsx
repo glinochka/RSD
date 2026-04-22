@@ -1124,11 +1124,17 @@ const AgentsPageContent = () => {
                   </button>
                   <button
                     type="button"
-                    className={`connection-type-card ${channelModalTab === 'whatsapp' ? 'active' : ''}`}
+                    className={`connection-type-card connection-type-card--with-beta ${channelModalTab === 'whatsapp' ? 'active' : ''}`}
                     onClick={() => setChannelModalTab('whatsapp')}
                     disabled={isSavingChannel}
                   >
-                    WhatsApp Business API
+                    <span className="connection-type-card-label connection-type-card-label--stacked-wa-api">
+                      <span className="connection-type-card-label__row">WhatsApp Business</span>
+                      <span className="connection-type-card-label__row connection-type-card-label__row--api-beta">
+                        API
+                        <span className="beta-badge">BETA</span>
+                      </span>
+                    </span>
                   </button>
                 </div>
 

@@ -1,4 +1,8 @@
 import ipaddress
+import hmac
+import hashlib
+import json
+import time
 from secrets import compare_digest
 
 from fastapi import Header, HTTPException, Request, status
@@ -73,3 +77,88 @@ def is_internal_request(
     if not is_request_secure(request) and not settings.ALLOW_INSECURE_INTERNAL_API:
         return False
     return True
+
+
+def _build_signature_payload(*, method: str, path: str, timestamp: str, body: str) -> str:
+    return "\n".join([method.upper(), path, timestamp, body])
+
+
+def _compute_signature(*, payload: str, secret: str) -> str:
+    return hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def build_internal_request_signature(
+    *,
+    method: str,
+    path: str,
+    timestamp: str,
+    body: str,
+    secret: str,
+) -> str:
+    payload = _build_signature_payload(method=method, path=path, timestamp=timestamp, body=body)
+    return _compute_signature(payload=payload, secret=secret)
+
+
+async def verify_internal_signature(request: Request) -> None:
+    """
+    Validate HMAC signature on internal bot→backend calls.
+
+    Note: This must read headers from ``request`` because several routes invoke
+    ``await verify_internal_signature(request)`` directly. Using ``Header(...)``
+    defaults on optional parameters would leave those defaults as unresolved
+    ``Header`` objects when FastAPI dependency injection is bypassed.
+    """
+    x_internal_timestamp = request.headers.get("x-internal-timestamp")
+    x_internal_signature = request.headers.get("x-internal-signature")
+
+    secret = settings.INTERNAL_REQUEST_SIGNING_SECRET.strip() or settings.INTERNAL_API_KEY.strip()
+    if not secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Internal request signing secret is not configured",
+        )
+
+    if not x_internal_timestamp or not x_internal_signature:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Internal request signature required",
+        )
+
+    try:
+        ts = int(x_internal_timestamp)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid internal request timestamp",
+        )
+
+    ttl = max(30, int(settings.INTERNAL_REQUEST_SIGNATURE_TTL_SECONDS))
+    now = int(time.time())
+    if abs(now - ts) > ttl:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Internal request signature expired",
+        )
+
+    raw = await request.body()
+    if raw:
+        try:
+            body_obj = json.loads(raw.decode("utf-8"))
+            canonical_body = json.dumps(body_obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        except Exception:
+            canonical_body = raw.decode("utf-8", errors="ignore")
+    else:
+        canonical_body = ""
+
+    expected = build_internal_request_signature(
+        method=request.method,
+        path=request.url.path,
+        timestamp=x_internal_timestamp,
+        body=canonical_body,
+        secret=secret,
+    )
+    if not compare_digest(expected, x_internal_signature):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid internal request signature",
+        )

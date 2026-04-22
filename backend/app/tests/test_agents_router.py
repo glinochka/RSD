@@ -3,6 +3,8 @@ import json
 from unittest.mock import patch, MagicMock, AsyncMock
 from httpx import AsyncClient
 
+from app.services.crm.providers.base import CRMConnectionHealth
+
 
 class TestAgentsAuth:
     """Тесты аутентификации агентов"""
@@ -205,3 +207,36 @@ class TestAgentsInternal:
         )
         
         assert response.status_code == 201, f"Expected 201, got {response.status_code}: {response.text}"
+
+
+class TestAgentsCrm:
+    """Smoke-тесты CRM endpoints."""
+
+    @pytest.mark.asyncio
+    async def test_connect_crm_bitrix24_smoke(self, client: AsyncClient, auth_headers, test_agent):
+        mock_provider = AsyncMock()
+        mock_provider.validate_connection.return_value = CRMConnectionHealth(
+            ok=True,
+            provider="bitrix24",
+            external_id="bitrix-user-42",
+            details={"name": "Bitrix User"},
+        )
+
+        with patch("app.router_agents.router.build_provider", return_value=mock_provider):
+            response = await client.post(
+                "/api/agents/crm/connect",
+                headers=auth_headers,
+                json={
+                    "bot_id": test_agent.bot_id,
+                    "provider": "bitrix24",
+                    "account_base_url": "https://portal.bitrix24.ru/rest/1/abc123",
+                    "access_token": "x" * 24,
+                },
+            )
+
+        assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
+        data = response.json()
+        assert data["health"]["ok"] is True
+        assert data["health"]["provider"] == "bitrix24"
+        assert data["health"]["external_id"] == "bitrix-user-42"
+        assert data["crm_connection"]["provider"] == "bitrix24"

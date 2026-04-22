@@ -1,5 +1,6 @@
 import asyncio
 import json
+import math
 from logging import getLogger
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -7,30 +8,33 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 
 import jwt
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt.exceptions import InvalidTokenError
 from sqlalchemy import Date, cast, func, select
 
-from .dao import AgentChannelConnectionDAO, AgentDAO
+from .dao import AgentChannelConnectionDAO, AgentCrmConnectionDAO, AgentDAO
 from .schemas import *
 from ..alembic.database import async_session_maker
-from ..alembic.models import Agent, AgentAnalyticsMessage, AgentChannelConnection, AgentFrozenUser
+from ..alembic.models import Agent, AgentAnalyticsMessage, AgentChannelConnection, AgentCrmConnection, AgentFrozenUser
 from ..config import settings
 from ..qdrant.search_service import delete_agent_vectors
 from ..router_users.dao import UserDAO
-from ..services.ai_authoring import (
-    generate_answer_with_context,
-    generate_welcome_with_ai,
-    improve_prompt_with_ai,
+from ..channels.message_processor import (
+    Channel as RuntimeChannel,
+    MessageRequest as RuntimeMessageRequest,
+    get_message_processor,
 )
-from ..qdrant.search_service import search_knowledge_base
+from ..services.ai_authoring import generate_welcome_with_ai, improve_prompt_with_ai
+from ..services.crm import build_provider
+from ..services.template_runtime import get_template_runtime
 from ..utils.api_keys import generate_agent_external_api_key, hash_agent_external_api_key
 from ..utils.JWT import get_user_from_access_token
 from ..utils.convert import convert_to_dict
-from ..utils.crypto import encrypt_token, decrypt_token
-from ..utils.internal_auth import is_internal_request
+from ..utils.crypto import decrypt_crm_credentials, decrypt_token, encrypt_crm_credentials, encrypt_token
+from ..utils.internal_auth import is_internal_request, is_request_secure, verify_internal_signature
+from ..utils.pii import redact_pii_text
 from ..utils.rate_limit import rate_limit
 from ..utils.whatsapp_session import decode_whatsapp_session_bundle
 
@@ -39,6 +43,136 @@ router = APIRouter(prefix="/api/agents")
 http_bearer = HTTPBearer(auto_error=False)
 MAX_INT32 = 2_147_483_647
 USERBOT_AUTH_TOKEN_TTL_MINUTES = 10
+LEGACY_TEMPLATE_TYPE_ALIASES = {
+    "function_calling": "crm_admin",
+}
+SUPPORTED_TEMPLATE_TYPES = {"qa", "crm_admin", "lead_generation", "content_factory"}
+CRM_PROVIDERS = {"amocrm", "bitrix24"}
+CRM_CONFIRMATION_POLICIES = {"always_confirm", "confirm_risky", "never_confirm"}
+CRM_FALLBACK_MODES = {"ask_clarifying_question", "text_only"}
+DEFAULT_CRM_ALLOWED_TOOLS = [
+    "find_contact",
+    "create_contact",
+    "find_lead",
+    "create_lead",
+    "update_lead",
+    "add_note",
+    "create_task",
+    "assign_owner",
+]
+
+
+def _assert_https_for_sensitive_endpoint(request: Request) -> None:
+    if not is_request_secure(request):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="HTTPS is required for this endpoint",
+        )
+
+
+def _summarize_tool_event_for_log(event: dict) -> str:
+    tool_name = str(event.get("tool_name") or "unknown")
+    tool_status = str(event.get("tool_status") or "unknown")
+    latency_ms = int(event.get("latency_ms") or 0)
+    provider = str(event.get("crm_provider") or "unknown")
+    replay = bool(event.get("idempotent_replay"))
+    error = redact_pii_text(str(event.get("error") or "")).strip()
+    parts = [
+        f"tool={tool_name}",
+        f"status={tool_status}",
+        f"latency_ms={latency_ms}",
+        f"crm_provider={provider}",
+        f"idempotent_replay={str(replay).lower()}",
+    ]
+    if error:
+        parts.append(f"error={error}")
+    return " ".join(parts)
+
+
+def _normalize_template_type(template_type: str | None) -> str:
+    raw = (template_type or "qa").strip().lower()
+    normalized = LEGACY_TEMPLATE_TYPE_ALIASES.get(raw, raw)
+    if normalized not in SUPPORTED_TEMPLATE_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unsupported template_type: {template_type}",
+        )
+    return normalized
+
+
+def _normalize_template_config(template_type: str, template_config: dict | None) -> str | None:
+    if template_type != "crm_admin":
+        return None
+
+    raw = template_config or {}
+    if not isinstance(raw, dict):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="template_config must be a JSON object",
+        )
+
+    crm_provider = str(raw.get("crm_provider") or "amocrm").strip().lower()
+    if crm_provider not in CRM_PROVIDERS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="template_config.crm_provider must be one of: amocrm, bitrix24",
+        )
+
+    confirmation_policy = str(raw.get("confirmation_policy") or "confirm_risky").strip().lower()
+    if confirmation_policy not in CRM_CONFIRMATION_POLICIES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="template_config.confirmation_policy is invalid",
+        )
+
+    fallback_mode = str(raw.get("fallback_mode") or "ask_clarifying_question").strip().lower()
+    if fallback_mode not in CRM_FALLBACK_MODES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="template_config.fallback_mode is invalid",
+        )
+
+    allowed_tools_raw = raw.get("allowed_tools")
+    if allowed_tools_raw is None:
+        allowed_tools = list(DEFAULT_CRM_ALLOWED_TOOLS)
+    elif isinstance(allowed_tools_raw, list):
+        allowed_tools = []
+        for item in allowed_tools_raw:
+            tool = str(item or "").strip()
+            if tool and tool not in allowed_tools:
+                allowed_tools.append(tool)
+        if not allowed_tools:
+            allowed_tools = list(DEFAULT_CRM_ALLOWED_TOOLS)
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="template_config.allowed_tools must be an array of strings",
+        )
+
+    field_mapping_raw = raw.get("field_mapping")
+    field_mapping = None
+    if field_mapping_raw is not None:
+        if not isinstance(field_mapping_raw, dict):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="template_config.field_mapping must be an object",
+            )
+        normalized_mapping = {}
+        for key, value in field_mapping_raw.items():
+            k = str(key or "").strip()
+            v = str(value or "").strip()
+            if k and v:
+                normalized_mapping[k] = v
+        field_mapping = normalized_mapping or None
+
+    normalized_config = {
+        "crm_provider": crm_provider,
+        "allowed_tools": allowed_tools,
+        "confirmation_policy": confirmation_policy,
+        "fallback_mode": fallback_mode,
+        "field_mapping": field_mapping,
+    }
+    return json.dumps(normalized_config, ensure_ascii=False)
 
 
 async def get_current_user_optional(
@@ -106,6 +240,18 @@ def _serialize_agent(agent, *, include_external_api_key: bool = False, include_e
     data.pop("registered", None)
     data.pop("encrypted_external_api_key", None)
     data.pop("external_api_key_hash", None)
+    try:
+        data["template_type"] = _normalize_template_type(data.get("template_type"))
+    except HTTPException:
+        data["template_type"] = "qa"
+    raw_template_config = data.get("template_config")
+    if isinstance(raw_template_config, str) and raw_template_config.strip():
+        try:
+            data["template_config"] = json.loads(raw_template_config)
+        except Exception:
+            data["template_config"] = None
+    else:
+        data["template_config"] = None
     if not include_encrypted_token:
         data.pop("encrypted_token", None)
     if include_external_api_key:
@@ -129,11 +275,56 @@ def _serialize_channel_connection(connection: AgentChannelConnection) -> dict:
     }
 
 
+def _serialize_crm_connection(connection: AgentCrmConnection) -> dict:
+    return {
+        "id": connection.id,
+        "provider": connection.provider,
+        "external_id": connection.external_id,
+        "is_active": bool(connection.is_active),
+        "last_checked_at": _safe_iso(connection.last_checked_at),
+        "created_at": _safe_iso(connection.created_at),
+        "updated_at": _safe_iso(connection.updated_at),
+    }
+
+
+def _normalize_crm_base_url(value: str) -> str:
+    raw = (value or "").strip().rstrip("/")
+    if not raw:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="account_base_url is required",
+        )
+    if not (raw.startswith("http://") or raw.startswith("https://")):
+        raw = f"https://{raw}"
+    return raw
+
+
+def _decode_template_config(raw_template_config: str | None) -> dict | None:
+    if not raw_template_config or not str(raw_template_config).strip():
+        return None
+    try:
+        loaded = json.loads(raw_template_config)
+        if isinstance(loaded, dict):
+            return loaded
+    except Exception:
+        return None
+    return None
+
+
 async def _list_agent_channels(session, agent_id: int) -> list[AgentChannelConnection]:
     rows = await session.scalars(
         select(AgentChannelConnection)
         .where(AgentChannelConnection.agent_id == agent_id)
         .order_by(AgentChannelConnection.created_at.asc(), AgentChannelConnection.id.asc())
+    )
+    return list(rows.all())
+
+
+async def _list_agent_crm_connections(session, agent_id: int) -> list[AgentCrmConnection]:
+    rows = await session.scalars(
+        select(AgentCrmConnection)
+        .where(AgentCrmConnection.agent_id == agent_id)
+        .order_by(AgentCrmConnection.created_at.asc(), AgentCrmConnection.id.asc())
     )
     return list(rows.all())
 
@@ -820,6 +1011,11 @@ async def _log_analytics_message_for_agent_ids(
     user_external_id: str | None = None,
     user_display_name: str | None = None,
     telegram_peer_access_hash: int | None = None,
+    tool_name: str | None = None,
+    tool_args_hash: str | None = None,
+    tool_status: str | None = None,
+    latency_ms: int | None = None,
+    crm_provider: str | None = None,
 ) -> None:
     normalized_text = (message_text or "").strip()
     if not normalized_text:
@@ -853,6 +1049,11 @@ async def _log_analytics_message_for_agent_ids(
         user_external_id=(user_external_id or None),
         user_display_name=(user_display_name or None),
         telegram_peer_access_hash=telegram_peer_access_hash,
+        tool_name=tool_name,
+        tool_args_hash=tool_args_hash,
+        tool_status=tool_status,
+        latency_ms=latency_ms,
+        crm_provider=crm_provider,
         message_text=normalized_text,
     )
     session.add(row)
@@ -868,6 +1069,11 @@ async def _log_analytics_message(
     user_external_id: str | None = None,
     user_display_name: str | None = None,
     telegram_peer_access_hash: int | None = None,
+    tool_name: str | None = None,
+    tool_args_hash: str | None = None,
+    tool_status: str | None = None,
+    latency_ms: int | None = None,
+    crm_provider: str | None = None,
 ) -> None:
     resolved_channel_id = agent.bot_id if agent.bot_id is not None else agent.id
     await _log_analytics_message_for_agent_ids(
@@ -880,6 +1086,11 @@ async def _log_analytics_message(
         user_external_id=user_external_id,
         user_display_name=user_display_name,
         telegram_peer_access_hash=telegram_peer_access_hash,
+        tool_name=tool_name,
+        tool_args_hash=tool_args_hash,
+        tool_status=tool_status,
+        latency_ms=latency_ms,
+        crm_provider=crm_provider,
     )
 
 
@@ -933,10 +1144,11 @@ async def get_agent_by_external_api_key(
 
 
 @router.get("/internal/userbot_clients")
-async def list_userbot_clients(internal: bool = Depends(is_internal_request)):
+async def list_userbot_clients(request: Request, internal: bool = Depends(is_internal_request)):
     """List active userbot channel configs for bot service (internal only)."""
     if not internal:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Internal API key required")
+    await verify_internal_signature(request)
 
     async with async_session_maker() as session:
         async with session.begin():
@@ -981,10 +1193,11 @@ async def list_userbot_clients(internal: bool = Depends(is_internal_request)):
 
 
 @router.get("/internal/whatsapp_userbot_clients")
-async def list_whatsapp_userbot_clients(internal: bool = Depends(is_internal_request)):
+async def list_whatsapp_userbot_clients(request: Request, internal: bool = Depends(is_internal_request)):
     """List active WhatsApp userbot channel configs for bot service (internal only)."""
     if not internal:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Internal API key required")
+    await verify_internal_signature(request)
 
     async with async_session_maker() as session:
         async with session.begin():
@@ -1032,6 +1245,367 @@ async def list_whatsapp_userbot_clients(internal: bool = Depends(is_internal_req
     return JSONResponse(content=payload, status_code=status.HTTP_200_OK)
 
 
+@router.post("/internal/process_message")
+async def internal_process_message(
+    request: Request,
+    payload: InternalProcessMessageRequest,
+    internal: bool = Depends(is_internal_request),
+):
+    if not internal:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Internal API key required")
+    await verify_internal_signature(request)
+
+    try:
+        channel = RuntimeChannel(payload.channel)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Unsupported channel",
+        )
+
+    request = RuntimeMessageRequest(
+        bot_id=payload.bot_id,
+        query=payload.query.strip(),
+        user_external_id=payload.user_external_id.strip(),
+        channel=channel,
+        system_prompt=(payload.system_prompt or "").strip(),
+        welcome_message=payload.welcome_message,
+        user_display_name=(payload.user_display_name or "").strip() or None,
+        telegram_peer_access_hash=payload.telegram_peer_access_hash,
+    )
+    response = await get_message_processor().process(request)
+    return JSONResponse(
+        content={
+            "text": response.text,
+            "status": response.status.value,
+        },
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@router.post("/crm/connect")
+async def connect_crm(
+    request: Request,
+    payload: AgentCrmConnectPayload,
+    current_user=Depends(get_current_user_required),
+):
+    _assert_https_for_sensitive_endpoint(request)
+    provider_name = (payload.provider or "").strip().lower()
+    base_url = _normalize_crm_base_url(payload.account_base_url)
+    access_token = payload.access_token.strip()
+
+    provider = build_provider(provider_name, base_url=base_url, access_token=access_token)
+    try:
+        health = await provider.validate_connection()
+    except Exception:
+        logger.exception("CRM credentials validation failed during connect (provider=%s)", provider_name)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="CRM credentials validation failed",
+        )
+
+    now = datetime.utcnow()
+    external_id = (health.external_id or "").strip() or base_url
+    encrypted_credentials = encrypt_crm_credentials(
+        json.dumps(
+            {
+                "base_url": base_url,
+                "access_token": access_token,
+                "account_external_id": external_id,
+            },
+            ensure_ascii=False,
+        )
+    )
+
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        crm_connection_dao = AgentCrmConnectionDAO(session)
+        async with session.begin():
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
+                current_user=current_user,
+                internal=False,
+            )
+
+            existing_for_agent = await crm_connection_dao.find_one_by_filter(
+                agent_id=agent.id,
+                provider=provider_name,
+            )
+            existing_global = await crm_connection_dao.find_one_by_filter(
+                provider=provider_name,
+                external_id=external_id,
+            )
+            if existing_global and existing_global.agent_id != agent.id:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Этот CRM аккаунт уже подключен к другому агенту",
+                )
+
+            if existing_for_agent:
+                await crm_connection_dao.update(
+                    existing_for_agent,
+                    {
+                        "external_id": external_id,
+                        "encrypted_credentials": encrypted_credentials,
+                        "is_active": True,
+                        "last_checked_at": now,
+                        "updated_at": now,
+                    },
+                )
+                connection = existing_for_agent
+            else:
+                connection = await crm_connection_dao.add(
+                    {
+                        "agent_id": agent.id,
+                        "provider": provider_name,
+                        "external_id": external_id,
+                        "encrypted_credentials": encrypted_credentials,
+                        "is_active": True,
+                        "last_checked_at": now,
+                        "created_at": now,
+                        "updated_at": now,
+                    }
+                )
+                await session.flush()
+
+            if _normalize_template_type(agent.template_type) == "crm_admin":
+                current_config = _decode_template_config(agent.template_config) or {}
+                current_config["crm_provider"] = provider_name
+                await agent_dao.update(
+                    agent,
+                    {
+                        "template_config": _normalize_template_config("crm_admin", current_config),
+                    },
+                )
+
+            return JSONResponse(
+                content={
+                    "agent_id": agent.id,
+                    "bot_id": agent.bot_id,
+                    "crm_connection": _serialize_crm_connection(connection),
+                    "health": {
+                        "ok": health.ok,
+                        "provider": health.provider,
+                        "external_id": health.external_id,
+                        "details": health.details,
+                    },
+                },
+                status_code=status.HTTP_200_OK,
+            )
+
+
+@router.post("/crm/validate")
+async def validate_crm_connection(
+    request: Request,
+    payload: AgentCrmValidatePayload,
+    current_user=Depends(get_current_user_required),
+):
+    _assert_https_for_sensitive_endpoint(request)
+    provider_name = (payload.provider or "").strip().lower()
+    base_url = _normalize_crm_base_url(payload.account_base_url)
+    access_token = payload.access_token.strip()
+
+    try:
+        provider = build_provider(provider_name, base_url=base_url, access_token=access_token)
+        health = await provider.validate_connection()
+    except Exception:
+        logger.exception("CRM credentials validation failed (provider=%s)", provider_name)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="CRM credentials validation failed",
+        )
+
+    return JSONResponse(
+        content={
+            "ok": bool(health.ok),
+            "provider": health.provider,
+            "external_id": health.external_id,
+            "details": health.details,
+        },
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@router.get("/crm/health")
+async def crm_health(
+    request: Request,
+    agent_id: int | None = Query(default=None),
+    bot_id: int | None = Query(default=None),
+    provider: str | None = Query(default=None),
+    current_user=Depends(get_current_user_required),
+):
+    _assert_https_for_sensitive_endpoint(request)
+    if agent_id is None and bot_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Query parameter 'agent_id' or 'bot_id' is required",
+        )
+
+    provider_filter = (provider or "").strip().lower() or None
+    if provider_filter and provider_filter not in CRM_PROVIDERS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Supported providers: amocrm, bitrix24",
+        )
+
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=agent_id,
+                bot_id=bot_id,
+                session=session,
+                current_user=current_user,
+                internal=False,
+            )
+            rows = (
+                (
+                    await session.execute(
+                        select(AgentCrmConnection).where(
+                            AgentCrmConnection.agent_id == agent.id,
+                            AgentCrmConnection.is_active.is_(True),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if provider_filter:
+                rows = [row for row in rows if (row.provider or "").strip().lower() == provider_filter]
+            if not rows:
+                return JSONResponse(
+                    content={
+                        "agent_id": agent.id,
+                        "bot_id": agent.bot_id,
+                        "connections": [],
+                    },
+                    status_code=status.HTTP_200_OK,
+                )
+
+            now = datetime.utcnow()
+            results = []
+            for row in rows:
+                try:
+                    decrypted_payload, needs_rotation = decrypt_crm_credentials(row.encrypted_credentials)
+                    bundle = json.loads(decrypted_payload)
+                    if needs_rotation:
+                        row.encrypted_credentials = encrypt_crm_credentials(
+                            json.dumps(bundle, ensure_ascii=False)
+                        )
+                    provider_impl = build_provider(
+                        row.provider,
+                        base_url=str(bundle.get("base_url") or ""),
+                        access_token=str(bundle.get("access_token") or ""),
+                    )
+                    health = await provider_impl.validate_connection()
+                    row.last_checked_at = now
+                    row.updated_at = now
+                    results.append(
+                        {
+                            "connection": _serialize_crm_connection(row),
+                            "health": {
+                                "ok": health.ok,
+                                "provider": health.provider,
+                                "external_id": health.external_id,
+                                "details": health.details,
+                            },
+                        }
+                    )
+                except Exception as exc:
+                    logger.exception("CRM health check failed for connection_id=%s", row.id)
+                    results.append(
+                        {
+                            "connection": _serialize_crm_connection(row),
+                            "health": {
+                                "ok": False,
+                                "provider": row.provider,
+                                "external_id": row.external_id,
+                                "details": {"error": redact_pii_text(str(exc))},
+                            },
+                        }
+                    )
+            return JSONResponse(
+                content={
+                    "agent_id": agent.id,
+                    "bot_id": agent.bot_id,
+                    "connections": results,
+                },
+                status_code=status.HTTP_200_OK,
+            )
+
+
+@router.post("/crm/rotate_secret")
+async def rotate_crm_secret(
+    request: Request,
+    payload: AgentCrmRotateSecretPayload,
+    current_user=Depends(get_current_user_required),
+):
+    _assert_https_for_sensitive_endpoint(request)
+    provider_filter = (payload.provider or "").strip().lower() or None
+
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        crm_connection_dao = AgentCrmConnectionDAO(session)
+        async with session.begin():
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
+                current_user=current_user,
+                internal=False,
+            )
+            rows = (
+                (
+                    await session.execute(
+                        select(AgentCrmConnection).where(
+                            AgentCrmConnection.agent_id == agent.id,
+                            AgentCrmConnection.is_active.is_(True),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if provider_filter:
+                rows = [row for row in rows if (row.provider or "").strip().lower() == provider_filter]
+
+            now = datetime.utcnow()
+            rotated_count = 0
+            for row in rows:
+                try:
+                    decrypted_payload, _ = decrypt_crm_credentials(row.encrypted_credentials)
+                    row.encrypted_credentials = encrypt_crm_credentials(decrypted_payload)
+                    row.updated_at = now
+                    await crm_connection_dao.update(
+                        row,
+                        {
+                            "encrypted_credentials": row.encrypted_credentials,
+                            "updated_at": row.updated_at,
+                        },
+                    )
+                    rotated_count += 1
+                except Exception:
+                    logger.exception("CRM secret rotation failed for connection_id=%s", row.id)
+
+            return JSONResponse(
+                content={
+                    "agent_id": agent.id,
+                    "bot_id": agent.bot_id,
+                    "provider": provider_filter,
+                    "rotated": rotated_count,
+                    "total_candidates": len(rows),
+                },
+                status_code=status.HTTP_200_OK,
+            )
+
+
 @router.get("")
 async def read_agent(
     agent_id: int | None = Query(default=None),
@@ -1064,12 +1638,14 @@ async def read_agent(
             await _ensure_external_api_key(found_agent, agent_dao)
             await _ensure_single_primary_flag(session=session, agent_id=found_agent.id)
             channels = await _list_agent_channels(session, found_agent.id)
+            crm_connections = await _list_agent_crm_connections(session, found_agent.id)
             payload = _serialize_agent(
                 found_agent,
                 include_external_api_key=True,
                 include_encrypted_token=internal,
             )
             payload["channels"] = [_serialize_channel_connection(item) for item in channels]
+            payload["crm_connections"] = [_serialize_crm_connection(item) for item in crm_connections]
             if internal and resolved_channel and resolved_channel.encrypted_credentials:
                 # Internal webhook lookup by Telegram Bot ID must return that bot token.
                 payload["encrypted_token"] = resolved_channel.encrypted_credentials
@@ -1116,13 +1692,16 @@ async def create_empty_agent(
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
         async with session.begin():
+            template_type = _normalize_template_type(payload.template_type)
+            template_config = _normalize_template_config(template_type, payload.template_config)
             external_api_key = generate_agent_external_api_key()
             created_agent = await agent_dao.add(
                 {
                     "user_id": current_user.id,
                     "bot_id": None,
                     "primary_provider": "none",
-                    "template_type": payload.template_type,
+                    "template_type": template_type,
+                    "template_config": template_config,
                     "encrypted_token": encrypt_token(f"agent:{current_user.id}:{datetime.utcnow().timestamp()}"),
                     "encrypted_external_api_key": encrypt_token(external_api_key),
                     "external_api_key_hash": hash_agent_external_api_key(external_api_key),
@@ -1165,6 +1744,11 @@ async def create_agent_by_tg_id(
                 )
 
             payload = new_agent.model_dump()
+            payload["template_type"] = _normalize_template_type(payload.get("template_type"))
+            payload["template_config"] = _normalize_template_config(
+                payload["template_type"],
+                payload.get("template_config"),
+            )
             payload["user_id"] = user.id
             del payload["tg_id"]
             payload["primary_provider"] = "telegram_bot"
@@ -1221,6 +1805,8 @@ async def create_agent_by_token(new_agent: NewAgent_byToken, current_user=Depend
         agent_dao = AgentDAO(session)
         channel_connection_dao = AgentChannelConnectionDAO(session)
         async with session.begin():
+            template_type = _normalize_template_type(new_agent.template_type)
+            template_config = _normalize_template_config(template_type, new_agent.template_config)
             duplicate_agent = await agent_dao.find_one_by_filter(bot_id=bot_id)
             if duplicate_agent:
                 raise HTTPException(
@@ -1233,7 +1819,8 @@ async def create_agent_by_token(new_agent: NewAgent_byToken, current_user=Depend
                     "user_id": current_user.id,
                     "bot_id": bot_id,
                     "primary_provider": "telegram_bot",
-                    "template_type": new_agent.template_type,
+                    "template_type": template_type,
+                    "template_config": template_config,
                     "encrypted_token": encrypt_token(token_value),
                     "encrypted_external_api_key": encrypt_token(external_api_key),
                     "external_api_key_hash": hash_agent_external_api_key(external_api_key),
@@ -1311,6 +1898,8 @@ async def create_agent_by_userbot_session(
         agent_dao = AgentDAO(session)
         channel_connection_dao = AgentChannelConnectionDAO(session)
         async with session.begin():
+            template_type = _normalize_template_type(new_agent.template_type)
+            template_config = _normalize_template_config(template_type, new_agent.template_config)
             duplicate_agent = await agent_dao.find_one_by_filter(bot_id=telegram_user_id)
             if duplicate_agent:
                 raise HTTPException(
@@ -1333,7 +1922,8 @@ async def create_agent_by_userbot_session(
                     "user_id": current_user.id,
                     "bot_id": telegram_user_id,
                     "primary_provider": "telegram_userbot",
-                    "template_type": new_agent.template_type,
+                    "template_type": template_type,
+                    "template_config": template_config,
                     "encrypted_token": encrypt_token(session_string),
                     "encrypted_external_api_key": encrypt_token(external_api_key),
                     "external_api_key_hash": hash_agent_external_api_key(external_api_key),
@@ -2158,6 +2748,20 @@ async def update_by_bot_id(
             updates = new_data.model_dump(exclude_none=True)
             updates.pop("bot_id", None)
             updates.pop("agent_id", None)
+            if "template_type" in updates:
+                updates["template_type"] = _normalize_template_type(updates["template_type"])
+                if "template_config" not in updates:
+                    if updates["template_type"] == "crm_admin":
+                        updates["template_config"] = _normalize_template_config("crm_admin", None)
+                    else:
+                        updates["template_config"] = None
+            if "template_config" in updates:
+                normalized_type = _normalize_template_type(updates.get("template_type") or agent.template_type)
+                updates["template_type"] = normalized_type
+                updates["template_config"] = _normalize_template_config(
+                    normalized_type,
+                    updates.get("template_config"),
+                )
             await agent_dao.update(agent, updates)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -2326,11 +2930,14 @@ async def regenerate_external_api_key(
 
 @router.post("/analytics/messages/log")
 async def log_analytics_message(
+    request: Request,
     payload: AgentAnalyticsMessageLog,
     current_user=Depends(get_current_user_optional),
     internal: bool = Depends(is_internal_request),
 ):
     _assert_access(current_user, internal)
+    if internal:
+        await verify_internal_signature(request)
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
         async with session.begin():
@@ -2352,6 +2959,11 @@ async def log_analytics_message(
                 user_external_id=payload.user_external_id,
                 user_display_name=payload.user_display_name,
                 telegram_peer_access_hash=payload.telegram_peer_access_hash,
+                tool_name=payload.tool_name,
+                tool_args_hash=payload.tool_args_hash,
+                tool_status=payload.tool_status,
+                latency_ms=payload.latency_ms,
+                crm_provider=payload.crm_provider,
             )
     return Response(status_code=status.HTTP_201_CREATED)
 
@@ -2554,6 +3166,184 @@ async def read_analytics_timeseries(
                     "bot_id": agent.bot_id,
                     "days": days,
                     "timeline": timeline,
+                },
+                status_code=status.HTTP_200_OK,
+            )
+
+
+@router.get("/analytics/crm_actions")
+async def read_analytics_crm_actions(
+    agent_id: int | None = Query(default=None),
+    bot_id: int | None = Query(default=None),
+    current_user=Depends(get_current_user_optional),
+    internal: bool = Depends(is_internal_request),
+):
+    _assert_access(current_user, internal)
+    if agent_id is None and bot_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Query parameter 'agent_id' or 'bot_id' is required",
+        )
+
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=agent_id,
+                bot_id=bot_id,
+                session=session,
+                current_user=current_user,
+                internal=internal,
+            )
+            analytics_namespace_id = agent.bot_id if agent.bot_id is not None else agent.id
+
+            tool_calls_total = (
+                await session.scalar(
+                    select(func.count(AgentAnalyticsMessage.id)).where(
+                        AgentAnalyticsMessage.bot_id == analytics_namespace_id,
+                        AgentAnalyticsMessage.tool_name.is_not(None),
+                        AgentAnalyticsMessage.tool_name != "fallback_to_text",
+                    )
+                )
+            ) or 0
+            successful_tool_calls = (
+                await session.scalar(
+                    select(func.count(AgentAnalyticsMessage.id)).where(
+                        AgentAnalyticsMessage.bot_id == analytics_namespace_id,
+                        AgentAnalyticsMessage.tool_name.is_not(None),
+                        AgentAnalyticsMessage.tool_name != "fallback_to_text",
+                        AgentAnalyticsMessage.tool_status == "success",
+                    )
+                )
+            ) or 0
+            fallback_to_text_count = (
+                await session.scalar(
+                    select(func.count(AgentAnalyticsMessage.id)).where(
+                        AgentAnalyticsMessage.bot_id == analytics_namespace_id,
+                        AgentAnalyticsMessage.tool_name == "fallback_to_text",
+                    )
+                )
+            ) or 0
+            total_questions = (
+                await session.scalar(
+                    select(func.count(AgentAnalyticsMessage.id)).where(
+                        AgentAnalyticsMessage.bot_id == analytics_namespace_id,
+                        AgentAnalyticsMessage.role == "user",
+                    )
+                )
+            ) or 0
+
+            crm_ops_errors = max(0, int(tool_calls_total) - int(successful_tool_calls))
+            success_share_percent = (
+                (float(successful_tool_calls) / float(tool_calls_total)) * 100.0
+                if tool_calls_total > 0
+                else 0.0
+            )
+            fallback_frequency_percent = (
+                (float(fallback_to_text_count) / float(total_questions)) * 100.0
+                if total_questions > 0
+                else 0.0
+            )
+            error_rate_percent = (
+                (float(crm_ops_errors) / float(tool_calls_total)) * 100.0
+                if tool_calls_total > 0
+                else 0.0
+            )
+
+            # Error budget is calculated against a baseline SLO success rate of 95%.
+            target_error_budget_percent = 5.0
+            error_budget_used_percent = (
+                min(100.0, (error_rate_percent / target_error_budget_percent) * 100.0)
+                if tool_calls_total > 0
+                else 0.0
+            )
+
+            latency_rows = (
+                (
+                    await session.execute(
+                        select(AgentAnalyticsMessage.latency_ms).where(
+                            AgentAnalyticsMessage.bot_id == analytics_namespace_id,
+                            AgentAnalyticsMessage.tool_name.is_not(None),
+                            AgentAnalyticsMessage.tool_name != "fallback_to_text",
+                            AgentAnalyticsMessage.latency_ms.is_not(None),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            latencies = sorted(int(value) for value in latency_rows if value is not None and int(value) >= 0)
+            avg_latency_ms = round(sum(latencies) / len(latencies), 2) if latencies else 0.0
+            if latencies:
+                p95_index = max(0, math.ceil(len(latencies) * 0.95) - 1)
+                p95_latency_ms = int(latencies[p95_index])
+            else:
+                p95_latency_ms = 0
+
+            by_tool_rows = (
+                (
+                    await session.execute(
+                        select(
+                            AgentAnalyticsMessage.tool_name,
+                            func.count(AgentAnalyticsMessage.id).label("count"),
+                        )
+                        .where(
+                            AgentAnalyticsMessage.bot_id == analytics_namespace_id,
+                            AgentAnalyticsMessage.tool_name.is_not(None),
+                            AgentAnalyticsMessage.tool_name != "fallback_to_text",
+                        )
+                        .group_by(AgentAnalyticsMessage.tool_name)
+                        .order_by(func.count(AgentAnalyticsMessage.id).desc())
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            by_status_rows = (
+                (
+                    await session.execute(
+                        select(
+                            AgentAnalyticsMessage.tool_status,
+                            func.count(AgentAnalyticsMessage.id).label("count"),
+                        )
+                        .where(
+                            AgentAnalyticsMessage.bot_id == analytics_namespace_id,
+                            AgentAnalyticsMessage.tool_name.is_not(None),
+                        )
+                        .group_by(AgentAnalyticsMessage.tool_status)
+                        .order_by(func.count(AgentAnalyticsMessage.id).desc())
+                    )
+                )
+                .mappings()
+                .all()
+            )
+
+            return JSONResponse(
+                content={
+                    "agent_id": agent.id,
+                    "bot_id": agent.bot_id,
+                    "tool_calls_total": int(tool_calls_total),
+                    "successful_tool_calls": int(successful_tool_calls),
+                    "crm_ops_errors": int(crm_ops_errors),
+                    "success_share_percent": round(success_share_percent, 2),
+                    "avg_latency_ms": avg_latency_ms,
+                    "p95_latency_ms": p95_latency_ms,
+                    "fallback_to_text_count": int(fallback_to_text_count),
+                    "fallback_frequency_percent": round(fallback_frequency_percent, 2),
+                    "error_budget": {
+                        "target_error_budget_percent": target_error_budget_percent,
+                        "used_percent": round(error_budget_used_percent, 2),
+                        "remaining_percent": round(max(0.0, 100.0 - error_budget_used_percent), 2),
+                    },
+                    "by_tool": [
+                        {"tool_name": row["tool_name"], "count": int(row["count"] or 0)}
+                        for row in by_tool_rows
+                    ],
+                    "by_status": [
+                        {"tool_status": row["tool_status"] or "unknown", "count": int(row["count"] or 0)}
+                        for row in by_status_rows
+                    ],
                 },
                 status_code=status.HTTP_200_OK,
             )
@@ -3343,20 +4133,25 @@ async def external_chat(
     external_user_id = (payload.external_user_id or "").strip() or None
     external_user_name = (payload.external_user_name or "").strip() or None
 
-    context = await search_knowledge_base(message, agent_id=agent.bot_id)
+    knowledge_scope_id = agent.bot_id if agent.bot_id is not None else agent.id
     try:
-        answer = await generate_answer_with_context(message, context, agent.system_prompt or "Ты — полезный ассистент.")
+        execution = await get_template_runtime().execute(
+            template_type=agent.template_type,
+            prompt=agent.system_prompt or "Ты — полезный ассистент.",
+            user_message=message,
+            knowledge_scope_id=knowledge_scope_id,
+            agent_id=agent.id,
+            user_external_id=external_user_id,
+            template_config=_decode_template_config(agent.template_config),
+            source_channel="external_api",
+        )
+        answer = execution.answer
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Не удалось получить ответ от LLM",
         )
-
-    sources = []
-    for item in context:
-        source = item.get("source")
-        if source and source not in sources:
-            sources.append(source)
+    sources = execution.sources
 
     async with async_session_maker() as session:
         async with session.begin():
@@ -3378,6 +4173,34 @@ async def external_chat(
                 user_display_name=external_user_name,
                 message_text=answer,
             )
+            for event in execution.tool_events:
+                await _log_analytics_message(
+                    session=session,
+                    agent=agent,
+                    role="operator",
+                    channel="external_api",
+                    user_external_id=external_user_id,
+                    user_display_name=external_user_name,
+                    message_text=_summarize_tool_event_for_log(event),
+                    tool_name=event.get("tool_name"),
+                    tool_args_hash=event.get("tool_args_hash"),
+                    tool_status=event.get("tool_status"),
+                    latency_ms=int(event.get("latency_ms") or 0),
+                    crm_provider=event.get("crm_provider"),
+                )
+            if execution.fallback_to_text:
+                await _log_analytics_message(
+                    session=session,
+                    agent=agent,
+                    role="operator",
+                    channel="external_api",
+                    user_external_id=external_user_id,
+                    user_display_name=external_user_name,
+                    message_text=execution.fallback_reason or "fallback_to_text",
+                    tool_name="fallback_to_text",
+                    tool_status="fallback",
+                    crm_provider=(_decode_template_config(agent.template_config) or {}).get("crm_provider"),
+                )
 
     return JSONResponse(
         content={

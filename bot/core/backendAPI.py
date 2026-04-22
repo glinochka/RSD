@@ -4,17 +4,47 @@ from core.config import settings
 import httpx
 from typing import Awaitable, Callable, Any
 import json
+import hmac
+import hashlib
+import time
 from fastapi import status
  
 import inspect
+from urllib.parse import urlparse
 base_url = f'http://{settings.API_HOST}:{settings.API_PORT}/api'
 
 # Default httpx timeout is 5s; backend context loads embeddings (cold start can take tens of seconds).
 _HTTP_TIMEOUT = httpx.Timeout(120.0, connect=30.0)
 
 
-def _internal_headers() -> dict:
-    return {"X-Internal-API-Key": settings.INTERNAL_API_KEY}
+def _build_internal_signature(*, method: str, path: str, timestamp: str, body: str) -> str:
+    payload = "\n".join([method.upper(), path, timestamp, body])
+    secret = settings.INTERNAL_REQUEST_SIGNING_SECRET.strip() or settings.INTERNAL_API_KEY.strip()
+    if not secret:
+        return ""
+    return hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _canonical_json(data: dict | None) -> str:
+    if not data:
+        return ""
+    return json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _internal_headers(method: str, url: str, json_body: dict | None = None) -> dict:
+    headers = {"X-Internal-API-Key": settings.INTERNAL_API_KEY}
+    timestamp = str(int(time.time()))
+    path = urlparse(url).path
+    signature = _build_internal_signature(
+        method=method,
+        path=path,
+        timestamp=timestamp,
+        body=_canonical_json(json_body),
+    )
+    if signature:
+        headers["X-Internal-Timestamp"] = timestamp
+        headers["X-Internal-Signature"] = signature
+    return headers
 
 class APIbase():
     operation: Callable[..., Awaitable[Any]] = None
@@ -27,9 +57,15 @@ class APIbase():
                     'file': (file_name, file_bytes, 'application/octet-stream')
                 }
 
-                response = await client.post(url, data=data, files=files, timeout=600.0, headers=_internal_headers())
+                response = await client.post(
+                    url,
+                    data=data,
+                    files=files,
+                    timeout=600.0,
+                    headers=_internal_headers("POST", url, None),
+                )
             else:
-                response = await client.post(url, json=data, headers=_internal_headers())
+                response = await client.post(url, json=data, headers=_internal_headers("POST", url, data))
             if not response.is_success:
                 return {
                     'error_code': response.status_code,
@@ -45,7 +81,7 @@ class APIbase():
     @classmethod
     async def fetch_get(cls, url: str, data: dict) -> dict:
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-            response = await client.get(url, params=data, headers=_internal_headers())
+            response = await client.get(url, params=data, headers=_internal_headers("GET", url, None))
             if not response.is_success:
                 return {
                     'error_code': response.status_code,
@@ -61,7 +97,7 @@ class APIbase():
     @classmethod
     async def fetch_patch(cls, url: str, data: dict) -> dict:
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-            response = await client.patch(url, json=data, headers=_internal_headers())
+            response = await client.patch(url, json=data, headers=_internal_headers("PATCH", url, data))
             
             if not response.is_success:
                 return {
@@ -78,7 +114,7 @@ class APIbase():
     @classmethod
     async def fetch_delete(cls, url: str, data: dict) -> dict|list:
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-            response = await client.delete(url, params=data, headers=_internal_headers())
+            response = await client.delete(url, params=data, headers=_internal_headers("DELETE", url, None))
             
             if not response.is_success:
                 return {
@@ -134,21 +170,30 @@ class APIcreate(APIbase):
         bot_id: int = None,
         tg_id: int = None,
         encrypted_token: str = None,
-        bot_username:str = None
+        bot_username: str | None = None,
     ) -> dict:
-        
-        data = {
-            'bot_id': bot_id,
-            'encrypted_token': encrypted_token,
-            'bot_username': bot_username,
-            'tg_id': tg_id
-            }
+        # NewAgent_byUserWith_tgID: bot_username min_length=3 (Telegram may omit username on rare accounts).
+        resolved_username = (bot_username or "").strip()
+        if len(resolved_username) < 3:
+            resolved_username = f"bot_{bot_id}"
 
-        return await cls.agent(data, add_url='ByUserWith_tgID')
+        data = {
+            "bot_id": bot_id,
+            "encrypted_token": encrypted_token,
+            "bot_username": resolved_username,
+            "tg_id": tg_id,
+        }
+
+        return await cls.agent(data, add_url="ByUserWith_tgID")
     
     @classmethod
-    async def userBy_tgID(cls, name:str, tg_id: int) -> dict:
-        data = {'name':name, 'telegram_id': tg_id}
+    async def userBy_tgID(cls, name: str | None, tg_id: int) -> dict:
+        # Backend User_from_tg: name min_length=3, max_length=32 (Telegram username may be missing or short).
+        safe_name = (name or "").strip()
+        if len(safe_name) < 3:
+            safe_name = f"tg_{tg_id}"
+        safe_name = safe_name[:32]
+        data = {"name": safe_name, "telegram_id": tg_id}
         return await cls.user(data)
 
     @classmethod
@@ -222,6 +267,31 @@ class APIcreate(APIbase):
         if telegram_peer_access_hash is not None:
             data["telegram_peer_access_hash"] = telegram_peer_access_hash
         return await cls.agent(data, add_url="analytics/messages/log")
+
+    @classmethod
+    async def processAgentMessage(
+        cls,
+        *,
+        bot_id: int,
+        query: str,
+        user_external_id: str,
+        channel: str,
+        system_prompt: str = "",
+        welcome_message: str | None = None,
+        user_display_name: str | None = None,
+        telegram_peer_access_hash: int | None = None,
+    ) -> dict:
+        data = {
+            "bot_id": bot_id,
+            "query": query,
+            "user_external_id": user_external_id,
+            "channel": channel,
+            "system_prompt": system_prompt,
+            "welcome_message": welcome_message,
+            "user_display_name": user_display_name,
+            "telegram_peer_access_hash": telegram_peer_access_hash,
+        }
+        return await cls.agent(data, add_url="internal/process_message")
     
 
     

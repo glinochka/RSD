@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     QDRANT_URL: str
     DB_HOST: str
     INTERNAL_API_KEY: str = ""
+    INTERNAL_REQUEST_SIGNING_SECRET: str = ""
+    INTERNAL_REQUEST_SIGNATURE_TTL_SECONDS: int = 300
     ALLOW_INSECURE_INTERNAL_API: bool = False
     CORS_ALLOWED_ORIGINS: str = ""
     # Public base URL (domain) used by Telegram webhooks.
@@ -55,6 +57,8 @@ class Settings(BaseSettings):
     USERBOT_POLL_INTERVAL_SECONDS: int = 30
     WHATSAPP_USERBOT_POLL_INTERVAL_SECONDS: int = 5
     WA_USERBOT_SESSION_SECRET: str = ""
+    CRM_CREDENTIALS_ENCRYPTION_KEY: str = ""
+    CRM_CREDENTIALS_ENCRYPTION_KEY_PREVIOUS: str = ""
     EMBEDDING_THREADS: int = 1
     EMBEDDING_BATCH_SIZE: int = 16
     EMBEDDING_PARALLEL: int = 1

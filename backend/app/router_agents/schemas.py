@@ -17,6 +17,15 @@ class UpdateAgent(AgentLookup):
     name: Optional[str]  = Field(None, min_length=3, max_length=100, description="Имя агента: длина от 3 до 30 символов")
     system_prompt: Optional[str] = Field(None, description="Промпт")
     welcome_message: Optional[str] = Field(None, min_length=3, description="Начальное сообщение бота: длина от 3 символов")
+    template_type: Optional[str] = Field(
+        None,
+        pattern="^(qa|crm_admin|function_calling|lead_generation|content_factory)$",
+        description="Тип шаблона агента",
+    )
+    template_config: Optional[dict] = Field(
+        default=None,
+        description="Конфигурация шаблона (JSON)",
+    )
 
 class NewAgent_byUserWith_tgID(BaseModel):
     tg_id: int = Field(..., description="tg id")
@@ -28,8 +37,12 @@ class NewAgent_byUserWith_tgID(BaseModel):
     welcome_message: Optional[str] = Field(None,min_length=3, description="Начальное сообщение бота: длина от 3 символов")
     template_type: str = Field(
         default="qa",
-        pattern="^(qa|function_calling|lead_generation|content_factory)$",
+        pattern="^(qa|crm_admin|function_calling|lead_generation|content_factory)$",
         description="Тип шаблона агента",
+    )
+    template_config: Optional[dict] = Field(
+        default=None,
+        description="Конфигурация шаблона (JSON)",
     )
 
 
@@ -45,8 +58,12 @@ class NewAgent_byToken(BaseModel):
     system_prompt: str = Field(..., min_length=1, description="System prompt for agent")
     template_type: str = Field(
         default="qa",
-        pattern="^(qa|function_calling|lead_generation|content_factory)$",
+        pattern="^(qa|crm_admin|function_calling|lead_generation|content_factory)$",
         description="Тип шаблона агента",
+    )
+    template_config: Optional[dict] = Field(
+        default=None,
+        description="Конфигурация шаблона (JSON)",
     )
 
 
@@ -57,8 +74,12 @@ class NewAgent_byUserbotSession(BaseModel):
     system_prompt: str = Field(..., min_length=1, description="System prompt for agent")
     template_type: str = Field(
         default="qa",
-        pattern="^(qa|function_calling|lead_generation|content_factory)$",
+        pattern="^(qa|crm_admin|function_calling|lead_generation|content_factory)$",
         description="Тип шаблона агента",
+    )
+    template_config: Optional[dict] = Field(
+        default=None,
+        description="Конфигурация шаблона (JSON)",
     )
 
 
@@ -66,8 +87,12 @@ class CreateEmptyAgent(BaseModel):
     system_prompt: Optional[str] = Field(default="Ты — полезный ассистент.", min_length=1, description="System prompt for agent")
     template_type: str = Field(
         default="qa",
-        pattern="^(qa|function_calling|lead_generation|content_factory)$",
+        pattern="^(qa|crm_admin|function_calling|lead_generation|content_factory)$",
         description="Тип шаблона агента",
+    )
+    template_config: Optional[dict] = Field(
+        default=None,
+        description="Конфигурация шаблона (JSON)",
     )
 
 
@@ -185,7 +210,7 @@ class ExternalAgentChatRequest(BaseModel):
 
 
 class AgentAnalyticsMessageLog(AgentLookup):
-    role: str = Field(..., pattern="^(user|agent)$", description="Роль сообщения")
+    role: str = Field(..., pattern="^(user|agent|operator)$", description="Роль сообщения")
     channel: str = Field(
         default="telegram",
         pattern="^(telegram|external_api|web|dashboard|telegram_userbot|whatsapp_userbot|whatsapp_business_api|instagram|tiktok|pinterest)$",
@@ -206,6 +231,11 @@ class AgentAnalyticsMessageLog(AgentLookup):
         default=None,
         description="Telegram access_hash для InputPeerUser (userbot), если известен",
     )
+    tool_name: Optional[str] = Field(default=None, max_length=64, description="Название CRM tool/fallback")
+    tool_args_hash: Optional[str] = Field(default=None, max_length=64, description="SHA-256 хеш аргументов tool")
+    tool_status: Optional[str] = Field(default=None, max_length=24, description="Статус tool-вызова")
+    latency_ms: Optional[int] = Field(default=None, ge=0, description="Latency tool-вызова в миллисекундах")
+    crm_provider: Optional[str] = Field(default=None, max_length=32, description="CRM провайдер (amocrm/bitrix24)")
 
 
 class AgentFreezeUserPayload(AgentLookup):
@@ -257,5 +287,79 @@ class AgentWhatsappUserbotBroadcastPayload(AgentLookup):
         ge=1,
         le=5000,
         description="Максимум получателей за один запрос",
+    )
+
+
+class InternalProcessMessageRequest(BaseModel):
+    bot_id: int = Field(..., gt=0, description="ID публичного канала/агента")
+    query: str = Field(..., min_length=1, max_length=4000, description="Сообщение пользователя")
+    user_external_id: str = Field(..., min_length=1, max_length=128, description="Внешний ID пользователя")
+    channel: str = Field(
+        ...,
+        pattern="^(telegram|telegram_userbot|whatsapp_userbot)$",
+        description="Канал сообщения",
+    )
+    system_prompt: Optional[str] = Field(default="", description="Системный промпт агента")
+    welcome_message: Optional[str] = Field(default=None, description="Welcome message для /start")
+    user_display_name: Optional[str] = Field(default=None, max_length=128, description="Отображаемое имя")
+    telegram_peer_access_hash: Optional[int] = Field(
+        default=None,
+        description="Telegram access_hash для userbot-сценария",
+    )
+
+
+class AgentCrmConnectPayload(AgentLookup):
+    provider: str = Field(
+        ...,
+        pattern="^(amocrm|bitrix24)$",
+        description="CRM провайдер (amocrm или bitrix24)",
+    )
+    account_base_url: str = Field(
+        ...,
+        min_length=10,
+        max_length=255,
+        description="Базовый URL аккаунта CRM (например https://example.amocrm.ru)",
+    )
+    access_token: str = Field(
+        ...,
+        min_length=20,
+        max_length=4096,
+        description="OAuth access token CRM",
+    )
+
+
+class AgentCrmHealthPayload(AgentLookup):
+    provider: Optional[str] = Field(
+        default=None,
+        pattern="^(amocrm|bitrix24)$",
+        description="Опционально: конкретный CRM провайдер",
+    )
+
+
+class AgentCrmValidatePayload(BaseModel):
+    provider: str = Field(
+        ...,
+        pattern="^(amocrm|bitrix24)$",
+        description="CRM провайдер (amocrm или bitrix24)",
+    )
+    account_base_url: str = Field(
+        ...,
+        min_length=10,
+        max_length=255,
+        description="Базовый URL аккаунта CRM (например https://example.amocrm.ru)",
+    )
+    access_token: str = Field(
+        ...,
+        min_length=20,
+        max_length=4096,
+        description="OAuth access token CRM",
+    )
+
+
+class AgentCrmRotateSecretPayload(AgentLookup):
+    provider: Optional[str] = Field(
+        default=None,
+        pattern="^(amocrm|bitrix24)$",
+        description="Опционально: конкретный CRM провайдер для ротации",
     )
 

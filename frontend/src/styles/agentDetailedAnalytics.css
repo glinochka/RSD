@@ -355,6 +355,60 @@
   box-shadow: 0 2px 14px rgba(15, 23, 42, 0.05);
 }
 
+.analytics-crm-actions {
+  margin-top: var(--spacing-xl);
+}
+
+.analytics-crm-actions h4 {
+  margin: 0 0 var(--spacing-base);
+  font-size: var(--font-size-lg);
+}
+
+.analytics-metric-card--crm {
+  border-left-color: #7c3aed;
+}
+
+.analytics-crm-breakdown {
+  margin-top: var(--spacing-base);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--spacing-base);
+}
+
+.analytics-crm-breakdown-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  padding: var(--spacing-base);
+}
+
+.analytics-crm-breakdown-card h5 {
+  margin: 0 0 var(--spacing-sm);
+  font-size: var(--font-size-sm);
+}
+
+.analytics-crm-breakdown-card ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.analytics-crm-breakdown-card li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-light);
+}
+
+.analytics-crm-breakdown-card strong {
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
 .analytics-chart-topbar {
   display: flex;
   justify-content: space-between;
@@ -772,6 +826,11 @@
   margin-top: var(--spacing-xl);
 }
 
+/* Зазор между блоком «Рассылка в Telegram» и «Рассылка в WhatsApp (userbot)» */
+.analytics-broadcast--whatsapp + .analytics-broadcast {
+  margin-top: var(--spacing-2xl);
+}
+
 @media (max-width: 768px) {
   .agent-analytics-header {
     flex-direction: column;
@@ -831,6 +890,10 @@
   }
 
   .analytics-broadcast-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .analytics-crm-breakdown {
     grid-template-columns: 1fr;
   }
 

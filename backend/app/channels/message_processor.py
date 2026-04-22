@@ -1,6 +1,7 @@
 """Unified message processing for channel managers."""
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -10,8 +11,8 @@ from sqlalchemy import select
 
 from ..alembic.database import async_session_maker
 from ..alembic.models import Agent, AgentAnalyticsMessage, AgentFrozenUser, User
-from ..qdrant.search_service import search_knowledge_base
-from ..services.ai_authoring import generate_answer_with_context
+from ..services.template_runtime import get_template_runtime
+from ..utils.pii import redact_pii_text
 logger = logging.getLogger(__name__)
 MAX_INT32 = 2_147_483_647
 
@@ -49,8 +50,55 @@ class MessageResponse:
 
 
 class MessageProcessor:
+    @staticmethod
+    def _parse_template_config(raw: str | None) -> dict | None:
+        if not raw or not str(raw).strip():
+            return None
+        try:
+            loaded = json.loads(raw)
+            if isinstance(loaded, dict):
+                return loaded
+        except Exception:
+            return None
+        return None
+
+    @staticmethod
+    def _normalize_user_external_id(channel: Channel, user_external_id: str) -> str:
+        uid = (user_external_id or "").strip()
+        if channel == Channel.WHATSAPP_USERBOT:
+            if "@" in uid:
+                return uid.lower()
+            digits = "".join(ch for ch in uid if ch.isdigit())
+            if digits:
+                return f"{digits}@s.whatsapp.net"
+            return uid.lower()
+        return uid
+
+    @staticmethod
+    def _summarize_tool_event(event: dict) -> str:
+        tool_name = str(event.get("tool_name") or "unknown")
+        status = str(event.get("tool_status") or "unknown")
+        latency_ms = int(event.get("latency_ms") or 0)
+        provider = str(event.get("crm_provider") or "unknown")
+        replay = bool(event.get("idempotent_replay"))
+        error = redact_pii_text(str(event.get("error") or "")).strip()
+        parts = [
+            f"tool={tool_name}",
+            f"status={status}",
+            f"latency_ms={latency_ms}",
+            f"crm_provider={provider}",
+            f"idempotent_replay={str(replay).lower()}",
+        ]
+        if error:
+            parts.append(f"error={error}")
+        return " ".join(parts)
+
     async def process(self, request: MessageRequest) -> MessageResponse:
         try:
+            normalized_user_external_id = self._normalize_user_external_id(
+                request.channel,
+                request.user_external_id,
+            )
             resolved_agent = await self._resolve_agent(request.bot_id)
             if not resolved_agent:
                 return MessageResponse(
@@ -67,7 +115,7 @@ class MessageProcessor:
                     status=ProcessingStatus.EXPIRED_SUBSCRIPTION,
                 )
 
-            if await self._is_user_frozen(resolved_agent.id, request.user_external_id):
+            if await self._is_user_frozen(resolved_agent.id, normalized_user_external_id):
                 return MessageResponse(
                     text=(
                         "Доступ к этому агенту для вас временно ограничен владельцем. "
@@ -87,28 +135,66 @@ class MessageProcessor:
                 analytics_namespace_id=resolved_agent.bot_id or resolved_agent.id,
                 role="user",
                 message_text=request.query,
-                user_external_id=request.user_external_id,
+                user_external_id=normalized_user_external_id,
                 user_display_name=request.user_display_name,
                 channel=request.channel.value,
                 telegram_peer_access_hash=request.telegram_peer_access_hash,
             )
 
-            context = await search_knowledge_base(
-                request.query,
-                agent_id=resolved_agent.bot_id or resolved_agent.id,
+            execution = await get_template_runtime().execute(
+                template_type=resolved_agent.template_type,
+                prompt=request.system_prompt or (resolved_agent.system_prompt or ""),
+                user_message=request.query,
+                knowledge_scope_id=resolved_agent.bot_id or resolved_agent.id,
+                agent_id=resolved_agent.id,
+                user_external_id=normalized_user_external_id,
+                template_config=self._parse_template_config(resolved_agent.template_config),
+                source_channel=request.channel.value,
             )
-            answer = await generate_answer_with_context(
-                request.query,
-                context if isinstance(context, list) else [],
-                request.system_prompt,
-            )
+            answer = execution.answer
+
+            for event in execution.tool_events:
+                await self._log_message(
+                    agent_id=resolved_agent.id,
+                    analytics_namespace_id=resolved_agent.bot_id or resolved_agent.id,
+                    role="operator",
+                    message_text=self._summarize_tool_event(event),
+                    user_external_id=normalized_user_external_id,
+                    user_display_name=request.user_display_name,
+                    channel=request.channel.value,
+                    telegram_peer_access_hash=request.telegram_peer_access_hash,
+                    tool_name=event.get("tool_name"),
+                    tool_args_hash=event.get("tool_args_hash"),
+                    tool_status=event.get("tool_status"),
+                    latency_ms=int(event.get("latency_ms") or 0),
+                    crm_provider=event.get("crm_provider"),
+                )
+
+            if execution.fallback_to_text:
+                await self._log_message(
+                    agent_id=resolved_agent.id,
+                    analytics_namespace_id=resolved_agent.bot_id or resolved_agent.id,
+                    role="operator",
+                    message_text=execution.fallback_reason or "fallback_to_text",
+                    user_external_id=normalized_user_external_id,
+                    user_display_name=request.user_display_name,
+                    channel=request.channel.value,
+                    telegram_peer_access_hash=request.telegram_peer_access_hash,
+                    tool_name="fallback_to_text",
+                    tool_args_hash=None,
+                    tool_status="fallback",
+                    latency_ms=0,
+                    crm_provider=(
+                        (self._parse_template_config(resolved_agent.template_config) or {}).get("crm_provider")
+                    ),
+                )
 
             await self._log_message(
                 agent_id=resolved_agent.id,
                 analytics_namespace_id=resolved_agent.bot_id or resolved_agent.id,
                 role="agent",
                 message_text=answer,
-                user_external_id=request.user_external_id,
+                user_external_id=normalized_user_external_id,
                 user_display_name=request.user_display_name,
                 channel=request.channel.value,
                 telegram_peer_access_hash=request.telegram_peer_access_hash,
@@ -185,6 +271,11 @@ class MessageProcessor:
         user_display_name: str | None,
         channel: str,
         telegram_peer_access_hash: int | None,
+        tool_name: str | None = None,
+        tool_args_hash: str | None = None,
+        tool_status: str | None = None,
+        latency_ms: int | None = None,
+        crm_provider: str | None = None,
     ) -> None:
         try:
             async with async_session_maker() as session:
@@ -198,6 +289,11 @@ class MessageProcessor:
                             user_external_id=user_external_id,
                             user_display_name=user_display_name,
                             telegram_peer_access_hash=telegram_peer_access_hash,
+                            tool_name=tool_name,
+                            tool_args_hash=tool_args_hash,
+                            tool_status=tool_status,
+                            latency_ms=latency_ms,
+                            crm_provider=crm_provider,
                             message_text=message_text,
                         )
                     )
