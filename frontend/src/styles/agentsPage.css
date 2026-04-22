@@ -346,6 +346,9 @@
   z-index: var(--z-modal-backdrop);
   display: flex;
   flex-direction: column;
+  /* Не center: у базового .auth-modal-backdrop justify-content: center — при длинном
+   * контенте колонка «висит» по центру viewport, верх уезжает за предел прокрутки. */
+  justify-content: flex-start;
   align-items: center;
   overflow-x: hidden;
   overflow-y: auto;
