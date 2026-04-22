@@ -210,6 +210,7 @@ class TestGetYooKassaPaymentStatus:
                 plan_name="Pro",
                 currency="RUB",
                 total_amount=49900,
+                original_total_amount=49900,
                 yookassa_payment_id="test_payment_status_123",
                 status="pending",
             )
@@ -244,6 +245,7 @@ class TestGetYooKassaPaymentStatus:
                 plan_name="Pro",
                 currency="RUB",
                 total_amount=49900,
+                original_total_amount=49900,
                 yookassa_payment_id="nonexistent_payment",
                 status="pending",
             )
@@ -294,6 +296,7 @@ class TestYooKassaWebhook:
                 plan_name="Advanced",
                 currency="RUB",
                 total_amount=29900,
+                original_total_amount=29900,
                 yookassa_payment_id="webhook_payment_123",
                 status="pending",
             )
