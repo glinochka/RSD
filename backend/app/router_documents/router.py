@@ -80,7 +80,9 @@ def _serialize_document(document, bot_id: int | None = None) -> dict:
 
 async def _find_agent_by_lookup(agent_dao: AgentDAO, *, agent_id: int | None, bot_id: int | None):
     if agent_id is not None and 0 < agent_id <= MAX_INT32:
-        return await agent_dao.find_one_by_filter(load_relations=True, id=agent_id)
+        found_by_id = await agent_dao.find_one_by_filter(load_relations=True, id=agent_id)
+        if found_by_id:
+            return found_by_id
     # Backward-compat: some legacy callers still pass Telegram channel id as `agent_id`.
     if agent_id is not None and (bot_id is None):
         bot_id = agent_id

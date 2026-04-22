@@ -13,11 +13,6 @@ def _get_configured_internal_key() -> str:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Internal API auth is not configured",
         )
-    if len(configured_key) < 32:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Internal API auth key is too weak",
-        )
     return configured_key
 
 
