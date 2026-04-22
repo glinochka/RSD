@@ -710,6 +710,7 @@ const CreateAgentContent = () => {
                   disabled={form.isSubmitting}
                 >
                   <option value="amocrm">amoCRM</option>
+                  <option value="bitrix24">Bitrix24</option>
                 </select>
 
                 <label htmlFor="crm_account_base_url" className="mt-input">
@@ -723,7 +724,11 @@ const CreateAgentContent = () => {
                   value={form.values.crm_account_base_url}
                   onChange={form.handleChange}
                   disabled={form.isSubmitting}
-                  placeholder="https://example.amocrm.ru"
+                  placeholder={
+                    form.values.crm_provider === 'bitrix24'
+                      ? 'https://your-portal.bitrix24.ru/rest'
+                      : 'https://example.amocrm.ru'
+                  }
                 />
                 {form.errors.crm_account_base_url && (
                   <span className="error-message">{form.errors.crm_account_base_url}</span>
