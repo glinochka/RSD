@@ -4,6 +4,8 @@
   width: 100%;
   max-width: 1200px;
   margin: 0 auto;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 /* Agents Section */
@@ -35,13 +37,15 @@
   display: flex;
   flex-direction: column;
   gap: var(--spacing-lg);
+  min-width: 0;
 }
 
 .agents-layout {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: var(--spacing-xl);
   align-items: start;
+  min-width: 0;
 }
 
 .agent-item {
@@ -54,6 +58,8 @@
   background-color: var(--color-bg);
   transition: all var(--transition-base);
   cursor: pointer;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .agent-item:hover {
@@ -76,6 +82,7 @@
   align-items: center;
   gap: var(--spacing-lg);
   flex: 1;
+  min-width: 0;
 }
 
 .agent-status-dot {
@@ -97,6 +104,7 @@
 .agent-details {
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 .agent-name {
@@ -104,6 +112,7 @@
   font-weight: var(--font-weight-semibold);
   color: var(--color-text);
   margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .agent-role {
@@ -150,6 +159,8 @@
   display: flex;
   flex-direction: column;
   gap: var(--spacing-lg);
+  min-width: 0;
+  max-width: 100%;
 }
 
 .agent-management-header {
@@ -190,6 +201,7 @@
   align-items: flex-start;
   flex-wrap: wrap;
   gap: var(--spacing-sm);
+  min-width: 0;
 }
 
 .agent-management-empty {
@@ -202,6 +214,7 @@
   justify-content: space-between;
   align-items: center;
   gap: var(--spacing-base);
+  min-width: 0;
 }
 
 .docs-upload-btn {
@@ -212,6 +225,7 @@
 .kb-link-row {
   display: flex;
   gap: var(--spacing-sm);
+  min-width: 0;
 }
 
 .kb-link-row .input-main {
@@ -362,7 +376,8 @@
 .auth-modal-backdrop.channels-modal-backdrop .auth-modal.channels-modal {
   margin-left: auto;
   margin-right: auto;
-  margin-top: 0;
+  /* Обязательный зазор сверху у окна (ПК и моб.) — доп. к padding-top бэкдропа */
+  margin-top: var(--spacing-md);
   margin-bottom: 0;
   flex-shrink: 0;
 }
@@ -461,7 +476,7 @@
 /* Responsive */
 @media (max-width: 768px) {
   .agents-layout {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .section-header {
@@ -485,8 +500,38 @@
     justify-content: space-between;
   }
 
+  .api-key-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .api-key-row .btn {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    white-space: normal;
+  }
+
+  .docs-header-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .docs-header-row .btn {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    white-space: normal;
+  }
+
   .kb-link-row {
     flex-direction: column;
+  }
+
+  .kb-link-row .btn {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
   }
 
   .connection-type-grid--channels,
