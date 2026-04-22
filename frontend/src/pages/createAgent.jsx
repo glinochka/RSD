@@ -40,6 +40,90 @@ const parseAllowedTools = (raw) =>
 const buildCrmValidationSignature = (provider, baseUrl, token) =>
   `${String(provider || '').trim().toLowerCase()}|${String(baseUrl || '').trim()}|${String(token || '').trim()}`;
 
+const CustomSelect = ({
+  id,
+  name,
+  value,
+  options,
+  onChange,
+  disabled = false,
+  className = '',
+  error = false,
+}) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const selectRef = useRef(null);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const handleOutsideClick = (event) => {
+      if (!selectRef.current?.contains(event.target)) {
+        setIsOpen(false);
+      }
+    };
+    const handleEscape = (event) => {
+      if (event.key === 'Escape') {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [isOpen]);
+
+  const selectedOption = options.find((option) => option.value === value) || options[0];
+  const buttonClassName = [
+    'custom-select-trigger',
+    className,
+    error ? 'error' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  const handleSelectOption = (nextValue) => {
+    onChange({
+      target: {
+        name,
+        value: nextValue,
+      },
+    });
+    setIsOpen(false);
+  };
+
+  return (
+    <div className={`custom-select ${disabled ? 'disabled' : ''}`} ref={selectRef}>
+      <button
+        id={id}
+        type="button"
+        className={buttonClassName}
+        onClick={() => setIsOpen((prev) => !prev)}
+        disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
+      >
+        <span className="custom-select-value">{selectedOption?.label || ''}</span>
+        <span className={`custom-select-arrow ${isOpen ? 'open' : ''}`} aria-hidden="true" />
+      </button>
+      {isOpen && !disabled && (
+        <div className="custom-select-dropdown" role="listbox" aria-labelledby={id}>
+          {options.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              className={`custom-select-option ${option.value === value ? 'selected' : ''}`}
+              onClick={() => handleSelectOption(option.value)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const CreateAgentContent = () => {
   const navigate = useNavigate();
   const { id: agentId } = useParams();
@@ -681,17 +765,18 @@ const CreateAgentContent = () => {
             <h3 className="agent-form-section-title">Подключение</h3>
             <div className="form-group">
               <label htmlFor="template_type">Шаблон агента:</label>
-              <select
+              <CustomSelect
                 id="template_type"
                 name="template_type"
                 className="input-main"
                 value={form.values.template_type}
                 onChange={form.handleChange}
+                options={[
+                  { value: 'qa', label: 'Консультант (RAG QA)' },
+                  { value: 'crm_admin', label: 'Администратор CRM' },
+                ]}
                 disabled={form.isSubmitting}
-              >
-                <option value="qa">Консультант (RAG QA)</option>
-                <option value="crm_admin">Администратор CRM</option>
-              </select>
+              />
               <p className="help-text">
                 Для CRM-шаблона агент работает как администратор с доступом к функциям CRM.
               </p>
@@ -701,17 +786,18 @@ const CreateAgentContent = () => {
               <div className="form-group">
                 <h3 className="agent-form-channel-title">Конфигурация CRM шаблона</h3>
                 <label htmlFor="crm_provider">CRM провайдер:</label>
-                <select
+                <CustomSelect
                   id="crm_provider"
                   name="crm_provider"
                   className="input-main"
                   value={form.values.crm_provider}
                   onChange={form.handleChange}
+                  options={[
+                    { value: 'amocrm', label: 'amoCRM' },
+                    { value: 'bitrix24', label: 'Bitrix24' },
+                  ]}
                   disabled={form.isSubmitting}
-                >
-                  <option value="amocrm">amoCRM</option>
-                  <option value="bitrix24">Bitrix24</option>
-                </select>
+                />
 
                 <label htmlFor="crm_account_base_url" className="mt-input">
                   Base URL аккаунта CRM:
@@ -800,33 +886,35 @@ const CreateAgentContent = () => {
                 <label htmlFor="crm_confirmation_policy" className="mt-input">
                   Политика подтверждения:
                 </label>
-                <select
+                <CustomSelect
                   id="crm_confirmation_policy"
                   name="crm_confirmation_policy"
                   className="input-main"
                   value={form.values.crm_confirmation_policy}
                   onChange={form.handleChange}
+                  options={[
+                    { value: 'confirm_risky', label: 'Подтверждать рискованные действия' },
+                    { value: 'always_confirm', label: 'Подтверждать каждое действие' },
+                    { value: 'never_confirm', label: 'Без подтверждений' },
+                  ]}
                   disabled={form.isSubmitting}
-                >
-                  <option value="confirm_risky">Подтверждать рискованные действия</option>
-                  <option value="always_confirm">Подтверждать каждое действие</option>
-                  <option value="never_confirm">Без подтверждений</option>
-                </select>
+                />
 
                 <label htmlFor="crm_fallback_mode" className="mt-input">
                   Режим fallback:
                 </label>
-                <select
+                <CustomSelect
                   id="crm_fallback_mode"
                   name="crm_fallback_mode"
                   className="input-main"
                   value={form.values.crm_fallback_mode}
                   onChange={form.handleChange}
+                  options={[
+                    { value: 'ask_clarifying_question', label: 'Задавать уточняющие вопросы' },
+                    { value: 'text_only', label: 'Только текстовый ответ' },
+                  ]}
                   disabled={form.isSubmitting}
-                >
-                  <option value="ask_clarifying_question">Задавать уточняющие вопросы</option>
-                  <option value="text_only">Только текстовый ответ</option>
-                </select>
+                />
               </div>
             )}
 
