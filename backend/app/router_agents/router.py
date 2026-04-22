@@ -13,10 +13,10 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt.exceptions import InvalidTokenError
 from sqlalchemy import Date, cast, func, select
 
-from .dao import AgentChannelConnectionDAO, AgentDAO
+from .dao import AgentChannelConnectionDAO, AgentCrmConnectionDAO, AgentDAO
 from .schemas import *
 from ..alembic.database import async_session_maker
-from ..alembic.models import Agent, AgentAnalyticsMessage, AgentChannelConnection, AgentFrozenUser
+from ..alembic.models import Agent, AgentAnalyticsMessage, AgentChannelConnection, AgentCrmConnection, AgentFrozenUser
 from ..config import settings
 from ..qdrant.search_service import delete_agent_vectors
 from ..router_users.dao import UserDAO
@@ -26,6 +26,7 @@ from ..channels.message_processor import (
     get_message_processor,
 )
 from ..services.ai_authoring import generate_welcome_with_ai, improve_prompt_with_ai
+from ..services.crm import build_provider
 from ..services.template_runtime import get_template_runtime
 from ..utils.api_keys import generate_agent_external_api_key, hash_agent_external_api_key
 from ..utils.JWT import get_user_from_access_token
@@ -40,6 +41,109 @@ router = APIRouter(prefix="/api/agents")
 http_bearer = HTTPBearer(auto_error=False)
 MAX_INT32 = 2_147_483_647
 USERBOT_AUTH_TOKEN_TTL_MINUTES = 10
+LEGACY_TEMPLATE_TYPE_ALIASES = {
+    "function_calling": "crm_admin",
+}
+SUPPORTED_TEMPLATE_TYPES = {"qa", "crm_admin", "lead_generation", "content_factory"}
+CRM_PROVIDERS = {"amocrm", "bitrix24"}
+CRM_CONFIRMATION_POLICIES = {"always_confirm", "confirm_risky", "never_confirm"}
+CRM_FALLBACK_MODES = {"ask_clarifying_question", "text_only"}
+DEFAULT_CRM_ALLOWED_TOOLS = [
+    "find_contact",
+    "create_contact",
+    "find_lead",
+    "create_lead",
+    "update_lead",
+    "add_note",
+    "create_task",
+    "assign_owner",
+]
+
+
+def _normalize_template_type(template_type: str | None) -> str:
+    raw = (template_type or "qa").strip().lower()
+    normalized = LEGACY_TEMPLATE_TYPE_ALIASES.get(raw, raw)
+    if normalized not in SUPPORTED_TEMPLATE_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unsupported template_type: {template_type}",
+        )
+    return normalized
+
+
+def _normalize_template_config(template_type: str, template_config: dict | None) -> str | None:
+    if template_type != "crm_admin":
+        return None
+
+    raw = template_config or {}
+    if not isinstance(raw, dict):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="template_config must be a JSON object",
+        )
+
+    crm_provider = str(raw.get("crm_provider") or "amocrm").strip().lower()
+    if crm_provider not in CRM_PROVIDERS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="template_config.crm_provider must be one of: amocrm, bitrix24",
+        )
+
+    confirmation_policy = str(raw.get("confirmation_policy") or "confirm_risky").strip().lower()
+    if confirmation_policy not in CRM_CONFIRMATION_POLICIES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="template_config.confirmation_policy is invalid",
+        )
+
+    fallback_mode = str(raw.get("fallback_mode") or "ask_clarifying_question").strip().lower()
+    if fallback_mode not in CRM_FALLBACK_MODES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="template_config.fallback_mode is invalid",
+        )
+
+    allowed_tools_raw = raw.get("allowed_tools")
+    if allowed_tools_raw is None:
+        allowed_tools = list(DEFAULT_CRM_ALLOWED_TOOLS)
+    elif isinstance(allowed_tools_raw, list):
+        allowed_tools = []
+        for item in allowed_tools_raw:
+            tool = str(item or "").strip()
+            if tool and tool not in allowed_tools:
+                allowed_tools.append(tool)
+        if not allowed_tools:
+            allowed_tools = list(DEFAULT_CRM_ALLOWED_TOOLS)
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="template_config.allowed_tools must be an array of strings",
+        )
+
+    field_mapping_raw = raw.get("field_mapping")
+    field_mapping = None
+    if field_mapping_raw is not None:
+        if not isinstance(field_mapping_raw, dict):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="template_config.field_mapping must be an object",
+            )
+        normalized_mapping = {}
+        for key, value in field_mapping_raw.items():
+            k = str(key or "").strip()
+            v = str(value or "").strip()
+            if k and v:
+                normalized_mapping[k] = v
+        field_mapping = normalized_mapping or None
+
+    normalized_config = {
+        "crm_provider": crm_provider,
+        "allowed_tools": allowed_tools,
+        "confirmation_policy": confirmation_policy,
+        "fallback_mode": fallback_mode,
+        "field_mapping": field_mapping,
+    }
+    return json.dumps(normalized_config, ensure_ascii=False)
 
 
 async def get_current_user_optional(
@@ -107,6 +211,18 @@ def _serialize_agent(agent, *, include_external_api_key: bool = False, include_e
     data.pop("registered", None)
     data.pop("encrypted_external_api_key", None)
     data.pop("external_api_key_hash", None)
+    try:
+        data["template_type"] = _normalize_template_type(data.get("template_type"))
+    except HTTPException:
+        data["template_type"] = "qa"
+    raw_template_config = data.get("template_config")
+    if isinstance(raw_template_config, str) and raw_template_config.strip():
+        try:
+            data["template_config"] = json.loads(raw_template_config)
+        except Exception:
+            data["template_config"] = None
+    else:
+        data["template_config"] = None
     if not include_encrypted_token:
         data.pop("encrypted_token", None)
     if include_external_api_key:
@@ -130,11 +246,56 @@ def _serialize_channel_connection(connection: AgentChannelConnection) -> dict:
     }
 
 
+def _serialize_crm_connection(connection: AgentCrmConnection) -> dict:
+    return {
+        "id": connection.id,
+        "provider": connection.provider,
+        "external_id": connection.external_id,
+        "is_active": bool(connection.is_active),
+        "last_checked_at": _safe_iso(connection.last_checked_at),
+        "created_at": _safe_iso(connection.created_at),
+        "updated_at": _safe_iso(connection.updated_at),
+    }
+
+
+def _normalize_crm_base_url(value: str) -> str:
+    raw = (value or "").strip().rstrip("/")
+    if not raw:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="account_base_url is required",
+        )
+    if not (raw.startswith("http://") or raw.startswith("https://")):
+        raw = f"https://{raw}"
+    return raw
+
+
+def _decode_template_config(raw_template_config: str | None) -> dict | None:
+    if not raw_template_config or not str(raw_template_config).strip():
+        return None
+    try:
+        loaded = json.loads(raw_template_config)
+        if isinstance(loaded, dict):
+            return loaded
+    except Exception:
+        return None
+    return None
+
+
 async def _list_agent_channels(session, agent_id: int) -> list[AgentChannelConnection]:
     rows = await session.scalars(
         select(AgentChannelConnection)
         .where(AgentChannelConnection.agent_id == agent_id)
         .order_by(AgentChannelConnection.created_at.asc(), AgentChannelConnection.id.asc())
+    )
+    return list(rows.all())
+
+
+async def _list_agent_crm_connections(session, agent_id: int) -> list[AgentCrmConnection]:
+    rows = await session.scalars(
+        select(AgentCrmConnection)
+        .where(AgentCrmConnection.agent_id == agent_id)
+        .order_by(AgentCrmConnection.created_at.asc(), AgentCrmConnection.id.asc())
     )
     return list(rows.all())
 
@@ -1069,6 +1230,219 @@ async def internal_process_message(
     )
 
 
+@router.post("/crm/connect")
+async def connect_crm(
+    payload: AgentCrmConnectPayload,
+    current_user=Depends(get_current_user_required),
+):
+    provider_name = (payload.provider or "").strip().lower()
+    base_url = _normalize_crm_base_url(payload.account_base_url)
+    access_token = payload.access_token.strip()
+
+    provider = build_provider(provider_name, base_url=base_url, access_token=access_token)
+    try:
+        health = await provider.validate_connection()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"CRM credentials validation failed: {exc}",
+        )
+
+    now = datetime.utcnow()
+    external_id = (health.external_id or "").strip() or base_url
+    encrypted_credentials = encrypt_token(
+        json.dumps(
+            {
+                "base_url": base_url,
+                "access_token": access_token,
+                "account_external_id": external_id,
+            },
+            ensure_ascii=False,
+        )
+    )
+
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        crm_connection_dao = AgentCrmConnectionDAO(session)
+        async with session.begin():
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
+                current_user=current_user,
+                internal=False,
+            )
+
+            existing_for_agent = await crm_connection_dao.find_one_by_filter(
+                agent_id=agent.id,
+                provider=provider_name,
+            )
+            existing_global = await crm_connection_dao.find_one_by_filter(
+                provider=provider_name,
+                external_id=external_id,
+            )
+            if existing_global and existing_global.agent_id != agent.id:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Этот CRM аккаунт уже подключен к другому агенту",
+                )
+
+            if existing_for_agent:
+                await crm_connection_dao.update(
+                    existing_for_agent,
+                    {
+                        "external_id": external_id,
+                        "encrypted_credentials": encrypted_credentials,
+                        "is_active": True,
+                        "last_checked_at": now,
+                        "updated_at": now,
+                    },
+                )
+                connection = existing_for_agent
+            else:
+                connection = await crm_connection_dao.add(
+                    {
+                        "agent_id": agent.id,
+                        "provider": provider_name,
+                        "external_id": external_id,
+                        "encrypted_credentials": encrypted_credentials,
+                        "is_active": True,
+                        "last_checked_at": now,
+                        "created_at": now,
+                        "updated_at": now,
+                    }
+                )
+                await session.flush()
+
+            if _normalize_template_type(agent.template_type) == "crm_admin":
+                current_config = _decode_template_config(agent.template_config) or {}
+                current_config["crm_provider"] = provider_name
+                await agent_dao.update(
+                    agent,
+                    {
+                        "template_config": _normalize_template_config("crm_admin", current_config),
+                    },
+                )
+
+            return JSONResponse(
+                content={
+                    "agent_id": agent.id,
+                    "bot_id": agent.bot_id,
+                    "crm_connection": _serialize_crm_connection(connection),
+                    "health": {
+                        "ok": health.ok,
+                        "provider": health.provider,
+                        "external_id": health.external_id,
+                        "details": health.details,
+                    },
+                },
+                status_code=status.HTTP_200_OK,
+            )
+
+
+@router.get("/crm/health")
+async def crm_health(
+    agent_id: int | None = Query(default=None),
+    bot_id: int | None = Query(default=None),
+    provider: str | None = Query(default=None),
+    current_user=Depends(get_current_user_required),
+):
+    if agent_id is None and bot_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Query parameter 'agent_id' or 'bot_id' is required",
+        )
+
+    provider_filter = (provider or "").strip().lower() or None
+    if provider_filter and provider_filter != "amocrm":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Supported provider: amocrm",
+        )
+
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=agent_id,
+                bot_id=bot_id,
+                session=session,
+                current_user=current_user,
+                internal=False,
+            )
+            rows = (
+                (
+                    await session.execute(
+                        select(AgentCrmConnection).where(
+                            AgentCrmConnection.agent_id == agent.id,
+                            AgentCrmConnection.is_active.is_(True),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if provider_filter:
+                rows = [row for row in rows if (row.provider or "").strip().lower() == provider_filter]
+            if not rows:
+                return JSONResponse(
+                    content={
+                        "agent_id": agent.id,
+                        "bot_id": agent.bot_id,
+                        "connections": [],
+                    },
+                    status_code=status.HTTP_200_OK,
+                )
+
+            now = datetime.utcnow()
+            results = []
+            for row in rows:
+                try:
+                    bundle = json.loads(decrypt_token(row.encrypted_credentials))
+                    provider_impl = build_provider(
+                        row.provider,
+                        base_url=str(bundle.get("base_url") or ""),
+                        access_token=str(bundle.get("access_token") or ""),
+                    )
+                    health = await provider_impl.validate_connection()
+                    row.last_checked_at = now
+                    row.updated_at = now
+                    results.append(
+                        {
+                            "connection": _serialize_crm_connection(row),
+                            "health": {
+                                "ok": health.ok,
+                                "provider": health.provider,
+                                "external_id": health.external_id,
+                                "details": health.details,
+                            },
+                        }
+                    )
+                except Exception as exc:
+                    results.append(
+                        {
+                            "connection": _serialize_crm_connection(row),
+                            "health": {
+                                "ok": False,
+                                "provider": row.provider,
+                                "external_id": row.external_id,
+                                "details": {"error": str(exc)},
+                            },
+                        }
+                    )
+            return JSONResponse(
+                content={
+                    "agent_id": agent.id,
+                    "bot_id": agent.bot_id,
+                    "connections": results,
+                },
+                status_code=status.HTTP_200_OK,
+            )
+
+
 @router.get("")
 async def read_agent(
     agent_id: int | None = Query(default=None),
@@ -1101,12 +1475,14 @@ async def read_agent(
             await _ensure_external_api_key(found_agent, agent_dao)
             await _ensure_single_primary_flag(session=session, agent_id=found_agent.id)
             channels = await _list_agent_channels(session, found_agent.id)
+            crm_connections = await _list_agent_crm_connections(session, found_agent.id)
             payload = _serialize_agent(
                 found_agent,
                 include_external_api_key=True,
                 include_encrypted_token=internal,
             )
             payload["channels"] = [_serialize_channel_connection(item) for item in channels]
+            payload["crm_connections"] = [_serialize_crm_connection(item) for item in crm_connections]
             if internal and resolved_channel and resolved_channel.encrypted_credentials:
                 # Internal webhook lookup by Telegram Bot ID must return that bot token.
                 payload["encrypted_token"] = resolved_channel.encrypted_credentials
@@ -1153,13 +1529,16 @@ async def create_empty_agent(
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
         async with session.begin():
+            template_type = _normalize_template_type(payload.template_type)
+            template_config = _normalize_template_config(template_type, payload.template_config)
             external_api_key = generate_agent_external_api_key()
             created_agent = await agent_dao.add(
                 {
                     "user_id": current_user.id,
                     "bot_id": None,
                     "primary_provider": "none",
-                    "template_type": payload.template_type,
+                    "template_type": template_type,
+                    "template_config": template_config,
                     "encrypted_token": encrypt_token(f"agent:{current_user.id}:{datetime.utcnow().timestamp()}"),
                     "encrypted_external_api_key": encrypt_token(external_api_key),
                     "external_api_key_hash": hash_agent_external_api_key(external_api_key),
@@ -1202,6 +1581,11 @@ async def create_agent_by_tg_id(
                 )
 
             payload = new_agent.model_dump()
+            payload["template_type"] = _normalize_template_type(payload.get("template_type"))
+            payload["template_config"] = _normalize_template_config(
+                payload["template_type"],
+                payload.get("template_config"),
+            )
             payload["user_id"] = user.id
             del payload["tg_id"]
             payload["primary_provider"] = "telegram_bot"
@@ -1258,6 +1642,8 @@ async def create_agent_by_token(new_agent: NewAgent_byToken, current_user=Depend
         agent_dao = AgentDAO(session)
         channel_connection_dao = AgentChannelConnectionDAO(session)
         async with session.begin():
+            template_type = _normalize_template_type(new_agent.template_type)
+            template_config = _normalize_template_config(template_type, new_agent.template_config)
             duplicate_agent = await agent_dao.find_one_by_filter(bot_id=bot_id)
             if duplicate_agent:
                 raise HTTPException(
@@ -1270,7 +1656,8 @@ async def create_agent_by_token(new_agent: NewAgent_byToken, current_user=Depend
                     "user_id": current_user.id,
                     "bot_id": bot_id,
                     "primary_provider": "telegram_bot",
-                    "template_type": new_agent.template_type,
+                    "template_type": template_type,
+                    "template_config": template_config,
                     "encrypted_token": encrypt_token(token_value),
                     "encrypted_external_api_key": encrypt_token(external_api_key),
                     "external_api_key_hash": hash_agent_external_api_key(external_api_key),
@@ -1348,6 +1735,8 @@ async def create_agent_by_userbot_session(
         agent_dao = AgentDAO(session)
         channel_connection_dao = AgentChannelConnectionDAO(session)
         async with session.begin():
+            template_type = _normalize_template_type(new_agent.template_type)
+            template_config = _normalize_template_config(template_type, new_agent.template_config)
             duplicate_agent = await agent_dao.find_one_by_filter(bot_id=telegram_user_id)
             if duplicate_agent:
                 raise HTTPException(
@@ -1370,7 +1759,8 @@ async def create_agent_by_userbot_session(
                     "user_id": current_user.id,
                     "bot_id": telegram_user_id,
                     "primary_provider": "telegram_userbot",
-                    "template_type": new_agent.template_type,
+                    "template_type": template_type,
+                    "template_config": template_config,
                     "encrypted_token": encrypt_token(session_string),
                     "encrypted_external_api_key": encrypt_token(external_api_key),
                     "external_api_key_hash": hash_agent_external_api_key(external_api_key),
@@ -2195,6 +2585,20 @@ async def update_by_bot_id(
             updates = new_data.model_dump(exclude_none=True)
             updates.pop("bot_id", None)
             updates.pop("agent_id", None)
+            if "template_type" in updates:
+                updates["template_type"] = _normalize_template_type(updates["template_type"])
+                if "template_config" not in updates:
+                    if updates["template_type"] == "crm_admin":
+                        updates["template_config"] = _normalize_template_config("crm_admin", None)
+                    else:
+                        updates["template_config"] = None
+            if "template_config" in updates:
+                normalized_type = _normalize_template_type(updates.get("template_type") or agent.template_type)
+                updates["template_type"] = normalized_type
+                updates["template_config"] = _normalize_template_config(
+                    normalized_type,
+                    updates.get("template_config"),
+                )
             await agent_dao.update(agent, updates)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

@@ -71,6 +71,13 @@ const CreateAgentContent = () => {
       whatsapp_access_token: '',
       whatsapp_business_account_id: '',
       whatsapp_verify_token: '',
+      template_type: 'qa',
+      crm_provider: 'amocrm',
+      crm_account_base_url: '',
+      crm_access_token: '',
+      crm_allowed_tools: 'find_contact, create_contact, find_lead, create_lead, update_lead, add_note, create_task, assign_owner',
+      crm_confirmation_policy: 'confirm_risky',
+      crm_fallback_mode: 'ask_clarifying_question',
       system_prompt: '',
     },
     async (values) => {
@@ -142,13 +149,49 @@ const CreateAgentContent = () => {
           return;
         }
 
+        const selectedTemplate = values.template_type?.trim() || 'qa';
+        if (selectedTemplate === 'crm_admin' && !values.crm_account_base_url?.trim()) {
+          form.setFieldError('crm_account_base_url', 'Base URL CRM обязателен');
+          return;
+        }
+        if (selectedTemplate === 'crm_admin' && !values.crm_access_token?.trim()) {
+          form.setFieldError('crm_access_token', 'Access token CRM обязателен');
+          return;
+        }
+        const templateConfig = selectedTemplate === 'crm_admin'
+          ? {
+              crm_provider: values.crm_provider?.trim() || 'amocrm',
+              allowed_tools: Array.from(
+                new Set(
+                  (values.crm_allowed_tools || '')
+                    .split(',')
+                    .map((tool) => tool.trim())
+                    .filter(Boolean)
+                )
+              ),
+              confirmation_policy: values.crm_confirmation_policy?.trim() || 'confirm_risky',
+              fallback_mode: values.crm_fallback_mode?.trim() || 'ask_clarifying_question',
+            }
+          : undefined;
+
         const createdAgent = await agentService.createEmpty({
           system_prompt: values.system_prompt.trim(),
+          template_type: selectedTemplate,
+          template_config: templateConfig,
         });
         const agentId = createdAgent?.id;
         if (!Number.isFinite(agentId)) {
           showError('Не удалось определить id агента после создания');
           return;
+        }
+
+        if (selectedTemplate === 'crm_admin') {
+          await agentService.connectCrm({
+            agent_id: agentId,
+            provider: values.crm_provider?.trim() || 'amocrm',
+            account_base_url: values.crm_account_base_url.trim(),
+            access_token: values.crm_access_token.trim(),
+          });
         }
 
         const primaryProvider = isBotMode
@@ -545,6 +588,120 @@ const CreateAgentContent = () => {
 
           <form id="agent-form" className="agent-form" onSubmit={form.handleSubmit}>
             <h3 className="agent-form-section-title">Подключение</h3>
+            <div className="form-group">
+              <label htmlFor="template_type">Шаблон агента:</label>
+              <select
+                id="template_type"
+                name="template_type"
+                className="input-main"
+                value={form.values.template_type}
+                onChange={form.handleChange}
+                disabled={form.isSubmitting}
+              >
+                <option value="qa">Консультант (RAG QA)</option>
+                <option value="crm_admin">Администратор CRM</option>
+              </select>
+              <p className="help-text">
+                Для CRM-шаблона агент работает как администратор с доступом к функциям CRM.
+              </p>
+            </div>
+
+            {form.values.template_type === 'crm_admin' && (
+              <div className="form-group">
+                <h3 className="agent-form-channel-title">Конфигурация CRM шаблона</h3>
+                <label htmlFor="crm_provider">CRM провайдер:</label>
+                <select
+                  id="crm_provider"
+                  name="crm_provider"
+                  className="input-main"
+                  value={form.values.crm_provider}
+                  onChange={form.handleChange}
+                  disabled={form.isSubmitting}
+                >
+                  <option value="amocrm">amoCRM</option>
+                </select>
+
+                <label htmlFor="crm_account_base_url" className="mt-input">
+                  Base URL аккаунта CRM:
+                </label>
+                <input
+                  id="crm_account_base_url"
+                  type="text"
+                  name="crm_account_base_url"
+                  className={`input-main ${form.errors.crm_account_base_url ? 'error' : ''}`}
+                  value={form.values.crm_account_base_url}
+                  onChange={form.handleChange}
+                  disabled={form.isSubmitting}
+                  placeholder="https://example.amocrm.ru"
+                />
+                {form.errors.crm_account_base_url && (
+                  <span className="error-message">{form.errors.crm_account_base_url}</span>
+                )}
+
+                <label htmlFor="crm_access_token" className="mt-input">
+                  Access token CRM:
+                </label>
+                <input
+                  id="crm_access_token"
+                  type="password"
+                  name="crm_access_token"
+                  className={`input-main ${form.errors.crm_access_token ? 'error' : ''}`}
+                  value={form.values.crm_access_token}
+                  onChange={form.handleChange}
+                  disabled={form.isSubmitting}
+                  placeholder="Вставьте OAuth access token"
+                />
+                {form.errors.crm_access_token && (
+                  <span className="error-message">{form.errors.crm_access_token}</span>
+                )}
+
+                <label htmlFor="crm_allowed_tools" className="mt-input">
+                  Разрешенные инструменты (через запятую):
+                </label>
+                <input
+                  id="crm_allowed_tools"
+                  type="text"
+                  name="crm_allowed_tools"
+                  className="input-main"
+                  value={form.values.crm_allowed_tools}
+                  onChange={form.handleChange}
+                  disabled={form.isSubmitting}
+                  placeholder="find_contact, create_contact, create_lead"
+                />
+
+                <label htmlFor="crm_confirmation_policy" className="mt-input">
+                  Политика подтверждения:
+                </label>
+                <select
+                  id="crm_confirmation_policy"
+                  name="crm_confirmation_policy"
+                  className="input-main"
+                  value={form.values.crm_confirmation_policy}
+                  onChange={form.handleChange}
+                  disabled={form.isSubmitting}
+                >
+                  <option value="confirm_risky">Подтверждать рискованные действия</option>
+                  <option value="always_confirm">Подтверждать каждое действие</option>
+                  <option value="never_confirm">Без подтверждений</option>
+                </select>
+
+                <label htmlFor="crm_fallback_mode" className="mt-input">
+                  Режим fallback:
+                </label>
+                <select
+                  id="crm_fallback_mode"
+                  name="crm_fallback_mode"
+                  className="input-main"
+                  value={form.values.crm_fallback_mode}
+                  onChange={form.handleChange}
+                  disabled={form.isSubmitting}
+                >
+                  <option value="ask_clarifying_question">Задавать уточняющие вопросы</option>
+                  <option value="text_only">Только текстовый ответ</option>
+                </select>
+              </div>
+            )}
+
             <div className="form-group">
               <label>Тип подключения:</label>
               <div className="connection-type-grid connection-type-grid--channels">

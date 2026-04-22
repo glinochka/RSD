@@ -143,6 +143,10 @@ class Agent(Base):
         back_populates="agent",
         cascade="all, delete-orphan",
     )
+    crm_connections: Mapped[list["AgentCrmConnection"]] = relationship(
+        back_populates="agent",
+        cascade="all, delete-orphan",
+    )
 
 
 class AgentFrozenUser(Base):
@@ -197,6 +201,27 @@ class AgentChannelConnection(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
 
     agent: Mapped["Agent"] = relationship(back_populates="channel_connections")
+
+
+class AgentCrmConnection(Base):
+    __tablename__ = "agent_crm_connections"
+    __table_args__ = (
+        UniqueConstraint("agent_id", "provider", name="uq_agent_crm_agent_provider"),
+        UniqueConstraint("provider", "external_id", name="uq_agent_crm_provider_external"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), index=True, nullable=False)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    external_id: Mapped[str] = mapped_column(String(191), nullable=False, index=True)
+    encrypted_credentials: Mapped[str] = mapped_column(Text, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    agent: Mapped["Agent"] = relationship(back_populates="crm_connections")
 
 
 class UserExternalIdentity(Base):

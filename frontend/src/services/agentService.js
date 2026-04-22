@@ -252,6 +252,22 @@ export const agentService = {
     return response.data;
   },
 
+  connectCrm: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_CRM_CONNECT, data);
+    return response.data;
+  },
+
+  getCrmHealth: async ({ agent_id = null, bot_id = null, provider = null } = {}) => {
+    const response = await apiClient.get(API_ROUTES.AGENTS_CRM_HEALTH, {
+      params: {
+        agent_id: agent_id ?? undefined,
+        bot_id: bot_id ?? undefined,
+        provider: provider ?? undefined,
+      },
+    });
+    return response.data;
+  },
+
   uploadDocumentByBotId: async (agentId, file) => {
     const formData = new FormData();
     formData.append('agent_data', JSON.stringify({ agent_id: agentId }));

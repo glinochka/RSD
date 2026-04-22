@@ -28,7 +28,9 @@ class TemplateRuntimeService:
         knowledge_scope_id: int,
     ) -> TemplateExecutionResult:
         normalized = (template_type or "qa").strip().lower()
-        if normalized in {"qa", "function_calling", "lead_generation", "content_factory"}:
+        if normalized == "function_calling":
+            normalized = "crm_admin"
+        if normalized in {"qa", "crm_admin", "lead_generation", "content_factory"}:
             return await self._execute_qa_like(
                 prompt=prompt,
                 user_message=user_message,
