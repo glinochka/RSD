@@ -73,9 +73,13 @@ async def _handle_private_message(
     event: events.NewMessage.Event,
     *,
     bot_id: int,
+    agent_id: int,
     system_prompt: str,
     welcome_message: str | None,
+    template_type: str,
+    template_config: dict[str, Any],
 ) -> None:
+    """Handle incoming private messages (DM)."""
     if not event.is_private:
         return
 
@@ -116,44 +120,133 @@ async def _handle_private_message(
     await event.respond(response.text)
 
 
+async def _handle_chat_message(
+    event: events.NewMessage.Event,
+    *,
+    bot_id: int,
+    agent_id: int,
+    system_prompt: str,
+    template_type: str,
+    template_config: dict[str, Any],
+) -> None:
+    """Handle incoming messages from groups/chats for sales_manager scanning."""
+    if event.is_private or event.is_channel:
+        return
+
+    # Skip system messages
+    if event.message.action is not None:
+        return
+
+    # Skip if message from bot itself
+    sender = await event.get_sender()
+    if sender is None:
+        return
+    
+    sender_is_bot = getattr(sender, "bot", False)
+    if sender_is_bot:
+        return
+
+    raw = event.message.message
+    if raw is None or not str(raw).strip():
+        return
+
+    # Only process if template is sales_manager
+    if template_type != "sales_manager":
+        return
+
+    query = str(raw).strip()
+    user_external_id = str(getattr(sender, "id", None) or "")
+    if not user_external_id:
+        return
+
+    source_chat_id = str(event.chat_id) if hasattr(event, "chat_id") else "0"
+    
+    user_display_name = (
+        (getattr(sender, "first_name", "") or "").strip()
+        + " "
+        + (getattr(sender, "last_name", "") or "").strip()
+    ).strip() or getattr(sender, "username", None)
+
+    # Process through message processor (will route to sales_manager template runtime)
+    request = MessageRequest(
+        bot_id=bot_id,
+        query=query,
+        user_external_id=user_external_id,
+        channel=Channel.TELEGRAM_USERBOT,
+        system_prompt=system_prompt,
+        welcome_message=None,
+        user_display_name=user_display_name,
+        telegram_peer_access_hash=None,
+    )
+    
+    # Note: Response is not sent to group, only processed/queued in backend
+    try:
+        await get_message_processor().process(request)
+    except Exception as exc:
+        logger.warning("sales_manager chat scanning error: %s", exc)
+
+
+
 async def _run_one_client(cfg: dict[str, Any]) -> None:
+    """Run Telethon client for userbot: handle DMs and scan chats for sales_manager."""
     bundle = json.loads(decrypt_token(cfg["encrypted_userbot_bundle"]))
     api_id = int(bundle["api_id"])
     api_hash = str(bundle["api_hash"])
     session_str = str(bundle["session_string"])
     bot_id = int(cfg["bot_id"])
+    agent_id = int(cfg["agent_id"])
     system_prompt = cfg.get("system_prompt") or ""
     welcome = cfg.get("welcome_message")
+    template_type = cfg.get("template_type") or "qa"
+    template_config = cfg.get("template_config") or {}
 
     client = _make_client(session_str, api_id, api_hash)
 
-    async def handler(event: events.NewMessage.Event) -> None:
+    async def private_msg_handler(event: events.NewMessage.Event) -> None:
         await _handle_private_message(
             event,
             bot_id=bot_id,
+            agent_id=agent_id,
             system_prompt=system_prompt,
             welcome_message=welcome,
+            template_type=template_type,
+            template_config=template_config,
         )
 
-    client.add_event_handler(handler, events.NewMessage(incoming=True))
+    async def chat_msg_handler(event: events.NewMessage.Event) -> None:
+        await _handle_chat_message(
+            event,
+            bot_id=bot_id,
+            agent_id=agent_id,
+            system_prompt=system_prompt,
+            template_type=template_type,
+            template_config=template_config,
+        )
+
+    # Register handlers: private messages and group/chat messages
+    client.add_event_handler(private_msg_handler, events.NewMessage(incoming=True, func=lambda e: e.is_private))
+    client.add_event_handler(chat_msg_handler, events.NewMessage(incoming=True, func=lambda e: not e.is_private))
+    
     try:
-        logger.info("userbot: connecting bot_id=%s", bot_id)
+        logger.info("userbot: connecting bot_id=%s agent_id=%s", bot_id, agent_id)
         await client.connect()
         if not await client.is_user_authorized():
-            logger.error("userbot: session unauthorized bot_id=%s", bot_id)
+            logger.error("userbot: session unauthorized bot_id=%s agent_id=%s", bot_id, agent_id)
             return
         me = await client.get_me()
         logger.info(
-            "userbot: online bot_id=%s telegram_user=%s",
+            "userbot: online bot_id=%s agent_id=%s telegram_user=%s template_type=%s",
             bot_id,
+            agent_id,
             getattr(me, "username", None) or me.id,
+            template_type,
         )
         await client.run_until_disconnected()
     except asyncio.CancelledError:
-        logger.info("userbot: stopping bot_id=%s", bot_id)
+        logger.info("userbot: stopping bot_id=%s agent_id=%s", bot_id, agent_id)
         raise
     except Exception:
-        logger.exception("userbot: worker failed bot_id=%s", bot_id)
+        logger.exception("userbot: worker failed bot_id=%s agent_id=%s", bot_id, agent_id)
     finally:
         if client.is_connected():
             await client.disconnect()

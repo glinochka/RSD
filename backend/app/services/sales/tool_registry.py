@@ -64,7 +64,7 @@ _TOOL_DESCRIPTIONS = {
 
 
 def _now_utc() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _cleanup_idempotency_cache() -> None:
@@ -186,12 +186,32 @@ class SalesToolRegistry:
 
         data = args.model_dump()
         started = time.perf_counter()
+        
         if tool_name == "schedule_dm":
+            # Enqueue DM for async sending
+            from .dm_queue_service import get_dm_queue_service
+            
+            queue_service = get_dm_queue_service()
+            target_uid = data.get("target_user_external_id") or self._user_external_id
+            source_cid = str(data.get("source_chat_id") or "global")
+            
+            await queue_service.enqueue_dm(
+                agent_id=self._agent_id,
+                target_user_external_id=target_uid,
+                source_chat_id=source_cid,
+                message_text=data.get("text", ""),
+                metadata={
+                    "mode": self._mode,
+                    "qualification": "auto" if self._mode == "auto" else "manual",
+                },
+            )
+            
             if self._mode == "auto":
                 status = "sent_auto"
             else:
                 status = "draft_requires_review"
             result = {"queued": True, "status": status, "payload": data}
+            
         elif tool_name == "skip_lead":
             result = {"skipped": True, "payload": data}
         elif tool_name == "record_lead_signal":
@@ -202,6 +222,7 @@ class SalesToolRegistry:
             result = {"marked": True, "payload": data}
         else:
             raise RuntimeError(f"Tool '{tool_name}' is not supported")
+            
         latency_ms = max(0, int((time.perf_counter() - started) * 1000))
         _IDEMPOTENCY_CACHE[idempotency_key] = (
             _now_utc() + timedelta(seconds=_IDEMPOTENCY_TTL_SECONDS),

@@ -980,6 +980,27 @@ const CreateAgentContent = () => {
               </div>
             )}
 
+            {form.values.template_type === 'sales_manager' && (
+              <div className="form-group">
+                <h3 className="agent-form-channel-title">Конфигурация Sales Manager</h3>
+                <div className="help-text">
+                  <strong>⚠️ Важно:</strong> На этом этапе sales_manager настроен с безопасным профилем:
+                  <ul style={{ marginTop: '8px', paddingLeft: '20px' }}>
+                    <li>Режим: <strong>draft_only</strong> (все сообщения требуют подтверждения)</li>
+                    <li>Модель классификации: <strong>DeepSeek-chat</strong></li>
+                    <li>Минимальная уверенность: <strong>0.75</strong></li>
+                    <li>Лимиты: <strong>3/минуту, 25/час, 120/день</strong></li>
+                    <li>Cooldown между контактами: <strong>14 дней</strong></li>
+                  </ul>
+                </div>
+                <p className="help-text">
+                  Агент будет сканировать сообщения в доступных ему Telegram чатах и готовить 
+                  персонализированные предложения в личные сообщения. Дополнительная конфигурация 
+                  лимитов и правил доступна после создания агента.
+                </p>
+              </div>
+            )}
+
             <div className="form-group">
               <label>Тип подключения:</label>
               <div className="connection-type-grid connection-type-grid--channels">
