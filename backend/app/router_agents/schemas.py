@@ -311,8 +311,8 @@ class InternalProcessMessageRequest(BaseModel):
 class AgentCrmConnectPayload(AgentLookup):
     provider: str = Field(
         ...,
-        pattern="^(amocrm)$",
-        description="CRM провайдер (пока только amoCRM)",
+        pattern="^(amocrm|bitrix24)$",
+        description="CRM провайдер (amocrm или bitrix24)",
     )
     account_base_url: str = Field(
         ...,
@@ -331,7 +331,7 @@ class AgentCrmConnectPayload(AgentLookup):
 class AgentCrmHealthPayload(AgentLookup):
     provider: Optional[str] = Field(
         default=None,
-        pattern="^(amocrm)$",
+        pattern="^(amocrm|bitrix24)$",
         description="Опционально: конкретный CRM провайдер",
     )
 
@@ -339,8 +339,8 @@ class AgentCrmHealthPayload(AgentLookup):
 class AgentCrmValidatePayload(BaseModel):
     provider: str = Field(
         ...,
-        pattern="^(amocrm)$",
-        description="CRM провайдер (пока только amoCRM)",
+        pattern="^(amocrm|bitrix24)$",
+        description="CRM провайдер (amocrm или bitrix24)",
     )
     account_base_url: str = Field(
         ...,
@@ -359,7 +359,7 @@ class AgentCrmValidatePayload(BaseModel):
 class AgentCrmRotateSecretPayload(AgentLookup):
     provider: Optional[str] = Field(
         default=None,
-        pattern="^(amocrm)$",
+        pattern="^(amocrm|bitrix24)$",
         description="Опционально: конкретный CRM провайдер для ротации",
     )
 

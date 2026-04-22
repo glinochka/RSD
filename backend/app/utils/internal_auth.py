@@ -104,7 +104,7 @@ async def verify_internal_signature(
     x_internal_timestamp: str | None = Header(default=None, alias="X-Internal-Timestamp"),
     x_internal_signature: str | None = Header(default=None, alias="X-Internal-Signature"),
 ) -> None:
-    secret = settings.INTERNAL_REQUEST_SIGNING_SECRET.strip()
+    secret = settings.INTERNAL_REQUEST_SIGNING_SECRET.strip() or settings.INTERNAL_API_KEY.strip()
     if not secret:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

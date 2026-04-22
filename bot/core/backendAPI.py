@@ -19,7 +19,7 @@ _HTTP_TIMEOUT = httpx.Timeout(120.0, connect=30.0)
 
 def _build_internal_signature(*, method: str, path: str, timestamp: str, body: str) -> str:
     payload = "\n".join([method.upper(), path, timestamp, body])
-    secret = settings.INTERNAL_REQUEST_SIGNING_SECRET.strip()
+    secret = settings.INTERNAL_REQUEST_SIGNING_SECRET.strip() or settings.INTERNAL_API_KEY.strip()
     if not secret:
         return ""
     return hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()

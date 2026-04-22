@@ -1446,10 +1446,10 @@ async def crm_health(
         )
 
     provider_filter = (provider or "").strip().lower() or None
-    if provider_filter and provider_filter != "amocrm":
+    if provider_filter and provider_filter not in CRM_PROVIDERS:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Supported provider: amocrm",
+            detail="Supported providers: amocrm, bitrix24",
         )
 
     async with async_session_maker() as session:
