@@ -1,4 +1,5 @@
 import os
+import re
 import asyncio
 from html import escape as html_escape
 from urllib.parse import urlparse
@@ -264,9 +265,11 @@ async def cmd_start(message: types.Message, state: FSMContext):
     )
 
 
-@master_router.message(StateFilter(None), F.text.regexp(r"^\d{6}$"))
-async def link_website_account_by_code(message: types.Message):
-    raw_code = (message.text or "").strip()
+async def _respond_to_telegram_link_code(message: types.Message, raw_code: str) -> int:
+    """
+    Confirm a 6-digit web→Telegram link code with the backend and send a user-facing reply.
+    Returns the HTTP status from the backend (or a synthetic client-side code on transport errors).
+    """
     response = await APIcreate.confirmTelegramLinkCode(
         code=raw_code,
         telegram_id=message.from_user.id,
@@ -275,21 +278,28 @@ async def link_website_account_by_code(message: types.Message):
 
     if response_status == status.HTTP_200_OK:
         await message.answer("✅ Telegram успешно привязан к вашему аккаунту на сайте.")
-        return
+        return response_status
 
     if response_status == status.HTTP_409_CONFLICT:
         await message.answer("Этот Telegram уже привязан к другому аккаунту.")
-        return
+        return response_status
 
     if response_status == status.HTTP_429_TOO_MANY_REQUESTS:
         await message.answer("Код заблокирован из-за превышения числа попыток. Сгенерируйте новый код на сайте.")
-        return
+        return response_status
 
     if response_status == status.HTTP_400_BAD_REQUEST:
         await message.answer("Код недействителен или истек. Сгенерируйте новый код в профиле на сайте.")
-        return
+        return response_status
 
     await message.answer("Не удалось привязать аккаунт из-за ошибки сервера. Попробуйте позже.")
+    return response_status
+
+
+@master_router.message(StateFilter(None), F.text.regexp(r"^\d{6}$"))
+async def link_website_account_by_code(message: types.Message):
+    raw_code = (message.text or "").strip()
+    await _respond_to_telegram_link_code(message, raw_code)
 
 @master_router.callback_query(F.data == "start_menu")
 async def back_to_menu(callback: types.CallbackQuery):
@@ -423,6 +433,14 @@ async def start_add_agent(callback: types.CallbackQuery, state: FSMContext):
 @master_router.message(CreateAgentSG.waiting_token)
 async def process_token(message: types.Message, state: FSMContext):
     token = message.text.strip()
+    # Реальный API-ключ бота всегда содержит ':'; ровно 6 цифр — это код привязки с сайта.
+    # Без этого ветвления сообщение уходит в Bot(token=...), и Telegram отвечает про невалидный токен.
+    if re.fullmatch(r"\d{6}", token):
+        response_status = await _respond_to_telegram_link_code(message, token)
+        if response_status == status.HTTP_200_OK:
+            await state.clear()
+        return
+
     temp_bot = None
     try:
         temp_bot = Bot(token=token)
