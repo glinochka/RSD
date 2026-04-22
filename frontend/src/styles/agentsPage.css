@@ -451,14 +451,22 @@
   justify-content: center;
 }
 
-.connection-type-card-label {
+.connection-type-card-label--stacked-wa-api {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  line-height: 1.22;
+  text-align: center;
+}
+
+.connection-type-card-label__row--api-beta {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex-wrap: wrap;
   gap: 6px;
-  line-height: 1.3;
-  text-align: center;
+  white-space: nowrap;
 }
 
 .beta-badge {
