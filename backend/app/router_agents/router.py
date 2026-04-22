@@ -3794,6 +3794,7 @@ async def external_chat(
             agent_id=agent.id,
             user_external_id=external_user_id,
             template_config=_decode_template_config(agent.template_config),
+            source_channel="external_api",
         )
         answer = execution.answer
     except Exception:
@@ -3823,6 +3824,16 @@ async def external_chat(
                 user_display_name=external_user_name,
                 message_text=answer,
             )
+            for event in execution.tool_events:
+                await _log_analytics_message(
+                    session=session,
+                    agent=agent,
+                    role="operator",
+                    channel="external_api",
+                    user_external_id=external_user_id,
+                    user_display_name=external_user_name,
+                    message_text=json.dumps(event, ensure_ascii=False),
+                )
 
     return JSONResponse(
         content={

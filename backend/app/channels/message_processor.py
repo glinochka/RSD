@@ -61,8 +61,24 @@ class MessageProcessor:
             return None
         return None
 
+    @staticmethod
+    def _normalize_user_external_id(channel: Channel, user_external_id: str) -> str:
+        uid = (user_external_id or "").strip()
+        if channel == Channel.WHATSAPP_USERBOT:
+            if "@" in uid:
+                return uid.lower()
+            digits = "".join(ch for ch in uid if ch.isdigit())
+            if digits:
+                return f"{digits}@s.whatsapp.net"
+            return uid.lower()
+        return uid
+
     async def process(self, request: MessageRequest) -> MessageResponse:
         try:
+            normalized_user_external_id = self._normalize_user_external_id(
+                request.channel,
+                request.user_external_id,
+            )
             resolved_agent = await self._resolve_agent(request.bot_id)
             if not resolved_agent:
                 return MessageResponse(
@@ -79,7 +95,7 @@ class MessageProcessor:
                     status=ProcessingStatus.EXPIRED_SUBSCRIPTION,
                 )
 
-            if await self._is_user_frozen(resolved_agent.id, request.user_external_id):
+            if await self._is_user_frozen(resolved_agent.id, normalized_user_external_id):
                 return MessageResponse(
                     text=(
                         "Доступ к этому агенту для вас временно ограничен владельцем. "
@@ -99,7 +115,7 @@ class MessageProcessor:
                 analytics_namespace_id=resolved_agent.bot_id or resolved_agent.id,
                 role="user",
                 message_text=request.query,
-                user_external_id=request.user_external_id,
+                user_external_id=normalized_user_external_id,
                 user_display_name=request.user_display_name,
                 channel=request.channel.value,
                 telegram_peer_access_hash=request.telegram_peer_access_hash,
@@ -111,17 +127,30 @@ class MessageProcessor:
                 user_message=request.query,
                 knowledge_scope_id=resolved_agent.bot_id or resolved_agent.id,
                 agent_id=resolved_agent.id,
-                user_external_id=request.user_external_id,
+                user_external_id=normalized_user_external_id,
                 template_config=self._parse_template_config(resolved_agent.template_config),
+                source_channel=request.channel.value,
             )
             answer = execution.answer
+
+            for event in execution.tool_events:
+                await self._log_message(
+                    agent_id=resolved_agent.id,
+                    analytics_namespace_id=resolved_agent.bot_id or resolved_agent.id,
+                    role="operator",
+                    message_text=json.dumps(event, ensure_ascii=False),
+                    user_external_id=normalized_user_external_id,
+                    user_display_name=request.user_display_name,
+                    channel=request.channel.value,
+                    telegram_peer_access_hash=request.telegram_peer_access_hash,
+                )
 
             await self._log_message(
                 agent_id=resolved_agent.id,
                 analytics_namespace_id=resolved_agent.bot_id or resolved_agent.id,
                 role="agent",
                 message_text=answer,
-                user_external_id=request.user_external_id,
+                user_external_id=normalized_user_external_id,
                 user_display_name=request.user_display_name,
                 channel=request.channel.value,
                 telegram_peer_access_hash=request.telegram_peer_access_hash,

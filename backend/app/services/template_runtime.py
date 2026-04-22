@@ -1,7 +1,7 @@
 """Unified template runtime for agent responses."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import logging
 from typing import Any
@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy import select
 
 from ..alembic.database import async_session_maker
-from ..alembic.models import AgentCrmConnection
+from ..alembic.models import AgentAnalyticsMessage, AgentCrmConnection
 from ..utils.crypto import decrypt_token
 from .ai_authoring import ai_client, generate_answer_with_context
 from .crm import build_provider
@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 class TemplateExecutionResult:
     answer: str
     sources: list[str]
+    tool_events: list[dict[str, Any]] = field(default_factory=list)
 
 
 class TemplateRuntimeService:
@@ -38,6 +39,7 @@ class TemplateRuntimeService:
         agent_id: int | None = None,
         user_external_id: str | None = None,
         template_config: dict[str, Any] | None = None,
+        source_channel: str | None = None,
     ) -> TemplateExecutionResult:
         normalized = (template_type or "qa").strip().lower()
         if normalized == "function_calling":
@@ -49,6 +51,7 @@ class TemplateRuntimeService:
                 agent_id=agent_id,
                 user_external_id=user_external_id,
                 template_config=template_config or {},
+                source_channel=source_channel or "telegram",
             )
             if crm_result is not None:
                 return crm_result
@@ -77,6 +80,7 @@ class TemplateRuntimeService:
         agent_id: int | None,
         user_external_id: str | None,
         template_config: dict[str, Any],
+        source_channel: str,
     ) -> TemplateExecutionResult | None:
         if not agent_id:
             return None
@@ -116,6 +120,12 @@ class TemplateRuntimeService:
         if not llm_tools:
             return None
 
+        chat_history = await self._load_recent_channel_history(
+            agent_id=agent_id,
+            user_external_id=user_external_id,
+            source_channel=source_channel,
+        )
+
         system_prompt = (
             f"{prompt}\n\n"
             "Ты CRM-администратор. Если нужно действие в CRM — используй function tools. "
@@ -125,8 +135,10 @@ class TemplateRuntimeService:
 
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
         ]
+        messages.extend(chat_history)
+        messages.append({"role": "user", "content": user_message})
+        tool_events: list[dict[str, Any]] = []
 
         for _ in range(4):
             completion = await ai_client.chat.completions.create(
@@ -144,7 +156,7 @@ class TemplateRuntimeService:
                 cleaned = content.replace("#", "").replace("*", "").strip()
                 if not cleaned:
                     cleaned = "Не удалось сформировать ответ. Уточните запрос."
-                return TemplateExecutionResult(answer=cleaned, sources=[])
+                return TemplateExecutionResult(answer=cleaned, sources=[], tool_events=tool_events)
 
             messages.append(
                 {
@@ -159,10 +171,43 @@ class TemplateRuntimeService:
                 raw_args = tool_call.function.arguments or "{}"
                 try:
                     tool_result = await registry.execute_tool(tool_name, raw_args)
+                    tool_events.append(
+                        {
+                            "tool_name": tool_name,
+                            "source_channel": source_channel,
+                            "user_external_id": user_external_id,
+                            "ok": bool(tool_result.get("ok")),
+                            "idempotent_replay": bool(tool_result.get("idempotent_replay")),
+                            "idempotency_key": tool_result.get("idempotency_key"),
+                            "error": None,
+                        }
+                    )
                 except CRMNeedsConfirmationError as exc:
-                    return TemplateExecutionResult(answer=str(exc), sources=[])
+                    tool_events.append(
+                        {
+                            "tool_name": tool_name,
+                            "source_channel": source_channel,
+                            "user_external_id": user_external_id,
+                            "ok": False,
+                            "idempotent_replay": False,
+                            "idempotency_key": None,
+                            "error": str(exc),
+                        }
+                    )
+                    return TemplateExecutionResult(answer=str(exc), sources=[], tool_events=tool_events)
                 except Exception as exc:
                     tool_result = {"ok": False, "error": str(exc)}
+                    tool_events.append(
+                        {
+                            "tool_name": tool_name,
+                            "source_channel": source_channel,
+                            "user_external_id": user_external_id,
+                            "ok": False,
+                            "idempotent_replay": False,
+                            "idempotency_key": None,
+                            "error": str(exc),
+                        }
+                    )
 
                 messages.append(
                     {
@@ -176,6 +221,7 @@ class TemplateRuntimeService:
         return TemplateExecutionResult(
             answer="Не удалось завершить CRM-операцию за допустимое число шагов. Попробуйте уточнить запрос.",
             sources=[],
+            tool_events=tool_events,
         )
 
     async def _get_active_crm_connection(self, *, agent_id: int, provider: str) -> AgentCrmConnection | None:
@@ -188,6 +234,50 @@ class TemplateRuntimeService:
                         AgentCrmConnection.is_active.is_(True),
                     )
                 )
+
+    async def _load_recent_channel_history(
+        self,
+        *,
+        agent_id: int,
+        user_external_id: str | None,
+        source_channel: str,
+    ) -> list[dict[str, Any]]:
+        uid = (user_external_id or "").strip()
+        channel = (source_channel or "").strip().lower()
+        if not uid or not channel:
+            return []
+
+        async with async_session_maker() as session:
+            async with session.begin():
+                rows = (
+                    (
+                        await session.execute(
+                            select(
+                                AgentAnalyticsMessage.role,
+                                AgentAnalyticsMessage.message_text,
+                            )
+                            .where(
+                                AgentAnalyticsMessage.agent_id == agent_id,
+                                AgentAnalyticsMessage.user_external_id == uid,
+                                AgentAnalyticsMessage.channel == channel,
+                                AgentAnalyticsMessage.role.in_(["user", "agent"]),
+                            )
+                            .order_by(AgentAnalyticsMessage.created_at.desc())
+                            .limit(8)
+                        )
+                    )
+                    .mappings()
+                    .all()
+                )
+
+        history: list[dict[str, Any]] = []
+        for row in reversed(rows):
+            role = (row.get("role") or "").strip().lower()
+            text = (row.get("message_text") or "").strip()
+            if role not in {"user", "agent"} or not text:
+                continue
+            history.append({"role": "assistant" if role == "agent" else "user", "content": text})
+        return history
 
     async def _execute_qa_like(
         self,
