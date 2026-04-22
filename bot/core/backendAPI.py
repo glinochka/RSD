@@ -170,21 +170,30 @@ class APIcreate(APIbase):
         bot_id: int = None,
         tg_id: int = None,
         encrypted_token: str = None,
-        bot_username:str = None
+        bot_username: str | None = None,
     ) -> dict:
-        
-        data = {
-            'bot_id': bot_id,
-            'encrypted_token': encrypted_token,
-            'bot_username': bot_username,
-            'tg_id': tg_id
-            }
+        # NewAgent_byUserWith_tgID: bot_username min_length=3 (Telegram may omit username on rare accounts).
+        resolved_username = (bot_username or "").strip()
+        if len(resolved_username) < 3:
+            resolved_username = f"bot_{bot_id}"
 
-        return await cls.agent(data, add_url='ByUserWith_tgID')
+        data = {
+            "bot_id": bot_id,
+            "encrypted_token": encrypted_token,
+            "bot_username": resolved_username,
+            "tg_id": tg_id,
+        }
+
+        return await cls.agent(data, add_url="ByUserWith_tgID")
     
     @classmethod
-    async def userBy_tgID(cls, name:str, tg_id: int) -> dict:
-        data = {'name':name, 'telegram_id': tg_id}
+    async def userBy_tgID(cls, name: str | None, tg_id: int) -> dict:
+        # Backend User_from_tg: name min_length=3, max_length=32 (Telegram username may be missing or short).
+        safe_name = (name or "").strip()
+        if len(safe_name) < 3:
+            safe_name = f"tg_{tg_id}"
+        safe_name = safe_name[:32]
+        data = {"name": safe_name, "telegram_id": tg_id}
         return await cls.user(data)
 
     @classmethod
