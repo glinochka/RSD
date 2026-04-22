@@ -355,3 +355,11 @@ class AgentCrmValidatePayload(BaseModel):
         description="OAuth access token CRM",
     )
 
+
+class AgentCrmRotateSecretPayload(AgentLookup):
+    provider: Optional[str] = Field(
+        default=None,
+        pattern="^(amocrm)$",
+        description="Опционально: конкретный CRM провайдер для ротации",
+    )
+

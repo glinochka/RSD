@@ -12,6 +12,7 @@ from sqlalchemy import select
 from ..alembic.database import async_session_maker
 from ..alembic.models import Agent, AgentAnalyticsMessage, AgentFrozenUser, User
 from ..services.template_runtime import get_template_runtime
+from ..utils.pii import redact_pii_text
 logger = logging.getLogger(__name__)
 MAX_INT32 = 2_147_483_647
 
@@ -72,6 +73,25 @@ class MessageProcessor:
                 return f"{digits}@s.whatsapp.net"
             return uid.lower()
         return uid
+
+    @staticmethod
+    def _summarize_tool_event(event: dict) -> str:
+        tool_name = str(event.get("tool_name") or "unknown")
+        status = str(event.get("tool_status") or "unknown")
+        latency_ms = int(event.get("latency_ms") or 0)
+        provider = str(event.get("crm_provider") or "unknown")
+        replay = bool(event.get("idempotent_replay"))
+        error = redact_pii_text(str(event.get("error") or "")).strip()
+        parts = [
+            f"tool={tool_name}",
+            f"status={status}",
+            f"latency_ms={latency_ms}",
+            f"crm_provider={provider}",
+            f"idempotent_replay={str(replay).lower()}",
+        ]
+        if error:
+            parts.append(f"error={error}")
+        return " ".join(parts)
 
     async def process(self, request: MessageRequest) -> MessageResponse:
         try:
@@ -138,7 +158,7 @@ class MessageProcessor:
                     agent_id=resolved_agent.id,
                     analytics_namespace_id=resolved_agent.bot_id or resolved_agent.id,
                     role="operator",
-                    message_text=json.dumps(event, ensure_ascii=False),
+                    message_text=self._summarize_tool_event(event),
                     user_external_id=normalized_user_external_id,
                     user_display_name=request.user_display_name,
                     channel=request.channel.value,

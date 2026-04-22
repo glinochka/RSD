@@ -4,17 +4,47 @@ from core.config import settings
 import httpx
 from typing import Awaitable, Callable, Any
 import json
+import hmac
+import hashlib
+import time
 from fastapi import status
  
 import inspect
+from urllib.parse import urlparse
 base_url = f'http://{settings.API_HOST}:{settings.API_PORT}/api'
 
 # Default httpx timeout is 5s; backend context loads embeddings (cold start can take tens of seconds).
 _HTTP_TIMEOUT = httpx.Timeout(120.0, connect=30.0)
 
 
-def _internal_headers() -> dict:
-    return {"X-Internal-API-Key": settings.INTERNAL_API_KEY}
+def _build_internal_signature(*, method: str, path: str, timestamp: str, body: str) -> str:
+    payload = "\n".join([method.upper(), path, timestamp, body])
+    secret = settings.INTERNAL_REQUEST_SIGNING_SECRET.strip()
+    if not secret:
+        return ""
+    return hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _canonical_json(data: dict | None) -> str:
+    if not data:
+        return ""
+    return json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _internal_headers(method: str, url: str, json_body: dict | None = None) -> dict:
+    headers = {"X-Internal-API-Key": settings.INTERNAL_API_KEY}
+    timestamp = str(int(time.time()))
+    path = urlparse(url).path
+    signature = _build_internal_signature(
+        method=method,
+        path=path,
+        timestamp=timestamp,
+        body=_canonical_json(json_body),
+    )
+    if signature:
+        headers["X-Internal-Timestamp"] = timestamp
+        headers["X-Internal-Signature"] = signature
+    return headers
 
 class APIbase():
     operation: Callable[..., Awaitable[Any]] = None
@@ -27,9 +57,15 @@ class APIbase():
                     'file': (file_name, file_bytes, 'application/octet-stream')
                 }
 
-                response = await client.post(url, data=data, files=files, timeout=600.0, headers=_internal_headers())
+                response = await client.post(
+                    url,
+                    data=data,
+                    files=files,
+                    timeout=600.0,
+                    headers=_internal_headers("POST", url, None),
+                )
             else:
-                response = await client.post(url, json=data, headers=_internal_headers())
+                response = await client.post(url, json=data, headers=_internal_headers("POST", url, data))
             if not response.is_success:
                 return {
                     'error_code': response.status_code,
@@ -45,7 +81,7 @@ class APIbase():
     @classmethod
     async def fetch_get(cls, url: str, data: dict) -> dict:
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-            response = await client.get(url, params=data, headers=_internal_headers())
+            response = await client.get(url, params=data, headers=_internal_headers("GET", url, None))
             if not response.is_success:
                 return {
                     'error_code': response.status_code,
@@ -61,7 +97,7 @@ class APIbase():
     @classmethod
     async def fetch_patch(cls, url: str, data: dict) -> dict:
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-            response = await client.patch(url, json=data, headers=_internal_headers())
+            response = await client.patch(url, json=data, headers=_internal_headers("PATCH", url, data))
             
             if not response.is_success:
                 return {
@@ -78,7 +114,7 @@ class APIbase():
     @classmethod
     async def fetch_delete(cls, url: str, data: dict) -> dict|list:
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-            response = await client.delete(url, params=data, headers=_internal_headers())
+            response = await client.delete(url, params=data, headers=_internal_headers("DELETE", url, None))
             
             if not response.is_success:
                 return {

@@ -144,6 +144,8 @@ app.add_middleware(
         "Origin",
         "X-Requested-With",
         "X-Internal-API-Key",
+        "X-Internal-Timestamp",
+        "X-Internal-Signature",
         "X-Agent-API-Key",
     ],
     allow_credentials = True

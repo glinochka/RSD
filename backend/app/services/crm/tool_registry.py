@@ -23,6 +23,20 @@ _SENSITIVE_FIELD_DENYLIST = {
     "api_key",
     "encryption_key",
 }
+_UPDATE_LEAD_ALLOWED_FIELDS = {
+    "name",
+    "price",
+    "status_id",
+    "pipeline_id",
+    "responsible_user_id",
+    "custom_fields_values",
+    "tags_to_add",
+    "tags_to_delete",
+}
+_MAX_RAW_ARGUMENTS_BYTES = 16_000
+_MAX_UPDATE_LEAD_DEPTH = 4
+_MAX_UPDATE_LEAD_COLLECTION_SIZE = 50
+_MAX_UPDATE_LEAD_STRING_LENGTH = 512
 
 _READ_ONLY_TOOLS = {"find_contact", "find_lead"}
 _HIGH_RISK_TOOLS = {"update_lead", "assign_owner"}
@@ -178,6 +192,35 @@ class CRMToolRegistry:
             normalized = str(key or "").strip().lower()
             if normalized in _SENSITIVE_FIELD_DENYLIST:
                 raise RuntimeError(f"Field '{key}' is blocked by safety policy")
+            if normalized not in _UPDATE_LEAD_ALLOWED_FIELDS:
+                raise RuntimeError(f"Field '{key}' is not allowed by update policy")
+        self._assert_payload_limits(fields, depth=0)
+
+    def _assert_payload_limits(self, value: Any, *, depth: int) -> None:
+        if depth > _MAX_UPDATE_LEAD_DEPTH:
+            raise RuntimeError("Payload is too deeply nested")
+        if isinstance(value, str):
+            if len(value) > _MAX_UPDATE_LEAD_STRING_LENGTH:
+                raise RuntimeError("Payload string value is too long")
+            return
+        if isinstance(value, (int, float, bool)) or value is None:
+            return
+        if isinstance(value, list):
+            if len(value) > _MAX_UPDATE_LEAD_COLLECTION_SIZE:
+                raise RuntimeError("Payload list is too large")
+            for item in value:
+                self._assert_payload_limits(item, depth=depth + 1)
+            return
+        if isinstance(value, dict):
+            if len(value) > _MAX_UPDATE_LEAD_COLLECTION_SIZE:
+                raise RuntimeError("Payload object is too large")
+            for key, item in value.items():
+                key_str = str(key)
+                if len(key_str) > 128:
+                    raise RuntimeError("Payload key is too long")
+                self._assert_payload_limits(item, depth=depth + 1)
+            return
+        raise RuntimeError("Unsupported payload type")
 
     def _canonical_args(self, model: BaseModel) -> str:
         return json.dumps(model.model_dump(), ensure_ascii=False, sort_keys=True)
@@ -191,6 +234,8 @@ class CRMToolRegistry:
         return hashlib.sha256(canonical_args.encode("utf-8")).hexdigest()
 
     async def execute_tool(self, tool_name: str, raw_arguments: str) -> dict[str, Any]:
+        if len((raw_arguments or "").encode("utf-8")) > _MAX_RAW_ARGUMENTS_BYTES:
+            raise RuntimeError("Tool arguments payload is too large")
         if tool_name not in self._allowed_tools:
             raise RuntimeError(f"Tool '{tool_name}' is not allowed")
 

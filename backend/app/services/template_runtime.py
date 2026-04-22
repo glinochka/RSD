@@ -10,7 +10,8 @@ from sqlalchemy import select
 
 from ..alembic.database import async_session_maker
 from ..alembic.models import AgentAnalyticsMessage, AgentCrmConnection
-from ..utils.crypto import decrypt_token
+from ..utils.crypto import decrypt_crm_credentials
+from ..utils.pii import mask_external_id, redact_pii_text
 from .ai_authoring import ai_client, generate_answer_with_context
 from .crm import build_provider
 from .crm.tool_registry import CRMNeedsConfirmationError, CRMToolRegistry
@@ -105,7 +106,8 @@ class TemplateRuntimeService:
             return None
 
         try:
-            bundle = json.loads(decrypt_token(connection.encrypted_credentials))
+            decrypted_bundle, _ = decrypt_crm_credentials(connection.encrypted_credentials)
+            bundle = json.loads(decrypted_bundle)
             provider = build_provider(
                 crm_provider_name,
                 base_url=str(bundle.get("base_url") or ""),
@@ -189,7 +191,7 @@ class TemplateRuntimeService:
                             "latency_ms": int(tool_result.get("latency_ms") or 0),
                             "crm_provider": tool_result.get("crm_provider") or crm_provider_name,
                             "source_channel": source_channel,
-                            "user_external_id": user_external_id,
+                            "user_external_id": mask_external_id(user_external_id),
                             "ok": bool(tool_result.get("ok")),
                             "idempotent_replay": bool(tool_result.get("idempotent_replay")),
                             "idempotency_key": tool_result.get("idempotency_key"),
@@ -197,6 +199,7 @@ class TemplateRuntimeService:
                         }
                     )
                 except CRMNeedsConfirmationError as exc:
+                    safe_error = redact_pii_text(str(exc))
                     tool_events.append(
                         {
                             "tool_name": tool_name,
@@ -205,16 +208,17 @@ class TemplateRuntimeService:
                             "latency_ms": 0,
                             "crm_provider": crm_provider_name,
                             "source_channel": source_channel,
-                            "user_external_id": user_external_id,
+                            "user_external_id": mask_external_id(user_external_id),
                             "ok": False,
                             "idempotent_replay": False,
                             "idempotency_key": None,
-                            "error": str(exc),
+                            "error": safe_error,
                         }
                     )
-                    return TemplateExecutionResult(answer=str(exc), sources=[], tool_events=tool_events)
+                    return TemplateExecutionResult(answer=safe_error, sources=[], tool_events=tool_events)
                 except Exception as exc:
-                    tool_result = {"ok": False, "error": str(exc)}
+                    safe_error = redact_pii_text(str(exc))
+                    tool_result = {"ok": False, "error": safe_error}
                     tool_events.append(
                         {
                             "tool_name": tool_name,
@@ -223,11 +227,11 @@ class TemplateRuntimeService:
                             "latency_ms": 0,
                             "crm_provider": crm_provider_name,
                             "source_channel": source_channel,
-                            "user_external_id": user_external_id,
+                            "user_external_id": mask_external_id(user_external_id),
                             "ok": False,
                             "idempotent_replay": False,
                             "idempotency_key": None,
-                            "error": str(exc),
+                            "error": safe_error,
                         }
                     )
 
