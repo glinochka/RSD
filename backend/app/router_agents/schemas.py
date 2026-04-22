@@ -259,3 +259,21 @@ class AgentWhatsappUserbotBroadcastPayload(AgentLookup):
         description="Максимум получателей за один запрос",
     )
 
+
+class InternalProcessMessageRequest(BaseModel):
+    bot_id: int = Field(..., gt=0, description="ID публичного канала/агента")
+    query: str = Field(..., min_length=1, max_length=4000, description="Сообщение пользователя")
+    user_external_id: str = Field(..., min_length=1, max_length=128, description="Внешний ID пользователя")
+    channel: str = Field(
+        ...,
+        pattern="^(telegram|telegram_userbot|whatsapp_userbot)$",
+        description="Канал сообщения",
+    )
+    system_prompt: Optional[str] = Field(default="", description="Системный промпт агента")
+    welcome_message: Optional[str] = Field(default=None, description="Welcome message для /start")
+    user_display_name: Optional[str] = Field(default=None, max_length=128, description="Отображаемое имя")
+    telegram_peer_access_hash: Optional[int] = Field(
+        default=None,
+        description="Telegram access_hash для userbot-сценария",
+    )
+

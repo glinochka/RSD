@@ -222,6 +222,31 @@ class APIcreate(APIbase):
         if telegram_peer_access_hash is not None:
             data["telegram_peer_access_hash"] = telegram_peer_access_hash
         return await cls.agent(data, add_url="analytics/messages/log")
+
+    @classmethod
+    async def processAgentMessage(
+        cls,
+        *,
+        bot_id: int,
+        query: str,
+        user_external_id: str,
+        channel: str,
+        system_prompt: str = "",
+        welcome_message: str | None = None,
+        user_display_name: str | None = None,
+        telegram_peer_access_hash: int | None = None,
+    ) -> dict:
+        data = {
+            "bot_id": bot_id,
+            "query": query,
+            "user_external_id": user_external_id,
+            "channel": channel,
+            "system_prompt": system_prompt,
+            "welcome_message": welcome_message,
+            "user_display_name": user_display_name,
+            "telegram_peer_access_hash": telegram_peer_access_hash,
+        }
+        return await cls.agent(data, add_url="internal/process_message")
     
 
     

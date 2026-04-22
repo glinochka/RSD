@@ -20,12 +20,13 @@ from ..alembic.models import Agent, AgentAnalyticsMessage, AgentChannelConnectio
 from ..config import settings
 from ..qdrant.search_service import delete_agent_vectors
 from ..router_users.dao import UserDAO
-from ..services.ai_authoring import (
-    generate_answer_with_context,
-    generate_welcome_with_ai,
-    improve_prompt_with_ai,
+from ..channels.message_processor import (
+    Channel as RuntimeChannel,
+    MessageRequest as RuntimeMessageRequest,
+    get_message_processor,
 )
-from ..qdrant.search_service import search_knowledge_base
+from ..services.ai_authoring import generate_welcome_with_ai, improve_prompt_with_ai
+from ..services.template_runtime import get_template_runtime
 from ..utils.api_keys import generate_agent_external_api_key, hash_agent_external_api_key
 from ..utils.JWT import get_user_from_access_token
 from ..utils.convert import convert_to_dict
@@ -1030,6 +1031,42 @@ async def list_whatsapp_userbot_clients(internal: bool = Depends(is_internal_req
         )
 
     return JSONResponse(content=payload, status_code=status.HTTP_200_OK)
+
+
+@router.post("/internal/process_message")
+async def internal_process_message(
+    payload: InternalProcessMessageRequest,
+    internal: bool = Depends(is_internal_request),
+):
+    if not internal:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Internal API key required")
+
+    try:
+        channel = RuntimeChannel(payload.channel)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Unsupported channel",
+        )
+
+    request = RuntimeMessageRequest(
+        bot_id=payload.bot_id,
+        query=payload.query.strip(),
+        user_external_id=payload.user_external_id.strip(),
+        channel=channel,
+        system_prompt=(payload.system_prompt or "").strip(),
+        welcome_message=payload.welcome_message,
+        user_display_name=(payload.user_display_name or "").strip() or None,
+        telegram_peer_access_hash=payload.telegram_peer_access_hash,
+    )
+    response = await get_message_processor().process(request)
+    return JSONResponse(
+        content={
+            "text": response.text,
+            "status": response.status.value,
+        },
+        status_code=status.HTTP_200_OK,
+    )
 
 
 @router.get("")
@@ -3343,20 +3380,21 @@ async def external_chat(
     external_user_id = (payload.external_user_id or "").strip() or None
     external_user_name = (payload.external_user_name or "").strip() or None
 
-    context = await search_knowledge_base(message, agent_id=agent.bot_id)
+    knowledge_scope_id = agent.bot_id if agent.bot_id is not None else agent.id
     try:
-        answer = await generate_answer_with_context(message, context, agent.system_prompt or "Ты — полезный ассистент.")
+        execution = await get_template_runtime().execute(
+            template_type=agent.template_type,
+            prompt=agent.system_prompt or "Ты — полезный ассистент.",
+            user_message=message,
+            knowledge_scope_id=knowledge_scope_id,
+        )
+        answer = execution.answer
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Не удалось получить ответ от LLM",
         )
-
-    sources = []
-    for item in context:
-        source = item.get("source")
-        if source and source not in sources:
-            sources.append(source)
+    sources = execution.sources
 
     async with async_session_maker() as session:
         async with session.begin():

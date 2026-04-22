@@ -10,8 +10,7 @@ from sqlalchemy import select
 
 from ..alembic.database import async_session_maker
 from ..alembic.models import Agent, AgentAnalyticsMessage, AgentFrozenUser, User
-from ..qdrant.search_service import search_knowledge_base
-from ..services.ai_authoring import generate_answer_with_context
+from ..services.template_runtime import get_template_runtime
 logger = logging.getLogger(__name__)
 MAX_INT32 = 2_147_483_647
 
@@ -93,15 +92,13 @@ class MessageProcessor:
                 telegram_peer_access_hash=request.telegram_peer_access_hash,
             )
 
-            context = await search_knowledge_base(
-                request.query,
-                agent_id=resolved_agent.bot_id or resolved_agent.id,
+            execution = await get_template_runtime().execute(
+                template_type=resolved_agent.template_type,
+                prompt=request.system_prompt or (resolved_agent.system_prompt or ""),
+                user_message=request.query,
+                knowledge_scope_id=resolved_agent.bot_id or resolved_agent.id,
             )
-            answer = await generate_answer_with_context(
-                request.query,
-                context if isinstance(context, list) else [],
-                request.system_prompt,
-            )
+            answer = execution.answer
 
             await self._log_message(
                 agent_id=resolved_agent.id,
