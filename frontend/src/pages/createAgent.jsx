@@ -40,6 +40,25 @@ const parseAllowedTools = (raw) =>
 const buildCrmValidationSignature = (provider, baseUrl, token) =>
   `${String(provider || '').trim().toLowerCase()}|${String(baseUrl || '').trim()}|${String(token || '').trim()}`;
 
+const TEMPLATE_TYPE_HELP = {
+  qa: 'Агент отвечает на вопросы по подключённой базе знаний (RAG): поиск по документам и выдержки в ответах. Подходит для поддержки и консультаций.',
+  crm_admin:
+    'Агент работает по шаблону администратора CRM: поиск и создание контактов, сделок, задач и другое в соответствии с настройками ниже. Перед сохранением проверьте подключение к CRM. Функция в статусе BETA.',
+};
+
+const TEMPLATE_TYPE_SELECT_OPTIONS = [
+  { value: 'qa', label: 'Консультант (RAG QA)' },
+  {
+    value: 'crm_admin',
+    label: (
+      <span className="select-option-label-with-badge">
+        Администратор CRM
+        <span className="beta-badge">BETA</span>
+      </span>
+    ),
+  },
+];
+
 const CustomSelect = ({
   id,
   name,
@@ -771,14 +790,11 @@ const CreateAgentContent = () => {
                 className="input-main"
                 value={form.values.template_type}
                 onChange={form.handleChange}
-                options={[
-                  { value: 'qa', label: 'Консультант (RAG QA)' },
-                  { value: 'crm_admin', label: 'Администратор CRM' },
-                ]}
+                options={TEMPLATE_TYPE_SELECT_OPTIONS}
                 disabled={form.isSubmitting}
               />
               <p className="help-text">
-                Для CRM-шаблона агент работает как администратор с доступом к функциям CRM.
+                {TEMPLATE_TYPE_HELP[form.values.template_type] || TEMPLATE_TYPE_HELP.qa}
               </p>
             </div>
 
@@ -943,15 +959,18 @@ const CreateAgentContent = () => {
                   onClick={toggleWhatsAppUserbotChannel}
                   disabled={form.isSubmitting}
                 >
-                  WhatsApp userbot
+                  WhatsApp юзербот
                 </button>
                 <button
                   type="button"
-                  className={`connection-type-card ${useWhatsAppBusinessApiChannel ? 'active' : ''}`}
+                  className={`connection-type-card connection-type-card--with-beta ${useWhatsAppBusinessApiChannel ? 'active' : ''}`}
                   onClick={toggleWhatsAppBusinessApiChannel}
                   disabled={form.isSubmitting}
                 >
-                  WhatsApp Business API
+                  <span className="connection-type-card-label">
+                    WhatsApp Business API
+                    <span className="beta-badge">BETA</span>
+                  </span>
                 </button>
               </div>
             </div>
