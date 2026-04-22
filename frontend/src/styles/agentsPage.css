@@ -4,8 +4,6 @@
   width: 100%;
   max-width: 1200px;
   margin: 0 auto;
-  min-width: 0;
-  box-sizing: border-box;
 }
 
 /* Agents Section */
@@ -44,7 +42,6 @@
   grid-template-columns: 1fr 1fr;
   gap: var(--spacing-xl);
   align-items: start;
-  min-width: 0;
 }
 
 .agent-item {
@@ -57,8 +54,6 @@
   background-color: var(--color-bg);
   transition: all var(--transition-base);
   cursor: pointer;
-  min-width: 0;
-  box-sizing: border-box;
 }
 
 .agent-item:hover {
@@ -81,7 +76,6 @@
   align-items: center;
   gap: var(--spacing-lg);
   flex: 1;
-  min-width: 0;
 }
 
 .agent-status-dot {
@@ -103,7 +97,6 @@
 .agent-details {
   display: flex;
   flex-direction: column;
-  min-width: 0;
 }
 
 .agent-name {
@@ -157,9 +150,6 @@
   display: flex;
   flex-direction: column;
   gap: var(--spacing-lg);
-  min-width: 0;
-  max-width: 100%;
-  box-sizing: border-box;
 }
 
 .agent-management-header {
@@ -470,10 +460,6 @@
 
 /* Responsive */
 @media (max-width: 768px) {
-  .agents-list {
-    min-width: 0;
-  }
-
   .agents-layout {
     grid-template-columns: 1fr;
   }
@@ -496,41 +482,11 @@
 
   .agent-actions {
     width: 100%;
-    justify-content: flex-start;
-    flex-wrap: wrap;
-    gap: var(--spacing-sm);
-  }
-
-  /* .btn использует white-space: nowrap в глобальных стилях — длинные подписи сжимают макет вширь */
-  .agents-page-content .api-key-row .btn {
-    white-space: normal;
-    text-align: center;
-  }
-
-  .agents-page-content .agent-management-block > .btn {
-    white-space: normal;
-    text-align: center;
-  }
-
-  .docs-header-row {
-    flex-direction: column;
-    align-items: stretch;
-    gap: var(--spacing-sm);
-  }
-
-  .docs-header-row .btn {
-    width: 100%;
-    justify-content: center;
-    box-sizing: border-box;
+    justify-content: space-between;
   }
 
   .kb-link-row {
     flex-direction: column;
-  }
-
-  .kb-link-row .btn {
-    width: 100%;
-    justify-content: center;
   }
 
   .connection-type-grid--channels,

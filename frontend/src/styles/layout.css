@@ -11,28 +11,22 @@
 .layout-main {
   --layout-gap-after-nav: 1.5rem;
   flex: 1;
-  /* max(..., safe-area) — контент не прилипает к физическим краям на iPhone / вырезах */
-  padding: var(--layout-gap-after-nav) max(1rem, env(safe-area-inset-right, 0px)) 2rem
-    max(1rem, env(safe-area-inset-left, 0px));
+  padding: var(--layout-gap-after-nav) 1rem 2rem;
   max-width: 1200px;
   margin: 0 auto;
   width: 100%;
-  min-width: 0;
-  box-sizing: border-box;
 }
 
 @media (max-width: 768px) {
   .layout-main {
     --layout-gap-after-nav: 0.75rem;
-    padding: var(--layout-gap-after-nav) max(1rem, env(safe-area-inset-right, 0px)) 1rem
-      max(1rem, env(safe-area-inset-left, 0px));
+    padding: var(--layout-gap-after-nav) 1rem 1rem;
   }
 }
 
 @media (max-width: 480px) {
   .layout-main {
     --layout-gap-after-nav: 0.5rem;
-    padding: var(--layout-gap-after-nav) max(0.75rem, env(safe-area-inset-right, 0px)) 0.75rem
-      max(0.75rem, env(safe-area-inset-left, 0px));
+    padding: var(--layout-gap-after-nav) 0.75rem 0.75rem;
   }
 }
