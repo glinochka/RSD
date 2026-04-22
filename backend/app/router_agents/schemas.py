@@ -19,7 +19,7 @@ class UpdateAgent(AgentLookup):
     welcome_message: Optional[str] = Field(None, min_length=3, description="Начальное сообщение бота: длина от 3 символов")
     template_type: Optional[str] = Field(
         None,
-        pattern="^(qa|crm_admin|function_calling|lead_generation|content_factory)$",
+        pattern="^(qa|crm_admin|function_calling|lead_generation|content_factory|sales_manager)$",
         description="Тип шаблона агента",
     )
     template_config: Optional[dict] = Field(
@@ -37,7 +37,7 @@ class NewAgent_byUserWith_tgID(BaseModel):
     welcome_message: Optional[str] = Field(None,min_length=3, description="Начальное сообщение бота: длина от 3 символов")
     template_type: str = Field(
         default="qa",
-        pattern="^(qa|crm_admin|function_calling|lead_generation|content_factory)$",
+        pattern="^(qa|crm_admin|function_calling|lead_generation|content_factory|sales_manager)$",
         description="Тип шаблона агента",
     )
     template_config: Optional[dict] = Field(
@@ -58,7 +58,7 @@ class NewAgent_byToken(BaseModel):
     system_prompt: str = Field(..., min_length=1, description="System prompt for agent")
     template_type: str = Field(
         default="qa",
-        pattern="^(qa|crm_admin|function_calling|lead_generation|content_factory)$",
+        pattern="^(qa|crm_admin|function_calling|lead_generation|content_factory|sales_manager)$",
         description="Тип шаблона агента",
     )
     template_config: Optional[dict] = Field(
@@ -74,7 +74,7 @@ class NewAgent_byUserbotSession(BaseModel):
     system_prompt: str = Field(..., min_length=1, description="System prompt for agent")
     template_type: str = Field(
         default="qa",
-        pattern="^(qa|crm_admin|function_calling|lead_generation|content_factory)$",
+        pattern="^(qa|crm_admin|function_calling|lead_generation|content_factory|sales_manager)$",
         description="Тип шаблона агента",
     )
     template_config: Optional[dict] = Field(
@@ -87,7 +87,7 @@ class CreateEmptyAgent(BaseModel):
     system_prompt: Optional[str] = Field(default="Ты — полезный ассистент.", min_length=1, description="System prompt for agent")
     template_type: str = Field(
         default="qa",
-        pattern="^(qa|crm_admin|function_calling|lead_generation|content_factory)$",
+        pattern="^(qa|crm_admin|function_calling|lead_generation|content_factory|sales_manager)$",
         description="Тип шаблона агента",
     )
     template_config: Optional[dict] = Field(

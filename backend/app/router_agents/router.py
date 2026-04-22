@@ -46,7 +46,7 @@ USERBOT_AUTH_TOKEN_TTL_MINUTES = 10
 LEGACY_TEMPLATE_TYPE_ALIASES = {
     "function_calling": "crm_admin",
 }
-SUPPORTED_TEMPLATE_TYPES = {"qa", "crm_admin", "lead_generation", "content_factory"}
+SUPPORTED_TEMPLATE_TYPES = {"qa", "crm_admin", "lead_generation", "content_factory", "sales_manager"}
 CRM_PROVIDERS = {"amocrm", "bitrix24"}
 CRM_CONFIRMATION_POLICIES = {"always_confirm", "confirm_risky", "never_confirm"}
 CRM_FALLBACK_MODES = {"ask_clarifying_question", "text_only"}
@@ -60,6 +60,39 @@ DEFAULT_CRM_ALLOWED_TOOLS = [
     "create_task",
     "assign_owner",
 ]
+SALES_MODES = {"draft_only", "semi_auto", "auto"}
+SALES_ALLOWED_LANGUAGES = {"ru", "en"}
+SALES_CONFIRMATION_POLICIES = {"always_confirm", "confirm_risky", "never_confirm"}
+SALES_DEFAULT_ALLOWED_TOOLS = [
+    "schedule_dm",
+    "skip_lead",
+    "record_lead_signal",
+    "create_crm_lead",
+    "mark_contacted",
+]
+SALES_DEFAULT_CONFIG = {
+    "mode": "draft_only",
+    "qualification_model": "deepseek-chat",
+    "generation_model": "deepseek-chat",
+    "min_confidence": 0.75,
+    "scan_scope": {
+        "include_chat_ids": [],
+        "exclude_chat_ids": [],
+    },
+    "dm_limits": {
+        "per_minute": 3,
+        "per_hour": 25,
+        "per_day": 120,
+        "per_source_chat_per_day": 40,
+    },
+    "cooldown_days": 14,
+    "dedup_window_days": 30,
+    "allowed_languages": ["ru", "en"],
+    "quiet_hours_local": "22:00-09:00",
+    "offer_profile_id": None,
+    "confirmation_policy": "confirm_risky",
+    "allowed_tools": list(SALES_DEFAULT_ALLOWED_TOOLS),
+}
 
 
 def _assert_https_for_sensitive_endpoint(request: Request) -> None:
@@ -101,15 +134,211 @@ def _normalize_template_type(template_type: str | None) -> str:
 
 
 def _normalize_template_config(template_type: str, template_config: dict | None) -> str | None:
-    if template_type != "crm_admin":
-        return None
-
     raw = template_config or {}
     if not isinstance(raw, dict):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="template_config must be a JSON object",
         )
+    if template_type == "sales_manager":
+        mode = str(raw.get("mode") or SALES_DEFAULT_CONFIG["mode"]).strip().lower()
+        if mode not in SALES_MODES:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="template_config.mode must be one of: draft_only, semi_auto, auto",
+            )
+
+        qualification_model = str(
+            raw.get("qualification_model") or SALES_DEFAULT_CONFIG["qualification_model"]
+        ).strip()
+        generation_model = str(
+            raw.get("generation_model") or SALES_DEFAULT_CONFIG["generation_model"]
+        ).strip()
+        if not qualification_model or not generation_model:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="template_config qualification_model/generation_model must be non-empty",
+            )
+
+        min_confidence_raw = raw.get("min_confidence", SALES_DEFAULT_CONFIG["min_confidence"])
+        try:
+            min_confidence = float(min_confidence_raw)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="template_config.min_confidence must be a number",
+            ) from None
+        if min_confidence < 0.0 or min_confidence > 1.0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="template_config.min_confidence must be between 0 and 1",
+            )
+
+        scan_scope_raw = raw.get("scan_scope")
+        if scan_scope_raw is None:
+            scan_scope_raw = SALES_DEFAULT_CONFIG["scan_scope"]
+        if not isinstance(scan_scope_raw, dict):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="template_config.scan_scope must be an object",
+            )
+
+        def _normalize_chat_ids(value: list | None) -> list[int]:
+            if value is None:
+                return []
+            if not isinstance(value, list):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="scan_scope chat ids must be arrays",
+                )
+            normalized_ids: list[int] = []
+            for item in value:
+                try:
+                    chat_id = int(str(item).strip())
+                except (TypeError, ValueError):
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail="scan_scope chat ids must contain integers",
+                    ) from None
+                if chat_id not in normalized_ids:
+                    normalized_ids.append(chat_id)
+            return normalized_ids
+
+        include_chat_ids = _normalize_chat_ids(scan_scope_raw.get("include_chat_ids"))
+        exclude_chat_ids = _normalize_chat_ids(scan_scope_raw.get("exclude_chat_ids"))
+        scan_scope = {
+            "include_chat_ids": include_chat_ids,
+            "exclude_chat_ids": exclude_chat_ids,
+        }
+
+        dm_limits_raw = raw.get("dm_limits")
+        if dm_limits_raw is None:
+            dm_limits_raw = SALES_DEFAULT_CONFIG["dm_limits"]
+        if not isinstance(dm_limits_raw, dict):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="template_config.dm_limits must be an object",
+            )
+
+        def _normalize_positive_int(name: str, default_value: int, max_value: int) -> int:
+            value = dm_limits_raw.get(name, default_value)
+            try:
+                normalized = int(value)
+            except (TypeError, ValueError):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"template_config.dm_limits.{name} must be an integer",
+                ) from None
+            if normalized < 1 or normalized > max_value:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"template_config.dm_limits.{name} must be between 1 and {max_value}",
+                )
+            return normalized
+
+        dm_limits = {
+            "per_minute": _normalize_positive_int("per_minute", 3, 60),
+            "per_hour": _normalize_positive_int("per_hour", 25, 600),
+            "per_day": _normalize_positive_int("per_day", 120, 5000),
+            "per_source_chat_per_day": _normalize_positive_int("per_source_chat_per_day", 40, 2000),
+        }
+
+        cooldown_days_raw = raw.get("cooldown_days", SALES_DEFAULT_CONFIG["cooldown_days"])
+        dedup_window_days_raw = raw.get("dedup_window_days", SALES_DEFAULT_CONFIG["dedup_window_days"])
+        try:
+            cooldown_days = int(cooldown_days_raw)
+            dedup_window_days = int(dedup_window_days_raw)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="template_config.cooldown_days/dedup_window_days must be integers",
+            ) from None
+        if cooldown_days < 1 or cooldown_days > 365:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="template_config.cooldown_days must be between 1 and 365",
+            )
+        if dedup_window_days < 1 or dedup_window_days > 365:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="template_config.dedup_window_days must be between 1 and 365",
+            )
+
+        allowed_languages_raw = raw.get("allowed_languages")
+        if allowed_languages_raw is None:
+            allowed_languages = list(SALES_DEFAULT_CONFIG["allowed_languages"])
+        elif isinstance(allowed_languages_raw, list):
+            allowed_languages = []
+            for item in allowed_languages_raw:
+                lang = str(item or "").strip().lower()
+                if lang in SALES_ALLOWED_LANGUAGES and lang not in allowed_languages:
+                    allowed_languages.append(lang)
+            if not allowed_languages:
+                allowed_languages = list(SALES_DEFAULT_CONFIG["allowed_languages"])
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="template_config.allowed_languages must be an array of strings",
+            )
+
+        quiet_hours_local = str(raw.get("quiet_hours_local") or SALES_DEFAULT_CONFIG["quiet_hours_local"]).strip()
+        if quiet_hours_local != "22:00-09:00":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="template_config.quiet_hours_local currently supports only: 22:00-09:00",
+            )
+
+        offer_profile_raw = raw.get("offer_profile_id")
+        offer_profile_id = None
+        if offer_profile_raw is not None:
+            offer_profile_value = str(offer_profile_raw).strip()
+            offer_profile_id = offer_profile_value or None
+
+        confirmation_policy = str(
+            raw.get("confirmation_policy") or SALES_DEFAULT_CONFIG["confirmation_policy"]
+        ).strip().lower()
+        if confirmation_policy not in SALES_CONFIRMATION_POLICIES:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="template_config.confirmation_policy must be one of: always_confirm, confirm_risky, never_confirm",
+            )
+
+        allowed_tools_raw = raw.get("allowed_tools")
+        if allowed_tools_raw is None:
+            allowed_tools = list(SALES_DEFAULT_ALLOWED_TOOLS)
+        elif isinstance(allowed_tools_raw, list):
+            allowed_tools = []
+            for item in allowed_tools_raw:
+                tool = str(item or "").strip()
+                if tool and tool in SALES_DEFAULT_ALLOWED_TOOLS and tool not in allowed_tools:
+                    allowed_tools.append(tool)
+            if not allowed_tools:
+                allowed_tools = list(SALES_DEFAULT_ALLOWED_TOOLS)
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="template_config.allowed_tools must be an array of strings",
+            )
+
+        normalized_config = {
+            "mode": mode,
+            "qualification_model": qualification_model,
+            "generation_model": generation_model,
+            "min_confidence": min_confidence,
+            "scan_scope": scan_scope,
+            "dm_limits": dm_limits,
+            "cooldown_days": cooldown_days,
+            "dedup_window_days": dedup_window_days,
+            "allowed_languages": allowed_languages,
+            "quiet_hours_local": quiet_hours_local,
+            "offer_profile_id": offer_profile_id,
+            "confirmation_policy": confirmation_policy,
+            "allowed_tools": allowed_tools,
+        }
+        return json.dumps(normalized_config, ensure_ascii=False)
+
+    if template_type != "crm_admin":
+        return None
 
     crm_provider = str(raw.get("crm_provider") or "amocrm").strip().lower()
     if crm_provider not in CRM_PROVIDERS:

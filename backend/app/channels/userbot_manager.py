@@ -27,6 +27,7 @@ def _make_client(session_string: str, api_id: int, api_hash: str) -> TelegramCli
 
 
 async def _fetch_userbot_configs() -> list[dict[str, Any]]:
+    """Fetch active userbot configurations including sales_manager template info."""
     async with async_session_maker() as session:
         async with session.begin():
             rows = (
@@ -37,6 +38,8 @@ async def _fetch_userbot_configs() -> list[dict[str, Any]]:
                             Agent.bot_id,
                             Agent.system_prompt,
                             Agent.welcome_message,
+                            Agent.template_type,
+                            Agent.template_config,
                             AgentChannelConnection.encrypted_credentials,
                         )
                         .join(AgentChannelConnection, AgentChannelConnection.agent_id == Agent.id)
@@ -58,6 +61,8 @@ async def _fetch_userbot_configs() -> list[dict[str, Any]]:
             "bot_id": int(row["bot_id"] if row["bot_id"] is not None else row["agent_id"]),
             "system_prompt": row["system_prompt"] or "",
             "welcome_message": row["welcome_message"],
+            "template_type": str(row["template_type"] or "qa").strip().lower(),
+            "template_config": json.loads(row["template_config"]) if row["template_config"] else {},
             "encrypted_userbot_bundle": row["encrypted_credentials"],
         }
         for row in rows

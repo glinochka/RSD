@@ -40,10 +40,36 @@ const parseAllowedTools = (raw) =>
 const buildCrmValidationSignature = (provider, baseUrl, token) =>
   `${String(provider || '').trim().toLowerCase()}|${String(baseUrl || '').trim()}|${String(token || '').trim()}`;
 
+const SALES_DEFAULT_TEMPLATE_CONFIG = {
+  mode: 'draft_only',
+  qualification_model: 'deepseek-chat',
+  generation_model: 'deepseek-chat',
+  min_confidence: 0.75,
+  scan_scope: {
+    include_chat_ids: [],
+    exclude_chat_ids: [],
+  },
+  dm_limits: {
+    per_minute: 3,
+    per_hour: 25,
+    per_day: 120,
+    per_source_chat_per_day: 40,
+  },
+  cooldown_days: 14,
+  dedup_window_days: 30,
+  allowed_languages: ['ru', 'en'],
+  quiet_hours_local: '22:00-09:00',
+  offer_profile_id: null,
+  confirmation_policy: 'confirm_risky',
+  allowed_tools: ['schedule_dm', 'skip_lead', 'record_lead_signal', 'create_crm_lead', 'mark_contacted'],
+};
+
 const TEMPLATE_TYPE_HELP = {
   qa: 'Агент отвечает на вопросы по подключённой базе знаний (RAG): поиск по документам и выдержки в ответах. Подходит для поддержки и консультаций.',
   crm_admin:
     'Агент работает по шаблону администратора CRM: поиск и создание контактов, сделок, задач и другое в соответствии с настройками ниже. Перед сохранением проверьте подключение к CRM. Функция в статусе BETA.',
+  sales_manager:
+    'Агент работает в режиме менеджера продаж: отслеживает целевые сообщения в чатах через Telegram userbot и готовит outreach в личные сообщения. На этом этапе включается безопасный профиль draft_only с лимитами и дедупликацией.',
 };
 
 const TEMPLATE_TYPE_SELECT_OPTIONS = [
@@ -53,6 +79,15 @@ const TEMPLATE_TYPE_SELECT_OPTIONS = [
     label: (
       <span className="select-option-label-with-badge">
         Администратор (Интеграция с CRM)
+        <span className="beta-badge">BETA</span>
+      </span>
+    ),
+  },
+  {
+    value: 'sales_manager',
+    label: (
+      <span className="select-option-label-with-badge">
+        Менеджер продаж (Telegram userbot)
         <span className="beta-badge">BETA</span>
       </span>
     ),
@@ -279,6 +314,15 @@ const CreateAgentContent = () => {
         }
 
         const selectedTemplate = values.template_type?.trim() || 'qa';
+        if (
+          selectedTemplate === 'sales_manager' &&
+          (!isUserbotMode || isBotMode || isWhatsAppUserbotMode || isWhatsAppBusinessApiMode)
+        ) {
+          showError(
+            'Для шаблона "Менеджер продаж" на этом этапе доступно только подключение Telegram userbot.'
+          );
+          return;
+        }
         if (selectedTemplate === 'crm_admin' && !values.crm_account_base_url?.trim()) {
           form.setFieldError('crm_account_base_url', 'Base URL CRM обязателен');
           return;
@@ -305,7 +349,9 @@ const CreateAgentContent = () => {
               confirmation_policy: values.crm_confirmation_policy?.trim() || 'confirm_risky',
               fallback_mode: values.crm_fallback_mode?.trim() || 'ask_clarifying_question',
             }
-          : undefined;
+          : selectedTemplate === 'sales_manager'
+            ? SALES_DEFAULT_TEMPLATE_CONFIG
+            : undefined;
 
         const createdAgent = await agentService.createEmpty({
           system_prompt: values.system_prompt.trim(),

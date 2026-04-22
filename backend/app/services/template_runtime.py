@@ -15,6 +15,8 @@ from ..utils.pii import mask_external_id, redact_pii_text
 from .ai_authoring import ai_client, generate_answer_with_context
 from .crm import build_provider
 from .crm.tool_registry import CRMNeedsConfirmationError, CRMToolRegistry
+from .sales.tool_registry import SalesNeedsConfirmationError, SalesToolRegistry
+from .sales.fsm import SalesFSMError, get_sales_fsm_service
 from ..qdrant.search_service import search_knowledge_base
 
 logger = logging.getLogger(__name__)
@@ -67,6 +69,17 @@ class TemplateRuntimeService:
             qa_result.fallback_to_text = True
             qa_result.fallback_reason = "crm_runtime_unavailable"
             return qa_result
+
+        if normalized == "sales_manager":
+            return await self._execute_sales_manager(
+                prompt=prompt,
+                user_message=user_message,
+                knowledge_scope_id=knowledge_scope_id,
+                template_config=template_config or {},
+                source_channel=source_channel or "telegram",
+                user_external_id=user_external_id,
+                agent_id=agent_id,
+            )
 
         if normalized in {"qa", "lead_generation", "content_factory"}:
             return await self._execute_qa_like(
@@ -325,6 +338,520 @@ class TemplateRuntimeService:
                 sources.append(str(source))
 
         return TemplateExecutionResult(answer=answer, sources=sources)
+
+    async def _execute_sales_manager(
+        self,
+        *,
+        prompt: str,
+        user_message: str,
+        knowledge_scope_id: int,
+        template_config: dict[str, Any],
+        source_channel: str,
+        user_external_id: str | None,
+        agent_id: int | None = None,
+    ) -> TemplateExecutionResult:
+        contact_key = self._resolve_sales_contact_key(template_config=template_config)
+        if agent_id and user_external_id:
+            await self._ensure_sales_contact_exists(
+                agent_id=agent_id,
+                user_external_id=user_external_id,
+                source_chat_id=contact_key,
+            )
+        qualification = await self.qualify_message(
+            prompt=prompt,
+            user_message=user_message,
+            template_config=template_config,
+        )
+        intent = qualification.get("intent", "unsure")
+        confidence = float(qualification.get("confidence") or 0.0)
+        min_confidence = float(template_config.get("min_confidence") or 0.75)
+
+        if intent in {"do_not_contact", "non_target"}:
+            if agent_id and user_external_id:
+                await self._transition_sales_state_safe(
+                    agent_id=agent_id,
+                    user_external_id=user_external_id,
+                    source_chat_id=contact_key,
+                    to_state="SKIPPED",
+                    reason=f"intent:{intent}",
+                    metadata={"qualification": qualification},
+                )
+            return self.emit_action(
+                template_config=template_config,
+                qualification=qualification,
+                composed_dm=None,
+                sources=[],
+                source_channel=source_channel,
+                user_external_id=user_external_id,
+            )
+        if confidence < min_confidence:
+            if agent_id and user_external_id:
+                await self._transition_sales_state_safe(
+                    agent_id=agent_id,
+                    user_external_id=user_external_id,
+                    source_chat_id=contact_key,
+                    to_state="SKIPPED",
+                    reason="low_confidence",
+                    metadata={"qualification": qualification},
+                )
+            return self.emit_action(
+                template_config=template_config,
+                qualification=qualification,
+                composed_dm=None,
+                sources=[],
+                source_channel=source_channel,
+                user_external_id=user_external_id,
+            )
+
+        if agent_id and user_external_id:
+            await self._transition_sales_state_safe(
+                agent_id=agent_id,
+                user_external_id=user_external_id,
+                source_chat_id=contact_key,
+                to_state="QUALIFIED",
+                reason="qualified",
+                metadata={"qualification": qualification},
+            )
+        context_list, sources = await self.retrieve_offer_context(
+            user_message=user_message,
+            knowledge_scope_id=knowledge_scope_id,
+        )
+        composed_dm = await self.compose_dm(
+            prompt=prompt,
+            user_message=user_message,
+            qualification=qualification,
+            context_list=context_list,
+            template_config=template_config,
+        )
+        tool_driven = await self._execute_sales_tools(
+            prompt=prompt,
+            user_message=user_message,
+            qualification=qualification,
+            composed_dm=composed_dm,
+            template_config=template_config,
+            source_channel=source_channel,
+            user_external_id=user_external_id,
+            agent_id=agent_id,
+            sources=sources,
+        )
+        if tool_driven is not None:
+            if agent_id and user_external_id and tool_driven.tool_events:
+                await self._apply_fsm_from_tool_events(
+                    agent_id=agent_id,
+                    user_external_id=user_external_id,
+                    source_chat_id=contact_key,
+                    tool_events=tool_driven.tool_events,
+                )
+            return tool_driven
+        result = self.emit_action(
+            template_config=template_config,
+            qualification=qualification,
+            composed_dm=composed_dm,
+            sources=sources,
+            source_channel=source_channel,
+            user_external_id=user_external_id,
+        )
+        if agent_id and user_external_id and result.tool_events:
+            await self._apply_fsm_from_tool_events(
+                agent_id=agent_id,
+                user_external_id=user_external_id,
+                source_chat_id=contact_key,
+                tool_events=result.tool_events,
+            )
+        return result
+
+    async def _execute_sales_tools(
+        self,
+        *,
+        prompt: str,
+        user_message: str,
+        qualification: dict[str, Any],
+        composed_dm: str,
+        template_config: dict[str, Any],
+        source_channel: str,
+        user_external_id: str | None,
+        agent_id: int | None,
+        sources: list[str],
+    ) -> TemplateExecutionResult | None:
+        allowed_tools_raw = template_config.get("allowed_tools")
+        allowed_tools = allowed_tools_raw if isinstance(allowed_tools_raw, list) else None
+        confirmation_policy = str(template_config.get("confirmation_policy") or "confirm_risky").strip().lower()
+        mode = str(template_config.get("mode") or "draft_only").strip().lower()
+        registry = SalesToolRegistry(
+            allowed_tools=allowed_tools,
+            confirmation_policy=confirmation_policy,
+            user_message=user_message,
+            agent_id=agent_id,
+            user_external_id=user_external_id,
+            mode=mode,
+        )
+        llm_tools = registry.tools_for_llm()
+        if not llm_tools:
+            return None
+
+        generation_model = str(template_config.get("generation_model") or "deepseek-chat").strip() or "deepseek-chat"
+        system_prompt = (
+            f"{prompt}\n\n"
+            "Ты управляешь действиями sales-агента через function tools. "
+            "Не пиши свободный ответ вместо действия, выбери tool call. "
+            "Если лид нецелевой — используй skip_lead."
+        )
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": (
+                    f"Классификация: {json.dumps(qualification, ensure_ascii=False)}\n"
+                    f"Черновик outreach: {composed_dm}\n"
+                    f"Канал: {source_channel}"
+                ),
+            },
+        ]
+        tool_events: list[dict[str, Any]] = []
+
+        for _ in range(3):
+            completion = await ai_client.chat.completions.create(
+                model=generation_model,
+                messages=messages,
+                tools=llm_tools,
+                tool_choice="auto",
+                temperature=0.2,
+            )
+            message = completion.choices[0].message
+            tool_calls = message.tool_calls or []
+            if not tool_calls:
+                break
+
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": message.content or "",
+                    "tool_calls": [tool_call.model_dump() for tool_call in tool_calls],
+                }
+            )
+            for tool_call in tool_calls:
+                tool_name = tool_call.function.name
+                raw_args = tool_call.function.arguments or "{}"
+                try:
+                    tool_result = await registry.execute_tool(tool_name, raw_args)
+                    result_payload = tool_result.get("result") or {}
+                    status = str(result_payload.get("status") or tool_result.get("tool_status") or "success")
+                    tool_events.append(
+                        {
+                            "tool_name": tool_name,
+                            "tool_args_hash": tool_result.get("tool_args_hash"),
+                            "tool_status": status,
+                            "latency_ms": int(tool_result.get("latency_ms") or 0),
+                            "crm_provider": None,
+                            "source_channel": source_channel,
+                            "user_external_id": mask_external_id(user_external_id),
+                            "ok": bool(tool_result.get("ok")),
+                            "idempotent_replay": bool(tool_result.get("idempotent_replay")),
+                            "idempotency_key": tool_result.get("idempotency_key"),
+                            "error": None,
+                        }
+                    )
+                except SalesNeedsConfirmationError as exc:
+                    safe_error = redact_pii_text(str(exc))
+                    tool_result = {"ok": False, "error": safe_error}
+                    tool_events.append(
+                        {
+                            "tool_name": tool_name,
+                            "tool_args_hash": None,
+                            "tool_status": "confirmation_required",
+                            "latency_ms": 0,
+                            "crm_provider": None,
+                            "source_channel": source_channel,
+                            "user_external_id": mask_external_id(user_external_id),
+                            "ok": False,
+                            "idempotent_replay": False,
+                            "idempotency_key": None,
+                            "error": safe_error,
+                        }
+                    )
+                except Exception as exc:
+                    safe_error = redact_pii_text(str(exc))
+                    tool_result = {"ok": False, "error": safe_error}
+                    tool_events.append(
+                        {
+                            "tool_name": tool_name,
+                            "tool_args_hash": None,
+                            "tool_status": "error",
+                            "latency_ms": 0,
+                            "crm_provider": None,
+                            "source_channel": source_channel,
+                            "user_external_id": mask_external_id(user_external_id),
+                            "ok": False,
+                            "idempotent_replay": False,
+                            "idempotency_key": None,
+                            "error": safe_error,
+                        }
+                    )
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "name": tool_name,
+                        "content": json.dumps(tool_result, ensure_ascii=False),
+                    }
+                )
+            if tool_events:
+                break
+
+        if not tool_events:
+            return None
+        last_status = str(tool_events[-1].get("tool_status") or "")
+        if last_status == "sent_auto":
+            answer = f"Auto outreach готов к отправке:\n{composed_dm}"
+        elif last_status == "draft_requires_review":
+            answer = f"Требуется подтверждение владельца. Черновик:\n{composed_dm}"
+        elif last_status == "confirmation_required":
+            answer = "Для выполнения действия требуется явное подтверждение пользователя."
+        elif last_status.startswith("skipped_"):
+            answer = "Лид пропущен согласно policy."
+        else:
+            answer = "Действие sales-агента выполнено через tools."
+        return TemplateExecutionResult(answer=answer, sources=sources, tool_events=tool_events)
+
+    async def qualify_message(
+        self,
+        *,
+        prompt: str,
+        user_message: str,
+        template_config: dict[str, Any],
+    ) -> dict[str, Any]:
+        model = str(template_config.get("qualification_model") or "deepseek-chat").strip() or "deepseek-chat"
+        instruction = (
+            f"{prompt}\n\n"
+            "Ты классификатор для sales outreach. Верни только JSON объект с полями: "
+            "intent, confidence, reason. "
+            "intent строго один из: target_hot, target_warm, non_target, do_not_contact, unsure. "
+            "confidence от 0 до 1."
+        )
+        completion = await ai_client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": instruction},
+                {"role": "user", "content": user_message},
+            ],
+            temperature=0.1,
+        )
+        raw = (completion.choices[0].message.content or "").strip()
+        parsed: dict[str, Any] = {}
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            logger.warning("sales_manager classify parse failed, fallback to unsure")
+            return {"intent": "unsure", "confidence": 0.0, "reason": "invalid_classifier_json"}
+
+        intent = str(parsed.get("intent") or "unsure").strip().lower()
+        allowed_intents = {"target_hot", "target_warm", "non_target", "do_not_contact", "unsure"}
+        if intent not in allowed_intents:
+            intent = "unsure"
+        try:
+            confidence = float(parsed.get("confidence"))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        confidence = min(1.0, max(0.0, confidence))
+        reason = str(parsed.get("reason") or "").strip()[:500]
+        return {"intent": intent, "confidence": confidence, "reason": reason}
+
+    async def retrieve_offer_context(
+        self,
+        *,
+        user_message: str,
+        knowledge_scope_id: int,
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        context = await search_knowledge_base(user_message, agent_id=knowledge_scope_id)
+        context_list = context if isinstance(context, list) else []
+        normalized_context = [item for item in context_list if isinstance(item, dict)]
+        sources: list[str] = []
+        for item in normalized_context:
+            source = item.get("source")
+            if source and source not in sources:
+                sources.append(str(source))
+        return normalized_context, sources
+
+    async def compose_dm(
+        self,
+        *,
+        prompt: str,
+        user_message: str,
+        qualification: dict[str, Any],
+        context_list: list[dict[str, Any]],
+        template_config: dict[str, Any],
+    ) -> str:
+        model = str(template_config.get("generation_model") or "deepseek-chat").strip() or "deepseek-chat"
+        context_parts = [
+            f"Источник: {c.get('source', 'Unknown')}\nТекст: {c.get('text', '')}"
+            for c in context_list
+        ]
+        context_text = "\n\n---\n\n".join(context_parts) if context_parts else "Контекст не найден."
+        system_prompt = (
+            f"{prompt}\n\n"
+            "Ты пишешь короткое и уместное первое сообщение в личку от менеджера продаж. "
+            "Тон: уважительный, без давления, без спама. "
+            "Верни только чистый текст, без markdown."
+        )
+        user_prompt = (
+            f"Исходное сообщение в чате:\n{user_message}\n\n"
+            f"Классификация:\n{json.dumps(qualification, ensure_ascii=False)}\n\n"
+            f"Контекст продукта (RAG):\n{context_text}\n\n"
+            "Сформируй короткий персонализированный outreach в 1-3 предложения."
+        )
+        completion = await ai_client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.3,
+        )
+        content = (completion.choices[0].message.content or "").strip()
+        cleaned = content.replace("#", "").replace("*", "").strip()
+        return cleaned[:1200]
+
+    def emit_action(
+        self,
+        *,
+        template_config: dict[str, Any],
+        qualification: dict[str, Any],
+        composed_dm: str | None,
+        sources: list[str],
+        source_channel: str,
+        user_external_id: str | None,
+    ) -> TemplateExecutionResult:
+        intent = str(qualification.get("intent") or "unsure").strip().lower()
+        confidence = float(qualification.get("confidence") or 0.0)
+        min_confidence = float(template_config.get("min_confidence") or 0.75)
+        mode = str(template_config.get("mode") or "draft_only").strip().lower()
+        reason = str(qualification.get("reason") or "").strip()
+
+        if intent == "do_not_contact":
+            reason_code = "skipped_do_not_contact"
+            answer = "Лид пропущен: контакт запрещен по политике."
+        elif intent == "non_target":
+            reason_code = "skipped_non_target"
+            answer = "Лид пропущен: сообщение нецелевое."
+        elif confidence < min_confidence:
+            reason_code = "skipped_low_confidence"
+            answer = "Лид пропущен: низкая уверенность классификатора."
+        elif not composed_dm:
+            reason_code = "draft_requires_review"
+            answer = "Черновик не сформирован, требуется ручная проверка."
+        elif mode == "auto":
+            reason_code = "sent_auto"
+            answer = f"Auto outreach готов к отправке:\n{composed_dm}"
+        elif mode == "semi_auto":
+            reason_code = "draft_requires_review"
+            answer = f"Требуется подтверждение владельца. Черновик:\n{composed_dm}"
+        else:
+            reason_code = "draft_requires_review"
+            answer = f"Черновик outreach (режим draft_only):\n{composed_dm}"
+
+        event = {
+            "tool_name": "sales_outreach_action",
+            "tool_args_hash": None,
+            "tool_status": reason_code,
+            "latency_ms": 0,
+            "crm_provider": None,
+            "source_channel": source_channel,
+            "user_external_id": mask_external_id(user_external_id),
+            "ok": reason_code in {"sent_auto", "draft_requires_review"},
+            "idempotent_replay": False,
+            "idempotency_key": None,
+            "error": None if reason_code not in {"skipped_do_not_contact", "skipped_non_target", "skipped_low_confidence"} else reason or reason_code,
+        }
+        return TemplateExecutionResult(answer=answer, sources=sources, tool_events=[event])
+
+    @staticmethod
+    def _resolve_sales_contact_key(*, template_config: dict[str, Any]) -> str:
+        source_chat_id = template_config.get("source_chat_id")
+        value = str(source_chat_id or "global").strip()
+        return value or "global"
+
+    async def _ensure_sales_contact_exists(
+        self,
+        *,
+        agent_id: int,
+        user_external_id: str,
+        source_chat_id: str,
+    ) -> None:
+        try:
+            await get_sales_fsm_service().get_or_create_contact(
+                agent_id=agent_id,
+                user_external_id=user_external_id,
+                source_chat_id=source_chat_id,
+            )
+        except Exception:
+            logger.exception("sales_manager FSM get_or_create failed")
+
+    async def _transition_sales_state_safe(
+        self,
+        *,
+        agent_id: int,
+        user_external_id: str,
+        source_chat_id: str,
+        to_state: str,
+        reason: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        try:
+            await get_sales_fsm_service().transition_contact(
+                agent_id=agent_id,
+                user_external_id=user_external_id,
+                source_chat_id=source_chat_id,
+                to_state=to_state,
+                reason=reason,
+                metadata=metadata,
+            )
+        except SalesFSMError:
+            logger.warning("sales_manager FSM illegal transition ignored: %s", to_state)
+        except Exception:
+            logger.exception("sales_manager FSM transition failed: %s", to_state)
+
+    async def _apply_fsm_from_tool_events(
+        self,
+        *,
+        agent_id: int,
+        user_external_id: str,
+        source_chat_id: str,
+        tool_events: list[dict[str, Any]],
+    ) -> None:
+        if not tool_events:
+            return
+        status = str(tool_events[-1].get("tool_status") or "").strip().lower()
+        if status == "draft_requires_review":
+            await self._transition_sales_state_safe(
+                agent_id=agent_id,
+                user_external_id=user_external_id,
+                source_chat_id=source_chat_id,
+                to_state="QUEUED",
+                reason=status,
+            )
+        elif status == "sent_auto":
+            await self._transition_sales_state_safe(
+                agent_id=agent_id,
+                user_external_id=user_external_id,
+                source_chat_id=source_chat_id,
+                to_state="QUEUED",
+                reason="auto_queue",
+            )
+            await self._transition_sales_state_safe(
+                agent_id=agent_id,
+                user_external_id=user_external_id,
+                source_chat_id=source_chat_id,
+                to_state="SENT",
+                reason=status,
+            )
+        elif status.startswith("skipped_"):
+            await self._transition_sales_state_safe(
+                agent_id=agent_id,
+                user_external_id=user_external_id,
+                source_chat_id=source_chat_id,
+                to_state="SKIPPED",
+                reason=status,
+            )
 
 
 _runtime_service: TemplateRuntimeService | None = None

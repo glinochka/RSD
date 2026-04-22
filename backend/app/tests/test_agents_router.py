@@ -185,6 +185,71 @@ class TestAgentsCRUD:
         assert isinstance(data, list)
         assert len(data) >= 1
 
+    @pytest.mark.asyncio
+    async def test_create_empty_agent_sales_manager_default_config(self, client: AsyncClient, auth_headers):
+        """Создание sales_manager с дефолтным безопасным template_config."""
+        response = await client.post(
+            "/api/agents",
+            headers=auth_headers,
+            json={
+                "system_prompt": "Sales system prompt",
+                "template_type": "sales_manager",
+            },
+        )
+
+        assert response.status_code == 201, f"Expected 201, got {response.status_code}: {response.text}"
+        data = response.json()
+        assert data["template_type"] == "sales_manager"
+        cfg = data["template_config"] or {}
+        assert cfg["mode"] == "draft_only"
+        assert cfg["qualification_model"] == "deepseek-chat"
+        assert cfg["generation_model"] == "deepseek-chat"
+        assert cfg["min_confidence"] == 0.75
+        assert cfg["dm_limits"]["per_minute"] == 3
+        assert cfg["dm_limits"]["per_hour"] == 25
+        assert cfg["dm_limits"]["per_day"] == 120
+        assert cfg["cooldown_days"] == 14
+        assert cfg["dedup_window_days"] == 30
+        assert cfg["allowed_languages"] == ["ru", "en"]
+
+    @pytest.mark.asyncio
+    async def test_create_empty_agent_sales_manager_invalid_mode(self, client: AsyncClient, auth_headers):
+        """sales_manager отклоняет невалидный режим."""
+        response = await client.post(
+            "/api/agents",
+            headers=auth_headers,
+            json={
+                "system_prompt": "Sales system prompt",
+                "template_type": "sales_manager",
+                "template_config": {
+                    "mode": "unsafe_auto",
+                },
+            },
+        )
+
+        assert response.status_code == 422, f"Expected 422, got {response.status_code}: {response.text}"
+        assert "template_config.mode" in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_create_empty_agent_sales_manager_invalid_limit(self, client: AsyncClient, auth_headers):
+        """sales_manager отклоняет невалидные лимиты."""
+        response = await client.post(
+            "/api/agents",
+            headers=auth_headers,
+            json={
+                "system_prompt": "Sales system prompt",
+                "template_type": "sales_manager",
+                "template_config": {
+                    "dm_limits": {
+                        "per_minute": 0,
+                    },
+                },
+            },
+        )
+
+        assert response.status_code == 422, f"Expected 422, got {response.status_code}: {response.text}"
+        assert "template_config.dm_limits.per_minute" in response.json()["detail"]
+
 
 class TestAgentsInternal:
     """Тесты внутренних API агентов"""

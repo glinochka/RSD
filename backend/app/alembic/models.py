@@ -147,6 +147,14 @@ class Agent(Base):
         back_populates="agent",
         cascade="all, delete-orphan",
     )
+    sales_contacts: Mapped[list["AgentSalesContact"]] = relationship(
+        back_populates="agent",
+        cascade="all, delete-orphan",
+    )
+    sales_dm_queue: Mapped[list["AgentSalesDmQueue"]] = relationship(
+        back_populates="agent",
+        cascade="all, delete-orphan",
+    )
 
 
 class AgentFrozenUser(Base):
@@ -227,6 +235,63 @@ class AgentCrmConnection(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
 
     agent: Mapped["Agent"] = relationship(back_populates="crm_connections")
+
+
+class AgentSalesContact(Base):
+    __tablename__ = "agent_sales_contacts"
+    __table_args__ = (
+        UniqueConstraint("agent_id", "user_external_id", "source_chat_id", name="uq_agent_sales_contact_key"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), index=True, nullable=False)
+    user_external_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    source_chat_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    state: Mapped[str] = mapped_column(String(32), nullable=False, default="DISCOVERED", server_default="DISCOVERED", index=True)
+    last_contacted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_reason: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    cooldown_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    metadata_json: Mapped[str | None] = mapped_column("metadata", Text, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    agent: Mapped["Agent"] = relationship(back_populates="sales_contacts")
+
+
+class AgentSalesDmQueue(Base):
+    """Queue for outgoing DM (Direct Messages) in sales_manager template."""
+    __tablename__ = "agent_sales_dm_queue"
+    __table_args__ = (
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), index=True, nullable=False)
+    target_user_external_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    source_chat_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    message_text: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32), 
+        nullable=False, 
+        default="pending", 
+        server_default="pending",
+        index=True
+    )  # pending, sending, sent, failed, skipped
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    max_retries: Mapped[int] = mapped_column(Integer, nullable=False, default=3, server_default="3")
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scheduled_for: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    metadata_json: Mapped[str | None] = mapped_column("metadata", Text, nullable=True)
+
+    agent: Mapped["Agent"] = relationship(
+        back_populates="sales_dm_queue",
+        foreign_keys=[agent_id],
+    )
 
 
 class UserExternalIdentity(Base):
