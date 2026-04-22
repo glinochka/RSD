@@ -27,14 +27,18 @@ def upgrade() -> None:
             """
         )
     )
+    default_crm_config = (
+        '{"crm_provider":"amocrm","allowed_tools":["find_contact","create_contact","find_lead","create_lead","update_lead","add_note","create_task","assign_owner"],'
+        '"confirmation_policy":"confirm_risky","fallback_mode":"ask_clarifying_question","field_mapping":null}'
+    )
     op.execute(
         sa.text(
             """
             UPDATE agents
-            SET template_config = '{"crm_provider":"amocrm","allowed_tools":["find_contact","create_contact","find_lead","create_lead","update_lead","add_note","create_task","assign_owner"],"confirmation_policy":"confirm_risky","fallback_mode":"ask_clarifying_question","field_mapping":null}'
+            SET template_config = :default_crm_config
             WHERE template_type = 'crm_admin' AND (template_config IS NULL OR btrim(template_config) = '')
             """
-        )
+        ).bindparams(default_crm_config=default_crm_config)
     )
 
 
