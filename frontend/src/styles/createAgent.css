@@ -288,6 +288,12 @@
   background-color: #eef2ff;
 }
 
+.connection-type-card--disabled,
+.connection-type-card:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .connection-type-card--with-beta {
   display: flex;
   align-items: center;

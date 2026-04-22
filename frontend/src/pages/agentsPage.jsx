@@ -515,7 +515,7 @@ const AgentsPageContent = () => {
       return;
     }
     resetChannelModalFields();
-    setChannelModalTab('bot');
+    setChannelModalTab(selectedAgent?.template_type === 'sales_manager' ? 'userbot' : 'bot');
     setIsChannelsModalOpen(true);
     setIsLoadingChannels(true);
     try {
@@ -531,6 +531,15 @@ const AgentsPageContent = () => {
     setIsChannelsModalOpen(false);
     resetChannelModalFields();
   };
+
+  const isSalesManagerTemplate = selectedAgent?.template_type === 'sales_manager';
+
+  useEffect(() => {
+    if (!isChannelsModalOpen || !isSalesManagerTemplate) return;
+    if (channelModalTab !== 'userbot') {
+      setChannelModalTab('userbot');
+    }
+  }, [channelModalTab, isChannelsModalOpen, isSalesManagerTemplate]);
 
   const handleRemoveChannel = async (connectionId) => {
     if (!selectedBotId) return;
@@ -1100,9 +1109,9 @@ const AgentsPageContent = () => {
                 <div className="connection-type-grid connection-type-grid--channels channels-tabs">
                   <button
                     type="button"
-                    className={`connection-type-card ${channelModalTab === 'bot' ? 'active' : ''}`}
+                    className={`connection-type-card ${channelModalTab === 'bot' ? 'active' : ''} ${isSalesManagerTemplate ? 'connection-type-card--disabled' : ''}`}
                     onClick={() => setChannelModalTab('bot')}
-                    disabled={isSavingChannel}
+                    disabled={isSavingChannel || isSalesManagerTemplate}
                   >
                     Telegram бот
                   </button>
@@ -1116,17 +1125,17 @@ const AgentsPageContent = () => {
                   </button>
                   <button
                     type="button"
-                    className={`connection-type-card ${channelModalTab === 'whatsapp_userbot' ? 'active' : ''}`}
+                    className={`connection-type-card ${channelModalTab === 'whatsapp_userbot' ? 'active' : ''} ${isSalesManagerTemplate ? 'connection-type-card--disabled' : ''}`}
                     onClick={() => setChannelModalTab('whatsapp_userbot')}
-                    disabled={isSavingChannel}
+                    disabled={isSavingChannel || isSalesManagerTemplate}
                   >
                     WhatsApp userbot
                   </button>
                   <button
                     type="button"
-                    className={`connection-type-card connection-type-card--with-beta ${channelModalTab === 'whatsapp' ? 'active' : ''}`}
+                    className={`connection-type-card connection-type-card--with-beta ${channelModalTab === 'whatsapp' ? 'active' : ''} ${isSalesManagerTemplate ? 'connection-type-card--disabled' : ''}`}
                     onClick={() => setChannelModalTab('whatsapp')}
-                    disabled={isSavingChannel}
+                    disabled={isSavingChannel || isSalesManagerTemplate}
                   >
                     <span className="connection-type-card-label connection-type-card-label--stacked-wa-api">
                       <span className="connection-type-card-label__row">WhatsApp Business</span>
@@ -1137,6 +1146,11 @@ const AgentsPageContent = () => {
                     </span>
                   </button>
                 </div>
+                {isSalesManagerTemplate ? (
+                  <p className="help-text">
+                    Для шаблона "Менеджер продаж" доступно только подключение Telegram userbot.
+                  </p>
+                ) : null}
 
                 {channelModalTab === 'bot' ? (
                   <div className="agent-management-block">

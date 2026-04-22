@@ -434,6 +434,7 @@ const CreateAgentContent = () => {
     },
     validationRules
   );
+  const isSalesManagerTemplate = form.values.template_type === 'sales_manager';
 
   const clearUserbotLocalState = () => {
     setUserbotAuthToken('');
@@ -449,6 +450,7 @@ const CreateAgentContent = () => {
   };
 
   const toggleBotChannel = () => {
+    if (isSalesManagerTemplate) return;
     setUseBotChannel((prev) => {
       const next = !prev;
       if (!next) {
@@ -470,6 +472,7 @@ const CreateAgentContent = () => {
   };
 
   const toggleWhatsAppBusinessApiChannel = () => {
+    if (isSalesManagerTemplate) return;
     setUseWhatsAppBusinessApiChannel((prev) => {
       const next = !prev;
       if (!next) {
@@ -485,6 +488,7 @@ const CreateAgentContent = () => {
   };
 
   const toggleWhatsAppUserbotChannel = () => {
+    if (isSalesManagerTemplate) return;
     setUseWhatsAppUserbotChannel((prev) => {
       const next = !prev;
       if (!next) {
@@ -811,6 +815,47 @@ const CreateAgentContent = () => {
     crmValidationSignature,
   ]);
 
+  useEffect(() => {
+    if (!isSalesManagerTemplate) return;
+    setUseUserbotChannel(true);
+    if (useBotChannel) {
+      setUseBotChannel(false);
+      form.setFieldValue('bot_token', '');
+      form.setFieldError('bot_token', undefined);
+    }
+    if (useWhatsAppUserbotChannel) {
+      setUseWhatsAppUserbotChannel(false);
+      setWhatsappUserbotMode('simple');
+      setWhatsappUserbotAuthToken('');
+      setWhatsappUserbotQrDataUrl('');
+      setIsSendingWhatsappUserbotCode(false);
+      setIsVerifyingWhatsappUserbotCode(false);
+      setIsWhatsappUserbotVerified(false);
+      setVerifiedWhatsappUserbotLabel('');
+      whatsappUserbotLastAuthStatusRef.current = '';
+      form.setFieldValue('whatsapp_userbot_phone_number', '');
+      form.setFieldValue('whatsapp_userbot_session_string', '');
+      form.setFieldValue('whatsapp_userbot_client_label', '');
+      form.setFieldError('whatsapp_userbot_phone_number', undefined);
+      form.setFieldError('whatsapp_userbot_session_string', undefined);
+    }
+    if (useWhatsAppBusinessApiChannel) {
+      setUseWhatsAppBusinessApiChannel(false);
+      form.setFieldValue('whatsapp_phone_number_id', '');
+      form.setFieldValue('whatsapp_access_token', '');
+      form.setFieldValue('whatsapp_business_account_id', '');
+      form.setFieldValue('whatsapp_verify_token', '');
+      form.setFieldError('whatsapp_phone_number_id', undefined);
+      form.setFieldError('whatsapp_access_token', undefined);
+    }
+  }, [
+    form,
+    isSalesManagerTemplate,
+    useBotChannel,
+    useWhatsAppBusinessApiChannel,
+    useWhatsAppUserbotChannel,
+  ]);
+
   return (
     <MainLayout>
       <div className="create-agent-page">
@@ -1006,9 +1051,9 @@ const CreateAgentContent = () => {
               <div className="connection-type-grid connection-type-grid--channels">
                 <button
                   type="button"
-                  className={`connection-type-card ${useBotChannel ? 'active' : ''}`}
+                  className={`connection-type-card ${useBotChannel ? 'active' : ''} ${isSalesManagerTemplate ? 'connection-type-card--disabled' : ''}`}
                   onClick={toggleBotChannel}
-                  disabled={form.isSubmitting}
+                  disabled={form.isSubmitting || isSalesManagerTemplate}
                 >
                   Telegram бот
                 </button>
@@ -1022,17 +1067,17 @@ const CreateAgentContent = () => {
                 </button>
                 <button
                   type="button"
-                  className={`connection-type-card ${useWhatsAppUserbotChannel ? 'active' : ''}`}
+                  className={`connection-type-card ${useWhatsAppUserbotChannel ? 'active' : ''} ${isSalesManagerTemplate ? 'connection-type-card--disabled' : ''}`}
                   onClick={toggleWhatsAppUserbotChannel}
-                  disabled={form.isSubmitting}
+                  disabled={form.isSubmitting || isSalesManagerTemplate}
                 >
                   WhatsApp юзербот
                 </button>
                 <button
                   type="button"
-                  className={`connection-type-card connection-type-card--with-beta ${useWhatsAppBusinessApiChannel ? 'active' : ''}`}
+                  className={`connection-type-card connection-type-card--with-beta ${useWhatsAppBusinessApiChannel ? 'active' : ''} ${isSalesManagerTemplate ? 'connection-type-card--disabled' : ''}`}
                   onClick={toggleWhatsAppBusinessApiChannel}
-                  disabled={form.isSubmitting}
+                  disabled={form.isSubmitting || isSalesManagerTemplate}
                 >
                   <span className="connection-type-card-label connection-type-card-label--stacked-wa-api">
                     <span className="connection-type-card-label__row">WhatsApp Business</span>
@@ -1043,6 +1088,11 @@ const CreateAgentContent = () => {
                   </span>
                 </button>
               </div>
+              {isSalesManagerTemplate ? (
+                <p className="help-text">
+                  Для шаблона "Менеджер продаж" доступно только подключение Telegram userbot.
+                </p>
+              ) : null}
             </div>
 
             {useBotChannel && (
