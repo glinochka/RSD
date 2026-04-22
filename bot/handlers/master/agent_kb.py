@@ -12,7 +12,7 @@ from keyboards.master_kb import get_main_menu
 from states.master import CreateAgentSG
 
 from .formatting import escape_md
-from .knowledge_helpers import is_public_http_url
+from .knowledge_helpers import is_public_http_url, text_is_not_command
 from .router import master_router
 from .telegram_helpers import safe_callback_answer, safe_edit_callback_message
 
@@ -248,7 +248,7 @@ async def process_extra_document(message: types.Message, state: FSMContext, bot:
     await show_knowledge_base(fake_callback)
 
 
-@master_router.message(CreateAgentSG.adding_extra_links, F.text)
+@master_router.message(CreateAgentSG.adding_extra_links, F.text, F.func(text_is_not_command))
 async def process_extra_link(message: types.Message, state: FSMContext):
     data = await state.get_data()
     agent_id = data.get("edit_agent_id")

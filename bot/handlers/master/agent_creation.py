@@ -14,7 +14,7 @@ from states.master import CreateAgentSG
 
 from .account_linking import respond_to_telegram_link_code
 from .formatting import escape_md
-from .knowledge_helpers import handle_link_upload_result, is_public_http_url
+from .knowledge_helpers import handle_link_upload_result, is_public_http_url, text_is_not_command
 from .plans import get_plans_from_backend
 from .router import master_router
 from .telegram_helpers import safe_edit_callback_message
@@ -203,7 +203,7 @@ async def handle_docs(message: types.Message, state: FSMContext, bot: Bot):
     )
 
 
-@master_router.message(CreateAgentSG.waiting_docs, F.text)
+@master_router.message(CreateAgentSG.waiting_docs, F.text, F.func(text_is_not_command))
 async def handle_link_during_agent_creation(message: types.Message, state: FSMContext):
     url_value = (message.text or "").strip()
     if not is_public_http_url(url_value):

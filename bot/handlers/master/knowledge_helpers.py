@@ -4,6 +4,15 @@ from urllib.parse import urlparse
 from aiogram import types
 
 
+def text_is_not_command(message: types.Message) -> bool:
+    """
+    Не перехватывать команды (/start и др.) FSM-хендлерами ожидания ссылки —
+    иначе /start обрабатывается как «не URL» и пользователь застревает в цикле ошибок.
+    """
+    text = (message.text or "").strip()
+    return bool(text) and not text.startswith("/")
+
+
 def is_public_http_url(value: str) -> bool:
     if not value:
         return False
