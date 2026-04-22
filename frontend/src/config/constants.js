@@ -61,6 +61,7 @@ export const API_ROUTES = {
   AGENTS_ANALYTICS_SUMMARY: '/api/agents/analytics/summary',
   AGENTS_ANALYTICS_CHATS: '/api/agents/analytics/chats',
   AGENTS_ANALYTICS_TIMESERIES: '/api/agents/analytics/timeseries',
+  AGENTS_ANALYTICS_CRM_ACTIONS: '/api/agents/analytics/crm_actions',
   AGENTS_ANALYTICS_FROZEN: '/api/agents/analytics/frozen',
   AGENTS_TELEGRAM_SEND_TO_USER: '/api/agents/telegram/send_to_user',
   AGENTS_TELEGRAM_BROADCAST_RECIPIENTS: '/api/agents/telegram/broadcast_recipients',

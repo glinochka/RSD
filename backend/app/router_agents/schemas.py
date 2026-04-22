@@ -210,7 +210,7 @@ class ExternalAgentChatRequest(BaseModel):
 
 
 class AgentAnalyticsMessageLog(AgentLookup):
-    role: str = Field(..., pattern="^(user|agent)$", description="Роль сообщения")
+    role: str = Field(..., pattern="^(user|agent|operator)$", description="Роль сообщения")
     channel: str = Field(
         default="telegram",
         pattern="^(telegram|external_api|web|dashboard|telegram_userbot|whatsapp_userbot|whatsapp_business_api|instagram|tiktok|pinterest)$",
@@ -231,6 +231,11 @@ class AgentAnalyticsMessageLog(AgentLookup):
         default=None,
         description="Telegram access_hash для InputPeerUser (userbot), если известен",
     )
+    tool_name: Optional[str] = Field(default=None, max_length=64, description="Название CRM tool/fallback")
+    tool_args_hash: Optional[str] = Field(default=None, max_length=64, description="SHA-256 хеш аргументов tool")
+    tool_status: Optional[str] = Field(default=None, max_length=24, description="Статус tool-вызова")
+    latency_ms: Optional[int] = Field(default=None, ge=0, description="Latency tool-вызова в миллисекундах")
+    crm_provider: Optional[str] = Field(default=None, max_length=32, description="CRM провайдер (amocrm/bitrix24)")
 
 
 class AgentFreezeUserPayload(AgentLookup):

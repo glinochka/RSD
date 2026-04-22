@@ -191,6 +191,13 @@ export const agentService = {
     return response.data;
   },
 
+  getAnalyticsCrmActions: async (agentId) => {
+    const response = await apiClient.get(API_ROUTES.AGENTS_ANALYTICS_CRM_ACTIONS, {
+      params: { agent_id: agentId },
+    });
+    return response.data;
+  },
+
   setUserFrozen: async (agentId, userExternalId, frozen) => {
     await apiClient.post(API_ROUTES.AGENTS_ANALYTICS_FROZEN, {
       agent_id: agentId,

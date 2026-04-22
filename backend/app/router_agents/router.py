@@ -1,5 +1,6 @@
 import asyncio
 import json
+import math
 from logging import getLogger
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -982,6 +983,11 @@ async def _log_analytics_message_for_agent_ids(
     user_external_id: str | None = None,
     user_display_name: str | None = None,
     telegram_peer_access_hash: int | None = None,
+    tool_name: str | None = None,
+    tool_args_hash: str | None = None,
+    tool_status: str | None = None,
+    latency_ms: int | None = None,
+    crm_provider: str | None = None,
 ) -> None:
     normalized_text = (message_text or "").strip()
     if not normalized_text:
@@ -1015,6 +1021,11 @@ async def _log_analytics_message_for_agent_ids(
         user_external_id=(user_external_id or None),
         user_display_name=(user_display_name or None),
         telegram_peer_access_hash=telegram_peer_access_hash,
+        tool_name=tool_name,
+        tool_args_hash=tool_args_hash,
+        tool_status=tool_status,
+        latency_ms=latency_ms,
+        crm_provider=crm_provider,
         message_text=normalized_text,
     )
     session.add(row)
@@ -1030,6 +1041,11 @@ async def _log_analytics_message(
     user_external_id: str | None = None,
     user_display_name: str | None = None,
     telegram_peer_access_hash: int | None = None,
+    tool_name: str | None = None,
+    tool_args_hash: str | None = None,
+    tool_status: str | None = None,
+    latency_ms: int | None = None,
+    crm_provider: str | None = None,
 ) -> None:
     resolved_channel_id = agent.bot_id if agent.bot_id is not None else agent.id
     await _log_analytics_message_for_agent_ids(
@@ -1042,6 +1058,11 @@ async def _log_analytics_message(
         user_external_id=user_external_id,
         user_display_name=user_display_name,
         telegram_peer_access_hash=telegram_peer_access_hash,
+        tool_name=tool_name,
+        tool_args_hash=tool_args_hash,
+        tool_status=tool_status,
+        latency_ms=latency_ms,
+        crm_provider=crm_provider,
     )
 
 
@@ -2822,6 +2843,11 @@ async def log_analytics_message(
                 user_external_id=payload.user_external_id,
                 user_display_name=payload.user_display_name,
                 telegram_peer_access_hash=payload.telegram_peer_access_hash,
+                tool_name=payload.tool_name,
+                tool_args_hash=payload.tool_args_hash,
+                tool_status=payload.tool_status,
+                latency_ms=payload.latency_ms,
+                crm_provider=payload.crm_provider,
             )
     return Response(status_code=status.HTTP_201_CREATED)
 
@@ -3024,6 +3050,184 @@ async def read_analytics_timeseries(
                     "bot_id": agent.bot_id,
                     "days": days,
                     "timeline": timeline,
+                },
+                status_code=status.HTTP_200_OK,
+            )
+
+
+@router.get("/analytics/crm_actions")
+async def read_analytics_crm_actions(
+    agent_id: int | None = Query(default=None),
+    bot_id: int | None = Query(default=None),
+    current_user=Depends(get_current_user_optional),
+    internal: bool = Depends(is_internal_request),
+):
+    _assert_access(current_user, internal)
+    if agent_id is None and bot_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Query parameter 'agent_id' or 'bot_id' is required",
+        )
+
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=agent_id,
+                bot_id=bot_id,
+                session=session,
+                current_user=current_user,
+                internal=internal,
+            )
+            analytics_namespace_id = agent.bot_id if agent.bot_id is not None else agent.id
+
+            tool_calls_total = (
+                await session.scalar(
+                    select(func.count(AgentAnalyticsMessage.id)).where(
+                        AgentAnalyticsMessage.bot_id == analytics_namespace_id,
+                        AgentAnalyticsMessage.tool_name.is_not(None),
+                        AgentAnalyticsMessage.tool_name != "fallback_to_text",
+                    )
+                )
+            ) or 0
+            successful_tool_calls = (
+                await session.scalar(
+                    select(func.count(AgentAnalyticsMessage.id)).where(
+                        AgentAnalyticsMessage.bot_id == analytics_namespace_id,
+                        AgentAnalyticsMessage.tool_name.is_not(None),
+                        AgentAnalyticsMessage.tool_name != "fallback_to_text",
+                        AgentAnalyticsMessage.tool_status == "success",
+                    )
+                )
+            ) or 0
+            fallback_to_text_count = (
+                await session.scalar(
+                    select(func.count(AgentAnalyticsMessage.id)).where(
+                        AgentAnalyticsMessage.bot_id == analytics_namespace_id,
+                        AgentAnalyticsMessage.tool_name == "fallback_to_text",
+                    )
+                )
+            ) or 0
+            total_questions = (
+                await session.scalar(
+                    select(func.count(AgentAnalyticsMessage.id)).where(
+                        AgentAnalyticsMessage.bot_id == analytics_namespace_id,
+                        AgentAnalyticsMessage.role == "user",
+                    )
+                )
+            ) or 0
+
+            crm_ops_errors = max(0, int(tool_calls_total) - int(successful_tool_calls))
+            success_share_percent = (
+                (float(successful_tool_calls) / float(tool_calls_total)) * 100.0
+                if tool_calls_total > 0
+                else 0.0
+            )
+            fallback_frequency_percent = (
+                (float(fallback_to_text_count) / float(total_questions)) * 100.0
+                if total_questions > 0
+                else 0.0
+            )
+            error_rate_percent = (
+                (float(crm_ops_errors) / float(tool_calls_total)) * 100.0
+                if tool_calls_total > 0
+                else 0.0
+            )
+
+            # Error budget is calculated against a baseline SLO success rate of 95%.
+            target_error_budget_percent = 5.0
+            error_budget_used_percent = (
+                min(100.0, (error_rate_percent / target_error_budget_percent) * 100.0)
+                if tool_calls_total > 0
+                else 0.0
+            )
+
+            latency_rows = (
+                (
+                    await session.execute(
+                        select(AgentAnalyticsMessage.latency_ms).where(
+                            AgentAnalyticsMessage.bot_id == analytics_namespace_id,
+                            AgentAnalyticsMessage.tool_name.is_not(None),
+                            AgentAnalyticsMessage.tool_name != "fallback_to_text",
+                            AgentAnalyticsMessage.latency_ms.is_not(None),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            latencies = sorted(int(value) for value in latency_rows if value is not None and int(value) >= 0)
+            avg_latency_ms = round(sum(latencies) / len(latencies), 2) if latencies else 0.0
+            if latencies:
+                p95_index = max(0, math.ceil(len(latencies) * 0.95) - 1)
+                p95_latency_ms = int(latencies[p95_index])
+            else:
+                p95_latency_ms = 0
+
+            by_tool_rows = (
+                (
+                    await session.execute(
+                        select(
+                            AgentAnalyticsMessage.tool_name,
+                            func.count(AgentAnalyticsMessage.id).label("count"),
+                        )
+                        .where(
+                            AgentAnalyticsMessage.bot_id == analytics_namespace_id,
+                            AgentAnalyticsMessage.tool_name.is_not(None),
+                            AgentAnalyticsMessage.tool_name != "fallback_to_text",
+                        )
+                        .group_by(AgentAnalyticsMessage.tool_name)
+                        .order_by(func.count(AgentAnalyticsMessage.id).desc())
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            by_status_rows = (
+                (
+                    await session.execute(
+                        select(
+                            AgentAnalyticsMessage.tool_status,
+                            func.count(AgentAnalyticsMessage.id).label("count"),
+                        )
+                        .where(
+                            AgentAnalyticsMessage.bot_id == analytics_namespace_id,
+                            AgentAnalyticsMessage.tool_name.is_not(None),
+                        )
+                        .group_by(AgentAnalyticsMessage.tool_status)
+                        .order_by(func.count(AgentAnalyticsMessage.id).desc())
+                    )
+                )
+                .mappings()
+                .all()
+            )
+
+            return JSONResponse(
+                content={
+                    "agent_id": agent.id,
+                    "bot_id": agent.bot_id,
+                    "tool_calls_total": int(tool_calls_total),
+                    "successful_tool_calls": int(successful_tool_calls),
+                    "crm_ops_errors": int(crm_ops_errors),
+                    "success_share_percent": round(success_share_percent, 2),
+                    "avg_latency_ms": avg_latency_ms,
+                    "p95_latency_ms": p95_latency_ms,
+                    "fallback_to_text_count": int(fallback_to_text_count),
+                    "fallback_frequency_percent": round(fallback_frequency_percent, 2),
+                    "error_budget": {
+                        "target_error_budget_percent": target_error_budget_percent,
+                        "used_percent": round(error_budget_used_percent, 2),
+                        "remaining_percent": round(max(0.0, 100.0 - error_budget_used_percent), 2),
+                    },
+                    "by_tool": [
+                        {"tool_name": row["tool_name"], "count": int(row["count"] or 0)}
+                        for row in by_tool_rows
+                    ],
+                    "by_status": [
+                        {"tool_status": row["tool_status"] or "unknown", "count": int(row["count"] or 0)}
+                        for row in by_status_rows
+                    ],
                 },
                 status_code=status.HTTP_200_OK,
             )
@@ -3862,6 +4066,24 @@ async def external_chat(
                     user_external_id=external_user_id,
                     user_display_name=external_user_name,
                     message_text=json.dumps(event, ensure_ascii=False),
+                    tool_name=event.get("tool_name"),
+                    tool_args_hash=event.get("tool_args_hash"),
+                    tool_status=event.get("tool_status"),
+                    latency_ms=int(event.get("latency_ms") or 0),
+                    crm_provider=event.get("crm_provider"),
+                )
+            if execution.fallback_to_text:
+                await _log_analytics_message(
+                    session=session,
+                    agent=agent,
+                    role="operator",
+                    channel="external_api",
+                    user_external_id=external_user_id,
+                    user_display_name=external_user_name,
+                    message_text=execution.fallback_reason or "fallback_to_text",
+                    tool_name="fallback_to_text",
+                    tool_status="fallback",
+                    crm_provider=(_decode_template_config(agent.template_config) or {}).get("crm_provider"),
                 )
 
     return JSONResponse(

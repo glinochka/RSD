@@ -176,6 +176,11 @@ class AgentAnalyticsMessage(Base):
     user_external_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     user_display_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     telegram_peer_access_hash: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    tool_name: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    tool_args_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    tool_status: Mapped[str | None] = mapped_column(String(24), nullable=True, index=True)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    crm_provider: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     message_text: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
 

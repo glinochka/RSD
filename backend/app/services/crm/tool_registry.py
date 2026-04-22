@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import time
 from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
@@ -139,6 +140,7 @@ class CRMToolRegistry:
         self._user_message = user_message or ""
         self._agent_id = agent_id
         self._user_external_id = (user_external_id or "").strip() or "anonymous"
+        self._crm_provider = getattr(provider, "provider_name", "unknown")
 
     def tools_for_llm(self) -> list[dict[str, Any]]:
         tools: list[dict[str, Any]] = []
@@ -177,10 +179,16 @@ class CRMToolRegistry:
             if normalized in _SENSITIVE_FIELD_DENYLIST:
                 raise RuntimeError(f"Field '{key}' is blocked by safety policy")
 
-    def _idempotency_key(self, tool_name: str, model: BaseModel) -> str:
-        canonical_args = json.dumps(model.model_dump(), ensure_ascii=False, sort_keys=True)
+    def _canonical_args(self, model: BaseModel) -> str:
+        return json.dumps(model.model_dump(), ensure_ascii=False, sort_keys=True)
+
+    def _idempotency_key(self, tool_name: str, canonical_args: str) -> str:
         raw = f"{self._agent_id}:{self._user_external_id}:{tool_name}:{canonical_args}"
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _tool_args_hash(canonical_args: str) -> str:
+        return hashlib.sha256(canonical_args.encode("utf-8")).hexdigest()
 
     async def execute_tool(self, tool_name: str, raw_arguments: str) -> dict[str, Any]:
         if tool_name not in self._allowed_tools:
@@ -208,19 +216,27 @@ class CRMToolRegistry:
                 "Попросите пользователя написать: 'подтверждаю'."
             )
 
+        canonical_args = self._canonical_args(args)
+        tool_args_hash = self._tool_args_hash(canonical_args)
         _cleanup_idempotency_cache()
-        idempotency_key = self._idempotency_key(tool_name, args)
+        idempotency_key = self._idempotency_key(tool_name, canonical_args)
         cached = _IDEMPOTENCY_CACHE.get(idempotency_key)
         if cached:
             _, value = cached
             return {
                 "ok": True,
+                "tool_name": tool_name,
+                "tool_args_hash": tool_args_hash,
+                "tool_status": "success",
+                "crm_provider": self._crm_provider,
+                "latency_ms": 0,
                 "idempotent_replay": True,
                 "idempotency_key": idempotency_key,
                 "result": value,
             }
 
         data = args.model_dump()
+        started = time.perf_counter()
         if tool_name == "find_contact":
             result = await self._provider.find_contact(**data)
         elif tool_name == "create_contact":
@@ -244,8 +260,14 @@ class CRMToolRegistry:
             _now_utc() + timedelta(seconds=_IDEMPOTENCY_TTL_SECONDS),
             {"tool": tool_name, "result": result},
         )
+        latency_ms = max(0, int((time.perf_counter() - started) * 1000))
         return {
             "ok": True,
+            "tool_name": tool_name,
+            "tool_args_hash": tool_args_hash,
+            "tool_status": "success",
+            "crm_provider": self._crm_provider,
+            "latency_ms": latency_ms,
             "idempotency_key": idempotency_key,
             "result": result,
         }

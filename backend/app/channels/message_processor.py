@@ -143,6 +143,30 @@ class MessageProcessor:
                     user_display_name=request.user_display_name,
                     channel=request.channel.value,
                     telegram_peer_access_hash=request.telegram_peer_access_hash,
+                    tool_name=event.get("tool_name"),
+                    tool_args_hash=event.get("tool_args_hash"),
+                    tool_status=event.get("tool_status"),
+                    latency_ms=int(event.get("latency_ms") or 0),
+                    crm_provider=event.get("crm_provider"),
+                )
+
+            if execution.fallback_to_text:
+                await self._log_message(
+                    agent_id=resolved_agent.id,
+                    analytics_namespace_id=resolved_agent.bot_id or resolved_agent.id,
+                    role="operator",
+                    message_text=execution.fallback_reason or "fallback_to_text",
+                    user_external_id=normalized_user_external_id,
+                    user_display_name=request.user_display_name,
+                    channel=request.channel.value,
+                    telegram_peer_access_hash=request.telegram_peer_access_hash,
+                    tool_name="fallback_to_text",
+                    tool_args_hash=None,
+                    tool_status="fallback",
+                    latency_ms=0,
+                    crm_provider=(
+                        (self._parse_template_config(resolved_agent.template_config) or {}).get("crm_provider")
+                    ),
                 )
 
             await self._log_message(
@@ -227,6 +251,11 @@ class MessageProcessor:
         user_display_name: str | None,
         channel: str,
         telegram_peer_access_hash: int | None,
+        tool_name: str | None = None,
+        tool_args_hash: str | None = None,
+        tool_status: str | None = None,
+        latency_ms: int | None = None,
+        crm_provider: str | None = None,
     ) -> None:
         try:
             async with async_session_maker() as session:
@@ -240,6 +269,11 @@ class MessageProcessor:
                             user_external_id=user_external_id,
                             user_display_name=user_display_name,
                             telegram_peer_access_hash=telegram_peer_access_hash,
+                            tool_name=tool_name,
+                            tool_args_hash=tool_args_hash,
+                            tool_status=tool_status,
+                            latency_ms=latency_ms,
+                            crm_provider=crm_provider,
                             message_text=message_text,
                         )
                     )

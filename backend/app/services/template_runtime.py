@@ -24,6 +24,8 @@ class TemplateExecutionResult:
     answer: str
     sources: list[str]
     tool_events: list[dict[str, Any]] = field(default_factory=list)
+    fallback_to_text: bool = False
+    fallback_reason: str | None = None
 
 
 class TemplateRuntimeService:
@@ -56,6 +58,14 @@ class TemplateRuntimeService:
             if crm_result is not None:
                 return crm_result
             logger.warning("crm_admin runtime fallback to qa strategy")
+            qa_result = await self._execute_qa_like(
+                prompt=prompt,
+                user_message=user_message,
+                knowledge_scope_id=knowledge_scope_id,
+            )
+            qa_result.fallback_to_text = True
+            qa_result.fallback_reason = "crm_runtime_unavailable"
+            return qa_result
 
         if normalized in {"qa", "lead_generation", "content_factory"}:
             return await self._execute_qa_like(
@@ -174,6 +184,10 @@ class TemplateRuntimeService:
                     tool_events.append(
                         {
                             "tool_name": tool_name,
+                            "tool_args_hash": tool_result.get("tool_args_hash"),
+                            "tool_status": tool_result.get("tool_status", "success"),
+                            "latency_ms": int(tool_result.get("latency_ms") or 0),
+                            "crm_provider": tool_result.get("crm_provider") or crm_provider_name,
                             "source_channel": source_channel,
                             "user_external_id": user_external_id,
                             "ok": bool(tool_result.get("ok")),
@@ -186,6 +200,10 @@ class TemplateRuntimeService:
                     tool_events.append(
                         {
                             "tool_name": tool_name,
+                            "tool_args_hash": None,
+                            "tool_status": "confirmation_required",
+                            "latency_ms": 0,
+                            "crm_provider": crm_provider_name,
                             "source_channel": source_channel,
                             "user_external_id": user_external_id,
                             "ok": False,
@@ -200,6 +218,10 @@ class TemplateRuntimeService:
                     tool_events.append(
                         {
                             "tool_name": tool_name,
+                            "tool_args_hash": None,
+                            "tool_status": "error",
+                            "latency_ms": 0,
+                            "crm_provider": crm_provider_name,
                             "source_channel": source_channel,
                             "user_external_id": user_external_id,
                             "ok": False,
