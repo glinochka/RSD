@@ -1,6 +1,7 @@
 """Unified message processing for channel managers."""
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -48,6 +49,18 @@ class MessageResponse:
 
 
 class MessageProcessor:
+    @staticmethod
+    def _parse_template_config(raw: str | None) -> dict | None:
+        if not raw or not str(raw).strip():
+            return None
+        try:
+            loaded = json.loads(raw)
+            if isinstance(loaded, dict):
+                return loaded
+        except Exception:
+            return None
+        return None
+
     async def process(self, request: MessageRequest) -> MessageResponse:
         try:
             resolved_agent = await self._resolve_agent(request.bot_id)
@@ -97,6 +110,9 @@ class MessageProcessor:
                 prompt=request.system_prompt or (resolved_agent.system_prompt or ""),
                 user_message=request.query,
                 knowledge_scope_id=resolved_agent.bot_id or resolved_agent.id,
+                agent_id=resolved_agent.id,
+                user_external_id=request.user_external_id,
+                template_config=self._parse_template_config(resolved_agent.template_config),
             )
             answer = execution.answer
 

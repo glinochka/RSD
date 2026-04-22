@@ -3791,6 +3791,9 @@ async def external_chat(
             prompt=agent.system_prompt or "Ты — полезный ассистент.",
             user_message=message,
             knowledge_scope_id=knowledge_scope_id,
+            agent_id=agent.id,
+            user_external_id=external_user_id,
+            template_config=_decode_template_config(agent.template_config),
         )
         answer = execution.answer
     except Exception:
