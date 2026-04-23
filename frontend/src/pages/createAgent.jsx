@@ -70,6 +70,8 @@ const TEMPLATE_TYPE_HELP = {
     'Агент работает по шаблону администратора CRM: поиск и создание контактов, сделок, задач и другое в соответствии с настройками ниже. Перед сохранением проверьте подключение к CRM. Функция в статусе BETA.',
   sales_manager:
     'Агент работает в режиме менеджера продаж: отслеживает целевые сообщения в чатах через Telegram userbot и готовит outreach в личные сообщения. На этом этапе включается безопасный профиль draft_only с лимитами и дедупликацией.',
+  ai_logist: 'Шаблон находится в разработке.',
+  content_factory: 'Шаблон находится в разработке.',
 };
 
 const TEMPLATE_TYPE_SELECT_OPTIONS = [
@@ -89,6 +91,26 @@ const TEMPLATE_TYPE_SELECT_OPTIONS = [
       <span className="select-option-label-with-badge">
         Менеджер продаж (Telegram userbot)
         <span className="beta-badge">BETA</span>
+      </span>
+    ),
+  },
+  {
+    value: 'ai_logist',
+    disabled: true,
+    label: (
+      <span className="select-option-label-with-badge">
+        ИИ Логист
+        <span className="beta-badge">В разработке</span>
+      </span>
+    ),
+  },
+  {
+    value: 'content_factory',
+    disabled: true,
+    label: (
+      <span className="select-option-label-with-badge">
+        Контент-завод
+        <span className="beta-badge">В разработке</span>
       </span>
     ),
   },
@@ -137,6 +159,10 @@ const CustomSelect = ({
     .join(' ');
 
   const handleSelectOption = (nextValue) => {
+    const optionToSelect = options.find((option) => option.value === nextValue);
+    if (optionToSelect?.disabled) {
+      return;
+    }
     onChange({
       target: {
         name,
@@ -166,8 +192,11 @@ const CustomSelect = ({
             <button
               key={option.value}
               type="button"
-              className={`custom-select-option ${option.value === value ? 'selected' : ''}`}
+              className={`custom-select-option ${option.value === value ? 'selected' : ''} ${
+                option.disabled ? 'disabled' : ''
+              }`}
               onClick={() => handleSelectOption(option.value)}
+              disabled={option.disabled}
             >
               {option.label}
             </button>

@@ -240,6 +240,16 @@
   color: var(--color-primary-dark, #3730a3);
 }
 
+.custom-select-option.disabled {
+  color: var(--color-text-light);
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.custom-select-option.disabled:hover {
+  background-color: transparent;
+}
+
 .custom-select.disabled .custom-select-trigger {
   cursor: not-allowed;
   opacity: 0.7;
