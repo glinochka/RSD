@@ -101,6 +101,7 @@ class Agent(Base):
     encrypted_token: Mapped[str] = mapped_column(Text, unique=True)
     encrypted_external_api_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     external_api_key_hash: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
+    external_webhook_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     bot_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=True) 
     primary_provider: Mapped[str] = mapped_column(
         String(32),

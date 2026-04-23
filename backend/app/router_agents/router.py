@@ -3,7 +3,8 @@ import json
 import math
 from logging import getLogger
 from urllib.parse import quote
-from urllib.request import Request, urlopen
+from urllib.request import Request as UrlRequest, urlopen
+from urllib.error import HTTPError, URLError
 from datetime import datetime, timedelta
 from collections import defaultdict
 
@@ -540,6 +541,84 @@ def _decode_template_config(raw_template_config: str | None) -> dict | None:
     return None
 
 
+def _normalize_external_webhook_url(value: str | None) -> str | None:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    if len(raw) > 1024:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="external_webhook_url must be at most 1024 chars",
+        )
+    if not (raw.startswith("http://") or raw.startswith("https://")):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="external_webhook_url must start with http:// or https://",
+        )
+    return raw
+
+
+async def _send_external_webhook_message(
+    *,
+    webhook_url: str,
+    agent,
+    user_external_id: str,
+    message_text: str,
+) -> dict:
+    body = json.dumps(
+        {
+            "event": "owner_message",
+            "channel": "external_api",
+            "agent_id": agent.id,
+            "bot_id": agent.bot_id,
+            "user_external_id": user_external_id,
+            "message": message_text,
+            "sent_at": datetime.utcnow().isoformat() + "Z",
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
+    request = UrlRequest(
+        webhook_url,
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        method="POST",
+    )
+
+    def _call():
+        with urlopen(request, timeout=20) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+            if not raw.strip():
+                return {"ok": True}
+            try:
+                decoded = json.loads(raw)
+                if isinstance(decoded, dict):
+                    return decoded
+            except Exception:
+                pass
+            return {"ok": True, "raw": raw}
+
+    try:
+        return await asyncio.get_running_loop().run_in_executor(None, _call)
+    except HTTPError as exc:
+        detail_text = ""
+        try:
+            detail_text = exc.read().decode("utf-8", errors="replace")
+        except Exception:
+            detail_text = ""
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"External webhook returned HTTP {exc.code}: {detail_text[:500]}",
+        ) from exc
+    except URLError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"External webhook is unreachable: {exc.reason}",
+        ) from exc
+
+
 async def _list_agent_channels(session, agent_id: int) -> list[AgentChannelConnection]:
     rows = await session.scalars(
         select(AgentChannelConnection)
@@ -788,7 +867,7 @@ async def _waba_get_phone_number_info(phone_number_id: str, access_token: str) -
         f"https://graph.facebook.com/v22.0/{quote(phone_number_id, safe='')}"
         "?fields=id,display_phone_number,verified_name,quality_rating"
     )
-    request = Request(
+    request = UrlRequest(
         request_url,
         headers={
             "Authorization": f"Bearer {access_token}",
@@ -1079,7 +1158,7 @@ async def _wa_userbot_bridge_post(path: str, payload: dict) -> dict:
             detail="WhatsApp userbot bridge API key не настроен на сервере",
         )
     headers["X-API-Key"] = bridge_api_key
-    request = Request(url, data=body, headers=headers, method="POST")
+    request = UrlRequest(url, data=body, headers=headers, method="POST")
 
     def _post():
         from urllib.error import HTTPError, URLError
@@ -2977,6 +3056,8 @@ async def update_by_bot_id(
             updates = new_data.model_dump(exclude_none=True)
             updates.pop("bot_id", None)
             updates.pop("agent_id", None)
+            if "external_webhook_url" in updates:
+                updates["external_webhook_url"] = _normalize_external_webhook_url(updates["external_webhook_url"])
             if "template_type" in updates:
                 updates["template_type"] = _normalize_template_type(updates["template_type"])
                 if "template_config" not in updates:
@@ -3743,6 +3824,60 @@ async def telegram_send_to_user_as_owner(
                 user_display_name=None,
             )
     return JSONResponse(content={"ok": True}, status_code=status.HTTP_200_OK)
+
+
+@router.post("/external/send_to_user")
+async def external_send_to_user_as_owner(
+    payload: AgentExternalApiSendToUserPayload,
+    current_user=Depends(get_current_user_required),
+):
+    user_external_id = payload.user_external_id.strip()
+    if not user_external_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="user_external_id is required",
+        )
+    text = payload.message.strip()
+    if not text:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Сообщение пустое",
+        )
+
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
+                current_user=current_user,
+                internal=False,
+            )
+            webhook_url = _normalize_external_webhook_url(agent.external_webhook_url)
+            if not webhook_url:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="external_webhook_url is not configured for this agent",
+                )
+            webhook_result = await _send_external_webhook_message(
+                webhook_url=webhook_url,
+                agent=agent,
+                user_external_id=user_external_id,
+                message_text=text,
+            )
+            await _log_analytics_message(
+                session=session,
+                agent=agent,
+                role="operator",
+                message_text=text,
+                channel="external_api",
+                user_external_id=user_external_id,
+                user_display_name=None,
+            )
+    return JSONResponse(content={"ok": True, "webhook_result": webhook_result}, status_code=status.HTTP_200_OK)
 
 
 @router.get("/telegram/broadcast_recipients")

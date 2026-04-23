@@ -64,6 +64,7 @@ export const API_ROUTES = {
   AGENTS_ANALYTICS_CRM_ACTIONS: '/api/agents/analytics/crm_actions',
   AGENTS_ANALYTICS_FROZEN: '/api/agents/analytics/frozen',
   AGENTS_TELEGRAM_SEND_TO_USER: '/api/agents/telegram/send_to_user',
+  AGENTS_EXTERNAL_SEND_TO_USER: '/api/agents/external/send_to_user',
   AGENTS_TELEGRAM_BROADCAST_RECIPIENTS: '/api/agents/telegram/broadcast_recipients',
   AGENTS_TELEGRAM_BROADCAST: '/api/agents/telegram/broadcast',
   AGENTS_WHATSAPP_USERBOT_SEND_TO_USER: '/api/agents/whatsapp_userbot/send_to_user',

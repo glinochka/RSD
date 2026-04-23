@@ -17,6 +17,11 @@ class UpdateAgent(AgentLookup):
     name: Optional[str]  = Field(None, min_length=3, max_length=100, description="Имя агента: длина от 3 до 30 символов")
     system_prompt: Optional[str] = Field(None, description="Промпт")
     welcome_message: Optional[str] = Field(None, min_length=3, description="Начальное сообщение бота: длина от 3 символов")
+    external_webhook_url: Optional[str] = Field(
+        None,
+        max_length=1024,
+        description="Webhook URL для исходящих сообщений в external_api-чатах",
+    )
     template_type: Optional[str] = Field(
         None,
         pattern="^(qa|crm_admin|function_calling|lead_generation|content_factory|sales_manager)$",
@@ -254,6 +259,15 @@ class AgentTelegramSendToUserPayload(AgentLookup):
         default=None,
         pattern="^(telegram|telegram_userbot)$",
         description="Предпочитаемый telegram-канал доставки",
+    )
+    message: str = Field(..., min_length=1, max_length=4096, description="Текст сообщения от владельца")
+
+
+class AgentExternalApiSendToUserPayload(AgentLookup):
+    user_external_id: str = Field(
+        ...,
+        max_length=128,
+        description="ID пользователя/чата во внешней системе",
     )
     message: str = Field(..., min_length=1, max_length=4096, description="Текст сообщения от владельца")
 

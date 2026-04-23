@@ -216,6 +216,15 @@ export const agentService = {
     return response.data;
   },
 
+  sendExternalMessageAsOwner: async (agentId, userExternalId, message) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_EXTERNAL_SEND_TO_USER, {
+      agent_id: agentId,
+      user_external_id: userExternalId,
+      message,
+    });
+    return response.data;
+  },
+
   getTelegramBroadcastRecipients: async (agentId) => {
     const response = await apiClient.get(API_ROUTES.AGENTS_TELEGRAM_BROADCAST_RECIPIENTS, {
       params: { agent_id: agentId },

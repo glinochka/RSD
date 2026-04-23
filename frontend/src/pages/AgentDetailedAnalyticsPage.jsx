@@ -454,6 +454,9 @@ const AgentDetailedAnalyticsPageContent = () => {
           const digits = raw.replace(/\D/g, '');
           return digits.length >= 5 && digits.length <= 20;
         }
+        if (selectedUser.channel === 'external_api') {
+          return raw.length > 0 && raw.length <= 128;
+        }
         return (
           ['telegram', 'telegram_userbot'].includes(selectedUser.channel) && /^\d+$/.test(raw)
         );
@@ -509,6 +512,8 @@ const AgentDetailedAnalyticsPageContent = () => {
     try {
       if (selectedUser.channel === 'whatsapp_userbot') {
         await agentService.sendWhatsappUserbotMessageAsOwner(botId, selectedUser.userExternalId, text);
+      } else if (selectedUser.channel === 'external_api') {
+        await agentService.sendExternalMessageAsOwner(botId, selectedUser.userExternalId, text);
       } else {
         await agentService.sendTelegramMessageAsOwner(
           botId,
