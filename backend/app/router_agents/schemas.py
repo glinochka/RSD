@@ -200,7 +200,12 @@ class ExternalAgentChatRequest(BaseModel):
     external_user_id: Optional[str] = Field(
         None,
         max_length=128,
-        description="Опциональный ID пользователя во внешней системе",
+        description="ID пользователя/чата во внешней системе (обязателен для отображения в дашборде)",
+    )
+    chat_id: Optional[str] = Field(
+        None,
+        max_length=128,
+        description="Алиас для external_user_id (инициализация id чата на стороне интегратора)",
     )
     external_user_name: Optional[str] = Field(
         None,

@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 
 
 # Test key provided by the user.
-API_KEY = "agnt_baYOViUeuDtTsoBJVzjgjCcpz2z9gBF7eJM-a2jxvZs"
+API_KEY = "agnt_Fama44X3KkIaJjWmXrRZ4tpPW-aO1Z1YKVjNVu0tpNg"
 
 # You can override in env:
 #   set API_BASE_URL=http://localhost:8000
@@ -18,8 +18,19 @@ URL = f"{API_BASE_URL}/api/agents/external/chat"
 
 def main() -> int:
     message = sys.argv[1] if len(sys.argv) > 1 else "Привет! Подскажи, что ты умеешь."
+    # Chat/user identifier must be initialized by the integrator side
+    # so that the conversation is visible in dashboard analytics.
+    external_user_id = (
+        (sys.argv[2] if len(sys.argv) > 2 else "")
+        or os.getenv("EXTERNAL_USER_ID", "")
+        or "api-test-user-1"
+    )
 
-    payload = {"message": message}
+    payload = {
+        "message": message,
+        "external_user_id": str(external_user_id),
+        "external_user_name": "API Test User",
+    }
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
     headers = {

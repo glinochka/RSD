@@ -4228,6 +4228,8 @@ async def read_analytics_chats(
             )
             analytics_namespace_id = agent.bot_id if agent.bot_id is not None else agent.id
 
+            supported_chat_channels = ["telegram", "telegram_userbot", "whatsapp_userbot", "external_api"]
+
             user_rows = (
                 (
                     await session.execute(
@@ -4241,9 +4243,7 @@ async def read_analytics_chats(
                             AgentAnalyticsMessage.bot_id == analytics_namespace_id,
                             AgentAnalyticsMessage.role == "user",
                             AgentAnalyticsMessage.user_external_id.is_not(None),
-                            AgentAnalyticsMessage.channel.in_(
-                                ["telegram", "telegram_userbot", "whatsapp_userbot"]
-                            ),
+                            AgentAnalyticsMessage.channel.in_(supported_chat_channels),
                         ).group_by(
                             AgentAnalyticsMessage.user_external_id,
                             AgentAnalyticsMessage.channel,
@@ -4259,7 +4259,7 @@ async def read_analytics_chats(
             chat_keys = [
                 (row["uid"], row["channel"])
                 for row in user_rows
-                if row["uid"] and row["channel"] in {"telegram", "telegram_userbot", "whatsapp_userbot"}
+                if row["uid"] and row["channel"] in set(supported_chat_channels)
             ]
             if not chat_keys:
                 return JSONResponse(
@@ -4290,7 +4290,7 @@ async def read_analytics_chats(
                             AgentAnalyticsMessage.bot_id == analytics_namespace_id,
                             AgentAnalyticsMessage.user_external_id.in_(user_ids),
                             AgentAnalyticsMessage.channel.in_(
-                                ["telegram", "telegram_userbot", "whatsapp_userbot", "dashboard"]
+                                [*supported_chat_channels, "dashboard"]
                             ),
                         ).order_by(AgentAnalyticsMessage.created_at.asc())
                     )
@@ -4307,6 +4307,7 @@ async def read_analytics_chats(
                     grouped_messages[(row["user_external_id"], "telegram")].append(row)
                     grouped_messages[(row["user_external_id"], "telegram_userbot")].append(row)
                     grouped_messages[(row["user_external_id"], "whatsapp_userbot")].append(row)
+                    grouped_messages[(row["user_external_id"], "external_api")].append(row)
                 else:
                     grouped_messages[(row["user_external_id"], row_channel)].append(row)
 
@@ -4359,8 +4360,13 @@ async def external_chat(
     if not message:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Message is empty")
 
-    external_user_id = (payload.external_user_id or "").strip() or None
+    external_user_id = (payload.external_user_id or "").strip() or (payload.chat_id or "").strip() or None
     external_user_name = (payload.external_user_name or "").strip() or None
+    if not external_user_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="external_user_id (or chat_id) is required for dashboard chat tracking",
+        )
 
     knowledge_scope_id = agent.bot_id if agent.bot_id is not None else agent.id
     try:
@@ -4435,6 +4441,7 @@ async def external_chat(
         content={
             "bot_id": agent.bot_id,
             "bot_username": agent.bot_username,
+            "external_user_id": external_user_id,
             "answer": answer,
             "sources": sources,
         },

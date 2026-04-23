@@ -54,6 +54,7 @@ const channelLabel = (channel) => {
   if (channel === 'telegram_userbot') return 'Telegram userbot';
   if (channel === 'telegram') return 'Telegram bot';
   if (channel === 'whatsapp_userbot') return 'WhatsApp userbot';
+  if (channel === 'external_api') return 'External API';
   if (channel === 'whatsapp_business_api') return 'WhatsApp Business API';
   return channel || 'unknown';
 };
