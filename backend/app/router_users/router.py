@@ -189,22 +189,16 @@ async def _decode_and_validate_google_id_token(id_token: str, nonce: str) -> dic
             detail="Google email is not verified",
         )
 
-    # Allow both personal accounts (no hd) and workspace accounts
-    # Only enforce domain restriction if GOOGLE_OAUTH_ALLOWED_HD is explicitly set
+    # Allow all Google accounts - both personal and workspace
+    # GOOGLE_OAUTH_ALLOWED_HD setting is currently unused (all accounts allowed)
     allowed_hd = settings.GOOGLE_OAUTH_ALLOWED_HD.strip().lower()
     token_hd = str(payload.get("hd") or "").strip().lower()
     
-    logger.debug(f"Google OAuth domain check: allowed_hd={allowed_hd!r}, token_hd={token_hd!r}")
+    logger.debug(f"Google OAuth: email={email}, token_hd={token_hd or 'personal'}, allowed_hd={allowed_hd or 'none (all allowed)'}")
     
-    if allowed_hd:
-        # If a specific domain is required, token must have matching hd
-        if not token_hd or token_hd != allowed_hd:
-            logger.warning(f"Domain mismatch: token_hd={token_hd!r}, allowed_hd={allowed_hd!r}")
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Google workspace domain '{token_hd or 'personal account'}' is not allowed. Required: {allowed_hd}",
-            )
-    # If no allowed_hd is set, accept both personal and workspace accounts
+    # Currently allowing all accounts - comment out the check below if domain restriction needed in future
+    # if allowed_hd and token_hd and token_hd != allowed_hd:
+    #     raise HTTPException(...)
     
     logger.info(f"Google OAuth validation successful for email={email}")
     return payload
