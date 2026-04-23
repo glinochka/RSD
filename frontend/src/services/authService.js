@@ -48,11 +48,31 @@ export const authService = {
   },
 
   loginWithGoogleIdToken: async (idToken, nonce) => {
-    const response = await apiClient.post(API_ROUTES.AUTH_GOOGLE, {
-      id_token: idToken,
-      nonce,
-    });
-    return normalizeAuthResponse(response.data, 'google_user');
+    try {
+      // Log what we're sending
+      console.log('Sending Google OAuth request:', {
+        hasCredential: !!idToken,
+        credentialLength: idToken?.length || 0,
+        nonceLength: nonce?.length || 0,
+      });
+      
+      const response = await apiClient.post(API_ROUTES.AUTH_GOOGLE, {
+        id_token: idToken,
+        nonce,
+      });
+      
+      console.log('Google OAuth success:', { status: response.status });
+      return normalizeAuthResponse(response.data, 'google_user');
+    } catch (error) {
+      // Log detailed error for debugging
+      console.error('Google login error:', {
+        status: error.response?.status,
+        detail: error.response?.data?.detail,
+        data: error.response?.data,
+        message: error.message,
+      });
+      throw error;
+    }
   },
 
   /**

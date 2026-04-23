@@ -168,6 +168,7 @@ async def _decode_and_validate_google_id_token(id_token: str, nonce: str) -> dic
 
     token_nonce = str(payload.get("nonce") or "").strip()
     if token_nonce != nonce:
+        logger.warning(f"Nonce mismatch: token={token_nonce!r}, expected={nonce!r}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Google token nonce mismatch",
@@ -175,25 +176,37 @@ async def _decode_and_validate_google_id_token(id_token: str, nonce: str) -> dic
 
     email = _normalize_email(str(payload.get("email") or ""))
     if not EMAIL_PATTERN.match(email):
+        logger.warning(f"Invalid email format: {email!r}")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Google account has no valid email",
         )
     email_verified = payload.get("email_verified")
     if email_verified not in (True, "true", "True", 1):
+        logger.warning(f"Email not verified: {email_verified!r}")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Google email is not verified",
         )
 
+    # Allow both personal accounts (no hd) and workspace accounts
+    # Only enforce domain restriction if GOOGLE_OAUTH_ALLOWED_HD is explicitly set
     allowed_hd = settings.GOOGLE_OAUTH_ALLOWED_HD.strip().lower()
     token_hd = str(payload.get("hd") or "").strip().lower()
-    if allowed_hd and token_hd != allowed_hd:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Google workspace domain is not allowed",
-        )
-
+    
+    logger.debug(f"Google OAuth domain check: allowed_hd={allowed_hd!r}, token_hd={token_hd!r}")
+    
+    if allowed_hd:
+        # If a specific domain is required, token must have matching hd
+        if not token_hd or token_hd != allowed_hd:
+            logger.warning(f"Domain mismatch: token_hd={token_hd!r}, allowed_hd={allowed_hd!r}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Google workspace domain '{token_hd or 'personal account'}' is not allowed. Required: {allowed_hd}",
+            )
+    # If no allowed_hd is set, accept both personal and workspace accounts
+    
+    logger.info(f"Google OAuth validation successful for email={email}")
     return payload
 
 
@@ -1208,11 +1221,18 @@ async def user_login(login_user: LoginUser):
     dependencies=[Depends(rate_limit(max_requests=20, window_seconds=60, scope="users_oauth_google"))],
 )
 async def user_google_oauth_login(payload: GoogleOAuthLoginRequest):
+    logger.info("Google OAuth login request received")
     nonce = payload.nonce.strip()
-    google_payload = await _decode_and_validate_google_id_token(payload.id_token.strip(), nonce)
+    
+    try:
+        google_payload = await _decode_and_validate_google_id_token(payload.id_token.strip(), nonce)
+    except HTTPException as e:
+        logger.error(f"Google token validation failed: {e.detail}", exc_info=True)
+        raise
 
     google_sub = str(google_payload.get("sub") or "").strip()
     if not google_sub:
+        logger.error("Google token has no subject")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Google token has no subject",

@@ -297,28 +297,76 @@ const Auth = () => {
       if (!window.google?.accounts?.id) {
         throw new Error('Google Identity SDK not available');
       }
+      
       const nonce = generateNonce();
-      const credentialResponse = await new Promise((resolve, reject) => {
-        window.google.accounts.id.initialize({
-          client_id: ENV_CONFIG.APP.GOOGLE_CLIENT_ID,
-          nonce,
-          ux_mode: 'popup',
-          callback: (response) => resolve(response),
-        });
-        window.google.accounts.id.prompt((notification) => {
-          if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-            reject(new Error('Google sign-in was cancelled'));
+      
+      // Detect mobile
+      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      
+      // Initialize Google SDK
+      window.google.accounts.id.initialize({
+        client_id: ENV_CONFIG.APP.GOOGLE_CLIENT_ID,
+        nonce,
+        callback: async (response) => {
+          if (response.credential) {
+            try {
+              // Decode the credential to see what we have (for debugging only)
+              const parts = response.credential.split('.');
+              if (parts.length === 3) {
+                try {
+                  const payload = JSON.parse(atob(parts[1]));
+                  console.log('Google ID token payload:', {
+                    email: payload.email,
+                    email_verified: payload.email_verified,
+                    nonce: payload.nonce,
+                    hd: payload.hd,
+                  });
+                } catch (e) {
+                  console.log('Could not decode token payload:', e.message);
+                }
+              }
+              console.log('Google credential received, attempting login with nonce:', nonce);
+              await loginWithGoogle(response.credential, nonce);
+              showSuccess(SUCCESS_MESSAGES.LOGIN_SUCCESS, 3000);
+              navigate(NAVIGATION_ROUTES.AGENTS);
+            } catch (error) {
+              console.error('Google login failed:', error);
+              showError(getAuthErrorMessage(error));
+            }
           }
-        });
+        },
       });
-      const idToken = credentialResponse?.credential;
-      if (!idToken) {
-        throw new Error('Google не вернул id_token');
+      
+      if (isMobile) {
+        // For mobile: use one-tap (more reliable than popup on mobile)
+        window.google.accounts.id.prompt((notification) => {
+          // One-tap UI showed/was dismissed
+        });
+      } else {
+        // For desktop: use renderButton and direct trigger
+        const buttonContainer = document.createElement('div');
+        buttonContainer.id = `gsi_button_${Date.now()}`;
+        buttonContainer.style.display = 'none';
+        document.body.appendChild(buttonContainer);
+        
+        window.google.accounts.id.renderButton(buttonContainer, {
+          theme: 'outline',
+          size: 'large',
+        });
+        
+        // Click the button to open popup
+        const button = buttonContainer.querySelector('div[role="button"]');
+        if (button) {
+          button.click();
+        }
+        
+        // Cleanup after a delay
+        setTimeout(() => {
+          buttonContainer.remove();
+        }, 5000);
       }
-      await loginWithGoogle(idToken, nonce);
-      showSuccess(SUCCESS_MESSAGES.LOGIN_SUCCESS, 3000);
-      navigate(NAVIGATION_ROUTES.AGENTS);
     } catch (error) {
+      console.error('Google sign-in initialization error:', error);
       showError(getAuthErrorMessage(error));
     }
   };

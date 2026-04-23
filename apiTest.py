@@ -16,23 +16,9 @@ API_BASE_URL = "https://rsd-ai.ru"
 URL = f"{API_BASE_URL}/api/agents/external/chat"
 
 
-def main() -> int:
-    message = sys.argv[1] if len(sys.argv) > 1 else "Привет! Подскажи, что ты умеешь."
-    # Chat/user identifier must be initialized by the integrator side
-    # so that the conversation is visible in dashboard analytics.
-    external_user_id = (
-        (sys.argv[2] if len(sys.argv) > 2 else "")
-        or os.getenv("EXTERNAL_USER_ID", "")
-        or "api-test-user-1"
-    )
-
-    payload = {
-        "message": message,
-        "external_user_id": str(external_user_id),
-        "external_user_name": "API Test User",
-    }
+def _send_message(message: str, external_user_id: str, external_user_name: str) -> int:
+    payload = {"message": message, "external_user_id": external_user_id, "external_user_name": external_user_name}
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-
     headers = {
         "Content-Type": "application/json",
         "X-Agent-API-Key": API_KEY,
@@ -79,6 +65,42 @@ def main() -> int:
     except Exception as e:
         print(f"Request failed: {e}")
         return 1
+
+
+def main() -> int:
+    # Chat/user identifier must be initialized by the integrator side
+    # so that the conversation is visible in dashboard analytics.
+    external_user_id = (
+        (sys.argv[2] if len(sys.argv) > 2 else "")
+        or os.getenv("EXTERNAL_USER_ID", "")
+        or "api-test-user-1"
+    )
+    external_user_name = os.getenv("EXTERNAL_USER_NAME", "API Test User")
+
+    # Backward-compatible one-shot mode:
+    #   python apiTest.py "Привет" "chat-1"
+    if len(sys.argv) > 1:
+        return _send_message(sys.argv[1], str(external_user_id), external_user_name)
+
+    print("Интерактивный чат-режим API теста")
+    print(f"external_user_id: {external_user_id}")
+    print("Введите сообщение и нажмите Enter. Для выхода: /exit или /quit")
+    while True:
+        try:
+            message = input("\nВы: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nЗавершение чата.")
+            return 0
+
+        if not message:
+            continue
+        if message.lower() in {"/exit", "/quit"}:
+            print("Чат завершен.")
+            return 0
+
+        status_code = _send_message(message, str(external_user_id), external_user_name)
+        if status_code != 0:
+            print("Запрос завершился с ошибкой. Продолжаем чат, попробуйте еще раз.")
 
 
 if __name__ == "__main__":
