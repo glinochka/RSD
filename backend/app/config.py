@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     YOOKASSA_SECRET_KEY: str = ""
     YOOKASSA_RETURN_URL: str | None = None
     MASTER_BOT_TOKEN: str = ""
+    GOOGLE_OAUTH_CLIENT_ID: str = ""
+    GOOGLE_OAUTH_ALLOWED_HD: str = ""
     MAILOPOST_API_URL: str = "https://api.mailopost.ru/v1"
     MAILOPOST_API_TOKEN: str = ""
     MAILOPOST_FROM_EMAIL: str = ""

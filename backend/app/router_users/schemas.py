@@ -14,6 +14,11 @@ class LoginUser(BaseModel):
     password: str = Field(..., min_length=6, max_length=30, description="Пароль: длина от 6 до 30 символов")
 
 
+class GoogleOAuthLoginRequest(BaseModel):
+    id_token: str = Field(..., min_length=100, max_length=6000, description="Google ID token from GIS")
+    nonce: str = Field(..., min_length=8, max_length=255, description="Client-generated nonce")
+
+
 class RefreshTokenRequest(BaseModel):
     refresh_token: str = Field(..., min_length=32, max_length=1024, description="Refresh token")
 

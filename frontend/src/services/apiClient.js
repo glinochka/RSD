@@ -25,7 +25,10 @@ const REFRESH_RETRY_FLAG = '_retriedWithRefreshedToken';
 const isAuthRequest = (url) =>
   url !== null &&
   url !== undefined &&
-  (url.includes('/login') || url.includes('/registration') || url.includes('/refresh'));
+  (url.includes('/login') ||
+    url.includes('/registration') ||
+    url.includes('/refresh') ||
+    url.includes('/oauth/google'));
 
 class APIClient {
   constructor() {

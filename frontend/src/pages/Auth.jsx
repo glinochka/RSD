@@ -4,7 +4,7 @@
  * Field names and validation match backend (router_users/schemas.py): name, password.
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 /** Message for auth UI: apiClient sets error.message from FastAPI detail (normalized). */
 function getAuthErrorMessage(error) {
@@ -26,6 +26,7 @@ import { useAuth } from '../context/useAuth';
 import { useNotification } from '../context/useNotification';
 import { useForm } from '../hooks/useForm';
 import { NAVIGATION_ROUTES, SUCCESS_MESSAGES, VALIDATION } from '../config/constants';
+import { ENV_CONFIG } from '../config/environment';
 import authService from '../services/authService';
 import { reachYandexGoal, YM_GOALS } from '../utils/yandexMetrika';
 import AgentChatShowcase from '../components/AgentChatShowcase';
@@ -47,9 +48,20 @@ const AUTH_FORM_INITIAL = {
   consentTerms: false,
 };
 
+const GOOGLE_IDENTITY_SCRIPT_URL = 'https://accounts.google.com/gsi/client';
+
+const base64UrlEncode = (bytes) =>
+  btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+
+const generateNonce = () => {
+  const bytes = new Uint8Array(24);
+  window.crypto.getRandomValues(bytes);
+  return base64UrlEncode(bytes);
+};
+
 const Auth = () => {
   const navigate = useNavigate();
-  const { login, register, verifyRegistrationCode } = useAuth();
+  const { login, loginWithGoogle, register, verifyRegistrationCode } = useAuth();
   const { showError, showSuccess } = useNotification();
   const [isLogin, setIsLogin] = useState(true);
   const [isAwaitingEmailCode, setIsAwaitingEmailCode] = useState(false);
@@ -58,6 +70,32 @@ const Auth = () => {
   const [, setResendTick] = useState(0);
   const isRecoveryMode = recoveryStep !== null;
   const isRegister = !isLogin && !isRecoveryMode;
+  const googleScriptPromiseRef = useRef(null);
+
+  const ensureGoogleIdentityScript = useCallback(() => {
+    if (window.google?.accounts?.id) {
+      return Promise.resolve();
+    }
+    if (googleScriptPromiseRef.current) {
+      return googleScriptPromiseRef.current;
+    }
+    googleScriptPromiseRef.current = new Promise((resolve, reject) => {
+      const existing = document.querySelector(`script[src="${GOOGLE_IDENTITY_SCRIPT_URL}"]`);
+      if (existing) {
+        existing.addEventListener('load', () => resolve(), { once: true });
+        existing.addEventListener('error', () => reject(new Error('Failed to load Google Identity SDK')), { once: true });
+        return;
+      }
+      const script = document.createElement('script');
+      script.src = GOOGLE_IDENTITY_SCRIPT_URL;
+      script.async = true;
+      script.defer = true;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error('Failed to load Google Identity SDK'));
+      document.head.appendChild(script);
+    });
+    return googleScriptPromiseRef.current;
+  }, []);
 
   useEffect(() => {
     if (!resendCooldownUntil || resendCooldownUntil <= Date.now()) {
@@ -246,6 +284,45 @@ const Auth = () => {
     }
   };
 
+  const handleGoogleSignIn = async () => {
+    if (isRecoveryMode || isAwaitingEmailCode || form.isSubmitting) {
+      return;
+    }
+    if (!ENV_CONFIG.APP.GOOGLE_CLIENT_ID) {
+      showError('Google OAuth не настроен на клиенте (VITE_GOOGLE_CLIENT_ID)');
+      return;
+    }
+    try {
+      await ensureGoogleIdentityScript();
+      if (!window.google?.accounts?.id) {
+        throw new Error('Google Identity SDK not available');
+      }
+      const nonce = generateNonce();
+      const credentialResponse = await new Promise((resolve, reject) => {
+        window.google.accounts.id.initialize({
+          client_id: ENV_CONFIG.APP.GOOGLE_CLIENT_ID,
+          nonce,
+          ux_mode: 'popup',
+          callback: (response) => resolve(response),
+        });
+        window.google.accounts.id.prompt((notification) => {
+          if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+            reject(new Error('Google sign-in was cancelled'));
+          }
+        });
+      });
+      const idToken = credentialResponse?.credential;
+      if (!idToken) {
+        throw new Error('Google не вернул id_token');
+      }
+      await loginWithGoogle(idToken, nonce);
+      showSuccess(SUCCESS_MESSAGES.LOGIN_SUCCESS, 3000);
+      navigate(NAVIGATION_ROUTES.AGENTS);
+    } catch (error) {
+      showError(getAuthErrorMessage(error));
+    }
+  };
+
   return (
     <div className="auth-page">
       <a className="auth-logo" href={NAVIGATION_ROUTES.HOME}>
@@ -281,7 +358,8 @@ const Auth = () => {
               <button
                 className="google-btn"
                 type="button"
-                disabled={form.isSubmitting}
+                disabled={form.isSubmitting || isRecoveryMode || isAwaitingEmailCode}
+                onClick={handleGoogleSignIn}
               >
                 Авторизация через Google
               </button>

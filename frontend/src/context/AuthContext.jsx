@@ -41,6 +41,17 @@ export const AuthProvider = ({ children }) => {
     [setRefreshToken, setToken, setUser]
   );
 
+  const loginWithGoogle = useCallback(
+    async (idToken, nonce) => {
+      const response = await authService.loginWithGoogleIdToken(idToken, nonce);
+      setToken(response.token);
+      setRefreshToken(response.refreshToken);
+      setUser(response.user);
+      return response;
+    },
+    [setRefreshToken, setToken, setUser]
+  );
+
   const register = useCallback(
     async (email, password) => {
       const response = await authService.register(email, password);
@@ -80,6 +91,7 @@ export const AuthProvider = ({ children }) => {
     isAuthenticated,
     isLoadingAuth,
     login,
+    loginWithGoogle,
     register,
     verifyRegistrationCode,
     logout,

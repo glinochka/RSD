@@ -47,6 +47,14 @@ export const authService = {
     return normalizeAuthResponse(response.data, name.trim());
   },
 
+  loginWithGoogleIdToken: async (idToken, nonce) => {
+    const response = await apiClient.post(API_ROUTES.AUTH_GOOGLE, {
+      id_token: idToken,
+      nonce,
+    });
+    return normalizeAuthResponse(response.data, 'google_user');
+  },
+
   /**
    * Register step 1: sends verification code to email.
    */

@@ -19,6 +19,7 @@ export const HTTP_STATUS = {
 export const API_ROUTES = {
   // Auth (backend: prefix /api/users)
   AUTH_LOGIN: '/api/users/login',
+  AUTH_GOOGLE: '/api/users/oauth/google',
   AUTH_REGISTER: '/api/users/registration',
   AUTH_REGISTER_RESEND_CODE: '/api/users/registration/resend-code',
   AUTH_REGISTER_VERIFY: '/api/users/registration/verify',
