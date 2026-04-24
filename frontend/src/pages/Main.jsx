@@ -125,6 +125,103 @@ const LAUNCH_STEPS = [
   'Запускаете в рабочем канале и отслеживаете метрики качества.',
 ];
 
+const FLOATING_PHRASES = [
+  'Интеграция с CRM',
+  'Запуск за 5 минут',
+  'Быстрое подключение',
+  'Множество каналов',
+  'Единый дашборд',
+  'Без кода',
+  'Telegram и мессенджеры',
+  'База знаний компании',
+  'Автоответы 24/7',
+  'Поддержка и продажи',
+  'Контроль качества',
+  'Гибкие сценарии',
+  'Командная работа',
+  'Быстрый онбординг',
+  'Аналитика диалогов',
+  'Омниканальная поддержка',
+  'AI-ассистент для команды',
+  'Шаблоны ответов',
+  'Сценарии под ваш бизнес',
+  'Автоматизация рутины',
+  'История диалогов',
+  'Прозрачные метрики',
+  'Подключение базы FAQ',
+  'Готовые роли агента',
+  'Контроль тональности',
+  'Экономия времени команды',
+  'Гибкие настройки',
+  'Скорость внедрения',
+  'Подключение без кода',
+  'Точнее ответы',
+  'Масштабирование поддержки',
+  'Подключение WhatsApp',
+  'Подключение Telegram',
+  'Подключение сайта',
+  'Единая база знаний',
+  'Ответы по вашим документам',
+  'Обучение на ваших материалах',
+  'Понятные сценарии диалога',
+  'Быстрый старт команды',
+  'Меньше ручной рутины',
+  'Экономия на первой линии',
+  'Снижение времени ответа',
+  'Быстрая обработка заявок',
+  'Квалификация лидов',
+  'Автоответы клиентам 24/7',
+  'Подсказки для менеджеров',
+  'Стандарты общения',
+  'Единый стиль ответов',
+  'Контроль ошибок в ответах',
+  'Готовые бизнес-шаблоны',
+  'Гибкие роли ассистента',
+  'Удобная панель управления',
+  'Сводка по диалогам',
+  'Отчеты по качеству',
+  'Контроль SLA',
+  'Быстрое внедрение в отдел',
+  'Помощь новым сотрудникам',
+  'Сокращение нагрузки на поддержку',
+  'Запуск без технической команды',
+  'Простая настройка сценариев',
+  'Без долгой интеграции',
+  'Поддержка клиентов в одном окне',
+  'Автоматизация повторяющихся вопросов',
+  'Ускорение продаж в чате',
+  'Поддержка внутренних процессов',
+  'Масштабирование без найма',
+  'Прозрачные результаты внедрения',
+  'Улучшение клиентского опыта',
+  'Быстрое подключение каналов',
+  'Актуальные ответы по базе',
+  'Точки роста в аналитике',
+  'Гибкие правила маршрутизации',
+  'Плавный запуск пилота',
+  'Управление знаниями команды',
+  'Единый входящий поток',
+  'Снижение стоимости обращения',
+  'Контроль контекста ответа',
+  'Быстрый запуск без кода',
+  'Повышение конверсии обращений',
+  'Качественный сервис 24/7',
+  'Подключение по API',
+];
+
+const FLOATING_LANES = [10, 18, 26, 34, 42, 50, 58, 66, 74, 82, 90];
+const FLOATING_SIZES = ['sm', 'md', 'lg'];
+const FLOATING_MIN_DURATION_SECONDS = 28;
+const FLOATING_MAX_DURATION_SECONDS = 34;
+const FLOATING_SPAWN_INTERVAL_MS = 340;
+const FLOATING_INITIAL_BURST_COUNT = 18;
+const FLOATING_MIN_GAP_MS_SAME_LANE = 6000;
+const FLOATING_VERTICAL_JITTER_PX = 3;
+const FLOATING_LANE_DIRECTIONS = FLOATING_LANES.reduce((acc, lane, index) => {
+  acc[lane] = index % 2 === 0 ? 'left' : 'right';
+  return acc;
+}, {});
+
 const FAQ_ITEMS = [
   {
     id: 'faq-1',
@@ -178,12 +275,18 @@ const Main = () => {
   const [activeScenarioId, setActiveScenarioId] = useState(BUSINESS_SCENARIOS[0].id);
   const [openFaqId, setOpenFaqId] = useState(null);
   const [isSubmittingTurnkeyRequest, setIsSubmittingTurnkeyRequest] = useState(false);
+  const [floatingPhrases, setFloatingPhrases] = useState([]);
   const [turnkeyRequestForm, setTurnkeyRequestForm] = useState({
     phoneNumber: '',
     email: '',
     employeeRequest: '',
   });
   const mainContentRef = useRef(null);
+  const floatingPhraseTimeoutsRef = useRef(new Set());
+  const floatingLaneReleaseTimeoutsRef = useRef(new Set());
+  const floatingSpawnTimeoutsRef = useRef(new Set());
+  const floatingLaneLastSpawnRef = useRef(new Map());
+  const floatingLaneOccupiedRef = useRef(new Set());
 
   useEffect(() => {
     const root = mainContentRef.current;
@@ -223,6 +326,76 @@ const Main = () => {
     revealItems.forEach((item) => observer.observe(item));
 
     return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const spawnPhrase = () => {
+      const now = Date.now();
+      const availableLanes = FLOATING_LANES.filter(
+        (laneValue) =>
+          !floatingLaneOccupiedRef.current.has(laneValue) &&
+          now - (floatingLaneLastSpawnRef.current.get(laneValue) || 0) >= FLOATING_MIN_GAP_MS_SAME_LANE
+      );
+      if (!availableLanes.length) return;
+      const lanePool = availableLanes;
+      const lane = lanePool[Math.floor(Math.random() * lanePool.length)];
+      const text = FLOATING_PHRASES[Math.floor(Math.random() * FLOATING_PHRASES.length)];
+      const direction = FLOATING_LANE_DIRECTIONS[lane] || 'left';
+      const size = FLOATING_SIZES[Math.floor(Math.random() * FLOATING_SIZES.length)];
+      const yOffset = Math.round((Math.random() * 2 - 1) * FLOATING_VERTICAL_JITTER_PX);
+      const durationRange = FLOATING_MAX_DURATION_SECONDS - FLOATING_MIN_DURATION_SECONDS;
+      const duration = FLOATING_MIN_DURATION_SECONDS + Math.random() * durationRange;
+      const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      floatingLaneLastSpawnRef.current.set(lane, now);
+      floatingLaneOccupiedRef.current.add(lane);
+
+      setFloatingPhrases((prev) => [
+        ...prev,
+        {
+          id,
+          text,
+          lane,
+          direction,
+          size,
+          yOffset,
+          duration,
+        },
+      ]);
+
+      const laneReleaseTimeoutId = window.setTimeout(() => {
+        floatingLaneOccupiedRef.current.delete(lane);
+        floatingLaneReleaseTimeoutsRef.current.delete(laneReleaseTimeoutId);
+      }, (duration * 1000) / 2);
+      floatingLaneReleaseTimeoutsRef.current.add(laneReleaseTimeoutId);
+
+      const timeoutId = window.setTimeout(() => {
+        setFloatingPhrases((prev) => prev.filter((phrase) => phrase.id !== id));
+        floatingLaneOccupiedRef.current.delete(lane);
+        floatingPhraseTimeoutsRef.current.delete(timeoutId);
+      }, (duration + 0.4) * 1000);
+      floatingPhraseTimeoutsRef.current.add(timeoutId);
+    };
+
+    for (let i = 0; i < FLOATING_INITIAL_BURST_COUNT; i += 1) {
+      const startupTimeoutId = window.setTimeout(() => {
+        spawnPhrase();
+        floatingSpawnTimeoutsRef.current.delete(startupTimeoutId);
+      }, i * 120);
+      floatingSpawnTimeoutsRef.current.add(startupTimeoutId);
+    }
+    const intervalId = window.setInterval(spawnPhrase, FLOATING_SPAWN_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(intervalId);
+      floatingSpawnTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
+      floatingSpawnTimeoutsRef.current.clear();
+      floatingLaneReleaseTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
+      floatingLaneReleaseTimeoutsRef.current.clear();
+      floatingPhraseTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
+      floatingPhraseTimeoutsRef.current.clear();
+      floatingLaneLastSpawnRef.current.clear();
+      floatingLaneOccupiedRef.current.clear();
+    };
   }, []);
 
   const handleCreateAgent = () => {
@@ -334,6 +507,23 @@ const Main = () => {
                 </article>
               );
             })}
+          </div>
+        </section>
+
+        <section className="why-rsd-section reveal-on-scroll reveal-from-bottom" aria-labelledby="why-rsd-heading">
+          <h2 id="why-rsd-heading" className="section-title reveal-on-scroll reveal-from-bottom">
+            Почему RSD AI?
+          </h2>
+          <div className="floating-phrases-shell reveal-on-scroll reveal-from-bottom reveal-delay-1" aria-hidden="true">
+            {floatingPhrases.map((phrase) => (
+              <span
+                key={phrase.id}
+                className={`floating-phrase floating-phrase--${phrase.direction} floating-phrase--${phrase.size}`}
+                style={{ top: `calc(${phrase.lane}% + ${phrase.yOffset}px)`, animationDuration: `${phrase.duration}s` }}
+              >
+                {phrase.text}
+              </span>
+            ))}
           </div>
         </section>
 
