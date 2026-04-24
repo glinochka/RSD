@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from unittest.mock import patch, AsyncMock
 
 import pytest
 
@@ -120,7 +121,7 @@ async def test_sales_runtime_skip_low_confidence(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_sales_runtime_function_call_schedule_dm(monkeypatch):
+async def test_sales_runtime_function_call_schedule_dm(monkeypatch, mock_db_session):
     service = TemplateRuntimeService()
     calls = {"n": 0}
 

@@ -29,7 +29,7 @@ async def test_sales_manager_template_config_normalization():
 
 
 @pytest.mark.asyncio
-async def test_dm_queue_service_enqueue_and_retrieve():
+async def test_dm_queue_service_enqueue_and_retrieve(mock_db_session):
     """Test enqueueing and retrieving messages from DM queue."""
     service = DmQueueService()
     
@@ -53,7 +53,7 @@ async def test_dm_queue_service_enqueue_and_retrieve():
 
 
 @pytest.mark.asyncio
-async def test_dm_queue_service_mark_sent():
+async def test_dm_queue_service_mark_sent(mock_db_session):
     """Test marking a message as sent."""
     service = DmQueueService()
     
@@ -73,7 +73,7 @@ async def test_dm_queue_service_mark_sent():
 
 
 @pytest.mark.asyncio
-async def test_dm_queue_service_mark_failed_with_retry():
+async def test_dm_queue_service_mark_failed_with_retry(mock_db_session):
     """Test marking a message as failed with retry."""
     service = DmQueueService()
     
@@ -99,7 +99,7 @@ async def test_dm_queue_service_mark_failed_with_retry():
 
 
 @pytest.mark.asyncio
-async def test_sales_fsm_transitions():
+async def test_sales_fsm_transitions(mock_db_session):
     """Test FSM transitions for sales contacts."""
     service = SalesFSMService()
     
@@ -137,7 +137,7 @@ async def test_sales_fsm_transitions():
 
 
 @pytest.mark.asyncio
-async def test_sales_fsm_illegal_transition():
+async def test_sales_fsm_illegal_transition(mock_db_session):
     """Test that illegal FSM transitions are prevented."""
     service = SalesFSMService()
     
@@ -193,7 +193,7 @@ async def test_sales_tool_registry_execute_schedule_dm():
     args = json.dumps({
         "text": "Check out our new product!",
         "target_user_external_id": "123456789",
-        "source_chat_id": "-100chat123",
+        "source_chat_id": -100123456789,
     })
     
     result = await registry.execute_tool("schedule_dm", args)

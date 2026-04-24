@@ -324,3 +324,23 @@ def mock_httpx_client():
         mock_client.post = AsyncMock()
         mock_client_class.return_value = mock_client
         yield mock_client
+
+
+@pytest_asyncio.fixture(scope="function")
+async def mock_db_session(test_session):
+    """
+    Fixtures that provides mocked async_session_maker for database services.
+    This allows tests to use DmQueueService, SalesFSMService, etc. without connecting to PostgreSQL.
+    """
+    async def mock_async_session_maker():
+        class MockAsyncContextManager:
+            async def __aenter__(self):
+                return test_session
+            
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                pass
+        
+        return MockAsyncContextManager()
+    
+    with patch('app.alembic.database.async_session_maker', mock_async_session_maker):
+        yield test_session

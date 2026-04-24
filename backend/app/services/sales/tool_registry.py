@@ -232,7 +232,7 @@ class SalesToolRegistry:
             "ok": True,
             "tool_name": tool_name,
             "tool_args_hash": tool_args_hash,
-            "tool_status": "success",
+            "tool_status": status,
             "latency_ms": latency_ms,
             "idempotency_key": idempotency_key,
             "result": result,
