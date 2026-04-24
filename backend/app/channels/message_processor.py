@@ -140,6 +140,15 @@ class MessageProcessor:
                 channel=request.channel.value,
                 telegram_peer_access_hash=request.telegram_peer_access_hash,
             )
+            template_config = self._parse_template_config(resolved_agent.template_config)
+            chat_portrait = await get_template_runtime().update_chat_portrait(
+                agent_id=resolved_agent.id,
+                user_external_id=normalized_user_external_id,
+                source_channel=request.channel.value,
+                user_message=request.query,
+                base_prompt=request.system_prompt or (resolved_agent.system_prompt or ""),
+                template_config=template_config,
+            )
 
             execution = await get_template_runtime().execute(
                 template_type=resolved_agent.template_type,
@@ -148,8 +157,9 @@ class MessageProcessor:
                 knowledge_scope_id=resolved_agent.bot_id or resolved_agent.id,
                 agent_id=resolved_agent.id,
                 user_external_id=normalized_user_external_id,
-                template_config=self._parse_template_config(resolved_agent.template_config),
+                template_config=template_config,
                 source_channel=request.channel.value,
+                chat_portrait=chat_portrait,
             )
             answer = execution.answer
 
@@ -185,7 +195,7 @@ class MessageProcessor:
                     tool_status="fallback",
                     latency_ms=0,
                     crm_provider=(
-                        (self._parse_template_config(resolved_agent.template_config) or {}).get("crm_provider")
+                        (template_config or {}).get("crm_provider")
                     ),
                 )
 

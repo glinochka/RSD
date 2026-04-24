@@ -20,6 +20,7 @@ from .sales.fsm import SalesFSMError, get_sales_fsm_service
 from ..qdrant.search_service import search_knowledge_base
 
 logger = logging.getLogger(__name__)
+MAX_CHAT_PORTRAIT_CHARS = 2000
 
 
 @dataclass
@@ -50,6 +51,7 @@ class TemplateRuntimeService:
         user_external_id: str | None = None,
         template_config: dict[str, Any] | None = None,
         source_channel: str | None = None,
+        chat_portrait: str | None = None,
     ) -> TemplateExecutionResult:
         normalized = (template_type or "qa").strip().lower()
         if normalized == "function_calling":
@@ -62,6 +64,7 @@ class TemplateRuntimeService:
                 user_external_id=user_external_id,
                 template_config=template_config or {},
                 source_channel=source_channel or "telegram",
+                chat_portrait=chat_portrait,
             )
             if crm_result is not None:
                 return crm_result
@@ -70,6 +73,7 @@ class TemplateRuntimeService:
                 prompt=prompt,
                 user_message=user_message,
                 knowledge_scope_id=knowledge_scope_id,
+                chat_portrait=chat_portrait,
             )
             qa_result.fallback_to_text = True
             qa_result.fallback_reason = "crm_runtime_unavailable"
@@ -84,6 +88,7 @@ class TemplateRuntimeService:
                 source_channel=source_channel or "telegram",
                 user_external_id=user_external_id,
                 agent_id=agent_id,
+                chat_portrait=chat_portrait,
             )
 
         if normalized in {"qa", "lead_generation", "content_factory"}:
@@ -91,6 +96,7 @@ class TemplateRuntimeService:
                 prompt=prompt,
                 user_message=user_message,
                 knowledge_scope_id=knowledge_scope_id,
+                chat_portrait=chat_portrait,
             )
 
         # Unknown template types should not break runtime.
@@ -99,7 +105,144 @@ class TemplateRuntimeService:
             prompt=prompt,
             user_message=user_message,
             knowledge_scope_id=knowledge_scope_id,
+            chat_portrait=chat_portrait,
         )
+
+    @staticmethod
+    def _format_portrait_block(chat_portrait: str | None) -> str:
+        portrait = (chat_portrait or "").strip()
+        if not portrait:
+            return ""
+        return f"Портрет текущего клиента/чата:\n{portrait}"
+
+    async def update_chat_portrait(
+        self,
+        *,
+        agent_id: int | None,
+        user_external_id: str | None,
+        source_channel: str | None,
+        user_message: str,
+        base_prompt: str,
+        template_config: dict[str, Any] | None = None,
+    ) -> str:
+        if not agent_id or not user_external_id or not source_channel:
+            return ""
+        text = (user_message or "").strip()
+        if not text:
+            return await self._load_chat_portrait(
+                agent_id=agent_id,
+                user_external_id=user_external_id,
+                source_channel=source_channel,
+            )
+
+        previous = await self._load_chat_portrait(
+            agent_id=agent_id,
+            user_external_id=user_external_id,
+            source_channel=source_channel,
+        )
+        cfg = template_config or {}
+        model = str(
+            cfg.get("portrait_model") or cfg.get("generation_model") or "deepseek-chat"
+        ).strip() or "deepseek-chat"
+        system_prompt = (
+            "Ты модуль памяти клиента. Обнови портрет клиента/чата на основе нового сообщения. "
+            "Портрет должен быть кратким, фактическим и полезным для будущих ответов ассистента. "
+            "Включай: цели, интересы, ограничения, предпочтительный стиль общения, важные факты и текущий контекст. "
+            "Не выдумывай данные, не добавляй markdown, верни только итоговый портрет."
+        )
+        if (base_prompt or "").strip():
+            system_prompt = f"{base_prompt.strip()}\n\n{system_prompt}"
+        user_prompt = (
+            f"Текущий портрет:\n{previous or 'Портрет пока отсутствует.'}\n\n"
+            f"Новое сообщение клиента:\n{text}\n\n"
+            "Верни обновлённый портрет (до 2000 символов)."
+        )
+        try:
+            completion = await ai_client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.1,
+            )
+            updated = (completion.choices[0].message.content or "").replace("#", "").replace("*", "").strip()
+            if not updated:
+                return previous
+            updated = updated[:MAX_CHAT_PORTRAIT_CHARS]
+            if updated != previous:
+                await self._save_chat_portrait(
+                    agent_id=agent_id,
+                    user_external_id=user_external_id,
+                    source_channel=source_channel,
+                    portrait=updated,
+                )
+            return updated
+        except Exception:
+            logger.exception("Failed to update chat portrait for agent_id=%s", agent_id)
+            return previous
+
+    async def _load_chat_portrait(
+        self,
+        *,
+        agent_id: int,
+        user_external_id: str,
+        source_channel: str,
+    ) -> str:
+        uid = (user_external_id or "").strip()
+        channel = (source_channel or "").strip().lower()
+        if not uid or not channel:
+            return ""
+        async with async_session_maker() as session:
+            async with session.begin():
+                row = (
+                    (
+                        await session.execute(
+                            select(AgentAnalyticsMessage.message_text)
+                            .where(
+                                AgentAnalyticsMessage.agent_id == agent_id,
+                                AgentAnalyticsMessage.user_external_id == uid,
+                                AgentAnalyticsMessage.channel == channel,
+                                AgentAnalyticsMessage.role == "portrait",
+                            )
+                            .order_by(AgentAnalyticsMessage.created_at.desc())
+                            .limit(1)
+                        )
+                    )
+                    .mappings()
+                    .first()
+                )
+        if not row:
+            return ""
+        return str(row.get("message_text") or "").strip()[:MAX_CHAT_PORTRAIT_CHARS]
+
+    async def _save_chat_portrait(
+        self,
+        *,
+        agent_id: int,
+        user_external_id: str,
+        source_channel: str,
+        portrait: str,
+    ) -> None:
+        async with async_session_maker() as session:
+            async with session.begin():
+                session.add(
+                    AgentAnalyticsMessage(
+                        agent_id=agent_id,
+                        bot_id=agent_id,
+                        role="portrait",
+                        channel=(source_channel or "").strip().lower(),
+                        user_external_id=(user_external_id or "").strip(),
+                        user_display_name=None,
+                        telegram_peer_access_hash=None,
+                        tool_name="chat_portrait_update",
+                        tool_args_hash=None,
+                        tool_status="success",
+                        latency_ms=0,
+                        crm_provider=None,
+                        message_text=(portrait or "").strip()[:MAX_CHAT_PORTRAIT_CHARS],
+                    )
+                )
 
     async def _execute_crm_admin(
         self,
@@ -110,6 +253,7 @@ class TemplateRuntimeService:
         user_external_id: str | None,
         template_config: dict[str, Any],
         source_channel: str,
+        chat_portrait: str | None = None,
     ) -> TemplateExecutionResult | None:
         if not agent_id:
             return None
@@ -156,12 +300,15 @@ class TemplateRuntimeService:
             source_channel=source_channel,
         )
 
+        portrait_block = self._format_portrait_block(chat_portrait)
         system_prompt = (
             f"{prompt}\n\n"
             "Ты CRM-администратор. Если нужно действие в CRM — используй function tools. "
             "Не выдумывай результаты CRM операций: опирайся только на ответы tools. "
             "Отвечай только чистым текстом, без markdown."
         ).strip()
+        if portrait_block:
+            system_prompt = f"{system_prompt}\n\n{portrait_block}"
 
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
@@ -329,10 +476,15 @@ class TemplateRuntimeService:
         prompt: str,
         user_message: str,
         knowledge_scope_id: int,
+        chat_portrait: str | None = None,
     ) -> TemplateExecutionResult:
         context = await search_knowledge_base(user_message, agent_id=knowledge_scope_id)
         context_list = context if isinstance(context, list) else []
-        answer = await generate_answer_with_context(user_message, context_list, prompt)
+        portrait_block = self._format_portrait_block(chat_portrait)
+        effective_prompt = prompt.strip()
+        if portrait_block:
+            effective_prompt = f"{effective_prompt}\n\n{portrait_block}" if effective_prompt else portrait_block
+        answer = await generate_answer_with_context(user_message, context_list, effective_prompt)
 
         sources: list[str] = []
         for item in context_list:
@@ -354,6 +506,7 @@ class TemplateRuntimeService:
         source_channel: str,
         user_external_id: str | None,
         agent_id: int | None = None,
+        chat_portrait: str | None = None,
     ) -> TemplateExecutionResult:
         contact_key = self._resolve_sales_contact_key(template_config=template_config)
         if agent_id and user_external_id:
@@ -366,6 +519,7 @@ class TemplateRuntimeService:
             prompt=prompt,
             user_message=user_message,
             template_config=template_config,
+            chat_portrait=chat_portrait,
         )
         intent = qualification.get("intent", "unsure")
         confidence = float(qualification.get("confidence") or 0.0)
@@ -390,11 +544,13 @@ class TemplateRuntimeService:
                 user_external_id=user_external_id,
             )
         if confidence < min_confidence:
-            if self._is_userbot_channel(source_channel):
+            low_confidence_fallback_to_qa = bool(template_config.get("low_confidence_fallback_to_qa"))
+            if self._is_userbot_channel(source_channel) and low_confidence_fallback_to_qa:
                 qa_result = await self._execute_qa_like(
                     prompt=prompt,
                     user_message=user_message,
                     knowledge_scope_id=knowledge_scope_id,
+                    chat_portrait=chat_portrait,
                 )
                 qa_result.fallback_to_text = True
                 qa_result.fallback_reason = "sales_low_confidence_fallback"
@@ -436,6 +592,7 @@ class TemplateRuntimeService:
             qualification=qualification,
             context_list=context_list,
             template_config=template_config,
+            chat_portrait=chat_portrait,
         )
         tool_driven = await self._execute_sales_tools(
             prompt=prompt,
@@ -447,6 +604,7 @@ class TemplateRuntimeService:
             user_external_id=user_external_id,
             agent_id=agent_id,
             sources=sources,
+            chat_portrait=chat_portrait,
         )
         if tool_driven is not None:
             if agent_id and user_external_id and tool_driven.tool_events:
@@ -486,6 +644,7 @@ class TemplateRuntimeService:
         user_external_id: str | None,
         agent_id: int | None,
         sources: list[str],
+        chat_portrait: str | None = None,
     ) -> TemplateExecutionResult | None:
         allowed_tools_raw = template_config.get("allowed_tools")
         allowed_tools = allowed_tools_raw if isinstance(allowed_tools_raw, list) else None
@@ -504,12 +663,15 @@ class TemplateRuntimeService:
             return None
 
         generation_model = str(template_config.get("generation_model") or "deepseek-chat").strip() or "deepseek-chat"
+        portrait_block = self._format_portrait_block(chat_portrait)
         system_prompt = (
             f"{prompt}\n\n"
             "Ты управляешь действиями sales-агента через function tools. "
             "Не пиши свободный ответ вместо действия, выбери tool call. "
             "Если лид нецелевой — используй skip_lead."
         )
+        if portrait_block:
+            system_prompt = f"{system_prompt}\n\n{portrait_block}"
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
             {
@@ -633,8 +795,10 @@ class TemplateRuntimeService:
         prompt: str,
         user_message: str,
         template_config: dict[str, Any],
+        chat_portrait: str | None = None,
     ) -> dict[str, Any]:
         model = str(template_config.get("qualification_model") or "deepseek-chat").strip() or "deepseek-chat"
+        portrait_block = self._format_portrait_block(chat_portrait)
         instruction = (
             f"{prompt}\n\n"
             "Ты классификатор для sales outreach. Верни только JSON объект с полями: "
@@ -642,6 +806,8 @@ class TemplateRuntimeService:
             "intent строго один из: target_hot, target_warm, non_target, do_not_contact, unsure. "
             "confidence от 0 до 1."
         )
+        if portrait_block:
+            instruction = f"{instruction}\n\n{portrait_block}"
         completion = await ai_client.chat.completions.create(
             model=model,
             messages=[
@@ -694,6 +860,7 @@ class TemplateRuntimeService:
         qualification: dict[str, Any],
         context_list: list[dict[str, Any]],
         template_config: dict[str, Any],
+        chat_portrait: str | None = None,
     ) -> str:
         model = str(template_config.get("generation_model") or "deepseek-chat").strip() or "deepseek-chat"
         context_parts = [
@@ -701,12 +868,15 @@ class TemplateRuntimeService:
             for c in context_list
         ]
         context_text = "\n\n---\n\n".join(context_parts) if context_parts else "Контекст не найден."
+        portrait_block = self._format_portrait_block(chat_portrait)
         system_prompt = (
             f"{prompt}\n\n"
             "Ты пишешь короткое и уместное первое сообщение в личку от менеджера продаж. "
             "Тон: уважительный, без давления, без спама. "
             "Верни только чистый текст, без markdown."
         )
+        if portrait_block:
+            system_prompt = f"{system_prompt}\n\n{portrait_block}"
         user_prompt = (
             f"Исходное сообщение в чате:\n{user_message}\n\n"
             f"Классификация:\n{json.dumps(qualification, ensure_ascii=False)}\n\n"
