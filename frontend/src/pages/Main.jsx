@@ -286,7 +286,7 @@ const Main = () => {
         <section className="hero" aria-labelledby="hero-heading">
           <div className="hero-content reveal-on-scroll reveal-from-left">
             <h1 id="hero-heading">
-              Создайте персонального ИИ-агента за <span className="hero-accent">5 минут</span>!
+              Создайте персонального ИИ‑агента за <span className="hero-accent">5 минут</span>!
             </h1>
             <p className="description">
               RSD — no-code платформа для ИИ-агентов под поддержку, продажи и внутренние процессы. Соберите сценарий без
