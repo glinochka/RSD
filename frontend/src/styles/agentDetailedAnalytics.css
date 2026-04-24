@@ -333,6 +333,26 @@
   background: rgba(255, 255, 255, 0.85);
 }
 
+.analytics-portrait-panel {
+  padding: var(--spacing-base) var(--spacing-lg);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.analytics-portrait-panel h5 {
+  margin: 0 0 var(--spacing-sm);
+  font-size: var(--font-size-base);
+  color: var(--color-text);
+}
+
+.analytics-portrait-panel p {
+  margin: 0;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  color: var(--color-text);
+}
+
 .analytics-chat-composer-hint {
   margin: 0 0 var(--spacing-sm);
   font-size: var(--font-size-xs);

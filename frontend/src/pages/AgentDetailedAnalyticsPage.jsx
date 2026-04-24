@@ -15,6 +15,11 @@ const ANALYTICS_SECTIONS = {
 
 const BROADCAST_LIMIT_OPTIONS = [100, 250, 500, 1000, 2000, 5000];
 const CHART_PERIODS = [7, 30, 90];
+const isPortraitFeatureEnabled = (agent) => {
+  const cfg = agent?.template_config;
+  if (!cfg || typeof cfg !== 'object') return true;
+  return cfg.enable_chat_portrait !== false;
+};
 
 const formatNumber = (value) => {
   if (typeof value !== 'number' || Number.isNaN(value)) return '0';
@@ -324,6 +329,7 @@ const AgentDetailedAnalyticsPageContent = () => {
   const [ownerReplyText, setOwnerReplyText] = useState('');
   const [isSendingOwnerReply, setIsSendingOwnerReply] = useState(false);
   const [isTogglingFreeze, setIsTogglingFreeze] = useState(false);
+  const [chatViewMode, setChatViewMode] = useState('chat');
   const [broadcastStats, setBroadcastStats] = useState(null);
   const [broadcastStatsLoading, setBroadcastStatsLoading] = useState(false);
   const [broadcastBody, setBroadcastBody] = useState('');
@@ -473,6 +479,10 @@ const AgentDetailedAnalyticsPageContent = () => {
     setOwnerReplyText('');
   }, [selectedUserId]);
 
+  useEffect(() => {
+    setChatViewMode('chat');
+  }, [selectedUserId]);
+
   const refreshChats = async () => {
     const chats = await agentService.getAnalyticsChats(botId, {
       limit_users: 100,
@@ -503,15 +513,9 @@ const AgentDetailedAnalyticsPageContent = () => {
     }
   };
 
-  const handleShowPortrait = () => {
-    if (!selectedUser) return;
-    const portrait = String(selectedUser.chatPortrait || '').trim();
-    if (!portrait) {
-      showError('Портрет для этого чата пока не сформирован');
-      return;
-    }
-    window.alert(portrait);
-  };
+  const portraitFeatureEnabled = isPortraitFeatureEnabled(agent);
+  const selectedPortrait = String(selectedUser?.chatPortrait || '').trim();
+  const canShowPortrait = portraitFeatureEnabled && Boolean(selectedPortrait);
 
   const handleSendOwnerMessage = async () => {
     if (!selectedUser) return;
@@ -780,13 +784,15 @@ const AgentDetailedAnalyticsPageContent = () => {
                           </p>
                         </div>
                         <div className="analytics-chat-thread-header-actions">
-                          <button
-                            type="button"
-                            className="btn btn-outline analytics-portrait-btn"
-                            onClick={handleShowPortrait}
-                          >
-                            Портрет
-                          </button>
+                          {portraitFeatureEnabled ? (
+                            <button
+                              type="button"
+                              className="btn btn-outline analytics-portrait-btn"
+                              onClick={() => setChatViewMode((prev) => (prev === 'chat' ? 'portrait' : 'chat'))}
+                            >
+                              {chatViewMode === 'chat' ? 'Портрет' : 'Чат'}
+                            </button>
+                          ) : null}
                           <button
                             type="button"
                             className={`btn btn-outline analytics-freeze-btn ${selectedUser.isFrozen ? 'analytics-freeze-btn--active' : ''}`}
@@ -801,27 +807,42 @@ const AgentDetailedAnalyticsPageContent = () => {
                           </button>
                         </div>
                       </header>
-                      <div className="analytics-messages-list">
-                        {selectedUser.messages.map((message) => {
-                          const bubbleRole = message.role === 'operator' ? 'operator' : message.role;
-                          const roleLabel =
-                            message.role === 'user'
-                              ? selectedUser.name
-                              : message.role === 'operator'
-                                ? 'Вы (владелец)'
-                                : 'Агент';
-                          return (
-                            <div
-                              key={message.id}
-                              className={`analytics-message-bubble analytics-message-bubble--${bubbleRole}`}
-                            >
-                              <span className="analytics-message-role">{roleLabel}</span>
-                              <p>{message.text}</p>
-                              <time>{message.timestamp}</time>
-                            </div>
-                          );
-                        })}
-                      </div>
+                      {chatViewMode === 'portrait' && portraitFeatureEnabled ? (
+                        <div className="analytics-portrait-panel">
+                          {canShowPortrait ? (
+                            <>
+                              <h5>Портрет клиента/чата</h5>
+                              <p>{selectedPortrait}</p>
+                            </>
+                          ) : (
+                            <p className="analytics-chat-empty">
+                              Портрет для этого чата пока не сформирован
+                            </p>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="analytics-messages-list">
+                          {selectedUser.messages.map((message) => {
+                            const bubbleRole = message.role === 'operator' ? 'operator' : message.role;
+                            const roleLabel =
+                              message.role === 'user'
+                                ? selectedUser.name
+                                : message.role === 'operator'
+                                  ? 'Вы (владелец)'
+                                  : 'Агент';
+                            return (
+                              <div
+                                key={message.id}
+                                className={`analytics-message-bubble analytics-message-bubble--${bubbleRole}`}
+                              >
+                                <span className="analytics-message-role">{roleLabel}</span>
+                                <p>{message.text}</p>
+                                <time>{message.timestamp}</time>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                       <div className="analytics-chat-composer">
                         <p className="analytics-chat-composer-hint">
                           {canSendOwnerToUser

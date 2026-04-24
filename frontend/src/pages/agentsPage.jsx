@@ -20,6 +20,11 @@ const AGENTS_EMPTY_MESSAGE = 'У вас еще нет агентов, созда
 const AGENTS_EMPTY_CTA = 'Создайте прямо сейчас';
 const fileIdentity = (file) => `${file.name}::${file.size}::${file.lastModified}`;
 const linkIdentity = (link) => link.trim().toLowerCase();
+const isPortraitFeatureEnabled = (agent) => {
+  const cfg = agent?.template_config;
+  if (!cfg || typeof cfg !== 'object') return true;
+  return cfg.enable_chat_portrait !== false;
+};
 const channelLabel = (channel) => {
   if (!channel) return 'Канал';
   if (channel.provider === 'telegram_bot') return 'Telegram бот';
@@ -112,6 +117,7 @@ const AgentsPageContent = () => {
   const [isLoadingDetails, setIsLoadingDetails] = useState(false);
   const [isSavingPrompt, setIsSavingPrompt] = useState(false);
   const [isSavingWelcome, setIsSavingWelcome] = useState(false);
+  const [isSavingPortraitFeature, setIsSavingPortraitFeature] = useState(false);
   const [isGeneratingPrompt, setIsGeneratingPrompt] = useState(false);
   const [isGeneratingWelcome, setIsGeneratingWelcome] = useState(false);
   const [isUploadingDocs, setIsUploadingDocs] = useState(false);
@@ -320,6 +326,38 @@ const AgentsPageContent = () => {
       showError(error?.message || 'Ошибка при генерации приветствия через ИИ');
     } finally {
       setIsGeneratingWelcome(false);
+    }
+  };
+
+  const handleTogglePortraitFeature = async (enabled) => {
+    if (!selectedBotId || !selectedAgent) return;
+    const currentConfig =
+      selectedAgent.template_config && typeof selectedAgent.template_config === 'object'
+        ? selectedAgent.template_config
+        : {};
+    const nextConfig = {
+      ...currentConfig,
+      enable_chat_portrait: Boolean(enabled),
+    };
+    setIsSavingPortraitFeature(true);
+    try {
+      await agentService.update(selectedBotId, {
+        template_config: nextConfig,
+      });
+      setSelectedAgent((prev) =>
+        prev
+          ? {
+              ...prev,
+              template_config: nextConfig,
+            }
+          : prev
+      );
+      showSuccess(enabled ? 'Функция портрета включена' : 'Функция портрета отключена');
+      await refreshAgents();
+    } catch (error) {
+      showError(error?.message || 'Не удалось обновить настройку портрета');
+    } finally {
+      setIsSavingPortraitFeature(false);
     }
   };
 
@@ -953,6 +991,18 @@ const AgentsPageContent = () => {
                         ))}
                       </div>
                     )}
+                  </div>
+
+                  <div className="agent-management-block">
+                    <label className="channel-primary-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={isPortraitFeatureEnabled(selectedAgent)}
+                        onChange={(event) => handleTogglePortraitFeature(event.target.checked)}
+                        disabled={isSavingPortraitFeature}
+                      />
+                      Включить функцию «Портрет чата»
+                    </label>
                   </div>
 
                   <div className="agent-management-block">

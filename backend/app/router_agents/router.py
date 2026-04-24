@@ -141,6 +141,14 @@ def _normalize_template_config(template_type: str, template_config: dict | None)
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="template_config must be a JSON object",
         )
+    common_config: dict[str, object] = {}
+    if "enable_chat_portrait" in raw:
+        common_config["enable_chat_portrait"] = bool(raw.get("enable_chat_portrait"))
+    if "portrait_model" in raw:
+        portrait_model = str(raw.get("portrait_model") or "").strip()
+        if portrait_model:
+            common_config["portrait_model"] = portrait_model
+
     if template_type == "sales_manager":
         mode = str(raw.get("mode") or SALES_DEFAULT_CONFIG["mode"]).strip().lower()
         if mode not in SALES_MODES:
@@ -335,11 +343,12 @@ def _normalize_template_config(template_type: str, template_config: dict | None)
             "offer_profile_id": offer_profile_id,
             "confirmation_policy": confirmation_policy,
             "allowed_tools": allowed_tools,
+            **common_config,
         }
         return json.dumps(normalized_config, ensure_ascii=False)
 
     if template_type != "crm_admin":
-        return None
+        return json.dumps(common_config, ensure_ascii=False) if common_config else None
 
     crm_provider = str(raw.get("crm_provider") or "amocrm").strip().lower()
     if crm_provider not in CRM_PROVIDERS:
@@ -401,6 +410,7 @@ def _normalize_template_config(template_type: str, template_config: dict | None)
         "confirmation_policy": confirmation_policy,
         "fallback_mode": fallback_mode,
         "field_mapping": field_mapping,
+        **common_config,
     }
     return json.dumps(normalized_config, ensure_ascii=False)
 
