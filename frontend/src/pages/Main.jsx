@@ -6,9 +6,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
+import { useNotification } from '../context/useNotification';
 import MainLayout from '../components/Layout';
 import AgentChatShowcase from '../components/AgentChatShowcase';
-import { NAVIGATION_ROUTES } from '../config/constants';
+import { NAVIGATION_ROUTES, VALIDATION } from '../config/constants';
+import pricingService from '../services/pricingService';
 import '../styles/main.css';
 
 const VALUE_HIGHLIGHTS = [
@@ -171,9 +173,16 @@ const getInitials = (name) => {
 const Main = () => {
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
+  const { showError, showSuccess } = useNotification();
   const [activeTestimonialIndex, setActiveTestimonialIndex] = useState(0);
   const [activeScenarioId, setActiveScenarioId] = useState(BUSINESS_SCENARIOS[0].id);
   const [openFaqId, setOpenFaqId] = useState(null);
+  const [isSubmittingTurnkeyRequest, setIsSubmittingTurnkeyRequest] = useState(false);
+  const [turnkeyRequestForm, setTurnkeyRequestForm] = useState({
+    phoneNumber: '',
+    email: '',
+    employeeRequest: '',
+  });
   const mainContentRef = useRef(null);
 
   useEffect(() => {
@@ -229,6 +238,44 @@ const Main = () => {
     setActiveTestimonialIndex((prev) => (prev + 1) % TESTIMONIALS.length);
   const handlePrevTestimonial = () =>
     setActiveTestimonialIndex((prev) => (prev - 1 + TESTIMONIALS.length) % TESTIMONIALS.length);
+  const handleSubmitTurnkeyRequest = async (event) => {
+    event.preventDefault();
+    if (isSubmittingTurnkeyRequest) return;
+
+    const phoneNumber = turnkeyRequestForm.phoneNumber.trim();
+    const email = turnkeyRequestForm.email.trim();
+    const employeeRequest = turnkeyRequestForm.employeeRequest.trim();
+
+    if (!phoneNumber || !email || !employeeRequest) {
+      showError('Заполните все поля заявки.');
+      return;
+    }
+
+    if (!VALIDATION.EMAIL_PATTERN.test(email)) {
+      showError('Введите корректный email.');
+      return;
+    }
+
+    try {
+      setIsSubmittingTurnkeyRequest(true);
+      await pricingService.createTurnkeyRequest({
+        phone_number: phoneNumber,
+        email,
+        requested_agent: employeeRequest,
+        purpose: employeeRequest,
+      });
+      setTurnkeyRequestForm({
+        phoneNumber: '',
+        email: '',
+        employeeRequest: '',
+      });
+      showSuccess('Заявка успешно создана, мы скоро свяжемся с вами.');
+    } catch (error) {
+      showError(error?.response?.data?.detail || error?.message || 'Не удалось отправить заявку.');
+    } finally {
+      setIsSubmittingTurnkeyRequest(false);
+    }
+  };
 
   const activeTestimonial = TESTIMONIALS[activeTestimonialIndex];
   const activeScenario = BUSINESS_SCENARIOS.find((scenario) => scenario.id === activeScenarioId) ?? BUSINESS_SCENARIOS[0];
@@ -238,9 +285,9 @@ const Main = () => {
       <div className="main-content" ref={mainContentRef}>
         <section className="hero" aria-labelledby="hero-heading">
           <div className="hero-content reveal-on-scroll reveal-from-left">
-            <h1 id="hero-heading">Ваш бизнес.</h1>
-            <div className="highlight">Ваши знания.</div>
-            <h2>Ваш сотрудник.</h2>
+            <h1 id="hero-heading">
+              Создайте персонального ИИ-агента за <span className="hero-accent">5 минут</span>!
+            </h1>
             <p className="description">
               RSD — no-code платформа для ИИ-агентов под поддержку, продажи и внутренние процессы. Соберите сценарий без
               разработчиков: ответы опираются на ваши документы и тон общения, который вы задаёте сами.
@@ -415,6 +462,51 @@ const Main = () => {
               </li>
             ))}
           </ol>
+        </section>
+
+        <section className="turnkey-section reveal-on-scroll reveal-from-bottom" aria-labelledby="turnkey-heading">
+          <h2 id="turnkey-heading" className="section-title reveal-on-scroll reveal-from-bottom">
+            Нужен сложный ИИ-агент под ключ?
+          </h2>
+          <p className="section-lead section-lead-tight reveal-on-scroll reveal-from-bottom reveal-delay-1">
+            Опишете задачу - команда RSD соберет архитектуру, настроит агента под ваши процессы и поможет запустить его в
+            работу без лишней рутины.
+          </p>
+          <form className="turnkey-request-form reveal-on-scroll reveal-from-bottom reveal-delay-1" onSubmit={handleSubmitTurnkeyRequest}>
+            <label>
+              Номер телефона
+              <input
+                type="tel"
+                value={turnkeyRequestForm.phoneNumber}
+                onChange={(event) => setTurnkeyRequestForm((prev) => ({ ...prev, phoneNumber: event.target.value }))}
+                placeholder="+7 (900) 000-00-00"
+                required
+              />
+            </label>
+            <label>
+              Электронная почта
+              <input
+                type="email"
+                value={turnkeyRequestForm.email}
+                onChange={(event) => setTurnkeyRequestForm((prev) => ({ ...prev, email: event.target.value }))}
+                placeholder="name@company.ru"
+                required
+              />
+            </label>
+            <label>
+              Какого сотрудника вы хотите получить
+              <textarea
+                value={turnkeyRequestForm.employeeRequest}
+                onChange={(event) => setTurnkeyRequestForm((prev) => ({ ...prev, employeeRequest: event.target.value }))}
+                placeholder="Опишите роли, задачи и сценарии работы сотрудника"
+                rows={4}
+                required
+              />
+            </label>
+            <button type="submit" className="btn btn-black" disabled={isSubmittingTurnkeyRequest}>
+              {isSubmittingTurnkeyRequest ? 'Отправка...' : 'Отправить заявку'}
+            </button>
+          </form>
         </section>
 
         <section className="faq-section reveal-on-scroll reveal-from-bottom" aria-labelledby="faq-heading">
