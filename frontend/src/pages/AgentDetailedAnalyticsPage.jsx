@@ -180,13 +180,19 @@ const mapChatsPayload = (payload) => {
     questions: Number(user.questions_count || 0),
     lastMessageAt: formatDateTime(user.last_message_at),
     isFrozen: Boolean(user.is_frozen),
-    messages: (Array.isArray(user.messages) ? user.messages : []).map((item, index) => ({
-      id: `${user.chat_key || user.user_external_id}-${index}-${item.created_at || 'time'}`,
-      role: item.role,
-      text: item.text,
-      timestamp: formatDateTime(item.created_at),
-      channel: item.channel,
-    })),
+    chatPortrait: (Array.isArray(user.messages) ? user.messages : [])
+      .filter((item) => item?.role === 'portrait' && String(item?.text || '').trim())
+      .sort((a, b) => new Date(a?.created_at || 0).getTime() - new Date(b?.created_at || 0).getTime())
+      .at(-1)?.text || '',
+    messages: (Array.isArray(user.messages) ? user.messages : [])
+      .filter((item) => item?.role !== 'portrait')
+      .map((item, index) => ({
+        id: `${user.chat_key || user.user_external_id}-${index}-${item.created_at || 'time'}`,
+        role: item.role,
+        text: item.text,
+        timestamp: formatDateTime(item.created_at),
+        channel: item.channel,
+      })),
   }));
 };
 
@@ -497,6 +503,16 @@ const AgentDetailedAnalyticsPageContent = () => {
     }
   };
 
+  const handleShowPortrait = () => {
+    if (!selectedUser) return;
+    const portrait = String(selectedUser.chatPortrait || '').trim();
+    if (!portrait) {
+      showError('Портрет для этого чата пока не сформирован');
+      return;
+    }
+    window.alert(portrait);
+  };
+
   const handleSendOwnerMessage = async () => {
     if (!selectedUser) return;
     const text = ownerReplyText.trim();
@@ -763,18 +779,27 @@ const AgentDetailedAnalyticsPageContent = () => {
                             Вопросов: {selectedUser.questions} · {channelLabel(selectedUser.channel)}
                           </p>
                         </div>
-                        <button
-                          type="button"
-                          className={`btn btn-outline analytics-freeze-btn ${selectedUser.isFrozen ? 'analytics-freeze-btn--active' : ''}`}
-                          onClick={handleToggleFreeze}
-                          disabled={isTogglingFreeze}
-                        >
-                          {isTogglingFreeze
-                            ? '...'
-                            : selectedUser.isFrozen
-                              ? 'Разморозить'
-                              : 'Заморозить'}
-                        </button>
+                        <div className="analytics-chat-thread-header-actions">
+                          <button
+                            type="button"
+                            className="btn btn-outline analytics-portrait-btn"
+                            onClick={handleShowPortrait}
+                          >
+                            Портрет
+                          </button>
+                          <button
+                            type="button"
+                            className={`btn btn-outline analytics-freeze-btn ${selectedUser.isFrozen ? 'analytics-freeze-btn--active' : ''}`}
+                            onClick={handleToggleFreeze}
+                            disabled={isTogglingFreeze}
+                          >
+                            {isTogglingFreeze
+                              ? '...'
+                              : selectedUser.isFrozen
+                                ? 'Разморозить'
+                                : 'Заморозить'}
+                          </button>
+                        </div>
                       </header>
                       <div className="analytics-messages-list">
                         {selectedUser.messages.map((message) => {

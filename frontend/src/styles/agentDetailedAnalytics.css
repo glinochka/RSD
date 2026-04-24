@@ -280,6 +280,19 @@
   color: #64748b;
 }
 
+.analytics-chat-thread-header-actions {
+  display: inline-flex;
+  gap: var(--spacing-xs);
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.analytics-portrait-btn {
+  padding: var(--spacing-xs) var(--spacing-base);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+}
+
 .analytics-freeze-btn {
   flex-shrink: 0;
   padding: var(--spacing-xs) var(--spacing-base);
@@ -881,6 +894,10 @@
   }
 
   .analytics-freeze-btn {
+    align-self: flex-start;
+  }
+
+  .analytics-chat-thread-header-actions {
     align-self: flex-start;
   }
 
