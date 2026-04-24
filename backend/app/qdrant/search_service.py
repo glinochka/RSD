@@ -1,3 +1,4 @@
+import json
 from typing import List, Dict, Any
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models
@@ -15,20 +16,78 @@ ai_client = AsyncOpenAI(
     base_url="https://api.deepseek.com"
 )
 
-async def rewrite_query(original_query: str) -> str:
-    """Оптимизация запроса пользователя для векторного поиска."""
+async def plan_rag_queries(original_query: str, *, max_queries: int = 3) -> list[str]:
+    """Строит 1..max_queries поисковых запросов через function calling."""
+    safe_max_queries = max(1, min(max_queries, 3))
     try:
         response = await ai_client.chat.completions.create(
             model="deepseek-chat",
             messages=[
-                {"role": "system", "content": "Переформулируй запрос пользователя в поисковый запрос для базы знаний. Верни только текст запроса."},
+                {
+                    "role": "system",
+                    "content": (
+                        "Ты планируешь поиск по базе знаний (RAG). "
+                        "Сформируй запросы, которые нужно отправить в векторный поиск, "
+                        "чтобы собрать факты для ответа пользователю. "
+                        "Дай от 1 до 3 точных поисковых формулировок без воды."
+                    ),
+                },
                 {"role": "user", "content": original_query}
             ],
-            temperature=0.1
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "extract_rag_queries",
+                        "description": "Извлекает список поисковых запросов для RAG.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "queries": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "minItems": 1,
+                                    "maxItems": safe_max_queries,
+                                }
+                            },
+                            "required": ["queries"],
+                            "additionalProperties": False,
+                        },
+                    },
+                }
+            ],
+            tool_choice={
+                "type": "function",
+                "function": {"name": "extract_rag_queries"},
+            },
+            temperature=0.1,
         )
-        return response.choices[0].message.content
+
+        message = response.choices[0].message
+        tool_calls = message.tool_calls or []
+        if not tool_calls:
+            raise ValueError("LLM не вернул function call для RAG-запросов")
+
+        args_raw = tool_calls[0].function.arguments or "{}"
+        payload = json.loads(args_raw)
+        raw_queries = payload.get("queries")
+        if not isinstance(raw_queries, list):
+            raise ValueError("Некорректный формат queries")
+
+        queries: list[str] = []
+        for item in raw_queries:
+            text = str(item or "").strip()
+            if text and text not in queries:
+                queries.append(text)
+            if len(queries) >= safe_max_queries:
+                break
+
+        if not queries:
+            raise ValueError("Пустой список запросов после нормализации")
+        return queries
     except Exception:
-        return original_query # Если упало — ищем по оригиналу
+        fallback_query = (original_query or "").strip()
+        return [fallback_query] if fallback_query else []
 
 
 
@@ -38,67 +97,87 @@ async def rewrite_query(original_query: str) -> str:
 # Инициализируем асинхронный клиент
 q_client = AsyncQdrantClient(url=settings.QDRANT_URL)
 
-async def search_knowledge_base(query: str, agent_id: int, limit: int = 5) -> List[Dict[str, Any]]:
+async def search_knowledge_base(
+    query: str,
+    agent_id: int,
+    limit: int = 5,
+    *,
+    max_queries: int = 3,
+    max_chunks_per_query: int = 2,
+) -> List[Dict[str, Any]]:
     """Поиск по базе знаний с использованием актуального API query_points."""
     try:
-        # 1. Переписываем запрос (LLM)
-        optimized_query = await rewrite_query(query)
-        
-        # 2. Генерируем эмбеддинг (вне event loop — не блокируем API)
-        dense_vector = await run_in_cpu_pool(embed_dense_for_query, optimized_query)
+        planned_queries = await plan_rag_queries(query, max_queries=max_queries)
+        if not planned_queries:
+            return []
 
         embedding_profile = get_active_embedding_profile()
-
-        # 3. Фильтр по конкретному агенту и активному профилю эмбеддинга.
-        # Если версия еще не переиндексирована, ниже есть fallback на legacy-поиск.
-        search_filter = models.Filter(
-            must=[
-                models.FieldCondition(
-                    key="agent_id", 
-                    match=models.MatchValue(value=agent_id)
-                ),
-                models.FieldCondition(
-                    key="embedding_profile_key",
-                    match=models.MatchValue(value=embedding_profile["profile_key"]),
-                )
-            ]
+        effective_limit = max(
+            1,
+            min(
+                max_chunks_per_query,
+                2,
+                limit,
+            ),
         )
 
-        # 4. ВАЖНО: Используем новый метод query_points вместо удаленного search
-        response = await q_client.query_points(
-            collection_name="agent_documents",
-            query=dense_vector,
-            query_filter=search_filter,
-            limit=limit,
-            with_payload=True
-        )
+        results: list[dict[str, Any]] = []
+        seen_keys: set[tuple[str, str]] = set()
 
-        # Legacy fallback for documents indexed before embedding profile tagging.
-        if not response.points:
-            legacy_filter = models.Filter(
+        for planned_query in planned_queries[:3]:
+            dense_vector = await run_in_cpu_pool(embed_dense_for_query, planned_query)
+
+            search_filter = models.Filter(
                 must=[
                     models.FieldCondition(
                         key="agent_id",
                         match=models.MatchValue(value=agent_id)
+                    ),
+                    models.FieldCondition(
+                        key="embedding_profile_key",
+                        match=models.MatchValue(value=embedding_profile["profile_key"]),
                     )
                 ]
             )
+
             response = await q_client.query_points(
                 collection_name="agent_documents",
                 query=dense_vector,
-                query_filter=legacy_filter,
-                limit=limit,
+                query_filter=search_filter,
+                limit=effective_limit,
                 with_payload=True
             )
 
-        # 5. Сбор результатов (они теперь лежат внутри response.points)
-        results = []
-        for hit in response.points:
-            results.append({
-                "text": hit.payload.get("text", ""),
-                "source": hit.payload.get("source", "Unknown"),
-                "score": hit.score
-            })
+            if not response.points:
+                legacy_filter = models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="agent_id",
+                            match=models.MatchValue(value=agent_id)
+                        )
+                    ]
+                )
+                response = await q_client.query_points(
+                    collection_name="agent_documents",
+                    query=dense_vector,
+                    query_filter=legacy_filter,
+                    limit=effective_limit,
+                    with_payload=True
+                )
+
+            for hit in response.points:
+                text = hit.payload.get("text", "")
+                source = hit.payload.get("source", "Unknown")
+                dedupe_key = (str(source), str(text))
+                if dedupe_key in seen_keys:
+                    continue
+                seen_keys.add(dedupe_key)
+                results.append({
+                    "text": text,
+                    "source": source,
+                    "score": hit.score,
+                    "rag_query": planned_query,
+                })
 
         return results
 
