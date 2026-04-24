@@ -33,6 +33,7 @@ function isUserNotFoundAuthError(error) {
     detail.includes('аккаунт не найден')
   );
 }
+
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 import { useNotification } from '../context/useNotification';
@@ -271,6 +272,11 @@ const Auth = () => {
               showSuccess('Аккаунт не найден. Мы перевели вас на регистрацию и отправили код на email.', 5000);
               return;
             } catch (registerError) {
+              // If registration says user already exists, keep original login error semantics.
+              if (registerError?.status === 409) {
+                showError(getAuthErrorMessage(error));
+                return;
+              }
               showError(getAuthErrorMessage(registerError));
               return;
             }

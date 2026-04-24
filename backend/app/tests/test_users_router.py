@@ -326,8 +326,8 @@ class TestUserLogin:
             json={"name": "nonexistent", "password": "anypassword"}
         )
 
-        assert response.status_code == 401
-        assert "Неверные учетные данные" in response.json()["detail"]
+        assert response.status_code == 404
+        assert "Пользователь не найден" in response.json()["detail"]
 
 
 class TestUserSessionLifecycle:

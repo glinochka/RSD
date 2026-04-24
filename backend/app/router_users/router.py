@@ -1138,6 +1138,7 @@ async def confirm_password_reset(payload: PasswordResetConfirmRequest):
 async def user_login(login_user: LoginUser):
     login_value = login_user.name.strip()
     matched_user = None
+    has_login_candidates = False
     async with async_session_maker() as session:
         user_dao = UserDAO(session)
 
@@ -1164,6 +1165,7 @@ async def user_login(login_user: LoginUser):
                 if user_by_name:
                     candidates = [user_by_name]
 
+            has_login_candidates = len(candidates) > 0
             for candidate in candidates:
                 if not candidate.password:
                     continue
@@ -1181,6 +1183,11 @@ async def user_login(login_user: LoginUser):
 
     if not matched_user:
         logger.info("Неуспешная попытка входа для логина: %s", login_value)
+        if not has_login_candidates:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Пользователь не найден",
+            )
         raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Неверные учетные данные"
