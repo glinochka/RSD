@@ -21,6 +21,18 @@ function getAuthErrorMessage(error) {
   }
   return 'Ошибка входа. Проверьте учетные данные.';
 }
+
+function isUserNotFoundAuthError(error) {
+  const detail = `${error?.message ?? ''} ${error?.data?.detail ?? ''}`.toLowerCase();
+  return (
+    error?.status === 404 ||
+    detail.includes('not found') ||
+    detail.includes('user not found') ||
+    detail.includes('пользователь не найден') ||
+    detail.includes('не зарегистр') ||
+    detail.includes('аккаунт не найден')
+  );
+}
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 import { useNotification } from '../context/useNotification';
@@ -243,6 +255,27 @@ const Auth = () => {
           navigate(NAVIGATION_ROUTES.AGENTS);
         }
       } catch (error) {
+        if (isLogin && isUserNotFoundAuthError(error)) {
+          const loginValue = values.name?.trim() ?? '';
+          const looksLikeEmail = VALIDATION.EMAIL_PATTERN.test(loginValue);
+
+          if (looksLikeEmail) {
+            try {
+              await register(loginValue, values.password);
+              setIsLogin(false);
+              setIsAwaitingEmailCode(true);
+              form.setFieldValue('email', loginValue);
+              setResendCooldownUntil(
+                Date.now() + VALIDATION.EMAIL_RESEND_COOLDOWN_SECONDS * 1000
+              );
+              showSuccess('Аккаунт не найден. Мы перевели вас на регистрацию и отправили код на email.', 5000);
+              return;
+            } catch (registerError) {
+              showError(getAuthErrorMessage(registerError));
+              return;
+            }
+          }
+        }
         showError(getAuthErrorMessage(error));
       }
     },
