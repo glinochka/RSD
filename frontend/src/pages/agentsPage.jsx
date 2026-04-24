@@ -994,7 +994,7 @@ const AgentsPageContent = () => {
                   </div>
 
                   <div className="agent-management-block">
-                    <label className="channel-primary-checkbox">
+                    <label className="channel-primary-checkbox portrait-feature-toggle">
                       <input
                         type="checkbox"
                         checked={isPortraitFeatureEnabled(selectedAgent)}
