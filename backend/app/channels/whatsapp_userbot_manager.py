@@ -115,9 +115,22 @@ def _user_external_id_for_whatsapp_analytics(remote_jid: str) -> str:
     return jid
 
 
+def _is_private_whatsapp_jid(jid: str) -> bool:
+    value = str(jid or "").strip().lower()
+    if not value:
+        return False
+    if value.endswith("@g.us") or value.endswith("@broadcast") or value == "status@broadcast":
+        return False
+    return ("@" in value) and (value.endswith("@s.whatsapp.net") or value.endswith("@lid"))
+
+
 async def _process_incoming(cfg: dict[str, Any], incoming: dict[str, Any]) -> None:
     remote_jid = str(incoming.get("remote_jid") or "").strip()
     if not remote_jid:
+        return
+
+    # Reply only in direct messages, never in groups/channels/broadcast chats.
+    if not _is_private_whatsapp_jid(remote_jid):
         return
 
     if str(incoming.get("from_me") or "").lower() == "true":

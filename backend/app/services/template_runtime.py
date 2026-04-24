@@ -34,6 +34,11 @@ class TemplateExecutionResult:
 class TemplateRuntimeService:
     """Executes agent templates through a single entrypoint."""
 
+    @staticmethod
+    def _is_userbot_channel(source_channel: str) -> bool:
+        normalized = (source_channel or "").strip().lower()
+        return normalized in {"telegram_userbot", "whatsapp_userbot"}
+
     async def execute(
         self,
         *,
@@ -385,6 +390,15 @@ class TemplateRuntimeService:
                 user_external_id=user_external_id,
             )
         if confidence < min_confidence:
+            if self._is_userbot_channel(source_channel):
+                qa_result = await self._execute_qa_like(
+                    prompt=prompt,
+                    user_message=user_message,
+                    knowledge_scope_id=knowledge_scope_id,
+                )
+                qa_result.fallback_to_text = True
+                qa_result.fallback_reason = "sales_low_confidence_fallback"
+                return qa_result
             if agent_id and user_external_id:
                 await self._transition_sales_state_safe(
                     agent_id=agent_id,

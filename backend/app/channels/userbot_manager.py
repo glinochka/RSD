@@ -100,6 +100,10 @@ async def _handle_private_message(
         if ah is not None:
             peer_access_hash = int(ah)
 
+    sender_is_bot = bool(getattr(sender, "bot", False))
+    if sender_is_bot:
+        return
+
     user_display_name = (
         (getattr(sender, "first_name", "") or "").strip()
         + " "
@@ -130,7 +134,7 @@ async def _handle_chat_message(
     template_config: dict[str, Any],
 ) -> None:
     """Handle incoming messages from groups/chats for sales_manager scanning."""
-    if event.is_private or event.is_channel:
+    if event.is_private:
         return
 
     # Skip system messages

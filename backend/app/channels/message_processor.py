@@ -124,7 +124,7 @@ class MessageProcessor:
                     status=ProcessingStatus.BLOCKED_USER,
                 )
 
-            if request.query.strip() == "/start":
+            if request.query.strip() == "/start" and request.channel == Channel.TELEGRAM:
                 return MessageResponse(
                     text=request.welcome_message or "Здравствуйте! Чем я могу вам помочь?",
                     status=ProcessingStatus.WELCOME,
