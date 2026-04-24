@@ -44,7 +44,7 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--spacing-3xl);
-  align-items: center;
+  align-items: stretch;
   padding: 0 0 var(--spacing-3xl);
   margin-bottom: var(--spacing-3xl);
 }
@@ -52,6 +52,8 @@
 .hero-content {
   display: flex;
   flex-direction: column;
+  min-height: clamp(320px, 56vh, 620px);
+  justify-content: center;
 }
 
 .hero-content h1 {
