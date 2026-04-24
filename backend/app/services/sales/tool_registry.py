@@ -213,12 +213,16 @@ class SalesToolRegistry:
             result = {"queued": True, "status": status, "payload": data}
             
         elif tool_name == "skip_lead":
+            status = "skipped"
             result = {"skipped": True, "payload": data}
         elif tool_name == "record_lead_signal":
+            status = "recorded"
             result = {"recorded": True, "payload": data}
         elif tool_name == "create_crm_lead":
+            status = "crm_lead_created"
             result = {"crm_lead_created": True, "payload": data}
         elif tool_name == "mark_contacted":
+            status = "marked_contacted"
             result = {"marked": True, "payload": data}
         else:
             raise RuntimeError(f"Tool '{tool_name}' is not supported")

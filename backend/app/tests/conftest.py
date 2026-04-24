@@ -332,15 +332,19 @@ async def mock_db_session(test_session):
     Fixtures that provides mocked async_session_maker for database services.
     This allows tests to use DmQueueService, SalesFSMService, etc. without connecting to PostgreSQL.
     """
-    async def mock_async_session_maker():
-        class MockAsyncContextManager:
-            async def __aenter__(self):
-                return test_session
-            
-            async def __aexit__(self, exc_type, exc_val, exc_tb):
-                pass
-        
+    class MockAsyncContextManager:
+        async def __aenter__(self):
+            return test_session
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
+
+    def mock_async_session_maker():
         return MockAsyncContextManager()
-    
-    with patch('app.alembic.database.async_session_maker', mock_async_session_maker):
+
+    with (
+        patch('app.alembic.database.async_session_maker', mock_async_session_maker),
+        patch('app.services.sales.dm_queue_service.async_session_maker', mock_async_session_maker),
+        patch('app.services.sales.fsm.async_session_maker', mock_async_session_maker),
+    ):
         yield test_session

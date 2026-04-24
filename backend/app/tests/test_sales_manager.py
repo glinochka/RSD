@@ -179,7 +179,7 @@ async def test_sales_tool_registry_schedule_dm():
 
 
 @pytest.mark.asyncio
-async def test_sales_tool_registry_execute_schedule_dm():
+async def test_sales_tool_registry_execute_schedule_dm(mock_db_session):
     """Test executing schedule_dm tool."""
     registry = SalesToolRegistry(
         allowed_tools=["schedule_dm", "skip_lead"],
