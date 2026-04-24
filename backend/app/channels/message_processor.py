@@ -143,6 +143,7 @@ class MessageProcessor:
             template_config = self._parse_template_config(resolved_agent.template_config)
             chat_portrait = await get_template_runtime().update_chat_portrait(
                 agent_id=resolved_agent.id,
+                analytics_namespace_id=resolved_agent.bot_id or resolved_agent.id,
                 user_external_id=normalized_user_external_id,
                 source_channel=request.channel.value,
                 user_message=request.query,

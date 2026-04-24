@@ -119,6 +119,7 @@ class TemplateRuntimeService:
         self,
         *,
         agent_id: int | None,
+        analytics_namespace_id: int | None = None,
         user_external_id: str | None,
         source_channel: str | None,
         user_message: str,
@@ -173,6 +174,7 @@ class TemplateRuntimeService:
             if updated != previous:
                 await self._save_chat_portrait(
                     agent_id=agent_id,
+                    analytics_namespace_id=analytics_namespace_id or agent_id,
                     user_external_id=user_external_id,
                     source_channel=source_channel,
                     portrait=updated,
@@ -220,6 +222,7 @@ class TemplateRuntimeService:
         self,
         *,
         agent_id: int,
+        analytics_namespace_id: int,
         user_external_id: str,
         source_channel: str,
         portrait: str,
@@ -229,7 +232,7 @@ class TemplateRuntimeService:
                 session.add(
                     AgentAnalyticsMessage(
                         agent_id=agent_id,
-                        bot_id=agent_id,
+                        bot_id=analytics_namespace_id,
                         role="portrait",
                         channel=(source_channel or "").strip().lower(),
                         user_external_id=(user_external_id or "").strip(),
