@@ -722,7 +722,10 @@
     padding: 0 0 var(--spacing-2xl);
   }
 
-  .hero-content h1,
+  .hero-content h1 {
+    font-size: var(--font-size-4xl);
+  }
+
   .highlight {
     font-size: var(--font-size-3xl);
   }
@@ -762,7 +765,10 @@
     margin-bottom: var(--spacing-2xl);
   }
 
-  .hero-content h1,
+  .hero-content h1 {
+    font-size: var(--font-size-3xl);
+  }
+
   .highlight {
     font-size: var(--font-size-2xl);
   }
