@@ -141,7 +141,10 @@ class MessageProcessor:
                 telegram_peer_access_hash=request.telegram_peer_access_hash,
             )
             template_config = self._parse_template_config(resolved_agent.template_config)
+            normalized_template = str(resolved_agent.template_type or "qa").strip().lower()
             portrait_enabled = bool((template_config or {}).get("enable_chat_portrait", True))
+            if normalized_template == "content_factory":
+                portrait_enabled = False
             chat_portrait = ""
             if portrait_enabled:
                 chat_portrait = await get_template_runtime().update_chat_portrait(

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import math
+import re
 from logging import getLogger
 from urllib.parse import quote
 from urllib.request import Request as UrlRequest, urlopen
@@ -18,7 +19,14 @@ from sqlalchemy import Date, cast, func, select
 from .dao import AgentChannelConnectionDAO, AgentCrmConnectionDAO, AgentDAO
 from .schemas import *
 from ..alembic.database import async_session_maker
-from ..alembic.models import Agent, AgentAnalyticsMessage, AgentChannelConnection, AgentCrmConnection, AgentFrozenUser
+from ..alembic.models import (
+    Agent,
+    AgentAnalyticsMessage,
+    AgentChannelConnection,
+    AgentContentJob,
+    AgentCrmConnection,
+    AgentFrozenUser,
+)
 from ..config import settings
 from ..qdrant.search_service import delete_agent_vectors
 from ..router_users.dao import UserDAO
@@ -30,6 +38,7 @@ from ..channels.message_processor import (
 from ..services.ai_authoring import generate_welcome_with_ai, improve_prompt_with_ai
 from ..services.crm import build_provider
 from ..services.template_runtime import get_template_runtime
+from ..services.youtube_client import get_youtube_client
 from ..utils.api_keys import generate_agent_external_api_key, hash_agent_external_api_key
 from ..utils.JWT import get_user_from_access_token
 from ..utils.convert import convert_to_dict
@@ -97,6 +106,19 @@ SALES_DEFAULT_CONFIG = {
     "confirmation_policy": "confirm_risky",
     "allowed_tools": list(SALES_DEFAULT_ALLOWED_TOOLS),
 }
+YOUTUBE_OAUTH_STATE_TTL_SECONDS = 15 * 60
+YOUTUBE_OAUTH_STATE_SCOPE = "youtube_oauth_connect"
+CONTENT_FACTORY_DEFAULT_CONFIG = {
+    "content_language": "ru",
+    "daily_posting_enabled": True,
+    "daily_post_time": "10:00",
+    "timezone": "UTC",
+    "video_duration_seconds": 8,
+    "kling_model": "kling-v1",
+}
+CONTENT_FACTORY_TIME_PATTERN = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
+CONTENT_FACTORY_LANGUAGE_PATTERN = re.compile(r"^[a-z]{2,16}(?:-[a-z]{2,16})?$")
+CONTENT_FACTORY_TIMEZONE_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_+\-]*/?[A-Za-z0-9_+\-]*$")
 
 
 def _assert_https_for_sensitive_endpoint(request: Request) -> None:
@@ -151,6 +173,113 @@ def _normalize_template_config(template_type: str, template_config: dict | None)
         portrait_model = str(raw.get("portrait_model") or "").strip()
         if portrait_model:
             common_config["portrait_model"] = portrait_model
+
+    if template_type == "content_factory":
+        company_name = str(raw.get("company_name") or "").strip()
+        company_activity = str(raw.get("company_activity") or "").strip()
+        if not company_name:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="template_config.company_name is required for content_factory",
+            )
+        if not company_activity:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="template_config.company_activity is required for content_factory",
+            )
+        if len(company_name) > 255 or len(company_activity) > 2000:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="template_config.company_name/company_activity are too long",
+            )
+
+        brand_tone = str(raw.get("brand_tone") or "").strip() or None
+        if brand_tone and len(brand_tone) > 500:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="template_config.brand_tone is too long",
+            )
+
+        content_language = str(
+            raw.get("content_language") or CONTENT_FACTORY_DEFAULT_CONFIG["content_language"]
+        ).strip().lower()
+        if not CONTENT_FACTORY_LANGUAGE_PATTERN.fullmatch(content_language):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="template_config.content_language must be an IETF-like tag (e.g. ru, en, pt-br)",
+            )
+
+        daily_posting_enabled_raw = raw.get(
+            "daily_posting_enabled",
+            CONTENT_FACTORY_DEFAULT_CONFIG["daily_posting_enabled"],
+        )
+        if not isinstance(daily_posting_enabled_raw, bool):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="template_config.daily_posting_enabled must be a boolean",
+            )
+        daily_posting_enabled = daily_posting_enabled_raw
+
+        daily_post_time = str(
+            raw.get("daily_post_time") or CONTENT_FACTORY_DEFAULT_CONFIG["daily_post_time"]
+        ).strip()
+        if not CONTENT_FACTORY_TIME_PATTERN.fullmatch(daily_post_time):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="template_config.daily_post_time must be in HH:MM format",
+            )
+
+        timezone_name = str(raw.get("timezone") or CONTENT_FACTORY_DEFAULT_CONFIG["timezone"]).strip()
+        if not timezone_name:
+            timezone_name = str(CONTENT_FACTORY_DEFAULT_CONFIG["timezone"])
+        if not CONTENT_FACTORY_TIMEZONE_PATTERN.fullmatch(timezone_name):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="template_config.timezone format is invalid",
+            )
+
+        video_duration_raw = raw.get(
+            "video_duration_seconds",
+            CONTENT_FACTORY_DEFAULT_CONFIG["video_duration_seconds"],
+        )
+        try:
+            video_duration_seconds = int(video_duration_raw)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="template_config.video_duration_seconds must be an integer",
+            ) from None
+        if video_duration_seconds < 1 or video_duration_seconds > 8:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="template_config.video_duration_seconds must be between 1 and 8 for MVP",
+            )
+
+        kling_model = str(raw.get("kling_model") or CONTENT_FACTORY_DEFAULT_CONFIG["kling_model"]).strip()
+        if not kling_model:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="template_config.kling_model must be non-empty",
+            )
+        if len(kling_model) > 128:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="template_config.kling_model is too long",
+            )
+
+        normalized_config = {
+            "company_name": company_name,
+            "company_activity": company_activity,
+            "brand_tone": brand_tone,
+            "content_language": content_language,
+            "daily_posting_enabled": daily_posting_enabled,
+            "daily_post_time": daily_post_time,
+            "timezone": timezone_name,
+            "video_duration_seconds": video_duration_seconds,
+            "kling_model": kling_model,
+            **common_config,
+        }
+        return json.dumps(normalized_config, ensure_ascii=False)
 
     if template_type == "sales_manager":
         mode = str(raw.get("mode") or SALES_DEFAULT_CONFIG["mode"]).strip().lower()
@@ -542,6 +671,39 @@ def _serialize_crm_connection(connection: AgentCrmConnection) -> dict:
     }
 
 
+def _parse_content_job_metadata(raw_metadata: str | None) -> dict:
+    if not raw_metadata or not str(raw_metadata).strip():
+        return {}
+    try:
+        loaded = json.loads(raw_metadata)
+        return loaded if isinstance(loaded, dict) else {}
+    except Exception:
+        return {}
+
+
+def _serialize_content_job(row: AgentContentJob) -> dict:
+    return {
+        "id": row.id,
+        "agent_id": row.agent_id,
+        "status": row.status,
+        "scheduled_for": _safe_iso(row.scheduled_for),
+        "started_at": _safe_iso(row.started_at),
+        "finished_at": _safe_iso(row.finished_at),
+        "script_text": row.script_text,
+        "script_model": row.script_model,
+        "kling_task_id": row.kling_task_id,
+        "video_url": row.video_url,
+        "youtube_video_id": row.youtube_video_id,
+        "youtube_video_url": row.youtube_video_url,
+        "retry_count": int(row.retry_count or 0),
+        "max_retries": int(row.max_retries or 0),
+        "last_error": row.last_error,
+        "metadata": _parse_content_job_metadata(row.metadata_json),
+        "created_at": _safe_iso(row.created_at),
+        "updated_at": _safe_iso(row.updated_at),
+    }
+
+
 def _normalize_crm_base_url(value: str) -> str:
     raw = (value or "").strip().rstrip("/")
     if not raw:
@@ -757,6 +919,18 @@ async def _get_whatsapp_userbot_channel_for_agent(session, agent_id: int) -> Age
             AgentChannelConnection.agent_id == agent_id,
             AgentChannelConnection.provider == "whatsapp_userbot",
             AgentChannelConnection.connection_type == "userbot",
+            AgentChannelConnection.is_active.is_(True),
+            AgentChannelConnection.encrypted_credentials.is_not(None),
+        )
+    )
+
+
+async def _get_youtube_oauth_channel_for_agent(session, agent_id: int) -> AgentChannelConnection | None:
+    return await session.scalar(
+        select(AgentChannelConnection).where(
+            AgentChannelConnection.agent_id == agent_id,
+            AgentChannelConnection.provider == "youtube",
+            AgentChannelConnection.connection_type == "oauth",
             AgentChannelConnection.is_active.is_(True),
             AgentChannelConnection.encrypted_credentials.is_not(None),
         )
@@ -1158,6 +1332,46 @@ def _decode_whatsapp_userbot_auth_token(auth_token: str) -> dict:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Токен подтверждения WhatsApp userbot не привязан к пользователю",
+        )
+    return data
+
+
+def _create_youtube_oauth_state(*, user_id: int, agent_id: int, redirect_uri: str) -> str:
+    now = datetime.utcnow()
+    payload = {
+        "scope": YOUTUBE_OAUTH_STATE_SCOPE,
+        "user_id": int(user_id),
+        "agent_id": int(agent_id),
+        "redirect_uri": redirect_uri,
+        "exp": now + timedelta(seconds=YOUTUBE_OAUTH_STATE_TTL_SECONDS),
+        "iat": now,
+    }
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+
+def _decode_youtube_oauth_state(state_token: str) -> dict:
+    try:
+        data = jwt.decode(state_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+    except InvalidTokenError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Невалидный или просроченный OAuth state токен YouTube",
+        )
+    if data.get("scope") != YOUTUBE_OAUTH_STATE_SCOPE:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Некорректный scope OAuth state токена YouTube",
+        )
+    if not isinstance(data.get("user_id"), int) or not isinstance(data.get("agent_id"), int):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="OAuth state токен YouTube не содержит корректные идентификаторы",
+        )
+    redirect_uri = str(data.get("redirect_uri") or "").strip()
+    if not redirect_uri:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="OAuth state токен YouTube не содержит redirect_uri",
         )
     return data
 
@@ -2588,6 +2802,192 @@ async def list_agent_channels(
             )
 
 
+@router.post("/channels/by_youtube_oauth_start")
+async def start_agent_youtube_oauth(
+    payload: YouTubeOAuthStartPayload,
+    current_user=Depends(get_current_user_required),
+):
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
+                current_user=current_user,
+                internal=False,
+            )
+            redirect_uri = str(payload.redirect_uri or settings.YOUTUBE_OAUTH_REDIRECT_URI or "").strip()
+            if not redirect_uri:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="YouTube OAuth redirect_uri не настроен",
+                )
+            state = _create_youtube_oauth_state(
+                user_id=current_user.id,
+                agent_id=agent.id,
+                redirect_uri=redirect_uri,
+            )
+            auth_url = get_youtube_client().build_oauth_authorization_url(
+                state=state,
+                redirect_uri=redirect_uri,
+            )
+            return JSONResponse(
+                content={
+                    "agent_id": agent.id,
+                    "bot_id": agent.bot_id,
+                    "auth_url": auth_url,
+                    "state": state,
+                    "redirect_uri": redirect_uri,
+                },
+                status_code=status.HTTP_200_OK,
+            )
+
+
+@router.post("/channels/by_youtube_oauth_callback")
+async def complete_agent_youtube_oauth(payload: YouTubeOAuthCallbackPayload):
+    code = payload.code.strip()
+    state = payload.state.strip()
+    if not code:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Пустой OAuth code YouTube")
+    token_data = _decode_youtube_oauth_state(state)
+    agent_id = int(token_data["agent_id"])
+    user_id = int(token_data["user_id"])
+    redirect_uri = str(token_data.get("redirect_uri") or "").strip()
+
+    youtube_client = get_youtube_client()
+    token_bundle = await youtube_client.exchange_code_for_tokens(code=code, redirect_uri=redirect_uri)
+    health = await youtube_client.health_check(token_bundle=token_bundle)
+    effective_bundle = health.get("token_bundle") or token_bundle
+    external_id = str(health.get("external_id") or "").strip() or "youtube"
+
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        channel_connection_dao = AgentChannelConnectionDAO(session)
+        async with session.begin():
+            agent = await session.scalar(
+                select(Agent).where(
+                    Agent.id == agent_id,
+                    Agent.user_id == user_id,
+                )
+            )
+            if not agent:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found for OAuth state")
+
+            duplicate_connection = await session.scalar(
+                select(AgentChannelConnection).where(
+                    AgentChannelConnection.provider == "youtube",
+                    AgentChannelConnection.external_id == external_id,
+                    AgentChannelConnection.agent_id != agent.id,
+                )
+            )
+            if duplicate_connection:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Этот YouTube канал уже подключен к другому агенту",
+                )
+
+            encrypted_bundle = encrypt_token(json.dumps(effective_bundle, ensure_ascii=False))
+            existing = await session.scalar(
+                select(AgentChannelConnection).where(
+                    AgentChannelConnection.agent_id == agent.id,
+                    AgentChannelConnection.provider == "youtube",
+                    AgentChannelConnection.connection_type == "oauth",
+                )
+            )
+            now = datetime.utcnow()
+            if existing:
+                existing.external_id = external_id
+                existing.encrypted_credentials = encrypted_bundle
+                existing.is_active = True
+                existing.updated_at = now
+            else:
+                await channel_connection_dao.add(
+                    {
+                        "agent_id": agent.id,
+                        "provider": "youtube",
+                        "connection_type": "oauth",
+                        "external_id": external_id,
+                        "encrypted_credentials": encrypted_bundle,
+                        "is_primary": False,
+                        "is_active": True,
+                        "created_at": now,
+                        "updated_at": now,
+                    }
+                )
+
+            await _sync_agent_primary_fields(agent=agent, agent_dao=agent_dao, session=session)
+            channels = await _list_agent_channels(session, agent.id)
+            return JSONResponse(
+                content={
+                    "agent_id": agent.id,
+                    "bot_id": agent.bot_id,
+                    "channels": [_serialize_channel_connection(item) for item in channels],
+                    "youtube_health": {
+                        "ok": bool(health.get("ok")),
+                        "provider": "youtube",
+                        "external_id": external_id,
+                        "details": health.get("details") or {},
+                    },
+                },
+                status_code=status.HTTP_200_OK,
+            )
+
+
+@router.get("/channels/youtube/health")
+async def youtube_health(
+    payload: YouTubeHealthPayload = Depends(),
+    current_user=Depends(get_current_user_required),
+):
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
+                current_user=current_user,
+                internal=False,
+            )
+            channel = await _get_youtube_oauth_channel_for_agent(session, agent.id)
+            if not channel or not channel.encrypted_credentials:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="YouTube OAuth канал не подключен",
+                )
+            try:
+                bundle_raw = decrypt_token(channel.encrypted_credentials)
+                bundle = json.loads(bundle_raw)
+            except Exception:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Поврежденный bundle YouTube OAuth в канале",
+                )
+            health = await get_youtube_client().health_check(token_bundle=bundle)
+            updated_bundle = health.get("token_bundle") or bundle
+            channel.encrypted_credentials = encrypt_token(json.dumps(updated_bundle, ensure_ascii=False))
+            channel.external_id = str(health.get("external_id") or channel.external_id or "youtube")
+            channel.updated_at = datetime.utcnow()
+            return JSONResponse(
+                content={
+                    "agent_id": agent.id,
+                    "bot_id": agent.bot_id,
+                    "connection": _serialize_channel_connection(channel),
+                    "health": {
+                        "ok": bool(health.get("ok")),
+                        "provider": "youtube",
+                        "external_id": channel.external_id,
+                        "details": health.get("details") or {},
+                    },
+                },
+                status_code=status.HTTP_200_OK,
+            )
+
+
 @router.post("/channels/by_token")
 async def add_agent_telegram_bot_channel(
     payload: AddTelegramBotChannel,
@@ -3682,6 +4082,186 @@ async def read_analytics_crm_actions(
                 },
                 status_code=status.HTTP_200_OK,
             )
+
+
+@router.get("/content/jobs")
+async def list_content_jobs(
+    payload: AgentLookup = Depends(),
+    status_filter: str | None = Query(default=None, alias="status"),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    current_user=Depends(get_current_user_optional),
+    internal: bool = Depends(is_internal_request),
+):
+    _assert_access(current_user, internal)
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
+                current_user=current_user,
+                internal=internal,
+            )
+            query = select(AgentContentJob).where(AgentContentJob.agent_id == agent.id)
+            count_query = select(func.count(AgentContentJob.id)).where(AgentContentJob.agent_id == agent.id)
+            normalized_status = str(status_filter or "").strip().lower()
+            if normalized_status:
+                query = query.where(AgentContentJob.status == normalized_status)
+                count_query = count_query.where(AgentContentJob.status == normalized_status)
+
+            total = int((await session.scalar(count_query)) or 0)
+            rows = (
+                await session.execute(
+                    query.order_by(AgentContentJob.created_at.desc(), AgentContentJob.id.desc()).limit(limit).offset(offset)
+                )
+            ).scalars().all()
+            return JSONResponse(
+                content={
+                    "agent_id": agent.id,
+                    "bot_id": agent.bot_id,
+                    "status_filter": normalized_status or None,
+                    "total": total,
+                    "limit": limit,
+                    "offset": offset,
+                    "items": [_serialize_content_job(item) for item in rows],
+                },
+                status_code=status.HTTP_200_OK,
+            )
+
+
+@router.get("/content/jobs/metrics")
+async def content_jobs_metrics(
+    payload: AgentLookup = Depends(),
+    current_user=Depends(get_current_user_optional),
+    internal: bool = Depends(is_internal_request),
+):
+    _assert_access(current_user, internal)
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
+                current_user=current_user,
+                internal=internal,
+            )
+            total = int(
+                (await session.scalar(select(func.count(AgentContentJob.id)).where(AgentContentJob.agent_id == agent.id)))
+                or 0
+            )
+            published = int(
+                (
+                    await session.scalar(
+                        select(func.count(AgentContentJob.id)).where(
+                            AgentContentJob.agent_id == agent.id,
+                            AgentContentJob.status == "published",
+                        )
+                    )
+                )
+                or 0
+            )
+            failed = int(
+                (
+                    await session.scalar(
+                        select(func.count(AgentContentJob.id)).where(
+                            AgentContentJob.agent_id == agent.id,
+                            AgentContentJob.status == "failed",
+                        )
+                    )
+                )
+                or 0
+            )
+            retry_jobs = int(
+                (
+                    await session.scalar(
+                        select(func.count(AgentContentJob.id)).where(
+                            AgentContentJob.agent_id == agent.id,
+                            AgentContentJob.retry_count > 0,
+                        )
+                    )
+                )
+                or 0
+            )
+            latency_rows = (
+                await session.execute(
+                    select(AgentContentJob.metadata_json).where(
+                        AgentContentJob.agent_id == agent.id,
+                        AgentContentJob.status.in_(["rendered", "publishing", "published", "failed"]),
+                        AgentContentJob.metadata_json.is_not(None),
+                    )
+                )
+            ).scalars().all()
+
+            latencies_seconds: list[float] = []
+            for raw_meta in latency_rows:
+                meta = _parse_content_job_metadata(raw_meta)
+                started_raw = str(meta.get("render_started_at") or "").strip()
+                finished_raw = str(meta.get("render_finished_at") or "").strip()
+                if not started_raw or not finished_raw:
+                    continue
+                try:
+                    started_dt = datetime.fromisoformat(started_raw)
+                    finished_dt = datetime.fromisoformat(finished_raw)
+                except Exception:
+                    continue
+                delta = (finished_dt - started_dt).total_seconds()
+                if delta >= 0:
+                    latencies_seconds.append(delta)
+
+            avg_render_latency_seconds = (
+                round(sum(latencies_seconds) / len(latencies_seconds), 2) if latencies_seconds else 0.0
+            )
+            retry_rate = (float(retry_jobs) / float(total)) * 100.0 if total > 0 else 0.0
+            return JSONResponse(
+                content={
+                    "agent_id": agent.id,
+                    "bot_id": agent.bot_id,
+                    "jobs_total": total,
+                    "jobs_published": published,
+                    "jobs_failed": failed,
+                    "avg_render_latency_seconds": avg_render_latency_seconds,
+                    "retry_rate_percent": round(retry_rate, 2),
+                },
+                status_code=status.HTTP_200_OK,
+            )
+
+
+@router.get("/content/jobs/{job_id}")
+async def content_job_detail(
+    job_id: int,
+    payload: AgentLookup = Depends(),
+    current_user=Depends(get_current_user_optional),
+    internal: bool = Depends(is_internal_request),
+):
+    _assert_access(current_user, internal)
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
+                current_user=current_user,
+                internal=internal,
+            )
+            row = await session.scalar(
+                select(AgentContentJob).where(
+                    AgentContentJob.id == int(job_id),
+                    AgentContentJob.agent_id == agent.id,
+                )
+            )
+            if row is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Content job not found")
+            return JSONResponse(content=_serialize_content_job(row), status_code=status.HTTP_200_OK)
 
 
 @router.get("/analytics/frozen/check")

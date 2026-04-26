@@ -4,7 +4,7 @@ sys.path.insert(0, dirname(dirname(abspath(__file__))))
 
 
 
-from sqlalchemy import BigInteger, Boolean, String, ForeignKey, Text, DateTime, Integer, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, String, ForeignKey, Text, DateTime, Integer, UniqueConstraint, Index
 from sqlalchemy.orm import  Mapped, mapped_column, relationship
 
 try: from .database import Base
@@ -156,6 +156,10 @@ class Agent(Base):
         back_populates="agent",
         cascade="all, delete-orphan",
     )
+    content_jobs: Mapped[list["AgentContentJob"]] = relationship(
+        back_populates="agent",
+        cascade="all, delete-orphan",
+    )
 
 
 class AgentFrozenUser(Base):
@@ -293,6 +297,43 @@ class AgentSalesDmQueue(Base):
         back_populates="sales_dm_queue",
         foreign_keys=[agent_id],
     )
+
+
+class AgentContentJob(Base):
+    """Pipeline job state for content_factory template."""
+    __tablename__ = "agent_content_jobs"
+    __table_args__ = (
+        Index("ix_agent_content_jobs_status_scheduled_for", "status", "scheduled_for"),
+        Index("ix_agent_content_jobs_kling_task_id", "kling_task_id"),
+        Index("ix_agent_content_jobs_youtube_video_id", "youtube_video_id"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), index=True, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="planned",
+        server_default="planned",
+    )  # planned, script_ready, rendering, rendered, publishing, published, failed
+    scheduled_for: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    script_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    script_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    kling_task_id: Mapped[str | None] = mapped_column(String(191), nullable=True)
+    video_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    youtube_video_id: Mapped[str | None] = mapped_column(String(191), nullable=True)
+    youtube_video_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    max_retries: Mapped[int] = mapped_column(Integer, nullable=False, default=3, server_default="3")
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metadata_json: Mapped[str | None] = mapped_column("metadata", Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    agent: Mapped["Agent"] = relationship(back_populates="content_jobs")
 
 
 class UserExternalIdentity(Base):

@@ -13,6 +13,7 @@ from ..alembic.models import AgentAnalyticsMessage, AgentCrmConnection, AgentSal
 from ..utils.crypto import decrypt_crm_credentials
 from ..utils.pii import mask_external_id, redact_pii_text
 from .ai_authoring import ai_client, generate_answer_with_context
+from .content_factory_runtime import get_content_factory_orchestrator
 from .crm import build_provider
 from .crm.tool_registry import CRMNeedsConfirmationError, CRMToolRegistry
 from .sales.tool_registry import SalesNeedsConfirmationError, SalesToolRegistry
@@ -91,7 +92,15 @@ class TemplateRuntimeService:
                 chat_portrait=chat_portrait,
             )
 
-        if normalized in {"qa", "lead_generation", "content_factory"}:
+        if normalized == "content_factory":
+            return await self._execute_content_factory(
+                prompt=prompt,
+                user_message=user_message,
+                knowledge_scope_id=knowledge_scope_id,
+                chat_portrait=chat_portrait,
+            )
+
+        if normalized in {"qa", "lead_generation"}:
             return await self._execute_qa_like(
                 prompt=prompt,
                 user_message=user_message,
@@ -501,6 +510,28 @@ class TemplateRuntimeService:
                 sources.append(str(source))
 
         return TemplateExecutionResult(answer=answer, sources=sources)
+
+    async def _execute_content_factory(
+        self,
+        *,
+        prompt: str,
+        user_message: str,
+        knowledge_scope_id: int,
+        chat_portrait: str | None = None,
+    ) -> TemplateExecutionResult:
+        decision = get_content_factory_orchestrator().route_incoming_message(user_message=user_message)
+        if decision.fallback_to_text_runtime:
+            fallback = await self._execute_qa_like(
+                prompt=prompt,
+                user_message=user_message,
+                knowledge_scope_id=knowledge_scope_id,
+                chat_portrait=chat_portrait,
+            )
+            fallback.fallback_to_text = True
+            fallback.fallback_reason = decision.fallback_reason or "content_factory_runtime_fallback"
+            return fallback
+
+        return TemplateExecutionResult(answer=decision.answer, sources=[])
 
     async def _execute_sales_manager(
         self,

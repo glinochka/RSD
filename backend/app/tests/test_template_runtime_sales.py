@@ -162,3 +162,49 @@ async def test_sales_runtime_function_call_schedule_dm(monkeypatch, mock_db_sess
     assert result.tool_events
     assert result.tool_events[0]["tool_name"] == "schedule_dm"
     assert result.tool_events[0]["tool_status"] == "draft_requires_review"
+
+
+@pytest.mark.asyncio
+async def test_content_factory_runtime_pipeline_mode_message():
+    service = TemplateRuntimeService()
+    result = await service.execute(
+        template_type="content_factory",
+        prompt="Ты агент контент-завода",
+        user_message="Придумай пост на сегодня",
+        knowledge_scope_id=101,
+        source_channel="telegram_userbot",
+        user_external_id="12345",
+    )
+
+    assert "pipeline-режиме" in result.answer
+    assert result.sources == []
+    assert result.fallback_to_text is False
+    assert result.fallback_reason is None
+
+
+@pytest.mark.asyncio
+async def test_content_factory_runtime_technical_message_fallback(monkeypatch):
+    service = TemplateRuntimeService()
+
+    async def fake_search(query, agent_id):
+        return [{"source": "kb://ops", "text": "Проверьте OAuth и refresh token."}]
+
+    async def fake_generate(user_message, context_list, prompt):
+        return "Техподсказка: обновите OAuth токен и переподключите YouTube."
+
+    monkeypatch.setattr("app.services.template_runtime.search_knowledge_base", fake_search)
+    monkeypatch.setattr("app.services.template_runtime.generate_answer_with_context", fake_generate)
+
+    result = await service.execute(
+        template_type="content_factory",
+        prompt="Ты агент контент-завода",
+        user_message="Ошибка OAuth при подключении YouTube",
+        knowledge_scope_id=101,
+        source_channel="telegram_userbot",
+        user_external_id="12345",
+    )
+
+    assert "Техподсказка" in result.answer
+    assert result.sources == ["kb://ops"]
+    assert result.fallback_to_text is True
+    assert result.fallback_reason == "content_factory_technical_fallback"

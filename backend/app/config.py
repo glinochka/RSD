@@ -18,6 +18,20 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
     QDRANT_API_KEY:str = ''
     DEEPSEEK_API_KEY: str
+    KLING_API_KEY: str = ""
+    KLING_API_BASE_URL: str = "https://api.klingai.com"
+    KLING_TIMEOUT_SECONDS: float = 30.0
+    KLING_MAX_RETRIES: int = 3
+    YOUTUBE_OAUTH_CLIENT_ID: str = ""
+    YOUTUBE_OAUTH_CLIENT_SECRET: str = ""
+    YOUTUBE_OAUTH_REDIRECT_URI: str = ""
+    YOUTUBE_OAUTH_SCOPES: str = "https://www.googleapis.com/auth/youtube.upload"
+    YOUTUBE_TIMEOUT_SECONDS: float = 45.0
+    YOUTUBE_MAX_RETRIES: int = 3
+    CONTENT_FACTORY_ENABLED: bool = False
+    CONTENT_FACTORY_POLL_INTERVAL_SECONDS: int = 20
+    CONTENT_FACTORY_RENDER_POLL_INTERVAL_SECONDS: int = 6
+    CONTENT_FACTORY_RENDER_MAX_POLLS: int = 60
 
     QDRANT_URL: str
     DB_HOST: str

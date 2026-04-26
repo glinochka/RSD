@@ -1,9 +1,15 @@
 import pytest
 import json
+from datetime import datetime, timedelta
 from unittest.mock import patch, MagicMock, AsyncMock
 from httpx import AsyncClient
+import jwt
 
 from app.services.crm.providers.base import CRMConnectionHealth
+from app.config import settings
+from app.alembic.models import AgentContentJob
+
+YOUTUBE_OAUTH_STATE_SCOPE = "youtube_oauth_connect"
 
 
 class TestAgentsAuth:
@@ -249,6 +255,301 @@ class TestAgentsCRUD:
 
         assert response.status_code == 422, f"Expected 422, got {response.status_code}: {response.text}"
         assert "template_config.dm_limits.per_minute" in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_youtube_oauth_start_returns_auth_url(self, client: AsyncClient, auth_headers, test_agent):
+        fake_client = MagicMock()
+        fake_client.build_oauth_authorization_url.return_value = "https://accounts.google.com/o/oauth2/v2/auth?state=test"
+        with patch("app.router_agents.router.get_youtube_client", return_value=fake_client):
+            response = await client.post(
+                "/api/agents/channels/by_youtube_oauth_start",
+                headers=auth_headers,
+                json={
+                    "bot_id": test_agent.bot_id,
+                    "redirect_uri": "https://app.example.com/oauth/youtube/callback",
+                },
+            )
+
+        assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
+        payload = response.json()
+        assert payload["agent_id"] == test_agent.id
+        assert payload["auth_url"].startswith("https://accounts.google.com/")
+        assert payload["state"]
+
+    @pytest.mark.asyncio
+    async def test_youtube_oauth_callback_connects_channel(self, client: AsyncClient, test_agent, test_user):
+        now = datetime.utcnow()
+        state = jwt.encode(
+            {
+                "scope": YOUTUBE_OAUTH_STATE_SCOPE,
+                "user_id": test_user.id,
+                "agent_id": test_agent.id,
+                "redirect_uri": "https://app.example.com/oauth/youtube/callback",
+                "exp": now + timedelta(minutes=10),
+                "iat": now,
+            },
+            settings.SECRET_KEY,
+            algorithm=settings.ALGORITHM,
+        )
+
+        fake_client = MagicMock()
+        fake_client.exchange_code_for_tokens = AsyncMock(
+            return_value={
+                "access_token": "ya29.token",
+                "refresh_token": "refresh.token",
+                "expires_at": (now + timedelta(hours=1)).isoformat(),
+            }
+        )
+        fake_client.health_check = AsyncMock(
+            return_value={
+                "ok": True,
+                "external_id": "UC_CHANNEL_123",
+                "details": {"title": "My Channel"},
+                "token_bundle": {
+                    "access_token": "ya29.token",
+                    "refresh_token": "refresh.token",
+                    "expires_at": (now + timedelta(hours=1)).isoformat(),
+                },
+            }
+        )
+
+        with patch("app.router_agents.router.get_youtube_client", return_value=fake_client):
+            response = await client.post(
+                "/api/agents/channels/by_youtube_oauth_callback",
+                json={"code": "oauth-code-12345", "state": state},
+            )
+
+        assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
+        payload = response.json()
+        providers = [item["provider"] for item in payload["channels"]]
+        assert "youtube" in providers
+        assert payload["youtube_health"]["ok"] is True
+
+    @pytest.mark.asyncio
+    async def test_youtube_health_endpoint(self, client: AsyncClient, auth_headers, test_agent, test_user):
+        now = datetime.utcnow()
+        state = jwt.encode(
+            {
+                "scope": YOUTUBE_OAUTH_STATE_SCOPE,
+                "user_id": test_user.id,
+                "agent_id": test_agent.id,
+                "redirect_uri": "https://app.example.com/oauth/youtube/callback",
+                "exp": now + timedelta(minutes=10),
+                "iat": now,
+            },
+            settings.SECRET_KEY,
+            algorithm=settings.ALGORITHM,
+        )
+
+        fake_client = MagicMock()
+        fake_client.exchange_code_for_tokens = AsyncMock(
+            return_value={
+                "access_token": "ya29.token",
+                "refresh_token": "refresh.token",
+                "expires_at": (now + timedelta(hours=1)).isoformat(),
+            }
+        )
+        fake_client.health_check = AsyncMock(
+            side_effect=[
+                {
+                    "ok": True,
+                    "external_id": "UC_CHANNEL_123",
+                    "details": {"title": "My Channel"},
+                    "token_bundle": {
+                        "access_token": "ya29.token",
+                        "refresh_token": "refresh.token",
+                        "expires_at": (now + timedelta(hours=1)).isoformat(),
+                    },
+                },
+                {
+                    "ok": True,
+                    "external_id": "UC_CHANNEL_123",
+                    "details": {"title": "My Channel"},
+                    "token_bundle": {
+                        "access_token": "ya29.token.updated",
+                        "refresh_token": "refresh.token",
+                        "expires_at": (now + timedelta(hours=1)).isoformat(),
+                    },
+                },
+            ]
+        )
+
+        with patch("app.router_agents.router.get_youtube_client", return_value=fake_client):
+            callback_resp = await client.post(
+                "/api/agents/channels/by_youtube_oauth_callback",
+                json={"code": "oauth-code-12345", "state": state},
+            )
+            assert callback_resp.status_code == 200, callback_resp.text
+
+            response = await client.get(
+                "/api/agents/channels/youtube/health",
+                headers=auth_headers,
+                params={"bot_id": test_agent.bot_id},
+            )
+
+        assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
+        payload = response.json()
+        assert payload["health"]["ok"] is True
+        assert payload["connection"]["provider"] == "youtube"
+
+    @pytest.mark.asyncio
+    async def test_content_jobs_list_filter_detail_and_metrics(
+        self, client: AsyncClient, auth_headers, test_session, test_agent
+    ):
+        now = datetime.utcnow().replace(microsecond=0)
+        async with test_session.begin():
+            test_session.add_all(
+                [
+                    AgentContentJob(
+                        agent_id=test_agent.id,
+                        status="published",
+                        scheduled_for=now,
+                        started_at=now,
+                        finished_at=now + timedelta(minutes=2),
+                        retry_count=1,
+                        max_retries=3,
+                        metadata_json=json.dumps(
+                            {
+                                "render_started_at": now.isoformat(),
+                                "render_finished_at": (now + timedelta(seconds=30)).isoformat(),
+                            }
+                        ),
+                        created_at=now,
+                        updated_at=now,
+                        youtube_video_id="vid_1",
+                        youtube_video_url="https://youtube.com/shorts/vid_1",
+                    ),
+                    AgentContentJob(
+                        agent_id=test_agent.id,
+                        status="failed",
+                        scheduled_for=now + timedelta(hours=1),
+                        retry_count=0,
+                        max_retries=3,
+                        metadata_json=json.dumps(
+                            {
+                                "render_started_at": (now + timedelta(hours=1)).isoformat(),
+                                "render_finished_at": (now + timedelta(hours=1, seconds=10)).isoformat(),
+                            }
+                        ),
+                        created_at=now + timedelta(hours=1),
+                        updated_at=now + timedelta(hours=1),
+                        last_error="publish_failed",
+                    ),
+                ]
+            )
+
+        list_resp = await client.get(
+            "/api/agents/content/jobs",
+            headers=auth_headers,
+            params={"bot_id": test_agent.bot_id},
+        )
+        assert list_resp.status_code == 200, list_resp.text
+        list_payload = list_resp.json()
+        assert list_payload["total"] == 2
+        assert len(list_payload["items"]) == 2
+
+        filtered_resp = await client.get(
+            "/api/agents/content/jobs",
+            headers=auth_headers,
+            params={"bot_id": test_agent.bot_id, "status": "published"},
+        )
+        assert filtered_resp.status_code == 200, filtered_resp.text
+        filtered_payload = filtered_resp.json()
+        assert filtered_payload["total"] == 1
+        assert filtered_payload["items"][0]["status"] == "published"
+        job_id = int(filtered_payload["items"][0]["id"])
+
+        detail_resp = await client.get(
+            f"/api/agents/content/jobs/{job_id}",
+            headers=auth_headers,
+            params={"bot_id": test_agent.bot_id},
+        )
+        assert detail_resp.status_code == 200, detail_resp.text
+        detail_payload = detail_resp.json()
+        assert detail_payload["id"] == job_id
+        assert detail_payload["youtube_video_id"] == "vid_1"
+
+        metrics_resp = await client.get(
+            "/api/agents/content/jobs/metrics",
+            headers=auth_headers,
+            params={"bot_id": test_agent.bot_id},
+        )
+        assert metrics_resp.status_code == 200, metrics_resp.text
+        metrics_payload = metrics_resp.json()
+        assert metrics_payload["jobs_total"] == 2
+        assert metrics_payload["jobs_published"] == 1
+        assert metrics_payload["jobs_failed"] == 1
+        assert metrics_payload["avg_render_latency_seconds"] == 20.0
+        assert metrics_payload["retry_rate_percent"] == 50.0
+
+    @pytest.mark.asyncio
+    async def test_create_empty_agent_content_factory_requires_company_fields(self, client: AsyncClient, auth_headers):
+        """content_factory требует обязательные поля company_name/company_activity."""
+        response = await client.post(
+            "/api/agents",
+            headers=auth_headers,
+            json={
+                "system_prompt": "Content factory system prompt",
+                "template_type": "content_factory",
+                "template_config": {
+                    "content_language": "ru",
+                },
+            },
+        )
+
+        assert response.status_code == 422, f"Expected 422, got {response.status_code}: {response.text}"
+        assert "template_config.company_name" in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_create_empty_agent_content_factory_defaults(self, client: AsyncClient, auth_headers):
+        """content_factory сохраняется с дефолтами и продуктовой схемой."""
+        response = await client.post(
+            "/api/agents",
+            headers=auth_headers,
+            json={
+                "system_prompt": "Content factory system prompt",
+                "template_type": "content_factory",
+                "template_config": {
+                    "company_name": "Acme AI",
+                    "company_activity": "Автоматизация клиентской поддержки",
+                },
+            },
+        )
+
+        assert response.status_code == 201, f"Expected 201, got {response.status_code}: {response.text}"
+        data = response.json()
+        cfg = data["template_config"] or {}
+        assert data["template_type"] == "content_factory"
+        assert cfg["company_name"] == "Acme AI"
+        assert cfg["company_activity"] == "Автоматизация клиентской поддержки"
+        assert cfg["content_language"] == "ru"
+        assert cfg["daily_posting_enabled"] is True
+        assert cfg["daily_post_time"] == "10:00"
+        assert cfg["timezone"] == "UTC"
+        assert cfg["video_duration_seconds"] == 8
+        assert cfg["kling_model"] == "kling-v1"
+
+    @pytest.mark.asyncio
+    async def test_update_agent_content_factory_rejects_duration_more_than_8(
+        self, client: AsyncClient, auth_headers, test_agent
+    ):
+        """content_factory в update отклоняет duration > 8."""
+        response = await client.patch(
+            "/api/agents/by_botID",
+            headers=auth_headers,
+            json={
+                "bot_id": test_agent.bot_id,
+                "template_type": "content_factory",
+                "template_config": {
+                    "company_name": "Acme AI",
+                    "company_activity": "Создание AI-видео",
+                    "video_duration_seconds": 12,
+                },
+            },
+        )
+
+        assert response.status_code == 422, f"Expected 422, got {response.status_code}: {response.text}"
+        assert "video_duration_seconds" in response.json()["detail"]
 
 
 class TestAgentsInternal:

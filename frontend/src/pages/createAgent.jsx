@@ -74,7 +74,8 @@ const TEMPLATE_TYPE_HELP = {
   sales_manager:
     'Агент работает как менеджер продаж: через function-calling решает, писать ли лиду, ведет диалог по стадиям (первое касание → выявление боли → ценностное предложение → перевод на ЛПР) и использует портрет клиента + RAG-контекст.',
   ai_logist: 'Шаблон находится в разработке.',
-  content_factory: 'Шаблон находится в разработке.',
+  content_factory:
+    'ИИ контент-завод: по расписанию генерирует сценарии и публикует короткие видео в YouTube. В MVP: без склеек, 1 публикация в день.',
 };
 
 const TEMPLATE_TYPE_SELECT_OPTIONS = [
@@ -109,11 +110,10 @@ const TEMPLATE_TYPE_SELECT_OPTIONS = [
   },
   {
     value: 'content_factory',
-    disabled: true,
     label: (
       <span className="select-option-label-with-badge">
         Контент-завод
-        <span className="beta-badge">В разработке</span>
+        <span className="beta-badge">MVP</span>
       </span>
     ),
   },
@@ -277,6 +277,10 @@ const CreateAgentContent = () => {
       sales_product_name: '',
       sales_offer_type: '',
       sales_usp: '',
+      content_company_name: '',
+      content_company_activity: '',
+      content_brand_tone: '',
+      content_language: 'ru',
       system_prompt: '',
     },
     async (values) => {
@@ -366,6 +370,14 @@ const CreateAgentContent = () => {
           form.setFieldError('sales_offer_type', 'Укажите тип предложения (например, SaaS, курсы, услуги)');
           return;
         }
+        if (selectedTemplate === 'content_factory' && !values.content_company_name?.trim()) {
+          form.setFieldError('content_company_name', 'Укажите название компании');
+          return;
+        }
+        if (selectedTemplate === 'content_factory' && !values.content_company_activity?.trim()) {
+          form.setFieldError('content_company_activity', 'Укажите деятельность компании');
+          return;
+        }
         if (selectedTemplate === 'crm_admin' && !values.crm_account_base_url?.trim()) {
           form.setFieldError('crm_account_base_url', 'Base URL CRM обязателен');
           return;
@@ -399,6 +411,13 @@ const CreateAgentContent = () => {
                 sales_offer_type: values.sales_offer_type.trim(),
                 sales_usp: values.sales_usp?.trim() || '',
               }
+            : selectedTemplate === 'content_factory'
+              ? {
+                  company_name: values.content_company_name.trim(),
+                  company_activity: values.content_company_activity.trim(),
+                  brand_tone: values.content_brand_tone?.trim() || undefined,
+                  content_language: values.content_language?.trim().toLowerCase() || 'ru',
+                }
             : undefined;
 
         const createdAgent = await agentService.createEmpty({
@@ -483,6 +502,7 @@ const CreateAgentContent = () => {
     validationRules
   );
   const isSalesManagerTemplate = form.values.template_type === 'sales_manager';
+  const isContentFactoryTemplate = form.values.template_type === 'content_factory';
 
   const clearUserbotLocalState = () => {
     setUserbotAuthToken('');
@@ -1138,6 +1158,80 @@ const CreateAgentContent = () => {
                   Агент будет сканировать сообщения в Telegram чатах и на каждом шаге принимать решение через
                   function-calling: писать или игнорировать лид. Далее диалог строится по стадиям и генерируется
                   LLM с учетом портрета клиента, истории общения и вашей базы знаний (RAG).
+                </p>
+              </div>
+            )}
+
+            {isContentFactoryTemplate && (
+              <div className="form-group">
+                <h3 className="agent-form-channel-title">Конфигурация контент-завода</h3>
+                <label htmlFor="content_company_name">Название компании:</label>
+                <input
+                  id="content_company_name"
+                  type="text"
+                  name="content_company_name"
+                  placeholder="Например: RSD AI"
+                  className={`input-main ${form.errors.content_company_name ? 'error' : ''}`}
+                  value={form.values.content_company_name}
+                  onChange={form.handleChange}
+                  onBlur={form.handleBlur}
+                  disabled={form.isSubmitting}
+                />
+                {form.errors.content_company_name && (
+                  <span className="error-message">{form.errors.content_company_name}</span>
+                )}
+
+                <label htmlFor="content_company_activity" className="mt-input">
+                  Деятельность:
+                </label>
+                <textarea
+                  id="content_company_activity"
+                  name="content_company_activity"
+                  placeholder="Кратко опишите, чем занимается компания"
+                  className={`input-main textarea ${form.errors.content_company_activity ? 'error' : ''}`}
+                  value={form.values.content_company_activity}
+                  onChange={form.handleChange}
+                  onBlur={form.handleBlur}
+                  disabled={form.isSubmitting}
+                  rows="3"
+                ></textarea>
+                {form.errors.content_company_activity && (
+                  <span className="error-message">{form.errors.content_company_activity}</span>
+                )}
+
+                <label htmlFor="content_brand_tone" className="mt-input">
+                  Тон коммуникации (опционально):
+                </label>
+                <textarea
+                  id="content_brand_tone"
+                  name="content_brand_tone"
+                  placeholder="Например: экспертный, дружелюбный, энергичный"
+                  className="input-main textarea"
+                  value={form.values.content_brand_tone}
+                  onChange={form.handleChange}
+                  onBlur={form.handleBlur}
+                  disabled={form.isSubmitting}
+                  rows="2"
+                ></textarea>
+
+                <label htmlFor="content_language" className="mt-input">
+                  Язык контента:
+                </label>
+                <CustomSelect
+                  id="content_language"
+                  name="content_language"
+                  className="input-main"
+                  value={form.values.content_language}
+                  onChange={form.handleChange}
+                  options={[
+                    { value: 'ru', label: 'Русский (ru)' },
+                    { value: 'en', label: 'Английский (en)' },
+                  ]}
+                  disabled={form.isSubmitting}
+                />
+
+                <p className="help-text">
+                  MVP публикует короткие видео в YouTube: без склеек, 1 публикация в день.
                 </p>
               </div>
             )}

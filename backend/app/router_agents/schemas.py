@@ -2,6 +2,28 @@ from pydantic import BaseModel, Field, model_validator
 from typing import Optional
 
 
+class ContentFactoryTemplateConfig(BaseModel):
+    company_name: str = Field(..., min_length=1, max_length=255, description="Название компании")
+    company_activity: str = Field(..., min_length=1, max_length=2000, description="Описание деятельности")
+    brand_tone: Optional[str] = Field(default=None, max_length=500, description="Тон коммуникации бренда")
+    content_language: str = Field(default="ru", pattern="^[a-z]{2,16}(?:-[a-z]{2,16})?$", description="Язык контента")
+    daily_posting_enabled: bool = Field(default=True, description="Включена ли ежедневная публикация")
+    daily_post_time: str = Field(default="10:00", pattern="^([01]\\d|2[0-3]):([0-5]\\d)$", description="Время публикации HH:MM")
+    timezone: str = Field(default="UTC", min_length=1, max_length=64, description="IANA timezone (например UTC/Europe-Moscow)")
+    video_duration_seconds: int = Field(default=8, ge=1, le=8, description="Длительность видео в секундах (MVP <= 8)")
+    kling_model: str = Field(default="kling-v1", min_length=1, max_length=128, description="Модель Kling для генерации")
+
+    @model_validator(mode="after")
+    def validate_timezone(self):
+        value = (self.timezone or "").strip()
+        if not value:
+            raise ValueError("timezone must not be empty")
+        allowed = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_+-/"
+        if any(ch not in allowed for ch in value):
+            raise ValueError("timezone format is invalid")
+        return self
+
+
 class AgentLookup(BaseModel):
     agent_id: Optional[int] = Field(None, gt=0, description="Внутренний id агента")
     bot_id: Optional[int] = Field(None, description="Legacy id (Telegram id канала)")
@@ -27,7 +49,7 @@ class UpdateAgent(AgentLookup):
         pattern="^(qa|crm_admin|function_calling|lead_generation|content_factory|sales_manager)$",
         description="Тип шаблона агента",
     )
-    template_config: Optional[dict] = Field(
+    template_config: Optional[dict | ContentFactoryTemplateConfig] = Field(
         default=None,
         description="Конфигурация шаблона (JSON)",
     )
@@ -45,7 +67,7 @@ class NewAgent_byUserWith_tgID(BaseModel):
         pattern="^(qa|crm_admin|function_calling|lead_generation|content_factory|sales_manager)$",
         description="Тип шаблона агента",
     )
-    template_config: Optional[dict] = Field(
+    template_config: Optional[dict | ContentFactoryTemplateConfig] = Field(
         default=None,
         description="Конфигурация шаблона (JSON)",
     )
@@ -66,7 +88,7 @@ class NewAgent_byToken(BaseModel):
         pattern="^(qa|crm_admin|function_calling|lead_generation|content_factory|sales_manager)$",
         description="Тип шаблона агента",
     )
-    template_config: Optional[dict] = Field(
+    template_config: Optional[dict | ContentFactoryTemplateConfig] = Field(
         default=None,
         description="Конфигурация шаблона (JSON)",
     )
@@ -82,7 +104,7 @@ class NewAgent_byUserbotSession(BaseModel):
         pattern="^(qa|crm_admin|function_calling|lead_generation|content_factory|sales_manager)$",
         description="Тип шаблона агента",
     )
-    template_config: Optional[dict] = Field(
+    template_config: Optional[dict | ContentFactoryTemplateConfig] = Field(
         default=None,
         description="Конфигурация шаблона (JSON)",
     )
@@ -95,7 +117,7 @@ class CreateEmptyAgent(BaseModel):
         pattern="^(qa|crm_admin|function_calling|lead_generation|content_factory|sales_manager)$",
         description="Тип шаблона агента",
     )
-    template_config: Optional[dict] = Field(
+    template_config: Optional[dict | ContentFactoryTemplateConfig] = Field(
         default=None,
         description="Конфигурация шаблона (JSON)",
     )
@@ -169,6 +191,24 @@ class AddWhatsAppUserbotChannel(AgentLookup):
 
 class DeleteAgentChannel(AgentLookup):
     connection_id: int = Field(..., gt=0, description="Id подключения канала")
+
+
+class YouTubeOAuthStartPayload(AgentLookup):
+    redirect_uri: Optional[str] = Field(
+        default=None,
+        min_length=10,
+        max_length=1024,
+        description="Опционально: redirect URI для OAuth callback",
+    )
+
+
+class YouTubeOAuthCallbackPayload(BaseModel):
+    code: str = Field(..., min_length=8, max_length=4096, description="Authorization code from Google OAuth")
+    state: str = Field(..., min_length=16, max_length=4096, description="Signed OAuth state")
+
+
+class YouTubeHealthPayload(AgentLookup):
+    pass
 
 
 class UserbotRequestCode(BaseModel):
