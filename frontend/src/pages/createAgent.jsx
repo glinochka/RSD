@@ -45,6 +45,9 @@ const SALES_DEFAULT_TEMPLATE_CONFIG = {
   qualification_model: 'deepseek-chat',
   generation_model: 'deepseek-chat',
   min_confidence: 0.75,
+  sales_product_name: '',
+  sales_offer_type: '',
+  sales_usp: '',
   scan_scope: {
     include_chat_ids: [],
     exclude_chat_ids: [],
@@ -69,7 +72,7 @@ const TEMPLATE_TYPE_HELP = {
   crm_admin:
     'Агент работает по шаблону администратора CRM: поиск и создание контактов, сделок, задач и другое в соответствии с настройками ниже. Перед сохранением проверьте подключение к CRM. Функция в статусе BETA.',
   sales_manager:
-    'Агент работает в режиме менеджера продаж: отслеживает целевые сообщения в чатах через Telegram userbot и готовит outreach в личные сообщения. На этом этапе включается безопасный профиль draft_only с лимитами и дедупликацией.',
+    'Агент работает как менеджер продаж: через function-calling решает, писать ли лиду, ведет диалог по стадиям (первое касание → выявление боли → ценностное предложение → перевод на ЛПР) и использует портрет клиента + RAG-контекст.',
   ai_logist: 'Шаблон находится в разработке.',
   content_factory: 'Шаблон находится в разработке.',
 };
@@ -271,6 +274,9 @@ const CreateAgentContent = () => {
       crm_allowed_tools: 'find_contact, create_contact, find_lead, create_lead, update_lead, add_note, create_task, assign_owner',
       crm_confirmation_policy: 'confirm_risky',
       crm_fallback_mode: 'ask_clarifying_question',
+      sales_product_name: '',
+      sales_offer_type: '',
+      sales_usp: '',
       system_prompt: '',
     },
     async (values) => {
@@ -352,6 +358,14 @@ const CreateAgentContent = () => {
           );
           return;
         }
+        if (selectedTemplate === 'sales_manager' && !values.sales_product_name?.trim()) {
+          form.setFieldError('sales_product_name', 'Укажите продукт, который продает агент');
+          return;
+        }
+        if (selectedTemplate === 'sales_manager' && !values.sales_offer_type?.trim()) {
+          form.setFieldError('sales_offer_type', 'Укажите тип предложения (например, SaaS, курсы, услуги)');
+          return;
+        }
         if (selectedTemplate === 'crm_admin' && !values.crm_account_base_url?.trim()) {
           form.setFieldError('crm_account_base_url', 'Base URL CRM обязателен');
           return;
@@ -379,7 +393,12 @@ const CreateAgentContent = () => {
               fallback_mode: values.crm_fallback_mode?.trim() || 'ask_clarifying_question',
             }
           : selectedTemplate === 'sales_manager'
-            ? SALES_DEFAULT_TEMPLATE_CONFIG
+            ? {
+                ...SALES_DEFAULT_TEMPLATE_CONFIG,
+                sales_product_name: values.sales_product_name.trim(),
+                sales_offer_type: values.sales_offer_type.trim(),
+                sales_usp: values.sales_usp?.trim() || '',
+              }
             : undefined;
 
         const createdAgent = await agentService.createEmpty({
@@ -1057,6 +1076,54 @@ const CreateAgentContent = () => {
             {form.values.template_type === 'sales_manager' && (
               <div className="form-group">
                 <h3 className="agent-form-channel-title">Конфигурация Sales Manager</h3>
+                <label htmlFor="sales_product_name">Продукт:</label>
+                <input
+                  id="sales_product_name"
+                  type="text"
+                  name="sales_product_name"
+                  placeholder="Например: ИИ-автоматизация продаж RSD AI"
+                  className={`input-main ${form.errors.sales_product_name ? 'error' : ''}`}
+                  value={form.values.sales_product_name}
+                  onChange={form.handleChange}
+                  onBlur={form.handleBlur}
+                  disabled={form.isSubmitting}
+                />
+                {form.errors.sales_product_name && (
+                  <span className="error-message">{form.errors.sales_product_name}</span>
+                )}
+
+                <label htmlFor="sales_offer_type" className="mt-input">
+                  Что продаете (категория):
+                </label>
+                <input
+                  id="sales_offer_type"
+                  type="text"
+                  name="sales_offer_type"
+                  placeholder="Например: SaaS, курсы, консалтинг, внедрение под ключ"
+                  className={`input-main ${form.errors.sales_offer_type ? 'error' : ''}`}
+                  value={form.values.sales_offer_type}
+                  onChange={form.handleChange}
+                  onBlur={form.handleBlur}
+                  disabled={form.isSubmitting}
+                />
+                {form.errors.sales_offer_type && (
+                  <span className="error-message">{form.errors.sales_offer_type}</span>
+                )}
+
+                <label htmlFor="sales_usp" className="mt-input">
+                  УТП (опционально):
+                </label>
+                <textarea
+                  id="sales_usp"
+                  name="sales_usp"
+                  placeholder="Например: подключение за 5 минут, быстрая интеграция с CRM, единый дашборд"
+                  className="input-main textarea"
+                  value={form.values.sales_usp}
+                  onChange={form.handleChange}
+                  onBlur={form.handleBlur}
+                  disabled={form.isSubmitting}
+                  rows="3"
+                ></textarea>
                 <div className="help-text">
                   <strong>⚠️ Важно:</strong> На этом этапе sales_manager настроен с безопасным профилем:
                   <ul style={{ marginTop: '8px', paddingLeft: '20px' }}>
@@ -1068,9 +1135,9 @@ const CreateAgentContent = () => {
                   </ul>
                 </div>
                 <p className="help-text">
-                  Агент будет сканировать сообщения в доступных ему Telegram чатах и готовить 
-                  персонализированные предложения в личные сообщения. Дополнительная конфигурация 
-                  лимитов и правил доступна после создания агента.
+                  Агент будет сканировать сообщения в Telegram чатах и на каждом шаге принимать решение через
+                  function-calling: писать или игнорировать лид. Далее диалог строится по стадиям и генерируется
+                  LLM с учетом портрета клиента, истории общения и вашей базы знаний (RAG).
                 </p>
               </div>
             )}

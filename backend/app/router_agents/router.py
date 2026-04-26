@@ -76,6 +76,9 @@ SALES_DEFAULT_CONFIG = {
     "qualification_model": "deepseek-chat",
     "generation_model": "deepseek-chat",
     "min_confidence": 0.75,
+    "sales_product_name": "",
+    "sales_offer_type": "",
+    "sales_usp": "",
     "scan_scope": {
         "include_chat_ids": [],
         "exclude_chat_ids": [],
@@ -181,6 +184,15 @@ def _normalize_template_config(template_type: str, template_config: dict | None)
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="template_config.min_confidence must be between 0 and 1",
+            )
+
+        sales_product_name = str(raw.get("sales_product_name") or SALES_DEFAULT_CONFIG["sales_product_name"]).strip()
+        sales_offer_type = str(raw.get("sales_offer_type") or SALES_DEFAULT_CONFIG["sales_offer_type"]).strip()
+        sales_usp = str(raw.get("sales_usp") or SALES_DEFAULT_CONFIG["sales_usp"]).strip()
+        if len(sales_product_name) > 255 or len(sales_offer_type) > 128 or len(sales_usp) > 2000:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="template_config sales fields are too long",
             )
 
         scan_scope_raw = raw.get("scan_scope")
@@ -334,6 +346,9 @@ def _normalize_template_config(template_type: str, template_config: dict | None)
             "qualification_model": qualification_model,
             "generation_model": generation_model,
             "min_confidence": min_confidence,
+            "sales_product_name": sales_product_name,
+            "sales_offer_type": sales_offer_type,
+            "sales_usp": sales_usp,
             "scan_scope": scan_scope,
             "dm_limits": dm_limits,
             "cooldown_days": cooldown_days,

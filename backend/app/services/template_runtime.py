@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy import select
 
 from ..alembic.database import async_session_maker
-from ..alembic.models import AgentAnalyticsMessage, AgentCrmConnection
+from ..alembic.models import AgentAnalyticsMessage, AgentCrmConnection, AgentSalesContact
 from ..utils.crypto import decrypt_crm_credentials
 from ..utils.pii import mask_external_id, redact_pii_text
 from .ai_authoring import ai_client, generate_answer_with_context
@@ -440,29 +440,32 @@ class TemplateRuntimeService:
         channel = (source_channel or "").strip().lower()
         if not uid or not channel:
             return []
-
-        async with async_session_maker() as session:
-            async with session.begin():
-                rows = (
-                    (
-                        await session.execute(
-                            select(
-                                AgentAnalyticsMessage.role,
-                                AgentAnalyticsMessage.message_text,
+        try:
+            async with async_session_maker() as session:
+                async with session.begin():
+                    rows = (
+                        (
+                            await session.execute(
+                                select(
+                                    AgentAnalyticsMessage.role,
+                                    AgentAnalyticsMessage.message_text,
+                                )
+                                .where(
+                                    AgentAnalyticsMessage.agent_id == agent_id,
+                                    AgentAnalyticsMessage.user_external_id == uid,
+                                    AgentAnalyticsMessage.channel == channel,
+                                    AgentAnalyticsMessage.role.in_(["user", "agent"]),
+                                )
+                                .order_by(AgentAnalyticsMessage.created_at.desc())
+                                .limit(8)
                             )
-                            .where(
-                                AgentAnalyticsMessage.agent_id == agent_id,
-                                AgentAnalyticsMessage.user_external_id == uid,
-                                AgentAnalyticsMessage.channel == channel,
-                                AgentAnalyticsMessage.role.in_(["user", "agent"]),
-                            )
-                            .order_by(AgentAnalyticsMessage.created_at.desc())
-                            .limit(8)
                         )
+                        .mappings()
+                        .all()
                     )
-                    .mappings()
-                    .all()
-                )
+        except Exception:
+            logger.warning("Failed to load recent channel history for sales context")
+            return []
 
         history: list[dict[str, Any]] = []
         for row in reversed(rows):
@@ -512,30 +515,61 @@ class TemplateRuntimeService:
         chat_portrait: str | None = None,
     ) -> TemplateExecutionResult:
         contact_key = self._resolve_sales_contact_key(template_config=template_config)
+        current_sales_state = "DISCOVERED"
         if agent_id and user_external_id:
             await self._ensure_sales_contact_exists(
                 agent_id=agent_id,
                 user_external_id=user_external_id,
                 source_chat_id=contact_key,
             )
+            current_sales_state = await self._load_sales_contact_state(
+                agent_id=agent_id,
+                user_external_id=user_external_id,
+                source_chat_id=contact_key,
+            )
+        recent_history: list[dict[str, Any]] = []
+        if agent_id and user_external_id:
+            recent_history = await self._load_recent_channel_history(
+                agent_id=agent_id,
+                user_external_id=user_external_id,
+                source_channel=source_channel,
+            )
         qualification = await self.qualify_message(
             prompt=prompt,
             user_message=user_message,
             template_config=template_config,
             chat_portrait=chat_portrait,
+            current_sales_state=current_sales_state,
+            recent_history=recent_history,
         )
         intent = qualification.get("intent", "unsure")
+        decision = str(qualification.get("decision") or "ignore").strip().lower()
         confidence = float(qualification.get("confidence") or 0.0)
         min_confidence = float(template_config.get("min_confidence") or 0.75)
 
-        if intent in {"do_not_contact", "non_target"}:
+        if intent in {"do_not_contact", "non_target"} or decision == "ignore":
+            skip_reason = f"intent:{intent}" if intent in {"do_not_contact", "non_target"} else "llm_ignore"
+            if (
+                agent_id
+                and user_external_id
+                and current_sales_state == "SENT"
+                and intent in {"do_not_contact", "non_target"}
+            ):
+                await self._transition_sales_state_safe(
+                    agent_id=agent_id,
+                    user_external_id=user_external_id,
+                    source_chat_id=contact_key,
+                    to_state="REPLIED_NEGATIVE",
+                    reason="reply_negative_signal",
+                    metadata={"qualification": qualification},
+                )
             if agent_id and user_external_id:
                 await self._transition_sales_state_safe(
                     agent_id=agent_id,
                     user_external_id=user_external_id,
                     source_chat_id=contact_key,
                     to_state="SKIPPED",
-                    reason=f"intent:{intent}",
+                    reason=skip_reason,
                     metadata={"qualification": qualification},
                 )
             return self.emit_action(
@@ -576,7 +610,18 @@ class TemplateRuntimeService:
                 user_external_id=user_external_id,
             )
 
-        if agent_id and user_external_id:
+        if agent_id and user_external_id and current_sales_state == "SENT" and decision == "engage":
+            await self._transition_sales_state_safe(
+                agent_id=agent_id,
+                user_external_id=user_external_id,
+                source_chat_id=contact_key,
+                to_state="REPLIED_POSITIVE",
+                reason="reply_engaged",
+                metadata={"qualification": qualification},
+            )
+            current_sales_state = "REPLIED_POSITIVE"
+
+        if agent_id and user_external_id and current_sales_state == "DISCOVERED":
             await self._transition_sales_state_safe(
                 agent_id=agent_id,
                 user_external_id=user_external_id,
@@ -585,6 +630,7 @@ class TemplateRuntimeService:
                 reason="qualified",
                 metadata={"qualification": qualification},
             )
+            current_sales_state = "QUALIFIED"
         context_list, sources = await self.retrieve_offer_context(
             user_message=user_message,
             knowledge_scope_id=knowledge_scope_id,
@@ -596,6 +642,8 @@ class TemplateRuntimeService:
             context_list=context_list,
             template_config=template_config,
             chat_portrait=chat_portrait,
+            current_sales_state=current_sales_state,
+            recent_history=recent_history,
         )
         tool_driven = await self._execute_sales_tools(
             prompt=prompt,
@@ -617,6 +665,15 @@ class TemplateRuntimeService:
                     source_chat_id=contact_key,
                     tool_events=tool_driven.tool_events,
                 )
+                if bool(qualification.get("handoff_ready")) and current_sales_state == "REPLIED_POSITIVE":
+                    await self._transition_sales_state_safe(
+                        agent_id=agent_id,
+                        user_external_id=user_external_id,
+                        source_chat_id=contact_key,
+                        to_state="HANDOFF_CRM",
+                        reason="llm_handoff_ready",
+                        metadata={"qualification": qualification},
+                    )
             return tool_driven
         result = self.emit_action(
             template_config=template_config,
@@ -633,6 +690,15 @@ class TemplateRuntimeService:
                 source_chat_id=contact_key,
                 tool_events=result.tool_events,
             )
+            if bool(qualification.get("handoff_ready")) and current_sales_state == "REPLIED_POSITIVE":
+                await self._transition_sales_state_safe(
+                    agent_id=agent_id,
+                    user_external_id=user_external_id,
+                    source_chat_id=contact_key,
+                    to_state="HANDOFF_CRM",
+                    reason="llm_handoff_ready",
+                    metadata={"qualification": qualification},
+                )
         return result
 
     async def _execute_sales_tools(
@@ -799,33 +865,138 @@ class TemplateRuntimeService:
         user_message: str,
         template_config: dict[str, Any],
         chat_portrait: str | None = None,
+        current_sales_state: str = "DISCOVERED",
+        recent_history: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         model = str(template_config.get("qualification_model") or "deepseek-chat").strip() or "deepseek-chat"
+        product_name = str(template_config.get("sales_product_name") or "ваш продукт").strip() or "ваш продукт"
+        offer_type = str(template_config.get("sales_offer_type") or "услуга").strip() or "услуга"
+        usp = str(template_config.get("sales_usp") or "").strip()
+        history_block = self._format_sales_history(recent_history)
         portrait_block = self._format_portrait_block(chat_portrait)
         instruction = (
             f"{prompt}\n\n"
-            "Ты классификатор для sales outreach. Верни только JSON объект с полями: "
-            "intent, confidence, reason. "
-            "intent строго один из: target_hot, target_warm, non_target, do_not_contact, unsure. "
-            "confidence от 0 до 1."
+            "Ты модуль pre-sales скрининга с function-calling. "
+            f"Продукт: {product_name}. Категория: {offer_type}. "
+            "Твоя задача: понять, стоит ли писать человеку в личку и как вести следующий шаг продаж.\n"
+            "Выбирай ровно один function call:\n"
+            "1) engage_lead - если нужно продолжать диалог/продажу.\n"
+            "2) ignore_lead - если лид нецелевой или писать не нужно.\n"
+            "Стадия продажи: "
+            f"{(current_sales_state or 'DISCOVERED').strip().upper()}.\n"
+            "Учитывай этап воронки, контекст и историю взаимодействия."
         )
         if portrait_block:
             instruction = f"{instruction}\n\n{portrait_block}"
+        if usp:
+            instruction = f"{instruction}\n\nКлючевое УТП:\n{usp}"
+        if history_block:
+            instruction = f"{instruction}\n\nНедавняя история диалога:\n{history_block}"
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "engage_lead",
+                    "description": "Продолжить диалог с лидом и продажу.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "intent": {"type": "string", "enum": ["target_hot", "target_warm", "unsure"]},
+                            "confidence": {"type": "number"},
+                            "reason": {"type": "string"},
+                            "lead_temperature": {"type": "string", "enum": ["cold", "warm", "hot"]},
+                            "stage_hint": {
+                                "type": "string",
+                                "enum": ["first_touch", "discovery", "value_pitch", "handoff"],
+                            },
+                            "handoff_ready": {"type": "boolean"},
+                        },
+                        "required": ["intent", "confidence", "reason"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "ignore_lead",
+                    "description": "Не писать пользователю и пропустить лид.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "intent": {"type": "string", "enum": ["non_target", "do_not_contact", "unsure"]},
+                            "confidence": {"type": "number"},
+                            "reason": {"type": "string"},
+                        },
+                        "required": ["intent", "confidence", "reason"],
+                    },
+                },
+            },
+        ]
         completion = await ai_client.chat.completions.create(
             model=model,
             messages=[
                 {"role": "system", "content": instruction},
-                {"role": "user", "content": user_message},
+                {
+                    "role": "user",
+                    "content": (
+                        "Вот сообщение из чата потенциального клиента:\n"
+                        f"{user_message}\n\n"
+                        "Реши, стоит ли отписывать этому человеку в личку для продажи."
+                    ),
+                },
             ],
+            tools=tools,
+            tool_choice="auto",
             temperature=0.1,
         )
-        raw = (completion.choices[0].message.content or "").strip()
+        message = completion.choices[0].message
+        tool_calls = message.tool_calls or []
+        if tool_calls:
+            tool_call = tool_calls[0]
+            tool_name = str(tool_call.function.name or "").strip()
+            try:
+                payload = json.loads(tool_call.function.arguments or "{}")
+            except Exception:
+                payload = {}
+            intent = str(payload.get("intent") or "unsure").strip().lower()
+            try:
+                confidence = float(payload.get("confidence"))
+            except (TypeError, ValueError):
+                confidence = 0.0
+            confidence = min(1.0, max(0.0, confidence))
+            reason = str(payload.get("reason") or "").strip()[:500]
+            decision = "engage" if tool_name == "engage_lead" else "ignore"
+            lead_temperature = str(payload.get("lead_temperature") or "warm").strip().lower()
+            if lead_temperature not in {"cold", "warm", "hot"}:
+                lead_temperature = "warm"
+            stage_hint = str(payload.get("stage_hint") or "first_touch").strip().lower()
+            if stage_hint not in {"first_touch", "discovery", "value_pitch", "handoff"}:
+                stage_hint = "first_touch"
+            return {
+                "decision": decision,
+                "intent": intent,
+                "confidence": confidence,
+                "reason": reason,
+                "lead_temperature": lead_temperature,
+                "stage_hint": stage_hint,
+                "handoff_ready": bool(payload.get("handoff_ready")),
+            }
+
+        raw = (message.content or "").strip()
         parsed: dict[str, Any] = {}
         try:
             parsed = json.loads(raw)
         except Exception:
             logger.warning("sales_manager classify parse failed, fallback to unsure")
-            return {"intent": "unsure", "confidence": 0.0, "reason": "invalid_classifier_json"}
+            return {
+                "decision": "ignore",
+                "intent": "unsure",
+                "confidence": 0.0,
+                "reason": "invalid_classifier_json",
+                "lead_temperature": "warm",
+                "stage_hint": "first_touch",
+                "handoff_ready": False,
+            }
 
         intent = str(parsed.get("intent") or "unsure").strip().lower()
         allowed_intents = {"target_hot", "target_warm", "non_target", "do_not_contact", "unsure"}
@@ -837,7 +1008,15 @@ class TemplateRuntimeService:
             confidence = 0.0
         confidence = min(1.0, max(0.0, confidence))
         reason = str(parsed.get("reason") or "").strip()[:500]
-        return {"intent": intent, "confidence": confidence, "reason": reason}
+        return {
+            "decision": "ignore" if intent in {"non_target", "do_not_contact", "unsure"} else "engage",
+            "intent": intent,
+            "confidence": confidence,
+            "reason": reason,
+            "lead_temperature": "warm",
+            "stage_hint": "first_touch",
+            "handoff_ready": False,
+        }
 
     async def retrieve_offer_context(
         self,
@@ -864,27 +1043,52 @@ class TemplateRuntimeService:
         context_list: list[dict[str, Any]],
         template_config: dict[str, Any],
         chat_portrait: str | None = None,
+        current_sales_state: str = "DISCOVERED",
+        recent_history: list[dict[str, Any]] | None = None,
     ) -> str:
         model = str(template_config.get("generation_model") or "deepseek-chat").strip() or "deepseek-chat"
+        product_name = str(template_config.get("sales_product_name") or "ваш продукт").strip() or "ваш продукт"
+        offer_type = str(template_config.get("sales_offer_type") or "услуга").strip() or "услуга"
+        usp = str(template_config.get("sales_usp") or "").strip()
+        stage_hint = str(qualification.get("stage_hint") or "first_touch").strip().lower()
         context_parts = [
             f"Источник: {c.get('source', 'Unknown')}\nТекст: {c.get('text', '')}"
             for c in context_list
         ]
         context_text = "\n\n---\n\n".join(context_parts) if context_parts else "Контекст не найден."
+        history_block = self._format_sales_history(recent_history)
         portrait_block = self._format_portrait_block(chat_portrait)
+        stage_instruction = self._sales_stage_instruction(
+            current_sales_state=(current_sales_state or "DISCOVERED").strip().upper(),
+            stage_hint=stage_hint,
+        )
         system_prompt = (
             f"{prompt}\n\n"
-            "Ты пишешь короткое и уместное первое сообщение в личку от менеджера продаж. "
-            "Тон: уважительный, без давления, без спама. "
+            "Ты менеджер отдела продаж. Пиши сообщение строго под текущую стадию сделки и контекст.\n"
+            f"Продукт: {product_name}\n"
+            f"Категория: {offer_type}\n"
+            f"Текущая стадия CRM/FSM: {(current_sales_state or 'DISCOVERED').strip().upper()}\n"
+            f"Инструкция по стадии: {stage_instruction}\n"
+            "Все сообщения должны быть ненавязчивыми, человеческими и полезными. "
+            "Не выдумывай факты про клиента. "
             "Верни только чистый текст, без markdown."
         )
         if portrait_block:
             system_prompt = f"{system_prompt}\n\n{portrait_block}"
+        if usp:
+            system_prompt = f"{system_prompt}\n\nКлючевое УТП:\n{usp}"
+        if history_block:
+            system_prompt = f"{system_prompt}\n\nНедавняя история диалога:\n{history_block}"
         user_prompt = (
             f"Исходное сообщение в чате:\n{user_message}\n\n"
             f"Классификация:\n{json.dumps(qualification, ensure_ascii=False)}\n\n"
             f"Контекст продукта (RAG):\n{context_text}\n\n"
-            "Сформируй короткий персонализированный outreach в 1-3 предложения."
+            "Сгенерируй следующее сообщение sales-диалога.\n"
+            "Если это первый контакт - используй мягкий старт формата: "
+            "'увидел ваше сообщение в чате, подскажите, вам интересно ...'.\n"
+            "Если это продолжение - выявляй боли, показывай что изменится после внедрения, "
+            "и подводи к передаче на ЛПР/заявку, когда клиент готов.\n"
+            "Длина: 1-4 предложения."
         )
         completion = await ai_client.chat.completions.create(
             model=model,
@@ -897,6 +1101,38 @@ class TemplateRuntimeService:
         content = (completion.choices[0].message.content or "").strip()
         cleaned = content.replace("#", "").replace("*", "").strip()
         return cleaned[:1200]
+
+    @staticmethod
+    def _sales_stage_instruction(*, current_sales_state: str, stage_hint: str) -> str:
+        if stage_hint == "handoff":
+            return (
+                "Заверши диалог на шаге передачи: предложи удобный формат передачи на ЛПР, "
+                "заявку или демо-звонок."
+            )
+        if stage_hint == "value_pitch":
+            return (
+                "Покажи ценность и ожидаемые изменения после внедрения, "
+                "связывай выгоды с болями клиента."
+            )
+        if stage_hint == "discovery":
+            return "Уточни боли и текущий процесс клиента, задай 1-2 коротких вопроса для квалификации."
+        if current_sales_state in {"SENT", "REPLIED_POSITIVE", "QUEUED"}:
+            return "Продолжай диалог после первого касания: выяви потребность и подведи к следующему шагу."
+        return "Сделай ненавязчивое первое касание и предложи релевантную помощь по запросу из чата."
+
+    @staticmethod
+    def _format_sales_history(history: list[dict[str, Any]] | None) -> str:
+        if not history:
+            return ""
+        rows: list[str] = []
+        for item in history[-6:]:
+            role = str(item.get("role") or "").strip().lower()
+            content = str(item.get("content") or "").strip()
+            if not content:
+                continue
+            label = "Агент" if role == "assistant" else "Клиент"
+            rows.append(f"{label}: {content}")
+        return "\n".join(rows)
 
     def emit_action(
         self,
@@ -956,6 +1192,29 @@ class TemplateRuntimeService:
         source_chat_id = template_config.get("source_chat_id")
         value = str(source_chat_id or "global").strip()
         return value or "global"
+
+    async def _load_sales_contact_state(
+        self,
+        *,
+        agent_id: int,
+        user_external_id: str,
+        source_chat_id: str,
+    ) -> str:
+        try:
+            async with async_session_maker() as session:
+                async with session.begin():
+                    row = await session.scalar(
+                        select(AgentSalesContact.state).where(
+                            AgentSalesContact.agent_id == agent_id,
+                            AgentSalesContact.user_external_id == user_external_id,
+                            AgentSalesContact.source_chat_id == source_chat_id,
+                        )
+                    )
+            value = str(row or "DISCOVERED").strip().upper()
+            return value or "DISCOVERED"
+        except Exception:
+            logger.warning("sales_manager failed to load FSM state, fallback to DISCOVERED")
+            return "DISCOVERED"
 
     async def _ensure_sales_contact_exists(
         self,

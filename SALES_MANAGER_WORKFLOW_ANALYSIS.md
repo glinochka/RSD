@@ -36,7 +36,7 @@
    - fallback события (если были);
    - финальный ответ агента (role=`agent`).
 
-## 3) Логика именно `sales_manager`
+## 3) Обновленная логика `sales_manager`
 
 Файл: `backend/app/services/template_runtime.py`, ветка `_execute_sales_manager(...)`.
 
@@ -45,20 +45,27 @@
 1. **FSM bootstrap**
    - Создает/проверяет контакт в FSM (`DISCOVERED`) через `get_or_create_contact`.
 
-2. **Qualification (LLM #1)**
-   - `qualify_message()` просит модель вернуть JSON:
-     - `intent`: `target_hot|target_warm|non_target|do_not_contact|unsure`
-     - `confidence`: `0..1`
-     - `reason`
-   - Если `non_target` или `do_not_contact` -> переход в FSM `SKIPPED` и завершение.
-   - Если `confidence < min_confidence`:
-     - либо fallback в QA (если `low_confidence_fallback_to_qa=true` и userbot channel),
-     - либо `SKIPPED`.
+2. **Lead screening через FC (LLM #1)**
+   - `qualify_message()` теперь использует function-calling с двумя action:
+     - `engage_lead` (писать/продолжать диалог),
+     - `ignore_lead` (игнорировать лид).
+   - В prompt классификации добавляются:
+     - `sales_product_name`, `sales_offer_type`, `sales_usp`,
+     - текущая стадия FSM,
+     - портрет клиента,
+     - recent history по каналу.
+   - Если выбран `ignore_lead` или `intent in {non_target, do_not_contact}` -> skip path.
+   - Если `confidence < min_confidence` -> skip path (или fallback в QA по флагу).
 
-3. **Qualified path**
+3. **Qualified / conversation path**
    - FSM: `DISCOVERED -> QUALIFIED`.
    - `retrieve_offer_context()` достает RAG-контекст из knowledge base.
-   - `compose_dm()` (LLM #2) формирует короткий outreach DM.
+   - `compose_dm()` (LLM #2) формирует сообщение на основе стадии:
+     - `first_touch` (мягкое первое касание),
+     - `discovery` (выявление боли),
+     - `value_pitch` (что изменится после внедрения),
+     - `handoff` (перевод на ЛПР/заявку/демо).
+   - Все сообщения генерируются LLM с учетом портрета, истории и RAG.
 
 4. **Tool-driven action (LLM #3 + function tools)**
    - `_execute_sales_tools()` создает `SalesToolRegistry`.
@@ -110,7 +117,7 @@ Safety:
 - Между отправками throttling (`min_interval_seconds=0.5`).
 - Ошибки делятся на retry/non-retry эвристикой (auth/not found -> без retry).
 
-## 5) "Реальный" пример чата с таймингами и payload
+## 5) "Реальный" пример чата с таймингами и payload (обновленный)
 
 Ниже пример одного сообщения из группового чата, где лид квалифицируется и ставится в очередь.
 Тайминги примерные, но соответствуют текущей архитектуре вызовов.
@@ -122,6 +129,9 @@ Safety:
   `Ищем подрядчика для AI-автоматизации отдела продаж, есть кейсы?`
 - `template_type= sales_manager`
 - `mode= draft_only`, `confirmation_policy= never_confirm`, `min_confidence=0.75`
+- `sales_product_name= ИИ-автоматизация`
+- `sales_offer_type= SaaS + внедрение под ключ`
+- `sales_usp= подключение за 5 минут, интеграция с CRM, единый дашборд`
 
 ### 5.2 Таймлайн обработки
 
@@ -131,8 +141,8 @@ Safety:
 - `T+120ms` `update_chat_portrait()` -> **LLM call #0** (опционально, если portrait enabled).
 - `T+380ms` Runtime `execute()` вошел в `_execute_sales_manager`.
 - `T+410ms` FSM `get_or_create_contact` (`DISCOVERED`).
-- `T+430ms` `qualify_message()` -> **LLM call #1**.
-- `T+760ms` Получен JSON `{intent:"target_hot", confidence:0.91, reason:"явный запрос подрядчика"}`.
+- `T+430ms` `qualify_message()` -> **LLM call #1** (function-calling decision).
+- `T+760ms` Получен `tool_call=engage_lead` c `intent/confidence/stage_hint`.
 - `T+790ms` FSM transition `DISCOVERED -> QUALIFIED`.
 - `T+840ms` `retrieve_offer_context()` (RAG search).
 - `T+980ms` `compose_dm()` -> **LLM call #2**.
@@ -150,7 +160,7 @@ Safety:
 
 ### 5.3 Что уходит в LLM и что приходит (по шагам)
 
-#### A) Qualification (`qualify_message`)
+#### A) Lead screening FC (`qualify_message`)
 
 Уходит в LLM:
 
@@ -161,17 +171,29 @@ Safety:
 - `user`:
   - сырой текст сообщения из чата.
 
-Приходит из LLM (ожидается строго JSON):
+Приходит из LLM (function call):
 
 ```json
-{"intent":"target_hot","confidence":0.91,"reason":"явный запрос подрядчика"}
+{
+  "tool_call": {
+    "name": "engage_lead",
+    "arguments": {
+      "intent": "target_hot",
+      "confidence": 0.91,
+      "reason": "явный запрос подрядчика",
+      "lead_temperature": "hot",
+      "stage_hint": "first_touch",
+      "handoff_ready": false
+    }
+  }
+}
 ```
 
-#### B) DM generation (`compose_dm`)
+#### B) Stage-aware DM generation (`compose_dm`)
 
 Уходит в LLM:
 
-- `system`: стиль outreach (коротко, уважительно, без спама, plain text).
+- `system`: стиль outreach + текущая стадия + инструкция по стадии + продукт/категория/УТП.
 - `user`:
   - исходное сообщение,
   - результат квалификации,
@@ -179,7 +201,19 @@ Safety:
 
 Приходит из LLM (plain text):
 
-`Здравствуйте! Видел ваш запрос про AI-автоматизацию продаж. Можем показать 2-3 релевантных кейса и предложить пилот под ваш процесс.`
+`Здравствуйте! Увидел ваше сообщение в чате про AI-автоматизацию. Если вам актуально, могу коротко подсказать, как внедрить это в вашем процессе и какие кейсы подойдут под ваш формат.`
+
+## 7) Обновление формы создания агента
+
+Для `sales_manager` в форме добавлены поля:
+
+- `Продукт` (`sales_product_name`) — обязательное поле.
+- `Что продаете (категория)` (`sales_offer_type`) — обязательное поле.
+- `УТП` (`sales_usp`) — опционально.
+- `Системный промпт` — обязательный (как и раньше).
+- Документация/ссылки для RAG — как и раньше.
+
+Эти поля сохраняются в `template_config` и используются в LLM-решениях на каждом шаге воронки.
 
 #### C) Tool decision (`_execute_sales_tools`)
 
