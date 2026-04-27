@@ -1280,6 +1280,22 @@ async def _telegram_get_me(bot_token: str) -> dict:
     return await asyncio.get_running_loop().run_in_executor(None, _fetch)
 
 
+async def _max_bot_get_me(bot_token: str) -> dict:
+    request = UrlRequest(
+        "https://platform-api.max.ru/me",
+        headers={
+            "Authorization": bot_token,
+            "Accept": "application/json",
+        },
+    )
+
+    def _fetch():
+        with urlopen(request, timeout=20) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+
+    return await asyncio.get_running_loop().run_in_executor(None, _fetch)
+
+
 async def _sync_telegram_bot_webhook(bot_token: str, bot_id: int, enabled: bool) -> None:
     if not settings.BASE_URL:
         raise HTTPException(
@@ -1826,6 +1842,7 @@ async def _log_analytics_message_for_agent_ids(
         "web",
         "dashboard",
         "telegram_userbot",
+        "max_bot",
         "max_userbot",
         "whatsapp_userbot",
         "whatsapp_business_api",
@@ -3421,6 +3438,118 @@ async def add_agent_userbot_channel(
                     agent_id=agent.id,
                     connection_id=created_connection.id,
                 )
+            await _sync_agent_primary_fields(agent=agent, agent_dao=agent_dao, session=session)
+            channels = await _list_agent_channels(session, agent.id)
+            return JSONResponse(
+                content={
+                    "agent_id": agent.id,
+                    "bot_id": agent.bot_id,
+                    "channels": [_serialize_channel_connection(item) for item in channels],
+                },
+                status_code=status.HTTP_201_CREATED,
+            )
+
+
+@router.post("/channels/by_max_bot")
+async def add_agent_max_bot_channel(
+    payload: AddMaxBotChannel,
+    current_user=Depends(get_current_user_required),
+):
+    bot_token = payload.bot_token.strip()
+    try:
+        me = await _max_bot_get_me(bot_token)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Не удалось связаться с MAX API для проверки токена: {exc}",
+        )
+
+    max_bot_id = me.get("user_id")
+    if max_bot_id is None or not str(max_bot_id).strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="MAX API не вернул user_id бота",
+        )
+    is_bot = me.get("is_bot")
+    if is_bot is not None and not bool(is_bot):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Переданный токен не принадлежит чат-боту MAX",
+        )
+    bot_username = (
+        str(me.get("username") or "").strip()
+        or str(me.get("first_name") or "").strip()
+        or str(me.get("name") or "").strip()
+        or f"max_bot_{max_bot_id}"
+    )
+
+    encrypted_bundle = encrypt_token(
+        json.dumps(
+            {
+                "max_bot_token": bot_token,
+                "max_bot_user_id": str(max_bot_id).strip(),
+            },
+            ensure_ascii=False,
+        )
+    )
+
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        channel_connection_dao = AgentChannelConnectionDAO(session)
+        async with session.begin():
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
+                current_user=current_user,
+                internal=False,
+            )
+            existing_max_bot_channel = await session.scalar(
+                select(AgentChannelConnection).where(
+                    AgentChannelConnection.agent_id == agent.id,
+                    AgentChannelConnection.provider == "max_bot",
+                    AgentChannelConnection.connection_type == "bot",
+                )
+            )
+            if existing_max_bot_channel:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="У агента уже подключен MAX bot-канал",
+                )
+            duplicate_connection = await channel_connection_dao.find_one_by_filter(
+                provider="max_bot",
+                external_id=str(max_bot_id),
+            )
+            if duplicate_connection:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Этот MAX бот уже подключен к другому агенту",
+                )
+
+            now = datetime.utcnow()
+            created_connection = await channel_connection_dao.add(
+                {
+                    "agent_id": agent.id,
+                    "provider": "max_bot",
+                    "connection_type": "bot",
+                    "external_id": str(max_bot_id),
+                    "encrypted_credentials": encrypted_bundle,
+                    "is_primary": bool(payload.make_primary),
+                    "is_active": True,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            )
+            await session.flush()
+            if payload.make_primary:
+                await _set_primary_channel(
+                    session=session,
+                    agent_id=agent.id,
+                    connection_id=created_connection.id,
+                )
+                await agent_dao.update(agent, {"bot_username": bot_username or agent.bot_username})
             await _sync_agent_primary_fields(agent=agent, agent_dao=agent_dao, session=session)
             channels = await _list_agent_channels(session, agent.id)
             return JSONResponse(
@@ -5368,7 +5497,14 @@ async def read_analytics_chats(
             )
             analytics_namespace_id = agent.bot_id if agent.bot_id is not None else agent.id
 
-            supported_chat_channels = ["telegram", "telegram_userbot", "max_userbot", "whatsapp_userbot", "external_api"]
+            supported_chat_channels = [
+                "telegram",
+                "telegram_userbot",
+                "max_bot",
+                "max_userbot",
+                "whatsapp_userbot",
+                "external_api",
+            ]
 
             user_rows = (
                 (
@@ -5446,6 +5582,7 @@ async def read_analytics_chats(
                     # Ответы из кабинета показываем в потоке того канала, куда писал пользователь.
                     grouped_messages[(row["user_external_id"], "telegram")].append(row)
                     grouped_messages[(row["user_external_id"], "telegram_userbot")].append(row)
+                    grouped_messages[(row["user_external_id"], "max_bot")].append(row)
                     grouped_messages[(row["user_external_id"], "max_userbot")].append(row)
                     grouped_messages[(row["user_external_id"], "whatsapp_userbot")].append(row)
                     grouped_messages[(row["user_external_id"], "external_api")].append(row)

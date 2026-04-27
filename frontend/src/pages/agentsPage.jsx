@@ -29,6 +29,7 @@ const channelLabel = (channel) => {
   if (!channel) return 'Канал';
   if (channel.provider === 'telegram_bot') return 'Telegram бот';
   if (channel.provider === 'telegram_userbot') return 'Telegram userbot';
+  if (channel.provider === 'max_bot') return 'MAX bot';
   if (channel.provider === 'max_userbot') return 'MAX userbot';
   if (channel.provider === 'whatsapp_userbot') return 'WhatsApp userbot';
   if (channel.provider === 'whatsapp_business_api') return 'WhatsApp Business API';
@@ -141,6 +142,7 @@ const AgentsPageContent = () => {
   const [userbotPassword, setUserbotPassword] = useState('');
   const [userbotAuthToken, setUserbotAuthToken] = useState('');
   const [userbotSessionString, setUserbotSessionString] = useState('');
+  const [maxBotTokenDraft, setMaxBotTokenDraft] = useState('');
   const [isSendingUserbotCode, setIsSendingUserbotCode] = useState(false);
   const [isVerifyingUserbotCode, setIsVerifyingUserbotCode] = useState(false);
   const [whatsappUserbotPhone, setWhatsappUserbotPhone] = useState('');
@@ -538,6 +540,7 @@ const AgentsPageContent = () => {
     setUserbotPassword('');
     setUserbotAuthToken('');
     setUserbotSessionString('');
+    setMaxBotTokenDraft('');
     setIsSendingUserbotCode(false);
     setIsVerifyingUserbotCode(false);
     setWhatsappUserbotPhone('');
@@ -714,6 +717,32 @@ const AgentsPageContent = () => {
       resetChannelModalFields();
     } catch (error) {
       showError(error?.message || 'Ошибка при подключении userbot');
+    } finally {
+      setIsSavingChannel(false);
+    }
+  };
+
+  const handleAddMaxBotChannel = async () => {
+    if (!selectedBotId) return;
+    if (!maxBotTokenDraft.trim()) {
+      showError('Введите MAX bot token');
+      return;
+    }
+    setIsSavingChannel(true);
+    try {
+      const res = await agentService.addMaxBotChannel({
+        agent_id: selectedBotId,
+        bot_token: maxBotTokenDraft.trim(),
+        make_primary: makePrimaryChannel,
+      });
+      const list = res?.channels || [];
+      setChannels(list);
+      setSelectedAgent((prev) => (prev ? { ...prev, channels: list } : prev));
+      showSuccess('MAX bot канал подключен');
+      await loadAgentDetails(selectedBotId);
+      resetChannelModalFields();
+    } catch (error) {
+      showError(error?.message || 'Ошибка при подключении MAX bot');
     } finally {
       setIsSavingChannel(false);
     }
@@ -1228,6 +1257,14 @@ const AgentsPageContent = () => {
                   </button>
                   <button
                     type="button"
+                    className={`connection-type-card ${channelModalTab === 'max_bot' ? 'active' : ''} ${isSalesManagerTemplate ? 'connection-type-card--disabled' : ''}`}
+                    onClick={() => setChannelModalTab('max_bot')}
+                    disabled={isSavingChannel || isSalesManagerTemplate}
+                  >
+                    MAX bot (API)
+                  </button>
+                  <button
+                    type="button"
                     className={`connection-type-card ${channelModalTab === 'whatsapp_userbot' ? 'active' : ''} ${isSalesManagerTemplate ? 'connection-type-card--disabled' : ''}`}
                     onClick={() => setChannelModalTab('whatsapp_userbot')}
                     disabled={isSavingChannel || isSalesManagerTemplate}
@@ -1357,6 +1394,34 @@ const AgentsPageContent = () => {
                       disabled={isSavingChannel}
                     >
                       {isSavingChannel ? 'Сохранение...' : 'Подключить Telegram userbot'}
+                    </button>
+                  </div>
+                ) : channelModalTab === 'max_bot' ? (
+                  <div className="agent-management-block">
+                    <textarea
+                      className="input-main textarea"
+                      rows={4}
+                      placeholder="MAX bot token (из MAX для партнеров)"
+                      value={maxBotTokenDraft}
+                      onChange={(event) => setMaxBotTokenDraft(event.target.value)}
+                      disabled={isSavingChannel}
+                    />
+                    <label className="channel-primary-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={makePrimaryChannel}
+                        onChange={(event) => setMakePrimaryChannel(event.target.checked)}
+                        disabled={isSavingChannel}
+                      />
+                      Сделать канал основным
+                    </label>
+                    <button
+                      type="button"
+                      className="btn btn-black"
+                      onClick={handleAddMaxBotChannel}
+                      disabled={isSavingChannel}
+                    >
+                      {isSavingChannel ? 'Сохранение...' : 'Подключить MAX bot'}
                     </button>
                   </div>
                 ) : channelModalTab === 'whatsapp_userbot' ? (

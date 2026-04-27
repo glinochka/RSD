@@ -220,6 +220,7 @@ const CreateAgentContent = () => {
   const [uploadedLinks, setUploadedLinks] = useState([]);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [useBotChannel, setUseBotChannel] = useState(true);
+  const [useMaxBotChannel, setUseMaxBotChannel] = useState(false);
   const [useUserbotChannel, setUseUserbotChannel] = useState(false);
   const [useMaxUserbotChannel, setUseMaxUserbotChannel] = useState(false);
   const [useWhatsAppUserbotChannel, setUseWhatsAppUserbotChannel] = useState(false);
@@ -261,6 +262,7 @@ const CreateAgentContent = () => {
       verify_code: '',
       password_2fa: '',
       session_string: '',
+      max_bot_token: '',
       max_token: '',
       max_chat_id: '',
       whatsapp_userbot_phone_number: '',
@@ -299,18 +301,23 @@ const CreateAgentContent = () => {
         }
 
         const isBotMode = useBotChannel;
+        const isMaxBotMode = useMaxBotChannel;
         const isUserbotMode = useUserbotChannel;
         const isMaxUserbotMode = useMaxUserbotChannel;
         const isWhatsAppUserbotMode = useWhatsAppUserbotChannel;
         const isWhatsAppBusinessApiMode = useWhatsAppBusinessApiChannel;
 
-        if (!isBotMode && !isUserbotMode && !isMaxUserbotMode && !isWhatsAppUserbotMode && !isWhatsAppBusinessApiMode) {
+        if (!isBotMode && !isMaxBotMode && !isUserbotMode && !isMaxUserbotMode && !isWhatsAppUserbotMode && !isWhatsAppBusinessApiMode) {
           showError('Выберите хотя бы один способ подключения');
           return;
         }
 
         if (isBotMode && !values.bot_token?.trim()) {
           form.setFieldError('bot_token', 'API ключ Telegram бота обязателен');
+          return;
+        }
+        if (isMaxBotMode && !values.max_bot_token?.trim()) {
+          form.setFieldError('max_bot_token', 'MAX bot token обязателен');
           return;
         }
         if (isUserbotMode && !values.api_id?.toString().trim()) {
@@ -445,6 +452,8 @@ const CreateAgentContent = () => {
 
         const primaryProvider = isBotMode
           ? 'telegram_bot'
+          : isMaxBotMode
+            ? 'max_bot'
           : isUserbotMode
             ? 'telegram_userbot'
             : isMaxUserbotMode
@@ -458,6 +467,13 @@ const CreateAgentContent = () => {
             agent_id: agentId,
             bot_token: values.bot_token.trim(),
             make_primary: primaryProvider === 'telegram_bot',
+          });
+        }
+        if (isMaxBotMode) {
+          await agentService.addMaxBotChannel({
+            agent_id: agentId,
+            bot_token: values.max_bot_token.trim(),
+            make_primary: primaryProvider === 'max_bot',
           });
         }
         if (isUserbotMode) {
@@ -546,6 +562,17 @@ const CreateAgentContent = () => {
       const next = !prev;
       if (!next) {
         clearUserbotLocalState();
+      }
+      return next;
+    });
+  };
+
+  const toggleMaxBotChannel = () => {
+    setUseMaxBotChannel((prev) => {
+      const next = !prev;
+      if (!next) {
+        form.setFieldValue('max_bot_token', '');
+        form.setFieldError('max_bot_token', undefined);
       }
       return next;
     });
@@ -1250,6 +1277,14 @@ const CreateAgentContent = () => {
                 </button>
                 <button
                   type="button"
+                  className={`connection-type-card ${useMaxBotChannel ? 'active' : ''}`}
+                  onClick={toggleMaxBotChannel}
+                  disabled={form.isSubmitting}
+                >
+                  MAX бот (API)
+                </button>
+                <button
+                  type="button"
                   className={`connection-type-card ${useMaxUserbotChannel ? 'active' : ''} ${isContentFactoryTemplate ? 'connection-type-card--disabled' : ''}`}
                   onClick={toggleMaxUserbotChannel}
                   disabled={form.isSubmitting || isContentFactoryTemplate}
@@ -1413,6 +1448,29 @@ const CreateAgentContent = () => {
                     Userbot подтвержден: {verifiedUserbotLabel || 'успешно'}
                   </p>
                 )}
+              </div>
+            )}
+
+            {useMaxBotChannel && (
+              <div className="form-group">
+                <h3 className="agent-form-channel-title">MAX бот (официальный API)</h3>
+                <label htmlFor="max_bot_token">MAX bot token:</label>
+                <textarea
+                  id="max_bot_token"
+                  name="max_bot_token"
+                  placeholder="Токен из MAX для партнеров: Чат-боты → Интеграция → Получить токен"
+                  className={`input-main textarea ${form.errors.max_bot_token ? 'error' : ''}`}
+                  value={form.values.max_bot_token}
+                  onChange={form.handleChange}
+                  disabled={form.isSubmitting}
+                  rows="3"
+                ></textarea>
+                {form.errors.max_bot_token && (
+                  <span className="error-message">{form.errors.max_bot_token}</span>
+                )}
+                <p className="help-text">
+                  Для production используйте Webhook в MAX, для разработки поддерживается long polling.
+                </p>
               </div>
             )}
 

@@ -91,6 +91,11 @@ export const agentService = {
     return response.data;
   },
 
+  addMaxBotChannel: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_CHANNELS_ADD_MAX_BOT, data);
+    return response.data;
+  },
+
   addMaxUserbotChannel: async (data) => {
     const response = await apiClient.post(API_ROUTES.AGENTS_CHANNELS_ADD_MAX_USERBOT, data);
     return response.data;

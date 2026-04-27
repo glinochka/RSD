@@ -48,6 +48,7 @@ export const API_ROUTES = {
   AGENTS_CHANNELS_LIST: '/api/agents/channels',
   AGENTS_CHANNELS_ADD_BOT: '/api/agents/channels/by_token',
   AGENTS_CHANNELS_ADD_USERBOT: '/api/agents/channels/by_userbot_session',
+  AGENTS_CHANNELS_ADD_MAX_BOT: '/api/agents/channels/by_max_bot',
   AGENTS_CHANNELS_ADD_MAX_USERBOT: '/api/agents/channels/by_max_userbot',
   AGENTS_CHANNELS_ADD_WHATSAPP_USERBOT: '/api/agents/channels/by_whatsapp_userbot',
   AGENTS_CHANNELS_ADD_WHATSAPP_BUSINESS_API: '/api/agents/channels/by_whatsapp_business_api',

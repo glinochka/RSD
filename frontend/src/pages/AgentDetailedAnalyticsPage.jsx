@@ -58,6 +58,7 @@ const formatDateShort = (value) => {
 const channelLabel = (channel) => {
   if (channel === 'telegram_userbot') return 'Telegram userbot';
   if (channel === 'telegram') return 'Telegram bot';
+  if (channel === 'max_bot') return 'MAX bot';
   if (channel === 'max_userbot') return 'MAX userbot';
   if (channel === 'whatsapp_userbot') return 'WhatsApp userbot';
   if (channel === 'external_api') return 'External API';

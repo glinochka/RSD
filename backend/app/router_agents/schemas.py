@@ -139,6 +139,16 @@ class AddTelegramUserbotChannel(AgentLookup):
     make_primary: bool = Field(default=False, description="Сделать канал основным")
 
 
+class AddMaxBotChannel(AgentLookup):
+    bot_token: str = Field(
+        ...,
+        min_length=10,
+        max_length=65535,
+        description="Токен чат-бота MAX (из платформы MAX для партнеров)",
+    )
+    make_primary: bool = Field(default=False, description="Сделать канал основным")
+
+
 class AddWhatsAppBusinessApiChannel(AgentLookup):
     phone_number_id: str = Field(
         ...,
@@ -279,7 +289,7 @@ class AgentAnalyticsMessageLog(AgentLookup):
     role: str = Field(..., pattern="^(user|agent|operator)$", description="Роль сообщения")
     channel: str = Field(
         default="telegram",
-        pattern="^(telegram|external_api|web|dashboard|telegram_userbot|max_userbot|whatsapp_userbot|whatsapp_business_api|instagram|tiktok|pinterest)$",
+        pattern="^(telegram|external_api|web|dashboard|telegram_userbot|max_bot|max_userbot|whatsapp_userbot|whatsapp_business_api|instagram|tiktok|pinterest)$",
         description="Канал сообщения",
     )
     user_external_id: Optional[str] = Field(
@@ -380,7 +390,7 @@ class InternalProcessMessageRequest(BaseModel):
     user_external_id: str = Field(..., min_length=1, max_length=128, description="Внешний ID пользователя")
     channel: str = Field(
         ...,
-        pattern="^(telegram|telegram_userbot|max_userbot|whatsapp_userbot)$",
+        pattern="^(telegram|telegram_userbot|max_bot|max_userbot|whatsapp_userbot)$",
         description="Канал сообщения",
     )
     system_prompt: Optional[str] = Field(default="", description="Системный промпт агента")
