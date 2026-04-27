@@ -257,6 +257,69 @@ class TestAgentsCRUD:
         assert "template_config.dm_limits.per_minute" in response.json()["detail"]
 
     @pytest.mark.asyncio
+    async def test_create_empty_agent_crm_admin_default_v2_config(self, client: AsyncClient, auth_headers):
+        """crm_admin создаётся с v2-контрактом template_config по умолчанию."""
+        response = await client.post(
+            "/api/agents",
+            headers=auth_headers,
+            json={
+                "system_prompt": "CRM admin system prompt",
+                "template_type": "crm_admin",
+            },
+        )
+
+        assert response.status_code == 201, f"Expected 201, got {response.status_code}: {response.text}"
+        data = response.json()
+        cfg = data["template_config"] or {}
+        assert data["template_type"] == "crm_admin"
+        assert cfg["domain_type"] == "beauty_salon"
+        assert cfg["crm_mode"] == "optional"
+        assert cfg["booking_backend"] == "crm"
+        assert cfg["crm_provider"] == "amocrm"
+        assert cfg["confirmation_policy"] == "confirm_risky"
+        assert cfg["fallback_mode"] == "ask_clarifying_question"
+        assert cfg["allowed_tools"] == [
+            "find_contact",
+            "create_contact",
+            "find_lead",
+            "create_lead",
+            "update_lead",
+            "add_note",
+            "create_task",
+            "assign_owner",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_get_agent_migrates_legacy_crm_admin_template_config(
+        self, client: AsyncClient, auth_headers, test_session, test_agent
+    ):
+        """Legacy crm_admin config автоматически дополняется v2 полями при чтении."""
+        async with test_session.begin():
+            test_agent.template_type = "crm_admin"
+            test_agent.template_config = json.dumps(
+                {
+                    "crm_provider": "bitrix24",
+                    "allowed_tools": ["find_contact", "create_lead"],
+                },
+                ensure_ascii=False,
+            )
+            test_session.add(test_agent)
+
+        response = await client.get(
+            "/api/agents",
+            headers=auth_headers,
+            params={"bot_id": test_agent.bot_id},
+        )
+
+        assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
+        cfg = (response.json() or {}).get("template_config") or {}
+        assert cfg["domain_type"] == "beauty_salon"
+        assert cfg["crm_mode"] == "optional"
+        assert cfg["booking_backend"] == "crm"
+        assert cfg["crm_provider"] == "bitrix24"
+        assert cfg["allowed_tools"] == ["find_contact", "create_lead"]
+
+    @pytest.mark.asyncio
     async def test_youtube_oauth_start_returns_auth_url(self, client: AsyncClient, auth_headers, test_agent):
         fake_client = MagicMock()
         fake_client.build_oauth_authorization_url.return_value = "https://accounts.google.com/o/oauth2/v2/auth?state=test"

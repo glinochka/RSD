@@ -4,7 +4,18 @@ sys.path.insert(0, dirname(dirname(abspath(__file__))))
 
 
 
-from sqlalchemy import BigInteger, Boolean, String, ForeignKey, Text, DateTime, Integer, UniqueConstraint, Index
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    String,
+    ForeignKey,
+    Text,
+    DateTime,
+    Integer,
+    UniqueConstraint,
+    Index,
+    CheckConstraint,
+)
 from sqlalchemy.orm import  Mapped, mapped_column, relationship
 
 try: from .database import Base
@@ -160,6 +171,42 @@ class Agent(Base):
         back_populates="agent",
         cascade="all, delete-orphan",
     )
+    admin_staff: Mapped[list["AdminStaff"]] = relationship(
+        back_populates="agent",
+        cascade="all, delete-orphan",
+    )
+    admin_resources: Mapped[list["AdminResource"]] = relationship(
+        back_populates="agent",
+        cascade="all, delete-orphan",
+    )
+    admin_services: Mapped[list["AdminService"]] = relationship(
+        back_populates="agent",
+        cascade="all, delete-orphan",
+    )
+    admin_schedule_slots: Mapped[list["AdminScheduleSlot"]] = relationship(
+        back_populates="agent",
+        cascade="all, delete-orphan",
+    )
+    admin_appointments: Mapped[list["AdminAppointment"]] = relationship(
+        back_populates="agent",
+        cascade="all, delete-orphan",
+    )
+    admin_waitlist_entries: Mapped[list["AdminWaitlistEntry"]] = relationship(
+        back_populates="agent",
+        cascade="all, delete-orphan",
+    )
+    admin_client_profiles: Mapped[list["AdminClientProfile"]] = relationship(
+        back_populates="agent",
+        cascade="all, delete-orphan",
+    )
+    admin_quick_replies: Mapped[list["AdminQuickReplyTemplate"]] = relationship(
+        back_populates="agent",
+        cascade="all, delete-orphan",
+    )
+    admin_reminder_logs: Mapped[list["AdminAppointmentReminderLog"]] = relationship(
+        back_populates="agent",
+        cascade="all, delete-orphan",
+    )
 
 
 class AgentFrozenUser(Base):
@@ -240,6 +287,256 @@ class AgentCrmConnection(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
 
     agent: Mapped["Agent"] = relationship(back_populates="crm_connections")
+
+
+class AdminStaff(Base):
+    __tablename__ = "admin_staff"
+    __table_args__ = (
+        CheckConstraint("role IN ('master','doctor')", name="ck_admin_staff_role"),
+        Index("ix_admin_staff_agent_role_active", "agent_id", "role", "is_active"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    full_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    specializations_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    agent: Mapped["Agent"] = relationship(back_populates="admin_staff")
+    schedule_slots: Mapped[list["AdminScheduleSlot"]] = relationship(
+        back_populates="staff",
+        cascade="all, delete-orphan",
+    )
+    appointments: Mapped[list["AdminAppointment"]] = relationship(
+        back_populates="staff",
+        cascade="all, delete-orphan",
+    )
+
+
+class AdminResource(Base):
+    __tablename__ = "admin_resources"
+    __table_args__ = (
+        CheckConstraint("resource_type IN ('chair','room','equipment')", name="ck_admin_resources_type"),
+        UniqueConstraint("agent_id", "resource_type", "title", name="uq_admin_resources_agent_type_title"),
+        Index("ix_admin_resources_agent_type_active", "agent_id", "resource_type", "is_active"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    resource_type: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(128), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    agent: Mapped["Agent"] = relationship(back_populates="admin_resources")
+    schedule_slots: Mapped[list["AdminScheduleSlot"]] = relationship(
+        back_populates="resource",
+        cascade="all, delete-orphan",
+    )
+    appointments: Mapped[list["AdminAppointment"]] = relationship(
+        back_populates="resource",
+        cascade="all, delete-orphan",
+    )
+
+
+class AdminService(Base):
+    __tablename__ = "admin_services"
+    __table_args__ = (
+        CheckConstraint("duration_minutes > 0", name="ck_admin_services_duration_gt_zero"),
+        CheckConstraint("price_minor >= 0", name="ck_admin_services_price_non_negative"),
+        UniqueConstraint("agent_id", "title", name="uq_admin_services_agent_title"),
+        Index("ix_admin_services_agent_role_active", "agent_id", "target_role", "is_active"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    target_role: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(128), nullable=False)
+    duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    price_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    resource_type_filters_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    agent: Mapped["Agent"] = relationship(back_populates="admin_services")
+    appointments: Mapped[list["AdminAppointment"]] = relationship(
+        back_populates="service",
+        cascade="all, delete-orphan",
+    )
+
+
+class AdminScheduleSlot(Base):
+    __tablename__ = "admin_schedule_slots"
+    __table_args__ = (
+        CheckConstraint("ends_at > starts_at", name="ck_admin_schedule_slots_time_order"),
+        CheckConstraint("(staff_id IS NOT NULL) OR (resource_id IS NOT NULL)", name="ck_admin_schedule_slots_target"),
+        UniqueConstraint("agent_id", "staff_id", "starts_at", "ends_at", name="uq_admin_schedule_slots_staff_exact"),
+        UniqueConstraint("agent_id", "resource_id", "starts_at", "ends_at", name="uq_admin_schedule_slots_resource_exact"),
+        Index("ix_admin_schedule_slots_agent_time", "agent_id", "starts_at", "ends_at"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    staff_id: Mapped[int | None] = mapped_column(ForeignKey("admin_staff.id", ondelete="CASCADE"), nullable=True, index=True)
+    resource_id: Mapped[int | None] = mapped_column(ForeignKey("admin_resources.id", ondelete="CASCADE"), nullable=True, index=True)
+    slot_kind: Mapped[str] = mapped_column(String(24), nullable=False, default="work", server_default="work")
+    starts_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    ends_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    agent: Mapped["Agent"] = relationship(back_populates="admin_schedule_slots")
+    staff: Mapped["AdminStaff"] = relationship(back_populates="schedule_slots")
+    resource: Mapped["AdminResource"] = relationship(back_populates="schedule_slots")
+
+
+class AdminAppointment(Base):
+    __tablename__ = "admin_appointments"
+    __table_args__ = (
+        CheckConstraint("ends_at > starts_at", name="ck_admin_appointments_time_order"),
+        CheckConstraint(
+            "status IN ('pending_confirmation','booked','confirmed','in_progress','cancelled','completed','no_show')",
+            name="ck_admin_appointments_status",
+        ),
+        Index("ix_admin_appointments_agent_status_time", "agent_id", "status", "starts_at"),
+        Index("ix_admin_appointments_client_lookup", "agent_id", "client_external_id"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    staff_id: Mapped[int | None] = mapped_column(ForeignKey("admin_staff.id", ondelete="SET NULL"), nullable=True, index=True)
+    resource_id: Mapped[int | None] = mapped_column(ForeignKey("admin_resources.id", ondelete="SET NULL"), nullable=True, index=True)
+    service_id: Mapped[int | None] = mapped_column(ForeignKey("admin_services.id", ondelete="SET NULL"), nullable=True, index=True)
+    client_external_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    client_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    starts_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    ends_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="booked", server_default="booked", index=True)
+    source_channel: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    agent: Mapped["Agent"] = relationship(back_populates="admin_appointments")
+    staff: Mapped["AdminStaff"] = relationship(back_populates="appointments")
+    resource: Mapped["AdminResource"] = relationship(back_populates="appointments")
+    service: Mapped["AdminService"] = relationship(back_populates="appointments")
+
+
+class AdminWaitlistEntry(Base):
+    __tablename__ = "admin_waitlist_entries"
+    __table_args__ = (
+        CheckConstraint("status IN ('waiting','matched','cancelled')", name="ck_admin_waitlist_entries_status"),
+        Index("ix_admin_waitlist_entries_agent_status_created", "agent_id", "status", "created_at"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    client_external_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    client_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    service_id: Mapped[int | None] = mapped_column(ForeignKey("admin_services.id", ondelete="SET NULL"), nullable=True, index=True)
+    desired_staff_id: Mapped[int | None] = mapped_column(ForeignKey("admin_staff.id", ondelete="SET NULL"), nullable=True, index=True)
+    desired_resource_id: Mapped[int | None] = mapped_column(ForeignKey("admin_resources.id", ondelete="SET NULL"), nullable=True, index=True)
+    earliest_starts_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    latest_ends_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="waiting", server_default="waiting", index=True)
+    matched_appointment_id: Mapped[int | None] = mapped_column(
+        ForeignKey("admin_appointments.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    agent: Mapped["Agent"] = relationship(back_populates="admin_waitlist_entries")
+    service: Mapped["AdminService"] = relationship()
+    desired_staff: Mapped["AdminStaff"] = relationship()
+    desired_resource: Mapped["AdminResource"] = relationship()
+    matched_appointment: Mapped["AdminAppointment"] = relationship()
+
+
+class AdminClientProfile(Base):
+    __tablename__ = "admin_client_profiles"
+    __table_args__ = (
+        UniqueConstraint("agent_id", "client_external_id", name="uq_admin_client_profiles_agent_client"),
+        Index("ix_admin_client_profiles_agent_last_visit", "agent_id", "last_visit_at"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    client_external_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    client_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    tags_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    preferences_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    history_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_visit_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    agent: Mapped["Agent"] = relationship(back_populates="admin_client_profiles")
+
+
+class AdminQuickReplyTemplate(Base):
+    __tablename__ = "admin_quick_reply_templates"
+    __table_args__ = (
+        UniqueConstraint("agent_id", "title", name="uq_admin_quick_reply_agent_title"),
+        Index("ix_admin_quick_reply_agent_active", "agent_id", "is_active"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(128), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    category: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    agent: Mapped["Agent"] = relationship(back_populates="admin_quick_replies")
+
+
+class AdminAppointmentReminderLog(Base):
+    __tablename__ = "admin_appointment_reminder_logs"
+    __table_args__ = (
+        UniqueConstraint(
+            "appointment_id",
+            "reminder_type",
+            name="uq_admin_appointment_reminder_logs_appointment_type",
+        ),
+        Index("ix_admin_appointment_reminder_logs_agent_type_sent", "agent_id", "reminder_type", "sent_at"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    appointment_id: Mapped[int] = mapped_column(
+        ForeignKey("admin_appointments.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    reminder_type: Mapped[str] = mapped_column(String(16), nullable=False, index=True)  # t24h | t2h
+    channel: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="queued", server_default="queued")
+    sent_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    agent: Mapped["Agent"] = relationship(back_populates="admin_reminder_logs")
+    appointment: Mapped["AdminAppointment"] = relationship()
 
 
 class AgentSalesContact(Base):

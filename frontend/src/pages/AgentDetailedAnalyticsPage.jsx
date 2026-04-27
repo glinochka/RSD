@@ -11,6 +11,7 @@ const ANALYTICS_SECTIONS = {
   OVERVIEW: 'overview',
   CHATS: 'chats',
   BROADCAST: 'broadcast',
+  OPERATIONS: 'operations',
 };
 
 const BROADCAST_LIMIT_OPTIONS = [100, 250, 500, 1000, 2000, 5000];
@@ -30,6 +31,16 @@ const formatPercent = (value) => {
   const numeric = Number(value || 0);
   if (!Number.isFinite(numeric)) return '0%';
   return `${numeric.toFixed(1)}%`;
+};
+
+const formatMinutes = (value) => {
+  const minutes = Number(value || 0);
+  if (!Number.isFinite(minutes) || minutes <= 0) return '0 мин';
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (h <= 0) return `${m} мин`;
+  if (m <= 0) return `${h} ч`;
+  return `${h} ч ${m} мин`;
 };
 
 const formatDateTime = (value) => {
@@ -53,6 +64,41 @@ const formatDateShort = (value) => {
     day: '2-digit',
     month: '2-digit',
   }).format(date);
+};
+
+const toIsoInputValue = (value) => {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return localDate.toISOString().slice(0, 16);
+};
+
+const fromIsoInputValue = (value) => {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString();
+};
+
+const startOfDay = (value) => {
+  const date = new Date(value);
+  date.setHours(0, 0, 0, 0);
+  return date;
+};
+
+const endOfDay = (value) => {
+  const date = new Date(value);
+  date.setHours(23, 59, 59, 999);
+  return date;
+};
+
+const startOfWeek = (value) => {
+  const date = startOfDay(value);
+  const day = date.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  date.setDate(date.getDate() + diff);
+  return date;
 };
 
 const channelLabel = (channel) => {
@@ -344,8 +390,69 @@ const AgentDetailedAnalyticsPageContent = () => {
   const [waBroadcastBody, setWaBroadcastBody] = useState('');
   const [waBroadcastResult, setWaBroadcastResult] = useState(null);
   const [isWaBroadcasting, setIsWaBroadcasting] = useState(false);
+  const [staffItems, setStaffItems] = useState([]);
+  const [resourceItems, setResourceItems] = useState([]);
+  const [serviceItems, setServiceItems] = useState([]);
+  const [scheduleItems, setScheduleItems] = useState([]);
+  const [appointmentItems, setAppointmentItems] = useState([]);
+  const [occupancyData, setOccupancyData] = useState(null);
+  const [opsLoading, setOpsLoading] = useState(false);
+  const [calendarView, setCalendarView] = useState('day');
+  const [calendarAnchor, setCalendarAnchor] = useState(() => new Date());
+  const [editingStaffId, setEditingStaffId] = useState(null);
+  const [editingResourceId, setEditingResourceId] = useState(null);
+  const [editingServiceId, setEditingServiceId] = useState(null);
+  const [editingStaffDraft, setEditingStaffDraft] = useState({ full_name: '', role: 'master', specializations: '' });
+  const [editingResourceDraft, setEditingResourceDraft] = useState({ title: '', resource_type: 'chair' });
+  const [editingServiceDraft, setEditingServiceDraft] = useState({
+    title: '',
+    target_role: 'master',
+    duration_minutes: 60,
+    price_minor: 0,
+    resource_type_filters: '',
+  });
+  const [newStaffDraft, setNewStaffDraft] = useState({ full_name: '', role: 'master', specializations: '' });
+  const [newResourceDraft, setNewResourceDraft] = useState({ title: '', resource_type: 'chair' });
+  const [newServiceDraft, setNewServiceDraft] = useState({
+    title: '',
+    target_role: 'master',
+    duration_minutes: 60,
+    price_minor: 0,
+    resource_type_filters: '',
+  });
+  const [newScheduleDraft, setNewScheduleDraft] = useState({
+    starts_at: '',
+    ends_at: '',
+    staff_id: '',
+    resource_id: '',
+    slot_kind: 'work',
+  });
+  const [newAppointmentDraft, setNewAppointmentDraft] = useState({
+    client_external_id: '',
+    client_name: '',
+    starts_at: '',
+    ends_at: '',
+    staff_id: '',
+    resource_id: '',
+    service_id: '',
+    notes: '',
+  });
+  const [selectedDrilldown, setSelectedDrilldown] = useState(null);
+  const [waitlistItems, setWaitlistItems] = useState([]);
+  const [clientProfileItems, setClientProfileItems] = useState([]);
+  const [quickReplyItems, setQuickReplyItems] = useState([]);
+  const [newWaitlistDraft, setNewWaitlistDraft] = useState({
+    client_external_id: '',
+    client_name: '',
+    service_id: '',
+    desired_staff_id: '',
+    desired_resource_id: '',
+  });
+  const [newQuickReplyDraft, setNewQuickReplyDraft] = useState({ title: '', body: '', category: '' });
+  const [reminderRunResult, setReminderRunResult] = useState(null);
 
   const botId = useMemo(() => Number(id), [id]);
+  const isCrmAdminTemplate = String(agent?.template_type || '').trim().toLowerCase() === 'crm_admin';
 
   const plannedBroadcastRecipients = useMemo(() => {
     if (!broadcastStats) return 0;
@@ -362,6 +469,63 @@ const AgentDetailedAnalyticsPageContent = () => {
       : Number(waBroadcastStats.whatsapp_userbot_users_total || 0);
     return Math.min(base, broadcastMaxRecipients);
   }, [waBroadcastStats, broadcastSkipFrozen, broadcastMaxRecipients]);
+
+  const operationRange = useMemo(() => {
+    const anchor = startOfDay(calendarAnchor);
+    if (calendarView === 'week') {
+      const start = startOfWeek(anchor);
+      const end = endOfDay(new Date(start.getTime() + 6 * 24 * 60 * 60 * 1000));
+      return { start, end };
+    }
+    return { start: startOfDay(anchor), end: endOfDay(anchor) };
+  }, [calendarAnchor, calendarView]);
+
+  const loadOperationsDashboard = async () => {
+    if (!Number.isFinite(botId) || botId <= 0) return;
+    setOpsLoading(true);
+    try {
+      const paramsBase = { bot_id: botId };
+      const [staff, resources, services, schedule, appointments, occupancy, waitlist, profiles, quickReplies] = await Promise.all([
+        agentService.listAdminTemplateStaff(paramsBase),
+        agentService.listAdminTemplateResources(paramsBase),
+        agentService.listAdminTemplateServices(paramsBase),
+        agentService.listAdminTemplateSchedule({
+          ...paramsBase,
+          starts_at: operationRange.start.toISOString(),
+          ends_at: operationRange.end.toISOString(),
+          active_only: true,
+        }),
+        agentService.listAdminTemplateAppointments({
+          ...paramsBase,
+          starts_at: operationRange.start.toISOString(),
+          ends_at: operationRange.end.toISOString(),
+        }),
+        agentService.getAdminTemplateOccupancy({
+          ...paramsBase,
+          starts_at: operationRange.start.toISOString(),
+          ends_at: operationRange.end.toISOString(),
+          granularity_minutes: 30,
+        }),
+        agentService.listAdminTemplateWaitlist(paramsBase),
+        agentService.listAdminTemplateClientProfiles(paramsBase),
+        agentService.listAdminTemplateQuickReplies(paramsBase),
+      ]);
+      setStaffItems(Array.isArray(staff?.items) ? staff.items : []);
+      setResourceItems(Array.isArray(resources?.items) ? resources.items : []);
+      setServiceItems(Array.isArray(services?.items) ? services.items : []);
+      setScheduleItems(Array.isArray(schedule?.items) ? schedule.items : []);
+      setAppointmentItems(Array.isArray(appointments?.items) ? appointments.items : []);
+      setOccupancyData(occupancy || null);
+      setSelectedDrilldown(null);
+      setWaitlistItems(Array.isArray(waitlist?.items) ? waitlist.items : []);
+      setClientProfileItems(Array.isArray(profiles?.items) ? profiles.items : []);
+      setQuickReplyItems(Array.isArray(quickReplies?.items) ? quickReplies.items : []);
+    } catch (error) {
+      showError(error?.message || 'Не удалось загрузить операционный дашборд');
+    } finally {
+      setOpsLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (!Number.isFinite(botId) || botId <= 0) {
@@ -452,6 +616,13 @@ const AgentDetailedAnalyticsPageContent = () => {
     loadBroadcastStats();
     loadWaBroadcastStats();
   }, [selectedSection, botId, showError]);
+
+  useEffect(() => {
+    if (!isCrmAdminTemplate) return;
+    if (selectedSection !== ANALYTICS_SECTIONS.OPERATIONS) return;
+    loadOperationsDashboard();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSection, isCrmAdminTemplate, botId, operationRange.start, operationRange.end]);
 
   const selectedUser = useMemo(
     () => chatUsers.find((user) => user.id === selectedUserId) || null,
@@ -648,9 +819,380 @@ const AgentDetailedAnalyticsPageContent = () => {
     }
   };
 
+  const parseCsv = (raw) =>
+    String(raw || '')
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+  const handleCreateStaff = async () => {
+    if (!newStaffDraft.full_name.trim()) {
+      showError('Укажите имя сотрудника');
+      return;
+    }
+    try {
+      await agentService.createAdminTemplateStaff({
+        bot_id: botId,
+        role: newStaffDraft.role,
+        full_name: newStaffDraft.full_name.trim(),
+        specializations: parseCsv(newStaffDraft.specializations),
+        is_active: true,
+      });
+      setNewStaffDraft({ full_name: '', role: 'master', specializations: '' });
+      await loadOperationsDashboard();
+    } catch (error) {
+      showError(error?.message || 'Не удалось создать сотрудника');
+    }
+  };
+
+  const handleSaveStaff = async () => {
+    if (!editingStaffId) return;
+    if (!editingStaffDraft.full_name.trim()) {
+      showError('Имя сотрудника не может быть пустым');
+      return;
+    }
+    try {
+      await agentService.updateAdminTemplateStaff({
+        bot_id: botId,
+        staff_id: editingStaffId,
+        full_name: editingStaffDraft.full_name.trim(),
+        specializations: parseCsv(editingStaffDraft.specializations),
+      });
+      setEditingStaffId(null);
+      await loadOperationsDashboard();
+    } catch (error) {
+      showError(error?.message || 'Не удалось обновить сотрудника');
+    }
+  };
+
+  const handleDeleteStaff = async (staffId) => {
+    if (!window.confirm('Удалить сотрудника?')) return;
+    try {
+      await agentService.deleteAdminTemplateStaff({ bot_id: botId, staff_id: staffId });
+      await loadOperationsDashboard();
+    } catch (error) {
+      showError(error?.message || 'Не удалось удалить сотрудника');
+    }
+  };
+
+  const handleCreateResource = async () => {
+    if (!newResourceDraft.title.trim()) {
+      showError('Укажите название ресурса');
+      return;
+    }
+    try {
+      await agentService.createAdminTemplateResource({
+        bot_id: botId,
+        resource_type: newResourceDraft.resource_type,
+        title: newResourceDraft.title.trim(),
+      });
+      setNewResourceDraft({ title: '', resource_type: 'chair' });
+      await loadOperationsDashboard();
+    } catch (error) {
+      showError(error?.message || 'Не удалось создать ресурс');
+    }
+  };
+
+  const handleSaveResource = async () => {
+    if (!editingResourceId) return;
+    if (!editingResourceDraft.title.trim()) {
+      showError('Название ресурса не может быть пустым');
+      return;
+    }
+    try {
+      await agentService.updateAdminTemplateResource({
+        bot_id: botId,
+        resource_id: editingResourceId,
+        title: editingResourceDraft.title.trim(),
+      });
+      setEditingResourceId(null);
+      await loadOperationsDashboard();
+    } catch (error) {
+      showError(error?.message || 'Не удалось обновить ресурс');
+    }
+  };
+
+  const handleDeleteResource = async (resourceId) => {
+    if (!window.confirm('Удалить ресурс?')) return;
+    try {
+      await agentService.deleteAdminTemplateResource({ bot_id: botId, resource_id: resourceId });
+      await loadOperationsDashboard();
+    } catch (error) {
+      showError(error?.message || 'Не удалось удалить ресурс');
+    }
+  };
+
+  const handleCreateService = async () => {
+    if (!newServiceDraft.title.trim()) {
+      showError('Укажите название услуги');
+      return;
+    }
+    try {
+      await agentService.createAdminTemplateService({
+        bot_id: botId,
+        target_role: newServiceDraft.target_role,
+        title: newServiceDraft.title.trim(),
+        duration_minutes: Number(newServiceDraft.duration_minutes || 60),
+        price_minor: Number(newServiceDraft.price_minor || 0),
+        resource_type_filters: parseCsv(newServiceDraft.resource_type_filters),
+      });
+      setNewServiceDraft({
+        title: '',
+        target_role: 'master',
+        duration_minutes: 60,
+        price_minor: 0,
+        resource_type_filters: '',
+      });
+      await loadOperationsDashboard();
+    } catch (error) {
+      showError(error?.message || 'Не удалось создать услугу');
+    }
+  };
+
+  const handleSaveService = async () => {
+    if (!editingServiceId) return;
+    if (!editingServiceDraft.title.trim()) {
+      showError('Название услуги не может быть пустым');
+      return;
+    }
+    try {
+      await agentService.updateAdminTemplateService({
+        bot_id: botId,
+        service_id: editingServiceId,
+        title: editingServiceDraft.title.trim(),
+        duration_minutes: Number(editingServiceDraft.duration_minutes || 60),
+        price_minor: Number(editingServiceDraft.price_minor || 0),
+        resource_type_filters: parseCsv(editingServiceDraft.resource_type_filters),
+      });
+      setEditingServiceId(null);
+      await loadOperationsDashboard();
+    } catch (error) {
+      showError(error?.message || 'Не удалось обновить услугу');
+    }
+  };
+
+  const handleDeleteService = async (serviceId) => {
+    if (!window.confirm('Удалить услугу?')) return;
+    try {
+      await agentService.deleteAdminTemplateService({ bot_id: botId, service_id: serviceId });
+      await loadOperationsDashboard();
+    } catch (error) {
+      showError(error?.message || 'Не удалось удалить услугу');
+    }
+  };
+
+  const handleCreateScheduleSlot = async () => {
+    if (!newScheduleDraft.starts_at || !newScheduleDraft.ends_at) {
+      showError('Укажите начало и конец слота');
+      return;
+    }
+    if (!newScheduleDraft.staff_id && !newScheduleDraft.resource_id) {
+      showError('Выберите сотрудника или ресурс');
+      return;
+    }
+    try {
+      await agentService.createAdminTemplateSchedule({
+        bot_id: botId,
+        starts_at: fromIsoInputValue(newScheduleDraft.starts_at),
+        ends_at: fromIsoInputValue(newScheduleDraft.ends_at),
+        staff_id: newScheduleDraft.staff_id ? Number(newScheduleDraft.staff_id) : undefined,
+        resource_id: newScheduleDraft.resource_id ? Number(newScheduleDraft.resource_id) : undefined,
+        slot_kind: newScheduleDraft.slot_kind || 'work',
+      });
+      setNewScheduleDraft({ starts_at: '', ends_at: '', staff_id: '', resource_id: '', slot_kind: 'work' });
+      await loadOperationsDashboard();
+    } catch (error) {
+      showError(error?.message || 'Не удалось добавить слот');
+    }
+  };
+
+  const handleDeleteScheduleSlot = async (slotId) => {
+    if (!window.confirm('Удалить слот расписания?')) return;
+    try {
+      await agentService.deleteAdminTemplateSchedule({ bot_id: botId, schedule_slot_id: slotId });
+      await loadOperationsDashboard();
+    } catch (error) {
+      showError(error?.message || 'Не удалось удалить слот');
+    }
+  };
+
+  const handleCreateAppointment = async () => {
+    if (!newAppointmentDraft.client_external_id.trim()) {
+      showError('Укажите client_external_id');
+      return;
+    }
+    if (!newAppointmentDraft.starts_at || !newAppointmentDraft.ends_at) {
+      showError('Укажите дату и время записи');
+      return;
+    }
+    try {
+      await agentService.createAdminTemplateAppointment({
+        bot_id: botId,
+        client_external_id: newAppointmentDraft.client_external_id.trim(),
+        client_name: newAppointmentDraft.client_name.trim() || undefined,
+        starts_at: fromIsoInputValue(newAppointmentDraft.starts_at),
+        ends_at: fromIsoInputValue(newAppointmentDraft.ends_at),
+        staff_id: newAppointmentDraft.staff_id ? Number(newAppointmentDraft.staff_id) : undefined,
+        resource_id: newAppointmentDraft.resource_id ? Number(newAppointmentDraft.resource_id) : undefined,
+        service_id: newAppointmentDraft.service_id ? Number(newAppointmentDraft.service_id) : undefined,
+        notes: newAppointmentDraft.notes.trim() || undefined,
+      });
+      setNewAppointmentDraft({
+        client_external_id: '',
+        client_name: '',
+        starts_at: '',
+        ends_at: '',
+        staff_id: '',
+        resource_id: '',
+        service_id: '',
+        notes: '',
+      });
+      await loadOperationsDashboard();
+    } catch (error) {
+      showError(error?.message || 'Не удалось создать запись');
+    }
+  };
+
+  const handleRescheduleAppointmentQuick = async (appointment) => {
+    const currentStart = new Date(appointment.starts_at);
+    const currentEnd = new Date(appointment.ends_at);
+    if (Number.isNaN(currentStart.getTime()) || Number.isNaN(currentEnd.getTime())) {
+      showError('Некорректное время записи');
+      return;
+    }
+    const nextStart = new Date(currentStart.getTime() + 60 * 60 * 1000);
+    const nextEnd = new Date(currentEnd.getTime() + 60 * 60 * 1000);
+    try {
+      await agentService.rescheduleAdminTemplateAppointment({
+        bot_id: botId,
+        appointment_id: appointment.id,
+        starts_at: nextStart.toISOString(),
+        ends_at: nextEnd.toISOString(),
+      });
+      await loadOperationsDashboard();
+    } catch (error) {
+      showError(error?.message || 'Не удалось перенести запись');
+    }
+  };
+
+  const handleCancelAppointmentQuick = async (appointment) => {
+    if (!window.confirm('Отменить запись?')) return;
+    try {
+      await agentService.cancelAdminTemplateAppointment({
+        bot_id: botId,
+        appointment_id: appointment.id,
+        reason: 'cancelled_from_dashboard',
+      });
+      await loadOperationsDashboard();
+    } catch (error) {
+      showError(error?.message || 'Не удалось отменить запись');
+    }
+  };
+
+  const handleConfirmAppointmentQuick = async (appointment) => {
+    try {
+      await agentService.confirmAdminTemplateAppointment({
+        bot_id: botId,
+        appointment_id: appointment.id,
+      });
+      await loadOperationsDashboard();
+    } catch (error) {
+      showError(error?.message || 'Не удалось подтвердить запись');
+    }
+  };
+
+  const handleCreateWaitlist = async () => {
+    if (!newWaitlistDraft.client_external_id.trim()) {
+      showError('Укажите client_external_id для waitlist');
+      return;
+    }
+    try {
+      await agentService.createAdminTemplateWaitlist({
+        bot_id: botId,
+        client_external_id: newWaitlistDraft.client_external_id.trim(),
+        client_name: newWaitlistDraft.client_name.trim() || undefined,
+        service_id: newWaitlistDraft.service_id ? Number(newWaitlistDraft.service_id) : undefined,
+        desired_staff_id: newWaitlistDraft.desired_staff_id ? Number(newWaitlistDraft.desired_staff_id) : undefined,
+        desired_resource_id: newWaitlistDraft.desired_resource_id ? Number(newWaitlistDraft.desired_resource_id) : undefined,
+      });
+      setNewWaitlistDraft({
+        client_external_id: '',
+        client_name: '',
+        service_id: '',
+        desired_staff_id: '',
+        desired_resource_id: '',
+      });
+      await loadOperationsDashboard();
+    } catch (error) {
+      showError(error?.message || 'Не удалось добавить в waitlist');
+    }
+  };
+
+  const handleCancelWaitlist = async (item) => {
+    try {
+      await agentService.updateAdminTemplateWaitlist({
+        bot_id: botId,
+        waitlist_id: item.id,
+        status: 'cancelled',
+      });
+      await loadOperationsDashboard();
+    } catch (error) {
+      showError(error?.message || 'Не удалось обновить waitlist');
+    }
+  };
+
+  const handleCreateQuickReply = async () => {
+    if (!newQuickReplyDraft.title.trim() || !newQuickReplyDraft.body.trim()) {
+      showError('Укажите title и body для quick reply');
+      return;
+    }
+    try {
+      await agentService.createAdminTemplateQuickReply({
+        bot_id: botId,
+        title: newQuickReplyDraft.title.trim(),
+        body: newQuickReplyDraft.body.trim(),
+        category: newQuickReplyDraft.category.trim() || undefined,
+      });
+      setNewQuickReplyDraft({ title: '', body: '', category: '' });
+      await loadOperationsDashboard();
+    } catch (error) {
+      showError(error?.message || 'Не удалось создать шаблон ответа');
+    }
+  };
+
+  const handleDeleteQuickReply = async (item) => {
+    try {
+      await agentService.deleteAdminTemplateQuickReply({ bot_id: botId, quick_reply_id: item.id });
+      await loadOperationsDashboard();
+    } catch (error) {
+      showError(error?.message || 'Не удалось удалить шаблон ответа');
+    }
+  };
+
+  const handleRunReminders = async () => {
+    try {
+      const result = await agentService.runAdminTemplateReminders({ bot_id: botId });
+      setReminderRunResult(result);
+      showSuccess(`Напоминаний отправлено: ${result?.sent || 0}`);
+      await loadOperationsDashboard();
+    } catch (error) {
+      showError(error?.message || 'Не удалось выполнить run напоминаний');
+    }
+  };
+
   if (isLoading) {
     return <Loading message="Загрузка аналитики..." />;
   }
+
+  const drilldownAppointments = Array.isArray(occupancyData?.drilldown?.appointments)
+    ? occupancyData.drilldown.appointments
+    : [];
+  const selectedDrilldownAppointmentIds = new Set(
+    Array.isArray(selectedDrilldown?.appointment_ids) ? selectedDrilldown.appointment_ids : []
+  );
+  const selectedDrilldownItems = selectedDrilldown
+    ? drilldownAppointments.filter((item) => selectedDrilldownAppointmentIds.has(item.id))
+    : [];
 
   return (
     <div className="agent-analytics-page">
@@ -694,6 +1236,15 @@ const AgentDetailedAnalyticsPageContent = () => {
           >
             Рассылка
           </button>
+          {isCrmAdminTemplate ? (
+            <button
+              type="button"
+              className={`analytics-section-btn ${selectedSection === ANALYTICS_SECTIONS.OPERATIONS ? 'analytics-section-btn--active' : ''}`}
+              onClick={() => setSelectedSection(ANALYTICS_SECTIONS.OPERATIONS)}
+            >
+              Операционный дашборд
+            </button>
+          ) : null}
         </aside>
 
         <div className="agent-analytics-content">
@@ -879,6 +1430,773 @@ const AgentDetailedAnalyticsPageContent = () => {
                   )}
                 </div>
               </div>
+            </section>
+          ) : selectedSection === ANALYTICS_SECTIONS.OPERATIONS ? (
+            <section className="analytics-operations">
+              <div className="analytics-operations-header">
+                <h3>Операционный дашборд</h3>
+                <div className="analytics-operations-toolbar">
+                  <div className="analytics-calendar-switch">
+                    <button
+                      type="button"
+                      className={`btn btn-outline ${calendarView === 'day' ? 'analytics-calendar-switch--active' : ''}`}
+                      onClick={() => setCalendarView('day')}
+                    >
+                      Day
+                    </button>
+                    <button
+                      type="button"
+                      className={`btn btn-outline ${calendarView === 'week' ? 'analytics-calendar-switch--active' : ''}`}
+                      onClick={() => setCalendarView('week')}
+                    >
+                      Week
+                    </button>
+                  </div>
+                  <input
+                    type="date"
+                    className="input-main analytics-calendar-date"
+                    value={toIsoInputValue(calendarAnchor).slice(0, 10)}
+                    onChange={(e) => setCalendarAnchor(new Date(`${e.target.value}T00:00:00`))}
+                  />
+                  <button type="button" className="btn btn-outline" onClick={loadOperationsDashboard} disabled={opsLoading}>
+                    {opsLoading ? 'Обновление...' : 'Обновить'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="analytics-ops-kpis">
+                <article className="analytics-ops-kpi">
+                  <span className="analytics-ops-kpi-label">Utilization</span>
+                  <strong>{formatPercent(occupancyData?.kpis?.utilization_percent)}</strong>
+                  <small>
+                    {formatMinutes(occupancyData?.totals?.occupied_minutes)} / {formatMinutes(occupancyData?.totals?.schedulable_minutes)}
+                  </small>
+                </article>
+                <article className="analytics-ops-kpi">
+                  <span className="analytics-ops-kpi-label">Peak hours</span>
+                  <strong>{occupancyData?.kpis?.peak_hours?.[0]?.label || '-'}</strong>
+                  <small>
+                    {formatMinutes(occupancyData?.kpis?.peak_hours?.[0]?.occupied_minutes)}
+                  </small>
+                </article>
+                <article className="analytics-ops-kpi">
+                  <span className="analytics-ops-kpi-label">No-show rate</span>
+                  <strong>
+                    {occupancyData?.kpis?.no_show?.enabled
+                      ? formatPercent(occupancyData?.kpis?.no_show?.rate_percent)
+                      : 'off'}
+                  </strong>
+                  <small>
+                    {occupancyData?.kpis?.no_show?.enabled
+                      ? `${occupancyData?.kpis?.no_show?.no_show_count || 0}/${occupancyData?.kpis?.no_show?.basis_appointments || 0}`
+                      : 'Подтверждение визитов выключено'}
+                  </small>
+                </article>
+              </div>
+
+              <div className="analytics-ops-aggregates-grid">
+                <article className="analytics-ops-card">
+                  <h4>Загрузка по сотруднику</h4>
+                  <div className="analytics-ops-list">
+                    {(occupancyData?.aggregates?.by_staff || []).map((item) => (
+                      <button
+                        key={`staff-agg-${item.staff_id}`}
+                        type="button"
+                        className={`analytics-ops-aggregate-row ${selectedDrilldown?.key === `staff-${item.staff_id}` ? 'analytics-ops-aggregate-row--active' : ''}`}
+                        onClick={() =>
+                          setSelectedDrilldown({
+                            key: `staff-${item.staff_id}`,
+                            title: `Сотрудник: ${item.staff_name}`,
+                            appointment_ids: item.appointment_ids || [],
+                          })
+                        }
+                      >
+                        <span>{item.staff_name}</span>
+                        <span>{formatMinutes(item.occupied_minutes)} · {formatPercent(item.utilization_percent)}</span>
+                      </button>
+                    ))}
+                  </div>
+                </article>
+                <article className="analytics-ops-card">
+                  <h4>Загрузка по кабинету/креслу</h4>
+                  <div className="analytics-ops-list">
+                    {(occupancyData?.aggregates?.by_resource || []).map((item) => (
+                      <button
+                        key={`resource-agg-${item.resource_id}`}
+                        type="button"
+                        className={`analytics-ops-aggregate-row ${selectedDrilldown?.key === `resource-${item.resource_id}` ? 'analytics-ops-aggregate-row--active' : ''}`}
+                        onClick={() =>
+                          setSelectedDrilldown({
+                            key: `resource-${item.resource_id}`,
+                            title: `Ресурс: ${item.resource_title}`,
+                            appointment_ids: item.appointment_ids || [],
+                          })
+                        }
+                      >
+                        <span>{item.resource_title}</span>
+                        <span>{formatMinutes(item.occupied_minutes)} · {formatPercent(item.utilization_percent)}</span>
+                      </button>
+                    ))}
+                  </div>
+                </article>
+                <article className="analytics-ops-card">
+                  <h4>Загрузка по услуге</h4>
+                  <div className="analytics-ops-list">
+                    {(occupancyData?.aggregates?.by_service || []).map((item) => (
+                      <button
+                        key={`service-agg-${item.service_id}`}
+                        type="button"
+                        className={`analytics-ops-aggregate-row ${selectedDrilldown?.key === `service-${item.service_id}` ? 'analytics-ops-aggregate-row--active' : ''}`}
+                        onClick={() =>
+                          setSelectedDrilldown({
+                            key: `service-${item.service_id}`,
+                            title: `Услуга: ${item.service_title}`,
+                            appointment_ids: item.appointment_ids || [],
+                          })
+                        }
+                      >
+                        <span>{item.service_title}</span>
+                        <span>{formatMinutes(item.occupied_minutes)} · {item.appointments} записей</span>
+                      </button>
+                    ))}
+                  </div>
+                </article>
+                <article className="analytics-ops-card">
+                  <h4>Пиковые часы</h4>
+                  <div className="analytics-ops-list">
+                    {(occupancyData?.kpis?.peak_hours || []).map((item) => (
+                      <button
+                        key={`peak-${item.hour}`}
+                        type="button"
+                        className={`analytics-ops-aggregate-row ${selectedDrilldown?.key === `peak-${item.hour}` ? 'analytics-ops-aggregate-row--active' : ''}`}
+                        onClick={() =>
+                          setSelectedDrilldown({
+                            key: `peak-${item.hour}`,
+                            title: `Пиковый час: ${item.label}`,
+                            appointment_ids: item.appointment_ids || [],
+                          })
+                        }
+                      >
+                        <span>{item.label}</span>
+                        <span>{formatMinutes(item.occupied_minutes)} · {item.appointments} записей</span>
+                      </button>
+                    ))}
+                  </div>
+                </article>
+                <article className="analytics-ops-card analytics-ops-card--wide">
+                  <h4>Провалы расписания (пустые окна)</h4>
+                  <div className="analytics-ops-list">
+                    {(occupancyData?.aggregates?.schedule_gaps || []).slice(0, 15).map((item, idx) => (
+                      <div key={`gap-${idx}`} className="analytics-ops-row">
+                        <div className="analytics-ops-row-main">
+                          <strong>{formatDateTime(item.starts_at)} - {formatDateTime(item.ends_at)}</strong>
+                          <span>
+                            {formatMinutes(item.duration_minutes)} · {item.staff_name || 'Без сотрудника'} · {item.resource_title || 'Без ресурса'}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+              </div>
+
+              {selectedDrilldown ? (
+                <article className="analytics-ops-card analytics-ops-card--wide">
+                  <div className="analytics-ops-drilldown-header">
+                    <h4>{selectedDrilldown.title}</h4>
+                    <button type="button" className="btn btn-outline" onClick={() => setSelectedDrilldown(null)}>
+                      Сбросить
+                    </button>
+                  </div>
+                  <div className="analytics-ops-list">
+                    {selectedDrilldownItems.length ? (
+                      selectedDrilldownItems.map((item) => (
+                        <div key={`drill-${item.id}`} className="analytics-ops-row">
+                          <div className="analytics-ops-row-main">
+                            <strong>{item.client_name || item.client_external_id}</strong>
+                            <span>
+                              {formatDateTime(item.starts_at)} - {formatDateTime(item.ends_at)} · status: {item.status}
+                            </span>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="analytics-note">Нет записей для выбранного агрегата.</p>
+                    )}
+                  </div>
+                </article>
+              ) : null}
+
+              <div className="analytics-ops-aggregates-grid">
+                <article className="analytics-ops-card">
+                  <div className="analytics-ops-drilldown-header">
+                    <h4>Waitlist</h4>
+                    <button type="button" className="btn btn-outline" onClick={handleRunReminders}>
+                      Run reminders
+                    </button>
+                  </div>
+                  <div className="analytics-ops-inline-form">
+                    <input
+                      className="input-main"
+                      placeholder="client_external_id"
+                      value={newWaitlistDraft.client_external_id}
+                      onChange={(e) => setNewWaitlistDraft((prev) => ({ ...prev, client_external_id: e.target.value }))}
+                    />
+                    <input
+                      className="input-main"
+                      placeholder="Имя клиента"
+                      value={newWaitlistDraft.client_name}
+                      onChange={(e) => setNewWaitlistDraft((prev) => ({ ...prev, client_name: e.target.value }))}
+                    />
+                    <select
+                      className="input-main"
+                      value={newWaitlistDraft.service_id}
+                      onChange={(e) => setNewWaitlistDraft((prev) => ({ ...prev, service_id: e.target.value }))}
+                    >
+                      <option value="">Услуга</option>
+                      {serviceItems.map((service) => (
+                        <option key={`wl-service-${service.id}`} value={service.id}>{service.title}</option>
+                      ))}
+                    </select>
+                    <button type="button" className="btn btn-black" onClick={handleCreateWaitlist}>
+                      Добавить
+                    </button>
+                  </div>
+                  {reminderRunResult ? (
+                    <p className="analytics-note">Последний запуск напоминаний: {reminderRunResult.sent || 0}</p>
+                  ) : null}
+                  <div className="analytics-ops-list">
+                    {waitlistItems.map((item) => (
+                      <div key={`waitlist-${item.id}`} className="analytics-ops-row">
+                        <div className="analytics-ops-row-main">
+                          <strong>{item.client_name || item.client_external_id}</strong>
+                          <span>status: {item.status} · service: {item.service_id || '-'}</span>
+                        </div>
+                        <div className="analytics-ops-row-actions">
+                          {item.status === 'waiting' ? (
+                            <button type="button" className="btn btn-outline" onClick={() => handleCancelWaitlist(item)}>
+                              Отменить
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+
+                <article className="analytics-ops-card">
+                  <h4>Клиенты: теги и предпочтения</h4>
+                  <div className="analytics-ops-list">
+                    {clientProfileItems.map((item) => (
+                      <div key={`profile-${item.id}`} className="analytics-ops-row">
+                        <div className="analytics-ops-row-main">
+                          <strong>{item.client_name || item.client_external_id}</strong>
+                          <span>
+                            tags: {Array.isArray(item.tags) && item.tags.length ? item.tags.join(', ') : '-'}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+
+                <article className="analytics-ops-card analytics-ops-card--wide">
+                  <h4>Шаблоны быстрых ответов</h4>
+                  <div className="analytics-ops-inline-form analytics-ops-inline-form--service">
+                    <input
+                      className="input-main"
+                      placeholder="Название шаблона"
+                      value={newQuickReplyDraft.title}
+                      onChange={(e) => setNewQuickReplyDraft((prev) => ({ ...prev, title: e.target.value }))}
+                    />
+                    <input
+                      className="input-main"
+                      placeholder="Категория"
+                      value={newQuickReplyDraft.category}
+                      onChange={(e) => setNewQuickReplyDraft((prev) => ({ ...prev, category: e.target.value }))}
+                    />
+                    <input
+                      className="input-main"
+                      placeholder="Текст ответа"
+                      value={newQuickReplyDraft.body}
+                      onChange={(e) => setNewQuickReplyDraft((prev) => ({ ...prev, body: e.target.value }))}
+                    />
+                    <button type="button" className="btn btn-black" onClick={handleCreateQuickReply}>
+                      Добавить
+                    </button>
+                  </div>
+                  <div className="analytics-ops-list">
+                    {quickReplyItems.map((item) => (
+                      <div key={`quick-reply-${item.id}`} className="analytics-ops-row">
+                        <div className="analytics-ops-row-main">
+                          <strong>{item.title}</strong>
+                          <span>{item.body}</span>
+                        </div>
+                        <div className="analytics-ops-row-actions">
+                          <button type="button" className="btn btn-outline" onClick={() => handleDeleteQuickReply(item)}>
+                            Удалить
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+              </div>
+
+              <div className="analytics-operations-grid">
+                <article className="analytics-ops-card">
+                  <h4>Сотрудники</h4>
+                  <div className="analytics-ops-inline-form">
+                    <input
+                      className="input-main"
+                      placeholder="Имя"
+                      value={newStaffDraft.full_name}
+                      onChange={(e) => setNewStaffDraft((prev) => ({ ...prev, full_name: e.target.value }))}
+                    />
+                    <select
+                      className="input-main"
+                      value={newStaffDraft.role}
+                      onChange={(e) => setNewStaffDraft((prev) => ({ ...prev, role: e.target.value }))}
+                    >
+                      <option value="master">master</option>
+                      <option value="doctor">doctor</option>
+                    </select>
+                    <input
+                      className="input-main"
+                      placeholder="Специализации через запятую"
+                      value={newStaffDraft.specializations}
+                      onChange={(e) => setNewStaffDraft((prev) => ({ ...prev, specializations: e.target.value }))}
+                    />
+                    <button type="button" className="btn btn-black" onClick={handleCreateStaff}>
+                      Добавить
+                    </button>
+                  </div>
+                  <div className="analytics-ops-list">
+                    {staffItems.map((item) => {
+                      const isEditing = editingStaffId === item.id;
+                      return (
+                        <div key={item.id} className="analytics-ops-row">
+                          {isEditing ? (
+                            <>
+                              <input
+                                className="input-main"
+                                value={editingStaffDraft.full_name}
+                                onChange={(e) => setEditingStaffDraft((prev) => ({ ...prev, full_name: e.target.value }))}
+                              />
+                              <input
+                                className="input-main"
+                                value={editingStaffDraft.specializations}
+                                onChange={(e) =>
+                                  setEditingStaffDraft((prev) => ({ ...prev, specializations: e.target.value }))
+                                }
+                              />
+                              <button type="button" className="btn btn-black" onClick={handleSaveStaff}>Сохранить</button>
+                              <button type="button" className="btn btn-outline" onClick={() => setEditingStaffId(null)}>Отмена</button>
+                            </>
+                          ) : (
+                            <>
+                              <div className="analytics-ops-row-main">
+                                <strong>{item.full_name}</strong>
+                                <span>{item.role}</span>
+                              </div>
+                              <div className="analytics-ops-row-actions">
+                                <button
+                                  type="button"
+                                  className="btn btn-outline"
+                                  onClick={() => {
+                                    setEditingStaffId(item.id);
+                                    setEditingStaffDraft({
+                                      full_name: item.full_name || '',
+                                      role: item.role || 'master',
+                                      specializations: Array.isArray(item.specializations) ? item.specializations.join(', ') : '',
+                                    });
+                                  }}
+                                >
+                                  Изменить
+                                </button>
+                                <button type="button" className="btn btn-outline" onClick={() => handleDeleteStaff(item.id)}>
+                                  Удалить
+                                </button>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </article>
+
+                <article className="analytics-ops-card">
+                  <h4>Ресурсы</h4>
+                  <div className="analytics-ops-inline-form">
+                    <input
+                      className="input-main"
+                      placeholder="Название ресурса"
+                      value={newResourceDraft.title}
+                      onChange={(e) => setNewResourceDraft((prev) => ({ ...prev, title: e.target.value }))}
+                    />
+                    <select
+                      className="input-main"
+                      value={newResourceDraft.resource_type}
+                      onChange={(e) => setNewResourceDraft((prev) => ({ ...prev, resource_type: e.target.value }))}
+                    >
+                      <option value="chair">chair</option>
+                      <option value="room">room</option>
+                      <option value="equipment">equipment</option>
+                    </select>
+                    <button type="button" className="btn btn-black" onClick={handleCreateResource}>
+                      Добавить
+                    </button>
+                  </div>
+                  <div className="analytics-ops-list">
+                    {resourceItems.map((item) => {
+                      const isEditing = editingResourceId === item.id;
+                      return (
+                        <div key={item.id} className="analytics-ops-row">
+                          {isEditing ? (
+                            <>
+                              <input
+                                className="input-main"
+                                value={editingResourceDraft.title}
+                                onChange={(e) => setEditingResourceDraft((prev) => ({ ...prev, title: e.target.value }))}
+                              />
+                              <button type="button" className="btn btn-black" onClick={handleSaveResource}>Сохранить</button>
+                              <button type="button" className="btn btn-outline" onClick={() => setEditingResourceId(null)}>Отмена</button>
+                            </>
+                          ) : (
+                            <>
+                              <div className="analytics-ops-row-main">
+                                <strong>{item.title}</strong>
+                                <span>{item.resource_type}</span>
+                              </div>
+                              <div className="analytics-ops-row-actions">
+                                <button
+                                  type="button"
+                                  className="btn btn-outline"
+                                  onClick={() => {
+                                    setEditingResourceId(item.id);
+                                    setEditingResourceDraft({
+                                      title: item.title || '',
+                                      resource_type: item.resource_type || 'chair',
+                                    });
+                                  }}
+                                >
+                                  Изменить
+                                </button>
+                                <button type="button" className="btn btn-outline" onClick={() => handleDeleteResource(item.id)}>
+                                  Удалить
+                                </button>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </article>
+
+                <article className="analytics-ops-card analytics-ops-card--wide">
+                  <h4>Услуги</h4>
+                  <div className="analytics-ops-inline-form analytics-ops-inline-form--service">
+                    <input
+                      className="input-main"
+                      placeholder="Название услуги"
+                      value={newServiceDraft.title}
+                      onChange={(e) => setNewServiceDraft((prev) => ({ ...prev, title: e.target.value }))}
+                    />
+                    <select
+                      className="input-main"
+                      value={newServiceDraft.target_role}
+                      onChange={(e) => setNewServiceDraft((prev) => ({ ...prev, target_role: e.target.value }))}
+                    >
+                      <option value="master">master</option>
+                      <option value="doctor">doctor</option>
+                    </select>
+                    <input
+                      className="input-main"
+                      type="number"
+                      min="1"
+                      placeholder="Минут"
+                      value={newServiceDraft.duration_minutes}
+                      onChange={(e) => setNewServiceDraft((prev) => ({ ...prev, duration_minutes: e.target.value }))}
+                    />
+                    <input
+                      className="input-main"
+                      type="number"
+                      min="0"
+                      placeholder="Цена minor"
+                      value={newServiceDraft.price_minor}
+                      onChange={(e) => setNewServiceDraft((prev) => ({ ...prev, price_minor: e.target.value }))}
+                    />
+                    <input
+                      className="input-main"
+                      placeholder="Фильтры ресурсов, через запятую"
+                      value={newServiceDraft.resource_type_filters}
+                      onChange={(e) =>
+                        setNewServiceDraft((prev) => ({ ...prev, resource_type_filters: e.target.value }))
+                      }
+                    />
+                    <button type="button" className="btn btn-black" onClick={handleCreateService}>
+                      Добавить
+                    </button>
+                  </div>
+                  <div className="analytics-ops-list">
+                    {serviceItems.map((item) => {
+                      const isEditing = editingServiceId === item.id;
+                      return (
+                        <div key={item.id} className="analytics-ops-row">
+                          {isEditing ? (
+                            <>
+                              <input
+                                className="input-main"
+                                value={editingServiceDraft.title}
+                                onChange={(e) => setEditingServiceDraft((prev) => ({ ...prev, title: e.target.value }))}
+                              />
+                              <input
+                                className="input-main"
+                                type="number"
+                                min="1"
+                                value={editingServiceDraft.duration_minutes}
+                                onChange={(e) =>
+                                  setEditingServiceDraft((prev) => ({ ...prev, duration_minutes: e.target.value }))
+                                }
+                              />
+                              <input
+                                className="input-main"
+                                type="number"
+                                min="0"
+                                value={editingServiceDraft.price_minor}
+                                onChange={(e) =>
+                                  setEditingServiceDraft((prev) => ({ ...prev, price_minor: e.target.value }))
+                                }
+                              />
+                              <button type="button" className="btn btn-black" onClick={handleSaveService}>Сохранить</button>
+                              <button type="button" className="btn btn-outline" onClick={() => setEditingServiceId(null)}>Отмена</button>
+                            </>
+                          ) : (
+                            <>
+                              <div className="analytics-ops-row-main">
+                                <strong>{item.title}</strong>
+                                <span>
+                                  {item.target_role} · {item.duration_minutes} мин · {item.price_minor}
+                                </span>
+                              </div>
+                              <div className="analytics-ops-row-actions">
+                                <button
+                                  type="button"
+                                  className="btn btn-outline"
+                                  onClick={() => {
+                                    setEditingServiceId(item.id);
+                                    setEditingServiceDraft({
+                                      title: item.title || '',
+                                      target_role: item.target_role || 'master',
+                                      duration_minutes: item.duration_minutes || 60,
+                                      price_minor: item.price_minor || 0,
+                                      resource_type_filters: Array.isArray(item.resource_type_filters)
+                                        ? item.resource_type_filters.join(', ')
+                                        : '',
+                                    });
+                                  }}
+                                >
+                                  Изменить
+                                </button>
+                                <button type="button" className="btn btn-outline" onClick={() => handleDeleteService(item.id)}>
+                                  Удалить
+                                </button>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </article>
+
+                <article className="analytics-ops-card analytics-ops-card--wide">
+                  <h4>Расписание</h4>
+                  <div className="analytics-ops-inline-form analytics-ops-inline-form--schedule">
+                    <input
+                      className="input-main"
+                      type="datetime-local"
+                      value={newScheduleDraft.starts_at}
+                      onChange={(e) => setNewScheduleDraft((prev) => ({ ...prev, starts_at: e.target.value }))}
+                    />
+                    <input
+                      className="input-main"
+                      type="datetime-local"
+                      value={newScheduleDraft.ends_at}
+                      onChange={(e) => setNewScheduleDraft((prev) => ({ ...prev, ends_at: e.target.value }))}
+                    />
+                    <select
+                      className="input-main"
+                      value={newScheduleDraft.staff_id}
+                      onChange={(e) => setNewScheduleDraft((prev) => ({ ...prev, staff_id: e.target.value }))}
+                    >
+                      <option value="">Сотрудник (опц.)</option>
+                      {staffItems.map((staff) => (
+                        <option key={staff.id} value={staff.id}>{staff.full_name}</option>
+                      ))}
+                    </select>
+                    <select
+                      className="input-main"
+                      value={newScheduleDraft.resource_id}
+                      onChange={(e) => setNewScheduleDraft((prev) => ({ ...prev, resource_id: e.target.value }))}
+                    >
+                      <option value="">Ресурс (опц.)</option>
+                      {resourceItems.map((resource) => (
+                        <option key={resource.id} value={resource.id}>{resource.title}</option>
+                      ))}
+                    </select>
+                    <button type="button" className="btn btn-black" onClick={handleCreateScheduleSlot}>
+                      Добавить слот
+                    </button>
+                  </div>
+                  <div className="analytics-ops-list">
+                    {scheduleItems.map((item) => (
+                      <div key={item.id} className="analytics-ops-row">
+                        <div className="analytics-ops-row-main">
+                          <strong>{formatDateTime(item.starts_at)} - {formatDateTime(item.ends_at)}</strong>
+                          <span>
+                            staff:{item.staff_id || '-'} · resource:{item.resource_id || '-'}
+                          </span>
+                        </div>
+                        <div className="analytics-ops-row-actions">
+                          <button type="button" className="btn btn-outline" onClick={() => handleDeleteScheduleSlot(item.id)}>
+                            Удалить
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+
+                <article className="analytics-ops-card analytics-ops-card--wide">
+                  <h4>Записи</h4>
+                  <div className="analytics-ops-inline-form analytics-ops-inline-form--appointment">
+                    <input
+                      className="input-main"
+                      placeholder="client_external_id"
+                      value={newAppointmentDraft.client_external_id}
+                      onChange={(e) =>
+                        setNewAppointmentDraft((prev) => ({ ...prev, client_external_id: e.target.value }))
+                      }
+                    />
+                    <input
+                      className="input-main"
+                      placeholder="Имя клиента"
+                      value={newAppointmentDraft.client_name}
+                      onChange={(e) => setNewAppointmentDraft((prev) => ({ ...prev, client_name: e.target.value }))}
+                    />
+                    <input
+                      className="input-main"
+                      type="datetime-local"
+                      value={newAppointmentDraft.starts_at}
+                      onChange={(e) => setNewAppointmentDraft((prev) => ({ ...prev, starts_at: e.target.value }))}
+                    />
+                    <input
+                      className="input-main"
+                      type="datetime-local"
+                      value={newAppointmentDraft.ends_at}
+                      onChange={(e) => setNewAppointmentDraft((prev) => ({ ...prev, ends_at: e.target.value }))}
+                    />
+                    <select
+                      className="input-main"
+                      value={newAppointmentDraft.staff_id}
+                      onChange={(e) => setNewAppointmentDraft((prev) => ({ ...prev, staff_id: e.target.value }))}
+                    >
+                      <option value="">Сотрудник</option>
+                      {staffItems.map((staff) => (
+                        <option key={staff.id} value={staff.id}>{staff.full_name}</option>
+                      ))}
+                    </select>
+                    <select
+                      className="input-main"
+                      value={newAppointmentDraft.resource_id}
+                      onChange={(e) => setNewAppointmentDraft((prev) => ({ ...prev, resource_id: e.target.value }))}
+                    >
+                      <option value="">Ресурс</option>
+                      {resourceItems.map((resource) => (
+                        <option key={resource.id} value={resource.id}>{resource.title}</option>
+                      ))}
+                    </select>
+                    <select
+                      className="input-main"
+                      value={newAppointmentDraft.service_id}
+                      onChange={(e) => setNewAppointmentDraft((prev) => ({ ...prev, service_id: e.target.value }))}
+                    >
+                      <option value="">Услуга</option>
+                      {serviceItems.map((service) => (
+                        <option key={service.id} value={service.id}>{service.title}</option>
+                      ))}
+                    </select>
+                    <button type="button" className="btn btn-black" onClick={handleCreateAppointment}>
+                      Создать запись
+                    </button>
+                  </div>
+                  <div className="analytics-ops-list">
+                    {appointmentItems.map((item) => (
+                      <div
+                        key={item.id}
+                        className={`analytics-ops-row ${item.status === 'cancelled' ? 'analytics-ops-row--cancelled' : ''}`}
+                      >
+                        <div className="analytics-ops-row-main">
+                          <strong>{item.client_name || item.client_external_id}</strong>
+                          <span>
+                            {formatDateTime(item.starts_at)} - {formatDateTime(item.ends_at)} · status: {item.status}
+                          </span>
+                        </div>
+                        <div className="analytics-ops-row-actions">
+                          <button type="button" className="btn btn-outline" onClick={() => handleRescheduleAppointmentQuick(item)}>
+                            +1ч перенос
+                          </button>
+                          <button type="button" className="btn btn-outline" onClick={() => handleConfirmAppointmentQuick(item)}>
+                            Подтвердить
+                          </button>
+                          <button type="button" className="btn btn-outline" onClick={() => handleCancelAppointmentQuick(item)}>
+                            Отменить
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+              </div>
+
+              <article className="analytics-ops-card analytics-ops-card--wide">
+                <h4>Календарь и занятость ({calendarView})</h4>
+                {occupancyData?.matrix?.length ? (
+                  <div className="analytics-occupancy-matrix">
+                    <div className="analytics-occupancy-header-row">
+                      <span>Ресурс</span>
+                      {(occupancyData.matrix[0]?.cells || []).map((cell) => (
+                        <span key={`${cell.starts_at}-${cell.ends_at}`}>
+                          {formatDateShort(cell.starts_at)} {new Date(cell.starts_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      ))}
+                    </div>
+                    {occupancyData.matrix.map((row) => (
+                      <div key={row.resource_id} className="analytics-occupancy-row">
+                        <span className="analytics-occupancy-resource">{row.resource_title}</span>
+                        {row.cells.map((cell) => (
+                          <span
+                            key={`${row.resource_id}-${cell.starts_at}`}
+                            className={`analytics-occupancy-cell ${
+                              cell.appointments_count > 1
+                                ? 'analytics-occupancy-cell--conflict'
+                                : cell.occupied
+                                  ? 'analytics-occupancy-cell--occupied'
+                                  : 'analytics-occupancy-cell--free'
+                            }`}
+                            title={`appointments: ${cell.appointments_count}`}
+                          />
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="analytics-note">Нет данных занятости за выбранный период.</p>
+                )}
+              </article>
             </section>
           ) : (
             <>

@@ -165,6 +165,77 @@ async def test_sales_runtime_function_call_schedule_dm(monkeypatch, mock_db_sess
 
 
 @pytest.mark.asyncio
+async def test_crm_admin_runtime_uses_booking_tools_without_crm_connection(monkeypatch):
+    service = TemplateRuntimeService()
+    calls = {"n": 0}
+
+    class _FakeBookingRegistry:
+        def __init__(self, **kwargs):
+            self._kwargs = kwargs
+
+        def tools_for_llm(self):
+            return [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "list_staff",
+                        "description": "List staff",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                }
+            ]
+
+        def has_tool(self, tool_name: str) -> bool:
+            return tool_name == "list_staff"
+
+        async def execute_tool(self, tool_name: str, raw_arguments: str):
+            return {
+                "ok": True,
+                "tool_name": "list_staff",
+                "tool_args_hash": "hash",
+                "tool_status": "success",
+                "crm_provider": "booking",
+                "latency_ms": 5,
+                "idempotency_key": "idem-key",
+                "result": {"items": [{"id": 1, "name": "Doctor A"}]},
+            }
+
+    async def fake_create(**kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return _completion_with_tool_call("list_staff", "{}")
+        return _completion("Нашёл свободных специалистов и могу продолжить запись.")
+
+    async def fake_get_connection(self, *, agent_id: int, provider: str):
+        return None
+
+    monkeypatch.setattr("app.services.template_runtime.ai_client.chat.completions.create", fake_create)
+    monkeypatch.setattr("app.services.template_runtime.AdminBookingToolRegistry", _FakeBookingRegistry)
+    monkeypatch.setattr("app.services.template_runtime.TemplateRuntimeService._get_active_crm_connection", fake_get_connection)
+
+    result = await service.execute(
+        template_type="crm_admin",
+        prompt="Ты администратор записи",
+        user_message="Покажи доступных специалистов",
+        knowledge_scope_id=101,
+        agent_id=77,
+        template_config={
+            "crm_provider": "amocrm",
+            "booking_backend": "local",
+            "domain_type": "dental_clinic",
+            "allowed_booking_tools": ["list_staff"],
+        },
+        source_channel="telegram",
+        user_external_id="12345",
+    )
+
+    assert "продолжить запись" in result.answer.lower()
+    assert result.tool_events
+    assert result.tool_events[0]["tool_name"] == "list_staff"
+    assert result.tool_events[0]["crm_provider"] == "booking"
+
+
+@pytest.mark.asyncio
 async def test_content_factory_runtime_pipeline_mode_message():
     service = TemplateRuntimeService()
     result = await service.execute(

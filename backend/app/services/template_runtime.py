@@ -13,6 +13,7 @@ from ..alembic.database import async_session_maker
 from ..alembic.models import AgentAnalyticsMessage, AgentCrmConnection, AgentSalesContact
 from ..utils.crypto import decrypt_crm_credentials
 from ..utils.pii import mask_external_id, redact_pii_text
+from .admin_booking import AdminBookingNeedsConfirmationError, AdminBookingToolRegistry
 from .ai_authoring import ai_client, generate_answer_with_context
 from .content_factory_runtime import get_content_factory_orchestrator
 from .crm import build_provider
@@ -282,39 +283,63 @@ class TemplateRuntimeService:
         if not agent_id:
             return None
 
+        domain_type = str(template_config.get("domain_type") or "beauty_salon").strip().lower()
+        if domain_type not in {"beauty_salon", "dental_clinic"}:
+            domain_type = "beauty_salon"
+        booking_backend = str(template_config.get("booking_backend") or "auto").strip().lower()
+        if booking_backend not in {"local", "crm", "auto"}:
+            booking_backend = "auto"
         crm_provider_name = str(template_config.get("crm_provider") or "amocrm").strip().lower()
-        allowed_tools_raw = template_config.get("allowed_tools")
-        allowed_tools = allowed_tools_raw if isinstance(allowed_tools_raw, list) else None
         confirmation_policy = str(template_config.get("confirmation_policy") or "confirm_risky").strip().lower()
+        allowed_crm_tools_raw = template_config.get("allowed_tools")
+        allowed_crm_tools = allowed_crm_tools_raw if isinstance(allowed_crm_tools_raw, list) else None
+        allowed_booking_tools_raw = template_config.get("allowed_booking_tools")
+        allowed_booking_tools = (
+            allowed_booking_tools_raw if isinstance(allowed_booking_tools_raw, list) else None
+        )
 
-        connection = await self._get_active_crm_connection(agent_id=agent_id, provider=crm_provider_name)
-        if connection is None:
-            return None
-
-        try:
-            decrypted_bundle, _ = decrypt_crm_credentials(connection.encrypted_credentials)
-            bundle = json.loads(decrypted_bundle)
-            provider = build_provider(
-                crm_provider_name,
-                base_url=str(bundle.get("base_url") or ""),
-                access_token=str(bundle.get("access_token") or ""),
-            )
-        except Exception:
-            logger.exception("Failed to initialize CRM provider for agent_id=%s", agent_id)
-            return TemplateExecutionResult(
-                answer="Не удалось инициализировать подключение CRM. Проверьте настройки интеграции.",
-                sources=[],
-            )
-
-        registry = CRMToolRegistry(
-            provider=provider,
-            allowed_tools=allowed_tools,
-            confirmation_policy=confirmation_policy,
-            user_message=user_message,
+        booking_registry = AdminBookingToolRegistry(
             agent_id=agent_id,
             user_external_id=user_external_id,
+            source_channel=source_channel,
+            confirmation_policy=confirmation_policy,
+            user_message=user_message,
+            allowed_tools=allowed_booking_tools,
         )
-        llm_tools = registry.tools_for_llm()
+        booking_llm_tools = booking_registry.tools_for_llm()
+
+        crm_registry: CRMToolRegistry | None = None
+        crm_tool_names: set[str] = set()
+        connection = await self._get_active_crm_connection(agent_id=agent_id, provider=crm_provider_name)
+        if connection is not None:
+            try:
+                decrypted_bundle, _ = decrypt_crm_credentials(connection.encrypted_credentials)
+                bundle = json.loads(decrypted_bundle)
+                provider = build_provider(
+                    crm_provider_name,
+                    base_url=str(bundle.get("base_url") or ""),
+                    access_token=str(bundle.get("access_token") or ""),
+                )
+                crm_registry = CRMToolRegistry(
+                    provider=provider,
+                    allowed_tools=allowed_crm_tools,
+                    confirmation_policy=confirmation_policy,
+                    user_message=user_message,
+                    agent_id=agent_id,
+                    user_external_id=user_external_id,
+                )
+                crm_tool_names = {
+                    str(item.get("function", {}).get("name") or "")
+                    for item in crm_registry.tools_for_llm()
+                    if isinstance(item, dict)
+                }
+            except Exception:
+                logger.exception("Failed to initialize CRM provider for agent_id=%s", agent_id)
+
+        llm_tools: list[dict[str, Any]] = []
+        llm_tools.extend(booking_llm_tools)
+        if crm_registry is not None:
+            llm_tools.extend(crm_registry.tools_for_llm())
         if not llm_tools:
             return None
 
@@ -325,11 +350,19 @@ class TemplateRuntimeService:
         )
 
         portrait_block = self._format_portrait_block(chat_portrait)
+        domain_instruction = self._crm_admin_domain_instruction(domain_type=domain_type)
+        backend_instruction = self._crm_admin_backend_instruction(
+            booking_backend=booking_backend,
+            crm_connected=connection is not None,
+            crm_provider_name=crm_provider_name,
+        )
         system_prompt = (
             f"{prompt}\n\n"
-            "Ты CRM-администратор. Если нужно действие в CRM — используй function tools. "
-            "Не выдумывай результаты CRM операций: опирайся только на ответы tools. "
-            "Отвечай только чистым текстом, без markdown."
+            "Ты AI-администратор записи. Работай через function tools для операций расписания и записи. "
+            "Не выдумывай результаты операций: опирайся только на ответы tools. "
+            "Если не хватает параметров для tool call — задай уточняющий вопрос. "
+            "Отвечай только чистым текстом, без markdown.\n\n"
+            f"{domain_instruction}\n{backend_instruction}"
         ).strip()
         if portrait_block:
             system_prompt = f"{system_prompt}\n\n{portrait_block}"
@@ -371,14 +404,19 @@ class TemplateRuntimeService:
                 tool_name = tool_call.function.name
                 raw_args = tool_call.function.arguments or "{}"
                 try:
-                    tool_result = await registry.execute_tool(tool_name, raw_args)
+                    if booking_registry.has_tool(tool_name):
+                        tool_result = await booking_registry.execute_tool(tool_name, raw_args)
+                    elif crm_registry is not None and tool_name in crm_tool_names:
+                        tool_result = await crm_registry.execute_tool(tool_name, raw_args)
+                    else:
+                        raise RuntimeError(f"Tool '{tool_name}' is not available in current runtime")
                     tool_events.append(
                         {
                             "tool_name": tool_name,
                             "tool_args_hash": tool_result.get("tool_args_hash"),
                             "tool_status": tool_result.get("tool_status", "success"),
                             "latency_ms": int(tool_result.get("latency_ms") or 0),
-                            "crm_provider": tool_result.get("crm_provider") or crm_provider_name,
+                            "crm_provider": tool_result.get("crm_provider"),
                             "source_channel": source_channel,
                             "user_external_id": mask_external_id(user_external_id),
                             "ok": bool(tool_result.get("ok")),
@@ -387,6 +425,24 @@ class TemplateRuntimeService:
                             "error": None,
                         }
                     )
+                except AdminBookingNeedsConfirmationError as exc:
+                    safe_error = redact_pii_text(str(exc))
+                    tool_events.append(
+                        {
+                            "tool_name": tool_name,
+                            "tool_args_hash": None,
+                            "tool_status": "confirmation_required",
+                            "latency_ms": 0,
+                            "crm_provider": "booking",
+                            "source_channel": source_channel,
+                            "user_external_id": mask_external_id(user_external_id),
+                            "ok": False,
+                            "idempotent_replay": False,
+                            "idempotency_key": None,
+                            "error": safe_error,
+                        }
+                    )
+                    return TemplateExecutionResult(answer=safe_error, sources=[], tool_events=tool_events)
                 except CRMNeedsConfirmationError as exc:
                     safe_error = redact_pii_text(str(exc))
                     tool_events.append(
@@ -395,7 +451,7 @@ class TemplateRuntimeService:
                             "tool_args_hash": None,
                             "tool_status": "confirmation_required",
                             "latency_ms": 0,
-                            "crm_provider": crm_provider_name,
+                            "crm_provider": crm_provider_name if crm_registry is not None else None,
                             "source_channel": source_channel,
                             "user_external_id": mask_external_id(user_external_id),
                             "ok": False,
@@ -414,7 +470,7 @@ class TemplateRuntimeService:
                             "tool_args_hash": None,
                             "tool_status": "error",
                             "latency_ms": 0,
-                            "crm_provider": crm_provider_name,
+                            "crm_provider": None,
                             "source_channel": source_channel,
                             "user_external_id": mask_external_id(user_external_id),
                             "ok": False,
@@ -438,6 +494,37 @@ class TemplateRuntimeService:
             sources=[],
             tool_events=tool_events,
         )
+
+    @staticmethod
+    def _crm_admin_domain_instruction(*, domain_type: str) -> str:
+        if domain_type == "dental_clinic":
+            return (
+                "Предметная область: стоматологическая клиника. "
+                "Используй терминологию врач/кабинет/процедура и уточняй длительность приема."
+            )
+        return (
+            "Предметная область: салон красоты. "
+            "Используй терминологию мастер/кресло/услуга и уточняй предпочтения по времени."
+        )
+
+    @staticmethod
+    def _crm_admin_backend_instruction(
+        *,
+        booking_backend: str,
+        crm_connected: bool,
+        crm_provider_name: str,
+    ) -> str:
+        if booking_backend == "local":
+            return "Backend бронирования: local (локальная доменная БД записи)."
+        if booking_backend == "crm":
+            if crm_connected:
+                return (
+                    f"Backend бронирования: crm (синхронизация через CRM-провайдер {crm_provider_name})."
+                )
+            return "Backend бронирования: crm, но CRM не подключена; используй local fallback для записи."
+        if crm_connected:
+            return f"Backend бронирования: auto (сейчас активен CRM-провайдер {crm_provider_name})."
+        return "Backend бронирования: auto (CRM не подключена, используй local backend)."
 
     async def _get_active_crm_connection(self, *, agent_id: int, provider: str) -> AgentCrmConnection | None:
         async with async_session_maker() as session:

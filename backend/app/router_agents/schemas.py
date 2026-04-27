@@ -451,3 +451,154 @@ class AgentCrmRotateSecretPayload(AgentLookup):
         description="Опционально: конкретный CRM провайдер для ротации",
     )
 
+
+class AdminTemplateStaffCreatePayload(AgentLookup):
+    role: str = Field(..., pattern="^(master|doctor)$", description="Роль сотрудника")
+    full_name: str = Field(..., min_length=1, max_length=128, description="ФИО сотрудника")
+    specializations: list[str] = Field(default_factory=list, description="Список специализаций")
+    is_active: bool = Field(default=True, description="Активен ли сотрудник")
+
+
+class AdminTemplateStaffUpdatePayload(AgentLookup):
+    staff_id: int = Field(..., gt=0, description="ID сотрудника")
+    full_name: Optional[str] = Field(default=None, min_length=1, max_length=128, description="ФИО сотрудника")
+    specializations: Optional[list[str]] = Field(default=None, description="Список специализаций")
+    is_active: Optional[bool] = Field(default=None, description="Активность сотрудника")
+
+
+class AdminTemplateStaffDeletePayload(AgentLookup):
+    staff_id: int = Field(..., gt=0, description="ID сотрудника")
+
+
+class AdminTemplateResourceCreatePayload(AgentLookup):
+    resource_type: str = Field(..., pattern="^(chair|room|equipment)$", description="Тип ресурса")
+    title: str = Field(..., min_length=1, max_length=128, description="Название ресурса")
+    is_active: bool = Field(default=True, description="Активен ли ресурс")
+
+
+class AdminTemplateResourceUpdatePayload(AgentLookup):
+    resource_id: int = Field(..., gt=0, description="ID ресурса")
+    title: Optional[str] = Field(default=None, min_length=1, max_length=128, description="Название ресурса")
+    is_active: Optional[bool] = Field(default=None, description="Активность ресурса")
+
+
+class AdminTemplateResourceDeletePayload(AgentLookup):
+    resource_id: int = Field(..., gt=0, description="ID ресурса")
+
+
+class AdminTemplateServiceCreatePayload(AgentLookup):
+    target_role: str = Field(..., pattern="^(master|doctor)$", description="Целевая роль исполнителя")
+    title: str = Field(..., min_length=1, max_length=128, description="Название услуги")
+    duration_minutes: int = Field(..., ge=1, le=24 * 60, description="Длительность услуги в минутах")
+    price_minor: int = Field(default=0, ge=0, description="Стоимость в minor units")
+    resource_type_filters: list[str] = Field(default_factory=list, description="Ограничение по типам ресурсов")
+    is_active: bool = Field(default=True, description="Активна ли услуга")
+
+
+class AdminTemplateServiceUpdatePayload(AgentLookup):
+    service_id: int = Field(..., gt=0, description="ID услуги")
+    title: Optional[str] = Field(default=None, min_length=1, max_length=128, description="Название услуги")
+    duration_minutes: Optional[int] = Field(default=None, ge=1, le=24 * 60, description="Длительность услуги")
+    price_minor: Optional[int] = Field(default=None, ge=0, description="Стоимость в minor units")
+    resource_type_filters: Optional[list[str]] = Field(default=None, description="Ограничение по типам ресурсов")
+    is_active: Optional[bool] = Field(default=None, description="Активность услуги")
+
+
+class AdminTemplateServiceDeletePayload(AgentLookup):
+    service_id: int = Field(..., gt=0, description="ID услуги")
+
+
+class AdminTemplateScheduleCreatePayload(AgentLookup):
+    starts_at: str = Field(..., min_length=16, max_length=40, description="Начало слота ISO datetime")
+    ends_at: str = Field(..., min_length=16, max_length=40, description="Конец слота ISO datetime")
+    staff_id: Optional[int] = Field(default=None, gt=0, description="ID сотрудника")
+    resource_id: Optional[int] = Field(default=None, gt=0, description="ID ресурса")
+    slot_kind: str = Field(default="work", min_length=1, max_length=24, description="Тип слота")
+    is_active: bool = Field(default=True, description="Активность слота")
+
+
+class AdminTemplateScheduleDeletePayload(AgentLookup):
+    schedule_slot_id: int = Field(..., gt=0, description="ID слота расписания")
+
+
+class AdminTemplateAppointmentCreatePayload(AgentLookup):
+    client_external_id: str = Field(..., min_length=1, max_length=128, description="ID клиента во внешнем канале")
+    starts_at: str = Field(..., min_length=16, max_length=40, description="Начало записи ISO datetime")
+    ends_at: str = Field(..., min_length=16, max_length=40, description="Конец записи ISO datetime")
+    staff_id: Optional[int] = Field(default=None, gt=0, description="ID сотрудника")
+    resource_id: Optional[int] = Field(default=None, gt=0, description="ID ресурса")
+    service_id: Optional[int] = Field(default=None, gt=0, description="ID услуги")
+    client_name: Optional[str] = Field(default=None, max_length=128, description="Имя клиента")
+    source_channel: Optional[str] = Field(default=None, max_length=32, description="Источник записи")
+    notes: Optional[str] = Field(default=None, max_length=4000, description="Заметка")
+
+
+class AdminTemplateAppointmentReschedulePayload(AgentLookup):
+    appointment_id: int = Field(..., gt=0, description="ID записи")
+    starts_at: str = Field(..., min_length=16, max_length=40, description="Новое начало записи ISO datetime")
+    ends_at: str = Field(..., min_length=16, max_length=40, description="Новый конец записи ISO datetime")
+    staff_id: Optional[int] = Field(default=None, gt=0, description="ID сотрудника")
+    resource_id: Optional[int] = Field(default=None, gt=0, description="ID ресурса")
+
+
+class AdminTemplateAppointmentCancelPayload(AgentLookup):
+    appointment_id: int = Field(..., gt=0, description="ID записи")
+    reason: Optional[str] = Field(default=None, max_length=1000, description="Причина отмены")
+
+
+class AdminTemplateAppointmentConfirmPayload(AgentLookup):
+    appointment_id: int = Field(..., gt=0, description="ID записи")
+
+
+class AdminTemplateWaitlistCreatePayload(AgentLookup):
+    client_external_id: str = Field(..., min_length=1, max_length=128)
+    client_name: Optional[str] = Field(default=None, max_length=128)
+    service_id: Optional[int] = Field(default=None, gt=0)
+    desired_staff_id: Optional[int] = Field(default=None, gt=0)
+    desired_resource_id: Optional[int] = Field(default=None, gt=0)
+    earliest_starts_at: Optional[str] = Field(default=None, min_length=16, max_length=40)
+    latest_ends_at: Optional[str] = Field(default=None, min_length=16, max_length=40)
+    notes: Optional[str] = Field(default=None, max_length=2000)
+
+
+class AdminTemplateWaitlistUpdatePayload(AgentLookup):
+    waitlist_id: int = Field(..., gt=0)
+    status: Optional[str] = Field(default=None, pattern="^(waiting|matched|cancelled)$")
+    notes: Optional[str] = Field(default=None, max_length=2000)
+
+
+class AdminTemplateWaitlistDeletePayload(AgentLookup):
+    waitlist_id: int = Field(..., gt=0)
+
+
+class AdminTemplateClientProfileUpdatePayload(AgentLookup):
+    client_external_id: str = Field(..., min_length=1, max_length=128)
+    client_name: Optional[str] = Field(default=None, max_length=128)
+    tags: Optional[list[str]] = Field(default=None)
+    preferences: Optional[dict] = Field(default=None)
+    history_note: Optional[str] = Field(default=None, max_length=2000)
+
+
+class AdminTemplateQuickReplyCreatePayload(AgentLookup):
+    title: str = Field(..., min_length=1, max_length=128)
+    body: str = Field(..., min_length=1, max_length=4000)
+    category: Optional[str] = Field(default=None, max_length=64)
+    is_active: bool = Field(default=True)
+
+
+class AdminTemplateQuickReplyUpdatePayload(AgentLookup):
+    quick_reply_id: int = Field(..., gt=0)
+    title: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    body: Optional[str] = Field(default=None, min_length=1, max_length=4000)
+    category: Optional[str] = Field(default=None, max_length=64)
+    is_active: Optional[bool] = Field(default=None)
+
+
+class AdminTemplateQuickReplyDeletePayload(AgentLookup):
+    quick_reply_id: int = Field(..., gt=0)
+
+
+class AdminTemplateRemindersRunPayload(AgentLookup):
+    now_iso: Optional[str] = Field(default=None, min_length=16, max_length=40)
+    channel: Optional[str] = Field(default=None, max_length=32)
+

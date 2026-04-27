@@ -27,6 +27,21 @@ const CRM_TOOL_OPTIONS = [
   { value: 'assign_owner', label: 'Назначение ответственного' },
 ];
 
+const CRM_DOMAIN_OPTIONS = [
+  { value: 'beauty_salon', label: 'Салон красоты' },
+  { value: 'dental_clinic', label: 'Стоматологическая клиника' },
+];
+
+const CRM_MODE_OPTIONS = [
+  { value: 'disabled', label: 'Работать без CRM' },
+  { value: 'optional', label: 'Подключить CRM (опционально сейчас / позже)' },
+];
+
+const CRM_CONNECT_TIMING_OPTIONS = [
+  { value: 'now', label: 'Подключить CRM сейчас' },
+  { value: 'later', label: 'Подключить CRM позже' },
+];
+
 const parseAllowedTools = (raw) =>
   Array.from(
     new Set(
@@ -39,6 +54,45 @@ const parseAllowedTools = (raw) =>
 
 const buildCrmValidationSignature = (provider, baseUrl, token) =>
   `${String(provider || '').trim().toLowerCase()}|${String(baseUrl || '').trim()}|${String(token || '').trim()}`;
+
+const parseMultilineItems = (raw) =>
+  Array.from(
+    new Set(
+      String(raw || '')
+        .split('\n')
+        .map((item) => item.trim())
+        .filter(Boolean)
+    )
+  );
+
+const buildAdminDomainPromptAppendix = (values) => {
+  const domainType = values.crm_domain_type === 'dental_clinic' ? 'dental_clinic' : 'beauty_salon';
+  if (domainType === 'beauty_salon') {
+    const chairsCount = Number.parseInt(values.beauty_chairs_count || '0', 10);
+    const masters = parseMultilineItems(values.beauty_masters_list);
+    const services = parseMultilineItems(values.beauty_services_list);
+    return [
+      '---',
+      'Admin domain profile:',
+      'domain_type: beauty_salon',
+      `chairs_count: ${Number.isFinite(chairsCount) ? Math.max(0, chairsCount) : 0}`,
+      `masters: ${masters.join(', ') || '-'}`,
+      `services: ${services.join(', ') || '-'}`,
+    ].join('\n');
+  }
+
+  const cabinetsCount = Number.parseInt(values.dental_cabinets_count || '0', 10);
+  const doctors = parseMultilineItems(values.dental_doctors_list);
+  const services = parseMultilineItems(values.dental_services_list);
+  return [
+    '---',
+    'Admin domain profile:',
+    'domain_type: dental_clinic',
+    `cabinets_count: ${Number.isFinite(cabinetsCount) ? Math.max(0, cabinetsCount) : 0}`,
+    `doctors: ${doctors.join(', ') || '-'}`,
+    `services: ${services.join(', ') || '-'}`,
+  ].join('\n');
+};
 
 const SALES_DEFAULT_TEMPLATE_CONFIG = {
   mode: 'draft_only',
@@ -70,7 +124,7 @@ const SALES_DEFAULT_TEMPLATE_CONFIG = {
 const TEMPLATE_TYPE_HELP = {
   qa: 'Агент отвечает на вопросы по подключённой базе знаний (RAG): поиск по документам и выдержки в ответах. Подходит для поддержки и консультаций.',
   crm_admin:
-    'Агент работает по шаблону администратора CRM: поиск и создание контактов, сделок, задач и другое в соответствии с настройками ниже. Перед сохранением проверьте подключение к CRM. Функция в статусе BETA.',
+    'Агент работает как администратор салона или клиники. CRM можно не подключать сразу: запустите локально и подключите интеграцию позже. Функция в статусе BETA.',
   sales_manager:
     'Агент работает как менеджер продаж: через function-calling решает, писать ли лиду, ведет диалог по стадиям (первое касание → выявление боли → ценностное предложение → перевод на ЛПР) и использует портрет клиента + RAG-контекст.',
   ai_logist: 'Шаблон находится в разработке.',
@@ -272,12 +326,27 @@ const CreateAgentContent = () => {
       whatsapp_business_account_id: '',
       whatsapp_verify_token: '',
       template_type: 'qa',
+      crm_domain_type: 'beauty_salon',
+      crm_mode: 'disabled',
+      crm_connect_timing: 'later',
       crm_provider: 'amocrm',
       crm_account_base_url: '',
       crm_access_token: '',
       crm_allowed_tools: 'find_contact, create_contact, find_lead, create_lead, update_lead, add_note, create_task, assign_owner',
       crm_confirmation_policy: 'confirm_risky',
       crm_fallback_mode: 'ask_clarifying_question',
+      waitlist_enabled: true,
+      reminder_enabled: true,
+      reminder_offsets_hours: '24,2',
+      manual_confirmation_enabled: false,
+      manual_confirmation_price_minor: '15000',
+      manual_confirmation_duration_minutes: '120',
+      beauty_chairs_count: '4',
+      beauty_masters_list: '',
+      beauty_services_list: '',
+      dental_cabinets_count: '3',
+      dental_doctors_list: '',
+      dental_services_list: '',
       sales_product_name: '',
       sales_offer_type: '',
       sales_usp: '',
@@ -375,6 +444,10 @@ const CreateAgentContent = () => {
         }
 
         const selectedTemplate = values.template_type?.trim() || 'qa';
+        const crmMode = values.crm_mode?.trim() || 'disabled';
+        const crmConnectTiming = values.crm_connect_timing?.trim() || 'later';
+        const shouldUseCrm = selectedTemplate === 'crm_admin' && crmMode !== 'disabled';
+        const shouldConnectCrmNow = shouldUseCrm && crmConnectTiming === 'now';
         if (selectedTemplate === 'sales_manager' && !values.sales_product_name?.trim()) {
           form.setFieldError('sales_product_name', 'Укажите продукт, который продает агент');
           return;
@@ -391,15 +464,15 @@ const CreateAgentContent = () => {
           form.setFieldError('content_company_activity', 'Укажите деятельность компании');
           return;
         }
-        if (selectedTemplate === 'crm_admin' && !values.crm_account_base_url?.trim()) {
-          form.setFieldError('crm_account_base_url', 'Base URL CRM обязателен');
+        if (shouldConnectCrmNow && !values.crm_account_base_url?.trim()) {
+          form.setFieldError('crm_account_base_url', 'Base URL CRM обязателен для подключения сейчас');
           return;
         }
-        if (selectedTemplate === 'crm_admin' && !values.crm_access_token?.trim()) {
-          form.setFieldError('crm_access_token', 'Access token CRM обязателен');
+        if (shouldConnectCrmNow && !values.crm_access_token?.trim()) {
+          form.setFieldError('crm_access_token', 'Access token CRM обязателен для подключения сейчас');
           return;
         }
-        if (selectedTemplate === 'crm_admin') {
+        if (shouldConnectCrmNow) {
           const currentSignature = buildCrmValidationSignature(
             values.crm_provider,
             values.crm_account_base_url,
@@ -412,10 +485,36 @@ const CreateAgentContent = () => {
         }
         const templateConfig = selectedTemplate === 'crm_admin'
           ? {
+              domain_type: values.crm_domain_type?.trim() || 'beauty_salon',
+              crm_mode: crmMode === 'optional' ? 'optional' : 'disabled',
+              booking_backend:
+                crmMode === 'disabled'
+                  ? 'local'
+                  : crmConnectTiming === 'now'
+                    ? 'crm'
+                    : 'auto',
               crm_provider: values.crm_provider?.trim() || 'amocrm',
               allowed_tools: parseAllowedTools(values.crm_allowed_tools),
+              allowed_booking_tools: [
+                'check_availability',
+                'create_appointment',
+                'reschedule_appointment',
+                'cancel_appointment',
+                'list_staff',
+                'list_services',
+              ],
               confirmation_policy: values.crm_confirmation_policy?.trim() || 'confirm_risky',
               fallback_mode: values.crm_fallback_mode?.trim() || 'ask_clarifying_question',
+              waitlist_enabled: Boolean(values.waitlist_enabled),
+              reminder_enabled: Boolean(values.reminder_enabled),
+              reminder_offsets_hours: String(values.reminder_offsets_hours || '')
+                .split(',')
+                .map((item) => Number(item.trim()))
+                .filter((item) => Number.isFinite(item) && item > 0 && item <= 72),
+              manual_confirmation_enabled: Boolean(values.manual_confirmation_enabled),
+              manual_confirmation_price_minor: Number(values.manual_confirmation_price_minor || 0),
+              manual_confirmation_duration_minutes: Number(values.manual_confirmation_duration_minutes || 120),
+              appointment_confirmation_enabled: true,
             }
           : selectedTemplate === 'sales_manager'
             ? {
@@ -433,8 +532,14 @@ const CreateAgentContent = () => {
                 }
             : undefined;
 
+        const adminOnboardingPrompt =
+          selectedTemplate === 'crm_admin' ? buildAdminDomainPromptAppendix(values) : '';
+        const finalSystemPrompt = selectedTemplate === 'crm_admin'
+          ? [values.system_prompt.trim(), adminOnboardingPrompt].filter(Boolean).join('\n\n')
+          : values.system_prompt.trim();
+
         const createdAgent = await agentService.createEmpty({
-          system_prompt: values.system_prompt.trim(),
+          system_prompt: finalSystemPrompt,
           template_type: selectedTemplate,
           template_config: templateConfig,
         });
@@ -444,7 +549,7 @@ const CreateAgentContent = () => {
           return;
         }
 
-        if (selectedTemplate === 'crm_admin') {
+        if (shouldConnectCrmNow) {
           await agentService.connectCrm({
             agent_id: agentId,
             provider: values.crm_provider?.trim() || 'amocrm',
@@ -534,6 +639,10 @@ const CreateAgentContent = () => {
   );
   const isSalesManagerTemplate = form.values.template_type === 'sales_manager';
   const isContentFactoryTemplate = form.values.template_type === 'content_factory';
+  const isCrmAdminTemplate = form.values.template_type === 'crm_admin';
+  const isBeautyDomain = form.values.crm_domain_type === 'beauty_salon';
+  const isCrmConnectionEnabled = form.values.crm_mode === 'optional';
+  const shouldShowCrmCredentials = isCrmConnectionEnabled && form.values.crm_connect_timing === 'now';
   const skipChannelSelection = isContentFactoryTemplate;
 
   const clearUserbotLocalState = () => {
@@ -882,6 +991,10 @@ const CreateAgentContent = () => {
   };
 
   const handleValidateCrm = async () => {
+    if (!shouldShowCrmCredentials) {
+      showError('Валидация CRM нужна только при выборе режима "Подключить CRM сейчас".');
+      return;
+    }
     if (!form.values.crm_account_base_url?.trim()) {
       form.setFieldError('crm_account_base_url', 'Base URL CRM обязателен');
       return;
@@ -914,7 +1027,7 @@ const CreateAgentContent = () => {
   };
 
   useEffect(() => {
-    if (form.values.template_type !== 'crm_admin') {
+    if (!isCrmAdminTemplate || !shouldShowCrmCredentials) {
       setCrmValidationResult(null);
       setCrmValidationSignature('');
       return;
@@ -928,12 +1041,19 @@ const CreateAgentContent = () => {
       setCrmValidationResult(null);
     }
   }, [
-    form.values.template_type,
+    isCrmAdminTemplate,
+    shouldShowCrmCredentials,
     form.values.crm_provider,
     form.values.crm_account_base_url,
     form.values.crm_access_token,
     crmValidationSignature,
   ]);
+
+  useEffect(() => {
+    if (!isCrmAdminTemplate || shouldShowCrmCredentials) return;
+    form.setFieldError('crm_account_base_url', undefined);
+    form.setFieldError('crm_access_token', undefined);
+  }, [form, isCrmAdminTemplate, shouldShowCrmCredentials]);
 
   useEffect(() => {
     if (!isContentFactoryTemplate) return;
@@ -1086,139 +1206,348 @@ const CreateAgentContent = () => {
               )}
             </div>
 
-            {form.values.template_type === 'crm_admin' && (
+            {isCrmAdminTemplate && (
               <div className="form-group">
-                <h3 className="agent-form-channel-title">Конфигурация CRM шаблона</h3>
-                <label htmlFor="crm_provider">CRM провайдер:</label>
+                <h3 className="agent-form-channel-title">Онбординг администратора</h3>
+                <label htmlFor="crm_domain_type">Подшаблон:</label>
                 <CustomSelect
-                  id="crm_provider"
-                  name="crm_provider"
+                  id="crm_domain_type"
+                  name="crm_domain_type"
                   className="input-main"
-                  value={form.values.crm_provider}
+                  value={form.values.crm_domain_type}
                   onChange={form.handleChange}
-                  options={[
-                    { value: 'amocrm', label: 'amoCRM' },
-                    { value: 'bitrix24', label: 'Bitrix24' },
-                  ]}
+                  options={CRM_DOMAIN_OPTIONS}
                   disabled={form.isSubmitting}
                 />
 
-                <label htmlFor="crm_account_base_url" className="mt-input">
-                  Base URL аккаунта CRM:
+                <label htmlFor="crm_mode" className="mt-input">
+                  CRM-режим:
                 </label>
-                <input
-                  id="crm_account_base_url"
-                  type="text"
-                  name="crm_account_base_url"
-                  className={`input-main ${form.errors.crm_account_base_url ? 'error' : ''}`}
-                  value={form.values.crm_account_base_url}
+                <CustomSelect
+                  id="crm_mode"
+                  name="crm_mode"
+                  className="input-main"
+                  value={form.values.crm_mode}
                   onChange={form.handleChange}
+                  options={CRM_MODE_OPTIONS}
                   disabled={form.isSubmitting}
-                  placeholder={
-                    form.values.crm_provider === 'bitrix24'
-                      ? 'https://your-portal.bitrix24.ru/rest'
-                      : 'https://example.amocrm.ru'
-                  }
                 />
-                {form.errors.crm_account_base_url && (
-                  <span className="error-message">{form.errors.crm_account_base_url}</span>
-                )}
 
-                <label htmlFor="crm_access_token" className="mt-input">
-                  Access token CRM:
-                </label>
-                <input
-                  id="crm_access_token"
-                  type="password"
-                  name="crm_access_token"
-                  className={`input-main ${form.errors.crm_access_token ? 'error' : ''}`}
-                  value={form.values.crm_access_token}
-                  onChange={form.handleChange}
-                  disabled={form.isSubmitting}
-                  placeholder="Вставьте OAuth access token"
-                />
-                {form.errors.crm_access_token && (
-                  <span className="error-message">{form.errors.crm_access_token}</span>
-                )}
-
-                <div className="channel-actions-row">
-                  <button
-                    type="button"
-                    className="btn btn-black"
-                    onClick={handleValidateCrm}
-                    disabled={form.isSubmitting || isValidatingCrm}
-                  >
-                    {isValidatingCrm ? 'Проверка...' : 'Проверить подключение CRM'}
-                  </button>
+                <div className="admin-template-onboarding-block">
+                  <h4 className="admin-template-onboarding-title">Дополнительные фичи (Stage 8)</h4>
+                  <label className="mt-input">
+                    <input
+                      type="checkbox"
+                      name="waitlist_enabled"
+                      checked={Boolean(form.values.waitlist_enabled)}
+                      onChange={form.handleChange}
+                      disabled={form.isSubmitting}
+                    />
+                    {' '}Включить waitlist с авто-подбором окон
+                  </label>
+                  <label className="mt-input">
+                    <input
+                      type="checkbox"
+                      name="reminder_enabled"
+                      checked={Boolean(form.values.reminder_enabled)}
+                      onChange={form.handleChange}
+                      disabled={form.isSubmitting}
+                    />
+                    {' '}Включить напоминания о визите
+                  </label>
+                  <label htmlFor="reminder_offsets_hours" className="mt-input">
+                    Reminder offsets (часы через запятую):
+                  </label>
+                  <input
+                    id="reminder_offsets_hours"
+                    name="reminder_offsets_hours"
+                    className="input-main"
+                    value={form.values.reminder_offsets_hours}
+                    onChange={form.handleChange}
+                    disabled={form.isSubmitting}
+                    placeholder="24,2"
+                  />
+                  <label className="mt-input">
+                    <input
+                      type="checkbox"
+                      name="manual_confirmation_enabled"
+                      checked={Boolean(form.values.manual_confirmation_enabled)}
+                      onChange={form.handleChange}
+                      disabled={form.isSubmitting}
+                    />
+                    {' '}Ручное подтверждение дорогих/долгих услуг
+                  </label>
+                  <label htmlFor="manual_confirmation_price_minor" className="mt-input">
+                    Порог цены (minor):
+                  </label>
+                  <input
+                    id="manual_confirmation_price_minor"
+                    type="number"
+                    min="0"
+                    name="manual_confirmation_price_minor"
+                    className="input-main"
+                    value={form.values.manual_confirmation_price_minor}
+                    onChange={form.handleChange}
+                    disabled={form.isSubmitting}
+                  />
+                  <label htmlFor="manual_confirmation_duration_minutes" className="mt-input">
+                    Порог длительности (мин):
+                  </label>
+                  <input
+                    id="manual_confirmation_duration_minutes"
+                    type="number"
+                    min="1"
+                    name="manual_confirmation_duration_minutes"
+                    className="input-main"
+                    value={form.values.manual_confirmation_duration_minutes}
+                    onChange={form.handleChange}
+                    disabled={form.isSubmitting}
+                  />
                 </div>
 
-                {crmValidationResult?.ok ? (
-                  <p className="help-text userbot-success">
-                    CRM проверена: {crmValidationResult.provider} ({crmValidationResult.external_id || 'ok'})
-                  </p>
-                ) : null}
-                {crmValidationResult && crmValidationResult.ok === false ? (
-                  <p className="error-message">
-                    {crmValidationResult.error || 'Проверка CRM завершилась с ошибкой'}
-                  </p>
+                {isBeautyDomain ? (
+                  <div className="admin-template-onboarding-block">
+                    <h4 className="admin-template-onboarding-title">Настройки салона красоты</h4>
+                    <label htmlFor="beauty_chairs_count">Количество кресел:</label>
+                    <input
+                      id="beauty_chairs_count"
+                      type="number"
+                      min="0"
+                      name="beauty_chairs_count"
+                      className="input-main"
+                      value={form.values.beauty_chairs_count}
+                      onChange={form.handleChange}
+                      disabled={form.isSubmitting}
+                    />
+
+                    <label htmlFor="beauty_masters_list" className="mt-input">
+                      Мастера (по одному на строку):
+                    </label>
+                    <textarea
+                      id="beauty_masters_list"
+                      name="beauty_masters_list"
+                      placeholder={'Анна Петрова\nИрина Смирнова'}
+                      className="input-main textarea admin-template-onboarding-textarea"
+                      value={form.values.beauty_masters_list}
+                      onChange={form.handleChange}
+                      disabled={form.isSubmitting}
+                      rows="3"
+                    ></textarea>
+
+                    <label htmlFor="beauty_services_list" className="mt-input">
+                      Услуги (по одной на строку):
+                    </label>
+                    <textarea
+                      id="beauty_services_list"
+                      name="beauty_services_list"
+                      placeholder={'Стрижка\nОкрашивание\nУкладка'}
+                      className="input-main textarea admin-template-onboarding-textarea"
+                      value={form.values.beauty_services_list}
+                      onChange={form.handleChange}
+                      disabled={form.isSubmitting}
+                      rows="3"
+                    ></textarea>
+                  </div>
+                ) : (
+                  <div className="admin-template-onboarding-block">
+                    <h4 className="admin-template-onboarding-title">Настройки стоматологии</h4>
+                    <label htmlFor="dental_cabinets_count">Количество кабинетов:</label>
+                    <input
+                      id="dental_cabinets_count"
+                      type="number"
+                      min="0"
+                      name="dental_cabinets_count"
+                      className="input-main"
+                      value={form.values.dental_cabinets_count}
+                      onChange={form.handleChange}
+                      disabled={form.isSubmitting}
+                    />
+
+                    <label htmlFor="dental_doctors_list" className="mt-input">
+                      Врачи (по одному на строку):
+                    </label>
+                    <textarea
+                      id="dental_doctors_list"
+                      name="dental_doctors_list"
+                      placeholder={'Д-р Иванов\nД-р Соколова'}
+                      className="input-main textarea admin-template-onboarding-textarea"
+                      value={form.values.dental_doctors_list}
+                      onChange={form.handleChange}
+                      disabled={form.isSubmitting}
+                      rows="3"
+                    ></textarea>
+
+                    <label htmlFor="dental_services_list" className="mt-input">
+                      Услуги (по одной на строку):
+                    </label>
+                    <textarea
+                      id="dental_services_list"
+                      name="dental_services_list"
+                      placeholder={'Осмотр\nЛечение кариеса\nПрофессиональная чистка'}
+                      className="input-main textarea admin-template-onboarding-textarea"
+                      value={form.values.dental_services_list}
+                      onChange={form.handleChange}
+                      disabled={form.isSubmitting}
+                      rows="3"
+                    ></textarea>
+                  </div>
+                )}
+
+                {isCrmConnectionEnabled ? (
+                  <>
+                    <label htmlFor="crm_connect_timing" className="mt-input">
+                      Когда подключить CRM:
+                    </label>
+                    <CustomSelect
+                      id="crm_connect_timing"
+                      name="crm_connect_timing"
+                      className="input-main"
+                      value={form.values.crm_connect_timing}
+                      onChange={form.handleChange}
+                      options={CRM_CONNECT_TIMING_OPTIONS}
+                      disabled={form.isSubmitting}
+                    />
+                  </>
                 ) : null}
 
-                <label htmlFor="crm_allowed_tools" className="mt-input">
-                  Разрешенные действия CRM:
-                </label>
-                <div className="connection-type-grid connection-type-grid--channels">
-                  {CRM_TOOL_OPTIONS.map((tool) => {
-                    const selectedTools = parseAllowedTools(form.values.crm_allowed_tools);
-                    const active = selectedTools.includes(tool.value);
-                    return (
+                {shouldShowCrmCredentials ? (
+                  <>
+                    <label htmlFor="crm_provider" className="mt-input">CRM провайдер:</label>
+                    <CustomSelect
+                      id="crm_provider"
+                      name="crm_provider"
+                      className="input-main"
+                      value={form.values.crm_provider}
+                      onChange={form.handleChange}
+                      options={[
+                        { value: 'amocrm', label: 'amoCRM' },
+                        { value: 'bitrix24', label: 'Bitrix24' },
+                      ]}
+                      disabled={form.isSubmitting}
+                    />
+
+                    <label htmlFor="crm_account_base_url" className="mt-input">
+                      Base URL аккаунта CRM:
+                    </label>
+                    <input
+                      id="crm_account_base_url"
+                      type="text"
+                      name="crm_account_base_url"
+                      className={`input-main ${form.errors.crm_account_base_url ? 'error' : ''}`}
+                      value={form.values.crm_account_base_url}
+                      onChange={form.handleChange}
+                      disabled={form.isSubmitting}
+                      placeholder={
+                        form.values.crm_provider === 'bitrix24'
+                          ? 'https://your-portal.bitrix24.ru/rest'
+                          : 'https://example.amocrm.ru'
+                      }
+                    />
+                    {form.errors.crm_account_base_url && (
+                      <span className="error-message">{form.errors.crm_account_base_url}</span>
+                    )}
+
+                    <label htmlFor="crm_access_token" className="mt-input">
+                      Access token CRM:
+                    </label>
+                    <input
+                      id="crm_access_token"
+                      type="password"
+                      name="crm_access_token"
+                      className={`input-main ${form.errors.crm_access_token ? 'error' : ''}`}
+                      value={form.values.crm_access_token}
+                      onChange={form.handleChange}
+                      disabled={form.isSubmitting}
+                      placeholder="Вставьте OAuth access token"
+                    />
+                    {form.errors.crm_access_token && (
+                      <span className="error-message">{form.errors.crm_access_token}</span>
+                    )}
+
+                    <div className="channel-actions-row">
                       <button
-                        key={tool.value}
                         type="button"
-                        className={`connection-type-card ${active ? 'active' : ''}`}
-                        onClick={() => toggleCrmTool(tool.value)}
-                        disabled={form.isSubmitting}
+                        className="btn btn-black"
+                        onClick={handleValidateCrm}
+                        disabled={form.isSubmitting || isValidatingCrm}
                       >
-                        {tool.label}
+                        {isValidatingCrm ? 'Проверка...' : 'Проверить подключение CRM'}
                       </button>
-                    );
-                  })}
-                </div>
-                <p className="help-text">
-                  Выбрано: {parseAllowedTools(form.values.crm_allowed_tools).join(', ') || 'ничего'}
-                </p>
+                    </div>
 
-                <label htmlFor="crm_confirmation_policy" className="mt-input">
-                  Политика подтверждения:
-                </label>
-                <CustomSelect
-                  id="crm_confirmation_policy"
-                  name="crm_confirmation_policy"
-                  className="input-main"
-                  value={form.values.crm_confirmation_policy}
-                  onChange={form.handleChange}
-                  options={[
-                    { value: 'confirm_risky', label: 'Подтверждать рискованные действия' },
-                    { value: 'always_confirm', label: 'Подтверждать каждое действие' },
-                    { value: 'never_confirm', label: 'Без подтверждений' },
-                  ]}
-                  disabled={form.isSubmitting}
-                />
+                    {crmValidationResult?.ok ? (
+                      <p className="help-text userbot-success">
+                        CRM проверена: {crmValidationResult.provider} ({crmValidationResult.external_id || 'ok'})
+                      </p>
+                    ) : null}
+                    {crmValidationResult && crmValidationResult.ok === false ? (
+                      <p className="error-message">
+                        {crmValidationResult.error || 'Проверка CRM завершилась с ошибкой'}
+                      </p>
+                    ) : null}
 
-                <label htmlFor="crm_fallback_mode" className="mt-input">
-                  Режим fallback:
-                </label>
-                <CustomSelect
-                  id="crm_fallback_mode"
-                  name="crm_fallback_mode"
-                  className="input-main"
-                  value={form.values.crm_fallback_mode}
-                  onChange={form.handleChange}
-                  options={[
-                    { value: 'ask_clarifying_question', label: 'Задавать уточняющие вопросы' },
-                    { value: 'text_only', label: 'Только текстовый ответ' },
-                  ]}
-                  disabled={form.isSubmitting}
-                />
+                    <label htmlFor="crm_allowed_tools" className="mt-input">
+                      Разрешенные действия CRM:
+                    </label>
+                    <div className="connection-type-grid connection-type-grid--channels">
+                      {CRM_TOOL_OPTIONS.map((tool) => {
+                        const selectedTools = parseAllowedTools(form.values.crm_allowed_tools);
+                        const active = selectedTools.includes(tool.value);
+                        return (
+                          <button
+                            key={tool.value}
+                            type="button"
+                            className={`connection-type-card ${active ? 'active' : ''}`}
+                            onClick={() => toggleCrmTool(tool.value)}
+                            disabled={form.isSubmitting}
+                          >
+                            {tool.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="help-text">
+                      Выбрано: {parseAllowedTools(form.values.crm_allowed_tools).join(', ') || 'ничего'}
+                    </p>
+
+                    <label htmlFor="crm_confirmation_policy" className="mt-input">
+                      Политика подтверждения:
+                    </label>
+                    <CustomSelect
+                      id="crm_confirmation_policy"
+                      name="crm_confirmation_policy"
+                      className="input-main"
+                      value={form.values.crm_confirmation_policy}
+                      onChange={form.handleChange}
+                      options={[
+                        { value: 'confirm_risky', label: 'Подтверждать рискованные действия' },
+                        { value: 'always_confirm', label: 'Подтверждать каждое действие' },
+                        { value: 'never_confirm', label: 'Без подтверждений' },
+                      ]}
+                      disabled={form.isSubmitting}
+                    />
+
+                    <label htmlFor="crm_fallback_mode" className="mt-input">
+                      Режим fallback:
+                    </label>
+                    <CustomSelect
+                      id="crm_fallback_mode"
+                      name="crm_fallback_mode"
+                      className="input-main"
+                      value={form.values.crm_fallback_mode}
+                      onChange={form.handleChange}
+                      options={[
+                        { value: 'ask_clarifying_question', label: 'Задавать уточняющие вопросы' },
+                        { value: 'text_only', label: 'Только текстовый ответ' },
+                      ]}
+                      disabled={form.isSubmitting}
+                    />
+                  </>
+                ) : (
+                  <p className="help-text">
+                    CRM не требуется на старте. Агент создастся сразу в локальном режиме, а CRM можно подключить позже.
+                  </p>
+                )}
               </div>
             )}
 
