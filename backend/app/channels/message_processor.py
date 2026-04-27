@@ -11,6 +11,7 @@ from sqlalchemy import select
 
 from ..alembic.database import async_session_maker
 from ..alembic.models import Agent, AgentAnalyticsMessage, AgentFrozenUser, User
+from ..services.qa_handoff_service import get_qa_handoff_service
 from ..services.template_runtime import get_template_runtime
 from ..utils.pii import redact_pii_text
 logger = logging.getLogger(__name__)
@@ -169,6 +170,18 @@ class MessageProcessor:
                 chat_portrait=chat_portrait,
             )
             answer = execution.answer
+            handoff_applied = False
+            if execution.requires_owner_handoff and normalized_template == "qa":
+                await get_qa_handoff_service().freeze_chat_and_notify_owner(
+                    agent_id=resolved_agent.id,
+                    user_external_id=normalized_user_external_id,
+                    user_message=request.query,
+                    answer=answer,
+                    reason=execution.owner_handoff_reason,
+                    channel=request.channel.value,
+                    user_display_name=request.user_display_name,
+                )
+                handoff_applied = True
 
             for event in execution.tool_events:
                 await self._log_message(
@@ -204,6 +217,22 @@ class MessageProcessor:
                     crm_provider=(
                         (template_config or {}).get("crm_provider")
                     ),
+                )
+            if handoff_applied:
+                await self._log_message(
+                    agent_id=resolved_agent.id,
+                    analytics_namespace_id=resolved_agent.bot_id or resolved_agent.id,
+                    role="operator",
+                    message_text=execution.owner_handoff_reason or "qa_owner_handoff",
+                    user_external_id=normalized_user_external_id,
+                    user_display_name=request.user_display_name,
+                    channel=request.channel.value,
+                    telegram_peer_access_hash=request.telegram_peer_access_hash,
+                    tool_name="qa_owner_handoff",
+                    tool_args_hash=None,
+                    tool_status="chat_frozen",
+                    latency_ms=0,
+                    crm_provider=None,
                 )
 
             await self._log_message(

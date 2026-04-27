@@ -11,7 +11,7 @@ from collections import defaultdict
 
 import jwt
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, PlainTextResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt.exceptions import InvalidTokenError
 from sqlalchemy import Date, cast, func, select
@@ -37,6 +37,7 @@ from ..channels.message_processor import (
 )
 from ..services.ai_authoring import generate_welcome_with_ai, improve_prompt_with_ai
 from ..services.crm import build_provider
+from ..services.qa_handoff_service import get_qa_handoff_service
 from ..services.template_runtime import get_template_runtime
 from ..services.youtube_client import get_youtube_client
 from ..utils.api_keys import generate_agent_external_api_key, hash_agent_external_api_key
@@ -119,6 +120,174 @@ CONTENT_FACTORY_DEFAULT_CONFIG = {
 CONTENT_FACTORY_TIME_PATTERN = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 CONTENT_FACTORY_LANGUAGE_PATTERN = re.compile(r"^[a-z]{2,16}(?:-[a-z]{2,16})?$")
 CONTENT_FACTORY_TIMEZONE_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_+\-]*/?[A-Za-z0-9_+\-]*$")
+WIDGET_ALLOWED_TEMPLATE_TYPES = {"qa", "crm_admin"}
+
+WIDGET_CSS = """
+.rsd-widget-root{position:fixed;z-index:2147483000;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}
+.rsd-widget-root[data-position="bottom-right"]{right:20px;bottom:20px}
+.rsd-widget-root[data-position="bottom-left"]{left:20px;bottom:20px}
+.rsd-widget-toggle{width:56px;height:56px;border-radius:50%;border:none;cursor:pointer;background:#111827;color:#fff;box-shadow:0 10px 30px rgba(17,24,39,.35);font-size:22px}
+.rsd-widget-panel{position:absolute;bottom:70px;right:0;width:360px;max-width:calc(100vw - 24px);height:540px;max-height:calc(100vh - 110px);background:#fff;border-radius:16px;box-shadow:0 24px 60px rgba(15,23,42,.25);display:flex;flex-direction:column;overflow:hidden;border:1px solid #e5e7eb}
+.rsd-widget-root[data-position="bottom-left"] .rsd-widget-panel{right:auto;left:0}
+.rsd-widget-header{padding:14px 16px;background:#111827;color:#fff;font-weight:600;font-size:14px}
+.rsd-widget-messages{flex:1;overflow:auto;padding:14px;background:#f8fafc;display:flex;flex-direction:column;gap:8px}
+.rsd-widget-msg{max-width:86%;padding:10px 12px;border-radius:14px;line-height:1.35;font-size:14px;white-space:pre-wrap;word-break:break-word}
+.rsd-widget-msg--agent{background:#fff;border:1px solid #e5e7eb;align-self:flex-start}
+.rsd-widget-msg--user{background:#111827;color:#fff;align-self:flex-end}
+.rsd-widget-msg--error{background:#fee2e2;color:#991b1b;align-self:flex-start}
+.rsd-widget-form{display:flex;gap:8px;padding:12px;border-top:1px solid #e5e7eb;background:#fff}
+.rsd-widget-input{flex:1;border:1px solid #d1d5db;border-radius:10px;padding:10px 12px;font-size:14px;outline:none}
+.rsd-widget-input:focus{border-color:#6b7280}
+.rsd-widget-send{border:none;border-radius:10px;padding:10px 14px;background:#111827;color:#fff;cursor:pointer}
+.rsd-widget-send:disabled{opacity:.55;cursor:not-allowed}
+@media (max-width:480px){.rsd-widget-root[data-position="bottom-right"],.rsd-widget-root[data-position="bottom-left"]{left:12px;right:12px;bottom:12px}.rsd-widget-panel{width:100%;left:0;right:0;max-height:calc(100vh - 94px)}}
+""".strip()
+
+WIDGET_JS = """
+(function () {
+  if (window.RSDChatWidgetInitialized) return;
+  window.RSDChatWidgetInitialized = true;
+
+  function pickScript() {
+    var scripts = document.querySelectorAll("script[data-rsd-widget]");
+    return scripts[scripts.length - 1] || document.currentScript;
+  }
+
+  function ensureCss(href) {
+    var existing = document.querySelector('link[data-rsd-widget-css="1"]');
+    if (existing) return;
+    var link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = href;
+    link.setAttribute("data-rsd-widget-css", "1");
+    document.head.appendChild(link);
+  }
+
+  function uid(storageKey) {
+    try {
+      var existing = localStorage.getItem(storageKey);
+      if (existing) return existing;
+      var generated = "web_" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+      localStorage.setItem(storageKey, generated);
+      return generated;
+    } catch (e) {
+      return "web_" + Math.random().toString(36).slice(2);
+    }
+  }
+
+  function esc(value) {
+    return String(value || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  var script = pickScript();
+  if (!script) return;
+
+  var apiBase = (script.dataset.apiBase || "").replace(/\\/$/, "");
+  var apiKey = script.dataset.apiKey || "";
+  var title = script.dataset.title || "Онлайн-консультант";
+  var greeting = script.dataset.greeting || "Здравствуйте! Чем могу помочь?";
+  var placeholder = script.dataset.placeholder || "Напишите сообщение...";
+  var position = script.dataset.position === "bottom-left" ? "bottom-left" : "bottom-right";
+  var providedUserId = script.dataset.userId || "";
+  var userName = script.dataset.userName || "";
+  var openOnStart = script.dataset.open === "true";
+
+  if (!apiBase || !apiKey) {
+    console.error("[RSD widget] Missing data-api-base or data-api-key");
+    return;
+  }
+
+  ensureCss(apiBase + "/api/agents/external/widget.css");
+  var userId = providedUserId || uid("rsd_widget_uid_" + apiKey.slice(-8));
+
+  var root = document.createElement("div");
+  root.className = "rsd-widget-root";
+  root.setAttribute("data-position", position);
+  root.innerHTML =
+    '<button type="button" class="rsd-widget-toggle" aria-label="Открыть чат">💬</button>' +
+    '<section class="rsd-widget-panel" style="display:none;">' +
+    '<header class="rsd-widget-header"></header>' +
+    '<div class="rsd-widget-messages"></div>' +
+    '<form class="rsd-widget-form">' +
+    '<input class="rsd-widget-input" type="text" maxlength="4000" />' +
+    '<button class="rsd-widget-send" type="submit">Отправить</button>' +
+    "</form></section>";
+  document.body.appendChild(root);
+
+  var toggle = root.querySelector(".rsd-widget-toggle");
+  var panel = root.querySelector(".rsd-widget-panel");
+  var header = root.querySelector(".rsd-widget-header");
+  var messages = root.querySelector(".rsd-widget-messages");
+  var form = root.querySelector(".rsd-widget-form");
+  var input = root.querySelector(".rsd-widget-input");
+  var sendBtn = root.querySelector(".rsd-widget-send");
+  header.textContent = title;
+  input.placeholder = placeholder;
+
+  function pushMessage(role, text) {
+    var el = document.createElement("div");
+    el.className = "rsd-widget-msg " + (role === "user" ? "rsd-widget-msg--user" : role === "error" ? "rsd-widget-msg--error" : "rsd-widget-msg--agent");
+    el.innerHTML = esc(text);
+    messages.appendChild(el);
+    messages.scrollTop = messages.scrollHeight;
+  }
+
+  function setLoading(flag) {
+    sendBtn.disabled = !!flag;
+    input.disabled = !!flag;
+  }
+
+  async function sendMessage(text) {
+    setLoading(true);
+    try {
+      var response = await fetch(apiBase + "/api/agents/external/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Agent-API-Key": apiKey
+        },
+        body: JSON.stringify({
+          message: text,
+          external_user_id: userId,
+          external_user_name: userName || null
+        })
+      });
+      if (!response.ok) {
+        throw new Error("HTTP " + response.status);
+      }
+      var payload = await response.json();
+      pushMessage("agent", payload.answer || "Нет ответа");
+    } catch (err) {
+      pushMessage("error", "Не удалось отправить сообщение. Попробуйте еще раз.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  toggle.addEventListener("click", function () {
+    var opened = panel.style.display !== "none";
+    panel.style.display = opened ? "none" : "flex";
+    if (!opened) input.focus();
+  });
+
+  form.addEventListener("submit", function (event) {
+    event.preventDefault();
+    var text = (input.value || "").trim();
+    if (!text) return;
+    input.value = "";
+    pushMessage("user", text);
+    sendMessage(text);
+  });
+
+  pushMessage("agent", greeting);
+  if (openOnStart) {
+    panel.style.display = "flex";
+  }
+})();
+""".strip()
 
 
 def _assert_https_for_sensitive_endpoint(request: Request) -> None:
@@ -5095,6 +5264,12 @@ async def external_chat(
 ):
     if not agent.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Agent is disabled")
+    template_type = str(agent.template_type or "qa").strip().lower()
+    if template_type not in WIDGET_ALLOWED_TEMPLATE_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="External chat is available only for qa and crm_admin templates",
+        )
 
     message = payload.message.strip()
     if not message:
@@ -5127,6 +5302,18 @@ async def external_chat(
             detail="Не удалось получить ответ от LLM",
         )
     sources = execution.sources
+    handoff_applied = False
+    if execution.requires_owner_handoff and str(agent.template_type or "qa").strip().lower() == "qa":
+        await get_qa_handoff_service().freeze_chat_and_notify_owner(
+            agent_id=agent.id,
+            user_external_id=external_user_id,
+            user_message=message,
+            answer=answer,
+            reason=execution.owner_handoff_reason,
+            channel="external_api",
+            user_display_name=external_user_name,
+        )
+        handoff_applied = True
 
     async with async_session_maker() as session:
         async with session.begin():
@@ -5176,6 +5363,18 @@ async def external_chat(
                     tool_status="fallback",
                     crm_provider=(_decode_template_config(agent.template_config) or {}).get("crm_provider"),
                 )
+            if handoff_applied:
+                await _log_analytics_message(
+                    session=session,
+                    agent=agent,
+                    role="operator",
+                    channel="external_api",
+                    user_external_id=external_user_id,
+                    user_display_name=external_user_name,
+                    message_text=execution.owner_handoff_reason or "qa_owner_handoff",
+                    tool_name="qa_owner_handoff",
+                    tool_status="chat_frozen",
+                )
 
     return JSONResponse(
         content={
@@ -5186,4 +5385,20 @@ async def external_chat(
             "sources": sources,
         },
         status_code=status.HTTP_200_OK,
+    )
+
+
+@router.get("/external/widget.css")
+async def external_widget_css():
+    return PlainTextResponse(
+        content=WIDGET_CSS,
+        media_type="text/css; charset=utf-8",
+    )
+
+
+@router.get("/external/widget.js")
+async def external_widget_js():
+    return PlainTextResponse(
+        content=WIDGET_JS,
+        media_type="application/javascript; charset=utf-8",
     )

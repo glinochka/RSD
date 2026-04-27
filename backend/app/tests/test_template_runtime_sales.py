@@ -208,3 +208,53 @@ async def test_content_factory_runtime_technical_message_fallback(monkeypatch):
     assert result.sources == ["kb://ops"]
     assert result.fallback_to_text is True
     assert result.fallback_reason == "content_factory_technical_fallback"
+
+
+@pytest.mark.asyncio
+async def test_qa_runtime_marks_owner_handoff_by_marker(monkeypatch):
+    service = TemplateRuntimeService()
+
+    async def fake_search(query, agent_id):
+        return [{"source": "kb://faq", "text": "FAQ context"}]
+
+    async def fake_generate(user_message, context_list, prompt):
+        return "[OWNER_HANDOFF] Нужна ручная проверка тарифа у владельца."
+
+    monkeypatch.setattr("app.services.template_runtime.search_knowledge_base", fake_search)
+    monkeypatch.setattr("app.services.template_runtime.generate_answer_with_context", fake_generate)
+
+    result = await service.execute(
+        template_type="qa",
+        prompt="Ты QA-ассистент",
+        user_message="Какой у меня индивидуальный тариф?",
+        knowledge_scope_id=101,
+    )
+
+    assert "ручная проверка" in result.answer
+    assert result.requires_owner_handoff is True
+    assert result.owner_handoff_reason is not None
+
+
+@pytest.mark.asyncio
+async def test_lead_generation_does_not_enable_owner_handoff(monkeypatch):
+    service = TemplateRuntimeService()
+
+    async def fake_search(query, agent_id):
+        return [{"source": "kb://lead", "text": "Lead context"}]
+
+    async def fake_generate(user_message, context_list, prompt):
+        return "[OWNER_HANDOFF] Формальный маркер"
+
+    monkeypatch.setattr("app.services.template_runtime.search_knowledge_base", fake_search)
+    monkeypatch.setattr("app.services.template_runtime.generate_answer_with_context", fake_generate)
+
+    result = await service.execute(
+        template_type="lead_generation",
+        prompt="Ты lead-ассистент",
+        user_message="Оставьте контакты",
+        knowledge_scope_id=101,
+    )
+
+    assert result.answer == "[OWNER_HANDOFF] Формальный маркер"
+    assert result.requires_owner_handoff is False
+    assert result.owner_handoff_reason is None

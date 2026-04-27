@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import json
 import logging
+import re
 from typing import Any
 
 from sqlalchemy import select
@@ -31,6 +32,8 @@ class TemplateExecutionResult:
     tool_events: list[dict[str, Any]] = field(default_factory=list)
     fallback_to_text: bool = False
     fallback_reason: str | None = None
+    requires_owner_handoff: bool = False
+    owner_handoff_reason: str | None = None
 
 
 class TemplateRuntimeService:
@@ -100,7 +103,16 @@ class TemplateRuntimeService:
                 chat_portrait=chat_portrait,
             )
 
-        if normalized in {"qa", "lead_generation"}:
+        if normalized == "qa":
+            return await self._execute_qa_like(
+                prompt=prompt,
+                user_message=user_message,
+                knowledge_scope_id=knowledge_scope_id,
+                chat_portrait=chat_portrait,
+                enable_owner_handoff=True,
+            )
+
+        if normalized == "lead_generation":
             return await self._execute_qa_like(
                 prompt=prompt,
                 user_message=user_message,
@@ -492,14 +504,26 @@ class TemplateRuntimeService:
         user_message: str,
         knowledge_scope_id: int,
         chat_portrait: str | None = None,
+        enable_owner_handoff: bool = False,
     ) -> TemplateExecutionResult:
         context = await search_knowledge_base(user_message, agent_id=knowledge_scope_id)
         context_list = context if isinstance(context, list) else []
         portrait_block = self._format_portrait_block(chat_portrait)
         effective_prompt = prompt.strip()
+        if enable_owner_handoff:
+            effective_prompt = (
+                f"{effective_prompt}\n\n"
+                "Если нет четкого ответа на вопрос из доступного контекста "
+                "или требуется вмешательство человека, начни ответ строго с маркера "
+                "[OWNER_HANDOFF], кратко укажи причину и сообщи пользователю, что запрос передан владельцу."
+            ).strip()
         if portrait_block:
             effective_prompt = f"{effective_prompt}\n\n{portrait_block}" if effective_prompt else portrait_block
         answer = await generate_answer_with_context(user_message, context_list, effective_prompt)
+        requires_owner_handoff = False
+        owner_handoff_reason: str | None = None
+        if enable_owner_handoff:
+            answer, requires_owner_handoff, owner_handoff_reason = self._extract_owner_handoff(answer)
 
         sources: list[str] = []
         for item in context_list:
@@ -509,7 +533,40 @@ class TemplateRuntimeService:
             if source and source not in sources:
                 sources.append(str(source))
 
-        return TemplateExecutionResult(answer=answer, sources=sources)
+        return TemplateExecutionResult(
+            answer=answer,
+            sources=sources,
+            requires_owner_handoff=requires_owner_handoff,
+            owner_handoff_reason=owner_handoff_reason,
+        )
+
+    @staticmethod
+    def _extract_owner_handoff(answer: str) -> tuple[str, bool, str | None]:
+        text = (answer or "").strip()
+        if not text:
+            return text, False, None
+
+        match = re.match(r"^\[OWNER_HANDOFF\]\s*(.*)$", text, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            reason_text = (match.group(1) or "").strip()
+            first_sentence = reason_text.split("\n", 1)[0][:300] if reason_text else "owner_handoff_requested"
+            return reason_text or "Передаю запрос владельцу для ручной обработки.", True, first_sentence
+
+        uncertainty_markers = (
+            "не хватает данных",
+            "недостаточно данных",
+            "нет точной информации",
+            "не могу точно ответить",
+            "нужен человек",
+            "передам владельцу",
+            "обратитесь к владельцу",
+            "требуется вмешательство",
+        )
+        lowered = text.lower()
+        for marker in uncertainty_markers:
+            if marker in lowered:
+                return text, True, marker
+        return text, False, None
 
     async def _execute_content_factory(
         self,

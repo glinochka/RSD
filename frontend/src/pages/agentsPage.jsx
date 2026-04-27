@@ -33,6 +33,7 @@ const channelLabel = (channel) => {
   if (channel.provider === 'whatsapp_business_api') return 'WhatsApp Business API';
   return channel.provider || 'Канал';
 };
+const WIDGET_TEMPLATE_TYPES = new Set(['qa', 'crm_admin']);
 
 const AgentCard = ({ agent, isSelected, onManage, onDelete, onToggle }) => {
   const agentName = agent.bot_username || agent.name || 'Агент';
@@ -497,6 +498,21 @@ const AgentsPageContent = () => {
     }
   };
 
+  const handleCopyWidgetSnippet = async () => {
+    if (!selectedAgent?.external_api_key) {
+      showError('API ключ не найден');
+      return;
+    }
+    const origin = window.location.origin;
+    const snippet = `<script src="${origin}/api/agents/external/widget.js" data-rsd-widget="1" data-api-base="${origin}" data-api-key="${selectedAgent.external_api_key}" data-position="bottom-right" data-title="Онлайн-консультант"></script>`;
+    try {
+      await navigator.clipboard.writeText(snippet);
+      showSuccess('Сниппет виджета скопирован');
+    } catch {
+      showError('Не удалось скопировать сниппет виджета');
+    }
+  };
+
   const handleRegenerateApiKey = async () => {
     if (!selectedBotId) return;
     if (!window.confirm('Вы точно хотите перевыпустить ключ? Нынешний ключ больше не будет активен.')) {
@@ -886,6 +902,12 @@ const AgentsPageContent = () => {
     if (!selectedAgent) return '';
     return selectedAgent.bot_username ? `@${selectedAgent.bot_username}` : `Агент #${selectedAgent.id}`;
   }, [selectedAgent]);
+  const isWidgetSupportedTemplate = WIDGET_TEMPLATE_TYPES.has(
+    String(selectedAgent?.template_type || 'qa').trim().toLowerCase()
+  );
+  const widgetSnippet = selectedAgent?.external_api_key
+    ? `<script src="${window.location.origin}/api/agents/external/widget.js" data-rsd-widget="1" data-api-base="${window.location.origin}" data-api-key="${selectedAgent.external_api_key}" data-position="bottom-right" data-title="Онлайн-консультант"></script>`
+    : '';
 
   if (isLoading && isAuthenticated) {
     return <Loading message="Загрузка агентов..." />;
@@ -965,6 +987,36 @@ const AgentsPageContent = () => {
                       </button>
                     </div>
                   </div>
+
+                  {isWidgetSupportedTemplate ? (
+                    <div className="agent-management-block">
+                      <label>Виджет-коннектор для сайта</label>
+                      <p className="docs-empty">
+                        Вставьте этот `script` на сайт, и чат появится в углу экрана.
+                      </p>
+                      <textarea
+                        rows="4"
+                        className="input-main textarea"
+                        value={widgetSnippet}
+                        readOnly
+                      />
+                      <button
+                        className="btn btn-black"
+                        onClick={handleCopyWidgetSnippet}
+                        title="Скопировать script сниппет"
+                        aria-label="Copy widget snippet"
+                      >
+                        Скопировать сниппет виджета
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="agent-management-block">
+                      <label>Виджет-коннектор для сайта</label>
+                      <p className="docs-empty">
+                        Виджет доступен только для шаблонов: Консультант (QA) и Администратор CRM.
+                      </p>
+                    </div>
+                  )}
 
                   <div className="agent-management-block">
                     <div className="docs-header-row">
