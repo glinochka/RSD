@@ -1,22 +1,26 @@
 from datetime import datetime, timezone
+from html import escape
 from logging import getLogger
 from secrets import compare_digest
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+import httpx
 import jwt
 from jwt.exceptions import InvalidTokenError
 from passlib.exc import UnknownHashError
+from sqlalchemy import select
 
 from .schemas import (
+    AdminEmailBroadcastRequest,
     AdminGiftSubscriptionRequest,
     AdminLoginRequest,
     AdminPromoCodeCreateRequest,
     AdminSubscriptionPlansUpdateRequest,
 )
 from ..alembic.database import async_session_maker
-from ..alembic.models import PromoCode
+from ..alembic.models import PromoCode, User
 from ..config import get_auth_data, settings
 from ..qdrant.search_service import delete_agent_vectors
 from ..router_agents.dao import AgentDAO
@@ -37,6 +41,63 @@ logger = getLogger(__name__)
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 http_bearer = HTTPBearer(auto_error=False)
+
+
+def _render_broadcast_html(*, subject: str, body: str) -> str:
+    safe_subject = escape(subject.strip())
+    safe_lines = [escape(line.strip()) for line in body.splitlines() if line.strip()]
+    rendered_lines = "".join(
+        f"<tr><td style='padding:0 24px 10px 24px;color:#374151;font-size:14px;line-height:1.7;'>{line}</td></tr>"
+        for line in safe_lines
+    )
+    return (
+        "<!DOCTYPE html>"
+        "<html><body style='margin:0;padding:0;background:#f5f7fb;font-family:Arial,sans-serif;'>"
+        "<table role='presentation' width='100%' cellspacing='0' cellpadding='0' style='background:#f5f7fb;padding:24px 12px;'>"
+        "<tr><td align='center'>"
+        "<table role='presentation' width='100%' cellspacing='0' cellpadding='0' style='max-width:640px;background:#ffffff;border:1px solid #e8ecf3;border-radius:12px;overflow:hidden;'>"
+        "<tr><td style='padding:24px 24px 10px 24px;'>"
+        f"<div style='font-size:22px;font-weight:700;color:#111827;'>{safe_subject}</div>"
+        "</td></tr>"
+        f"{rendered_lines}"
+        "<tr><td style='padding:8px 24px 24px 24px;color:#9ca3af;font-size:12px;line-height:1.6;'>"
+        "Вы получили это письмо, потому что зарегистрированы в RSD."
+        "</td></tr>"
+        "</table>"
+        "</td></tr></table>"
+        "</body></html>"
+    )
+
+
+async def _send_mailopost_email(*, recipient: str, subject: str, plain_text: str, html: str) -> bool:
+    api_token = settings.MAILOPOST_API_TOKEN.strip()
+    from_email = settings.MAILOPOST_FROM_EMAIL.strip()
+    base_url = settings.MAILOPOST_API_URL.strip().rstrip("/")
+    if not api_token or not from_email:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Mail sender is not configured",
+        )
+
+    payload = {
+        "from_email": from_email,
+        "to": recipient,
+        "subject": subject,
+        "text": plain_text,
+        "html": html,
+    }
+    from_name = settings.MAILOPOST_FROM_NAME.strip()
+    if from_name:
+        payload["from_name"] = from_name
+
+    headers = {
+        "Authorization": f"Bearer {api_token}",
+        "Content-Type": "application/json",
+    }
+    timeout = httpx.Timeout(settings.MAILOPOST_SEND_TIMEOUT_SECONDS, connect=5.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.post(f"{base_url}/email/messages", json=payload, headers=headers)
+    return response.is_success
 
 
 def _ensure_admin_credentials_configured() -> None:
@@ -523,6 +584,69 @@ async def admin_gift_subscription(
         content={
             "subscription_type": payload.plan_code,
             "subscription_end_date": new_end.isoformat(),
+        },
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@router.post("/email-broadcast")
+async def admin_email_broadcast(
+    payload: AdminEmailBroadcastRequest,
+    _admin=Depends(get_current_admin),
+):
+    subject = payload.subject.strip()
+    body = payload.body.strip()
+    plain_text = f"{subject}\n\n{body}"
+    html = _render_broadcast_html(subject=subject, body=body)
+
+    async with async_session_maker() as session:
+        async with session.begin():
+            emails = (
+                await session.scalars(
+                    select(User.email).where(
+                        User.email.is_not(None),
+                        User.email_verified.is_(True),
+                    )
+                )
+            ).all()
+
+    total = len(emails)
+    sent = 0
+    failed = 0
+    for recipient in emails:
+        if not recipient:
+            continue
+        try:
+            ok = await _send_mailopost_email(
+                recipient=recipient,
+                subject=subject,
+                plain_text=plain_text,
+                html=html,
+            )
+            if ok:
+                sent += 1
+            else:
+                failed += 1
+        except HTTPException:
+            raise
+        except Exception:
+            logger.exception("Admin broadcast failed for recipient=%s", recipient)
+            failed += 1
+
+    logger.info(
+        "Admin email broadcast finished: total=%d sent=%d failed=%d subject=%s",
+        total,
+        sent,
+        failed,
+        subject,
+    )
+    return JSONResponse(
+        content={
+            "status": "completed",
+            "total_recipients": total,
+            "sent": sent,
+            "failed": failed,
+            "subject": subject,
         },
         status_code=status.HTTP_200_OK,
     )

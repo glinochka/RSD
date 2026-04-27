@@ -14,6 +14,7 @@ const MENU_ITEMS = [
   { id: 'errorReports', label: 'Сообщения об ошибках' },
   { id: 'billing', label: 'Тарифы' },
   { id: 'promoCodes', label: 'Промокоды' },
+  { id: 'emailBroadcast', label: 'Email рассылка' },
 ];
 
 function formatError(error) {
@@ -75,6 +76,8 @@ const ManagementPortal = () => {
   const [promoCodeDraft, setPromoCodeDraft] = useState({ code: '', discountPercent: 0 });
   const [actionInProgress, setActionInProgress] = useState(null);
   const [giftModal, setGiftModal] = useState({ open: false, user: null, planCode: 'Advanced' });
+  const [broadcastDraft, setBroadcastDraft] = useState({ subject: '', body: '' });
+  const [broadcastResult, setBroadcastResult] = useState(null);
 
   const statsCards = useMemo(() => {
     if (!stats) return [];
@@ -447,6 +450,34 @@ const ManagementPortal = () => {
       setError('');
       await adminService.deletePromoCode(adminToken, promoCodeItem.id);
       await refreshPromoCodes();
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setActionInProgress(null);
+    }
+  };
+
+  const handleSendEmailBroadcast = async (event) => {
+    event.preventDefault();
+    const subject = broadcastDraft.subject.trim();
+    const body = broadcastDraft.body.trim();
+    if (subject.length < 3) {
+      setError('Тема письма должна быть не короче 3 символов');
+      return;
+    }
+    if (body.length < 10) {
+      setError('Текст рассылки должен быть не короче 10 символов');
+      return;
+    }
+    if (!window.confirm('Запустить email-рассылку по подтвержденным пользователям?')) {
+      return;
+    }
+
+    try {
+      setActionInProgress('email-broadcast');
+      setError('');
+      const result = await adminService.sendEmailBroadcast(adminToken, { subject, body });
+      setBroadcastResult(result);
     } catch (err) {
       setError(formatError(err));
     } finally {
@@ -1049,6 +1080,63 @@ const ManagementPortal = () => {
     </>
   );
 
+  const renderEmailBroadcast = () => (
+    <>
+      <div className="management-content-head">
+        <h2>Email рассылка</h2>
+      </div>
+      {error && <div className="management-error">{error}</div>}
+
+      <form className="management-broadcast-form" onSubmit={handleSendEmailBroadcast}>
+        <div className="management-form-row">
+          <label htmlFor="broadcast-subject">Тема письма</label>
+          <input
+            id="broadcast-subject"
+            type="text"
+            maxLength={200}
+            placeholder="Например: Важное обновление RSD"
+            value={broadcastDraft.subject}
+            onChange={(e) => setBroadcastDraft((prev) => ({ ...prev, subject: e.target.value }))}
+          />
+        </div>
+
+        <div className="management-form-row">
+          <label htmlFor="broadcast-body">Текст письма</label>
+          <textarea
+            id="broadcast-body"
+            rows={10}
+            maxLength={15000}
+            placeholder="Введите текст рассылки. HTML-оформление будет применено автоматически."
+            value={broadcastDraft.body}
+            onChange={(e) => setBroadcastDraft((prev) => ({ ...prev, body: e.target.value }))}
+          />
+        </div>
+
+        <div className="management-broadcast-actions">
+          <button
+            type="submit"
+            className="btn btn-black"
+            disabled={actionInProgress === 'email-broadcast'}
+          >
+            {actionInProgress === 'email-broadcast' ? 'Отправка...' : 'Запустить рассылку'}
+          </button>
+          <span className="management-broadcast-hint">
+            Рассылка отправляется по всем пользователям с подтвержденным email.
+          </span>
+        </div>
+      </form>
+
+      {broadcastResult && (
+        <div className="management-broadcast-result">
+          <strong>Результат:</strong>
+          <span> всего: {broadcastResult.total_recipients ?? 0}</span>
+          <span> отправлено: {broadcastResult.sent ?? 0}</span>
+          <span> ошибок: {broadcastResult.failed ?? 0}</span>
+        </div>
+      )}
+    </>
+  );
+
   return (
     <div className="management-page">
       <header className="management-header">
@@ -1116,6 +1204,7 @@ const ManagementPortal = () => {
             {activeSection === 'errorReports' && renderErrorReports()}
             {activeSection === 'billing' && renderBilling()}
             {activeSection === 'promoCodes' && renderPromoCodes()}
+            {activeSection === 'emailBroadcast' && renderEmailBroadcast()}
           </section>
         </main>
       )}

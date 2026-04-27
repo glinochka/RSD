@@ -264,7 +264,6 @@ const CreateAgentContent = () => {
       session_string: '',
       max_bot_token: '',
       max_token: '',
-      max_chat_id: '',
       whatsapp_userbot_phone_number: '',
       whatsapp_userbot_session_string: '',
       whatsapp_userbot_client_label: '',
@@ -307,48 +306,52 @@ const CreateAgentContent = () => {
         const isWhatsAppUserbotMode = useWhatsAppUserbotChannel;
         const isWhatsAppBusinessApiMode = useWhatsAppBusinessApiChannel;
 
-        if (!isBotMode && !isMaxBotMode && !isUserbotMode && !isMaxUserbotMode && !isWhatsAppUserbotMode && !isWhatsAppBusinessApiMode) {
+        if (
+          !skipChannelSelection &&
+          !isBotMode &&
+          !isMaxBotMode &&
+          !isUserbotMode &&
+          !isMaxUserbotMode &&
+          !isWhatsAppUserbotMode &&
+          !isWhatsAppBusinessApiMode
+        ) {
           showError('Выберите хотя бы один способ подключения');
           return;
         }
 
-        if (isBotMode && !values.bot_token?.trim()) {
+        if (!skipChannelSelection && isBotMode && !values.bot_token?.trim()) {
           form.setFieldError('bot_token', 'API ключ Telegram бота обязателен');
           return;
         }
-        if (isMaxBotMode && !values.max_bot_token?.trim()) {
+        if (!skipChannelSelection && isMaxBotMode && !values.max_bot_token?.trim()) {
           form.setFieldError('max_bot_token', 'MAX bot token обязателен');
           return;
         }
-        if (isUserbotMode && !values.api_id?.toString().trim()) {
+        if (!skipChannelSelection && isUserbotMode && !values.api_id?.toString().trim()) {
           form.setFieldError('api_id', 'API ID обязателен');
           return;
         }
-        if (isUserbotMode && !values.api_hash?.trim()) {
+        if (!skipChannelSelection && isUserbotMode && !values.api_hash?.trim()) {
           form.setFieldError('api_hash', 'API hash обязателен');
           return;
         }
-        if (isUserbotMode && !values.phone_number?.trim()) {
+        if (!skipChannelSelection && isUserbotMode && !values.phone_number?.trim()) {
           form.setFieldError('phone_number', 'Номер телефона обязателен');
           return;
         }
-        if (isUserbotMode && (!values.session_string?.trim() || !isUserbotVerified)) {
+        if (!skipChannelSelection && isUserbotMode && (!values.session_string?.trim() || !isUserbotVerified)) {
           form.setFieldError('verify_code', 'Сначала подтвердите код и сохраните userbot-сессию');
           return;
         }
-        if (isMaxUserbotMode && !values.max_token?.trim()) {
+        if (!skipChannelSelection && isMaxUserbotMode && !values.max_token?.trim()) {
           form.setFieldError('max_token', 'MAX token обязателен');
           return;
         }
-        if (isMaxUserbotMode && !values.max_chat_id?.trim()) {
-          form.setFieldError('max_chat_id', 'ID чата MAX обязателен');
-          return;
-        }
-        if (isWhatsAppUserbotMode && !values.whatsapp_userbot_phone_number?.trim()) {
+        if (!skipChannelSelection && isWhatsAppUserbotMode && !values.whatsapp_userbot_phone_number?.trim()) {
           form.setFieldError('whatsapp_userbot_phone_number', 'Номер WhatsApp обязателен');
           return;
         }
-        if (isWhatsAppUserbotMode) {
+        if (!skipChannelSelection && isWhatsAppUserbotMode) {
           if (whatsappUserbotMode === 'simple') {
             if (!values.whatsapp_userbot_session_string?.trim() || !isWhatsappUserbotVerified) {
               form.setFieldError(
@@ -362,11 +365,11 @@ const CreateAgentContent = () => {
             return;
           }
         }
-        if (isWhatsAppBusinessApiMode && !values.whatsapp_phone_number_id?.trim()) {
+        if (!skipChannelSelection && isWhatsAppBusinessApiMode && !values.whatsapp_phone_number_id?.trim()) {
           form.setFieldError('whatsapp_phone_number_id', 'Phone Number ID обязателен');
           return;
         }
-        if (isWhatsAppBusinessApiMode && !values.whatsapp_access_token?.trim()) {
+        if (!skipChannelSelection && isWhatsAppBusinessApiMode && !values.whatsapp_access_token?.trim()) {
           form.setFieldError('whatsapp_access_token', 'Access Token обязателен');
           return;
         }
@@ -489,7 +492,6 @@ const CreateAgentContent = () => {
           await agentService.addMaxUserbotChannel({
             agent_id: agentId,
             max_token: values.max_token.trim(),
-            max_chat_id: values.max_chat_id.trim(),
             make_primary: primaryProvider === 'max_userbot',
           });
         }
@@ -532,6 +534,7 @@ const CreateAgentContent = () => {
   );
   const isSalesManagerTemplate = form.values.template_type === 'sales_manager';
   const isContentFactoryTemplate = form.values.template_type === 'content_factory';
+  const skipChannelSelection = isContentFactoryTemplate;
 
   const clearUserbotLocalState = () => {
     setUserbotAuthToken('');
@@ -584,9 +587,7 @@ const CreateAgentContent = () => {
       const next = !prev;
       if (!next) {
         form.setFieldValue('max_token', '');
-        form.setFieldValue('max_chat_id', '');
         form.setFieldError('max_token', undefined);
-        form.setFieldError('max_chat_id', undefined);
       }
       return next;
     });
@@ -939,10 +940,28 @@ const CreateAgentContent = () => {
     if (!useMaxUserbotChannel) return;
     setUseMaxUserbotChannel(false);
     form.setFieldValue('max_token', '');
-    form.setFieldValue('max_chat_id', '');
     form.setFieldError('max_token', undefined);
-    form.setFieldError('max_chat_id', undefined);
   }, [form, isContentFactoryTemplate, useMaxUserbotChannel]);
+
+  useEffect(() => {
+    if (!isContentFactoryTemplate) return;
+    setUseBotChannel(false);
+    setUseUserbotChannel(false);
+    setUseMaxBotChannel(false);
+    setUseMaxUserbotChannel(false);
+    setUseWhatsAppUserbotChannel(false);
+    setUseWhatsAppBusinessApiChannel(false);
+  }, [isContentFactoryTemplate]);
+
+  useEffect(() => {
+    if (!isSalesManagerTemplate) return;
+    setUseBotChannel(false);
+    setUseUserbotChannel(true);
+    setUseMaxBotChannel(false);
+    setUseMaxUserbotChannel(false);
+    setUseWhatsAppUserbotChannel(false);
+    setUseWhatsAppBusinessApiChannel(false);
+  }, [isSalesManagerTemplate]);
 
   return (
     <MainLayout>
@@ -975,6 +994,96 @@ const CreateAgentContent = () => {
               <p className="help-text">
                 {TEMPLATE_TYPE_HELP[form.values.template_type] || TEMPLATE_TYPE_HELP.qa}
               </p>
+            </div>
+
+            <div className="form-group">
+              <label>Тип подключения:</label>
+              {isContentFactoryTemplate ? (
+                <>
+                  <div className="connection-type-grid connection-type-grid--channels">
+                    <div className="connection-type-card active connection-type-card--disabled connection-type-card--youtube">
+                      YouTube
+                    </div>
+                  </div>
+                  <p className="help-text">
+                    Для шаблона "Контент-завод" доступен только канал YouTube.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div className="connection-type-grid connection-type-grid--channels">
+                    <button
+                      type="button"
+                      className={`connection-type-card ${useBotChannel ? 'active' : ''} ${isSalesManagerTemplate ? 'connection-type-card--disabled' : ''}`}
+                      onClick={toggleBotChannel}
+                      disabled={form.isSubmitting || isSalesManagerTemplate}
+                    >
+                      Telegram бот
+                    </button>
+                    <button
+                      type="button"
+                      className={`connection-type-card ${useUserbotChannel ? 'active' : ''}`}
+                      onClick={toggleUserbotChannel}
+                      disabled={form.isSubmitting}
+                    >
+                      Telegram юзербот
+                    </button>
+                    <button
+                      type="button"
+                      className={`connection-type-card connection-type-card--with-beta ${useMaxBotChannel ? 'active' : ''} ${isSalesManagerTemplate ? 'connection-type-card--disabled' : ''}`}
+                      onClick={toggleMaxBotChannel}
+                      disabled={form.isSubmitting || isSalesManagerTemplate}
+                    >
+                      <span className="connection-type-card-label connection-type-card-label--stacked-wa-api">
+                        <span className="connection-type-card-label__row">MAX бот (API)</span>
+                        <span className="connection-type-card-label__row connection-type-card-label__row--api-beta">
+                          <span className="beta-badge">BETA</span>
+                        </span>
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className={`connection-type-card connection-type-card--with-beta ${useMaxUserbotChannel ? 'active' : ''} ${isSalesManagerTemplate ? 'connection-type-card--disabled' : ''}`}
+                      onClick={toggleMaxUserbotChannel}
+                      disabled={form.isSubmitting || isSalesManagerTemplate}
+                    >
+                      <span className="connection-type-card-label connection-type-card-label--stacked-wa-api">
+                        <span className="connection-type-card-label__row">MAX юзербот</span>
+                        <span className="connection-type-card-label__row connection-type-card-label__row--api-beta">
+                          <span className="beta-badge">BETA</span>
+                        </span>
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className={`connection-type-card ${useWhatsAppUserbotChannel ? 'active' : ''} ${isSalesManagerTemplate ? 'connection-type-card--disabled' : ''}`}
+                      onClick={toggleWhatsAppUserbotChannel}
+                      disabled={form.isSubmitting || isSalesManagerTemplate}
+                    >
+                      WhatsApp юзербот
+                    </button>
+                    <button
+                      type="button"
+                      className={`connection-type-card connection-type-card--with-beta ${useWhatsAppBusinessApiChannel ? 'active' : ''} ${isSalesManagerTemplate ? 'connection-type-card--disabled' : ''}`}
+                      onClick={toggleWhatsAppBusinessApiChannel}
+                      disabled={form.isSubmitting || isSalesManagerTemplate}
+                    >
+                      <span className="connection-type-card-label connection-type-card-label--stacked-wa-api">
+                        <span className="connection-type-card-label__row">WhatsApp Business</span>
+                        <span className="connection-type-card-label__row connection-type-card-label__row--api-beta">
+                          API
+                          <span className="beta-badge">BETA</span>
+                        </span>
+                      </span>
+                    </button>
+                  </div>
+                  {isSalesManagerTemplate ? (
+                    <p className="help-text">
+                      Для шаблона "Менеджер продаж" активно только подключение Telegram юзербот.
+                    </p>
+                  ) : null}
+                </>
+              )}
             </div>
 
             {form.values.template_type === 'crm_admin' && (
@@ -1164,16 +1273,6 @@ const CreateAgentContent = () => {
                   disabled={form.isSubmitting}
                   rows="3"
                 ></textarea>
-                <div className="help-text">
-                  <strong>⚠️ Важно:</strong> На этом этапе sales_manager настроен с безопасным профилем:
-                  <ul style={{ marginTop: '8px', paddingLeft: '20px' }}>
-                    <li>Режим: <strong>draft_only</strong> (все сообщения требуют подтверждения)</li>
-                    <li>Модель классификации: <strong>DeepSeek-chat</strong></li>
-                    <li>Минимальная уверенность: <strong>0.75</strong></li>
-                    <li>Лимиты: <strong>3/минуту, 25/час, 120/день</strong></li>
-                    <li>Cooldown между контактами: <strong>14 дней</strong></li>
-                  </ul>
-                </div>
                 <p className="help-text">
                   Агент будет сканировать сообщения в Telegram чатах и на каждом шаге принимать решение через
                   function-calling: писать или игнорировать лид. Далее диалог строится по стадиям и генерируется
@@ -1255,71 +1354,6 @@ const CreateAgentContent = () => {
                 </p>
               </div>
             )}
-
-            <div className="form-group">
-              <label>Тип подключения:</label>
-              <div className="connection-type-grid connection-type-grid--channels">
-                <button
-                  type="button"
-                  className={`connection-type-card ${useBotChannel ? 'active' : ''} ${isSalesManagerTemplate ? 'connection-type-card--disabled' : ''}`}
-                  onClick={toggleBotChannel}
-                  disabled={form.isSubmitting || isSalesManagerTemplate}
-                >
-                  Telegram бот
-                </button>
-                <button
-                  type="button"
-                  className={`connection-type-card ${useUserbotChannel ? 'active' : ''}`}
-                  onClick={toggleUserbotChannel}
-                  disabled={form.isSubmitting}
-                >
-                  Telegram юзербот
-                </button>
-                <button
-                  type="button"
-                  className={`connection-type-card ${useMaxBotChannel ? 'active' : ''}`}
-                  onClick={toggleMaxBotChannel}
-                  disabled={form.isSubmitting}
-                >
-                  MAX бот (API)
-                </button>
-                <button
-                  type="button"
-                  className={`connection-type-card ${useMaxUserbotChannel ? 'active' : ''} ${isContentFactoryTemplate ? 'connection-type-card--disabled' : ''}`}
-                  onClick={toggleMaxUserbotChannel}
-                  disabled={form.isSubmitting || isContentFactoryTemplate}
-                >
-                  MAX юзербот
-                </button>
-                <button
-                  type="button"
-                  className={`connection-type-card ${useWhatsAppUserbotChannel ? 'active' : ''}`}
-                  onClick={toggleWhatsAppUserbotChannel}
-                  disabled={form.isSubmitting}
-                >
-                  WhatsApp юзербот
-                </button>
-                <button
-                  type="button"
-                  className={`connection-type-card connection-type-card--with-beta ${useWhatsAppBusinessApiChannel ? 'active' : ''}`}
-                  onClick={toggleWhatsAppBusinessApiChannel}
-                  disabled={form.isSubmitting}
-                >
-                  <span className="connection-type-card-label connection-type-card-label--stacked-wa-api">
-                    <span className="connection-type-card-label__row">WhatsApp Business</span>
-                    <span className="connection-type-card-label__row connection-type-card-label__row--api-beta">
-                      API
-                      <span className="beta-badge">BETA</span>
-                    </span>
-                  </span>
-                </button>
-              </div>
-              {isContentFactoryTemplate ? (
-                <p className="help-text">
-                  Для шаблона "Контент-завод" подключение MAX userbot недоступно.
-                </p>
-              ) : null}
-            </div>
 
             {useBotChannel && (
               <div className="form-group">
@@ -1492,23 +1526,8 @@ const CreateAgentContent = () => {
                   <span className="error-message">{form.errors.max_token}</span>
                 )}
 
-                <label htmlFor="max_chat_id" className="mt-input">ID чата MAX:</label>
-                <input
-                  id="max_chat_id"
-                  type="text"
-                  name="max_chat_id"
-                  placeholder="-123456789"
-                  className={`input-main ${form.errors.max_chat_id ? 'error' : ''}`}
-                  value={form.values.max_chat_id}
-                  onChange={form.handleChange}
-                  disabled={form.isSubmitting}
-                />
-                {form.errors.max_chat_id && (
-                  <span className="error-message">{form.errors.max_chat_id}</span>
-                )}
-
                 <p className="help-text">
-                  Канал доступен для текстовых шаблонов (кроме "Контент-завод").
+                  Будут обрабатываться все личные сообщения (ЛС) в MAX.
                 </p>
               </div>
             )}

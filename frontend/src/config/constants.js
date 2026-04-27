@@ -98,6 +98,7 @@ export const API_ROUTES = {
   ADMIN_GIFT_SUBSCRIPTION: (userId) => `/api/admin/users/${userId}/gift-subscription`,
   ADMIN_DELETE_PROMO_CODE: (promoCodeId) => `/api/admin/promo-codes/${promoCodeId}`,
   ADMIN_ERROR_REPORTS: '/api/admin/error-reports',
+  ADMIN_EMAIL_BROADCAST: '/api/admin/email-broadcast',
   TURNKEY_REQUESTS: '/api/payments/turnkey-requests',
 };
 

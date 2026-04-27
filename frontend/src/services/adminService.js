@@ -163,6 +163,15 @@ const adminService = {
     );
     return response.data;
   },
+
+  async sendEmailBroadcast(token, { subject, body }) {
+    const response = await adminClient.post(
+      API_ROUTES.ADMIN_EMAIL_BROADCAST,
+      { subject, body },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data;
+  },
 };
 
 export default adminService;

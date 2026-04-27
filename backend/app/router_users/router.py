@@ -57,6 +57,31 @@ _GOOGLE_JWKS_CACHE: dict = {}
 _GOOGLE_JWKS_EXPIRES_AT: datetime | None = None
 
 
+def _render_mailopost_card_html(*, title: str, paragraphs: list[str], accent_block_html: str = "") -> str:
+    rendered_paragraphs = "".join(
+        f"<tr><td style='padding:0 24px 8px 24px;color:#374151;font-size:14px;line-height:1.6;'>{line}</td></tr>"
+        for line in paragraphs
+    )
+    return (
+        "<!DOCTYPE html>"
+        "<html><body style='margin:0;padding:0;background:#f5f7fb;font-family:Arial,sans-serif;'>"
+        "<table role='presentation' width='100%' cellspacing='0' cellpadding='0' style='background:#f5f7fb;padding:24px 12px;'>"
+        "<tr><td align='center'>"
+        "<table role='presentation' width='100%' cellspacing='0' cellpadding='0' style='max-width:560px;background:#ffffff;border:1px solid #e8ecf3;border-radius:12px;overflow:hidden;'>"
+        "<tr><td style='padding:24px 24px 8px 24px;'>"
+        f"<div style='font-size:20px;font-weight:700;color:#111827;'>{title}</div>"
+        "</td></tr>"
+        f"{rendered_paragraphs}"
+        f"{accent_block_html}"
+        "<tr><td style='padding:8px 24px 24px 24px;color:#9ca3af;font-size:12px;line-height:1.6;'>"
+        "Это письмо отправлено автоматически. Отвечать на него не нужно."
+        "</td></tr>"
+        "</table>"
+        "</td></tr></table>"
+        "</body></html>"
+    )
+
+
 def _mailopost_rate_limit_retry_seconds(response: httpx.Response) -> int | None:
     """Parse 'Try again in N seconds' from MailoPost JSON error body."""
     try:
@@ -396,30 +421,17 @@ async def _send_registration_email_code(email: str, code: str) -> None:
             f"Код действует {EMAIL_CODE_TTL_MINUTES} минут.\n\n"
             "Если вы не запрашивали регистрацию, просто проигнорируйте письмо."
         ),
-        "html": (
-            "<!DOCTYPE html>"
-            "<html><body style='margin:0;padding:0;background:#f5f7fb;font-family:Arial,sans-serif;'>"
-            "<table role='presentation' width='100%' cellspacing='0' cellpadding='0' style='background:#f5f7fb;padding:24px 12px;'>"
-            "<tr><td align='center'>"
-            "<table role='presentation' width='100%' cellspacing='0' cellpadding='0' style='max-width:560px;background:#ffffff;border:1px solid #e8ecf3;border-radius:12px;overflow:hidden;'>"
-            "<tr><td style='padding:24px 24px 8px 24px;'>"
-            "<div style='font-size:20px;font-weight:700;color:#111827;'>Подтверждение регистрации в RSD</div>"
-            "</td></tr>"
-            "<tr><td style='padding:0 24px 8px 24px;color:#374151;font-size:14px;line-height:1.6;'>"
-            "Введите код ниже на странице регистрации."
-            "</td></tr>"
-            "<tr><td style='padding:8px 24px 8px 24px;'>"
-            f"<div style='display:inline-block;background:#111827;color:#ffffff;font-size:28px;font-weight:700;letter-spacing:6px;padding:14px 18px;border-radius:10px;'>{code}</div>"
-            "</td></tr>"
-            "<tr><td style='padding:8px 24px 8px 24px;color:#6b7280;font-size:13px;line-height:1.6;'>"
-            f"Код действует {EMAIL_CODE_TTL_MINUTES} минут."
-            "</td></tr>"
-            "<tr><td style='padding:0 24px 24px 24px;color:#9ca3af;font-size:12px;line-height:1.6;'>"
-            "Если вы не запрашивали регистрацию, просто проигнорируйте это письмо."
-            "</td></tr>"
-            "</table>"
-            "</td></tr></table>"
-            "</body></html>"
+        "html": _render_mailopost_card_html(
+            title="Подтверждение регистрации в RSD",
+            paragraphs=[
+                "Введите код ниже на странице регистрации.",
+                f"Код действует {EMAIL_CODE_TTL_MINUTES} минут.",
+            ],
+            accent_block_html=(
+                "<tr><td style='padding:8px 24px 8px 24px;'>"
+                f"<div style='display:inline-block;background:#111827;color:#ffffff;font-size:28px;font-weight:700;letter-spacing:6px;padding:14px 18px;border-radius:10px;'>{code}</div>"
+                "</td></tr>"
+            ),
         ),
     }
     from_name = settings.MAILOPOST_FROM_NAME.strip()
@@ -484,30 +496,17 @@ async def _send_password_reset_email_code(email: str, code: str) -> None:
             f"Код действует {PASSWORD_RESET_CODE_TTL_MINUTES} минут.\n\n"
             "Если вы не запрашивали восстановление, просто проигнорируйте письмо."
         ),
-        "html": (
-            "<!DOCTYPE html>"
-            "<html><body style='margin:0;padding:0;background:#f5f7fb;font-family:Arial,sans-serif;'>"
-            "<table role='presentation' width='100%' cellspacing='0' cellpadding='0' style='background:#f5f7fb;padding:24px 12px;'>"
-            "<tr><td align='center'>"
-            "<table role='presentation' width='100%' cellspacing='0' cellpadding='0' style='max-width:560px;background:#ffffff;border:1px solid #e8ecf3;border-radius:12px;overflow:hidden;'>"
-            "<tr><td style='padding:24px 24px 8px 24px;'>"
-            "<div style='font-size:20px;font-weight:700;color:#111827;'>Восстановление пароля в RSD</div>"
-            "</td></tr>"
-            "<tr><td style='padding:0 24px 8px 24px;color:#374151;font-size:14px;line-height:1.6;'>"
-            "Введите код ниже на странице восстановления пароля."
-            "</td></tr>"
-            "<tr><td style='padding:8px 24px 8px 24px;'>"
-            f"<div style='display:inline-block;background:#111827;color:#ffffff;font-size:28px;font-weight:700;letter-spacing:6px;padding:14px 18px;border-radius:10px;'>{code}</div>"
-            "</td></tr>"
-            "<tr><td style='padding:8px 24px 8px 24px;color:#6b7280;font-size:13px;line-height:1.6;'>"
-            f"Код действует {PASSWORD_RESET_CODE_TTL_MINUTES} минут."
-            "</td></tr>"
-            "<tr><td style='padding:0 24px 24px 24px;color:#9ca3af;font-size:12px;line-height:1.6;'>"
-            "Если вы не запрашивали восстановление, просто проигнорируйте это письмо."
-            "</td></tr>"
-            "</table>"
-            "</td></tr></table>"
-            "</body></html>"
+        "html": _render_mailopost_card_html(
+            title="Восстановление пароля в RSD",
+            paragraphs=[
+                "Введите код ниже на странице восстановления пароля.",
+                f"Код действует {PASSWORD_RESET_CODE_TTL_MINUTES} минут.",
+            ],
+            accent_block_html=(
+                "<tr><td style='padding:8px 24px 8px 24px;'>"
+                f"<div style='display:inline-block;background:#111827;color:#ffffff;font-size:28px;font-weight:700;letter-spacing:6px;padding:14px 18px;border-radius:10px;'>{code}</div>"
+                "</td></tr>"
+            ),
         ),
     }
     from_name = settings.MAILOPOST_FROM_NAME.strip()
@@ -545,6 +544,61 @@ async def _send_password_reset_email_code(email: str, code: str) -> None:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Не удалось отправить код восстановления на email",
+        )
+
+
+async def _send_welcome_email(email: str) -> None:
+    api_token = settings.MAILOPOST_API_TOKEN.strip()
+    from_email = settings.MAILOPOST_FROM_EMAIL.strip()
+    base_url = settings.MAILOPOST_API_URL.strip().rstrip("/")
+    if not api_token or not from_email:
+        logger.warning("Welcome email skipped: Mail sender is not configured")
+        return
+
+    payload = {
+        "from_email": from_email,
+        "to": email,
+        "subject": "Добро пожаловать в RSD! Ваш промокод START50",
+        "text": (
+            "Добро пожаловать в RSD!\n\n"
+            "Спасибо за регистрацию.\n"
+            "Ваш персональный промокод: START50\n"
+            "Промокод активен в течение 7 дней с момента регистрации.\n\n"
+            "RSD — это сервис для быстрого создания AI-агентов, управления каналами общения "
+            "и автоматизации коммуникаций с клиентами."
+        ),
+        "html": _render_mailopost_card_html(
+            title="Добро пожаловать в RSD!",
+            paragraphs=[
+                "Спасибо за регистрацию — рады видеть вас в сервисе.",
+                "Ваш персональный промокод активен 7 дней с момента регистрации.",
+                "RSD помогает быстро создавать AI-агентов, подключать каналы и автоматизировать коммуникации с клиентами.",
+            ],
+            accent_block_html=(
+                "<tr><td style='padding:8px 24px 8px 24px;'>"
+                "<div style='display:inline-block;background:#111827;color:#ffffff;font-size:20px;font-weight:700;letter-spacing:2px;padding:12px 16px;border-radius:10px;'>START50</div>"
+                "</td></tr>"
+            ),
+        ),
+    }
+    from_name = settings.MAILOPOST_FROM_NAME.strip()
+    if from_name:
+        payload["from_name"] = from_name
+
+    headers = {
+        "Authorization": f"Bearer {api_token}",
+        "Content-Type": "application/json",
+    }
+    url = f"{base_url}/email/messages"
+    timeout = httpx.Timeout(settings.MAILOPOST_SEND_TIMEOUT_SECONDS, connect=5.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.post(url, json=payload, headers=headers)
+
+    if not response.is_success:
+        logger.error(
+            "MailoPost welcome email send failed: status=%s body=%s",
+            response.status_code,
+            response.text[:500],
         )
 
 
@@ -893,6 +947,8 @@ async def verify_user_registration_code(payload: VerifyRegistrationCodeRequest):
             )
 
             access_token, refresh_token = await _issue_user_tokens(session, user.id)
+
+    await _send_welcome_email(normalized_email)
 
     return JSONResponse(
         content={

@@ -177,7 +177,6 @@ async def _fetch_max_configs() -> list[dict[str, Any]]:
                             Agent.system_prompt,
                             Agent.welcome_message,
                             AgentChannelConnection.id.label("connection_id"),
-                            AgentChannelConnection.external_id.label("max_chat_id"),
                             AgentChannelConnection.encrypted_credentials,
                         )
                         .join(AgentChannelConnection, AgentChannelConnection.agent_id == Agent.id)
@@ -198,7 +197,6 @@ async def _fetch_max_configs() -> list[dict[str, Any]]:
             "agent_id": int(row["agent_id"]),
             "bot_id": int(row["bot_id"] if row["bot_id"] is not None else row["agent_id"]),
             "connection_id": int(row["connection_id"]),
-            "max_chat_id": str(row["max_chat_id"] or "").strip(),
             "system_prompt": row["system_prompt"] or "",
             "welcome_message": row["welcome_message"],
             "encrypted_credentials": row["encrypted_credentials"],
@@ -232,7 +230,8 @@ async def _process_event(client: MaxWsClient, cfg: dict[str, Any], raw_event: st
     chat_id = str(payload.get("chatId") or "").strip()
     if not sender or not chat_id:
         return
-    if chat_id != str(cfg.get("max_chat_id") or ""):
+    chat_type = str(payload.get("chatType") or "").strip().lower()
+    if chat_type and chat_type not in {"private", "direct", "dialog"}:
         return
     my_id = str((((client.me or {}).get("profile") or {}).get("contact") or {}).get("id") or "").strip()
     if my_id and sender == my_id:
@@ -249,7 +248,7 @@ async def _process_event(client: MaxWsClient, cfg: dict[str, Any], raw_event: st
     request = MessageRequest(
         bot_id=int(cfg["bot_id"]),
         query=text,
-        user_external_id=sender,
+        user_external_id=chat_id,
         channel=Channel.MAX_USERBOT,
         system_prompt=cfg.get("system_prompt") or "",
         welcome_message=cfg.get("welcome_message"),
@@ -269,9 +268,6 @@ async def _run_one_client(cfg: dict[str, Any], stop: asyncio.Event) -> None:
     if not max_token:
         logger.warning("max_userbot: empty token connection_id=%s", cfg.get("connection_id"))
         return
-    if not cfg.get("max_chat_id"):
-        logger.warning("max_userbot: empty max_chat_id connection_id=%s", cfg.get("connection_id"))
-        return
 
     connection_id = int(cfg["connection_id"])
     reconnect_delay = max(2, int(settings.MAX_USERBOT_RECONNECT_DELAY_SECONDS))
@@ -281,10 +277,9 @@ async def _run_one_client(cfg: dict[str, Any], stop: asyncio.Event) -> None:
             await asyncio.to_thread(client.connect)
             await asyncio.to_thread(client.auth)
             logger.info(
-                "max_userbot: connected connection_id=%s bot_id=%s chat_id=%s",
+                "max_userbot: connected connection_id=%s bot_id=%s",
                 connection_id,
                 cfg.get("bot_id"),
-                cfg.get("max_chat_id"),
             )
             while not stop.is_set():
                 raw = await asyncio.to_thread(client.recv)

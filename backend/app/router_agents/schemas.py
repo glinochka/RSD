@@ -206,12 +206,6 @@ class AddMaxUserbotChannel(AgentLookup):
         max_length=65535,
         description="Токен авторизации MAX (из localStorage __oneme_auth.token)",
     )
-    max_chat_id: str = Field(
-        ...,
-        min_length=1,
-        max_length=64,
-        description="ID чата MAX для обработки входящих сообщений",
-    )
     make_primary: bool = Field(default=False, description="Сделать канал основным")
 
 

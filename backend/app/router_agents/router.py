@@ -1205,7 +1205,7 @@ async def _max_userbot_send_message(encrypted_credentials: str, text: str, *, ch
         ) from exc
 
     max_token = str(bundle.get("max_token") or "").strip()
-    max_chat_id = str(chat_id or bundle.get("max_chat_id") or "").strip()
+    max_chat_id = str(chat_id or "").strip()
     if not max_token:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -1214,7 +1214,7 @@ async def _max_userbot_send_message(encrypted_credentials: str, text: str, *, ch
     if not max_chat_id:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="MAX chat id отсутствует в сохраненных credentials",
+            detail="MAX chat id (user_external_id) обязателен для отправки",
         )
 
     def _send_once():
@@ -1235,6 +1235,40 @@ async def _max_userbot_send_message(encrypted_credentials: str, text: str, *, ch
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Не удалось отправить сообщение в MAX: {exc}",
         ) from exc
+
+
+async def _max_userbot_resolve_account_id(max_token: str) -> str:
+    try:
+        from ..channels.max_userbot_manager import MaxWsClient
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"MAX runtime недоступен: {exc}",
+        ) from exc
+
+    def _resolve() -> str:
+        client = MaxWsClient(max_token)
+        try:
+            client.connect()
+            client.auth()
+            account_id = str((((client.me or {}).get("profile") or {}).get("contact") or {}).get("id") or "").strip()
+            return account_id
+        finally:
+            client.close()
+
+    try:
+        account_id = await asyncio.get_running_loop().run_in_executor(None, _resolve)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Не удалось авторизовать MAX token: {exc}",
+        ) from exc
+    if not account_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="MAX не вернул id аккаунта для token",
+        )
+    return account_id
 
 
 async def _list_whatsapp_userbot_broadcast_recipients(session, analytics_namespace_id: int) -> list[dict]:
@@ -3777,12 +3811,7 @@ async def add_agent_max_userbot_channel(
     current_user=Depends(get_current_user_required),
 ):
     max_token = payload.max_token.strip()
-    max_chat_id = payload.max_chat_id.strip()
-    if not max_chat_id:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="max_chat_id is required",
-        )
+    max_account_id = await _max_userbot_resolve_account_id(max_token)
 
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
@@ -3818,19 +3847,19 @@ async def add_agent_max_userbot_channel(
                 )
             duplicate_connection = await channel_connection_dao.find_one_by_filter(
                 provider="max_userbot",
-                external_id=max_chat_id,
+                external_id=max_account_id,
             )
             if duplicate_connection:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail="Этот MAX чат уже подключен к другому агенту",
+                    detail="Этот MAX аккаунт уже подключен к другому агенту",
                 )
 
             encrypted_bundle = encrypt_token(
                 json.dumps(
                     {
                         "max_token": max_token,
-                        "max_chat_id": max_chat_id,
+                        "max_account_id": max_account_id,
                     },
                     ensure_ascii=False,
                 )
@@ -3842,7 +3871,7 @@ async def add_agent_max_userbot_channel(
                     "agent_id": agent.id,
                     "provider": "max_userbot",
                     "connection_type": "userbot",
-                    "external_id": max_chat_id,
+                    "external_id": max_account_id,
                     "encrypted_credentials": encrypted_bundle,
                     "is_primary": bool(payload.make_primary),
                     "is_active": True,
