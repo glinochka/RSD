@@ -9,12 +9,16 @@ const SECTIONS = [
   { id: 'scenarios', title: 'Сценарии использования' },
   { id: 'api-auth', title: 'Авторизация API' },
   { id: 'api-chat-endpoint', title: 'Endpoint внешнего чата' },
+  { id: 'message-format', title: 'Формат входящих/исходящих сообщений' },
+  { id: 'widget-connector', title: 'Виджет-коннектор' },
+  { id: 'telegram-userbot-creds', title: 'api_id и api_hash для Telegram userbot' },
+  { id: 'api-errors', title: 'Коды ошибок и диагностика' },
   { id: 'api-js-example', title: 'Пример на JavaScript' },
   { id: 'api-python-example', title: 'Пример на Python' },
   { id: 'production-tips', title: 'Рекомендации для production' },
 ];
 
-const JS_EXAMPLE = `const API_BASE_URL = 'https://rsd-ai.ru/'
+const JS_EXAMPLE = `const API_BASE_URL = 'https://rsd-ai.ru'
 const AGENT_API_KEY = 'agnt_xxxxxxxxxxxxxxxxxxxxxxxxx';
 
 async function askAgent(message) {
@@ -46,7 +50,7 @@ askAgent('Подскажи условия доставки')
 
 const PYTHON_EXAMPLE = `import requests
 
-API_BASE_URL = "https://rsd-ai.ru/"
+API_BASE_URL = "https://rsd-ai.ru"
 AGENT_API_KEY = "agnt_xxxxxxxxxxxxxxxxxxxxxxxxx"
 
 def ask_agent(message: str) -> dict:
@@ -66,6 +70,23 @@ if __name__ == "__main__":
     data = ask_agent("Какие услуги вы оказываете?")
     print("Ответ агента:", data.get("answer"))
     print("Источники:", data.get("sources"))`;
+
+const CURL_EXAMPLE = `curl -X POST "https://rsd-ai.ru/api/agents/external/chat" \
+  -H "Content-Type: application/json" \
+  -H "X-Agent-API-Key: agnt_xxxxxxxxxxxxxxxxxxxxxxxxx" \
+  -d '{"message":"Подскажите стоимость внедрения"}'`;
+
+const WIDGET_CONNECTOR_EXAMPLE = `<script src="https://rsd-ai.ru/widget-connector.js"></script>
+<script>
+  window.RSDWidget.init({
+    apiBaseUrl: "https://rsd-ai.ru",
+    apiKey: "agnt_xxxxxxxxxxxxxxxxxxxxxxxxx",
+    containerId: "rsd-chat",
+    title: "Онлайн-консультант",
+    placeholder: "Напишите ваш вопрос...",
+  });
+</script>
+<div id="rsd-chat"></div>`;
 
 const DocumentationContent = () => {
   const [activeSection, setActiveSection] = useState(SECTIONS[0].id);
@@ -120,6 +141,11 @@ const DocumentationContent = () => {
             Схема работы: вы создаете агента в панели управления, настраиваете промпт и документы, получаете
             персональный API-ключ, после чего можете подключить чат на сайте или любую внешнюю систему.
           </p>
+          <ul>
+            <li>Если интеграция проходит впервые, начните с теста через cURL.</li>
+            <li>После успешного теста перенесите вызов в backend вашего проекта.</li>
+            <li>Только потом подключайте frontend-виджет и пользовательские сценарии.</li>
+          </ul>
         </section>
 
         <section id="create-agent">
@@ -189,10 +215,121 @@ const DocumentationContent = () => {
             <code>X-Agent-API-Key: &lt;ваш_ключ&gt;</code>
           </p>
           <p>
-            <strong>Body:</strong> <code>{'{ "message": "Ваш вопрос" }'}</code>
+            <strong>Body:</strong> <code>{'{ "message": "Ваш вопрос" }'}</code> (поле <code>message</code> обязательно)
           </p>
           <p>
             <strong>Response:</strong> <code>{'{ "bot_id": 123, "bot_username": "...", "answer": "...", "sources": [] }'}</code>
+          </p>
+          <p>
+            <strong>Быстрый тест через cURL:</strong>
+          </p>
+          <pre>
+            <code>{CURL_EXAMPLE}</code>
+          </pre>
+        </section>
+
+        <section id="message-format">
+          <h2>Формат входящих/исходящих сообщений</h2>
+          <p>
+            Внешний endpoint чата принимает одно пользовательское сообщение за запрос и возвращает итоговый ответ
+            агента с метаданными.
+          </p>
+          <h3>Что принимается (request)</h3>
+          <ul>
+            <li>
+              <code>message</code> (<code>string</code>, обязательно) — текст сообщения пользователя.
+            </li>
+            <li>
+              Заголовок <code>X-Agent-API-Key</code> (<code>string</code>, обязательно) — ключ конкретного агента.
+            </li>
+            <li>
+              <code>Content-Type: application/json</code> — тело запроса должно быть в JSON-формате.
+            </li>
+          </ul>
+          <h3>Что отправляется в ответ (response)</h3>
+          <ul>
+            <li>
+              <code>bot_id</code> (<code>number</code>) — внутренний идентификатор агента.
+            </li>
+            <li>
+              <code>bot_username</code> (<code>string</code>) — username подключенного Telegram-бота (если задан).
+            </li>
+            <li>
+              <code>answer</code> (<code>string</code>) — итоговый текст ответа пользователю.
+            </li>
+            <li>
+              <code>sources</code> (<code>array</code>) — список источников из базы знаний, использованных в ответе.
+            </li>
+          </ul>
+          <p>
+            Рекомендуется сохранять связку <code>message</code> и <code>answer</code> в логах интеграции для анализа
+            качества ответов и отладки.
+          </p>
+        </section>
+
+        <section id="widget-connector">
+          <h2>Виджет-коннектор</h2>
+          <p>
+            Виджет-коннектор позволяет быстро встроить чат на сайт без разработки собственного UI. Он собирает сообщение
+            пользователя, отправляет его в <code>/api/agents/external/chat</code> и отображает ответ агента.
+          </p>
+          <ol>
+            <li>Добавьте скрипт виджета на страницу сайта.</li>
+            <li>Передайте <code>apiBaseUrl</code>, <code>apiKey</code> и контейнер для рендера чата.</li>
+            <li>Проверьте отправку сообщений и отображение поля <code>answer</code> в интерфейсе.</li>
+          </ol>
+          <pre>
+            <code>{WIDGET_CONNECTOR_EXAMPLE}</code>
+          </pre>
+          <p>
+            Для production не публикуйте ключ в открытом фронтенде: используйте серверный прокси или подписанные
+            короткоживущие токены доступа.
+          </p>
+        </section>
+
+        <section id="telegram-userbot-creds">
+          <h2>api_id и api_hash для Telegram userbot</h2>
+          <p>
+            Для подключения Telegram userbot нужны <code>api_id</code> и <code>api_hash</code> приложения Telegram.
+            Эти значения выдаются в личном кабинете разработчика Telegram.
+          </p>
+          <ol>
+            <li>
+              Перейдите на <code>my.telegram.org</code> и войдите по номеру телефона аккаунта, который будет работать как
+              userbot.
+            </li>
+            <li>
+              Откройте раздел <code>API development tools</code> и создайте приложение (название и short name).
+            </li>
+            <li>
+              Скопируйте выданные <code>api_id</code> и <code>api_hash</code> и сохраните их в секретах backend.
+            </li>
+          </ol>
+          <p>
+            Не передавайте <code>api_hash</code> в клиентский код и не публикуйте в репозитории. Для каждого окружения
+            (dev/stage/prod) используйте отдельное безопасное хранение секретов.
+          </p>
+        </section>
+
+        <section id="api-errors">
+          <h2>Коды ошибок и диагностика</h2>
+          <ul>
+            <li>
+              <code>400 Bad Request</code> — невалидный JSON или отсутствует поле <code>message</code>.
+            </li>
+            <li>
+              <code>401/403</code> — отсутствует или некорректный <code>X-Agent-API-Key</code>.
+            </li>
+            <li>
+              <code>429</code> — превышен лимит запросов, добавьте ретраи с паузой.
+            </li>
+            <li>
+              <code>5xx</code> — временная ошибка сервера, повторите запрос с экспоненциальной задержкой.
+            </li>
+          </ul>
+          <p>
+            Для диагностики сохраняйте <code>status code</code>, тело ответа и <code>request id</code> (если передается в
+            заголовках) в логах интеграции.
           </p>
         </section>
 
