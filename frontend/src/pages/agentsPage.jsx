@@ -29,6 +29,7 @@ const channelLabel = (channel) => {
   if (!channel) return 'Канал';
   if (channel.provider === 'telegram_bot') return 'Telegram бот';
   if (channel.provider === 'telegram_userbot') return 'Telegram userbot';
+  if (channel.provider === 'max_userbot') return 'MAX userbot';
   if (channel.provider === 'whatsapp_userbot') return 'WhatsApp userbot';
   if (channel.provider === 'whatsapp_business_api') return 'WhatsApp Business API';
   return channel.provider || 'Канал';

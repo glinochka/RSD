@@ -91,6 +91,11 @@ export const agentService = {
     return response.data;
   },
 
+  addMaxUserbotChannel: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_CHANNELS_ADD_MAX_USERBOT, data);
+    return response.data;
+  },
+
   addWhatsAppUserbotChannel: async (data) => {
     const response = await apiClient.post(API_ROUTES.AGENTS_CHANNELS_ADD_WHATSAPP_USERBOT, data);
     return response.data;
@@ -244,6 +249,15 @@ export const agentService = {
 
   sendWhatsappUserbotMessageAsOwner: async (agentId, userExternalId, message) => {
     const response = await apiClient.post(API_ROUTES.AGENTS_WHATSAPP_USERBOT_SEND_TO_USER, {
+      agent_id: agentId,
+      user_external_id: userExternalId,
+      message,
+    });
+    return response.data;
+  },
+
+  sendMaxUserbotMessageAsOwner: async (agentId, userExternalId, message) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_MAX_USERBOT_SEND_TO_USER, {
       agent_id: agentId,
       user_external_id: userExternalId,
       message,

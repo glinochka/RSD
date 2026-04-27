@@ -221,6 +221,7 @@ const CreateAgentContent = () => {
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [useBotChannel, setUseBotChannel] = useState(true);
   const [useUserbotChannel, setUseUserbotChannel] = useState(false);
+  const [useMaxUserbotChannel, setUseMaxUserbotChannel] = useState(false);
   const [useWhatsAppUserbotChannel, setUseWhatsAppUserbotChannel] = useState(false);
   const [useWhatsAppBusinessApiChannel, setUseWhatsAppBusinessApiChannel] = useState(false);
   const [userbotAuthToken, setUserbotAuthToken] = useState('');
@@ -260,6 +261,8 @@ const CreateAgentContent = () => {
       verify_code: '',
       password_2fa: '',
       session_string: '',
+      max_token: '',
+      max_chat_id: '',
       whatsapp_userbot_phone_number: '',
       whatsapp_userbot_session_string: '',
       whatsapp_userbot_client_label: '',
@@ -297,10 +300,11 @@ const CreateAgentContent = () => {
 
         const isBotMode = useBotChannel;
         const isUserbotMode = useUserbotChannel;
+        const isMaxUserbotMode = useMaxUserbotChannel;
         const isWhatsAppUserbotMode = useWhatsAppUserbotChannel;
         const isWhatsAppBusinessApiMode = useWhatsAppBusinessApiChannel;
 
-        if (!isBotMode && !isUserbotMode && !isWhatsAppUserbotMode && !isWhatsAppBusinessApiMode) {
+        if (!isBotMode && !isUserbotMode && !isMaxUserbotMode && !isWhatsAppUserbotMode && !isWhatsAppBusinessApiMode) {
           showError('Выберите хотя бы один способ подключения');
           return;
         }
@@ -323,6 +327,14 @@ const CreateAgentContent = () => {
         }
         if (isUserbotMode && (!values.session_string?.trim() || !isUserbotVerified)) {
           form.setFieldError('verify_code', 'Сначала подтвердите код и сохраните userbot-сессию');
+          return;
+        }
+        if (isMaxUserbotMode && !values.max_token?.trim()) {
+          form.setFieldError('max_token', 'MAX token обязателен');
+          return;
+        }
+        if (isMaxUserbotMode && !values.max_chat_id?.trim()) {
+          form.setFieldError('max_chat_id', 'ID чата MAX обязателен');
           return;
         }
         if (isWhatsAppUserbotMode && !values.whatsapp_userbot_phone_number?.trim()) {
@@ -353,15 +365,6 @@ const CreateAgentContent = () => {
         }
 
         const selectedTemplate = values.template_type?.trim() || 'qa';
-        if (
-          selectedTemplate === 'sales_manager' &&
-          (!isUserbotMode || isBotMode || isWhatsAppUserbotMode || isWhatsAppBusinessApiMode)
-        ) {
-          showError(
-            'Для шаблона "Менеджер продаж" на этом этапе доступно только подключение Telegram userbot.'
-          );
-          return;
-        }
         if (selectedTemplate === 'sales_manager' && !values.sales_product_name?.trim()) {
           form.setFieldError('sales_product_name', 'Укажите продукт, который продает агент');
           return;
@@ -444,6 +447,8 @@ const CreateAgentContent = () => {
           ? 'telegram_bot'
           : isUserbotMode
             ? 'telegram_userbot'
+            : isMaxUserbotMode
+              ? 'max_userbot'
             : isWhatsAppUserbotMode
               ? 'whatsapp_userbot'
               : 'whatsapp_business_api';
@@ -462,6 +467,14 @@ const CreateAgentContent = () => {
             api_hash: values.api_hash.trim(),
             session_string: values.session_string.trim(),
             make_primary: primaryProvider === 'telegram_userbot',
+          });
+        }
+        if (isMaxUserbotMode) {
+          await agentService.addMaxUserbotChannel({
+            agent_id: agentId,
+            max_token: values.max_token.trim(),
+            max_chat_id: values.max_chat_id.trim(),
+            make_primary: primaryProvider === 'max_userbot',
           });
         }
         if (isWhatsAppUserbotMode) {
@@ -518,7 +531,6 @@ const CreateAgentContent = () => {
   };
 
   const toggleBotChannel = () => {
-    if (isSalesManagerTemplate) return;
     setUseBotChannel((prev) => {
       const next = !prev;
       if (!next) {
@@ -539,8 +551,21 @@ const CreateAgentContent = () => {
     });
   };
 
+  const toggleMaxUserbotChannel = () => {
+    if (isContentFactoryTemplate) return;
+    setUseMaxUserbotChannel((prev) => {
+      const next = !prev;
+      if (!next) {
+        form.setFieldValue('max_token', '');
+        form.setFieldValue('max_chat_id', '');
+        form.setFieldError('max_token', undefined);
+        form.setFieldError('max_chat_id', undefined);
+      }
+      return next;
+    });
+  };
+
   const toggleWhatsAppBusinessApiChannel = () => {
-    if (isSalesManagerTemplate) return;
     setUseWhatsAppBusinessApiChannel((prev) => {
       const next = !prev;
       if (!next) {
@@ -556,7 +581,6 @@ const CreateAgentContent = () => {
   };
 
   const toggleWhatsAppUserbotChannel = () => {
-    if (isSalesManagerTemplate) return;
     setUseWhatsAppUserbotChannel((prev) => {
       const next = !prev;
       if (!next) {
@@ -884,45 +908,14 @@ const CreateAgentContent = () => {
   ]);
 
   useEffect(() => {
-    if (!isSalesManagerTemplate) return;
-    setUseUserbotChannel(true);
-    if (useBotChannel) {
-      setUseBotChannel(false);
-      form.setFieldValue('bot_token', '');
-      form.setFieldError('bot_token', undefined);
-    }
-    if (useWhatsAppUserbotChannel) {
-      setUseWhatsAppUserbotChannel(false);
-      setWhatsappUserbotMode('simple');
-      setWhatsappUserbotAuthToken('');
-      setWhatsappUserbotQrDataUrl('');
-      setIsSendingWhatsappUserbotCode(false);
-      setIsVerifyingWhatsappUserbotCode(false);
-      setIsWhatsappUserbotVerified(false);
-      setVerifiedWhatsappUserbotLabel('');
-      whatsappUserbotLastAuthStatusRef.current = '';
-      form.setFieldValue('whatsapp_userbot_phone_number', '');
-      form.setFieldValue('whatsapp_userbot_session_string', '');
-      form.setFieldValue('whatsapp_userbot_client_label', '');
-      form.setFieldError('whatsapp_userbot_phone_number', undefined);
-      form.setFieldError('whatsapp_userbot_session_string', undefined);
-    }
-    if (useWhatsAppBusinessApiChannel) {
-      setUseWhatsAppBusinessApiChannel(false);
-      form.setFieldValue('whatsapp_phone_number_id', '');
-      form.setFieldValue('whatsapp_access_token', '');
-      form.setFieldValue('whatsapp_business_account_id', '');
-      form.setFieldValue('whatsapp_verify_token', '');
-      form.setFieldError('whatsapp_phone_number_id', undefined);
-      form.setFieldError('whatsapp_access_token', undefined);
-    }
-  }, [
-    form,
-    isSalesManagerTemplate,
-    useBotChannel,
-    useWhatsAppBusinessApiChannel,
-    useWhatsAppUserbotChannel,
-  ]);
+    if (!isContentFactoryTemplate) return;
+    if (!useMaxUserbotChannel) return;
+    setUseMaxUserbotChannel(false);
+    form.setFieldValue('max_token', '');
+    form.setFieldValue('max_chat_id', '');
+    form.setFieldError('max_token', undefined);
+    form.setFieldError('max_chat_id', undefined);
+  }, [form, isContentFactoryTemplate, useMaxUserbotChannel]);
 
   return (
     <MainLayout>
@@ -1257,17 +1250,25 @@ const CreateAgentContent = () => {
                 </button>
                 <button
                   type="button"
-                  className={`connection-type-card ${useWhatsAppUserbotChannel ? 'active' : ''} ${isSalesManagerTemplate ? 'connection-type-card--disabled' : ''}`}
+                  className={`connection-type-card ${useMaxUserbotChannel ? 'active' : ''} ${isContentFactoryTemplate ? 'connection-type-card--disabled' : ''}`}
+                  onClick={toggleMaxUserbotChannel}
+                  disabled={form.isSubmitting || isContentFactoryTemplate}
+                >
+                  MAX юзербот
+                </button>
+                <button
+                  type="button"
+                  className={`connection-type-card ${useWhatsAppUserbotChannel ? 'active' : ''}`}
                   onClick={toggleWhatsAppUserbotChannel}
-                  disabled={form.isSubmitting || isSalesManagerTemplate}
+                  disabled={form.isSubmitting}
                 >
                   WhatsApp юзербот
                 </button>
                 <button
                   type="button"
-                  className={`connection-type-card connection-type-card--with-beta ${useWhatsAppBusinessApiChannel ? 'active' : ''} ${isSalesManagerTemplate ? 'connection-type-card--disabled' : ''}`}
+                  className={`connection-type-card connection-type-card--with-beta ${useWhatsAppBusinessApiChannel ? 'active' : ''}`}
                   onClick={toggleWhatsAppBusinessApiChannel}
-                  disabled={form.isSubmitting || isSalesManagerTemplate}
+                  disabled={form.isSubmitting}
                 >
                   <span className="connection-type-card-label connection-type-card-label--stacked-wa-api">
                     <span className="connection-type-card-label__row">WhatsApp Business</span>
@@ -1278,9 +1279,9 @@ const CreateAgentContent = () => {
                   </span>
                 </button>
               </div>
-              {isSalesManagerTemplate ? (
+              {isContentFactoryTemplate ? (
                 <p className="help-text">
-                  Для шаблона "Менеджер продаж" доступно только подключение Telegram userbot.
+                  Для шаблона "Контент-завод" подключение MAX userbot недоступно.
                 </p>
               ) : null}
             </div>
@@ -1412,6 +1413,45 @@ const CreateAgentContent = () => {
                     Userbot подтвержден: {verifiedUserbotLabel || 'успешно'}
                   </p>
                 )}
+              </div>
+            )}
+
+            {useMaxUserbotChannel && (
+              <div className="form-group">
+                <h3 className="agent-form-channel-title">MAX юзербот</h3>
+                <label htmlFor="max_token">MAX token:</label>
+                <textarea
+                  id="max_token"
+                  name="max_token"
+                  placeholder="Токен из localStorage.__oneme_auth.token"
+                  className={`input-main textarea ${form.errors.max_token ? 'error' : ''}`}
+                  value={form.values.max_token}
+                  onChange={form.handleChange}
+                  disabled={form.isSubmitting}
+                  rows="3"
+                ></textarea>
+                {form.errors.max_token && (
+                  <span className="error-message">{form.errors.max_token}</span>
+                )}
+
+                <label htmlFor="max_chat_id" className="mt-input">ID чата MAX:</label>
+                <input
+                  id="max_chat_id"
+                  type="text"
+                  name="max_chat_id"
+                  placeholder="-123456789"
+                  className={`input-main ${form.errors.max_chat_id ? 'error' : ''}`}
+                  value={form.values.max_chat_id}
+                  onChange={form.handleChange}
+                  disabled={form.isSubmitting}
+                />
+                {form.errors.max_chat_id && (
+                  <span className="error-message">{form.errors.max_chat_id}</span>
+                )}
+
+                <p className="help-text">
+                  Канал доступен для текстовых шаблонов (кроме "Контент-завод").
+                </p>
               </div>
             )}
 

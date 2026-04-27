@@ -18,7 +18,7 @@ from app.config import settings
 from app.services.subscription_maintenance import downgrade_expired_subscriptions_once
 from app.services.reindex_jobs import run_reindex_worker_forever
 from app.services.content_factory_worker import get_content_factory_worker
-from app.channels import UserbotManager, WhatsAppUserbotManager
+from app.channels import UserbotManager, MaxUserbotManager, WhatsAppUserbotManager
 from app.qdrant.embeddings import get_active_dense_model_name, get_dense_vector_size
 from app.utils.internal_auth import is_request_secure
 import uvicorn
@@ -34,6 +34,8 @@ async def lifespan(app: FastAPI):
     reindex_task: asyncio.Task | None = None
     userbot_manager: UserbotManager | None = None
     userbot_task: asyncio.Task | None = None
+    max_userbot_manager: MaxUserbotManager | None = None
+    max_userbot_task: asyncio.Task | None = None
     whatsapp_userbot_manager: WhatsAppUserbotManager | None = None
     whatsapp_userbot_task: asyncio.Task | None = None
     content_factory_worker = None
@@ -97,6 +99,8 @@ async def lifespan(app: FastAPI):
     reindex_task = asyncio.create_task(run_reindex_worker_forever())
     userbot_manager = UserbotManager()
     userbot_task = asyncio.create_task(userbot_manager.run_forever())
+    max_userbot_manager = MaxUserbotManager()
+    max_userbot_task = asyncio.create_task(max_userbot_manager.run_forever())
     whatsapp_userbot_manager = WhatsAppUserbotManager()
     whatsapp_userbot_task = asyncio.create_task(whatsapp_userbot_manager.run_forever())
     if settings.CONTENT_FACTORY_ENABLED:
@@ -126,6 +130,14 @@ async def lifespan(app: FastAPI):
         userbot_task.cancel()
         try:
             await userbot_task
+        except asyncio.CancelledError:
+            pass
+    if max_userbot_manager:
+        await max_userbot_manager.shutdown()
+    if max_userbot_task:
+        max_userbot_task.cancel()
+        try:
+            await max_userbot_task
         except asyncio.CancelledError:
             pass
     if whatsapp_userbot_manager:

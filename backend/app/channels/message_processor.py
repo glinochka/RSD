@@ -21,6 +21,7 @@ MAX_INT32 = 2_147_483_647
 class Channel(str, Enum):
     TELEGRAM = "telegram"
     TELEGRAM_USERBOT = "telegram_userbot"
+    MAX_USERBOT = "max_userbot"
     WHATSAPP_USERBOT = "whatsapp_userbot"
 
 

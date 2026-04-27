@@ -58,6 +58,7 @@ const formatDateShort = (value) => {
 const channelLabel = (channel) => {
   if (channel === 'telegram_userbot') return 'Telegram userbot';
   if (channel === 'telegram') return 'Telegram bot';
+  if (channel === 'max_userbot') return 'MAX userbot';
   if (channel === 'whatsapp_userbot') return 'WhatsApp userbot';
   if (channel === 'external_api') return 'External API';
   if (channel === 'whatsapp_business_api') return 'WhatsApp Business API';
@@ -469,6 +470,9 @@ const AgentDetailedAnalyticsPageContent = () => {
         if (selectedUser.channel === 'external_api') {
           return raw.length > 0 && raw.length <= 128;
         }
+        if (selectedUser.channel === 'max_userbot') {
+          return raw.length > 0 && raw.length <= 128;
+        }
         return (
           ['telegram', 'telegram_userbot'].includes(selectedUser.channel) && /^\d+$/.test(raw)
         );
@@ -532,6 +536,8 @@ const AgentDetailedAnalyticsPageContent = () => {
     try {
       if (selectedUser.channel === 'whatsapp_userbot') {
         await agentService.sendWhatsappUserbotMessageAsOwner(botId, selectedUser.userExternalId, text);
+      } else if (selectedUser.channel === 'max_userbot') {
+        await agentService.sendMaxUserbotMessageAsOwner(botId, selectedUser.userExternalId, text);
       } else if (selectedUser.channel === 'external_api') {
         await agentService.sendExternalMessageAsOwner(botId, selectedUser.userExternalId, text);
       } else {

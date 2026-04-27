@@ -1109,6 +1109,18 @@ async def _get_whatsapp_userbot_channel_for_agent(session, agent_id: int) -> Age
     )
 
 
+async def _get_max_userbot_channel_for_agent(session, agent_id: int) -> AgentChannelConnection | None:
+    return await session.scalar(
+        select(AgentChannelConnection).where(
+            AgentChannelConnection.agent_id == agent_id,
+            AgentChannelConnection.provider == "max_userbot",
+            AgentChannelConnection.connection_type == "userbot",
+            AgentChannelConnection.is_active.is_(True),
+            AgentChannelConnection.encrypted_credentials.is_not(None),
+        )
+    )
+
+
 async def _get_youtube_oauth_channel_for_agent(session, agent_id: int) -> AgentChannelConnection | None:
     return await session.scalar(
         select(AgentChannelConnection).where(
@@ -1173,6 +1185,56 @@ async def _ensure_whatsapp_userbot_session(connection_id: int, encrypted_credent
             "session_string": session_string,
         },
     )
+
+
+async def _max_userbot_send_message(encrypted_credentials: str, text: str, *, chat_id: str | None = None) -> None:
+    try:
+        from ..channels.max_userbot_manager import MaxWsClient
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"MAX runtime недоступен: {exc}",
+        ) from exc
+
+    try:
+        bundle = json.loads(decrypt_token(encrypted_credentials))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Не удалось декодировать MAX userbot credentials",
+        ) from exc
+
+    max_token = str(bundle.get("max_token") or "").strip()
+    max_chat_id = str(chat_id or bundle.get("max_chat_id") or "").strip()
+    if not max_token:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="MAX token отсутствует в сохраненных credentials",
+        )
+    if not max_chat_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="MAX chat id отсутствует в сохраненных credentials",
+        )
+
+    def _send_once():
+        client = MaxWsClient(max_token)
+        try:
+            client.connect()
+            client.auth()
+            client.send_message(max_chat_id, text)
+        finally:
+            client.close()
+
+    try:
+        await asyncio.get_running_loop().run_in_executor(None, _send_once)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Не удалось отправить сообщение в MAX: {exc}",
+        ) from exc
 
 
 async def _list_whatsapp_userbot_broadcast_recipients(session, analytics_namespace_id: int) -> list[dict]:
@@ -1764,6 +1826,7 @@ async def _log_analytics_message_for_agent_ids(
         "web",
         "dashboard",
         "telegram_userbot",
+        "max_userbot",
         "whatsapp_userbot",
         "whatsapp_business_api",
         "instagram",
@@ -3579,6 +3642,104 @@ async def add_agent_whatsapp_userbot_channel(
             )
 
 
+@router.post("/channels/by_max_userbot")
+async def add_agent_max_userbot_channel(
+    payload: AddMaxUserbotChannel,
+    current_user=Depends(get_current_user_required),
+):
+    max_token = payload.max_token.strip()
+    max_chat_id = payload.max_chat_id.strip()
+    if not max_chat_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="max_chat_id is required",
+        )
+
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        channel_connection_dao = AgentChannelConnectionDAO(session)
+        async with session.begin():
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
+                current_user=current_user,
+                internal=False,
+            )
+            template_type = _normalize_template_type(agent.template_type)
+            if template_type == "content_factory":
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="MAX userbot недоступен для шаблона Контент-завод",
+                )
+
+            existing_max_channel = await session.scalar(
+                select(AgentChannelConnection).where(
+                    AgentChannelConnection.agent_id == agent.id,
+                    AgentChannelConnection.provider == "max_userbot",
+                    AgentChannelConnection.connection_type == "userbot",
+                )
+            )
+            if existing_max_channel:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="У агента уже подключен MAX userbot-канал",
+                )
+            duplicate_connection = await channel_connection_dao.find_one_by_filter(
+                provider="max_userbot",
+                external_id=max_chat_id,
+            )
+            if duplicate_connection:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Этот MAX чат уже подключен к другому агенту",
+                )
+
+            encrypted_bundle = encrypt_token(
+                json.dumps(
+                    {
+                        "max_token": max_token,
+                        "max_chat_id": max_chat_id,
+                    },
+                    ensure_ascii=False,
+                )
+            )
+
+            now = datetime.utcnow()
+            created_connection = await channel_connection_dao.add(
+                {
+                    "agent_id": agent.id,
+                    "provider": "max_userbot",
+                    "connection_type": "userbot",
+                    "external_id": max_chat_id,
+                    "encrypted_credentials": encrypted_bundle,
+                    "is_primary": bool(payload.make_primary),
+                    "is_active": True,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            )
+            await session.flush()
+            if payload.make_primary:
+                await _set_primary_channel(
+                    session=session,
+                    agent_id=agent.id,
+                    connection_id=created_connection.id,
+                )
+            await _sync_agent_primary_fields(agent=agent, agent_dao=agent_dao, session=session)
+            channels = await _list_agent_channels(session, agent.id)
+            return JSONResponse(
+                content={
+                    "agent_id": agent.id,
+                    "bot_id": agent.bot_id,
+                    "channels": [_serialize_channel_connection(item) for item in channels],
+                },
+                status_code=status.HTTP_201_CREATED,
+            )
+
+
 @router.delete("/channels")
 async def delete_agent_channel(
     payload: DeleteAgentChannel = Depends(),
@@ -4945,6 +5106,61 @@ async def whatsapp_userbot_send_to_user_as_owner(
     return JSONResponse(content={"ok": True}, status_code=status.HTTP_200_OK)
 
 
+@router.post("/max_userbot/send_to_user")
+async def max_userbot_send_to_user_as_owner(
+    payload: AgentMaxUserbotSendToUserPayload,
+    current_user=Depends(get_current_user_required),
+):
+    text = payload.message.strip()
+    if not text:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Сообщение пустое",
+        )
+    user_external_id = payload.user_external_id.strip()
+    if not user_external_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="user_external_id is required",
+        )
+
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
+                current_user=current_user,
+                internal=False,
+            )
+            max_channel = await _get_max_userbot_channel_for_agent(session, agent.id)
+            if not max_channel:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="У агента нет активного канала MAX userbot",
+                )
+            encrypted_credentials = str(max_channel.encrypted_credentials or "")
+
+    await _max_userbot_send_message(encrypted_credentials, text)
+
+    async with async_session_maker() as session:
+        async with session.begin():
+            await _log_analytics_message_for_agent_ids(
+                session=session,
+                agent_id=agent.id,
+                telegram_bot_id=agent.bot_id if agent.bot_id is not None else agent.id,
+                role="operator",
+                message_text=text,
+                channel="dashboard",
+                user_external_id=user_external_id,
+                user_display_name=None,
+            )
+    return JSONResponse(content={"ok": True}, status_code=status.HTTP_200_OK)
+
+
 @router.get("/whatsapp_userbot/broadcast_recipients")
 async def whatsapp_userbot_broadcast_recipients(
     agent_id: int | None = Query(default=None),
@@ -5152,7 +5368,7 @@ async def read_analytics_chats(
             )
             analytics_namespace_id = agent.bot_id if agent.bot_id is not None else agent.id
 
-            supported_chat_channels = ["telegram", "telegram_userbot", "whatsapp_userbot", "external_api"]
+            supported_chat_channels = ["telegram", "telegram_userbot", "max_userbot", "whatsapp_userbot", "external_api"]
 
             user_rows = (
                 (
@@ -5230,6 +5446,7 @@ async def read_analytics_chats(
                     # Ответы из кабинета показываем в потоке того канала, куда писал пользователь.
                     grouped_messages[(row["user_external_id"], "telegram")].append(row)
                     grouped_messages[(row["user_external_id"], "telegram_userbot")].append(row)
+                    grouped_messages[(row["user_external_id"], "max_userbot")].append(row)
                     grouped_messages[(row["user_external_id"], "whatsapp_userbot")].append(row)
                     grouped_messages[(row["user_external_id"], "external_api")].append(row)
                 else:
