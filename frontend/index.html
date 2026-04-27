@@ -117,6 +117,33 @@
       </div>
     </noscript>
     <div id="root"></div>
+    <script>
+      (function () {
+        var apiKey = '%VITE_WIDGET_API_KEY%'.trim();
+        if (!apiKey) return;
+
+        var apiBase = ('%VITE_WIDGET_API_BASE%' || window.location.origin).trim() || window.location.origin;
+        var script = document.createElement('script');
+        script.src = apiBase.replace(/\/$/, '') + '/api/agents/external/widget.js';
+        script.async = true;
+        script.dataset.rsdWidget = '1';
+        script.dataset.apiBase = apiBase;
+        script.dataset.apiKey = apiKey;
+        script.dataset.position = ('%VITE_WIDGET_POSITION%' || 'bottom-right').trim();
+        script.dataset.title = ('%VITE_WIDGET_TITLE%' || 'Онлайн-консультант').trim();
+        script.dataset.greeting = ('%VITE_WIDGET_GREETING%' || 'Здравствуйте! Чем могу помочь?').trim();
+        script.dataset.placeholder = ('%VITE_WIDGET_PLACEHOLDER%' || 'Напишите сообщение...').trim();
+
+        var proactiveMessage = ('%VITE_WIDGET_PROACTIVE_MESSAGE%' || '').trim();
+        var proactiveDelayMs = ('%VITE_WIDGET_PROACTIVE_DELAY_MS%' || '').trim();
+        var proactiveOpen = ('%VITE_WIDGET_PROACTIVE_OPEN%' || '').trim();
+        if (proactiveMessage) script.dataset.proactiveMessage = proactiveMessage;
+        if (proactiveDelayMs) script.dataset.proactiveDelayMs = proactiveDelayMs;
+        if (proactiveOpen) script.dataset.proactiveOpen = proactiveOpen;
+
+        document.body.appendChild(script);
+      })();
+    </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

@@ -194,6 +194,11 @@ WIDGET_JS = """
   var providedUserId = script.dataset.userId || "";
   var userName = script.dataset.userName || "";
   var openOnStart = script.dataset.open === "true";
+  var proactiveMessage = (script.dataset.proactiveMessage || "").trim();
+  var proactiveDelayRaw = Number(script.dataset.proactiveDelayMs || "0");
+  var proactiveDelayMs = Number.isFinite(proactiveDelayRaw) && proactiveDelayRaw > 0 ? proactiveDelayRaw : 0;
+  var proactiveOpen = script.dataset.proactiveOpen === "true";
+  var proactiveShown = false;
 
   if (!apiBase || !apiKey) {
     console.error("[RSD widget] Missing data-api-base or data-api-key");
@@ -285,6 +290,16 @@ WIDGET_JS = """
   pushMessage("agent", greeting);
   if (openOnStart) {
     panel.style.display = "flex";
+  }
+  if (proactiveMessage && proactiveDelayMs > 0) {
+    window.setTimeout(function () {
+      if (proactiveShown) return;
+      proactiveShown = true;
+      pushMessage("agent", proactiveMessage);
+      if (proactiveOpen) {
+        panel.style.display = "flex";
+      }
+    }, proactiveDelayMs);
   }
 })();
 """.strip()

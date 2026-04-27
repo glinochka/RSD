@@ -76,17 +76,19 @@ const CURL_EXAMPLE = `curl -X POST "https://rsd-ai.ru/api/agents/external/chat" 
   -H "X-Agent-API-Key: agnt_xxxxxxxxxxxxxxxxxxxxxxxxx" \
   -d '{"message":"Подскажите стоимость внедрения"}'`;
 
-const WIDGET_CONNECTOR_EXAMPLE = `<script src="https://rsd-ai.ru/widget-connector.js"></script>
-<script>
-  window.RSDWidget.init({
-    apiBaseUrl: "https://rsd-ai.ru",
-    apiKey: "agnt_xxxxxxxxxxxxxxxxxxxxxxxxx",
-    containerId: "rsd-chat",
-    title: "Онлайн-консультант",
-    placeholder: "Напишите ваш вопрос...",
-  });
-</script>
-<div id="rsd-chat"></div>`;
+const WIDGET_CONNECTOR_EXAMPLE = `<script
+  src="https://rsd-ai.ru/api/agents/external/widget.js"
+  data-rsd-widget="1"
+  data-api-base="https://rsd-ai.ru"
+  data-api-key="agnt_xxxxxxxxxxxxxxxxxxxxxxxxx"
+  data-position="bottom-right"
+  data-title="Онлайн-консультант"
+  data-greeting="Здравствуйте! Чем могу помочь?"
+  data-placeholder="Напишите ваш вопрос..."
+  data-proactive-message="Если хотите, помогу подобрать решение за 2-3 вопроса."
+  data-proactive-delay-ms="12000"
+  data-proactive-open="false"
+></script>`;
 
 const DocumentationContent = () => {
   const [activeSection, setActiveSection] = useState(SECTIONS[0].id);
@@ -102,12 +104,14 @@ const DocumentationContent = () => {
           setActiveSection(visible[0].target.id);
         }
       },
-      { rootMargin: '-25% 0px -60% 0px', threshold: [0.2, 0.4, 0.6] }
+      { rootMargin: '-25% 0px -60% 0px', threshold: [0.2, 0.4, 0.6] },
     );
 
     sectionIds.forEach((id) => {
       const node = document.getElementById(id);
-      if (node) observer.observe(node);
+      if (node) {
+        observer.observe(node);
+      }
     });
 
     return () => observer.disconnect();
@@ -275,12 +279,17 @@ const DocumentationContent = () => {
           </p>
           <ol>
             <li>Добавьте скрипт виджета на страницу сайта.</li>
-            <li>Передайте <code>apiBaseUrl</code>, <code>apiKey</code> и контейнер для рендера чата.</li>
+            <li>Передайте <code>data-api-base</code>, <code>data-api-key</code> и опциональные настройки UI.</li>
             <li>Проверьте отправку сообщений и отображение поля <code>answer</code> в интерфейсе.</li>
           </ol>
           <pre>
             <code>{WIDGET_CONNECTOR_EXAMPLE}</code>
           </pre>
+          <p>
+            Для “исходящего” сообщения по таймеру используйте атрибуты <code>data-proactive-message</code> и{' '}
+            <code>data-proactive-delay-ms</code> (в миллисекундах). Если нужно автоматически раскрывать окно при таком
+            сообщении, добавьте <code>data-proactive-open="true"</code>.
+          </p>
           <p>
             Для production не публикуйте ключ в открытом фронтенде: используйте серверный прокси или подписанные
             короткоживущие токены доступа.
