@@ -153,21 +153,21 @@ const TEMPLATE_TYPE_SELECT_OPTIONS = [
     ),
   },
   {
+    value: 'content_factory',
+    label: (
+      <span className="select-option-label-with-badge">
+        Контент-завод
+        <span className="beta-badge">BETA</span>
+      </span>
+    ),
+  },
+  {
     value: 'ai_logist',
     disabled: true,
     label: (
       <span className="select-option-label-with-badge">
         ИИ Логист
         <span className="beta-badge">В разработке</span>
-      </span>
-    ),
-  },
-  {
-    value: 'content_factory',
-    label: (
-      <span className="select-option-label-with-badge">
-        Контент-завод
-        <span className="beta-badge">MVP</span>
       </span>
     ),
   },
