@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 import json
 import logging
 import re
@@ -56,6 +57,147 @@ class TemplateRuntimeService:
         if not isinstance(template_config, dict):
             return True
         return bool(template_config.get("enable_chat_freeze", True))
+
+    @staticmethod
+    def _sales_workflow_completion_mode(template_config: dict[str, Any] | None) -> str:
+        if not isinstance(template_config, dict):
+            return "auto_finish_on_signal"
+        mode = str(template_config.get("workflow_completion_mode") or "auto_finish_on_signal").strip().lower()
+        if mode not in {"auto_finish_on_signal", "continue_dialog"}:
+            return "auto_finish_on_signal"
+        return mode
+
+    @staticmethod
+    def _is_sales_terminal_state(state: str) -> bool:
+        normalized = str(state or "").strip().upper()
+        return normalized in {"HANDOFF_CRM", "REPLIED_NEGATIVE", "NO_REPLY", "SKIPPED"}
+
+    @staticmethod
+    def _resolve_sales_score_scale(template_config: dict[str, Any] | None) -> int:
+        if not isinstance(template_config, dict):
+            return 100
+        raw = template_config.get("lead_score_scale", 100)
+        try:
+            scale = int(raw)
+        except (TypeError, ValueError):
+            return 100
+        if scale not in {10, 100}:
+            return 100
+        return scale
+
+    @staticmethod
+    def _clamp_score_0_100(value: float) -> float:
+        return min(100.0, max(0.0, float(value)))
+
+    @staticmethod
+    def _to_display_score(score_0_100: float, *, score_scale: int) -> float | int:
+        if score_scale == 10:
+            return round(TemplateRuntimeService._clamp_score_0_100(score_0_100) / 10.0, 1)
+        return int(round(TemplateRuntimeService._clamp_score_0_100(score_0_100)))
+
+    @staticmethod
+    def _normalize_model_score(value: Any, *, score_scale: int, default_0_100: float) -> float:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return TemplateRuntimeService._clamp_score_0_100(default_0_100)
+        normalized = numeric * 10.0 if score_scale == 10 else numeric
+        return TemplateRuntimeService._clamp_score_0_100(normalized)
+
+    @staticmethod
+    def _default_heat_score_from_temperature(lead_temperature: str) -> float:
+        normalized = str(lead_temperature or "").strip().lower()
+        if normalized == "hot":
+            return 85.0
+        if normalized == "cold":
+            return 30.0
+        return 60.0
+
+    def _build_sales_lead_profile(
+        self,
+        *,
+        qualification: dict[str, Any],
+        previous_profile: dict[str, Any] | None,
+        score_scale: int,
+    ) -> dict[str, Any]:
+        confidence = self._clamp_score_0_100(float(qualification.get("confidence") or 0.0) * 100.0)
+        heat = self._normalize_model_score(
+            qualification.get("lead_heat_score"),
+            score_scale=score_scale,
+            default_0_100=self._default_heat_score_from_temperature(str(qualification.get("lead_temperature") or "warm")),
+        )
+        resilience = self._normalize_model_score(
+            qualification.get("resilience_score"),
+            score_scale=score_scale,
+            default_0_100=55.0,
+        )
+        engagement = self._normalize_model_score(
+            qualification.get("engagement_score"),
+            score_scale=score_scale,
+            default_0_100=confidence,
+        )
+        fresh_overall = self._clamp_score_0_100(heat * 0.45 + resilience * 0.2 + engagement * 0.35)
+
+        prev_overall = None
+        if isinstance(previous_profile, dict):
+            prev_raw = previous_profile.get("lead_score_0_100")
+            try:
+                prev_overall = self._clamp_score_0_100(float(prev_raw))
+            except (TypeError, ValueError):
+                prev_overall = None
+        overall_0_100 = fresh_overall if prev_overall is None else self._clamp_score_0_100(prev_overall * 0.65 + fresh_overall * 0.35)
+
+        delta = 0.0 if prev_overall is None else round(overall_0_100 - prev_overall, 2)
+        if delta >= 4.0:
+            trend = "warming"
+        elif delta <= -4.0:
+            trend = "cooling"
+        else:
+            trend = "stable"
+
+        if overall_0_100 >= 80:
+            bucket = "very_hot"
+        elif overall_0_100 >= 65:
+            bucket = "warm"
+        elif overall_0_100 >= 45:
+            bucket = "neutral"
+        else:
+            bucket = "cold"
+
+        return {
+            "score_scale": score_scale,
+            "lead_score": self._to_display_score(overall_0_100, score_scale=score_scale),
+            "lead_score_0_100": round(overall_0_100, 2),
+            "lead_heat_score": self._to_display_score(heat, score_scale=score_scale),
+            "lead_heat_score_0_100": round(heat, 2),
+            "resilience_score": self._to_display_score(resilience, score_scale=score_scale),
+            "resilience_score_0_100": round(resilience, 2),
+            "engagement_score": self._to_display_score(engagement, score_scale=score_scale),
+            "engagement_score_0_100": round(engagement, 2),
+            "trend": trend,
+            "delta_0_100": delta,
+            "bucket": bucket,
+        }
+
+    @staticmethod
+    def _format_sales_lead_profile(profile: dict[str, Any] | None) -> str:
+        if not isinstance(profile, dict):
+            return ""
+        score_scale = int(profile.get("score_scale") or 100)
+        lead_score = profile.get("lead_score")
+        heat = profile.get("lead_heat_score")
+        resilience = profile.get("resilience_score")
+        engagement = profile.get("engagement_score")
+        trend = str(profile.get("trend") or "stable")
+        bucket = str(profile.get("bucket") or "neutral")
+        return (
+            "Портрет лида:\n"
+            f"- Общий score: {lead_score} / {score_scale}\n"
+            f"- Прогретость: {heat} / {score_scale}\n"
+            f"- Устойчивость к возражениям: {resilience} / {score_scale}\n"
+            f"- Вовлеченность: {engagement} / {score_scale}\n"
+            f"- Тренд: {trend}, сегмент: {bucket}"
+        )
 
     async def execute(
         self,
@@ -718,7 +860,10 @@ class TemplateRuntimeService:
     ) -> TemplateExecutionResult:
         runtime_context = runtime_context or {}
         contact_key = self._resolve_sales_contact_key(template_config=template_config)
+        workflow_completion_mode = self._sales_workflow_completion_mode(template_config)
+        lead_score_scale = self._resolve_sales_score_scale(template_config)
         current_sales_state = "DISCOVERED"
+        previous_profile: dict[str, Any] | None = None
         if agent_id and user_external_id:
             await self._ensure_sales_contact_exists(
                 agent_id=agent_id,
@@ -730,12 +875,47 @@ class TemplateRuntimeService:
                 user_external_id=user_external_id,
                 source_chat_id=contact_key,
             )
+            metadata = await self._load_sales_contact_metadata(
+                agent_id=agent_id,
+                user_external_id=user_external_id,
+                source_chat_id=contact_key,
+            )
+            if isinstance(metadata.get("lead_profile"), dict):
+                previous_profile = metadata.get("lead_profile")
         recent_history: list[dict[str, Any]] = []
         if agent_id and user_external_id:
             recent_history = await self._load_recent_channel_history(
                 agent_id=agent_id,
                 user_external_id=user_external_id,
                 source_channel=source_channel,
+            )
+        if (
+            workflow_completion_mode == "auto_finish_on_signal"
+            and self._is_sales_terminal_state(current_sales_state)
+        ):
+            terminal_state = (current_sales_state or "SKIPPED").strip().upper()
+            return TemplateExecutionResult(
+                answer=(
+                    "Диалог уже завершен на предыдущем этапе, "
+                    "дополнительный прогрев не требуется."
+                ),
+                sources=[],
+                tool_events=[
+                    {
+                        "tool_name": "sales_workflow_guard",
+                        "tool_args_hash": None,
+                        "tool_status": "workflow_finished_noop",
+                        "latency_ms": 0,
+                        "crm_provider": None,
+                        "source_channel": source_channel,
+                        "user_external_id": mask_external_id(user_external_id),
+                        "ok": True,
+                        "idempotent_replay": True,
+                        "idempotency_key": None,
+                        "error": None,
+                        "state": terminal_state,
+                    }
+                ],
             )
         lead_initiated_private_dialog = bool(runtime_context.get("lead_initiated_private_dialog"))
         if lead_initiated_private_dialog:
@@ -747,6 +927,10 @@ class TemplateRuntimeService:
                 "lead_temperature": "hot",
                 "stage_hint": "discovery",
                 "handoff_ready": False,
+                "workflow_outcome": "continue",
+                "lead_heat_score": 85 if lead_score_scale == 100 else 8.5,
+                "resilience_score": 70 if lead_score_scale == 100 else 7.0,
+                "engagement_score": 90 if lead_score_scale == 100 else 9.0,
             }
         else:
             qualification = await self.qualify_message(
@@ -756,11 +940,74 @@ class TemplateRuntimeService:
                 chat_portrait=chat_portrait,
                 current_sales_state=current_sales_state,
                 recent_history=recent_history,
+                workflow_completion_mode=workflow_completion_mode,
+                lead_score_scale=lead_score_scale,
+            )
+        lead_profile = self._build_sales_lead_profile(
+            qualification=qualification,
+            previous_profile=previous_profile,
+            score_scale=lead_score_scale,
+        )
+        qualification["lead_profile"] = lead_profile
+        if agent_id and user_external_id:
+            await self._update_sales_contact_profile(
+                agent_id=agent_id,
+                user_external_id=user_external_id,
+                source_chat_id=contact_key,
+                profile=lead_profile,
+                qualification=qualification,
             )
         intent = qualification.get("intent", "unsure")
         decision = str(qualification.get("decision") or "ignore").strip().lower()
+        workflow_outcome = str(qualification.get("workflow_outcome") or "continue").strip().lower()
         confidence = float(qualification.get("confidence") or 0.0)
         min_confidence = float(template_config.get("min_confidence") or 0.75)
+
+        if decision == "finish":
+            if agent_id and user_external_id:
+                transition_target = None
+                transition_reason = "workflow_finished"
+                if current_sales_state == "REPLIED_POSITIVE":
+                    transition_target = "HANDOFF_CRM"
+                    transition_reason = "sale_closed_signal"
+                elif current_sales_state == "SENT":
+                    transition_target = "REPLIED_NEGATIVE" if workflow_outcome == "dialog_finished" else "REPLIED_POSITIVE"
+                    transition_reason = "dialog_finished_signal"
+                elif current_sales_state in {"DISCOVERED", "QUALIFIED", "QUEUED"}:
+                    transition_target = "SKIPPED"
+                    transition_reason = "dialog_finished_signal"
+                if transition_target:
+                    await self._transition_sales_state_safe(
+                        agent_id=agent_id,
+                        user_external_id=user_external_id,
+                        source_chat_id=contact_key,
+                        to_state=transition_target,
+                        reason=transition_reason,
+                        metadata={"qualification": qualification},
+                    )
+            finish_text = (
+                "Лид переведен в завершенный статус (продажа/окончание диалога). "
+                "Новые прогревающие сообщения отключены."
+            )
+            return TemplateExecutionResult(
+                answer=finish_text,
+                sources=[],
+                tool_events=[
+                    {
+                        "tool_name": "sales_workflow_finish",
+                        "tool_args_hash": None,
+                        "tool_status": "workflow_finished",
+                        "latency_ms": 0,
+                        "crm_provider": None,
+                        "source_channel": source_channel,
+                        "user_external_id": mask_external_id(user_external_id),
+                        "ok": True,
+                        "idempotent_replay": False,
+                        "idempotency_key": None,
+                        "error": None,
+                    }
+                ],
+            )
 
         if intent in {"do_not_contact", "non_target"} or decision == "ignore":
             skip_reason = f"intent:{intent}" if intent in {"do_not_contact", "non_target"} else "llm_ignore"
@@ -1085,6 +1332,8 @@ class TemplateRuntimeService:
         chat_portrait: str | None = None,
         current_sales_state: str = "DISCOVERED",
         recent_history: list[dict[str, Any]] | None = None,
+        workflow_completion_mode: str = "auto_finish_on_signal",
+        lead_score_scale: int = 100,
     ) -> dict[str, Any]:
         model = str(template_config.get("qualification_model") or "deepseek-chat").strip() or "deepseek-chat"
         product_name = str(template_config.get("sales_product_name") or "ваш продукт").strip() or "ваш продукт"
@@ -1104,6 +1353,18 @@ class TemplateRuntimeService:
             f"{(current_sales_state or 'DISCOVERED').strip().upper()}.\n"
             "Учитывай этап воронки, контекст и историю взаимодействия."
         )
+        if workflow_completion_mode == "auto_finish_on_signal":
+            instruction = (
+                f"{instruction}\n"
+                "3) finish_workflow - если продажа уже совершена или диалог нужно завершить без дальнейшего догрева."
+            )
+        instruction = (
+            f"{instruction}\n"
+            f"Для оценки лида верни числовые оценки по шкале 0-{lead_score_scale}: "
+            "lead_heat_score (прогретость), resilience_score (устойчивость к возражениям), "
+            "engagement_score (вовлеченность)."
+        )
+        max_score = 10 if lead_score_scale == 10 else 100
         if portrait_block:
             instruction = f"{instruction}\n\n{portrait_block}"
         if usp:
@@ -1123,6 +1384,9 @@ class TemplateRuntimeService:
                             "confidence": {"type": "number"},
                             "reason": {"type": "string"},
                             "lead_temperature": {"type": "string", "enum": ["cold", "warm", "hot"]},
+                            "lead_heat_score": {"type": "number", "minimum": 0, "maximum": max_score},
+                            "resilience_score": {"type": "number", "minimum": 0, "maximum": max_score},
+                            "engagement_score": {"type": "number", "minimum": 0, "maximum": max_score},
                             "stage_hint": {
                                 "type": "string",
                                 "enum": ["first_touch", "discovery", "value_pitch", "handoff"],
@@ -1150,6 +1414,26 @@ class TemplateRuntimeService:
                 },
             },
         ]
+        if workflow_completion_mode == "auto_finish_on_signal":
+            tools.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "finish_workflow",
+                        "description": "Завершить sales-воркфлоу: продажа закрыта или диалог окончательно завершен.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "intent": {"type": "string", "enum": ["workflow_completed"]},
+                                "confidence": {"type": "number"},
+                                "reason": {"type": "string"},
+                                "workflow_outcome": {"type": "string", "enum": ["sale_closed", "dialog_finished"]},
+                            },
+                            "required": ["intent", "confidence", "reason", "workflow_outcome"],
+                        },
+                    },
+                }
+            )
         completion = await ai_client.chat.completions.create(
             model=model,
             messages=[
@@ -1183,13 +1467,36 @@ class TemplateRuntimeService:
                 confidence = 0.0
             confidence = min(1.0, max(0.0, confidence))
             reason = str(payload.get("reason") or "").strip()[:500]
-            decision = "engage" if tool_name == "engage_lead" else "ignore"
+            if tool_name == "engage_lead":
+                decision = "engage"
+            elif tool_name == "finish_workflow":
+                decision = "finish"
+            else:
+                decision = "ignore"
             lead_temperature = str(payload.get("lead_temperature") or "warm").strip().lower()
             if lead_temperature not in {"cold", "warm", "hot"}:
                 lead_temperature = "warm"
             stage_hint = str(payload.get("stage_hint") or "first_touch").strip().lower()
             if stage_hint not in {"first_touch", "discovery", "value_pitch", "handoff"}:
                 stage_hint = "first_touch"
+            workflow_outcome = str(payload.get("workflow_outcome") or "continue").strip().lower()
+            if workflow_outcome not in {"continue", "sale_closed", "dialog_finished"}:
+                workflow_outcome = "continue"
+            lead_heat_score = self._normalize_model_score(
+                payload.get("lead_heat_score"),
+                score_scale=lead_score_scale,
+                default_0_100=self._default_heat_score_from_temperature(lead_temperature),
+            )
+            resilience_score = self._normalize_model_score(
+                payload.get("resilience_score"),
+                score_scale=lead_score_scale,
+                default_0_100=55.0,
+            )
+            engagement_score = self._normalize_model_score(
+                payload.get("engagement_score"),
+                score_scale=lead_score_scale,
+                default_0_100=confidence * 100.0,
+            )
             return {
                 "decision": decision,
                 "intent": intent,
@@ -1198,6 +1505,10 @@ class TemplateRuntimeService:
                 "lead_temperature": lead_temperature,
                 "stage_hint": stage_hint,
                 "handoff_ready": bool(payload.get("handoff_ready")),
+                "workflow_outcome": workflow_outcome,
+                "lead_heat_score": self._to_display_score(lead_heat_score, score_scale=lead_score_scale),
+                "resilience_score": self._to_display_score(resilience_score, score_scale=lead_score_scale),
+                "engagement_score": self._to_display_score(engagement_score, score_scale=lead_score_scale),
             }
 
         raw = (message.content or "").strip()
@@ -1214,6 +1525,10 @@ class TemplateRuntimeService:
                 "lead_temperature": "warm",
                 "stage_hint": "first_touch",
                 "handoff_ready": False,
+                "workflow_outcome": "continue",
+                "lead_heat_score": self._to_display_score(40.0, score_scale=lead_score_scale),
+                "resilience_score": self._to_display_score(50.0, score_scale=lead_score_scale),
+                "engagement_score": self._to_display_score(25.0, score_scale=lead_score_scale),
             }
 
         intent = str(parsed.get("intent") or "unsure").strip().lower()
@@ -1234,6 +1549,10 @@ class TemplateRuntimeService:
             "lead_temperature": "warm",
             "stage_hint": "first_touch",
             "handoff_ready": False,
+            "workflow_outcome": "continue",
+            "lead_heat_score": self._to_display_score(55.0, score_scale=lead_score_scale),
+            "resilience_score": self._to_display_score(50.0, score_scale=lead_score_scale),
+            "engagement_score": self._to_display_score(confidence * 100.0, score_scale=lead_score_scale),
         }
 
     async def retrieve_offer_context(
@@ -1278,6 +1597,7 @@ class TemplateRuntimeService:
         offer_type = str(template_config.get("sales_offer_type") or "услуга").strip() or "услуга"
         usp = str(template_config.get("sales_usp") or "").strip()
         stage_hint = str(qualification.get("stage_hint") or "first_touch").strip().lower()
+        lead_profile_block = self._format_sales_lead_profile(qualification.get("lead_profile"))
         context_parts = [
             f"Источник: {c.get('source', 'Unknown')}\nТекст: {c.get('text', '')}"
             for c in context_list
@@ -1302,6 +1622,8 @@ class TemplateRuntimeService:
         )
         if portrait_block:
             system_prompt = f"{system_prompt}\n\n{portrait_block}"
+        if lead_profile_block:
+            system_prompt = f"{system_prompt}\n\n{lead_profile_block}"
         if usp:
             system_prompt = f"{system_prompt}\n\nКлючевое УТП:\n{usp}"
         if history_block:
@@ -1411,6 +1733,7 @@ class TemplateRuntimeService:
             "idempotent_replay": False,
             "idempotency_key": None,
             "error": None if reason_code not in {"skipped_do_not_contact", "skipped_non_target", "skipped_low_confidence"} else reason or reason_code,
+            "lead_profile": qualification.get("lead_profile"),
         }
         return TemplateExecutionResult(answer=answer, sources=sources, tool_events=[event])
 
@@ -1458,6 +1781,79 @@ class TemplateRuntimeService:
             )
         except Exception:
             logger.exception("sales_manager FSM get_or_create failed")
+
+    async def _load_sales_contact_metadata(
+        self,
+        *,
+        agent_id: int,
+        user_external_id: str,
+        source_chat_id: str,
+    ) -> dict[str, Any]:
+        try:
+            async with async_session_maker() as session:
+                async with session.begin():
+                    row = await session.scalar(
+                        select(AgentSalesContact.metadata_json).where(
+                            AgentSalesContact.agent_id == agent_id,
+                            AgentSalesContact.user_external_id == user_external_id,
+                            AgentSalesContact.source_chat_id == source_chat_id,
+                        )
+                    )
+            if not row:
+                return {}
+            loaded = json.loads(row)
+            return loaded if isinstance(loaded, dict) else {}
+        except Exception:
+            logger.warning("sales_manager failed to load contact metadata")
+            return {}
+
+    async def _update_sales_contact_profile(
+        self,
+        *,
+        agent_id: int,
+        user_external_id: str,
+        source_chat_id: str,
+        profile: dict[str, Any],
+        qualification: dict[str, Any],
+    ) -> None:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        try:
+            async with async_session_maker() as session:
+                async with session.begin():
+                    row = await session.scalar(
+                        select(AgentSalesContact)
+                        .where(
+                            AgentSalesContact.agent_id == agent_id,
+                            AgentSalesContact.user_external_id == user_external_id,
+                            AgentSalesContact.source_chat_id == source_chat_id,
+                        )
+                        .with_for_update()
+                    )
+                    if row is None:
+                        return
+                    metadata: dict[str, Any] = {}
+                    if row.metadata_json:
+                        try:
+                            loaded = json.loads(row.metadata_json)
+                            if isinstance(loaded, dict):
+                                metadata = loaded
+                        except Exception:
+                            metadata = {}
+                    metadata["lead_profile"] = profile
+                    metadata["last_qualification"] = {
+                        "decision": qualification.get("decision"),
+                        "intent": qualification.get("intent"),
+                        "confidence": qualification.get("confidence"),
+                        "reason": qualification.get("reason"),
+                        "workflow_outcome": qualification.get("workflow_outcome"),
+                    }
+                    metadata["lead_profile_updated_at"] = now.isoformat()
+                    row.metadata_json = json.dumps(metadata, ensure_ascii=False)
+                    row.updated_at = now
+                    row.version = int(row.version or 1) + 1
+                    await session.flush()
+        except Exception:
+            logger.warning("sales_manager failed to persist lead profile")
 
     async def _transition_sales_state_safe(
         self,

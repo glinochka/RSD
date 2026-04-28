@@ -283,6 +283,8 @@ const SALES_DEFAULT_TEMPLATE_CONFIG = {
   sales_product_name: '',
   sales_offer_type: '',
   sales_usp: '',
+  workflow_completion_mode: 'auto_finish_on_signal',
+  lead_score_scale: 100,
   scan_scope: {
     include_chat_ids: [],
     exclude_chat_ids: [],
@@ -606,6 +608,8 @@ const CreateAgentContent = () => {
       sales_product_name: '',
       sales_offer_type: '',
       sales_usp: '',
+      workflow_completion_mode: 'auto_finish_on_signal',
+      lead_score_scale: 100,
       content_company_name: '',
       content_company_activity: '',
       content_brand_tone: '',
@@ -778,6 +782,8 @@ const CreateAgentContent = () => {
                 sales_product_name: values.sales_product_name.trim(),
                 sales_offer_type: values.sales_offer_type.trim(),
                 sales_usp: values.sales_usp?.trim() || '',
+                workflow_completion_mode: values.workflow_completion_mode?.trim() || 'auto_finish_on_signal',
+                lead_score_scale: Number(values.lead_score_scale) === 10 ? 10 : 100,
               }
             : selectedTemplate === 'content_factory'
               ? {
@@ -1936,6 +1942,42 @@ const CreateAgentContent = () => {
                   disabled={form.isSubmitting}
                   rows="3"
                 ></textarea>
+                <label htmlFor="workflow_completion_mode" className="mt-input">
+                  Завершение диалога:
+                </label>
+                <CustomSelect
+                  id="workflow_completion_mode"
+                  name="workflow_completion_mode"
+                  className="input-main"
+                  value={form.values.workflow_completion_mode}
+                  onChange={form.handleChange}
+                  options={[
+                    {
+                      value: 'auto_finish_on_signal',
+                      label: 'Продажа/окончание диалога (останавливать автопрогрев)',
+                    },
+                    {
+                      value: 'continue_dialog',
+                      label: 'Продолжать диалог по стадиям без авто-остановки',
+                    },
+                  ]}
+                  disabled={form.isSubmitting}
+                />
+                <label htmlFor="lead_score_scale" className="mt-input">
+                  Шкала оценки лида:
+                </label>
+                <CustomSelect
+                  id="lead_score_scale"
+                  name="lead_score_scale"
+                  className="input-main"
+                  value={String(form.values.lead_score_scale)}
+                  onChange={form.handleChange}
+                  options={[
+                    { value: '100', label: '0–100 (детальная)' },
+                    { value: '10', label: '0–10 (компактная)' },
+                  ]}
+                  disabled={form.isSubmitting}
+                />
                 <p className="help-text">
                   Агент будет сканировать сообщения в Telegram чатах и на каждом шаге принимать решение через
                   function-calling: писать или игнорировать лид. Далее диалог строится по стадиям и генерируется

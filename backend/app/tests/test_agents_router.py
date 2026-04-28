@@ -211,6 +211,8 @@ class TestAgentsCRUD:
         assert cfg["qualification_model"] == "deepseek-chat"
         assert cfg["generation_model"] == "deepseek-chat"
         assert cfg["min_confidence"] == 0.75
+        assert cfg["workflow_completion_mode"] == "auto_finish_on_signal"
+        assert cfg["lead_score_scale"] == 100
         assert cfg["dm_limits"]["per_minute"] == 3
         assert cfg["dm_limits"]["per_hour"] == 25
         assert cfg["dm_limits"]["per_day"] == 120
@@ -255,6 +257,42 @@ class TestAgentsCRUD:
 
         assert response.status_code == 422, f"Expected 422, got {response.status_code}: {response.text}"
         assert "template_config.dm_limits.per_minute" in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_create_empty_agent_sales_manager_invalid_workflow_completion_mode(self, client: AsyncClient, auth_headers):
+        """sales_manager отклоняет невалидную настройку завершения диалога."""
+        response = await client.post(
+            "/api/agents",
+            headers=auth_headers,
+            json={
+                "system_prompt": "Sales system prompt",
+                "template_type": "sales_manager",
+                "template_config": {
+                    "workflow_completion_mode": "invalid_mode",
+                },
+            },
+        )
+
+        assert response.status_code == 422, f"Expected 422, got {response.status_code}: {response.text}"
+        assert "template_config.workflow_completion_mode" in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_create_empty_agent_sales_manager_invalid_lead_score_scale(self, client: AsyncClient, auth_headers):
+        """sales_manager отклоняет невалидную шкалу score лида."""
+        response = await client.post(
+            "/api/agents",
+            headers=auth_headers,
+            json={
+                "system_prompt": "Sales system prompt",
+                "template_type": "sales_manager",
+                "template_config": {
+                    "lead_score_scale": 42,
+                },
+            },
+        )
+
+        assert response.status_code == 422, f"Expected 422, got {response.status_code}: {response.text}"
+        assert "template_config.lead_score_scale" in response.json()["detail"]
 
     @pytest.mark.asyncio
     async def test_create_empty_agent_crm_admin_default_v2_config(self, client: AsyncClient, auth_headers):

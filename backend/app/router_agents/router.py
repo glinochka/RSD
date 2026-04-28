@@ -95,6 +95,8 @@ DEFAULT_BOOKING_ALLOWED_TOOLS = [
 SALES_MODES = {"draft_only", "semi_auto", "auto"}
 SALES_ALLOWED_LANGUAGES = {"ru", "en"}
 SALES_CONFIRMATION_POLICIES = {"always_confirm", "confirm_risky", "never_confirm"}
+SALES_WORKFLOW_COMPLETION_MODES = {"auto_finish_on_signal", "continue_dialog"}
+SALES_SCORE_SCALES = {10, 100}
 SALES_DEFAULT_ALLOWED_TOOLS = [
     "schedule_dm",
     "skip_lead",
@@ -110,6 +112,8 @@ SALES_DEFAULT_CONFIG = {
     "sales_product_name": "",
     "sales_offer_type": "",
     "sales_usp": "",
+    "workflow_completion_mode": "auto_finish_on_signal",
+    "lead_score_scale": 100,
     "scan_scope": {
         "include_chat_ids": [],
         "exclude_chat_ids": [],
@@ -707,6 +711,27 @@ def _normalize_template_config(template_type: str, template_config: dict | None)
         sales_product_name = str(raw.get("sales_product_name") or SALES_DEFAULT_CONFIG["sales_product_name"]).strip()
         sales_offer_type = str(raw.get("sales_offer_type") or SALES_DEFAULT_CONFIG["sales_offer_type"]).strip()
         sales_usp = str(raw.get("sales_usp") or SALES_DEFAULT_CONFIG["sales_usp"]).strip()
+        workflow_completion_mode = str(
+            raw.get("workflow_completion_mode") or SALES_DEFAULT_CONFIG["workflow_completion_mode"]
+        ).strip().lower()
+        if workflow_completion_mode not in SALES_WORKFLOW_COMPLETION_MODES:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="template_config.workflow_completion_mode must be one of: auto_finish_on_signal, continue_dialog",
+            )
+        lead_score_scale_raw = raw.get("lead_score_scale", SALES_DEFAULT_CONFIG["lead_score_scale"])
+        try:
+            lead_score_scale = int(lead_score_scale_raw)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="template_config.lead_score_scale must be an integer",
+            ) from None
+        if lead_score_scale not in SALES_SCORE_SCALES:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="template_config.lead_score_scale must be one of: 10, 100",
+            )
         if len(sales_product_name) > 255 or len(sales_offer_type) > 128 or len(sales_usp) > 2000:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -867,6 +892,8 @@ def _normalize_template_config(template_type: str, template_config: dict | None)
             "sales_product_name": sales_product_name,
             "sales_offer_type": sales_offer_type,
             "sales_usp": sales_usp,
+            "workflow_completion_mode": workflow_completion_mode,
+            "lead_score_scale": lead_score_scale,
             "scan_scope": scan_scope,
             "dm_limits": dm_limits,
             "cooldown_days": cooldown_days,

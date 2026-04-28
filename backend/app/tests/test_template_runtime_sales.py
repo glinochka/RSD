@@ -406,3 +406,69 @@ async def test_sales_runtime_mark_contacted_returns_human_text(monkeypatch):
     assert result.tool_events
     assert result.tool_events[0]["tool_status"] == "marked_contacted"
     assert result.answer == human_dm
+
+
+@pytest.mark.asyncio
+async def test_sales_runtime_stops_when_contact_already_terminal(monkeypatch):
+    service = TemplateRuntimeService()
+    qualify_mock = AsyncMock(side_effect=AssertionError("qualify_message should not be called"))
+    monkeypatch.setattr(service, "qualify_message", qualify_mock)
+    monkeypatch.setattr(service, "_load_sales_contact_state", AsyncMock(return_value="HANDOFF_CRM"))
+    monkeypatch.setattr(service, "_load_recent_channel_history", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.services.template_runtime.get_sales_fsm_service", lambda: _FakeFSMService())
+
+    result = await service.execute(
+        template_type="sales_manager",
+        prompt="Ты sales-агент",
+        user_message="Когда можем созвониться?",
+        knowledge_scope_id=101,
+        template_config={"mode": "auto", "workflow_completion_mode": "auto_finish_on_signal"},
+        source_channel="telegram_userbot",
+        user_external_id="12345",
+        agent_id=77,
+    )
+
+    assert "Диалог уже завершен" in result.answer
+    assert result.tool_events
+    assert result.tool_events[0]["tool_status"] == "workflow_finished_noop"
+    assert qualify_mock.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_sales_runtime_finish_workflow_signal(monkeypatch):
+    service = TemplateRuntimeService()
+    monkeypatch.setattr(
+        service,
+        "qualify_message",
+        AsyncMock(
+            return_value={
+                "decision": "finish",
+                "intent": "workflow_completed",
+                "confidence": 0.99,
+                "reason": "лид подтвердил завершение",
+                "lead_temperature": "hot",
+                "stage_hint": "handoff",
+                "handoff_ready": True,
+                "workflow_outcome": "dialog_finished",
+            }
+        ),
+    )
+    monkeypatch.setattr(service, "_load_sales_contact_state", AsyncMock(return_value="SENT"))
+    monkeypatch.setattr(service, "_load_recent_channel_history", AsyncMock(return_value=[]))
+    monkeypatch.setattr(service, "_transition_sales_state_safe", AsyncMock(return_value=None))
+    monkeypatch.setattr("app.services.template_runtime.get_sales_fsm_service", lambda: _FakeFSMService())
+
+    result = await service.execute(
+        template_type="sales_manager",
+        prompt="Ты sales-агент",
+        user_message="Спасибо, мы уже все согласовали, можно закрывать",
+        knowledge_scope_id=101,
+        template_config={"mode": "auto", "workflow_completion_mode": "auto_finish_on_signal"},
+        source_channel="telegram_userbot",
+        user_external_id="12345",
+        agent_id=77,
+    )
+
+    assert "Лид переведен в завершенный статус" in result.answer
+    assert result.tool_events
+    assert result.tool_events[0]["tool_status"] == "workflow_finished"
