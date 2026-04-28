@@ -867,7 +867,7 @@
 .analytics-operations {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-lg);
+  gap: var(--spacing-xl);
 }
 
 .analytics-ops-kpis {
@@ -911,14 +911,23 @@
 .analytics-operations-header {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
-  gap: var(--spacing-base);
+  align-items: center;
+  gap: var(--spacing-lg);
   flex-wrap: wrap;
+  border: 1px solid color-mix(in srgb, var(--color-border) 70%, #c7d2fe 30%);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(140deg, #ffffff 0%, #f8faff 100%);
+  padding: var(--spacing-base) var(--spacing-lg);
+  box-shadow: 0 6px 22px rgba(15, 23, 42, 0.05);
+}
+
+.analytics-operations-header h3 {
+  margin: 0;
 }
 
 .analytics-operations-toolbar {
   display: flex;
-  gap: var(--spacing-sm);
+  gap: var(--spacing-base);
   align-items: center;
   flex-wrap: wrap;
 }
@@ -926,10 +935,151 @@
 .analytics-calendar-switch {
   display: inline-flex;
   gap: var(--spacing-xs);
+  padding: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-bg-light) 70%, #fff 30%);
+}
+
+.analytics-calendar-switch .btn {
+  min-width: 56px;
+  padding: 7px 14px;
+  border-color: transparent;
 }
 
 .analytics-calendar-switch--active {
+  background: #fff;
   border-color: var(--color-primary);
+  color: var(--color-primary);
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.22);
+}
+
+.analytics-date-picker {
+  position: relative;
+}
+
+.analytics-date-picker-trigger {
+  min-width: 230px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-base);
+  padding: 9px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: #fff;
+  cursor: pointer;
+  transition: border-color var(--transition-base), box-shadow var(--transition-base), transform 0.15s ease;
+}
+
+.analytics-date-picker-trigger:hover {
+  border-color: color-mix(in srgb, var(--color-primary) 40%, var(--color-border));
+}
+
+.analytics-date-picker-trigger--active,
+.analytics-date-picker-trigger:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.14);
+}
+
+.analytics-date-picker-trigger-label {
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-light);
+}
+
+.analytics-date-picker-trigger-value {
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  text-transform: capitalize;
+}
+
+.analytics-date-picker-popover {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  width: min(320px, 86vw);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-base);
+  background: #fff;
+  box-shadow: 0 20px 44px rgba(15, 23, 42, 0.18);
+  z-index: calc(var(--z-dropdown) + 5);
+}
+
+.analytics-date-picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-xs);
+  margin-bottom: var(--spacing-sm);
+}
+
+.analytics-date-picker-head strong {
+  text-transform: capitalize;
+}
+
+.analytics-date-picker-nav-btn {
+  min-width: 36px;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.analytics-date-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.analytics-date-picker-grid--weekday {
+  margin-bottom: 6px;
+}
+
+.analytics-date-picker-grid--weekday span {
+  text-align: center;
+  font-size: 11px;
+  color: var(--color-text-light);
+  font-weight: var(--font-weight-semibold);
+}
+
+.analytics-date-picker-grid--days {
+  gap: 4px;
+}
+
+.analytics-date-picker-day {
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  min-height: 34px;
+  background: transparent;
+  cursor: pointer;
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
+  transition: border-color var(--transition-fast), background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.analytics-date-picker-day:hover {
+  border-color: color-mix(in srgb, var(--color-primary) 30%, var(--color-border));
+  background: color-mix(in srgb, var(--color-primary) 8%, #fff);
+}
+
+.analytics-date-picker-day--muted {
+  opacity: 0.45;
+}
+
+.analytics-date-picker-day--today {
+  border-color: rgba(59, 130, 246, 0.35);
+}
+
+.analytics-date-picker-day--selected {
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 16%, #fff);
+  color: #1e3a8a;
+}
+
+.analytics-date-picker-today-btn {
+  margin-top: var(--spacing-sm);
+  width: 100%;
 }
 
 .analytics-calendar-date {
@@ -944,12 +1094,13 @@
 
 .analytics-ops-card {
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  padding: var(--spacing-base);
-  background: var(--color-bg);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-lg);
+  background: linear-gradient(160deg, #fff 0%, #f8fafc 100%);
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-sm);
+  gap: var(--spacing-base);
+  box-shadow: 0 5px 18px rgba(15, 23, 42, 0.05);
 }
 
 .analytics-ops-card--wide {
@@ -959,7 +1110,11 @@
 .analytics-ops-inline-form {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--spacing-xs);
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm);
+  border: 1px dashed color-mix(in srgb, var(--color-border) 70%, #cbd5e1 30%);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.75);
 }
 
 .analytics-ops-inline-form--service,
@@ -968,26 +1123,44 @@
   grid-template-columns: repeat(8, minmax(0, 1fr));
 }
 
+.analytics-operations .input-main,
+.analytics-operations select.input-main,
+.analytics-operations textarea.input-main {
+  min-height: 40px;
+  border-radius: var(--radius-md);
+}
+
+.analytics-operations input[type='time'] {
+  min-height: 40px;
+}
+
+.analytics-operations input[type='time']::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.72;
+}
+
 .analytics-ops-list {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-xs);
+  gap: var(--spacing-sm);
 }
 
 .analytics-ops-row {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
-  padding: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-base);
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: var(--spacing-sm);
+  background: #fff;
+  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.04);
 }
 
 .analytics-ops-row-main {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
 }
 
 .analytics-ops-row-main span {
@@ -998,13 +1171,15 @@
 .analytics-ops-row-actions {
   display: inline-flex;
   gap: var(--spacing-xs);
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .analytics-ops-aggregate-row {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: #fff;
-  padding: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-base);
   cursor: pointer;
   display: flex;
   justify-content: space-between;
@@ -1038,9 +1213,11 @@
 .analytics-admin-calendar-head {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--spacing-base);
-  margin-bottom: var(--spacing-base);
+  margin-bottom: var(--spacing-lg);
+  padding-bottom: var(--spacing-sm);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.25);
 }
 
 .analytics-admin-calendar-title {
@@ -1051,12 +1228,16 @@
   display: inline-flex;
   align-items: center;
   gap: var(--spacing-sm);
+  padding: 4px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: #fff;
 }
 
 .analytics-admin-calendar-grid {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 8px;
+  gap: 10px;
 }
 
 .analytics-admin-calendar-grid--weekday {
@@ -1072,14 +1253,21 @@
 
 .analytics-admin-calendar-day {
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  min-height: 76px;
-  padding: 8px;
+  border-radius: var(--radius-md);
+  min-height: 82px;
+  padding: 10px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
   text-align: left;
   cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.analytics-admin-calendar-day:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+  border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-border));
 }
 
 .analytics-admin-calendar-day span {
@@ -1092,15 +1280,15 @@
 }
 
 .analytics-admin-calendar-day--free {
-  background: #ffffff;
+  background: linear-gradient(160deg, #ffffff 0%, #f8fafc 100%);
 }
 
 .analytics-admin-calendar-day--light {
-  background: #dcfce7;
+  background: linear-gradient(160deg, #ecfdf3 0%, #dcfce7 100%);
 }
 
 .analytics-admin-calendar-day--busy {
-  background: #86efac;
+  background: linear-gradient(160deg, #bbf7d0 0%, #86efac 100%);
 }
 
 .analytics-admin-calendar-day--muted {
@@ -1149,7 +1337,8 @@
 .analytics-admin-day-modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(15, 23, 42, 0.45);
+  background: rgba(15, 23, 42, 0.58);
+  backdrop-filter: blur(4px);
   display: flex;
   justify-content: center;
   align-items: center;
@@ -1164,10 +1353,11 @@
   background: #fff;
   border-radius: var(--radius-lg);
   border: 1px solid var(--color-border);
-  padding: var(--spacing-lg);
+  padding: var(--spacing-xl);
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-base);
+  gap: var(--spacing-lg);
+  box-shadow: 0 24px 64px rgba(15, 23, 42, 0.25);
 }
 
 .analytics-admin-day-modal-head {
@@ -1184,7 +1374,15 @@
 .analytics-admin-day-modal-columns {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--spacing-base);
+  gap: var(--spacing-lg);
+}
+
+.analytics-admin-day-modal-section {
+  border: 1px solid color-mix(in srgb, var(--color-border) 65%, #dbeafe 35%);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-base);
+  background: linear-gradient(170deg, #ffffff 0%, #f8fafc 100%);
+  min-height: 0;
 }
 
 .analytics-admin-day-modal-section h5 {
@@ -1199,19 +1397,32 @@
 .analytics-admin-shift-ranges {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-xs);
+  gap: var(--spacing-sm);
 }
 
 .analytics-admin-shift-range-row {
   display: grid;
   grid-template-columns: 1fr 1fr auto;
-  gap: var(--spacing-xs);
+  gap: var(--spacing-sm);
+  align-items: center;
+}
+
+.analytics-admin-day-modal .input-main,
+.analytics-admin-day-modal select.input-main {
+  min-height: 40px;
+  border-radius: var(--radius-md);
+}
+
+.analytics-admin-day-modal input[type='time']::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.72;
 }
 
 .analytics-admin-day-modal-actions {
   display: flex;
-  gap: var(--spacing-xs);
+  gap: var(--spacing-sm);
   margin-top: var(--spacing-sm);
+  flex-wrap: wrap;
 }
 
 .analytics-occupancy-matrix {
@@ -1349,7 +1560,69 @@
     grid-template-columns: 1fr;
   }
 
+  .analytics-operations-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .analytics-operations-header {
+    align-items: stretch;
+    padding: var(--spacing-base);
+  }
+
+  .analytics-operations-toolbar {
+    width: 100%;
+  }
+
+  .analytics-calendar-switch {
+    width: 100%;
+  }
+
+  .analytics-calendar-switch .btn {
+    flex: 1;
+  }
+
+  .analytics-date-picker {
+    width: 100%;
+  }
+
+  .analytics-date-picker-trigger {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .analytics-date-picker-popover {
+    left: 0;
+    right: 0;
+    width: auto;
+  }
+
+  .analytics-ops-card {
+    padding: var(--spacing-base);
+  }
+
+  .analytics-ops-inline-form,
+  .analytics-ops-inline-form--service,
+  .analytics-ops-inline-form--schedule,
+  .analytics-ops-inline-form--appointment,
+  .analytics-admin-day-schedule-form {
+    grid-template-columns: 1fr;
+  }
+
+  .analytics-ops-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .analytics-ops-row-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
   .analytics-admin-day-modal-columns {
+    grid-template-columns: 1fr;
+  }
+
+  .analytics-admin-shift-range-row {
     grid-template-columns: 1fr;
   }
 

@@ -237,6 +237,130 @@ const BroadcastLimitSelect = ({ value, onChange, disabled, options }) => {
   );
 };
 
+const CalendarAnchorPicker = ({ value, onChange }) => {
+  const [open, setOpen] = useState(false);
+  const [viewMonth, setViewMonth] = useState(() => startOfDay(value || new Date()));
+  const rootRef = useRef(null);
+
+  useEffect(() => {
+    if (!value) return;
+    setViewMonth(startOfDay(value));
+  }, [value]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => {
+      if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const pickerAnchor = startOfDay(viewMonth || new Date());
+  const monthTitle = pickerAnchor.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
+  const firstDay = new Date(pickerAnchor.getFullYear(), pickerAnchor.getMonth(), 1);
+  const lastDay = new Date(pickerAnchor.getFullYear(), pickerAnchor.getMonth() + 1, 0);
+  const gridStart = startOfWeek(firstDay);
+  const gridEnd = endOfWeek(lastDay);
+  const monthDays = [];
+  for (let cursor = new Date(gridStart); cursor <= gridEnd; cursor.setDate(cursor.getDate() + 1)) {
+    monthDays.push(new Date(cursor));
+  }
+  const selectedDayKey = toDayKey(value);
+  const todayKey = toDayKey(new Date());
+  const triggerLabel = (value || new Date()).toLocaleDateString('ru-RU', {
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric',
+  });
+
+  return (
+    <div className="analytics-date-picker" ref={rootRef}>
+      <button
+        type="button"
+        className={`analytics-date-picker-trigger ${open ? 'analytics-date-picker-trigger--active' : ''}`}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={() => setOpen((prev) => !prev)}
+      >
+        <span className="analytics-date-picker-trigger-label">Дата</span>
+        <strong className="analytics-date-picker-trigger-value">{triggerLabel}</strong>
+      </button>
+
+      {open ? (
+        <div className="analytics-date-picker-popover" role="dialog" aria-label="Выбор даты">
+          <div className="analytics-date-picker-head">
+            <button
+              type="button"
+              className="btn btn-outline analytics-date-picker-nav-btn"
+              onClick={() => setViewMonth(new Date(pickerAnchor.getFullYear(), pickerAnchor.getMonth() - 1, 1))}
+            >
+              ←
+            </button>
+            <strong>{monthTitle}</strong>
+            <button
+              type="button"
+              className="btn btn-outline analytics-date-picker-nav-btn"
+              onClick={() => setViewMonth(new Date(pickerAnchor.getFullYear(), pickerAnchor.getMonth() + 1, 1))}
+            >
+              →
+            </button>
+          </div>
+
+          <div className="analytics-date-picker-grid analytics-date-picker-grid--weekday">
+            {['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map((weekday) => (
+              <span key={weekday}>{weekday}</span>
+            ))}
+          </div>
+          <div className="analytics-date-picker-grid analytics-date-picker-grid--days">
+            {monthDays.map((day) => {
+              const dayKey = toDayKey(day);
+              const isCurrentMonth = day.getMonth() === pickerAnchor.getMonth();
+              const isSelected = dayKey === selectedDayKey;
+              const isToday = dayKey === todayKey;
+              return (
+                <button
+                  key={dayKey}
+                  type="button"
+                  className={`analytics-date-picker-day ${!isCurrentMonth ? 'analytics-date-picker-day--muted' : ''} ${isSelected ? 'analytics-date-picker-day--selected' : ''} ${isToday ? 'analytics-date-picker-day--today' : ''}`}
+                  onClick={() => {
+                    const picked = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 12, 0, 0, 0);
+                    onChange(picked);
+                    setViewMonth(startOfDay(picked));
+                    setOpen(false);
+                  }}
+                >
+                  {day.getDate()}
+                </button>
+              );
+            })}
+          </div>
+
+          <button
+            type="button"
+            className="btn btn-outline analytics-date-picker-today-btn"
+            onClick={() => {
+              const today = startOfDay(new Date());
+              onChange(today);
+              setViewMonth(today);
+              setOpen(false);
+            }}
+          >
+            Сегодня
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
 const mapChatsPayload = (payload) => {
   const users = Array.isArray(payload?.users) ? payload.users : [];
   return users.map((user) => ({
@@ -1610,12 +1734,7 @@ const AgentDetailedAnalyticsPageContent = () => {
                       Week
                     </button>
                   </div>
-                  <input
-                    type="date"
-                    className="input-main analytics-calendar-date"
-                    value={toIsoInputValue(calendarAnchor).slice(0, 10)}
-                    onChange={(e) => setCalendarAnchor(new Date(`${e.target.value}T00:00:00`))}
-                  />
+                  <CalendarAnchorPicker value={calendarAnchor} onChange={setCalendarAnchor} />
                   <button type="button" className="btn btn-outline" onClick={loadOperationsDashboard} disabled={opsLoading}>
                     {opsLoading ? 'Обновление...' : 'Обновить'}
                   </button>
