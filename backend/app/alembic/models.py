@@ -358,6 +358,7 @@ class AdminService(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
     target_role: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    staff_id: Mapped[int | None] = mapped_column(ForeignKey("admin_staff.id", ondelete="SET NULL"), nullable=True, index=True)
     title: Mapped[str] = mapped_column(String(128), nullable=False)
     duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
     price_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
@@ -367,6 +368,7 @@ class AdminService(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
 
     agent: Mapped["Agent"] = relationship(back_populates="admin_services")
+    staff: Mapped["AdminStaff | None"] = relationship(foreign_keys=[staff_id])
     appointments: Mapped[list["AdminAppointment"]] = relationship(
         back_populates="service",
         cascade="all, delete-orphan",

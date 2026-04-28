@@ -488,6 +488,7 @@ class AdminTemplateResourceDeletePayload(AgentLookup):
 
 class AdminTemplateServiceCreatePayload(AgentLookup):
     target_role: str = Field(..., pattern="^(master|doctor)$", description="Целевая роль исполнителя")
+    staff_id: Optional[int] = Field(default=None, gt=0, description="ID конкретного сотрудника-исполнителя")
     title: str = Field(..., min_length=1, max_length=128, description="Название услуги")
     duration_minutes: int = Field(..., ge=1, le=24 * 60, description="Длительность услуги в минутах")
     price_minor: int = Field(default=0, ge=0, description="Стоимость в minor units")
@@ -497,6 +498,7 @@ class AdminTemplateServiceCreatePayload(AgentLookup):
 
 class AdminTemplateServiceUpdatePayload(AgentLookup):
     service_id: int = Field(..., gt=0, description="ID услуги")
+    staff_id: Optional[int] = Field(default=None, gt=0, description="ID конкретного сотрудника-исполнителя")
     title: Optional[str] = Field(default=None, min_length=1, max_length=128, description="Название услуги")
     duration_minutes: Optional[int] = Field(default=None, ge=1, le=24 * 60, description="Длительность услуги")
     price_minor: Optional[int] = Field(default=None, ge=0, description="Стоимость в minor units")

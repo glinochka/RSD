@@ -105,6 +105,7 @@ def _serialize_service(row: AdminService) -> dict[str, Any]:
         "id": row.id,
         "agent_id": row.agent_id,
         "target_role": row.target_role,
+        "staff_id": row.staff_id,
         "title": row.title,
         "duration_minutes": int(row.duration_minutes),
         "price_minor": int(row.price_minor or 0),
@@ -350,6 +351,7 @@ class LocalBookingProvider(BookingProvider):
         *,
         agent_id: int,
         target_role: str,
+        staff_id: int | None = None,
         title: str,
         duration_minutes: int,
         price_minor: int = 0,
@@ -368,6 +370,7 @@ class LocalBookingProvider(BookingProvider):
         row = AdminService(
             agent_id=agent_id,
             target_role=normalized_role.lower(),
+            staff_id=staff_id,
             title=normalized_title,
             duration_minutes=int(duration_minutes),
             price_minor=int(price_minor),
@@ -386,6 +389,7 @@ class LocalBookingProvider(BookingProvider):
         *,
         agent_id: int,
         service_id: int,
+        staff_id: int | None = None,
         title: str | None = None,
         duration_minutes: int | None = None,
         price_minor: int | None = None,
@@ -403,6 +407,8 @@ class LocalBookingProvider(BookingProvider):
                 if row is None:
                     raise ValueError("Service not found")
 
+                if staff_id is not None:
+                    row.staff_id = staff_id
                 if title is not None:
                     normalized_title = _normalize_string(title)
                     if not normalized_title:
@@ -532,7 +538,14 @@ class LocalBookingProvider(BookingProvider):
                                 AdminScheduleSlot.resource_id.in_(resource_rows),
                             )
                         )
-                if service_row.target_role:
+                if service_row.staff_id is not None and staff_id is None:
+                    conditions.append(
+                        or_(
+                            AdminScheduleSlot.staff_id.is_(None),
+                            AdminScheduleSlot.staff_id == service_row.staff_id,
+                        )
+                    )
+                elif service_row.target_role and staff_id is None:
                     staff_rows = (
                         await session.execute(
                             select(AdminStaff.id).where(

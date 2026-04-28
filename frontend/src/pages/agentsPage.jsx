@@ -25,6 +25,16 @@ const isPortraitFeatureEnabled = (agent) => {
   if (!cfg || typeof cfg !== 'object') return true;
   return cfg.enable_chat_portrait !== false;
 };
+const isSmartSearchEnabled = (agent) => {
+  const cfg = agent?.template_config;
+  if (!cfg || typeof cfg !== 'object') return true;
+  return cfg.enable_smart_search !== false;
+};
+const isChatFreezeEnabled = (agent) => {
+  const cfg = agent?.template_config;
+  if (!cfg || typeof cfg !== 'object') return true;
+  return cfg.enable_chat_freeze !== false;
+};
 const channelLabel = (channel) => {
   if (!channel) return 'Канал';
   if (channel.provider === 'telegram_bot') return 'Telegram бот';
@@ -36,6 +46,80 @@ const channelLabel = (channel) => {
   return channel.provider || 'Канал';
 };
 const WIDGET_TEMPLATE_TYPES = new Set(['qa', 'crm_admin']);
+
+const FeatureToggle = ({ checked, onChange, disabled, title, description, helpText }) => {
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const toggleRef = useRef(null);
+
+  useEffect(() => {
+    if (!isHelpOpen) return undefined;
+
+    const handlePointerDown = (event) => {
+      if (!toggleRef.current) return;
+      if (!toggleRef.current.contains(event.target)) {
+        setIsHelpOpen(false);
+      }
+    };
+
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setIsHelpOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('touchstart', handlePointerDown, { passive: true });
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('touchstart', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isHelpOpen]);
+
+  return (
+    <div
+      ref={toggleRef}
+      className={`feature-toggle ${checked ? 'feature-toggle--on' : ''} ${isHelpOpen ? 'feature-toggle--help-open' : ''}`}
+    >
+      <button
+        type="button"
+        className="feature-toggle__main"
+        onClick={() => {
+          onChange(!checked);
+          setIsHelpOpen(false);
+        }}
+        disabled={disabled}
+        aria-pressed={checked}
+        title={title}
+      >
+        <span className="feature-toggle__content">
+          <span className="feature-toggle__title">{title}</span>
+          {description ? <span className="feature-toggle__description">{description}</span> : null}
+        </span>
+        <span className="feature-toggle__switch" aria-hidden="true">
+          <span className="feature-toggle__thumb" />
+        </span>
+      </button>
+      <button
+        type="button"
+        className="feature-toggle__help"
+        aria-label={`Справка: ${title}`}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setIsHelpOpen((prev) => !prev);
+        }}
+      >
+        ?
+      </button>
+      <div className="feature-toggle__tooltip" role="note">
+        {helpText}
+      </div>
+    </div>
+  );
+};
 
 const AgentCard = ({ agent, isSelected, onManage, onDelete, onToggle }) => {
   const agentName = agent.bot_username || agent.name || 'Агент';
@@ -121,6 +205,8 @@ const AgentsPageContent = () => {
   const [isSavingPrompt, setIsSavingPrompt] = useState(false);
   const [isSavingWelcome, setIsSavingWelcome] = useState(false);
   const [isSavingPortraitFeature, setIsSavingPortraitFeature] = useState(false);
+  const [isSavingSmartSearch, setIsSavingSmartSearch] = useState(false);
+  const [isSavingChatFreeze, setIsSavingChatFreeze] = useState(false);
   const [isGeneratingPrompt, setIsGeneratingPrompt] = useState(false);
   const [isGeneratingWelcome, setIsGeneratingWelcome] = useState(false);
   const [isUploadingDocs, setIsUploadingDocs] = useState(false);
@@ -362,6 +448,70 @@ const AgentsPageContent = () => {
       showError(error?.message || 'Не удалось обновить настройку портрета');
     } finally {
       setIsSavingPortraitFeature(false);
+    }
+  };
+
+  const handleToggleSmartSearch = async (enabled) => {
+    if (!selectedBotId || !selectedAgent) return;
+    const currentConfig =
+      selectedAgent.template_config && typeof selectedAgent.template_config === 'object'
+        ? selectedAgent.template_config
+        : {};
+    const nextConfig = {
+      ...currentConfig,
+      enable_smart_search: Boolean(enabled),
+    };
+    setIsSavingSmartSearch(true);
+    try {
+      await agentService.update(selectedBotId, {
+        template_config: nextConfig,
+      });
+      setSelectedAgent((prev) =>
+        prev
+          ? {
+              ...prev,
+              template_config: nextConfig,
+            }
+          : prev
+      );
+      showSuccess(enabled ? 'Умный поиск включен' : 'Умный поиск отключен');
+      await refreshAgents();
+    } catch (error) {
+      showError(error?.message || 'Не удалось обновить настройку умного поиска');
+    } finally {
+      setIsSavingSmartSearch(false);
+    }
+  };
+
+  const handleToggleChatFreeze = async (enabled) => {
+    if (!selectedBotId || !selectedAgent) return;
+    const currentConfig =
+      selectedAgent.template_config && typeof selectedAgent.template_config === 'object'
+        ? selectedAgent.template_config
+        : {};
+    const nextConfig = {
+      ...currentConfig,
+      enable_chat_freeze: Boolean(enabled),
+    };
+    setIsSavingChatFreeze(true);
+    try {
+      await agentService.update(selectedBotId, {
+        template_config: nextConfig,
+      });
+      setSelectedAgent((prev) =>
+        prev
+          ? {
+              ...prev,
+              template_config: nextConfig,
+            }
+          : prev
+      );
+      showSuccess(enabled ? 'Функция заморозки чата включена' : 'Функция заморозки чата отключена');
+      await refreshAgents();
+    } catch (error) {
+      showError(error?.message || 'Не удалось обновить настройку заморозки чата');
+    } finally {
+      setIsSavingChatFreeze(false);
     }
   };
 
@@ -1076,15 +1226,29 @@ const AgentsPageContent = () => {
                   </div>
 
                   <div className="agent-management-block">
-                    <label className="channel-primary-checkbox portrait-feature-toggle">
-                      <input
-                        type="checkbox"
-                        checked={isPortraitFeatureEnabled(selectedAgent)}
-                        onChange={(event) => handleTogglePortraitFeature(event.target.checked)}
-                        disabled={isSavingPortraitFeature}
-                      />
-                      Включить функцию «Портрет чата»
-                    </label>
+                    <FeatureToggle
+                      checked={isPortraitFeatureEnabled(selectedAgent)}
+                      onChange={handleTogglePortraitFeature}
+                      disabled={isSavingPortraitFeature}
+                      title="Включить функцию «Портрет чата»"
+                      helpText="Когда включено, система обновляет портрет клиента и использует его в ответах."
+                    />
+                    <FeatureToggle
+                      checked={isSmartSearchEnabled(selectedAgent)}
+                      onChange={handleToggleSmartSearch}
+                      disabled={isSavingSmartSearch}
+                      title="Умный поиск"
+                      description="ON: LLM формирует RAG-запросы. OFF: в RAG отправляется исходный запрос и извлекается 6 чанков."
+                      helpText="Управляет логикой поиска в базе знаний: LLM-планирование запросов или прямой поиск по исходному сообщению."
+                    />
+                    <FeatureToggle
+                      checked={isChatFreezeEnabled(selectedAgent)}
+                      onChange={handleToggleChatFreeze}
+                      disabled={isSavingChatFreeze}
+                      title="Заморозка чата"
+                      description="Авто-передача диалога владельцу при неуверенном ответе агента."
+                      helpText="Если включено, агент может пометить диалог как требующий владельца и временно заморозить чат для пользователя."
+                    />
                   </div>
 
                   <div className="agent-management-block">

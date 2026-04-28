@@ -130,6 +130,7 @@ class CrmBookingProvider(BookingProvider):
         *,
         agent_id: int,
         target_role: str,
+        staff_id: int | None = None,
         title: str,
         duration_minutes: int,
         price_minor: int = 0,
@@ -139,6 +140,7 @@ class CrmBookingProvider(BookingProvider):
         return await self._local.create_service(
             agent_id=agent_id,
             target_role=target_role,
+            staff_id=staff_id,
             title=title,
             duration_minutes=duration_minutes,
             price_minor=price_minor,
@@ -151,6 +153,7 @@ class CrmBookingProvider(BookingProvider):
         *,
         agent_id: int,
         service_id: int,
+        staff_id: int | None = None,
         title: str | None = None,
         duration_minutes: int | None = None,
         price_minor: int | None = None,
@@ -160,6 +163,7 @@ class CrmBookingProvider(BookingProvider):
         return await self._local.update_service(
             agent_id=agent_id,
             service_id=service_id,
+            staff_id=staff_id,
             title=title,
             duration_minutes=duration_minutes,
             price_minor=price_minor,

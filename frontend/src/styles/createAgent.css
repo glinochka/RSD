@@ -618,3 +618,167 @@
     font-size: 16px; /* Prevents zoom on iOS */
   }
 }
+
+/* ─────────────────────────────────────────────────
+   Onboarding card carousel
+───────────────────────────────────────────────── */
+
+.onboarding-carousel {
+  overflow-x: auto;
+  overflow-y: visible;
+  padding-bottom: var(--spacing-sm);
+  margin-top: var(--spacing-base);
+  /* Custom scrollbar */
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+.onboarding-carousel::-webkit-scrollbar {
+  height: 5px;
+}
+.onboarding-carousel::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 4px;
+}
+
+.onboarding-carousel__track {
+  display: flex;
+  flex-direction: row;
+  gap: var(--spacing-base);
+  align-items: flex-start;
+  min-width: max-content;
+}
+
+/* Base card */
+.onboarding-card {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg, 12px);
+  padding: var(--spacing-base);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  position: relative;
+  min-width: 180px;
+  max-width: 210px;
+  flex-shrink: 0;
+  transition: box-shadow var(--transition-base);
+}
+.onboarding-card:hover {
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+
+/* Add card */
+.onboarding-card--add {
+  border-style: dashed;
+  border-color: var(--color-border);
+  background: transparent;
+  align-items: center;
+  justify-content: center;
+  min-height: 120px;
+  cursor: pointer;
+  color: var(--color-text-secondary, #888);
+  font-size: var(--font-size-sm);
+  gap: var(--spacing-xs, 4px);
+  transition: border-color var(--transition-base), color var(--transition-base);
+}
+.onboarding-card--add:hover:not(:disabled) {
+  border-color: var(--color-text);
+  color: var(--color-text);
+}
+.onboarding-card--add:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.onboarding-card__plus {
+  font-size: 1.6rem;
+  line-height: 1;
+  font-weight: 300;
+}
+.onboarding-card__add-label {
+  font-size: var(--font-size-sm);
+}
+
+/* Remove button */
+.onboarding-card__remove {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  background: none;
+  border: none;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--color-text-secondary, #888);
+  padding: 2px 4px;
+  border-radius: var(--radius-sm, 4px);
+  transition: color var(--transition-base), background var(--transition-base);
+}
+.onboarding-card__remove:hover:not(:disabled) {
+  color: var(--color-text);
+  background: var(--color-border);
+}
+
+/* Field inside card */
+.onboarding-card__field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.onboarding-card__label {
+  font-size: var(--font-size-xs, 11px);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary, #888);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 0;
+}
+.onboarding-card__input {
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-base);
+  font-size: var(--font-size-sm);
+  font-family: inherit;
+  background: var(--color-bg);
+  color: var(--color-text);
+  transition: border-color var(--transition-base);
+  width: 100%;
+  box-sizing: border-box;
+}
+.onboarding-card__input:focus {
+  outline: none;
+  border-color: var(--color-text);
+}
+.onboarding-card__input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Staff card min-height */
+.onboarding-card--staff {
+  padding-top: 28px;
+}
+
+/* Service card is slightly wider */
+.onboarding-card--service {
+  min-width: 200px;
+  max-width: 230px;
+  padding-top: 28px;
+}
+
+/* Custom select inside service card */
+.onboarding-card__select .custom-select-trigger.onboarding-card__select-trigger {
+  padding: 6px 28px 6px 8px;
+  font-size: var(--font-size-sm);
+  min-height: unset;
+  height: auto;
+}
+.onboarding-card__select .custom-select-dropdown {
+  min-width: 150px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.onboarding-card__select .custom-select-option {
+  font-size: var(--font-size-sm);
+  padding: 6px 10px;
+}

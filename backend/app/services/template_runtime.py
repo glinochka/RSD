@@ -45,6 +45,18 @@ class TemplateRuntimeService:
         normalized = (source_channel or "").strip().lower()
         return normalized in {"telegram_userbot", "whatsapp_userbot"}
 
+    @staticmethod
+    def _is_smart_search_enabled(template_config: dict[str, Any] | None) -> bool:
+        if not isinstance(template_config, dict):
+            return True
+        return bool(template_config.get("enable_smart_search", True))
+
+    @staticmethod
+    def _is_chat_freeze_enabled(template_config: dict[str, Any] | None) -> bool:
+        if not isinstance(template_config, dict):
+            return True
+        return bool(template_config.get("enable_chat_freeze", True))
+
     async def execute(
         self,
         *,
@@ -112,7 +124,8 @@ class TemplateRuntimeService:
                 user_message=user_message,
                 knowledge_scope_id=knowledge_scope_id,
                 chat_portrait=chat_portrait,
-                enable_owner_handoff=True,
+                enable_owner_handoff=self._is_chat_freeze_enabled(template_config),
+                enable_smart_search=self._is_smart_search_enabled(template_config),
             )
 
         if normalized == "lead_generation":
@@ -121,6 +134,7 @@ class TemplateRuntimeService:
                 user_message=user_message,
                 knowledge_scope_id=knowledge_scope_id,
                 chat_portrait=chat_portrait,
+                enable_smart_search=self._is_smart_search_enabled(template_config),
             )
 
         # Unknown template types should not break runtime.
@@ -130,6 +144,7 @@ class TemplateRuntimeService:
             user_message=user_message,
             knowledge_scope_id=knowledge_scope_id,
             chat_portrait=chat_portrait,
+            enable_smart_search=self._is_smart_search_enabled(template_config),
         )
 
     @staticmethod
@@ -594,8 +609,17 @@ class TemplateRuntimeService:
         knowledge_scope_id: int,
         chat_portrait: str | None = None,
         enable_owner_handoff: bool = False,
+        enable_smart_search: bool = True,
     ) -> TemplateExecutionResult:
-        context = await search_knowledge_base(user_message, agent_id=knowledge_scope_id)
+        if enable_smart_search:
+            context = await search_knowledge_base(user_message, agent_id=knowledge_scope_id)
+        else:
+            context = await search_knowledge_base(
+                user_message,
+                agent_id=knowledge_scope_id,
+                limit=6,
+                use_smart_search=False,
+            )
         context_list = context if isinstance(context, list) else []
         portrait_block = self._format_portrait_block(chat_portrait)
         effective_prompt = prompt.strip()
@@ -779,6 +803,7 @@ class TemplateRuntimeService:
                     user_message=user_message,
                     knowledge_scope_id=knowledge_scope_id,
                     chat_portrait=chat_portrait,
+                    enable_smart_search=self._is_smart_search_enabled(template_config),
                 )
                 qa_result.fallback_to_text = True
                 qa_result.fallback_reason = "sales_low_confidence_fallback"
@@ -825,6 +850,7 @@ class TemplateRuntimeService:
         context_list, sources = await self.retrieve_offer_context(
             user_message=user_message,
             knowledge_scope_id=knowledge_scope_id,
+            enable_smart_search=self._is_smart_search_enabled(template_config),
         )
         composed_dm = await self.compose_dm(
             prompt=prompt,
@@ -1215,8 +1241,17 @@ class TemplateRuntimeService:
         *,
         user_message: str,
         knowledge_scope_id: int,
+        enable_smart_search: bool = True,
     ) -> tuple[list[dict[str, Any]], list[str]]:
-        context = await search_knowledge_base(user_message, agent_id=knowledge_scope_id)
+        if enable_smart_search:
+            context = await search_knowledge_base(user_message, agent_id=knowledge_scope_id)
+        else:
+            context = await search_knowledge_base(
+                user_message,
+                agent_id=knowledge_scope_id,
+                limit=6,
+                use_smart_search=False,
+            )
         context_list = context if isinstance(context, list) else []
         normalized_context = [item for item in context_list if isinstance(item, dict)]
         sources: list[str] = []

@@ -554,6 +554,10 @@ def _normalize_template_config(template_type: str, template_config: dict | None)
     common_config: dict[str, object] = {}
     if "enable_chat_portrait" in raw:
         common_config["enable_chat_portrait"] = bool(raw.get("enable_chat_portrait"))
+    if "enable_smart_search" in raw:
+        common_config["enable_smart_search"] = bool(raw.get("enable_smart_search"))
+    if "enable_chat_freeze" in raw:
+        common_config["enable_chat_freeze"] = bool(raw.get("enable_chat_freeze"))
     if "portrait_model" in raw:
         portrait_model = str(raw.get("portrait_model") or "").strip()
         if portrait_model:
@@ -6370,6 +6374,7 @@ async def admin_template_services_create(
             row = await get_admin_booking_service().create_service(
                 agent_id=agent.id,
                 target_role=payload.target_role,
+                staff_id=payload.staff_id,
                 title=payload.title,
                 duration_minutes=payload.duration_minutes,
                 price_minor=payload.price_minor,
@@ -6396,6 +6401,7 @@ async def admin_template_services_update(
             row = await get_admin_booking_service().update_service(
                 agent_id=agent.id,
                 service_id=payload.service_id,
+                staff_id=payload.staff_id,
                 title=payload.title,
                 duration_minutes=payload.duration_minutes,
                 price_minor=payload.price_minor,

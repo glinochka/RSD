@@ -104,27 +104,33 @@ async def search_knowledge_base(
     *,
     max_queries: int = 3,
     max_chunks_per_query: int = 2,
+    use_smart_search: bool = True,
 ) -> List[Dict[str, Any]]:
     """Поиск по базе знаний с использованием актуального API query_points."""
     try:
-        planned_queries = await plan_rag_queries(query, max_queries=max_queries)
+        raw_query = (query or "").strip()
+        if not raw_query:
+            return []
+
+        planned_queries = (
+            await plan_rag_queries(raw_query, max_queries=max_queries)
+            if use_smart_search
+            else [raw_query]
+        )
         if not planned_queries:
             return []
 
         embedding_profile = get_active_embedding_profile()
-        effective_limit = max(
-            1,
-            min(
-                max_chunks_per_query,
-                2,
-                limit,
-            ),
-        )
+        if use_smart_search:
+            effective_limit = max(1, min(max_chunks_per_query, 2, limit))
+        else:
+            effective_limit = max(1, min(limit, 6))
 
         results: list[dict[str, Any]] = []
         seen_keys: set[tuple[str, str]] = set()
 
-        for planned_query in planned_queries[:3]:
+        max_planned_queries = 3 if use_smart_search else 1
+        for planned_query in planned_queries[:max_planned_queries]:
             dense_vector = await run_in_cpu_pool(embed_dense_for_query, planned_query)
 
             search_filter = models.Filter(

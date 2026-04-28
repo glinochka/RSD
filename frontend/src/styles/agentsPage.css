@@ -496,39 +496,150 @@
   font-size: var(--font-size-sm);
 }
 
-.portrait-feature-toggle {
+.feature-toggle {
+  width: 100%;
   border: 1px solid color-mix(in srgb, var(--color-primary) 28%, var(--color-border));
   border-radius: var(--radius-md);
-  padding: var(--spacing-sm) var(--spacing-base);
   background: color-mix(in srgb, var(--color-primary) 6%, var(--color-bg));
   transition: border-color var(--transition-base), background-color var(--transition-base), box-shadow var(--transition-base);
-  cursor: pointer;
-  user-select: none;
+  position: relative;
 }
 
-.portrait-feature-toggle:hover {
+.feature-toggle:hover {
   border-color: color-mix(in srgb, var(--color-primary) 48%, var(--color-border));
   background: color-mix(in srgb, var(--color-primary) 10%, var(--color-bg));
 }
 
-.portrait-feature-toggle input {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--color-primary);
-  cursor: pointer;
-}
-
-.portrait-feature-toggle:has(input:focus-visible) {
+.feature-toggle:focus-within {
   box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.14);
 }
 
+.feature-toggle__main {
+  width: 100%;
+  border: none;
+  border-radius: inherit;
+  background: transparent;
+  padding: var(--spacing-sm) calc(var(--spacing-base) + 34px) var(--spacing-sm) var(--spacing-base);
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  text-align: left;
+}
+
+.feature-toggle__main:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.feature-toggle__content {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+
+.feature-toggle__title {
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
+.feature-toggle__description {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-light);
+}
+
+.feature-toggle__switch {
+  width: 46px;
+  height: 26px;
+  border-radius: 999px;
+  background: #c5ced9;
+  position: relative;
+  flex-shrink: 0;
+  transition: background-color var(--transition-base);
+}
+
+.feature-toggle--on .feature-toggle__switch {
+  background: var(--color-primary);
+}
+
+.feature-toggle__thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: var(--shadow-sm);
+  transition: transform var(--transition-base);
+}
+
+.feature-toggle--on .feature-toggle__thumb {
+  transform: translateX(20px);
+}
+
+.feature-toggle__help {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 38%, var(--color-border));
+  background: #ffffff;
+  color: var(--color-primary);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+
+.feature-toggle__help:hover {
+  background: color-mix(in srgb, var(--color-primary) 8%, #ffffff);
+}
+
+.feature-toggle__tooltip {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(360px, calc(100vw - 48px));
+  padding: var(--spacing-sm);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: #ffffff;
+  box-shadow: var(--shadow-md);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  line-height: 1.35;
+  opacity: 0;
+  transform: translateY(-4px);
+  pointer-events: none;
+  transition: opacity var(--transition-base), transform var(--transition-base);
+}
+
+.feature-toggle:hover .feature-toggle__tooltip,
+.feature-toggle:focus-within .feature-toggle__tooltip,
+.feature-toggle--help-open .feature-toggle__tooltip {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
 @supports not (background: color-mix(in srgb, white 50%, black)) {
-  .portrait-feature-toggle {
+  .feature-toggle {
     border-color: var(--color-border);
     background: var(--color-bg-light);
   }
 
-  .portrait-feature-toggle:hover {
+  .feature-toggle:hover {
     border-color: var(--color-primary);
   }
 }
