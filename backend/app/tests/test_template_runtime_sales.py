@@ -59,13 +59,14 @@ class _FakeFSMService:
 @pytest.mark.asyncio
 async def test_sales_runtime_draft_only(monkeypatch):
     service = TemplateRuntimeService()
-    calls = {"n": 0}
 
     async def fake_create(**kwargs):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            return _completion('{"intent":"target_hot","confidence":0.93,"reason":"прямой спрос"}')
-        return _completion("Здравствуйте! Могу помочь с решением под ваш кейс. Хотите кратко покажу варианты?")
+        return _completion(
+            '{"decision":"engage","intent":"target_hot","confidence":0.93,"reason":"прямой спрос",'
+            '"lead_temperature":"hot","lead_heat_score":85,"resilience_score":70,"engagement_score":93,'
+            '"stage_hint":"discovery","handoff_ready":false,"workflow_outcome":"continue",'
+            '"composed_message":"Здравствуйте! Могу помочь с решением под ваш кейс. Хотите кратко покажу варианты?"}'
+        )
 
     async def fake_search(query, agent_id):
         return [{"source": "kb://offer", "text": "Мы автоматизируем продажи и поддержку."}]
@@ -95,7 +96,12 @@ async def test_sales_runtime_skip_low_confidence(monkeypatch):
     service = TemplateRuntimeService()
 
     async def fake_create(**kwargs):
-        return _completion('{"intent":"target_warm","confidence":0.31,"reason":"слабый сигнал"}')
+        return _completion(
+            '{"decision":"engage","intent":"target_warm","confidence":0.31,"reason":"слабый сигнал",'
+            '"lead_temperature":"warm","lead_heat_score":55,"resilience_score":50,"engagement_score":31,'
+            '"stage_hint":"first_touch","handoff_ready":false,"workflow_outcome":"continue",'
+            '"composed_message":"Возможно, вам будет интересно узнать о наших решениях."}'
+        )
 
     async def fake_search(query, agent_id):
         return [{"source": "kb://offer", "text": "context"}]
@@ -128,9 +134,12 @@ async def test_sales_runtime_function_call_schedule_dm(monkeypatch, mock_db_sess
     async def fake_create(**kwargs):
         calls["n"] += 1
         if calls["n"] == 1:
-            return _completion('{"intent":"target_hot","confidence":0.99,"reason":"явный запрос"}')
-        if calls["n"] == 2:
-            return _completion("Здравствуйте! Могу предложить решение под ваш запрос.")
+            return _completion(
+                '{"decision":"engage","intent":"target_hot","confidence":0.99,"reason":"явный запрос",'
+                '"lead_temperature":"hot","lead_heat_score":90,"resilience_score":80,"engagement_score":99,'
+                '"stage_hint":"discovery","handoff_ready":false,"workflow_outcome":"continue",'
+                '"composed_message":"Здравствуйте! Могу предложить решение под ваш запрос."}'
+            )
         return _completion_with_tool_call(
             "schedule_dm",
             '{"text":"Здравствуйте! Могу предложить решение под ваш запрос.","target_user_external_id":"12345"}',
@@ -334,14 +343,18 @@ async def test_lead_generation_does_not_enable_owner_handoff(monkeypatch):
 @pytest.mark.asyncio
 async def test_sales_runtime_private_inbound_skips_target_check(monkeypatch):
     service = TemplateRuntimeService()
-    qualify_mock = AsyncMock(side_effect=AssertionError("qualify_message should not be called"))
-    monkeypatch.setattr(service, "qualify_message", qualify_mock)
+    unified_mock = AsyncMock(side_effect=AssertionError("_qualify_and_compose_unified should not be called"))
+    monkeypatch.setattr(service, "_qualify_and_compose_unified", unified_mock)
     monkeypatch.setattr(service, "retrieve_offer_context", AsyncMock(return_value=([], [])))
     monkeypatch.setattr(service, "compose_dm", AsyncMock(return_value="Спасибо за сообщение! Могу показать подход под ваш кейс."))
     monkeypatch.setattr(
         service,
         "_execute_sales_tools",
-        AsyncMock(return_value=SimpleNamespace(answer="Спасибо за сообщение! Могу показать подход под ваш кейс.", sources=[], tool_events=[])),
+        AsyncMock(return_value=SimpleNamespace(answer="Спасибо за сообщение! Могу показать подход под ваш кейс.", sources=[], tool_events=[{
+            "tool_name": "sales_outreach_action",
+            "tool_status": "sent_auto",
+            "ok": True,
+        }])),
     )
     monkeypatch.setattr("app.services.template_runtime.get_sales_fsm_service", lambda: _FakeFSMService())
 
@@ -350,7 +363,7 @@ async def test_sales_runtime_private_inbound_skips_target_check(monkeypatch):
         prompt="Ты sales-агент",
         user_message="Добрый день, занимаетесь автоматизацией?",
         knowledge_scope_id=101,
-        template_config={"mode": "auto"},
+        template_config={"mode": "auto", "allowed_tools": ["send_message"]},
         source_channel="telegram_userbot",
         user_external_id="12345",
         agent_id=77,
@@ -358,7 +371,7 @@ async def test_sales_runtime_private_inbound_skips_target_check(monkeypatch):
     )
 
     assert result.answer.startswith("Спасибо за сообщение!")
-    assert qualify_mock.await_count == 0
+    assert unified_mock.await_count == 0
 
 
 @pytest.mark.asyncio
@@ -367,21 +380,27 @@ async def test_sales_runtime_mark_contacted_returns_human_text(monkeypatch):
     human_dm = "Здравствуйте! Да, занимаемся автоматизацией бизнес-процессов. Подскажите ваш кейс?"
     monkeypatch.setattr(
         service,
-        "qualify_message",
+        "_qualify_and_compose_unified",
         AsyncMock(
             return_value={
-                "decision": "engage",
-                "intent": "target_hot",
-                "confidence": 0.98,
-                "reason": "явный интерес",
-                "lead_temperature": "hot",
-                "stage_hint": "discovery",
-                "handoff_ready": False,
+                "qualification": {
+                    "decision": "engage",
+                    "intent": "target_hot",
+                    "confidence": 0.98,
+                    "reason": "явный интерес",
+                    "lead_temperature": "hot",
+                    "stage_hint": "discovery",
+                    "handoff_ready": False,
+                    "workflow_outcome": "continue",
+                    "lead_heat_score": 90,
+                    "resilience_score": 80,
+                    "engagement_score": 98,
+                },
+                "composed_dm": human_dm,
             }
         ),
     )
     monkeypatch.setattr(service, "retrieve_offer_context", AsyncMock(return_value=([], [])))
-    monkeypatch.setattr(service, "compose_dm", AsyncMock(return_value=human_dm))
     monkeypatch.setattr(
         "app.services.template_runtime.ai_client.chat.completions.create",
         AsyncMock(return_value=_completion_with_tool_call("mark_contacted", '{"channel":"telegram_userbot"}')),
@@ -439,20 +458,27 @@ async def test_sales_runtime_finish_workflow_signal(monkeypatch):
     service = TemplateRuntimeService()
     monkeypatch.setattr(
         service,
-        "qualify_message",
+        "_qualify_and_compose_unified",
         AsyncMock(
             return_value={
-                "decision": "finish",
-                "intent": "workflow_completed",
-                "confidence": 0.99,
-                "reason": "лид подтвердил завершение",
-                "lead_temperature": "hot",
-                "stage_hint": "handoff",
-                "handoff_ready": True,
-                "workflow_outcome": "dialog_finished",
+                "qualification": {
+                    "decision": "finish",
+                    "intent": "workflow_completed",
+                    "confidence": 0.99,
+                    "reason": "лид подтвердил завершение",
+                    "lead_temperature": "hot",
+                    "stage_hint": "handoff",
+                    "handoff_ready": True,
+                    "workflow_outcome": "dialog_finished",
+                    "lead_heat_score": 95,
+                    "resilience_score": 85,
+                    "engagement_score": 99,
+                },
+                "composed_dm": "Спасибо за подтверждение!",
             }
         ),
     )
+    monkeypatch.setattr(service, "retrieve_offer_context", AsyncMock(return_value=([], [])))
     monkeypatch.setattr(service, "_load_sales_contact_state", AsyncMock(return_value="SENT"))
     monkeypatch.setattr(service, "_load_recent_channel_history", AsyncMock(return_value=[]))
     monkeypatch.setattr(service, "_transition_sales_state_safe", AsyncMock(return_value=None))

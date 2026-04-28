@@ -317,11 +317,21 @@ class TemplateRuntimeService:
                 source_channel=source_channel,
             )
 
+        min_message_length = 15
+        important_keywords = ["купить", "заказать", "хочу", "нужно", "интересует", "цена", "стоимость"]
+        is_important = (
+            len(text) >= min_message_length 
+            or any(keyword in text.lower() for keyword in important_keywords)
+        )
+        
         previous = await self._load_chat_portrait(
             agent_id=agent_id,
             user_external_id=user_external_id,
             source_channel=source_channel,
         )
+        
+        if not is_important and previous:
+            return previous
         cfg = template_config or {}
         model = str(
             cfg.get("portrait_model") or cfg.get("generation_model") or "deepseek-chat"
@@ -532,8 +542,9 @@ class TemplateRuntimeService:
         messages.extend(chat_history)
         messages.append({"role": "user", "content": user_message})
         tool_events: list[dict[str, Any]] = []
+        max_iterations = 3
 
-        for _ in range(4):
+        for iteration in range(max_iterations):
             completion = await ai_client.chat.completions.create(
                 model="deepseek-chat",
                 messages=messages,
@@ -559,6 +570,7 @@ class TemplateRuntimeService:
                 }
             )
 
+            all_tools_succeeded = True
             for tool_call in tool_calls:
                 tool_name = tool_call.function.name
                 raw_args = tool_call.function.arguments or "{}"
@@ -623,6 +635,7 @@ class TemplateRuntimeService:
                 except Exception as exc:
                     safe_error = redact_pii_text(str(exc))
                     tool_result = {"ok": False, "error": safe_error}
+                    all_tools_succeeded = False
                     tool_events.append(
                         {
                             "tool_name": tool_name,
@@ -647,6 +660,17 @@ class TemplateRuntimeService:
                         "content": json.dumps(tool_result, ensure_ascii=False),
                     }
                 )
+
+            if all_tools_succeeded and iteration == max_iterations - 1:
+                final_completion = await ai_client.chat.completions.create(
+                    model="deepseek-chat",
+                    messages=messages,
+                    temperature=0.2,
+                )
+                final_content = (final_completion.choices[0].message.content or "").strip()
+                cleaned = final_content.replace("#", "").replace("*", "").strip()
+                if cleaned:
+                    return TemplateExecutionResult(answer=cleaned, sources=[], tool_events=tool_events)
 
         return TemplateExecutionResult(
             answer="Не удалось завершить CRM-операцию за допустимое число шагов. Попробуйте уточнить запрос.",
@@ -918,6 +942,11 @@ class TemplateRuntimeService:
                 ],
             )
         lead_initiated_private_dialog = bool(runtime_context.get("lead_initiated_private_dialog"))
+        context_list, sources = await self.retrieve_offer_context(
+            user_message=user_message,
+            knowledge_scope_id=knowledge_scope_id,
+            enable_smart_search=self._is_smart_search_enabled(template_config),
+        )
         if lead_initiated_private_dialog:
             qualification = {
                 "decision": "engage",
@@ -932,10 +961,21 @@ class TemplateRuntimeService:
                 "resilience_score": 70 if lead_score_scale == 100 else 7.0,
                 "engagement_score": 90 if lead_score_scale == 100 else 9.0,
             }
-        else:
-            qualification = await self.qualify_message(
+            composed_dm = await self.compose_dm(
                 prompt=prompt,
                 user_message=user_message,
+                qualification=qualification,
+                context_list=context_list,
+                template_config=template_config,
+                chat_portrait=chat_portrait,
+                current_sales_state=current_sales_state,
+                recent_history=recent_history,
+            )
+        else:
+            unified = await self._qualify_and_compose_unified(
+                prompt=prompt,
+                user_message=user_message,
+                context_list=context_list,
                 template_config=template_config,
                 chat_portrait=chat_portrait,
                 current_sales_state=current_sales_state,
@@ -943,6 +983,9 @@ class TemplateRuntimeService:
                 workflow_completion_mode=workflow_completion_mode,
                 lead_score_scale=lead_score_scale,
             )
+            qualification = unified["qualification"]
+            composed_dm = unified["composed_dm"]
+
         lead_profile = self._build_sales_lead_profile(
             qualification=qualification,
             previous_profile=previous_profile,
@@ -1094,51 +1137,41 @@ class TemplateRuntimeService:
                 metadata={"qualification": qualification},
             )
             current_sales_state = "QUALIFIED"
-        context_list, sources = await self.retrieve_offer_context(
-            user_message=user_message,
-            knowledge_scope_id=knowledge_scope_id,
-            enable_smart_search=self._is_smart_search_enabled(template_config),
-        )
-        composed_dm = await self.compose_dm(
-            prompt=prompt,
-            user_message=user_message,
-            qualification=qualification,
-            context_list=context_list,
-            template_config=template_config,
-            chat_portrait=chat_portrait,
-            current_sales_state=current_sales_state,
-            recent_history=recent_history,
-        )
-        tool_driven = await self._execute_sales_tools(
-            prompt=prompt,
-            user_message=user_message,
-            qualification=qualification,
-            composed_dm=composed_dm,
-            template_config=template_config,
-            source_channel=source_channel,
-            user_external_id=user_external_id,
-            agent_id=agent_id,
-            sources=sources,
-            chat_portrait=chat_portrait,
-        )
-        if tool_driven is not None:
-            if agent_id and user_external_id and tool_driven.tool_events:
-                await self._apply_fsm_from_tool_events(
-                    agent_id=agent_id,
-                    user_external_id=user_external_id,
-                    source_chat_id=contact_key,
-                    tool_events=tool_driven.tool_events,
-                )
-                if bool(qualification.get("handoff_ready")) and current_sales_state == "REPLIED_POSITIVE":
-                    await self._transition_sales_state_safe(
+
+        allowed_tools_raw = template_config.get("allowed_tools")
+        allowed_tools = allowed_tools_raw if isinstance(allowed_tools_raw, list) else None
+        if allowed_tools:
+            tool_driven = await self._execute_sales_tools(
+                prompt=prompt,
+                user_message=user_message,
+                qualification=qualification,
+                composed_dm=composed_dm,
+                template_config=template_config,
+                source_channel=source_channel,
+                user_external_id=user_external_id,
+                agent_id=agent_id,
+                sources=sources,
+                chat_portrait=chat_portrait,
+            )
+            if tool_driven is not None:
+                if agent_id and user_external_id and tool_driven.tool_events:
+                    await self._apply_fsm_from_tool_events(
                         agent_id=agent_id,
                         user_external_id=user_external_id,
                         source_chat_id=contact_key,
-                        to_state="HANDOFF_CRM",
-                        reason="llm_handoff_ready",
-                        metadata={"qualification": qualification},
+                        tool_events=tool_driven.tool_events,
                     )
-            return tool_driven
+                    if bool(qualification.get("handoff_ready")) and current_sales_state == "REPLIED_POSITIVE":
+                        await self._transition_sales_state_safe(
+                            agent_id=agent_id,
+                            user_external_id=user_external_id,
+                            source_chat_id=contact_key,
+                            to_state="HANDOFF_CRM",
+                            reason="llm_handoff_ready",
+                            metadata={"qualification": qualification},
+                        )
+                return tool_driven
+
         result = self.emit_action(
             template_config=template_config,
             qualification=qualification,
@@ -1218,8 +1251,9 @@ class TemplateRuntimeService:
             },
         ]
         tool_events: list[dict[str, Any]] = []
+        max_tool_iterations = 2
 
-        for _ in range(3):
+        for iteration in range(max_tool_iterations):
             completion = await ai_client.chat.completions.create(
                 model=generation_model,
                 messages=messages,
@@ -1305,8 +1339,14 @@ class TemplateRuntimeService:
                         "content": json.dumps(tool_result, ensure_ascii=False),
                     }
                 )
-            if tool_events:
-                break
+            
+            if tool_events and iteration < max_tool_iterations - 1:
+                has_actionable_tools = any(
+                    e.get("tool_name") in {"send_message", "queue_for_approval", "skip_lead"}
+                    for e in tool_events
+                )
+                if has_actionable_tools:
+                    break
 
         if not tool_events:
             return None
@@ -1322,6 +1362,156 @@ class TemplateRuntimeService:
         else:
             answer = composed_dm
         return TemplateExecutionResult(answer=answer, sources=sources, tool_events=tool_events)
+
+    async def _qualify_and_compose_unified(
+        self,
+        *,
+        prompt: str,
+        user_message: str,
+        context_list: list[dict[str, Any]],
+        template_config: dict[str, Any],
+        chat_portrait: str | None = None,
+        current_sales_state: str = "DISCOVERED",
+        recent_history: list[dict[str, Any]] | None = None,
+        workflow_completion_mode: str = "auto_finish_on_signal",
+        lead_score_scale: int = 100,
+    ) -> dict[str, Any]:
+        model = str(template_config.get("qualification_model") or "deepseek-chat").strip() or "deepseek-chat"
+        product_name = str(template_config.get("sales_product_name") or "ваш продукт").strip() or "ваш продукт"
+        offer_type = str(template_config.get("sales_offer_type") or "услуга").strip() or "услуга"
+        usp = str(template_config.get("sales_usp") or "").strip()
+        history_block = self._format_sales_history(recent_history)
+        portrait_block = self._format_portrait_block(chat_portrait)
+        context_parts = [
+            f"Источник: {c.get('source', 'Unknown')}\nТекст: {c.get('text', '')}"
+            for c in context_list
+        ]
+        context_text = "\n\n---\n\n".join(context_parts) if context_parts else "Контекст не найден."
+        stage_instruction = self._sales_stage_instruction(
+            current_sales_state=(current_sales_state or "DISCOVERED").strip().upper(),
+            stage_hint="first_touch",
+        )
+        
+        instruction = (
+            f"{prompt}\n\n"
+            "Ты AI sales-менеджер с двумя задачами:\n"
+            "1) Квалификация лида: понять, стоит ли писать человеку в личку.\n"
+            "2) Генерация сообщения: составить следующее сообщение диалога.\n\n"
+            f"Продукт: {product_name}. Категория: {offer_type}.\n"
+            f"Текущая стадия CRM/FSM: {(current_sales_state or 'DISCOVERED').strip().upper()}\n"
+            f"Инструкция по стадии: {stage_instruction}\n\n"
+            "Верни JSON со структурой:\n"
+            "{\n"
+            '  "decision": "engage|ignore|finish",\n'
+            '  "intent": "target_hot|target_warm|non_target|do_not_contact|unsure|workflow_completed",\n'
+            '  "confidence": 0.0-1.0,\n'
+            '  "reason": "краткое обоснование",\n'
+            '  "lead_temperature": "cold|warm|hot",\n'
+            f'  "lead_heat_score": 0-{lead_score_scale},\n'
+            f'  "resilience_score": 0-{lead_score_scale},\n'
+            f'  "engagement_score": 0-{lead_score_scale},\n'
+            '  "stage_hint": "first_touch|discovery|value_pitch|handoff",\n'
+            '  "handoff_ready": true|false,\n'
+            '  "workflow_outcome": "continue|sale_closed|dialog_finished",\n'
+            '  "composed_message": "текст следующего сообщения (чистый текст, без markdown)"\n'
+            "}\n\n"
+            "Все сообщения должны быть ненавязчивыми, человеческими и полезными. "
+            "Не выдумывай факты про клиента. "
+            "Длина сообщения: 1-4 предложения."
+        )
+        if workflow_completion_mode == "auto_finish_on_signal":
+            instruction = (
+                f"{instruction}\n"
+                "Если продажа уже совершена или диалог нужно завершить без дальнейшего догрева, "
+                'используй decision="finish".'
+            )
+        if portrait_block:
+            instruction = f"{instruction}\n\n{portrait_block}"
+        if usp:
+            instruction = f"{instruction}\n\nКлючевое УТП:\n{usp}"
+        if history_block:
+            instruction = f"{instruction}\n\nНедавняя история диалога:\n{history_block}"
+
+        user_prompt = (
+            f"Исходное сообщение в чате:\n{user_message}\n\n"
+            f"Контекст продукта (RAG):\n{context_text}\n\n"
+            "Проанализируй сообщение и верни JSON с квалификацией и текстом следующего сообщения."
+        )
+
+        try:
+            completion = await ai_client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": instruction},
+                    {"role": "user", "content": user_prompt},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.2,
+            )
+            content = (completion.choices[0].message.content or "").strip()
+            parsed = json.loads(content)
+        except Exception:
+            logger.exception("sales_manager unified qualify+compose failed, fallback to safe defaults")
+            parsed = {}
+
+        decision = str(parsed.get("decision") or "ignore").strip().lower()
+        if decision not in {"engage", "ignore", "finish"}:
+            decision = "ignore"
+        intent = str(parsed.get("intent") or "unsure").strip().lower()
+        allowed_intents = {"target_hot", "target_warm", "non_target", "do_not_contact", "unsure", "workflow_completed"}
+        if intent not in allowed_intents:
+            intent = "unsure"
+        try:
+            confidence = float(parsed.get("confidence"))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        confidence = min(1.0, max(0.0, confidence))
+        reason = str(parsed.get("reason") or "").strip()[:500]
+        lead_temperature = str(parsed.get("lead_temperature") or "warm").strip().lower()
+        if lead_temperature not in {"cold", "warm", "hot"}:
+            lead_temperature = "warm"
+        stage_hint = str(parsed.get("stage_hint") or "first_touch").strip().lower()
+        if stage_hint not in {"first_touch", "discovery", "value_pitch", "handoff"}:
+            stage_hint = "first_touch"
+        workflow_outcome = str(parsed.get("workflow_outcome") or "continue").strip().lower()
+        if workflow_outcome not in {"continue", "sale_closed", "dialog_finished"}:
+            workflow_outcome = "continue"
+        lead_heat_score = self._normalize_model_score(
+            parsed.get("lead_heat_score"),
+            score_scale=lead_score_scale,
+            default_0_100=self._default_heat_score_from_temperature(lead_temperature),
+        )
+        resilience_score = self._normalize_model_score(
+            parsed.get("resilience_score"),
+            score_scale=lead_score_scale,
+            default_0_100=55.0,
+        )
+        engagement_score = self._normalize_model_score(
+            parsed.get("engagement_score"),
+            score_scale=lead_score_scale,
+            default_0_100=confidence * 100.0,
+        )
+        composed_message = str(parsed.get("composed_message") or "").replace("#", "").replace("*", "").strip()
+        if not composed_message:
+            composed_message = "Интересное предложение! Подскажите, вам актуально?"
+
+        qualification = {
+            "decision": decision,
+            "intent": intent,
+            "confidence": confidence,
+            "reason": reason,
+            "lead_temperature": lead_temperature,
+            "stage_hint": stage_hint,
+            "handoff_ready": bool(parsed.get("handoff_ready")),
+            "workflow_outcome": workflow_outcome,
+            "lead_heat_score": self._to_display_score(lead_heat_score, score_scale=lead_score_scale),
+            "resilience_score": self._to_display_score(resilience_score, score_scale=lead_score_scale),
+            "engagement_score": self._to_display_score(engagement_score, score_scale=lead_score_scale),
+        }
+        return {
+            "qualification": qualification,
+            "composed_dm": composed_message[:1200],
+        }
 
     async def qualify_message(
         self,
