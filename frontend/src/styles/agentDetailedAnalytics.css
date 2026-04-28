@@ -1109,7 +1109,7 @@
 
 .analytics-ops-inline-form {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   gap: var(--spacing-sm);
   padding: var(--spacing-sm);
   border: 1px dashed color-mix(in srgb, var(--color-border) 70%, #cbd5e1 30%);
@@ -1120,14 +1120,25 @@
 .analytics-ops-inline-form--service,
 .analytics-ops-inline-form--schedule,
 .analytics-ops-inline-form--appointment {
-  grid-template-columns: repeat(8, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.analytics-ops-inline-form > * {
+  min-width: 0;
 }
 
 .analytics-operations .input-main,
 .analytics-operations select.input-main,
 .analytics-operations textarea.input-main {
+  width: 100%;
   min-height: 40px;
+  min-width: 0;
   border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+}
+
+.analytics-operations .input-main::placeholder {
+  font-size: 12px;
 }
 
 .analytics-operations input[type='time'] {
@@ -1173,6 +1184,15 @@
   gap: var(--spacing-xs);
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.analytics-operations .btn {
+  white-space: nowrap;
+}
+
+.analytics-ops-inline-form .btn {
+  width: 100%;
+  justify-content: center;
 }
 
 .analytics-ops-aggregate-row {
