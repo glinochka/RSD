@@ -13,6 +13,7 @@ export default defineConfig({
     outDir: 'dist',
     sourcemap: false,
     minify: true, // esbuild (default); use 'terser' only if terser is installed
+    cssCodeSplit: false,
     rollupOptions: {
       output: {
         manualChunks: {
