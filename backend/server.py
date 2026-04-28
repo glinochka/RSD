@@ -18,6 +18,7 @@ from app.config import settings
 from app.services.subscription_maintenance import downgrade_expired_subscriptions_once
 from app.services.reindex_jobs import run_reindex_worker_forever
 from app.services.content_factory_worker import get_content_factory_worker
+from app.services.sales.dm_outreach_worker import get_dm_outreach_worker
 from app.channels import UserbotManager, MaxBotManager, MaxUserbotManager, WhatsAppUserbotManager
 from app.qdrant.embeddings import get_active_dense_model_name, get_dense_vector_size
 from app.utils.internal_auth import is_request_secure
@@ -42,6 +43,8 @@ async def lifespan(app: FastAPI):
     whatsapp_userbot_task: asyncio.Task | None = None
     content_factory_worker = None
     content_factory_task: asyncio.Task | None = None
+    dm_outreach_worker = None
+    dm_outreach_task: asyncio.Task | None = None
 
     async def run_subscription_cron():
         while True:
@@ -113,6 +116,9 @@ async def lifespan(app: FastAPI):
         logger.info("ContentFactoryWorker enabled")
     else:
         logger.info("ContentFactoryWorker disabled via CONTENT_FACTORY_ENABLED")
+    dm_outreach_worker = get_dm_outreach_worker()
+    dm_outreach_task = asyncio.create_task(dm_outreach_worker.run_forever())
+    logger.info("DmOutreachWorker enabled")
 
     yield 
 
@@ -166,6 +172,14 @@ async def lifespan(app: FastAPI):
         content_factory_task.cancel()
         try:
             await content_factory_task
+        except asyncio.CancelledError:
+            pass
+    if dm_outreach_worker:
+        await dm_outreach_worker.shutdown()
+    if dm_outreach_task:
+        dm_outreach_task.cancel()
+        try:
+            await dm_outreach_task
         except asyncio.CancelledError:
             pass
 
