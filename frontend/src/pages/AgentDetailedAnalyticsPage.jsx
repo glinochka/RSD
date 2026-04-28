@@ -1198,7 +1198,7 @@ const AgentDetailedAnalyticsPageContent = () => {
     <div className="agent-analytics-page">
       <div className="agent-analytics-header">
         <div className="agent-analytics-header-main">
-          <h2>Детальная аналитика</h2>
+          <h2>Дашборд агента</h2>
           <p className="agent-analytics-header-subtitle">
             {agent?.bot_username ? `@${agent.bot_username}` : `Агент #${botId}`}
           </p>

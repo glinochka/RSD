@@ -1142,7 +1142,7 @@ const AgentsPageContent = () => {
                       className="btn btn-black analytics-btn"
                       onClick={handleOpenDetailedAnalytics}
                     >
-                      Детальная аналитика
+                     Дашборд агента
                     </button>
                   </div>
 

@@ -139,7 +139,7 @@ const StaffCard = ({ staff, onChange, onRemove, disabled, roleLabel }) => (
   </div>
 );
 
-const ServiceStaffSelect = ({ value, onChange, staffList, disabled }) => {
+const ServiceStaffSelect = ({ values = [], onChange, staffList, disabled }) => {
   const [isOpen, setIsOpen] = useState(false);
   const ref = useRef(null);
 
@@ -152,8 +152,13 @@ const ServiceStaffSelect = ({ value, onChange, staffList, disabled }) => {
     return () => document.removeEventListener('mousedown', handler);
   }, [isOpen]);
 
-  const selected = staffList.find((s) => s.localId === value);
-  const label = selected ? `${selected.firstName} ${selected.lastName}`.trim() || 'Без имени' : 'Не выбран';
+  const selectedIds = Array.isArray(values) ? values : [];
+  const selectedItems = staffList.filter((s) => selectedIds.includes(s.localId));
+  const label = selectedItems.length
+    ? selectedItems
+      .map((s) => `${s.firstName} ${s.lastName}`.trim() || 'Без имени')
+      .join(', ')
+    : 'Не выбраны';
 
   return (
     <div className={`custom-select onboarding-card__select ${disabled ? 'disabled' : ''}`} ref={ref}>
@@ -172,17 +177,23 @@ const ServiceStaffSelect = ({ value, onChange, staffList, disabled }) => {
         <div className="custom-select-dropdown" role="listbox">
           <button
             type="button"
-            className={`custom-select-option ${!value ? 'selected' : ''}`}
-            onClick={() => { onChange(null); setIsOpen(false); }}
+            className={`custom-select-option ${selectedIds.length === 0 ? 'selected' : ''}`}
+            onClick={() => onChange([])}
           >
-            Не выбран
+            Не выбраны
           </button>
           {staffList.map((s) => (
             <button
               key={s.localId}
               type="button"
-              className={`custom-select-option ${s.localId === value ? 'selected' : ''}`}
-              onClick={() => { onChange(s.localId); setIsOpen(false); }}
+              className={`custom-select-option ${selectedIds.includes(s.localId) ? 'selected' : ''}`}
+              onClick={() => {
+                const isSelected = selectedIds.includes(s.localId);
+                const next = isSelected
+                  ? selectedIds.filter((id) => id !== s.localId)
+                  : [...selectedIds, s.localId];
+                onChange(next);
+              }}
             >
               {`${s.firstName} ${s.lastName}`.trim() || 'Без имени'}
             </button>
@@ -241,10 +252,10 @@ const ServiceCard = ({ service, onChange, onRemove, staffList, disabled }) => (
       />
     </div>
     <div className="onboarding-card__field">
-      <label className="onboarding-card__label">Мастер</label>
+      <label className="onboarding-card__label">Мастера/врачи</label>
       <ServiceStaffSelect
-        value={service.staffLocalId}
-        onChange={(val) => onChange({ ...service, staffLocalId: val })}
+        values={service.staffLocalIds}
+        onChange={(vals) => onChange({ ...service, staffLocalIds: vals })}
         staffList={staffList}
         disabled={disabled}
       />
@@ -430,6 +441,80 @@ const CustomSelect = ({
           ))}
         </div>
       )}
+    </div>
+  );
+};
+
+const FeatureToggle = ({ checked, onChange, disabled, title, description, helpText }) => {
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const toggleRef = useRef(null);
+
+  useEffect(() => {
+    if (!isHelpOpen) return undefined;
+
+    const handlePointerDown = (event) => {
+      if (!toggleRef.current) return;
+      if (!toggleRef.current.contains(event.target)) {
+        setIsHelpOpen(false);
+      }
+    };
+
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setIsHelpOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('touchstart', handlePointerDown, { passive: true });
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('touchstart', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isHelpOpen]);
+
+  return (
+    <div
+      ref={toggleRef}
+      className={`feature-toggle ${checked ? 'feature-toggle--on' : ''} ${isHelpOpen ? 'feature-toggle--help-open' : ''}`}
+    >
+      <button
+        type="button"
+        className="feature-toggle__main"
+        onClick={() => {
+          onChange(!checked);
+          setIsHelpOpen(false);
+        }}
+        disabled={disabled}
+        aria-pressed={checked}
+        title={title}
+      >
+        <span className="feature-toggle__content">
+          <span className="feature-toggle__title">{title}</span>
+          {description ? <span className="feature-toggle__description">{description}</span> : null}
+        </span>
+        <span className="feature-toggle__switch" aria-hidden="true">
+          <span className="feature-toggle__thumb" />
+        </span>
+      </button>
+      <button
+        type="button"
+        className="feature-toggle__help"
+        aria-label={`Справка: ${title}`}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setIsHelpOpen((prev) => !prev);
+        }}
+      >
+        ?
+      </button>
+      <div className="feature-toggle__tooltip" role="note">
+        {helpText}
+      </div>
     </div>
   );
 };
@@ -752,15 +837,23 @@ const CreateAgentContent = () => {
           }
           for (const svc of serviceList) {
             if (!svc.title?.trim()) continue;
-            const resolvedStaffId = svc.staffLocalId ? (localIdToApiId[svc.staffLocalId] ?? null) : null;
-            await agentService.createAdminTemplateService({
-              agent_id: agentId,
-              target_role: staffRole,
-              staff_id: resolvedStaffId,
-              title: svc.title.trim(),
-              duration_minutes: Number(svc.duration) || 60,
-              price_minor: Math.round((Number(svc.price) || 0) * 100),
-            });
+            const selectedLocalIds = Array.isArray(svc.staffLocalIds) ? svc.staffLocalIds : [];
+            const resolvedStaffIds = selectedLocalIds
+              .map((localId) => localIdToApiId[localId])
+              .filter((id) => Number.isFinite(id));
+            const uniqueResolvedStaffIds = Array.from(new Set(resolvedStaffIds));
+            const staffIdsToCreate = uniqueResolvedStaffIds.length > 0 ? uniqueResolvedStaffIds : [null];
+
+            for (const resolvedStaffId of staffIdsToCreate) {
+              await agentService.createAdminTemplateService({
+                agent_id: agentId,
+                target_role: staffRole,
+                staff_id: resolvedStaffId,
+                title: svc.title.trim(),
+                duration_minutes: Number(svc.duration) || 60,
+                price_minor: Math.round((Number(svc.price) || 0) * 100),
+              });
+            }
           }
         }
 
@@ -1441,26 +1534,20 @@ const CreateAgentContent = () => {
 
                 <div className="admin-template-onboarding-block">
                   <h4 className="admin-template-onboarding-title">Дополнительные фичи (Stage 8)</h4>
-                  <label className="mt-input">
-                    <input
-                      type="checkbox"
-                      name="waitlist_enabled"
-                      checked={Boolean(form.values.waitlist_enabled)}
-                      onChange={form.handleChange}
-                      disabled={form.isSubmitting}
-                    />
-                    {' '}Включить waitlist с авто-подбором окон
-                  </label>
-                  <label className="mt-input">
-                    <input
-                      type="checkbox"
-                      name="reminder_enabled"
-                      checked={Boolean(form.values.reminder_enabled)}
-                      onChange={form.handleChange}
-                      disabled={form.isSubmitting}
-                    />
-                    {' '}Включить напоминания о визите
-                  </label>
+                  <FeatureToggle
+                    checked={Boolean(form.values.waitlist_enabled)}
+                    onChange={(enabled) => form.setFieldValue('waitlist_enabled', enabled)}
+                    disabled={form.isSubmitting}
+                    title="Включить waitlist с авто-подбором окон"
+                    helpText="Когда включено, агент сможет предлагать клиентам окна из waitlist при освобождении слотов."
+                  />
+                  <FeatureToggle
+                    checked={Boolean(form.values.reminder_enabled)}
+                    onChange={(enabled) => form.setFieldValue('reminder_enabled', enabled)}
+                    disabled={form.isSubmitting}
+                    title="Включить напоминания о визите"
+                    helpText="При включении отправляются напоминания клиенту по расписанию, заданному в offsets."
+                  />
                   <label htmlFor="reminder_offsets_hours" className="mt-input">
                     Reminder offsets (часы через запятую):
                   </label>
@@ -1473,16 +1560,13 @@ const CreateAgentContent = () => {
                     disabled={form.isSubmitting}
                     placeholder="24,2"
                   />
-                  <label className="mt-input">
-                    <input
-                      type="checkbox"
-                      name="manual_confirmation_enabled"
-                      checked={Boolean(form.values.manual_confirmation_enabled)}
-                      onChange={form.handleChange}
-                      disabled={form.isSubmitting}
-                    />
-                    {' '}Ручное подтверждение дорогих/долгих услуг
-                  </label>
+                  <FeatureToggle
+                    checked={Boolean(form.values.manual_confirmation_enabled)}
+                    onChange={(enabled) => form.setFieldValue('manual_confirmation_enabled', enabled)}
+                    disabled={form.isSubmitting}
+                    title="Ручное подтверждение дорогих/долгих услуг"
+                    helpText="Агент будет запрашивать ручное подтверждение при превышении ценового порога или длительности услуги."
+                  />
                   <label htmlFor="manual_confirmation_price_minor" className="mt-input">
                     Порог цены (minor):
                   </label>
@@ -1556,7 +1640,7 @@ const CreateAgentContent = () => {
                       addCard={() =>
                         setBeautyServices((prev) => [
                           ...prev,
-                          { localId: newServiceLocalId(), title: '', price: '', duration: '', staffLocalId: null },
+                          { localId: newServiceLocalId(), title: '', price: '', duration: '', staffLocalIds: [] },
                         ])
                       }
                     >
@@ -1621,7 +1705,7 @@ const CreateAgentContent = () => {
                       addCard={() =>
                         setDentalServices((prev) => [
                           ...prev,
-                          { localId: newServiceLocalId(), title: '', price: '', duration: '', staffLocalId: null },
+                          { localId: newServiceLocalId(), title: '', price: '', duration: '', staffLocalIds: [] },
                         ])
                       }
                     >
