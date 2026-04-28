@@ -161,7 +161,7 @@ async def test_sales_runtime_function_call_schedule_dm(monkeypatch, mock_db_sess
 
     assert result.tool_events
     assert result.tool_events[0]["tool_name"] == "schedule_dm"
-    assert result.tool_events[0]["tool_status"] == "draft_requires_review"
+    assert result.tool_events[0]["tool_status"] == "sent_auto"
 
 
 @pytest.mark.asyncio
@@ -329,3 +329,80 @@ async def test_lead_generation_does_not_enable_owner_handoff(monkeypatch):
     assert result.answer == "[OWNER_HANDOFF] Формальный маркер"
     assert result.requires_owner_handoff is False
     assert result.owner_handoff_reason is None
+
+
+@pytest.mark.asyncio
+async def test_sales_runtime_private_inbound_skips_target_check(monkeypatch):
+    service = TemplateRuntimeService()
+    qualify_mock = AsyncMock(side_effect=AssertionError("qualify_message should not be called"))
+    monkeypatch.setattr(service, "qualify_message", qualify_mock)
+    monkeypatch.setattr(service, "retrieve_offer_context", AsyncMock(return_value=([], [])))
+    monkeypatch.setattr(service, "compose_dm", AsyncMock(return_value="Спасибо за сообщение! Могу показать подход под ваш кейс."))
+    monkeypatch.setattr(
+        service,
+        "_execute_sales_tools",
+        AsyncMock(return_value=SimpleNamespace(answer="Спасибо за сообщение! Могу показать подход под ваш кейс.", sources=[], tool_events=[])),
+    )
+    monkeypatch.setattr("app.services.template_runtime.get_sales_fsm_service", lambda: _FakeFSMService())
+
+    result = await service.execute(
+        template_type="sales_manager",
+        prompt="Ты sales-агент",
+        user_message="Добрый день, занимаетесь автоматизацией?",
+        knowledge_scope_id=101,
+        template_config={"mode": "auto"},
+        source_channel="telegram_userbot",
+        user_external_id="12345",
+        agent_id=77,
+        runtime_context={"lead_initiated_private_dialog": True},
+    )
+
+    assert result.answer.startswith("Спасибо за сообщение!")
+    assert qualify_mock.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_sales_runtime_mark_contacted_returns_human_text(monkeypatch):
+    service = TemplateRuntimeService()
+    human_dm = "Здравствуйте! Да, занимаемся автоматизацией бизнес-процессов. Подскажите ваш кейс?"
+    monkeypatch.setattr(
+        service,
+        "qualify_message",
+        AsyncMock(
+            return_value={
+                "decision": "engage",
+                "intent": "target_hot",
+                "confidence": 0.98,
+                "reason": "явный интерес",
+                "lead_temperature": "hot",
+                "stage_hint": "discovery",
+                "handoff_ready": False,
+            }
+        ),
+    )
+    monkeypatch.setattr(service, "retrieve_offer_context", AsyncMock(return_value=([], [])))
+    monkeypatch.setattr(service, "compose_dm", AsyncMock(return_value=human_dm))
+    monkeypatch.setattr(
+        "app.services.template_runtime.ai_client.chat.completions.create",
+        AsyncMock(return_value=_completion_with_tool_call("mark_contacted", '{"channel":"telegram_userbot"}')),
+    )
+    monkeypatch.setattr("app.services.template_runtime.get_sales_fsm_service", lambda: _FakeFSMService())
+
+    result = await service.execute(
+        template_type="sales_manager",
+        prompt="Ты sales-агент",
+        user_message="Добрый день, вы занимаетесь автоматизацией?",
+        knowledge_scope_id=101,
+        template_config={
+            "mode": "draft_only",
+            "confirmation_policy": "always_confirm",
+            "allowed_tools": ["mark_contacted"],
+        },
+        source_channel="telegram_userbot",
+        user_external_id="12345",
+        agent_id=77,
+    )
+
+    assert result.tool_events
+    assert result.tool_events[0]["tool_status"] == "marked_contacted"
+    assert result.answer == human_dm

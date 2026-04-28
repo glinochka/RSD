@@ -95,7 +95,7 @@ const buildAdminDomainPromptAppendix = (values) => {
 };
 
 const SALES_DEFAULT_TEMPLATE_CONFIG = {
-  mode: 'draft_only',
+  mode: 'auto',
   qualification_model: 'deepseek-chat',
   generation_model: 'deepseek-chat',
   min_confidence: 0.75,
@@ -117,7 +117,7 @@ const SALES_DEFAULT_TEMPLATE_CONFIG = {
   allowed_languages: ['ru', 'en'],
   quiet_hours_local: '22:00-09:00',
   offer_profile_id: null,
-  confirmation_policy: 'confirm_risky',
+  confirmation_policy: 'never_confirm',
   allowed_tools: ['schedule_dm', 'skip_lead', 'record_lead_signal', 'create_crm_lead', 'mark_contacted'],
 };
 

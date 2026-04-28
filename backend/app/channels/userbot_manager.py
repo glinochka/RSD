@@ -119,6 +119,10 @@ async def _handle_private_message(
         welcome_message=welcome_message,
         user_display_name=user_display_name,
         telegram_peer_access_hash=peer_access_hash,
+        runtime_context={
+            "lead_initiated_private_dialog": template_type == "sales_manager",
+            "is_private_chat": True,
+        },
     )
     response = await get_message_processor().process(request)
     await event.respond(response.text)
@@ -135,6 +139,8 @@ async def _handle_chat_message(
 ) -> None:
     """Handle incoming messages from groups/chats for sales_manager scanning."""
     if event.is_private:
+        return
+    if not event.is_group:
         return
 
     # Skip system messages
@@ -181,6 +187,11 @@ async def _handle_chat_message(
         welcome_message=None,
         user_display_name=user_display_name,
         telegram_peer_access_hash=None,
+        skip_chat_portrait_update=True,
+        runtime_context={
+            "is_group_chat": True,
+            "lead_initiated_private_dialog": False,
+        },
     )
     
     # Note: Response is not sent to group, only processed/queued in backend

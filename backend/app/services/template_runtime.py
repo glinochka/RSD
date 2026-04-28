@@ -57,6 +57,7 @@ class TemplateRuntimeService:
         template_config: dict[str, Any] | None = None,
         source_channel: str | None = None,
         chat_portrait: str | None = None,
+        runtime_context: dict[str, Any] | None = None,
     ) -> TemplateExecutionResult:
         normalized = (template_type or "qa").strip().lower()
         if normalized == "function_calling":
@@ -94,6 +95,7 @@ class TemplateRuntimeService:
                 user_external_id=user_external_id,
                 agent_id=agent_id,
                 chat_portrait=chat_portrait,
+                runtime_context=runtime_context or {},
             )
 
         if normalized == "content_factory":
@@ -688,7 +690,9 @@ class TemplateRuntimeService:
         user_external_id: str | None,
         agent_id: int | None = None,
         chat_portrait: str | None = None,
+        runtime_context: dict[str, Any] | None = None,
     ) -> TemplateExecutionResult:
+        runtime_context = runtime_context or {}
         contact_key = self._resolve_sales_contact_key(template_config=template_config)
         current_sales_state = "DISCOVERED"
         if agent_id and user_external_id:
@@ -709,14 +713,26 @@ class TemplateRuntimeService:
                 user_external_id=user_external_id,
                 source_channel=source_channel,
             )
-        qualification = await self.qualify_message(
-            prompt=prompt,
-            user_message=user_message,
-            template_config=template_config,
-            chat_portrait=chat_portrait,
-            current_sales_state=current_sales_state,
-            recent_history=recent_history,
-        )
+        lead_initiated_private_dialog = bool(runtime_context.get("lead_initiated_private_dialog"))
+        if lead_initiated_private_dialog:
+            qualification = {
+                "decision": "engage",
+                "intent": "target_hot",
+                "confidence": 1.0,
+                "reason": "lead_initiated_private_dialog",
+                "lead_temperature": "hot",
+                "stage_hint": "discovery",
+                "handoff_ready": False,
+            }
+        else:
+            qualification = await self.qualify_message(
+                prompt=prompt,
+                user_message=user_message,
+                template_config=template_config,
+                chat_portrait=chat_portrait,
+                current_sales_state=current_sales_state,
+                recent_history=recent_history,
+            )
         intent = qualification.get("intent", "unsure")
         decision = str(qualification.get("decision") or "ignore").strip().lower()
         confidence = float(qualification.get("confidence") or 0.0)
@@ -892,8 +908,9 @@ class TemplateRuntimeService:
     ) -> TemplateExecutionResult | None:
         allowed_tools_raw = template_config.get("allowed_tools")
         allowed_tools = allowed_tools_raw if isinstance(allowed_tools_raw, list) else None
-        confirmation_policy = str(template_config.get("confirmation_policy") or "confirm_risky").strip().lower()
-        mode = str(template_config.get("mode") or "draft_only").strip().lower()
+        # Sales workflow is fully autonomous: no interactive confirmations in runtime.
+        confirmation_policy = "never_confirm"
+        mode = "auto"
         registry = SalesToolRegistry(
             allowed_tools=allowed_tools,
             confirmation_policy=confirmation_policy,
@@ -1030,7 +1047,7 @@ class TemplateRuntimeService:
         elif last_status.startswith("skipped_"):
             answer = "Лид пропущен согласно policy."
         else:
-            answer = "Действие sales-агента выполнено через tools."
+            answer = composed_dm
         return TemplateExecutionResult(answer=answer, sources=sources, tool_events=tool_events)
 
     async def qualify_message(

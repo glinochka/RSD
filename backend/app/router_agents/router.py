@@ -103,7 +103,7 @@ SALES_DEFAULT_ALLOWED_TOOLS = [
     "mark_contacted",
 ]
 SALES_DEFAULT_CONFIG = {
-    "mode": "draft_only",
+    "mode": "auto",
     "qualification_model": "deepseek-chat",
     "generation_model": "deepseek-chat",
     "min_confidence": 0.75,
@@ -125,7 +125,7 @@ SALES_DEFAULT_CONFIG = {
     "allowed_languages": ["ru", "en"],
     "quiet_hours_local": "22:00-09:00",
     "offer_profile_id": None,
-    "confirmation_policy": "confirm_risky",
+    "confirmation_policy": "never_confirm",
     "allowed_tools": list(SALES_DEFAULT_ALLOWED_TOOLS),
 }
 YOUTUBE_OAUTH_STATE_TTL_SECONDS = 15 * 60

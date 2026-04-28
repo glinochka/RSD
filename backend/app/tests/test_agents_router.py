@@ -207,7 +207,7 @@ class TestAgentsCRUD:
         data = response.json()
         assert data["template_type"] == "sales_manager"
         cfg = data["template_config"] or {}
-        assert cfg["mode"] == "draft_only"
+        assert cfg["mode"] == "auto"
         assert cfg["qualification_model"] == "deepseek-chat"
         assert cfg["generation_model"] == "deepseek-chat"
         assert cfg["min_confidence"] == 0.75

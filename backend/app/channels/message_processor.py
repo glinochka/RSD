@@ -44,6 +44,8 @@ class MessageRequest:
     welcome_message: str | None = None
     user_display_name: str | None = None
     telegram_peer_access_hash: int | None = None
+    skip_chat_portrait_update: bool = False
+    runtime_context: dict[str, object] | None = None
 
 
 @dataclass
@@ -148,6 +150,8 @@ class MessageProcessor:
             portrait_enabled = bool((template_config or {}).get("enable_chat_portrait", True))
             if normalized_template == "content_factory":
                 portrait_enabled = False
+            if request.skip_chat_portrait_update:
+                portrait_enabled = False
             chat_portrait = ""
             if portrait_enabled:
                 chat_portrait = await get_template_runtime().update_chat_portrait(
@@ -170,6 +174,7 @@ class MessageProcessor:
                 template_config=template_config,
                 source_channel=request.channel.value,
                 chat_portrait=chat_portrait,
+                runtime_context=request.runtime_context or {},
             )
             answer = execution.answer
             handoff_applied = False
