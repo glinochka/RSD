@@ -101,6 +101,20 @@ const startOfWeek = (value) => {
   return date;
 };
 
+const endOfWeek = (value) => {
+  const start = startOfWeek(value);
+  return endOfDay(new Date(start.getTime() + 6 * 24 * 60 * 60 * 1000));
+};
+
+const toDayKey = (value) => {
+  const date = value instanceof Date ? new Date(value) : new Date(value || '');
+  if (Number.isNaN(date.getTime())) return '';
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
 const channelLabel = (channel) => {
   if (channel === 'telegram_userbot') return 'Telegram userbot';
   if (channel === 'telegram') return 'Telegram bot';
@@ -395,10 +409,18 @@ const AgentDetailedAnalyticsPageContent = () => {
   const [serviceItems, setServiceItems] = useState([]);
   const [scheduleItems, setScheduleItems] = useState([]);
   const [appointmentItems, setAppointmentItems] = useState([]);
+  const [calendarScheduleItems, setCalendarScheduleItems] = useState([]);
+  const [calendarAppointmentItems, setCalendarAppointmentItems] = useState([]);
   const [occupancyData, setOccupancyData] = useState(null);
   const [opsLoading, setOpsLoading] = useState(false);
   const [calendarView, setCalendarView] = useState('day');
   const [calendarAnchor, setCalendarAnchor] = useState(() => new Date());
+  const [selectedCalendarDay, setSelectedCalendarDay] = useState(null);
+  const [calendarShiftDraft, setCalendarShiftDraft] = useState({
+    staff_id: '',
+    resource_id: '',
+    ranges: [{ starts_at: '09:00', ends_at: '18:00' }],
+  });
   const [editingStaffId, setEditingStaffId] = useState(null);
   const [editingResourceId, setEditingResourceId] = useState(null);
   const [editingServiceId, setEditingServiceId] = useState(null);
@@ -480,12 +502,31 @@ const AgentDetailedAnalyticsPageContent = () => {
     return { start: startOfDay(anchor), end: endOfDay(anchor) };
   }, [calendarAnchor, calendarView]);
 
+  const monthRange = useMemo(() => {
+    const anchor = startOfDay(calendarAnchor);
+    const start = new Date(anchor.getFullYear(), anchor.getMonth(), 1, 0, 0, 0, 0);
+    const end = new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0, 23, 59, 59, 999);
+    return { start, end };
+  }, [calendarAnchor]);
+
   const loadOperationsDashboard = async () => {
     if (!Number.isFinite(botId) || botId <= 0) return;
     setOpsLoading(true);
     try {
       const paramsBase = { bot_id: botId };
-      const [staff, resources, services, schedule, appointments, occupancy, waitlist, profiles, quickReplies] = await Promise.all([
+      const [
+        staff,
+        resources,
+        services,
+        schedule,
+        appointments,
+        occupancy,
+        waitlist,
+        profiles,
+        quickReplies,
+        calendarSchedule,
+        calendarAppointments,
+      ] = await Promise.all([
         agentService.listAdminTemplateStaff(paramsBase),
         agentService.listAdminTemplateResources(paramsBase),
         agentService.listAdminTemplateServices(paramsBase),
@@ -509,12 +550,25 @@ const AgentDetailedAnalyticsPageContent = () => {
         agentService.listAdminTemplateWaitlist(paramsBase),
         agentService.listAdminTemplateClientProfiles(paramsBase),
         agentService.listAdminTemplateQuickReplies(paramsBase),
+        agentService.listAdminTemplateSchedule({
+          ...paramsBase,
+          starts_at: monthRange.start.toISOString(),
+          ends_at: monthRange.end.toISOString(),
+          active_only: true,
+        }),
+        agentService.listAdminTemplateAppointments({
+          ...paramsBase,
+          starts_at: monthRange.start.toISOString(),
+          ends_at: monthRange.end.toISOString(),
+        }),
       ]);
       setStaffItems(Array.isArray(staff?.items) ? staff.items : []);
       setResourceItems(Array.isArray(resources?.items) ? resources.items : []);
       setServiceItems(Array.isArray(services?.items) ? services.items : []);
       setScheduleItems(Array.isArray(schedule?.items) ? schedule.items : []);
       setAppointmentItems(Array.isArray(appointments?.items) ? appointments.items : []);
+      setCalendarScheduleItems(Array.isArray(calendarSchedule?.items) ? calendarSchedule.items : []);
+      setCalendarAppointmentItems(Array.isArray(calendarAppointments?.items) ? calendarAppointments.items : []);
       setOccupancyData(occupancy || null);
       setSelectedDrilldown(null);
       setWaitlistItems(Array.isArray(waitlist?.items) ? waitlist.items : []);
@@ -622,7 +676,7 @@ const AgentDetailedAnalyticsPageContent = () => {
     if (selectedSection !== ANALYTICS_SECTIONS.OPERATIONS) return;
     loadOperationsDashboard();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedSection, isCrmAdminTemplate, botId, operationRange.start, operationRange.end]);
+  }, [selectedSection, isCrmAdminTemplate, botId, operationRange.start, operationRange.end, monthRange.start, monthRange.end]);
 
   const selectedUser = useMemo(
     () => chatUsers.find((user) => user.id === selectedUserId) || null,
@@ -1016,6 +1070,76 @@ const AgentDetailedAnalyticsPageContent = () => {
     }
   };
 
+  const handleAddShiftRange = () => {
+    setCalendarShiftDraft((prev) => ({
+      ...prev,
+      ranges: [...prev.ranges, { starts_at: '09:00', ends_at: '18:00' }],
+    }));
+  };
+
+  const handleUpdateShiftRange = (index, key, value) => {
+    setCalendarShiftDraft((prev) => ({
+      ...prev,
+      ranges: prev.ranges.map((range, idx) => (idx === index ? { ...range, [key]: value } : range)),
+    }));
+  };
+
+  const handleRemoveShiftRange = (index) => {
+    setCalendarShiftDraft((prev) => ({
+      ...prev,
+      ranges: prev.ranges.filter((_, idx) => idx !== index),
+    }));
+  };
+
+  const handleCreateCalendarShifts = async () => {
+    if (!selectedCalendarDay) {
+      showError('Сначала выберите день в календаре');
+      return;
+    }
+    if (!calendarShiftDraft.staff_id) {
+      showError('Выберите сотрудника для графика');
+      return;
+    }
+
+    const payloads = calendarShiftDraft.ranges
+      .map((range) => {
+        const startsRaw = String(range.starts_at || '').trim();
+        const endsRaw = String(range.ends_at || '').trim();
+        if (!startsRaw || !endsRaw) return null;
+        if (startsRaw >= endsRaw) return null;
+
+        const [startHour, startMinute] = startsRaw.split(':').map((part) => Number(part || 0));
+        const [endHour, endMinute] = endsRaw.split(':').map((part) => Number(part || 0));
+        const startDate = new Date(selectedCalendarDay);
+        const endDate = new Date(selectedCalendarDay);
+        startDate.setHours(startHour, startMinute, 0, 0);
+        endDate.setHours(endHour, endMinute, 0, 0);
+
+        return {
+          bot_id: botId,
+          starts_at: startDate.toISOString(),
+          ends_at: endDate.toISOString(),
+          staff_id: Number(calendarShiftDraft.staff_id),
+          resource_id: calendarShiftDraft.resource_id ? Number(calendarShiftDraft.resource_id) : undefined,
+          slot_kind: 'work',
+        };
+      })
+      .filter(Boolean);
+
+    if (!payloads.length) {
+      showError('Добавьте хотя бы один корректный интервал (от и до)');
+      return;
+    }
+
+    try {
+      await Promise.all(payloads.map((payload) => agentService.createAdminTemplateSchedule(payload)));
+      showSuccess('График на выбранный день сохранен');
+      await loadOperationsDashboard();
+    } catch (error) {
+      showError(error?.message || 'Не удалось сохранить график на день');
+    }
+  };
+
   const handleCreateAppointment = async () => {
     if (!newAppointmentDraft.client_external_id.trim()) {
       showError('Укажите client_external_id');
@@ -1192,6 +1316,40 @@ const AgentDetailedAnalyticsPageContent = () => {
   );
   const selectedDrilldownItems = selectedDrilldown
     ? drilldownAppointments.filter((item) => selectedDrilldownAppointmentIds.has(item.id))
+    : [];
+
+  const selectedCalendarDayKey = selectedCalendarDay ? toDayKey(selectedCalendarDay) : '';
+  const monthAnchor = startOfDay(calendarAnchor);
+  const monthTitle = monthAnchor.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
+  const monthFirstDay = new Date(monthAnchor.getFullYear(), monthAnchor.getMonth(), 1);
+  const monthLastDay = new Date(monthAnchor.getFullYear(), monthAnchor.getMonth() + 1, 0);
+  const monthGridStart = startOfWeek(monthFirstDay);
+  const monthGridEnd = endOfWeek(monthLastDay);
+  const monthDays = [];
+  for (let cursor = new Date(monthGridStart); cursor <= monthGridEnd; cursor.setDate(cursor.getDate() + 1)) {
+    monthDays.push(new Date(cursor));
+  }
+
+  const staffNameById = new Map(staffItems.map((item) => [item.id, item.full_name || `Сотрудник #${item.id}`]));
+  const serviceTitleById = new Map(serviceItems.map((item) => [item.id, item.title || `Услуга #${item.id}`]));
+
+  const dayStats = monthDays.reduce((acc, day) => {
+    const dayKey = toDayKey(day);
+    const appointmentForDay = calendarAppointmentItems.filter((item) => toDayKey(item.starts_at) === dayKey);
+    const scheduleForDay = calendarScheduleItems.filter((item) => toDayKey(item.starts_at) === dayKey);
+    acc.set(dayKey, {
+      appointments: appointmentForDay,
+      schedules: scheduleForDay,
+      appointmentsCount: appointmentForDay.length,
+    });
+    return acc;
+  }, new Map());
+
+  const selectedDayAppointments = selectedCalendarDayKey
+    ? dayStats.get(selectedCalendarDayKey)?.appointments || []
+    : [];
+  const selectedDaySchedules = selectedCalendarDayKey
+    ? dayStats.get(selectedCalendarDayKey)?.schedules || []
     : [];
 
   return (
@@ -1463,6 +1621,82 @@ const AgentDetailedAnalyticsPageContent = () => {
                   </button>
                 </div>
               </div>
+
+              <article className="analytics-ops-card analytics-ops-card--wide">
+                <div className="analytics-admin-calendar-head">
+                  <div>
+                    <h4>Календарь записи</h4>
+                    <p className="analytics-note">
+                      Нажмите на день, чтобы посмотреть записи и назначить график сотрудника.
+                    </p>
+                  </div>
+                  <div className="analytics-admin-calendar-nav">
+                    <button
+                      type="button"
+                      className="btn btn-outline"
+                      onClick={() =>
+                        setCalendarAnchor(
+                          new Date(calendarAnchor.getFullYear(), calendarAnchor.getMonth() - 1, 1)
+                        )
+                      }
+                    >
+                      ←
+                    </button>
+                    <strong className="analytics-admin-calendar-title">{monthTitle}</strong>
+                    <button
+                      type="button"
+                      className="btn btn-outline"
+                      onClick={() =>
+                        setCalendarAnchor(
+                          new Date(calendarAnchor.getFullYear(), calendarAnchor.getMonth() + 1, 1)
+                        )
+                      }
+                    >
+                      →
+                    </button>
+                  </div>
+                </div>
+                <div className="analytics-admin-calendar-grid analytics-admin-calendar-grid--weekday">
+                  {['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map((weekday) => (
+                    <span key={weekday}>{weekday}</span>
+                  ))}
+                </div>
+                <div className="analytics-admin-calendar-grid">
+                  {monthDays.map((day) => {
+                    const dayKey = toDayKey(day);
+                    const stats = dayStats.get(dayKey) || { appointmentsCount: 0 };
+                    const isCurrentMonth = day.getMonth() === monthAnchor.getMonth();
+                    const isSelected = selectedCalendarDayKey === dayKey;
+                    const dayLoadClass = stats.appointmentsCount === 0
+                      ? 'analytics-admin-calendar-day--free'
+                      : stats.appointmentsCount >= 4
+                        ? 'analytics-admin-calendar-day--busy'
+                        : 'analytics-admin-calendar-day--light';
+
+                    return (
+                      <button
+                        key={dayKey}
+                        type="button"
+                        className={`analytics-admin-calendar-day ${dayLoadClass} ${!isCurrentMonth ? 'analytics-admin-calendar-day--muted' : ''} ${isSelected ? 'analytics-admin-calendar-day--selected' : ''}`}
+                        onClick={() => {
+                          setSelectedCalendarDay(day);
+                          if (!calendarShiftDraft.staff_id && staffItems[0]?.id) {
+                            setCalendarShiftDraft((prev) => ({ ...prev, staff_id: String(staffItems[0].id) }));
+                          }
+                        }}
+                      >
+                        <span>{day.getDate()}</span>
+                        <small>{stats.appointmentsCount} записей</small>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="analytics-admin-calendar-legend">
+                  <span><i className="analytics-admin-calendar-dot analytics-admin-calendar-dot--free" /> Нет записей</span>
+                  <span><i className="analytics-admin-calendar-dot analytics-admin-calendar-dot--light" /> Немного записей</span>
+                  <span><i className="analytics-admin-calendar-dot analytics-admin-calendar-dot--busy" /> День заполнен</span>
+                </div>
+              </article>
 
               <div className="analytics-ops-kpis">
                 <article className="analytics-ops-kpi">
@@ -2197,6 +2431,132 @@ const AgentDetailedAnalyticsPageContent = () => {
                   <p className="analytics-note">Нет данных занятости за выбранный период.</p>
                 )}
               </article>
+
+              {selectedCalendarDay ? (
+                <div className="analytics-admin-day-modal-backdrop" onClick={() => setSelectedCalendarDay(null)}>
+                  <article className="analytics-admin-day-modal" onClick={(e) => e.stopPropagation()}>
+                    <div className="analytics-admin-day-modal-head">
+                      <h4>{selectedCalendarDay.toLocaleDateString('ru-RU', { day: '2-digit', month: 'long', year: 'numeric' })}</h4>
+                      <button type="button" className="btn btn-outline" onClick={() => setSelectedCalendarDay(null)}>
+                        Закрыть
+                      </button>
+                    </div>
+
+                    <div className="analytics-admin-day-modal-columns">
+                      <section className="analytics-admin-day-modal-section">
+                        <h5>Записи на день</h5>
+                        {selectedDayAppointments.length ? (
+                          <div className="analytics-ops-list">
+                            {selectedDayAppointments.map((item) => {
+                              const staffName = staffNameById.get(item.staff_id) || 'Сотрудник не назначен';
+                              const serviceTitle = serviceTitleById.get(item.service_id) || 'Без услуги';
+                              return (
+                                <div key={`calendar-appt-${item.id}`} className="analytics-ops-row">
+                                  <div className="analytics-ops-row-main">
+                                    <strong>{item.client_name || item.client_external_id}</strong>
+                                    <span>
+                                      {formatDateTime(item.starts_at)} - {formatDateTime(item.ends_at)}
+                                    </span>
+                                    <span>{staffName} · {serviceTitle} · статус: {item.status}</span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <p className="analytics-note">На выбранный день записей нет.</p>
+                        )}
+                      </section>
+
+                      <section className="analytics-admin-day-modal-section">
+                        <h5>График сотрудников</h5>
+                        <div className="analytics-ops-inline-form analytics-admin-day-schedule-form">
+                          <select
+                            className="input-main"
+                            value={calendarShiftDraft.staff_id}
+                            onChange={(e) => setCalendarShiftDraft((prev) => ({ ...prev, staff_id: e.target.value }))}
+                          >
+                            <option value="">Выберите сотрудника</option>
+                            {staffItems.map((staff) => (
+                              <option key={`calendar-staff-${staff.id}`} value={staff.id}>{staff.full_name}</option>
+                            ))}
+                          </select>
+                          <select
+                            className="input-main"
+                            value={calendarShiftDraft.resource_id}
+                            onChange={(e) => setCalendarShiftDraft((prev) => ({ ...prev, resource_id: e.target.value }))}
+                          >
+                            <option value="">Ресурс (опционально)</option>
+                            {resourceItems.map((resource) => (
+                              <option key={`calendar-resource-${resource.id}`} value={resource.id}>{resource.title}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="analytics-admin-shift-ranges">
+                          {calendarShiftDraft.ranges.map((range, idx) => (
+                            <div key={`calendar-range-${idx}`} className="analytics-admin-shift-range-row">
+                              <input
+                                className="input-main"
+                                type="time"
+                                value={range.starts_at}
+                                onChange={(e) => handleUpdateShiftRange(idx, 'starts_at', e.target.value)}
+                              />
+                              <input
+                                className="input-main"
+                                type="time"
+                                value={range.ends_at}
+                                onChange={(e) => handleUpdateShiftRange(idx, 'ends_at', e.target.value)}
+                              />
+                              <button
+                                type="button"
+                                className="btn btn-outline"
+                                onClick={() => handleRemoveShiftRange(idx)}
+                                disabled={calendarShiftDraft.ranges.length <= 1}
+                              >
+                                Удалить
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="analytics-admin-day-modal-actions">
+                          <button type="button" className="btn btn-outline" onClick={handleAddShiftRange}>
+                            + Интервал
+                          </button>
+                          <button type="button" className="btn btn-black" onClick={handleCreateCalendarShifts}>
+                            Сохранить график
+                          </button>
+                        </div>
+
+                        <div className="analytics-ops-list">
+                          {selectedDaySchedules.length ? (
+                            selectedDaySchedules.map((item) => (
+                              <div key={`calendar-schedule-${item.id}`} className="analytics-ops-row">
+                                <div className="analytics-ops-row-main">
+                                  <strong>{formatDateTime(item.starts_at)} - {formatDateTime(item.ends_at)}</strong>
+                                  <span>{staffNameById.get(item.staff_id) || 'Без сотрудника'}</span>
+                                </div>
+                                <div className="analytics-ops-row-actions">
+                                  <button
+                                    type="button"
+                                    className="btn btn-outline"
+                                    onClick={() => handleDeleteScheduleSlot(item.id)}
+                                  >
+                                    Удалить
+                                  </button>
+                                </div>
+                              </div>
+                            ))
+                          ) : (
+                            <p className="analytics-note">На этот день график еще не назначен.</p>
+                          )}
+                        </div>
+                      </section>
+                    </div>
+                  </article>
+                </div>
+              ) : null}
             </section>
           ) : (
             <>
