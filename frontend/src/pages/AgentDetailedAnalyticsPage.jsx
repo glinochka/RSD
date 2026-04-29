@@ -92,6 +92,16 @@ const fromIsoInputValue = (value) => {
   return _toLocalIso(parsed);
 };
 
+const addMinutesToLocalDateTime = (value, minutes) => {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const normalized = raw.length === 16 ? `${raw}:00` : raw;
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) return '';
+  date.setMinutes(date.getMinutes() + Number(minutes || 0));
+  return _toLocalIso(date).slice(0, 16);
+};
+
 const startOfDay = (value) => {
   const date = new Date(value);
   date.setHours(0, 0, 0, 0);
@@ -242,6 +252,81 @@ const BroadcastLimitSelect = ({ value, onChange, disabled, options }) => {
               </button>
             </li>
           ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+};
+
+const AnalyticsCustomSelect = ({
+  value,
+  onChange,
+  options,
+  placeholder = '',
+  disabled = false,
+  ariaLabel = 'Выбор значения',
+}) => {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => {
+      if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const normalizedValue = value == null ? '' : String(value);
+  const selectedOption = options.find((option) => String(option.value) === normalizedValue);
+  const displayLabel = selectedOption?.label || placeholder || 'Выберите значение';
+
+  return (
+    <div className={`analytics-ops-custom-select ${disabled ? 'analytics-ops-custom-select--disabled' : ''}`} ref={rootRef}>
+      <button
+        type="button"
+        className={`analytics-ops-custom-select-trigger input-main ${open ? 'analytics-ops-custom-select-trigger--active' : ''}`}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={ariaLabel}
+        disabled={disabled}
+        onClick={() => !disabled && setOpen((prev) => !prev)}
+      >
+        <span className={`analytics-ops-custom-select-value ${selectedOption ? '' : 'analytics-ops-custom-select-value--placeholder'}`}>
+          {displayLabel}
+        </span>
+        <span className="analytics-ops-custom-select-chevron" aria-hidden />
+      </button>
+      {open ? (
+        <ul className="analytics-ops-custom-select-menu" role="listbox" aria-label={ariaLabel}>
+          {options.map((option) => {
+            const optionValue = String(option.value ?? '');
+            const isSelected = optionValue === normalizedValue;
+            return (
+              <li key={`${ariaLabel}-${optionValue || 'empty'}`} role="none">
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  className={`analytics-ops-custom-select-option ${isSelected ? 'analytics-ops-custom-select-option--selected' : ''}`}
+                  onClick={() => {
+                    onChange(option.value);
+                    setOpen(false);
+                  }}
+                >
+                  {option.label}
+                </button>
+              </li>
+            );
+          })}
         </ul>
       ) : null}
     </div>
@@ -2026,16 +2111,16 @@ const AgentDetailedAnalyticsPageContent = () => {
                       value={newWaitlistDraft.client_name}
                       onChange={(e) => setNewWaitlistDraft((prev) => ({ ...prev, client_name: e.target.value }))}
                     />
-                    <select
-                      className="input-main"
+                    <AnalyticsCustomSelect
                       value={newWaitlistDraft.service_id}
-                      onChange={(e) => setNewWaitlistDraft((prev) => ({ ...prev, service_id: e.target.value }))}
-                    >
-                      <option value="">Услуга</option>
-                      {serviceItems.map((service) => (
-                        <option key={`wl-service-${service.id}`} value={service.id}>{service.title}</option>
-                      ))}
-                    </select>
+                      onChange={(selectedValue) => setNewWaitlistDraft((prev) => ({ ...prev, service_id: selectedValue }))}
+                      placeholder="Услуга"
+                      ariaLabel="Выбор услуги для листа ожидания"
+                      options={[
+                        { value: '', label: 'Услуга' },
+                        ...serviceItems.map((service) => ({ value: service.id, label: service.title })),
+                      ]}
+                    />
                     <button type="button" className="btn btn-black" onClick={handleCreateWaitlist}>
                       Добавить
                     </button>
@@ -2131,14 +2216,15 @@ const AgentDetailedAnalyticsPageContent = () => {
                       value={newStaffDraft.full_name}
                       onChange={(e) => setNewStaffDraft((prev) => ({ ...prev, full_name: e.target.value }))}
                     />
-                    <select
-                      className="input-main"
+                    <AnalyticsCustomSelect
                       value={newStaffDraft.role}
-                      onChange={(e) => setNewStaffDraft((prev) => ({ ...prev, role: e.target.value }))}
-                    >
-                      <option value="master">master</option>
-                      <option value="doctor">doctor</option>
-                    </select>
+                      onChange={(selectedValue) => setNewStaffDraft((prev) => ({ ...prev, role: selectedValue }))}
+                      ariaLabel="Выбор роли сотрудника"
+                      options={[
+                        { value: 'master', label: 'master' },
+                        { value: 'doctor', label: 'doctor' },
+                      ]}
+                    />
                     <input
                       className="input-main"
                       placeholder="Специализации через запятую"
@@ -2213,15 +2299,16 @@ const AgentDetailedAnalyticsPageContent = () => {
                       value={newResourceDraft.title}
                       onChange={(e) => setNewResourceDraft((prev) => ({ ...prev, title: e.target.value }))}
                     />
-                    <select
-                      className="input-main"
+                    <AnalyticsCustomSelect
                       value={newResourceDraft.resource_type}
-                      onChange={(e) => setNewResourceDraft((prev) => ({ ...prev, resource_type: e.target.value }))}
-                    >
-                      <option value="chair">chair</option>
-                      <option value="room">room</option>
-                      <option value="equipment">equipment</option>
-                    </select>
+                      onChange={(selectedValue) => setNewResourceDraft((prev) => ({ ...prev, resource_type: selectedValue }))}
+                      ariaLabel="Выбор типа ресурса"
+                      options={[
+                        { value: 'chair', label: 'chair' },
+                        { value: 'room', label: 'room' },
+                        { value: 'equipment', label: 'equipment' },
+                      ]}
+                    />
                     <button type="button" className="btn btn-black" onClick={handleCreateResource}>
                       Добавить
                     </button>
@@ -2282,14 +2369,15 @@ const AgentDetailedAnalyticsPageContent = () => {
                       value={newServiceDraft.title}
                       onChange={(e) => setNewServiceDraft((prev) => ({ ...prev, title: e.target.value }))}
                     />
-                    <select
-                      className="input-main"
+                    <AnalyticsCustomSelect
                       value={newServiceDraft.target_role}
-                      onChange={(e) => setNewServiceDraft((prev) => ({ ...prev, target_role: e.target.value }))}
-                    >
-                      <option value="master">master</option>
-                      <option value="doctor">doctor</option>
-                    </select>
+                      onChange={(selectedValue) => setNewServiceDraft((prev) => ({ ...prev, target_role: selectedValue }))}
+                      ariaLabel="Выбор роли для услуги"
+                      options={[
+                        { value: 'master', label: 'master' },
+                        { value: 'doctor', label: 'doctor' },
+                      ]}
+                    />
                     <input
                       className="input-main"
                       type="number"
@@ -2393,38 +2481,58 @@ const AgentDetailedAnalyticsPageContent = () => {
                 <article className="analytics-ops-card analytics-ops-card--wide">
                   <h4>Расписание</h4>
                   <div className="analytics-ops-inline-form analytics-ops-inline-form--schedule">
-                    <input
-                      className="input-main"
-                      type="datetime-local"
-                      value={newScheduleDraft.starts_at}
-                      onChange={(e) => setNewScheduleDraft((prev) => ({ ...prev, starts_at: e.target.value }))}
-                    />
-                    <input
-                      className="input-main"
-                      type="datetime-local"
-                      value={newScheduleDraft.ends_at}
-                      onChange={(e) => setNewScheduleDraft((prev) => ({ ...prev, ends_at: e.target.value }))}
-                    />
-                    <select
-                      className="input-main"
+                    <div className="analytics-time-field">
+                      <span className="analytics-time-field-label">Начало</span>
+                      <input
+                        className="input-main analytics-datetime-input"
+                        type="datetime-local"
+                        step={300}
+                        value={newScheduleDraft.starts_at}
+                        onChange={(e) =>
+                          setNewScheduleDraft((prev) => {
+                            const nextStartsAt = e.target.value;
+                            const nextDraft = { ...prev, starts_at: nextStartsAt };
+                            const currentEndMs = Date.parse(prev.ends_at || '');
+                            const nextStartMs = Date.parse(nextStartsAt || '');
+                            if (!prev.ends_at || (Number.isFinite(nextStartMs) && Number.isFinite(currentEndMs) && currentEndMs <= nextStartMs)) {
+                              const suggestedEnd = addMinutesToLocalDateTime(nextStartsAt, 60);
+                              nextDraft.ends_at = suggestedEnd || prev.ends_at;
+                            }
+                            return nextDraft;
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="analytics-time-field">
+                      <span className="analytics-time-field-label">Окончание</span>
+                      <input
+                        className="input-main analytics-datetime-input"
+                        type="datetime-local"
+                        step={300}
+                        value={newScheduleDraft.ends_at}
+                        onChange={(e) => setNewScheduleDraft((prev) => ({ ...prev, ends_at: e.target.value }))}
+                      />
+                    </div>
+                    <AnalyticsCustomSelect
                       value={newScheduleDraft.staff_id}
-                      onChange={(e) => setNewScheduleDraft((prev) => ({ ...prev, staff_id: e.target.value }))}
-                    >
-                      <option value="">Сотрудник (опц.)</option>
-                      {staffItems.map((staff) => (
-                        <option key={staff.id} value={staff.id}>{staff.full_name}</option>
-                      ))}
-                    </select>
-                    <select
-                      className="input-main"
+                      onChange={(selectedValue) => setNewScheduleDraft((prev) => ({ ...prev, staff_id: selectedValue }))}
+                      placeholder="Сотрудник (опц.)"
+                      ariaLabel="Выбор сотрудника для слота"
+                      options={[
+                        { value: '', label: 'Сотрудник (опц.)' },
+                        ...staffItems.map((staff) => ({ value: staff.id, label: staff.full_name })),
+                      ]}
+                    />
+                    <AnalyticsCustomSelect
                       value={newScheduleDraft.resource_id}
-                      onChange={(e) => setNewScheduleDraft((prev) => ({ ...prev, resource_id: e.target.value }))}
-                    >
-                      <option value="">Ресурс (опц.)</option>
-                      {resourceItems.map((resource) => (
-                        <option key={resource.id} value={resource.id}>{resource.title}</option>
-                      ))}
-                    </select>
+                      onChange={(selectedValue) => setNewScheduleDraft((prev) => ({ ...prev, resource_id: selectedValue }))}
+                      placeholder="Ресурс (опц.)"
+                      ariaLabel="Выбор ресурса для слота"
+                      options={[
+                        { value: '', label: 'Ресурс (опц.)' },
+                        ...resourceItems.map((resource) => ({ value: resource.id, label: resource.title })),
+                      ]}
+                    />
                     <button type="button" className="btn btn-black" onClick={handleCreateScheduleSlot}>
                       Добавить слот
                     </button>
@@ -2465,48 +2573,68 @@ const AgentDetailedAnalyticsPageContent = () => {
                       value={newAppointmentDraft.client_name}
                       onChange={(e) => setNewAppointmentDraft((prev) => ({ ...prev, client_name: e.target.value }))}
                     />
-                    <input
-                      className="input-main"
-                      type="datetime-local"
-                      value={newAppointmentDraft.starts_at}
-                      onChange={(e) => setNewAppointmentDraft((prev) => ({ ...prev, starts_at: e.target.value }))}
-                    />
-                    <input
-                      className="input-main"
-                      type="datetime-local"
-                      value={newAppointmentDraft.ends_at}
-                      onChange={(e) => setNewAppointmentDraft((prev) => ({ ...prev, ends_at: e.target.value }))}
-                    />
-                    <select
-                      className="input-main"
+                    <div className="analytics-time-field">
+                      <span className="analytics-time-field-label">Начало</span>
+                      <input
+                        className="input-main analytics-datetime-input"
+                        type="datetime-local"
+                        step={300}
+                        value={newAppointmentDraft.starts_at}
+                        onChange={(e) =>
+                          setNewAppointmentDraft((prev) => {
+                            const nextStartsAt = e.target.value;
+                            const nextDraft = { ...prev, starts_at: nextStartsAt };
+                            const currentEndMs = Date.parse(prev.ends_at || '');
+                            const nextStartMs = Date.parse(nextStartsAt || '');
+                            if (!prev.ends_at || (Number.isFinite(nextStartMs) && Number.isFinite(currentEndMs) && currentEndMs <= nextStartMs)) {
+                              const suggestedEnd = addMinutesToLocalDateTime(nextStartsAt, 60);
+                              nextDraft.ends_at = suggestedEnd || prev.ends_at;
+                            }
+                            return nextDraft;
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="analytics-time-field">
+                      <span className="analytics-time-field-label">Окончание</span>
+                      <input
+                        className="input-main analytics-datetime-input"
+                        type="datetime-local"
+                        step={300}
+                        value={newAppointmentDraft.ends_at}
+                        onChange={(e) => setNewAppointmentDraft((prev) => ({ ...prev, ends_at: e.target.value }))}
+                      />
+                    </div>
+                    <AnalyticsCustomSelect
                       value={newAppointmentDraft.staff_id}
-                      onChange={(e) => setNewAppointmentDraft((prev) => ({ ...prev, staff_id: e.target.value }))}
-                    >
-                      <option value="">Сотрудник</option>
-                      {staffItems.map((staff) => (
-                        <option key={staff.id} value={staff.id}>{staff.full_name}</option>
-                      ))}
-                    </select>
-                    <select
-                      className="input-main"
+                      onChange={(selectedValue) => setNewAppointmentDraft((prev) => ({ ...prev, staff_id: selectedValue }))}
+                      placeholder="Сотрудник"
+                      ariaLabel="Выбор сотрудника для записи"
+                      options={[
+                        { value: '', label: 'Сотрудник' },
+                        ...staffItems.map((staff) => ({ value: staff.id, label: staff.full_name })),
+                      ]}
+                    />
+                    <AnalyticsCustomSelect
                       value={newAppointmentDraft.resource_id}
-                      onChange={(e) => setNewAppointmentDraft((prev) => ({ ...prev, resource_id: e.target.value }))}
-                    >
-                      <option value="">Ресурс</option>
-                      {resourceItems.map((resource) => (
-                        <option key={resource.id} value={resource.id}>{resource.title}</option>
-                      ))}
-                    </select>
-                    <select
-                      className="input-main"
+                      onChange={(selectedValue) => setNewAppointmentDraft((prev) => ({ ...prev, resource_id: selectedValue }))}
+                      placeholder="Ресурс"
+                      ariaLabel="Выбор ресурса для записи"
+                      options={[
+                        { value: '', label: 'Ресурс' },
+                        ...resourceItems.map((resource) => ({ value: resource.id, label: resource.title })),
+                      ]}
+                    />
+                    <AnalyticsCustomSelect
                       value={newAppointmentDraft.service_id}
-                      onChange={(e) => setNewAppointmentDraft((prev) => ({ ...prev, service_id: e.target.value }))}
-                    >
-                      <option value="">Услуга</option>
-                      {serviceItems.map((service) => (
-                        <option key={service.id} value={service.id}>{service.title}</option>
-                      ))}
-                    </select>
+                      onChange={(selectedValue) => setNewAppointmentDraft((prev) => ({ ...prev, service_id: selectedValue }))}
+                      placeholder="Услуга"
+                      ariaLabel="Выбор услуги для записи"
+                      options={[
+                        { value: '', label: 'Услуга' },
+                        ...serviceItems.map((service) => ({ value: service.id, label: service.title })),
+                      ]}
+                    />
                     <button type="button" className="btn btn-black" onClick={handleCreateAppointment}>
                       Создать запись
                     </button>
@@ -2627,43 +2755,55 @@ const AgentDetailedAnalyticsPageContent = () => {
                       <section className="analytics-admin-day-modal-section">
                         <h5>График сотрудников</h5>
                         <div className="analytics-ops-inline-form analytics-admin-day-schedule-form">
-                          <select
-                            className="input-main"
+                          <AnalyticsCustomSelect
                             value={calendarShiftDraft.staff_id}
-                            onChange={(e) => setCalendarShiftDraft((prev) => ({ ...prev, staff_id: e.target.value }))}
-                          >
-                            <option value="">Выберите сотрудника</option>
-                            {staffItems.map((staff) => (
-                              <option key={`calendar-staff-${staff.id}`} value={staff.id}>{staff.full_name}</option>
-                            ))}
-                          </select>
-                          <select
-                            className="input-main"
+                            onChange={(selectedValue) =>
+                              setCalendarShiftDraft((prev) => ({ ...prev, staff_id: selectedValue }))
+                            }
+                            placeholder="Выберите сотрудника"
+                            ariaLabel="Выбор сотрудника для графика"
+                            options={[
+                              { value: '', label: 'Выберите сотрудника' },
+                              ...staffItems.map((staff) => ({ value: staff.id, label: staff.full_name })),
+                            ]}
+                          />
+                          <AnalyticsCustomSelect
                             value={calendarShiftDraft.resource_id}
-                            onChange={(e) => setCalendarShiftDraft((prev) => ({ ...prev, resource_id: e.target.value }))}
-                          >
-                            <option value="">Ресурс (опционально)</option>
-                            {resourceItems.map((resource) => (
-                              <option key={`calendar-resource-${resource.id}`} value={resource.id}>{resource.title}</option>
-                            ))}
-                          </select>
+                            onChange={(selectedValue) =>
+                              setCalendarShiftDraft((prev) => ({ ...prev, resource_id: selectedValue }))
+                            }
+                            placeholder="Ресурс (опционально)"
+                            ariaLabel="Выбор ресурса для графика"
+                            options={[
+                              { value: '', label: 'Ресурс (опционально)' },
+                              ...resourceItems.map((resource) => ({ value: resource.id, label: resource.title })),
+                            ]}
+                          />
                         </div>
 
                         <div className="analytics-admin-shift-ranges">
                           {calendarShiftDraft.ranges.map((range, idx) => (
                             <div key={`calendar-range-${idx}`} className="analytics-admin-shift-range-row">
-                              <input
-                                className="input-main analytics-time-input"
-                                type="time"
-                                value={range.starts_at}
-                                onChange={(e) => handleUpdateShiftRange(idx, 'starts_at', e.target.value)}
-                              />
-                              <input
-                                className="input-main analytics-time-input"
-                                type="time"
-                                value={range.ends_at}
-                                onChange={(e) => handleUpdateShiftRange(idx, 'ends_at', e.target.value)}
-                              />
+                              <div className="analytics-time-field analytics-time-field--compact">
+                                <span className="analytics-time-field-label">С</span>
+                                <input
+                                  className="input-main analytics-time-input"
+                                  type="time"
+                                  step={300}
+                                  value={range.starts_at}
+                                  onChange={(e) => handleUpdateShiftRange(idx, 'starts_at', e.target.value)}
+                                />
+                              </div>
+                              <div className="analytics-time-field analytics-time-field--compact">
+                                <span className="analytics-time-field-label">До</span>
+                                <input
+                                  className="input-main analytics-time-input"
+                                  type="time"
+                                  step={300}
+                                  value={range.ends_at}
+                                  onChange={(e) => handleUpdateShiftRange(idx, 'ends_at', e.target.value)}
+                                />
+                              </div>
                               <button
                                 type="button"
                                 className="btn btn-outline"
