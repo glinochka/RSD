@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 from unittest.mock import patch, AsyncMock
+import json
 
 import pytest
 
@@ -242,6 +243,91 @@ async def test_crm_admin_runtime_uses_booking_tools_without_crm_connection(monke
     assert result.tool_events
     assert result.tool_events[0]["tool_name"] == "list_staff"
     assert result.tool_events[0]["crm_provider"] == "booking"
+
+
+@pytest.mark.asyncio
+async def test_crm_admin_runtime_executes_dsml_tool_calls(monkeypatch):
+    service = TemplateRuntimeService()
+    calls = {"n": 0, "args": None}
+
+    class _FakeBookingRegistry:
+        def __init__(self, **kwargs):
+            self._kwargs = kwargs
+
+        def tools_for_llm(self):
+            return [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "create_appointment",
+                        "description": "Create appointment",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                }
+            ]
+
+        def has_tool(self, tool_name: str) -> bool:
+            return tool_name == "create_appointment"
+
+        async def execute_tool(self, tool_name: str, raw_arguments: str):
+            calls["args"] = raw_arguments
+            return {
+                "ok": True,
+                "tool_name": "create_appointment",
+                "tool_args_hash": "hash",
+                "tool_status": "success",
+                "crm_provider": "booking",
+                "latency_ms": 5,
+                "idempotency_key": "idem-key",
+                "result": {"id": 501, "status": "booked"},
+            }
+
+    async def fake_create(**kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return _completion(
+                'Отлично, повторяю запись.\n\n'
+                '<｜DSML｜tool_calls>\n'
+                '<｜DSML｜invoke name="create_appointment">\n'
+                '<｜DSML｜parameter name="starts_at" string="true">2026-04-30T13:00:00</｜DSML｜parameter>\n'
+                '<｜DSML｜parameter name="ends_at" string="true">2026-04-30T13:30:00</｜DSML｜parameter>\n'
+                '<｜DSML｜parameter name="staff_id" string="false">7</｜DSML｜parameter>\n'
+                '<｜DSML｜parameter name="service_id" string="false">1</｜DSML｜parameter>\n'
+                '<｜DSML｜parameter name="client_name" string="true">Петр</｜DSML｜parameter>\n'
+                '</｜DSML｜invoke>\n'
+                '</｜DSML｜tool_calls>'
+            )
+        return _completion("Готово! Запись создана на 30 апреля в 13:00.")
+
+    async def fake_get_connection(self, *, agent_id: int, provider: str):
+        return None
+
+    monkeypatch.setattr("app.services.template_runtime.ai_client.chat.completions.create", fake_create)
+    monkeypatch.setattr("app.services.template_runtime.AdminBookingToolRegistry", _FakeBookingRegistry)
+    monkeypatch.setattr("app.services.template_runtime.TemplateRuntimeService._get_active_crm_connection", fake_get_connection)
+
+    result = await service.execute(
+        template_type="crm_admin",
+        prompt="Ты администратор записи",
+        user_message="Запиши меня к Анне на 30 апреля в 13:00",
+        knowledge_scope_id=101,
+        agent_id=77,
+        template_config={
+            "crm_provider": "amocrm",
+            "booking_backend": "local",
+            "domain_type": "beauty_salon",
+            "allowed_booking_tools": ["create_appointment"],
+        },
+        source_channel="telegram",
+        user_external_id="12345",
+    )
+
+    assert "tool_calls" not in result.answer
+    assert "запись создана" in result.answer.lower()
+    assert result.tool_events
+    assert result.tool_events[0]["tool_name"] == "create_appointment"
+    parsed_args = json.loads(str(calls["args"] or "{}"))
+    assert parsed_args["staff_id"] == 7
 
 
 @pytest.mark.asyncio

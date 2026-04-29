@@ -132,6 +132,12 @@ class Agent(Base):
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=False)
     welcome_message: Mapped[str] = mapped_column(Text, nullable=True)
+    process_start_with_llm: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
 
     registered: Mapped[date] = mapped_column(default=datetime.now(timezone.utc))
 

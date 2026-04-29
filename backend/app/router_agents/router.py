@@ -2371,6 +2371,7 @@ async def list_userbot_clients(request: Request, internal: bool = Depends(is_int
                             Agent.bot_id,
                             Agent.system_prompt,
                             Agent.welcome_message,
+                            Agent.process_start_with_llm,
                             AgentChannelConnection.encrypted_credentials,
                         )
                         .join(AgentChannelConnection, AgentChannelConnection.agent_id == Agent.id)
@@ -2396,6 +2397,7 @@ async def list_userbot_clients(request: Request, internal: bool = Depends(is_int
                 "bot_id": int(resolved_lookup_id),
                 "system_prompt": row["system_prompt"] or "",
                 "welcome_message": row["welcome_message"],
+                "process_start_with_llm": bool(row["process_start_with_llm"]),
                 "encrypted_userbot_bundle": row["encrypted_credentials"],
             }
         )
@@ -2420,6 +2422,7 @@ async def list_whatsapp_userbot_clients(request: Request, internal: bool = Depen
                             Agent.bot_id,
                             Agent.system_prompt,
                             Agent.welcome_message,
+                            Agent.process_start_with_llm,
                             AgentChannelConnection.id.label("connection_id"),
                             AgentChannelConnection.external_id.label("phone_number"),
                             AgentChannelConnection.encrypted_credentials,
@@ -2449,6 +2452,7 @@ async def list_whatsapp_userbot_clients(request: Request, internal: bool = Depen
                 "phone_number": row["phone_number"] or "",
                 "system_prompt": row["system_prompt"] or "",
                 "welcome_message": row["welcome_message"],
+                "process_start_with_llm": bool(row["process_start_with_llm"]),
                 "encrypted_credentials": row["encrypted_credentials"],
             }
         )
@@ -2481,6 +2485,7 @@ async def internal_process_message(
         channel=channel,
         system_prompt=(payload.system_prompt or "").strip(),
         welcome_message=payload.welcome_message,
+        process_start_with_llm=bool(payload.process_start_with_llm),
         user_display_name=(payload.user_display_name or "").strip() or None,
         telegram_peer_access_hash=payload.telegram_peer_access_hash,
     )

@@ -25,6 +25,15 @@ from ..qdrant.search_service import search_knowledge_base
 
 logger = logging.getLogger(__name__)
 MAX_CHAT_PORTRAIT_CHARS = 2000
+_DSML_TOOL_CALLS_RE = re.compile(r"<｜DSML｜tool_calls>.*?</｜DSML｜tool_calls>", re.DOTALL)
+_DSML_INVOKE_RE = re.compile(
+    r"<｜DSML｜invoke name=\"(?P<name>[^\"]+)\">(?P<body>.*?)</｜DSML｜invoke>",
+    re.DOTALL,
+)
+_DSML_PARAM_RE = re.compile(
+    r"<｜DSML｜parameter name=\"(?P<name>[^\"]+)\"[^>]*>(?P<value>.*?)</｜DSML｜parameter>",
+    re.DOTALL,
+)
 
 
 @dataclass
@@ -296,6 +305,85 @@ class TemplateRuntimeService:
             return ""
         return f"Портрет текущего клиента/чата:\n{portrait}"
 
+    @staticmethod
+    def _strip_dsml_tool_markup(text: str) -> str:
+        return _DSML_TOOL_CALLS_RE.sub("", text or "")
+
+    def _clean_llm_text(self, text: str) -> str:
+        return self._strip_dsml_tool_markup(text).replace("#", "").replace("*", "").strip()
+
+    @staticmethod
+    def _serialize_tool_call(tool_call: Any) -> dict[str, Any]:
+        if isinstance(tool_call, dict):
+            return tool_call
+        if hasattr(tool_call, "model_dump"):
+            return tool_call.model_dump()
+        fn = getattr(tool_call, "function", None)
+        return {
+            "id": str(getattr(tool_call, "id", "")),
+            "type": "function",
+            "function": {
+                "name": str(getattr(fn, "name", "")),
+                "arguments": str(getattr(fn, "arguments", "{}")),
+            },
+        }
+
+    @staticmethod
+    def _tool_call_name(tool_call: Any) -> str:
+        if isinstance(tool_call, dict):
+            return str(tool_call.get("function", {}).get("name") or "")
+        fn = getattr(tool_call, "function", None)
+        return str(getattr(fn, "name", "") or "")
+
+    @staticmethod
+    def _tool_call_arguments(tool_call: Any) -> str:
+        if isinstance(tool_call, dict):
+            return str(tool_call.get("function", {}).get("arguments") or "{}")
+        fn = getattr(tool_call, "function", None)
+        return str(getattr(fn, "arguments", "{}") or "{}")
+
+    @staticmethod
+    def _tool_call_id(tool_call: Any, *, fallback: str) -> str:
+        if isinstance(tool_call, dict):
+            return str(tool_call.get("id") or fallback)
+        return str(getattr(tool_call, "id", "") or fallback)
+
+    @staticmethod
+    def _parse_dsml_tool_calls(content: str, *, call_id_prefix: str = "dsml_call") -> list[dict[str, Any]]:
+        if "DSML" not in (content or ""):
+            return []
+        parsed: list[dict[str, Any]] = []
+        for invoke_index, invoke_match in enumerate(_DSML_INVOKE_RE.finditer(content or ""), start=1):
+            tool_name = str(invoke_match.group("name") or "").strip()
+            if not tool_name:
+                continue
+            body = invoke_match.group("body") or ""
+            args: dict[str, Any] = {}
+            for param_match in _DSML_PARAM_RE.finditer(body):
+                param_name = str(param_match.group("name") or "").strip()
+                if not param_name:
+                    continue
+                raw_value = (param_match.group("value") or "").strip()
+                marker_is_string = "string=\"false\"" not in (param_match.group(0) or "")
+                if marker_is_string:
+                    args[param_name] = raw_value
+                else:
+                    try:
+                        args[param_name] = json.loads(raw_value)
+                    except Exception:
+                        args[param_name] = raw_value
+            parsed.append(
+                {
+                    "id": f"{call_id_prefix}_{invoke_index}",
+                    "type": "function",
+                    "function": {
+                        "name": tool_name,
+                        "arguments": json.dumps(args, ensure_ascii=False),
+                    },
+                }
+            )
+        return parsed
+
     async def update_chat_portrait(
         self,
         *,
@@ -530,6 +618,8 @@ class TemplateRuntimeService:
             "Ты AI-администратор записи. Работай через function tools для операций расписания и записи. "
             "Не выдумывай результаты операций: опирайся только на ответы tools. "
             "Если не хватает параметров для tool call — задай уточняющий вопрос. "
+            "Никогда не показывай пользователю служебные блоки tool_calls/DSML/XML/JSON и не печатай внутренние id сотрудников/ресурсов. "
+            "Если пользователь называет дату без года, используй ближайшую будущую дату относительно текущего года. "
             "Отвечай только чистым текстом, без markdown.\n\n"
             f"{domain_instruction}\n{backend_instruction}"
         ).strip()
@@ -553,11 +643,13 @@ class TemplateRuntimeService:
                 temperature=0.2,
             )
             message = completion.choices[0].message
-            tool_calls = message.tool_calls or []
+            tool_calls: list[Any] = list(message.tool_calls or [])
             content = (message.content or "").strip()
+            if not tool_calls:
+                tool_calls = self._parse_dsml_tool_calls(content, call_id_prefix=f"crm_admin_{iteration}")
 
             if not tool_calls:
-                cleaned = content.replace("#", "").replace("*", "").strip()
+                cleaned = self._clean_llm_text(content)
                 if not cleaned:
                     cleaned = "Не удалось сформировать ответ. Уточните запрос."
                 return TemplateExecutionResult(answer=cleaned, sources=[], tool_events=tool_events)
@@ -565,15 +657,19 @@ class TemplateRuntimeService:
             messages.append(
                 {
                     "role": "assistant",
-                    "content": message.content or "",
-                    "tool_calls": [tool_call.model_dump() for tool_call in tool_calls],
+                    "content": self._strip_dsml_tool_markup(message.content or "").strip(),
+                    "tool_calls": [self._serialize_tool_call(tool_call) for tool_call in tool_calls],
                 }
             )
 
             all_tools_succeeded = True
-            for tool_call in tool_calls:
-                tool_name = tool_call.function.name
-                raw_args = tool_call.function.arguments or "{}"
+            for call_index, tool_call in enumerate(tool_calls, start=1):
+                tool_name = self._tool_call_name(tool_call)
+                raw_args = self._tool_call_arguments(tool_call)
+                tool_call_id = self._tool_call_id(
+                    tool_call,
+                    fallback=f"crm_admin_{iteration}_{call_index}",
+                )
                 try:
                     if booking_registry.has_tool(tool_name):
                         tool_result = await booking_registry.execute_tool(tool_name, raw_args)
@@ -655,7 +751,7 @@ class TemplateRuntimeService:
                 messages.append(
                     {
                         "role": "tool",
-                        "tool_call_id": tool_call.id,
+                        "tool_call_id": tool_call_id,
                         "name": tool_name,
                         "content": json.dumps(tool_result, ensure_ascii=False),
                     }
@@ -668,7 +764,7 @@ class TemplateRuntimeService:
                     temperature=0.2,
                 )
                 final_content = (final_completion.choices[0].message.content or "").strip()
-                cleaned = final_content.replace("#", "").replace("*", "").strip()
+                cleaned = self._clean_llm_text(final_content)
                 if cleaned:
                     return TemplateExecutionResult(answer=cleaned, sources=[], tool_events=tool_events)
 

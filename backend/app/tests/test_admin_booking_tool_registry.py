@@ -1,9 +1,6 @@
 import pytest
 
-from app.services.admin_booking.tool_registry import (
-    AdminBookingNeedsConfirmationError,
-    AdminBookingToolRegistry,
-)
+from app.services.admin_booking.tool_registry import AdminBookingToolRegistry
 
 
 @pytest.mark.asyncio
@@ -41,7 +38,16 @@ async def test_admin_booking_tool_registry_idempotency_replay(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_admin_booking_tool_registry_confirmation_required():
+async def test_admin_booking_tool_registry_does_not_require_confirmation(monkeypatch):
+    class _FakeService:
+        async def create_appointment(self, **kwargs):
+            return {"id": 101, "status": "booked"}
+
+    monkeypatch.setattr(
+        "app.services.admin_booking.tool_registry.get_admin_booking_service",
+        lambda: _FakeService(),
+    )
+
     registry = AdminBookingToolRegistry(
         agent_id=17,
         user_external_id="u-5",
@@ -51,8 +57,9 @@ async def test_admin_booking_tool_registry_confirmation_required():
         allowed_tools=["create_appointment"],
     )
 
-    with pytest.raises(AdminBookingNeedsConfirmationError):
-        await registry.execute_tool(
-            "create_appointment",
-            '{"starts_at":"2026-04-27T10:00:00","ends_at":"2026-04-27T11:00:00","staff_id":1}',
-        )
+    result = await registry.execute_tool(
+        "create_appointment",
+        '{"starts_at":"2026-04-27T10:00:00","ends_at":"2026-04-27T11:00:00","staff_id":1}',
+    )
+    assert result["ok"] is True
+    assert result["tool_status"] == "success"

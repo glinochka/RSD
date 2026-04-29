@@ -15,7 +15,8 @@ class AgentContextMiddleware(BaseMiddleware):
         agent_config = {
             "bot_id": data['bot_id'],
             "system_prompt": data['system_prompt'],
-            "welcome_message": data['welcome_message']
+            "welcome_message": data['welcome_message'],
+            "process_start_with_llm": bool(data.get("process_start_with_llm", False)),
         }
         # Always inject agent config so handler signature stays valid
         # even when owner lookup/subscription check fails.

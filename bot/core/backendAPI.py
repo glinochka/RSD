@@ -278,6 +278,7 @@ class APIcreate(APIbase):
         channel: str,
         system_prompt: str = "",
         welcome_message: str | None = None,
+        process_start_with_llm: bool = False,
         user_display_name: str | None = None,
         telegram_peer_access_hash: int | None = None,
     ) -> dict:
@@ -288,6 +289,7 @@ class APIcreate(APIbase):
             "channel": channel,
             "system_prompt": system_prompt,
             "welcome_message": welcome_message,
+            "process_start_with_llm": process_start_with_llm,
             "user_display_name": user_display_name,
             "telegram_peer_access_hash": telegram_peer_access_hash,
         }

@@ -42,6 +42,7 @@ class MessageRequest:
     channel: Channel
     system_prompt: str = ""
     welcome_message: str | None = None
+    process_start_with_llm: bool = False
     user_display_name: str | None = None
     telegram_peer_access_hash: int | None = None
     skip_chat_portrait_update: bool = False
@@ -129,7 +130,11 @@ class MessageProcessor:
                     status=ProcessingStatus.BLOCKED_USER,
                 )
 
-            if request.query.strip() == "/start" and request.channel == Channel.TELEGRAM:
+            if (
+                request.query.strip() == "/start"
+                and request.channel == Channel.TELEGRAM
+                and not request.process_start_with_llm
+            ):
                 return MessageResponse(
                     text=request.welcome_message or "Здравствуйте! Чем я могу вам помочь?",
                     status=ProcessingStatus.WELCOME,

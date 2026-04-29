@@ -39,6 +39,10 @@ class UpdateAgent(AgentLookup):
     name: Optional[str]  = Field(None, min_length=3, max_length=100, description="Имя агента: длина от 3 до 30 символов")
     system_prompt: Optional[str] = Field(None, description="Промпт")
     welcome_message: Optional[str] = Field(None, min_length=3, description="Начальное сообщение бота: длина от 3 символов")
+    process_start_with_llm: Optional[bool] = Field(
+        default=None,
+        description="Если true, /start обрабатывается через LLM как обычное сообщение",
+    )
     external_webhook_url: Optional[str] = Field(
         None,
         max_length=1024,
@@ -389,6 +393,10 @@ class InternalProcessMessageRequest(BaseModel):
     )
     system_prompt: Optional[str] = Field(default="", description="Системный промпт агента")
     welcome_message: Optional[str] = Field(default=None, description="Welcome message для /start")
+    process_start_with_llm: bool = Field(
+        default=False,
+        description="Если true, команда /start передается в LLM-пайплайн",
+    )
     user_display_name: Optional[str] = Field(default=None, max_length=128, description="Отображаемое имя")
     telegram_peer_access_hash: Optional[int] = Field(
         default=None,

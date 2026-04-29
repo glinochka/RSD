@@ -139,6 +139,7 @@ async def handle_agent_webhook(bot_id: int, request: Request):
                 bot_id=agent_json.get("bot_id"),
                 system_prompt=agent_json.get("system_prompt", ""),
                 welcome_message=agent_json.get("welcome_message"),
+                process_start_with_llm=bool(agent_json.get("process_start_with_llm", False)),
             )
 
         return {"status": "ok"}

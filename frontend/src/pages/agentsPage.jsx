@@ -35,6 +35,7 @@ const isChatFreezeEnabled = (agent) => {
   if (!cfg || typeof cfg !== 'object') return true;
   return cfg.enable_chat_freeze !== false;
 };
+const isStartProcessingEnabled = (agent) => Boolean(agent?.process_start_with_llm);
 const channelLabel = (channel) => {
   if (!channel) return 'Канал';
   if (channel.provider === 'telegram_bot') return 'Telegram бот';
@@ -207,6 +208,7 @@ const AgentsPageContent = () => {
   const [isSavingPortraitFeature, setIsSavingPortraitFeature] = useState(false);
   const [isSavingSmartSearch, setIsSavingSmartSearch] = useState(false);
   const [isSavingChatFreeze, setIsSavingChatFreeze] = useState(false);
+  const [isSavingStartProcessing, setIsSavingStartProcessing] = useState(false);
   const [isGeneratingPrompt, setIsGeneratingPrompt] = useState(false);
   const [isGeneratingWelcome, setIsGeneratingWelcome] = useState(false);
   const [isUploadingDocs, setIsUploadingDocs] = useState(false);
@@ -512,6 +514,30 @@ const AgentsPageContent = () => {
       showError(error?.message || 'Не удалось обновить настройку заморозки чата');
     } finally {
       setIsSavingChatFreeze(false);
+    }
+  };
+
+  const handleToggleStartProcessing = async (enabled) => {
+    if (!selectedBotId) return;
+    setIsSavingStartProcessing(true);
+    try {
+      await agentService.update(selectedBotId, {
+        process_start_with_llm: Boolean(enabled),
+      });
+      setSelectedAgent((prev) =>
+        prev
+          ? {
+              ...prev,
+              process_start_with_llm: Boolean(enabled),
+            }
+          : prev
+      );
+      showSuccess(enabled ? 'Обработка /start через LLM включена' : 'Обработка /start через LLM отключена');
+      await refreshAgents();
+    } catch (error) {
+      showError(error?.message || 'Не удалось обновить настройку обработки /start');
+    } finally {
+      setIsSavingStartProcessing(false);
     }
   };
 
@@ -1248,6 +1274,14 @@ const AgentsPageContent = () => {
                       title="Заморозка чата"
                       description="Авто-передача диалога владельцу при неуверенном ответе агента."
                       helpText="Если включено, агент может пометить диалог как требующий владельца и временно заморозить чат для пользователя."
+                    />
+                    <FeatureToggle
+                      checked={isStartProcessingEnabled(selectedAgent)}
+                      onChange={handleToggleStartProcessing}
+                      disabled={isSavingStartProcessing}
+                      title="Обработка /start"
+                      description="ON: /start отправляется в LLM. OFF: отправляется дефолтное/пользовательское приветствие."
+                      helpText="По умолчанию выключено: команда /start вернет текст приветствия. Включите, чтобы /start обрабатывался как обычное сообщение пользователя."
                     />
                   </div>
 

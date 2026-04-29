@@ -35,6 +35,7 @@ class MessageRequest:
     channel: Channel
     system_prompt: str = ""
     welcome_message: str | None = None
+    process_start_with_llm: bool = False
     user_display_name: str | None = None
     telegram_peer_access_hash: int | None = None
 
@@ -70,6 +71,7 @@ class MessageProcessor:
                 channel=request.channel.value,
                 system_prompt=request.system_prompt,
                 welcome_message=request.welcome_message,
+                process_start_with_llm=request.process_start_with_llm,
                 user_display_name=request.user_display_name,
                 telegram_peer_access_hash=request.telegram_peer_access_hash,
             )

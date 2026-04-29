@@ -39,6 +39,7 @@ async def handle_agent_message(message: types.Message, agent_config: dict):
         channel=Channel.TELEGRAM,
         system_prompt=agent_config.get("system_prompt", ""),
         welcome_message=agent_config.get("welcome_message"),
+        process_start_with_llm=bool(agent_config.get("process_start_with_llm", False)),
         user_display_name=user_display_name,
         telegram_peer_access_hash=None,  # Not available in webhook Telegram bot
     )

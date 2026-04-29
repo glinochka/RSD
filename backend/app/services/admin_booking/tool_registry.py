@@ -215,12 +215,6 @@ class AdminBookingToolRegistry:
         except ValidationError as exc:
             raise RuntimeError(f"Validation failed for tool '{tool_name}': {exc}")
 
-        if self._requires_confirmation(tool_name) and not _has_confirmation_marker(self._user_message):
-            raise AdminBookingNeedsConfirmationError(
-                "Для выполнения действия записи нужно подтверждение. "
-                "Попросите пользователя написать: 'подтверждаю'."
-            )
-
         canonical_args = self._canonical_args(args)
         tool_args_hash = self._tool_args_hash(canonical_args)
         _cleanup_idempotency_cache()
