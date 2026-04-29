@@ -66,19 +66,30 @@ const formatDateShort = (value) => {
   }).format(date);
 };
 
+const _padTwo = (n) => String(n).padStart(2, '0');
+const _toLocalIso = (d) =>
+  `${d.getFullYear()}-${_padTwo(d.getMonth() + 1)}-${_padTwo(d.getDate())}T${_padTwo(d.getHours())}:${_padTwo(d.getMinutes())}:${_padTwo(d.getSeconds())}`;
+
 const toIsoInputValue = (value) => {
   if (!value) return '';
-  const date = new Date(value);
+  const raw = String(value).trim();
+  if (raw.length >= 16 && !raw.includes('Z') && !raw.includes('+')) {
+    return raw.replace(' ', 'T').slice(0, 16);
+  }
+  const date = new Date(raw);
   if (Number.isNaN(date.getTime())) return '';
-  const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
-  return localDate.toISOString().slice(0, 16);
+  return _toLocalIso(date).slice(0, 16);
 };
 
 const fromIsoInputValue = (value) => {
   const raw = String(value || '').trim();
   if (!raw) return '';
+  if (raw.length >= 16 && !raw.includes('Z') && !raw.includes('+')) {
+    return raw;
+  }
   const parsed = new Date(raw);
-  return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString();
+  if (Number.isNaN(parsed.getTime())) return '';
+  return _toLocalIso(parsed);
 };
 
 const startOfDay = (value) => {
@@ -1241,8 +1252,8 @@ const AgentDetailedAnalyticsPageContent = () => {
 
         return {
           bot_id: botId,
-          starts_at: startDate.toISOString(),
-          ends_at: endDate.toISOString(),
+          starts_at: _toLocalIso(startDate),
+          ends_at: _toLocalIso(endDate),
           staff_id: Number(calendarShiftDraft.staff_id),
           resource_id: calendarShiftDraft.resource_id ? Number(calendarShiftDraft.resource_id) : undefined,
           slot_kind: 'work',

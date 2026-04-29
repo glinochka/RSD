@@ -160,7 +160,7 @@ _TOOL_MODELS: dict[str, type[BaseModel]] = {
 }
 
 _TOOL_DESCRIPTIONS = {
-    "check_availability": "Check available booking slots for requested period and filters.",
+    "check_availability": "Check available booking slots for requested period. Use a wide window (e.g. full day 00:00-23:59) to discover all schedule slots, then narrow down. Returns only slots with actual staff schedule entries.",
     "create_appointment": "Create booking appointment for selected slot/staff/resource.",
     "reschedule_appointment": "Reschedule existing appointment to a new time.",
     "cancel_appointment": "Cancel existing appointment by id.",

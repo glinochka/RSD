@@ -623,15 +623,23 @@ class TemplateRuntimeService:
             crm_connected=connection is not None,
             crm_provider_name=crm_provider_name,
         )
+        now_local = datetime.now()
+        now_context = (
+            f"Сейчас: {now_local.strftime('%Y-%m-%d %H:%M')} "
+            f"(день недели: {now_local.strftime('%A')})."
+        )
         system_prompt = (
             f"{prompt}\n\n"
             "Ты AI-администратор записи. Работай через function tools для операций расписания и записи. "
             "Не выдумывай результаты операций: опирайся только на ответы tools. "
             "Если не хватает параметров для tool call — задай уточняющий вопрос. "
             "Никогда не показывай пользователю служебные блоки tool_calls/DSML/XML/JSON и не печатай внутренние id сотрудников/ресурсов. "
-            "Если пользователь называет дату без года, используй ближайшую будущую дату относительно текущего года. "
+            "Даты и время в системе — локальные (бизнес-время). Не конвертируй в UTC. "
+            "Если пользователь называет дату без года, используй текущий год. "
+            "При вызове check_availability используй полный рабочий день (например, starts_at=начало дня 00:00, ends_at=конец дня 23:59) "
+            "чтобы получить все доступные слоты на день — не угадывай рабочие часы. "
             "Отвечай только чистым текстом, без markdown.\n\n"
-            f"{domain_instruction}\n{backend_instruction}"
+            f"{now_context}\n{domain_instruction}\n{backend_instruction}"
         ).strip()
         if portrait_block:
             system_prompt = f"{system_prompt}\n\n{portrait_block}"
@@ -1498,7 +1506,7 @@ class TemplateRuntimeService:
             return None
         last_status = str(tool_events[-1].get("tool_status") or "")
         if last_status == "sent_auto":
-            answer = f"Auto outreach готов к отправке:\n{composed_dm}"
+            answer = composed_dm
         elif last_status == "draft_requires_review":
             answer = f"Требуется подтверждение владельца. Черновик:\n{composed_dm}"
         elif last_status == "confirmation_required":
@@ -2049,7 +2057,7 @@ class TemplateRuntimeService:
             answer = "Черновик не сформирован, требуется ручная проверка."
         elif mode == "auto":
             reason_code = "sent_auto"
-            answer = f"Auto outreach готов к отправке:\n{composed_dm}"
+            answer = composed_dm
         elif mode == "semi_auto":
             reason_code = "draft_requires_review"
             answer = f"Требуется подтверждение владельца. Черновик:\n{composed_dm}"

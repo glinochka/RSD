@@ -155,6 +155,14 @@ async def _handle_chat_message(
     sender_is_bot = getattr(sender, "bot", False)
     if sender_is_bot:
         return
+    
+    # Skip messages from self (userbot)
+    try:
+        me = await event.client.get_me()
+        if sender.id == me.id:
+            return
+    except Exception:
+        pass
 
     raw = event.message.message
     if raw is None or not str(raw).strip():
@@ -196,9 +204,28 @@ async def _handle_chat_message(
     
     # Note: Response is not sent to group, only processed/queued in backend
     try:
-        await get_message_processor().process(request)
+        logger.info(
+            "Processing group message: bot_id=%s chat_id=%s user_id=%s text_preview=%s",
+            bot_id,
+            source_chat_id,
+            user_external_id,
+            query[:50] if len(query) > 50 else query,
+        )
+        response = await get_message_processor().process(request)
+        logger.info(
+            "Group message processed: bot_id=%s user_id=%s status=%s",
+            bot_id,
+            user_external_id,
+            response.status.value,
+        )
     except Exception as exc:
-        logger.warning("sales_manager chat scanning error: %s", exc)
+        logger.exception(
+            "sales_manager chat scanning error: bot_id=%s chat_id=%s user_id=%s error=%s",
+            bot_id,
+            source_chat_id,
+            user_external_id,
+            exc,
+        )
 
 
 

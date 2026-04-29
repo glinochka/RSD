@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 class DmOutreachWorker:
     """Background worker for sending queued DM messages."""
 
-    def __init__(self, batch_size: int = 10, min_interval_seconds: float = 0.5) -> None:
+    def __init__(self, batch_size: int = 10, min_interval_seconds: float = 0.3) -> None:
         self.batch_size = batch_size
         self.min_interval_seconds = min_interval_seconds
         self._stop = asyncio.Event()
@@ -32,7 +32,7 @@ class DmOutreachWorker:
     async def run_forever(self) -> None:
         """Main worker loop."""
         logger.info("DmOutreachWorker starting")
-        interval_seconds = max(5, int(self.min_interval_seconds * 10))  # Poll every 5+ seconds
+        interval_seconds = 2  # Poll every 2 seconds for more responsive processing
         
         try:
             while not self._stop.is_set():
@@ -64,6 +64,13 @@ class DmOutreachWorker:
 
         for item in pending:
             try:
+                logger.info(
+                    "Sending DM: queue_id=%d agent_id=%d user_id=%s text_preview=%s",
+                    item.id,
+                    item.agent_id,
+                    item.target_user_external_id,
+                    item.message_text[:50] if len(item.message_text) > 50 else item.message_text,
+                )
                 await self._send_message(item)
                 # Throttle between sends to avoid rate limiting
                 await asyncio.sleep(self.min_interval_seconds)
@@ -161,5 +168,5 @@ _dm_worker: DmOutreachWorker | None = None
 def get_dm_outreach_worker() -> DmOutreachWorker:
     global _dm_worker
     if _dm_worker is None:
-        _dm_worker = DmOutreachWorker(batch_size=10, min_interval_seconds=0.5)
+        _dm_worker = DmOutreachWorker(batch_size=10, min_interval_seconds=0.3)
     return _dm_worker
