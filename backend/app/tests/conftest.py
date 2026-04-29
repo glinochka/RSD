@@ -95,7 +95,7 @@ async def client(test_engine, test_session) -> AsyncGenerator[AsyncClient, None]
     # Моки для других сервисов
     mock_search_service = MagicMock()
     mock_ai_authoring = MagicMock()
-    mock_fastembed = MagicMock()
+    mock_sentence_transformers = MagicMock()
 
     # --- 2. ПАТЧИНГ СИСТЕМНЫХ МОДУЛЕЙ ПЕРЕД ИМПОРТОМ РОУТЕРОВ ---
     # Это критически важно: мы подменяем модуль в sys.modules ДО того, как кто-то сделает 'import app.qdrant.indexer'
@@ -104,9 +104,7 @@ async def client(test_engine, test_session) -> AsyncGenerator[AsyncClient, None]
         'app.qdrant.indexer': mock_indexer_module,  # Полная замена модуля
         'app.qdrant.search_service': mock_search_service,
         'app.services.ai_authoring': mock_ai_authoring,
-        'fastembed': mock_fastembed,
-        'fastembed.sparse': mock_fastembed,
-        'fastembed.sparse.sparse_text_embedding': mock_fastembed,
+        'sentence_transformers': mock_sentence_transformers,
     }):
         
         # --- 3. ПАТЧИНГ ФУНКЦИЙ КРИПТОГРАФИИ ---

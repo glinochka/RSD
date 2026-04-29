@@ -21,15 +21,13 @@ RUN python - <<'PY'
 import os
 
 try:
-    from fastembed import TextEmbedding
-
     os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-    primary = "BAAI/bge-m3"
-    fallback = "BAAI/bge-base-en-v1.5"
-    supported = {m.get("model") for m in TextEmbedding.list_supported_models()}
-    model_name = primary if primary in supported else fallback
+    from sentence_transformers import SentenceTransformer
+
+    model_name = "BAAI/bge-m3"
     print(f"Preloading embedding model: {model_name}")
-    TextEmbedding(model_name=model_name)
+    SentenceTransformer(model_name, device="cpu")
+    print("Model preloaded successfully.")
 except Exception as exc:
     print(f"WARNING: model preload skipped: {exc}")
 PY
