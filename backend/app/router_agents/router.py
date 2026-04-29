@@ -47,8 +47,8 @@ from ..channels.message_processor import (
 from ..services.ai_authoring import generate_welcome_with_ai, improve_prompt_with_ai
 from ..services.admin_booking import get_admin_booking_service
 from ..services.crm import build_provider
-from ..services.qa_handoff_service import get_qa_handoff_service
-from ..services.template_runtime import get_template_runtime
+from ..services.qa_handoff_service import EscalationType as QAEscalationType, get_qa_handoff_service
+from ..services.template_runtime import EscalationType, get_template_runtime
 from ..services.youtube_client import get_youtube_client
 from ..utils.api_keys import generate_agent_external_api_key, hash_agent_external_api_key
 from ..utils.JWT import get_user_from_access_token
@@ -86,9 +86,11 @@ DEFAULT_CRM_ALLOWED_TOOLS = [
 ]
 DEFAULT_BOOKING_ALLOWED_TOOLS = [
     "check_availability",
+    "list_appointments",
     "create_appointment",
     "reschedule_appointment",
     "cancel_appointment",
+    "confirm_appointment",
     "list_staff",
     "list_services",
 ]
@@ -560,7 +562,8 @@ def _normalize_template_config(template_type: str, template_config: dict | None)
         common_config["enable_chat_portrait"] = bool(raw.get("enable_chat_portrait"))
     if "enable_smart_search" in raw:
         common_config["enable_smart_search"] = bool(raw.get("enable_smart_search"))
-    if "enable_chat_freeze" in raw:
+    # Chat freeze feature is available only for QA template.
+    if template_type == "qa" and "enable_chat_freeze" in raw:
         common_config["enable_chat_freeze"] = bool(raw.get("enable_chat_freeze"))
     if "portrait_model" in raw:
         portrait_model = str(raw.get("portrait_model") or "").strip()
@@ -6078,8 +6081,14 @@ async def external_chat(
         )
     sources = execution.sources
     handoff_applied = False
+    escalation_type_applied: str | None = None
     if execution.requires_owner_handoff and str(agent.template_type or "qa").strip().lower() == "qa":
-        await get_qa_handoff_service().freeze_chat_and_notify_owner(
+        qa_escalation_type = (
+            QAEscalationType.FREEZE_CHAT
+            if execution.escalation_type == EscalationType.FREEZE_CHAT
+            else QAEscalationType.NOTIFY_ONLY
+        )
+        await get_qa_handoff_service().escalate_to_operator(
             agent_id=agent.id,
             user_external_id=external_user_id,
             user_message=message,
@@ -6087,8 +6096,10 @@ async def external_chat(
             reason=execution.owner_handoff_reason,
             channel="external_api",
             user_display_name=external_user_name,
+            escalation_type=qa_escalation_type,
         )
         handoff_applied = True
+        escalation_type_applied = qa_escalation_type.value
 
     async with async_session_maker() as session:
         async with session.begin():
@@ -6145,6 +6156,9 @@ async def external_chat(
                     ).get("crm_provider"),
                 )
             if handoff_applied:
+                tool_status = (
+                    "chat_frozen" if escalation_type_applied == "freeze_chat" else "operator_notified"
+                )
                 await _log_analytics_message(
                     session=session,
                     agent=agent,
@@ -6154,7 +6168,7 @@ async def external_chat(
                     user_display_name=external_user_name,
                     message_text=execution.owner_handoff_reason or "qa_owner_handoff",
                     tool_name="qa_owner_handoff",
-                    tool_status="chat_frozen",
+                    tool_status=tool_status,
                 )
 
     return JSONResponse(
@@ -6766,6 +6780,27 @@ async def admin_template_appointments_confirm(
                 appointment_id=payload.appointment_id,
             )
     return JSONResponse(content=row, status_code=status.HTTP_200_OK)
+
+
+@router.delete("/admin_template/appointments")
+async def admin_template_appointments_delete(
+    payload: AdminTemplateAppointmentDeletePayload,
+    current_user=Depends(get_current_user_required),
+):
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent, _ = await _find_admin_template_agent(
+                session=session,
+                agent_dao=agent_dao,
+                current_user=current_user,
+                payload=payload,
+            )
+            await get_admin_booking_service().delete_appointment(
+                agent_id=agent.id,
+                appointment_id=payload.appointment_id,
+            )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/admin_template/waitlist")

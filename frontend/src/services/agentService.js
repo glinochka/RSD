@@ -433,6 +433,10 @@ export const agentService = {
     const response = await apiClient.patch(API_ROUTES.AGENTS_ADMIN_TEMPLATE_APPOINTMENTS_CONFIRM, data);
     return response.data;
   },
+  deleteAdminTemplateAppointment: async (data) => {
+    const response = await apiClient.delete(API_ROUTES.AGENTS_ADMIN_TEMPLATE_APPOINTMENTS, { data });
+    return response.data;
+  },
   getAdminTemplateOccupancy: async ({ agent_id = null, bot_id = null, starts_at, ends_at, staff_id = null, service_id = null, resource_id = null, granularity_minutes = 30 } = {}) => {
     const response = await apiClient.get(API_ROUTES.AGENTS_ADMIN_TEMPLATE_OCCUPANCY, {
       params: {

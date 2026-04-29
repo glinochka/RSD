@@ -378,6 +378,8 @@ async def test_content_factory_runtime_technical_message_fallback(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_qa_runtime_marks_owner_handoff_by_marker(monkeypatch):
+    from app.services.template_runtime import EscalationType
+
     service = TemplateRuntimeService()
 
     async def fake_search(query, agent_id):
@@ -399,6 +401,36 @@ async def test_qa_runtime_marks_owner_handoff_by_marker(monkeypatch):
     assert "ручная проверка" in result.answer
     assert result.requires_owner_handoff is True
     assert result.owner_handoff_reason is not None
+    assert result.escalation_type == EscalationType.FREEZE_CHAT
+
+
+@pytest.mark.asyncio
+async def test_qa_runtime_operator_assist_does_not_freeze_chat(monkeypatch):
+    """Test that [OPERATOR_ASSIST] marker notifies operator without freezing chat."""
+    from app.services.template_runtime import EscalationType
+
+    service = TemplateRuntimeService()
+
+    async def fake_search(query, agent_id):
+        return [{"source": "kb://faq", "text": "FAQ context"}]
+
+    async def fake_generate(user_message, context_list, prompt):
+        return "[OPERATOR_ASSIST] Вызываю старшего менеджера для уточнения деталей."
+
+    monkeypatch.setattr("app.services.template_runtime.search_knowledge_base", fake_search)
+    monkeypatch.setattr("app.services.template_runtime.generate_answer_with_context", fake_generate)
+
+    result = await service.execute(
+        template_type="qa",
+        prompt="Ты QA-ассистент",
+        user_message="Мне нужна консультация менеджера",
+        knowledge_scope_id=101,
+    )
+
+    assert "менеджер" in result.answer.lower()
+    assert result.requires_owner_handoff is True
+    assert result.owner_handoff_reason is not None
+    assert result.escalation_type == EscalationType.NOTIFY_ONLY
 
 
 @pytest.mark.asyncio

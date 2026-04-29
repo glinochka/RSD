@@ -211,6 +211,13 @@ async def test_local_booking_lifecycle_create_reschedule_cancel(booking_session_
         starts_at=now,
         ends_at=later,
     )
+    appointments = await service.list_appointments(
+        agent_id=agent.id,
+        client_external_id="client-1",
+        status="booked",
+    )
+    assert len(appointments) == 1
+    assert appointments[0]["id"] == appointment["id"]
 
     with pytest.raises(ValueError, match="overlaps"):
         await service.create_appointment(
@@ -230,6 +237,11 @@ async def test_local_booking_lifecycle_create_reschedule_cancel(booking_session_
         ends_at=later2,
     )
     assert rescheduled["starts_at"] == later.isoformat()
+    confirmed = await service.confirm_appointment(
+        agent_id=agent.id,
+        appointment_id=appointment["id"],
+    )
+    assert confirmed["status"] == "confirmed"
 
     cancelled = await service.cancel_appointment(
         agent_id=agent.id,

@@ -560,6 +560,10 @@ class AdminTemplateAppointmentConfirmPayload(AgentLookup):
     appointment_id: int = Field(..., gt=0, description="ID записи")
 
 
+class AdminTemplateAppointmentDeletePayload(AgentLookup):
+    appointment_id: int = Field(..., gt=0, description="ID записи")
+
+
 class AdminTemplateWaitlistCreatePayload(AgentLookup):
     client_external_id: str = Field(..., min_length=1, max_length=128)
     client_name: Optional[str] = Field(default=None, max_length=128)

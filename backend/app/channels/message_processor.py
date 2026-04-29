@@ -11,8 +11,8 @@ from sqlalchemy import select
 
 from ..alembic.database import async_session_maker
 from ..alembic.models import Agent, AgentAnalyticsMessage, AgentFrozenUser, User
-from ..services.qa_handoff_service import get_qa_handoff_service
-from ..services.template_runtime import get_template_runtime
+from ..services.qa_handoff_service import EscalationType as QAEscalationType, get_qa_handoff_service
+from ..services.template_runtime import EscalationType, get_template_runtime
 from ..utils.pii import redact_pii_text
 logger = logging.getLogger(__name__)
 MAX_INT32 = 2_147_483_647
@@ -183,8 +183,14 @@ class MessageProcessor:
             )
             answer = execution.answer
             handoff_applied = False
+            escalation_type_applied: str | None = None
             if execution.requires_owner_handoff and normalized_template == "qa":
-                await get_qa_handoff_service().freeze_chat_and_notify_owner(
+                qa_escalation_type = (
+                    QAEscalationType.FREEZE_CHAT
+                    if execution.escalation_type == EscalationType.FREEZE_CHAT
+                    else QAEscalationType.NOTIFY_ONLY
+                )
+                await get_qa_handoff_service().escalate_to_operator(
                     agent_id=resolved_agent.id,
                     user_external_id=normalized_user_external_id,
                     user_message=request.query,
@@ -192,8 +198,10 @@ class MessageProcessor:
                     reason=execution.owner_handoff_reason,
                     channel=request.channel.value,
                     user_display_name=request.user_display_name,
+                    escalation_type=qa_escalation_type,
                 )
                 handoff_applied = True
+                escalation_type_applied = qa_escalation_type.value
 
             for event in execution.tool_events:
                 await self._log_message(
@@ -231,6 +239,9 @@ class MessageProcessor:
                     ),
                 )
             if handoff_applied:
+                tool_status = (
+                    "chat_frozen" if escalation_type_applied == "freeze_chat" else "operator_notified"
+                )
                 await self._log_message(
                     agent_id=resolved_agent.id,
                     analytics_namespace_id=resolved_agent.bot_id or resolved_agent.id,
@@ -242,7 +253,7 @@ class MessageProcessor:
                     telegram_peer_access_hash=request.telegram_peer_access_hash,
                     tool_name="qa_owner_handoff",
                     tool_args_hash=None,
-                    tool_status="chat_frozen",
+                    tool_status=tool_status,
                     latency_ms=0,
                     crm_provider=None,
                 )

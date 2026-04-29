@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from ...alembic.database import async_session_maker
-from ...alembic.models import Agent, AgentCrmConnection
+from ...alembic.models import AdminAppointment, Agent, AgentCrmConnection
 from ...utils.crypto import decrypt_crm_credentials
 from ..crm import build_provider
 from .providers import BookingProvider, CrmBookingProvider, LocalBookingProvider
@@ -328,6 +328,65 @@ class AdminBookingService:
             service_id=service_id,
         )
 
+    async def list_appointments(
+        self,
+        *,
+        agent_id: int,
+        starts_at: datetime | None = None,
+        ends_at: datetime | None = None,
+        staff_id: int | None = None,
+        resource_id: int | None = None,
+        service_id: int | None = None,
+        client_external_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        # Ensure agent exists and backend constraints are respected.
+        await self.resolve_provider(agent_id=agent_id)
+        async with self._session_factory() as session:
+            conditions = [AdminAppointment.agent_id == agent_id]
+            if staff_id is not None:
+                conditions.append(AdminAppointment.staff_id == staff_id)
+            if resource_id is not None:
+                conditions.append(AdminAppointment.resource_id == resource_id)
+            if service_id is not None:
+                conditions.append(AdminAppointment.service_id == service_id)
+            if starts_at is not None:
+                conditions.append(AdminAppointment.ends_at > starts_at)
+            if ends_at is not None:
+                conditions.append(AdminAppointment.starts_at < ends_at)
+            normalized_client_external_id = str(client_external_id or "").strip()
+            if normalized_client_external_id:
+                conditions.append(AdminAppointment.client_external_id == normalized_client_external_id)
+            normalized_status = str(status or "").strip().lower()
+            if normalized_status:
+                conditions.append(AdminAppointment.status == normalized_status)
+            rows = (
+                await session.execute(
+                    select(AdminAppointment)
+                    .where(*conditions)
+                    .order_by(AdminAppointment.starts_at.asc(), AdminAppointment.id.asc())
+                )
+            ).scalars().all()
+        return [
+            {
+                "id": row.id,
+                "agent_id": row.agent_id,
+                "staff_id": row.staff_id,
+                "resource_id": row.resource_id,
+                "service_id": row.service_id,
+                "client_external_id": row.client_external_id,
+                "client_name": row.client_name,
+                "source_channel": row.source_channel,
+                "starts_at": row.starts_at.isoformat() if row.starts_at else None,
+                "ends_at": row.ends_at.isoformat() if row.ends_at else None,
+                "status": row.status,
+                "notes": row.notes,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+                "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+            }
+            for row in rows
+        ]
+
     async def create_appointment(
         self,
         *,
@@ -398,6 +457,18 @@ class AdminBookingService:
     ) -> dict[str, Any]:
         resolution = await self.resolve_provider(agent_id=agent_id)
         return await resolution.provider.confirm_appointment(
+            agent_id=agent_id,
+            appointment_id=appointment_id,
+        )
+
+    async def delete_appointment(
+        self,
+        *,
+        agent_id: int,
+        appointment_id: int,
+    ) -> dict[str, Any]:
+        resolution = await self.resolve_provider(agent_id=agent_id)
+        return await resolution.provider.delete_appointment(
             agent_id=agent_id,
             appointment_id=appointment_id,
         )

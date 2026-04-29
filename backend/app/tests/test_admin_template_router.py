@@ -189,6 +189,22 @@ async def test_admin_template_schedule_appointments_and_occupancy(client: AsyncC
     )
     assert reschedule_resp.status_code == 200, reschedule_resp.text
 
+    delete_resp = await client.request(
+        "DELETE",
+        "/api/agents/admin_template/appointments",
+        headers=auth_headers,
+        json={"agent_id": agent_id, "appointment_id": appointment["id"]},
+    )
+    assert delete_resp.status_code == 204, delete_resp.text
+
+    appointments_after_delete = await client.get(
+        "/api/agents/admin_template/appointments",
+        headers=auth_headers,
+        params={"agent_id": agent_id},
+    )
+    assert appointments_after_delete.status_code == 200, appointments_after_delete.text
+    assert appointments_after_delete.json()["items"] == []
+
     occupancy_resp = await client.get(
         "/api/agents/admin_template/occupancy",
         headers=auth_headers,

@@ -316,6 +316,16 @@ class TestAgentsCRUD:
         assert cfg["crm_provider"] == "amocrm"
         assert cfg["confirmation_policy"] == "confirm_risky"
         assert cfg["fallback_mode"] == "ask_clarifying_question"
+        assert cfg["allowed_booking_tools"] == [
+            "check_availability",
+            "list_appointments",
+            "create_appointment",
+            "reschedule_appointment",
+            "cancel_appointment",
+            "confirm_appointment",
+            "list_staff",
+            "list_services",
+        ]
         assert cfg["allowed_tools"] == [
             "find_contact",
             "create_contact",

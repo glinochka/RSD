@@ -202,3 +202,12 @@ class BookingProvider(ABC):
         appointment_id: int,
     ) -> dict[str, Any]:
         raise NotImplementedError
+
+    @abstractmethod
+    async def delete_appointment(
+        self,
+        *,
+        agent_id: int,
+        appointment_id: int,
+    ) -> dict[str, Any]:
+        raise NotImplementedError

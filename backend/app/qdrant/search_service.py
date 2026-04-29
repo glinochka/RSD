@@ -1,4 +1,5 @@
 import json
+import re
 from typing import List, Dict, Any
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models
@@ -16,8 +17,29 @@ ai_client = AsyncOpenAI(
     base_url="https://api.deepseek.com"
 )
 
+_SMALL_TALK_PATTERNS = (
+    r"^\s*(привет|здравствуйте|добрый день|добрый вечер|hi|hello|hey)\s*[!.,?]*\s*$",
+    r"^\s*(как дела|как ты|что нового)\s*[!.,?]*\s*$",
+    r"^\s*(спасибо|благодарю|ок|хорошо|понял|понятно)\s*[!.,?]*\s*$",
+)
+
+
+def _looks_like_small_talk(query: str) -> bool:
+    text = (query or "").strip().lower()
+    if not text:
+        return True
+    if len(text) <= 2:
+        return True
+    return any(re.match(pattern, text) for pattern in _SMALL_TALK_PATTERNS)
+
+
 async def plan_rag_queries(original_query: str, *, max_queries: int = 3) -> list[str]:
-    """Строит 1..max_queries поисковых запросов через function calling."""
+    """
+    Планирует RAG-поиск через function calling.
+
+    В smart-режиме LLM может решить, что RAG не нужен (например, small-talk),
+    тогда возвращается пустой список и векторный поиск не выполняется.
+    """
     safe_max_queries = max(1, min(max_queries, 3))
     try:
         response = await ai_client.chat.completions.create(
@@ -27,9 +49,10 @@ async def plan_rag_queries(original_query: str, *, max_queries: int = 3) -> list
                     "role": "system",
                     "content": (
                         "Ты планируешь поиск по базе знаний (RAG). "
-                        "Сформируй запросы, которые нужно отправить в векторный поиск, "
-                        "чтобы собрать факты для ответа пользователю. "
-                        "Дай от 1 до 3 точных поисковых формулировок без воды."
+                        "Сначала определи, нужен ли вообще поиск по базе знаний для ответа. "
+                        "Если запрос пользователя — small-talk/приветствие/вежливая реплика, "
+                        "или ответ не требует фактов из базы знаний, верни should_search=false и пустой queries. "
+                        "Если поиск нужен, верни should_search=true и 1-3 точных поисковых формулировки без воды."
                     ),
                 },
                 {"role": "user", "content": original_query}
@@ -38,19 +61,23 @@ async def plan_rag_queries(original_query: str, *, max_queries: int = 3) -> list
                 {
                     "type": "function",
                     "function": {
-                        "name": "extract_rag_queries",
-                        "description": "Извлекает список поисковых запросов для RAG.",
+                        "name": "extract_rag_plan",
+                        "description": "Решает, нужен ли RAG и какие запросы использовать.",
                         "parameters": {
                             "type": "object",
                             "properties": {
+                                "should_search": {
+                                    "type": "boolean",
+                                    "description": "Нужен ли поиск по базе знаний для этого запроса.",
+                                },
                                 "queries": {
                                     "type": "array",
                                     "items": {"type": "string"},
-                                    "minItems": 1,
+                                    "minItems": 0,
                                     "maxItems": safe_max_queries,
                                 }
                             },
-                            "required": ["queries"],
+                            "required": ["should_search", "queries"],
                             "additionalProperties": False,
                         },
                     },
@@ -58,7 +85,7 @@ async def plan_rag_queries(original_query: str, *, max_queries: int = 3) -> list
             ],
             tool_choice={
                 "type": "function",
-                "function": {"name": "extract_rag_queries"},
+                "function": {"name": "extract_rag_plan"},
             },
             temperature=0.1,
         )
@@ -66,13 +93,16 @@ async def plan_rag_queries(original_query: str, *, max_queries: int = 3) -> list
         message = response.choices[0].message
         tool_calls = message.tool_calls or []
         if not tool_calls:
-            raise ValueError("LLM не вернул function call для RAG-запросов")
+            raise ValueError("LLM не вернул function call для RAG-плана")
 
         args_raw = tool_calls[0].function.arguments or "{}"
         payload = json.loads(args_raw)
+        should_search = bool(payload.get("should_search"))
         raw_queries = payload.get("queries")
         if not isinstance(raw_queries, list):
             raise ValueError("Некорректный формат queries")
+        if not should_search:
+            return []
 
         queries: list[str] = []
         for item in raw_queries:
@@ -83,10 +113,13 @@ async def plan_rag_queries(original_query: str, *, max_queries: int = 3) -> list
                 break
 
         if not queries:
-            raise ValueError("Пустой список запросов после нормализации")
+            fallback_query = (original_query or "").strip()
+            return [fallback_query] if fallback_query else []
         return queries
     except Exception:
         fallback_query = (original_query or "").strip()
+        if _looks_like_small_talk(fallback_query):
+            return []
         return [fallback_query] if fallback_query else []
 
 

@@ -292,6 +292,19 @@ class CrmBookingProvider(BookingProvider):
         await self._sync_crm_event(event="confirmed", appointment=appointment)
         return appointment
 
+    async def delete_appointment(
+        self,
+        *,
+        agent_id: int,
+        appointment_id: int,
+    ) -> dict[str, Any]:
+        appointment = await self._local.delete_appointment(
+            agent_id=agent_id,
+            appointment_id=appointment_id,
+        )
+        await self._sync_crm_event(event="deleted", appointment=appointment)
+        return appointment
+
     async def _sync_crm_event(self, *, event: str, appointment: dict[str, Any]) -> None:
         title = f"Booking {event}: client={appointment.get('client_name') or appointment.get('client_external_id')}"
         try:

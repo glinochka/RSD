@@ -808,6 +808,35 @@ class LocalBookingProvider(BookingProvider):
                 await session.refresh(row)
                 return _serialize_appointment(row)
 
+    async def delete_appointment(
+        self,
+        *,
+        agent_id: int,
+        appointment_id: int,
+    ) -> dict[str, Any]:
+        async with self._session_factory() as session:
+            async with _maybe_begin(session):
+                row = await session.scalar(
+                    select(AdminAppointment).where(
+                        AdminAppointment.id == appointment_id,
+                        AdminAppointment.agent_id == agent_id,
+                    )
+                )
+                if row is None:
+                    raise ValueError("Appointment not found")
+                serialized = _serialize_appointment(row)
+                await self._try_waitlist_auto_book(
+                    session,
+                    agent_id=agent_id,
+                    freed_starts_at=row.starts_at,
+                    freed_ends_at=row.ends_at,
+                    staff_id=row.staff_id,
+                    resource_id=row.resource_id,
+                    service_id=row.service_id,
+                )
+                await session.delete(row)
+                return serialized
+
     async def _upsert_client_profile(
         self,
         session: Any,

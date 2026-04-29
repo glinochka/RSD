@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from enum import Enum
 
 import httpx
 from sqlalchemy import select
@@ -13,7 +14,52 @@ from ..config import settings
 logger = logging.getLogger(__name__)
 
 
+class EscalationType(str, Enum):
+    """Type of escalation to operator."""
+
+    FREEZE_CHAT = "freeze_chat"
+    NOTIFY_ONLY = "notify_only"
+
+
 class QAHandoffService:
+    async def escalate_to_operator(
+        self,
+        *,
+        agent_id: int,
+        user_external_id: str,
+        user_message: str,
+        answer: str,
+        reason: str | None,
+        channel: str,
+        user_display_name: str | None = None,
+        escalation_type: EscalationType = EscalationType.NOTIFY_ONLY,
+    ) -> None:
+        """
+        Escalate conversation to human operator.
+
+        Args:
+            escalation_type:
+                - FREEZE_CHAT: freeze chat and notify owner (legacy behavior)
+                - NOTIFY_ONLY: just notify owner, chat continues working
+        """
+        normalized_uid = (user_external_id or "").strip()
+        if not normalized_uid:
+            return
+
+        if escalation_type == EscalationType.FREEZE_CHAT:
+            await self._freeze_user(agent_id=agent_id, user_external_id=normalized_uid)
+
+        await self._send_owner_email(
+            agent_id=agent_id,
+            user_external_id=normalized_uid,
+            user_display_name=user_display_name,
+            user_message=user_message,
+            answer=answer,
+            reason=reason,
+            channel=channel,
+            is_chat_frozen=escalation_type == EscalationType.FREEZE_CHAT,
+        )
+
     async def freeze_chat_and_notify_owner(
         self,
         *,
@@ -25,19 +71,39 @@ class QAHandoffService:
         channel: str,
         user_display_name: str | None = None,
     ) -> None:
-        normalized_uid = (user_external_id or "").strip()
-        if not normalized_uid:
-            return
-
-        await self._freeze_user(agent_id=agent_id, user_external_id=normalized_uid)
-        await self._send_owner_email(
+        """Legacy method - freezes chat and notifies owner."""
+        await self.escalate_to_operator(
             agent_id=agent_id,
-            user_external_id=normalized_uid,
-            user_display_name=user_display_name,
+            user_external_id=user_external_id,
             user_message=user_message,
             answer=answer,
             reason=reason,
             channel=channel,
+            user_display_name=user_display_name,
+            escalation_type=EscalationType.FREEZE_CHAT,
+        )
+
+    async def notify_operator_without_freeze(
+        self,
+        *,
+        agent_id: int,
+        user_external_id: str,
+        user_message: str,
+        answer: str,
+        reason: str | None,
+        channel: str,
+        user_display_name: str | None = None,
+    ) -> None:
+        """Notify operator without freezing the chat - bot continues to respond."""
+        await self.escalate_to_operator(
+            agent_id=agent_id,
+            user_external_id=user_external_id,
+            user_message=user_message,
+            answer=answer,
+            reason=reason,
+            channel=channel,
+            user_display_name=user_display_name,
+            escalation_type=EscalationType.NOTIFY_ONLY,
         )
 
     async def _freeze_user(self, *, agent_id: int, user_external_id: str) -> None:
@@ -71,6 +137,7 @@ class QAHandoffService:
         answer: str,
         reason: str | None,
         channel: str,
+        is_chat_frozen: bool = True,
     ) -> None:
         owner_email = ""
         owner_name = ""
@@ -120,14 +187,23 @@ class QAHandoffService:
         safe_answer = (answer or "").strip()[:3000]
         safe_channel = (channel or "").strip() or "unknown"
         subject = f"RSD: требуется вмешательство владельца ({bot_label})"
+
+        if is_chat_frozen:
+            status_line = "QA-бот автоматически перевел чат в заморозку и запрашивает ваше вмешательство."
+            chat_status = "Статус чата: ЗАМОРОЖЕН (бот не отвечает пользователю)"
+        else:
+            status_line = "QA-бот запрашивает ваше вмешательство. Бот продолжает отвечать на вопросы пользователя."
+            chat_status = "Статус чата: АКТИВЕН (бот продолжает работать)"
+
         text = (
             f"Здравствуйте, {owner_name or 'владелец агента'}.\n\n"
-            "QA-бот автоматически перевел чат в заморозку и запрашивает ваше вмешательство.\n\n"
+            f"{status_line}\n\n"
             f"Агент: {bot_label} (id={agent_id})\n"
             f"Канал: {safe_channel}\n"
             f"Пользователь: {user_external_id}\n"
             f"Имя пользователя: {safe_user_name}\n"
-            f"Причина: {safe_reason}\n\n"
+            f"{chat_status}\n"
+            f"Причина эскалации: {safe_reason}\n\n"
             f"Сообщение пользователя:\n{safe_user_message}\n\n"
             f"Ответ агента:\n{safe_answer}\n"
         )

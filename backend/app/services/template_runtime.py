@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from enum import Enum
 import json
 import logging
 import re
@@ -36,6 +37,14 @@ _DSML_PARAM_RE = re.compile(
 )
 
 
+class EscalationType(str, Enum):
+    """Type of escalation to operator."""
+
+    NONE = "none"
+    FREEZE_CHAT = "freeze_chat"
+    NOTIFY_ONLY = "notify_only"
+
+
 @dataclass
 class TemplateExecutionResult:
     answer: str
@@ -45,6 +54,7 @@ class TemplateExecutionResult:
     fallback_reason: str | None = None
     requires_owner_handoff: bool = False
     owner_handoff_reason: str | None = None
+    escalation_type: EscalationType = EscalationType.NONE
 
 
 class TemplateRuntimeService:
@@ -888,17 +898,26 @@ class TemplateRuntimeService:
         if enable_owner_handoff:
             effective_prompt = (
                 f"{effective_prompt}\n\n"
-                "Если нет четкого ответа на вопрос из доступного контекста "
-                "или требуется вмешательство человека, начни ответ строго с маркера "
-                "[OWNER_HANDOFF], кратко укажи причину и сообщи пользователю, что запрос передан владельцу."
+                "ВАЖНО: Ты можешь привлечь оператора когда это необходимо. Используй один из маркеров:\n"
+                "1. [OPERATOR_ASSIST] - если вопрос сложный и нужна помощь оператора, НО ты можешь "
+                "продолжать отвечать на другие вопросы клиента. Используй этот маркер, когда:\n"
+                "   - Клиент задаёт вопрос, на который ты не можешь дать точный ответ из контекста\n"
+                "   - Требуется уточнение от человека-менеджера\n"
+                "   - Клиент просит связаться с менеджером или оператором\n"
+                "   После маркера кратко укажи причину и сообщи клиенту, что вызываешь оператора.\n\n"
+                "2. [OWNER_HANDOFF] - ТОЛЬКО если клиент агрессивен, угрожает или ситуация критическая "
+                "и требует полной остановки бота. Это заморозит чат полностью.\n\n"
+                "В большинстве случаев используй [OPERATOR_ASSIST] - он вызовет оператора, "
+                "но позволит тебе продолжать помогать клиенту."
             ).strip()
         if portrait_block:
             effective_prompt = f"{effective_prompt}\n\n{portrait_block}" if effective_prompt else portrait_block
         answer = await generate_answer_with_context(user_message, context_list, effective_prompt)
         requires_owner_handoff = False
         owner_handoff_reason: str | None = None
+        escalation_type = EscalationType.NONE
         if enable_owner_handoff:
-            answer, requires_owner_handoff, owner_handoff_reason = self._extract_owner_handoff(answer)
+            answer, requires_owner_handoff, owner_handoff_reason, escalation_type = self._extract_owner_handoff(answer)
 
         sources: list[str] = []
         for item in context_list:
@@ -913,19 +932,51 @@ class TemplateRuntimeService:
             sources=sources,
             requires_owner_handoff=requires_owner_handoff,
             owner_handoff_reason=owner_handoff_reason,
+            escalation_type=escalation_type,
         )
 
     @staticmethod
-    def _extract_owner_handoff(answer: str) -> tuple[str, bool, str | None]:
+    def _extract_owner_handoff(answer: str) -> tuple[str, bool, str | None, EscalationType]:
+        """
+        Extract escalation markers from LLM response.
+
+        Returns:
+            tuple of (cleaned_answer, requires_handoff, reason, escalation_type)
+        """
         text = (answer or "").strip()
         if not text:
-            return text, False, None
+            return text, False, None, EscalationType.NONE
 
-        match = re.match(r"^\[OWNER_HANDOFF\]\s*(.*)$", text, flags=re.IGNORECASE | re.DOTALL)
-        if match:
-            reason_text = (match.group(1) or "").strip()
+        operator_assist_match = re.match(
+            r"^\[OPERATOR_ASSIST\]\s*(.*)$", text, flags=re.IGNORECASE | re.DOTALL
+        )
+        if operator_assist_match:
+            reason_text = (operator_assist_match.group(1) or "").strip()
+            first_sentence = reason_text.split("\n", 1)[0][:300] if reason_text else "operator_assist_requested"
+            default_msg = "Вызываю старшего менеджера, подождите пожалуйста. А пока могу помочь вам с другими вопросами."
+            return reason_text or default_msg, True, first_sentence, EscalationType.NOTIFY_ONLY
+
+        owner_handoff_match = re.match(
+            r"^\[OWNER_HANDOFF\]\s*(.*)$", text, flags=re.IGNORECASE | re.DOTALL
+        )
+        if owner_handoff_match:
+            reason_text = (owner_handoff_match.group(1) or "").strip()
             first_sentence = reason_text.split("\n", 1)[0][:300] if reason_text else "owner_handoff_requested"
-            return reason_text or "Передаю запрос владельцу для ручной обработки.", True, first_sentence
+            return reason_text or "Передаю запрос владельцу для ручной обработки.", True, first_sentence, EscalationType.FREEZE_CHAT
+
+        operator_call_markers = (
+            "вызываю оператора",
+            "вызываю менеджера",
+            "подключаю оператора",
+            "подключаю менеджера",
+            "свяжусь с менеджером",
+            "передаю менеджеру",
+            "позову менеджера",
+        )
+        lowered = text.lower()
+        for marker in operator_call_markers:
+            if marker in lowered:
+                return text, True, marker, EscalationType.NOTIFY_ONLY
 
         uncertainty_markers = (
             "не хватает данных",
@@ -937,11 +988,10 @@ class TemplateRuntimeService:
             "обратитесь к владельцу",
             "требуется вмешательство",
         )
-        lowered = text.lower()
         for marker in uncertainty_markers:
             if marker in lowered:
-                return text, True, marker
-        return text, False, None
+                return text, True, marker, EscalationType.NOTIFY_ONLY
+        return text, False, None, EscalationType.NONE
 
     async def _execute_content_factory(
         self,

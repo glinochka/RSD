@@ -1135,19 +1135,27 @@
   min-width: 0;
   border-radius: var(--radius-md);
   font-size: var(--font-size-sm);
+  padding-inline: 12px;
 }
 
 .analytics-operations .input-main::placeholder {
   font-size: 12px;
+  text-indent: 6px;
+  color: color-mix(in srgb, var(--color-text-light) 88%, #fff 12%);
 }
 
 .analytics-operations input[type='time'] {
   min-height: 40px;
+  border-color: color-mix(in srgb, var(--color-border) 80%, #cbd5e1 20%);
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  padding-right: 36px;
 }
 
 .analytics-operations input[type='time']::-webkit-calendar-picker-indicator {
   cursor: pointer;
-  opacity: 0.72;
+  opacity: 0.84;
 }
 
 .analytics-ops-list {
@@ -1171,7 +1179,9 @@
 .analytics-ops-row-main {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
+  min-width: 0;
+  line-height: 1.45;
 }
 
 .analytics-ops-row-main span {
@@ -1385,6 +1395,8 @@
   justify-content: space-between;
   align-items: center;
   gap: var(--spacing-base);
+  padding-bottom: var(--spacing-base);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border) 75%, #dbeafe 25%);
 }
 
 .analytics-admin-day-modal-head h4 {
@@ -1403,15 +1415,19 @@
   padding: var(--spacing-base);
   background: linear-gradient(170deg, #ffffff 0%, #f8fafc 100%);
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-base);
 }
 
 .analytics-admin-day-modal-section h5 {
-  margin: 0 0 var(--spacing-sm);
+  margin: 0;
   font-size: var(--font-size-base);
 }
 
 .analytics-admin-day-schedule-form {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: var(--spacing-xs);
 }
 
 .analytics-admin-shift-ranges {
@@ -1433,9 +1449,17 @@
   border-radius: var(--radius-md);
 }
 
+.analytics-admin-day-modal .analytics-time-input {
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  padding-right: 36px;
+  background: linear-gradient(180deg, #fff 0%, #f8fafc 100%);
+}
+
 .analytics-admin-day-modal input[type='time']::-webkit-calendar-picker-indicator {
   cursor: pointer;
-  opacity: 0.72;
+  opacity: 0.84;
 }
 
 .analytics-admin-day-modal-actions {

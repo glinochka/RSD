@@ -487,6 +487,10 @@ const AgentsPageContent = () => {
 
   const handleToggleChatFreeze = async (enabled) => {
     if (!selectedBotId || !selectedAgent) return;
+    if (String(selectedAgent.template_type || 'qa').trim().toLowerCase() !== 'qa') {
+      showError('Функция заморозки чата доступна только для шаблона Консультант (QA)');
+      return;
+    }
     const currentConfig =
       selectedAgent.template_config && typeof selectedAgent.template_config === 'object'
         ? selectedAgent.template_config
@@ -767,6 +771,7 @@ const AgentsPageContent = () => {
   };
 
   const isSalesManagerTemplate = selectedAgent?.template_type === 'sales_manager';
+  const isQATemplate = String(selectedAgent?.template_type || 'qa').trim().toLowerCase() === 'qa';
 
   useEffect(() => {
     if (!isChannelsModalOpen || !isSalesManagerTemplate) return;
@@ -1267,14 +1272,16 @@ const AgentsPageContent = () => {
                       description="ON: LLM формирует RAG-запросы. OFF: в RAG отправляется исходный запрос и извлекается 6 чанков."
                       helpText="Управляет логикой поиска в базе знаний: LLM-планирование запросов или прямой поиск по исходному сообщению."
                     />
-                    <FeatureToggle
-                      checked={isChatFreezeEnabled(selectedAgent)}
-                      onChange={handleToggleChatFreeze}
-                      disabled={isSavingChatFreeze}
-                      title="Заморозка чата"
-                      description="Авто-передача диалога владельцу при неуверенном ответе агента."
-                      helpText="Если включено, агент может пометить диалог как требующий владельца и временно заморозить чат для пользователя."
-                    />
+                    {isQATemplate ? (
+                      <FeatureToggle
+                        checked={isChatFreezeEnabled(selectedAgent)}
+                        onChange={handleToggleChatFreeze}
+                        disabled={isSavingChatFreeze}
+                        title="Заморозка чата"
+                        description="Авто-передача диалога владельцу при неуверенном ответе агента."
+                        helpText="Доступно только для шаблона Консультант (QA). Если включено, агент может пометить диалог как требующий владельца и временно заморозить чат для пользователя."
+                      />
+                    ) : null}
                     <FeatureToggle
                       checked={isStartProcessingEnabled(selectedAgent)}
                       onChange={handleToggleStartProcessing}

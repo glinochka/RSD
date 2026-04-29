@@ -15,8 +15,13 @@ _IDEMPOTENCY_TTL_SECONDS = 120
 _IDEMPOTENCY_CACHE: dict[str, tuple[datetime, dict[str, Any]]] = {}
 _MAX_RAW_ARGUMENTS_BYTES = 16_000
 
-_READ_ONLY_TOOLS = {"check_availability", "list_staff", "list_services"}
-_HIGH_RISK_TOOLS = {"create_appointment", "reschedule_appointment", "cancel_appointment"}
+_READ_ONLY_TOOLS = {"check_availability", "list_staff", "list_services", "list_appointments"}
+_HIGH_RISK_TOOLS = {
+    "create_appointment",
+    "reschedule_appointment",
+    "cancel_appointment",
+    "confirm_appointment",
+}
 
 
 class AdminBookingNeedsConfirmationError(RuntimeError):
@@ -117,11 +122,39 @@ class _CancelAppointmentArgs(BaseModel):
     reason: str | None = Field(default=None, max_length=1000)
 
 
+class _ConfirmAppointmentArgs(BaseModel):
+    appointment_id: int = Field(..., gt=0)
+
+
+class _ListAppointmentsArgs(BaseModel):
+    starts_at: str | None = Field(default=None, min_length=16, max_length=40)
+    ends_at: str | None = Field(default=None, min_length=16, max_length=40)
+    staff_id: int | None = Field(default=None, gt=0)
+    resource_id: int | None = Field(default=None, gt=0)
+    service_id: int | None = Field(default=None, gt=0)
+    client_external_id: str | None = Field(default=None, min_length=1, max_length=128)
+    status: str | None = Field(
+        default=None,
+        pattern="^(pending_confirmation|booked|confirmed|in_progress|completed|cancelled|no_show)$",
+    )
+
+    @model_validator(mode="after")
+    def _validate_window(self):
+        if self.starts_at and self.ends_at:
+            starts = _parse_iso_datetime(self.starts_at)
+            ends = _parse_iso_datetime(self.ends_at)
+            if ends <= starts:
+                raise ValueError("ends_at must be greater than starts_at")
+        return self
+
+
 _TOOL_MODELS: dict[str, type[BaseModel]] = {
     "check_availability": _CheckAvailabilityArgs,
     "create_appointment": _CreateAppointmentArgs,
     "reschedule_appointment": _RescheduleAppointmentArgs,
     "cancel_appointment": _CancelAppointmentArgs,
+    "confirm_appointment": _ConfirmAppointmentArgs,
+    "list_appointments": _ListAppointmentsArgs,
     "list_staff": _ListStaffArgs,
     "list_services": _ListServicesArgs,
 }
@@ -131,6 +164,8 @@ _TOOL_DESCRIPTIONS = {
     "create_appointment": "Create booking appointment for selected slot/staff/resource.",
     "reschedule_appointment": "Reschedule existing appointment to a new time.",
     "cancel_appointment": "Cancel existing appointment by id.",
+    "confirm_appointment": "Confirm existing appointment by id.",
+    "list_appointments": "List appointments by period/client/staff/status filters.",
     "list_staff": "List staff members available for booking.",
     "list_services": "List available services for booking.",
 }
@@ -286,6 +321,30 @@ class AdminBookingToolRegistry:
                 agent_id=self._agent_id,
                 appointment_id=int(data["appointment_id"]),
                 reason=data.get("reason"),
+            )
+        elif tool_name == "confirm_appointment":
+            result = await service.confirm_appointment(
+                agent_id=self._agent_id,
+                appointment_id=int(data["appointment_id"]),
+            )
+        elif tool_name == "list_appointments":
+            result = await service.list_appointments(
+                agent_id=self._agent_id,
+                starts_at=(
+                    _parse_iso_datetime(str(data.get("starts_at") or ""))
+                    if data.get("starts_at")
+                    else None
+                ),
+                ends_at=(
+                    _parse_iso_datetime(str(data.get("ends_at") or ""))
+                    if data.get("ends_at")
+                    else None
+                ),
+                staff_id=data.get("staff_id"),
+                resource_id=data.get("resource_id"),
+                service_id=data.get("service_id"),
+                client_external_id=data.get("client_external_id"),
+                status=data.get("status"),
             )
         else:
             raise RuntimeError(f"Tool '{tool_name}' is not supported")

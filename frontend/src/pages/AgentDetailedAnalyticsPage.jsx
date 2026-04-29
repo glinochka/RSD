@@ -1337,6 +1337,20 @@ const AgentDetailedAnalyticsPageContent = () => {
     }
   };
 
+  const handleDeleteAppointmentQuick = async (appointment) => {
+    if (!window.confirm('Удалить запись?')) return;
+    try {
+      await agentService.deleteAdminTemplateAppointment({
+        bot_id: botId,
+        appointment_id: appointment.id,
+      });
+      await loadOperationsDashboard();
+      showSuccess('Запись удалена');
+    } catch (error) {
+      showError(error?.message || 'Не удалось удалить запись');
+    }
+  };
+
   const handleConfirmAppointmentQuick = async (appointment) => {
     try {
       await agentService.confirmAdminTemplateAppointment({
@@ -2508,6 +2522,9 @@ const AgentDetailedAnalyticsPageContent = () => {
                           <button type="button" className="btn btn-outline" onClick={() => handleCancelAppointmentQuick(item)}>
                             Отменить
                           </button>
+                          <button type="button" className="btn btn-outline" onClick={() => handleDeleteAppointmentQuick(item)}>
+                            Удалить
+                          </button>
                         </div>
                       </div>
                     ))}
@@ -2578,6 +2595,15 @@ const AgentDetailedAnalyticsPageContent = () => {
                                     </span>
                                     <span>{staffName} · {serviceTitle} · статус: {item.status}</span>
                                   </div>
+                                <div className="analytics-ops-row-actions">
+                                  <button
+                                    type="button"
+                                    className="btn btn-outline"
+                                    onClick={() => handleDeleteAppointmentQuick(item)}
+                                  >
+                                    Удалить
+                                  </button>
+                                </div>
                                 </div>
                               );
                             })}
@@ -2616,13 +2642,13 @@ const AgentDetailedAnalyticsPageContent = () => {
                           {calendarShiftDraft.ranges.map((range, idx) => (
                             <div key={`calendar-range-${idx}`} className="analytics-admin-shift-range-row">
                               <input
-                                className="input-main"
+                                className="input-main analytics-time-input"
                                 type="time"
                                 value={range.starts_at}
                                 onChange={(e) => handleUpdateShiftRange(idx, 'starts_at', e.target.value)}
                               />
                               <input
-                                className="input-main"
+                                className="input-main analytics-time-input"
                                 type="time"
                                 value={range.ends_at}
                                 onChange={(e) => handleUpdateShiftRange(idx, 'ends_at', e.target.value)}
