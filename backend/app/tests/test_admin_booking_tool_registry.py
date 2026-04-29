@@ -101,3 +101,41 @@ async def test_admin_booking_tool_registry_supports_list_and_confirm_tools(monke
     assert list_result["result"][0]["id"] == 77
     assert confirm_result["ok"] is True
     assert confirm_result["result"]["status"] == "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_admin_booking_tool_registry_find_next_available_tool(monkeypatch):
+    from datetime import datetime
+    
+    class _FakeService:
+        async def find_next_available_slot(self, **kwargs):
+            return {
+                "available": True,
+                "starts_at": "2026-04-30T09:00:00",
+                "ends_at": "2026-04-30T09:30:00",
+                "staff_id": 1,
+                "duration_minutes": 30,
+            }
+
+    monkeypatch.setattr(
+        "app.services.admin_booking.tool_registry.get_admin_booking_service",
+        lambda: _FakeService(),
+    )
+
+    registry = AdminBookingToolRegistry(
+        agent_id=17,
+        user_external_id="u-5",
+        source_channel="telegram",
+        confirmation_policy="never_confirm",
+        user_message="найди свободное время",
+        allowed_tools=["find_next_available"],
+    )
+
+    result = await registry.execute_tool(
+        "find_next_available",
+        '{"duration_minutes":30,"staff_id":1,"earliest_starts_at":"2026-04-29T08:00:00"}',
+    )
+    assert result["ok"] is True
+    assert result["tool_status"] == "success"
+    assert result["result"]["available"] is True
+    assert "2026-04-30T09:00:00" in result["result"]["starts_at"]

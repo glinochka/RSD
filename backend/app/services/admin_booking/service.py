@@ -461,6 +461,28 @@ class AdminBookingService:
             appointment_id=appointment_id,
         )
 
+    async def find_next_available_slot(
+        self,
+        *,
+        agent_id: int,
+        duration_minutes: int = 30,
+        staff_id: int | None = None,
+        resource_id: int | None = None,
+        service_id: int | None = None,
+        earliest_starts_at: datetime | None = None,
+        search_days_ahead: int = 7,
+    ) -> dict[str, Any]:
+        resolution = await self.resolve_provider(agent_id=agent_id)
+        return await resolution.provider.find_next_available_slot(
+            agent_id=agent_id,
+            duration_minutes=duration_minutes,
+            staff_id=staff_id,
+            resource_id=resource_id,
+            service_id=service_id,
+            earliest_starts_at=earliest_starts_at or datetime.now(),
+            search_days_ahead=search_days_ahead,
+        )
+
     async def delete_appointment(
         self,
         *,

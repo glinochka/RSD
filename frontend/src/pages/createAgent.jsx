@@ -762,6 +762,7 @@ const CreateAgentContent = () => {
                 'cancel_appointment',
                 'list_staff',
                 'list_services',
+                'find_next_available',
               ],
               confirmation_policy: values.crm_confirmation_policy?.trim() || 'confirm_risky',
               fallback_mode: values.crm_fallback_mode?.trim() || 'ask_clarifying_question',

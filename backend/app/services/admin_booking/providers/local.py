@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 from typing import Any, Callable
 
@@ -198,6 +198,46 @@ class LocalBookingProvider(BookingProvider):
                 session.add(row)
                 await session.flush()
                 await session.refresh(row)
+                
+                # Создаем дефолтное расписание пн-пт 8:00-17:00
+                staff_id = row.id
+                today = datetime.now().date()
+                # Найдем ближайший понедельник
+                days_ahead = 0 - today.weekday()
+                if days_ahead <= 0:
+                    days_ahead += 7
+                next_monday = today + timedelta(days=days_ahead)
+                
+                # Создаем расписание на 4 недели вперед
+                for week in range(4):
+                    week_start = next_monday + timedelta(weeks=week)
+                    for day in range(5):  # пн-пт
+                        slot_date = week_start + timedelta(days=day)
+                        starts_at = datetime.combine(slot_date, datetime.min.time().replace(hour=8))
+                        ends_at = datetime.combine(slot_date, datetime.min.time().replace(hour=17))
+                        
+                        # Проверяем, нет ли уже такого слота
+                        existing = await session.scalar(
+                            select(AdminScheduleSlot).where(
+                                AdminScheduleSlot.agent_id == agent_id,
+                                AdminScheduleSlot.staff_id == staff_id,
+                                AdminScheduleSlot.starts_at == starts_at,
+                                AdminScheduleSlot.ends_at == ends_at,
+                            )
+                        )
+                        if not existing:
+                            slot = AdminScheduleSlot(
+                                agent_id=agent_id,
+                                staff_id=staff_id,
+                                resource_id=None,
+                                slot_kind="work",
+                                starts_at=starts_at,
+                                ends_at=ends_at,
+                                is_active=True,
+                            )
+                            session.add(slot)
+                
+                await session.flush()
                 return _serialize_staff(row)
 
     async def update_staff(
@@ -807,6 +847,74 @@ class LocalBookingProvider(BookingProvider):
                 await session.flush()
                 await session.refresh(row)
                 return _serialize_appointment(row)
+
+    async def find_next_available_slot(
+        self,
+        *,
+        agent_id: int,
+        duration_minutes: int = 30,
+        staff_id: int | None = None,
+        resource_id: int | None = None,
+        service_id: int | None = None,
+        earliest_starts_at: datetime,
+        search_days_ahead: int = 7,
+    ) -> dict[str, Any]:
+        search_until = earliest_starts_at + timedelta(days=search_days_ahead)
+        current_time = earliest_starts_at
+        
+        async with self._session_factory() as session:
+            while current_time < search_until:
+                # Ищем в текущем дне
+                day_start = current_time.replace(hour=0, minute=0, second=0, microsecond=0)
+                day_end = day_start + timedelta(days=1)
+                
+                # Получаем доступные слоты на день
+                available_slots = await self.list_available_slots(
+                    agent_id=agent_id,
+                    starts_at=day_start,
+                    ends_at=day_end,
+                    staff_id=staff_id,
+                    resource_id=resource_id,
+                    service_id=service_id,
+                )
+                
+                # Проверяем каждый слот на возможность разместить appointment
+                for slot in available_slots:
+                    slot_start = datetime.fromisoformat(slot["starts_at"])
+                    slot_end = datetime.fromisoformat(slot["ends_at"])
+                    
+                    # Находим возможное время в слоте
+                    candidate_start = max(slot_start, current_time)
+                    candidate_end = candidate_start + timedelta(minutes=duration_minutes)
+                    
+                    if candidate_end <= slot_end:
+                        # Проверяем, нет ли пересечений с существующими записями
+                        overlap = await self._has_appointment_overlap(
+                            session,
+                            agent_id=agent_id,
+                            starts_at=candidate_start,
+                            ends_at=candidate_end,
+                            staff_id=slot.get("staff_id"),
+                            resource_id=slot.get("resource_id"),
+                        )
+                        if not overlap:
+                            return {
+                                "starts_at": candidate_start.isoformat(),
+                                "ends_at": candidate_end.isoformat(),
+                                "staff_id": slot.get("staff_id"),
+                                "resource_id": slot.get("resource_id"),
+                                "duration_minutes": duration_minutes,
+                                "available": True,
+                            }
+                
+                # Переход к следующему дню
+                current_time = day_end
+        
+        return {
+            "available": False,
+            "message": f"No available slots found for {duration_minutes} minutes in the next {search_days_ahead} days",
+            "duration_minutes": duration_minutes,
+        }
 
     async def delete_appointment(
         self,

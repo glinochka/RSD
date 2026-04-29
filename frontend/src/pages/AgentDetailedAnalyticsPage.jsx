@@ -667,19 +667,19 @@ const AgentDetailedAnalyticsPageContent = () => {
         agentService.listAdminTemplateServices(paramsBase),
         agentService.listAdminTemplateSchedule({
           ...paramsBase,
-          starts_at: operationRange.start.toISOString(),
-          ends_at: operationRange.end.toISOString(),
+          starts_at: _toLocalIso(operationRange.start),
+          ends_at: _toLocalIso(operationRange.end),
           active_only: true,
         }),
         agentService.listAdminTemplateAppointments({
           ...paramsBase,
-          starts_at: operationRange.start.toISOString(),
-          ends_at: operationRange.end.toISOString(),
+          starts_at: _toLocalIso(operationRange.start),
+          ends_at: _toLocalIso(operationRange.end),
         }),
         agentService.getAdminTemplateOccupancy({
           ...paramsBase,
-          starts_at: operationRange.start.toISOString(),
-          ends_at: operationRange.end.toISOString(),
+          starts_at: _toLocalIso(operationRange.start),
+          ends_at: _toLocalIso(operationRange.end),
           granularity_minutes: 30,
         }),
         agentService.listAdminTemplateWaitlist(paramsBase),
@@ -687,14 +687,14 @@ const AgentDetailedAnalyticsPageContent = () => {
         agentService.listAdminTemplateQuickReplies(paramsBase),
         agentService.listAdminTemplateSchedule({
           ...paramsBase,
-          starts_at: monthRange.start.toISOString(),
-          ends_at: monthRange.end.toISOString(),
+          starts_at: _toLocalIso(monthRange.start),
+          ends_at: _toLocalIso(monthRange.end),
           active_only: true,
         }),
         agentService.listAdminTemplateAppointments({
           ...paramsBase,
-          starts_at: monthRange.start.toISOString(),
-          ends_at: monthRange.end.toISOString(),
+          starts_at: _toLocalIso(monthRange.start),
+          ends_at: _toLocalIso(monthRange.end),
         }),
       ]);
       setStaffItems(Array.isArray(staff?.items) ? staff.items : []);
@@ -1325,8 +1325,8 @@ const AgentDetailedAnalyticsPageContent = () => {
       await agentService.rescheduleAdminTemplateAppointment({
         bot_id: botId,
         appointment_id: appointment.id,
-        starts_at: nextStart.toISOString(),
-        ends_at: nextEnd.toISOString(),
+        starts_at: _toLocalIso(nextStart),
+        ends_at: _toLocalIso(nextEnd),
       });
       await loadOperationsDashboard();
     } catch (error) {

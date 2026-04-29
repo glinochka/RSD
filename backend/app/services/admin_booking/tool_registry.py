@@ -148,6 +148,15 @@ class _ListAppointmentsArgs(BaseModel):
         return self
 
 
+class _FindNextAvailableArgs(BaseModel):
+    duration_minutes: int = Field(default=30, gt=0, le=480)
+    staff_id: int | None = Field(default=None, gt=0)
+    resource_id: int | None = Field(default=None, gt=0)
+    service_id: int | None = Field(default=None, gt=0)
+    earliest_starts_at: str | None = Field(default=None, min_length=16, max_length=40)
+    search_days_ahead: int = Field(default=7, gt=0, le=30)
+
+
 _TOOL_MODELS: dict[str, type[BaseModel]] = {
     "check_availability": _CheckAvailabilityArgs,
     "create_appointment": _CreateAppointmentArgs,
@@ -157,6 +166,7 @@ _TOOL_MODELS: dict[str, type[BaseModel]] = {
     "list_appointments": _ListAppointmentsArgs,
     "list_staff": _ListStaffArgs,
     "list_services": _ListServicesArgs,
+    "find_next_available": _FindNextAvailableArgs,
 }
 
 _TOOL_DESCRIPTIONS = {
@@ -168,6 +178,7 @@ _TOOL_DESCRIPTIONS = {
     "list_appointments": "List appointments by period/client/staff/status filters.",
     "list_staff": "List staff members available for booking.",
     "list_services": "List available services for booking.",
+    "find_next_available": "Find the next available time slot for booking. Returns the earliest free slot matching duration and staff/service criteria. Use this to suggest specific times to users instead of generic availability.",
 }
 
 
@@ -345,6 +356,20 @@ class AdminBookingToolRegistry:
                 service_id=data.get("service_id"),
                 client_external_id=data.get("client_external_id"),
                 status=data.get("status"),
+            )
+        elif tool_name == "find_next_available":
+            result = await service.find_next_available_slot(
+                agent_id=self._agent_id,
+                duration_minutes=int(data.get("duration_minutes") or 30),
+                staff_id=data.get("staff_id"),
+                resource_id=data.get("resource_id"),
+                service_id=data.get("service_id"),
+                earliest_starts_at=(
+                    _parse_iso_datetime(str(data.get("earliest_starts_at") or ""))
+                    if data.get("earliest_starts_at")
+                    else None
+                ),
+                search_days_ahead=int(data.get("search_days_ahead") or 7),
             )
         else:
             raise RuntimeError(f"Tool '{tool_name}' is not supported")
