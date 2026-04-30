@@ -66,13 +66,13 @@ async def test_admin_booking_tool_registry_does_not_require_confirmation(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_admin_booking_tool_registry_supports_list_and_confirm_tools(monkeypatch):
+async def test_admin_booking_tool_registry_supports_list_and_cancel_tools(monkeypatch):
     class _FakeService:
         async def list_appointments(self, **kwargs):
             return [{"id": 77, "status": "booked", "client_external_id": kwargs.get("client_external_id")}]
 
-        async def confirm_appointment(self, **kwargs):
-            return {"id": kwargs["appointment_id"], "status": "confirmed"}
+        async def cancel_appointment(self, **kwargs):
+            return {"id": kwargs["appointment_id"], "status": "cancelled"}
 
     monkeypatch.setattr(
         "app.services.admin_booking.tool_registry.get_admin_booking_service",
@@ -83,24 +83,23 @@ async def test_admin_booking_tool_registry_supports_list_and_confirm_tools(monke
         agent_id=17,
         user_external_id="u-5",
         source_channel="telegram",
-        confirmation_policy="confirm_risky",
-        user_message="подтверди и покажи запись клиента",
-        allowed_tools=["list_appointments", "confirm_appointment"],
+        user_message="отмени и покажи запись клиента",
+        allowed_tools=["list_appointments", "cancel_appointment"],
     )
 
     list_result = await registry.execute_tool(
         "list_appointments",
         '{"client_external_id":"client-1","status":"booked"}',
     )
-    confirm_result = await registry.execute_tool(
-        "confirm_appointment",
+    cancel_result = await registry.execute_tool(
+        "cancel_appointment",
         '{"appointment_id":77}',
     )
 
     assert list_result["ok"] is True
     assert list_result["result"][0]["id"] == 77
-    assert confirm_result["ok"] is True
-    assert confirm_result["result"]["status"] == "confirmed"
+    assert cancel_result["ok"] is True
+    assert cancel_result["result"]["status"] == "cancelled"
 
 
 @pytest.mark.asyncio

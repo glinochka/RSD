@@ -15,14 +15,6 @@ _IDEMPOTENCY_TTL_SECONDS = 120
 _IDEMPOTENCY_CACHE: dict[str, tuple[datetime, dict[str, Any]]] = {}
 _MAX_RAW_ARGUMENTS_BYTES = 16_000
 
-_READ_ONLY_TOOLS = {"check_availability", "list_staff", "list_services", "list_appointments"}
-_HIGH_RISK_TOOLS = {
-    "create_appointment",
-    "reschedule_appointment",
-    "cancel_appointment",
-    "confirm_appointment",
-}
-
 
 class AdminBookingNeedsConfirmationError(RuntimeError):
     pass
@@ -37,14 +29,6 @@ def _cleanup_idempotency_cache() -> None:
     expired = [key for key, (expires_at, _) in _IDEMPOTENCY_CACHE.items() if expires_at <= now]
     for key in expired:
         _IDEMPOTENCY_CACHE.pop(key, None)
-
-
-def _has_confirmation_marker(user_message: str) -> bool:
-    text = (user_message or "").strip().lower()
-    if not text:
-        return False
-    markers = {"подтверждаю", "подтвердить", "confirm", "подтверждено", "ok, выполняй", "выполняй"}
-    return any(marker in text for marker in markers)
 
 
 def _parse_iso_datetime(raw: str) -> datetime:
@@ -102,28 +86,54 @@ class _CreateAppointmentArgs(BaseModel):
 
 
 class _RescheduleAppointmentArgs(BaseModel):
-    appointment_id: int = Field(..., gt=0)
-    starts_at: str = Field(..., min_length=16, max_length=40)
-    ends_at: str = Field(..., min_length=16, max_length=40)
-    staff_id: int | None = Field(default=None, gt=0)
-    resource_id: int | None = Field(default=None, gt=0)
+    """Reschedule an appointment to a new time.
+
+    Provide ``appointment_id`` when known. Otherwise provide ``appointment_date``
+    (ISO date "YYYY-MM-DD" or datetime "YYYY-MM-DDTHH:MM") so the system can
+    look up the booking by the current user + date.
+    ``lookup_staff_id`` narrows the lookup when the user has appointments with
+    multiple staff on the same day.
+    ``new_starts_at`` / ``new_ends_at`` are the desired new slot (ISO datetime).
+    """
+
+    appointment_id: int | None = Field(default=None, gt=0)
+    appointment_date: str | None = Field(default=None, min_length=8, max_length=40)
+    lookup_staff_id: int | None = Field(default=None, gt=0)
+    new_starts_at: str = Field(..., min_length=16, max_length=40)
+    new_ends_at: str = Field(..., min_length=16, max_length=40)
+    new_staff_id: int | None = Field(default=None, gt=0)
+    new_resource_id: int | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
-    def _validate_window(self):
-        starts = _parse_iso_datetime(self.starts_at)
-        ends = _parse_iso_datetime(self.ends_at)
+    def _validate(self):
+        if self.appointment_id is None and not (self.appointment_date or "").strip():
+            raise ValueError("Either appointment_id or appointment_date is required")
+        starts = _parse_iso_datetime(self.new_starts_at)
+        ends = _parse_iso_datetime(self.new_ends_at)
         if ends <= starts:
-            raise ValueError("ends_at must be greater than starts_at")
+            raise ValueError("new_ends_at must be greater than new_starts_at")
         return self
 
 
 class _CancelAppointmentArgs(BaseModel):
-    appointment_id: int = Field(..., gt=0)
+    """Cancel an appointment.
+
+    Provide ``appointment_id`` when known. Otherwise provide ``appointment_date``
+    (ISO date "YYYY-MM-DD" or datetime "YYYY-MM-DDTHH:MM") so the system can
+    look up the booking by the current user + date.
+    ``staff_id`` narrows the lookup when needed.
+    """
+
+    appointment_id: int | None = Field(default=None, gt=0)
+    appointment_date: str | None = Field(default=None, min_length=8, max_length=40)
+    staff_id: int | None = Field(default=None, gt=0)
     reason: str | None = Field(default=None, max_length=1000)
 
-
-class _ConfirmAppointmentArgs(BaseModel):
-    appointment_id: int = Field(..., gt=0)
+    @model_validator(mode="after")
+    def _validate(self):
+        if self.appointment_id is None and not (self.appointment_date or "").strip():
+            raise ValueError("Either appointment_id or appointment_date is required")
+        return self
 
 
 class _ListAppointmentsArgs(BaseModel):
@@ -162,7 +172,6 @@ _TOOL_MODELS: dict[str, type[BaseModel]] = {
     "create_appointment": _CreateAppointmentArgs,
     "reschedule_appointment": _RescheduleAppointmentArgs,
     "cancel_appointment": _CancelAppointmentArgs,
-    "confirm_appointment": _ConfirmAppointmentArgs,
     "list_appointments": _ListAppointmentsArgs,
     "list_staff": _ListStaffArgs,
     "list_services": _ListServicesArgs,
@@ -170,15 +179,30 @@ _TOOL_MODELS: dict[str, type[BaseModel]] = {
 }
 
 _TOOL_DESCRIPTIONS = {
-    "check_availability": "Check available booking slots for requested period. Use a wide window (e.g. full day 00:00-23:59) to discover all schedule slots, then narrow down. Returns only slots with actual staff schedule entries.",
-    "create_appointment": "Create booking appointment for selected slot/staff/resource.",
-    "reschedule_appointment": "Reschedule existing appointment to a new time.",
-    "cancel_appointment": "Cancel existing appointment by id.",
-    "confirm_appointment": "Confirm existing appointment by id.",
-    "list_appointments": "List appointments by period/client/staff/status filters.",
+    "check_availability": (
+        "Check available booking slots for a specific date or period. "
+        "Always use a full-day window (starts_at=DATE 00:00, ends_at=DATE 23:59) when checking a specific date. "
+        "Returns only slots with actual staff schedule entries."
+    ),
+    "create_appointment": "Create a booking appointment immediately without asking the user for confirmation.",
+    "reschedule_appointment": (
+        "Reschedule an existing appointment to a new time. "
+        "If appointment_id is unknown, provide appointment_date (ISO date or datetime) to look up the booking "
+        "by the current user. Use lookup_staff_id to narrow the search if needed."
+    ),
+    "cancel_appointment": (
+        "Cancel an existing appointment. "
+        "If appointment_id is unknown, provide appointment_date (ISO date or datetime) to look up the booking "
+        "by the current user. Never ask the user for an appointment ID."
+    ),
+    "list_appointments": "List appointments by period/client/staff/status filters. Use client_external_id filter to find appointments for the current user.",
     "list_staff": "List staff members available for booking.",
     "list_services": "List available services for booking.",
-    "find_next_available": "Find the next available time slot for booking. Returns the earliest free slot matching duration and staff/service criteria. Use this to suggest specific times to users instead of generic availability.",
+    "find_next_available": (
+        "Find the next available time slot starting from a given date. "
+        "Use ONLY when the user asks for 'nearest available time' or does not specify a date. "
+        "For a specific requested date, use check_availability instead."
+    ),
 }
 
 
@@ -189,7 +213,7 @@ class AdminBookingToolRegistry:
         agent_id: int,
         user_external_id: str | None,
         source_channel: str,
-        confirmation_policy: str,
+        confirmation_policy: str = "never_confirm",
         user_message: str,
         allowed_tools: list[str] | None = None,
     ) -> None:
@@ -202,7 +226,6 @@ class AdminBookingToolRegistry:
         self._agent_id = agent_id
         self._user_external_id = (user_external_id or "").strip() or "anonymous"
         self._source_channel = (source_channel or "telegram").strip().lower() or "telegram"
-        self._confirmation_policy = (confirmation_policy or "confirm_risky").strip().lower()
         self._user_message = user_message or ""
 
     def tools_for_llm(self) -> list[dict[str, Any]]:
@@ -224,14 +247,6 @@ class AdminBookingToolRegistry:
     def has_tool(self, tool_name: str) -> bool:
         return tool_name in self._allowed_tools
 
-    def _requires_confirmation(self, tool_name: str) -> bool:
-        policy = self._confirmation_policy
-        if policy == "never_confirm":
-            return False
-        if policy == "always_confirm":
-            return tool_name not in _READ_ONLY_TOOLS
-        return tool_name in _HIGH_RISK_TOOLS
-
     @staticmethod
     def _canonical_args(model: BaseModel) -> str:
         return json.dumps(model.model_dump(), ensure_ascii=False, sort_keys=True)
@@ -243,6 +258,51 @@ class AdminBookingToolRegistry:
     def _idempotency_key(self, tool_name: str, canonical_args: str) -> str:
         raw = f"{self._agent_id}:{self._user_external_id}:{tool_name}:{canonical_args}"
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    async def _lookup_appointment_id(
+        self,
+        *,
+        service: Any,
+        appointment_date: str,
+        staff_id: int | None,
+    ) -> int:
+        """Find an active appointment for the current user by date, return its ID."""
+        date_str = appointment_date.strip()
+        if not date_str:
+            raise RuntimeError("appointment_date is required to look up the appointment")
+        has_time = "T" in date_str or (":" in date_str and len(date_str) > 10)
+        if has_time:
+            pivot = _parse_iso_datetime(date_str)
+            window_start = pivot.replace(second=0) - timedelta(minutes=1)
+            window_end = pivot.replace(second=0) + timedelta(minutes=59)
+        else:
+            pivot = datetime.fromisoformat(date_str)
+            window_start = pivot.replace(hour=0, minute=0, second=0)
+            window_end = pivot.replace(hour=23, minute=59, second=59)
+
+        appointments = await service.list_appointments(
+            agent_id=self._agent_id,
+            starts_at=window_start,
+            ends_at=window_end,
+            staff_id=staff_id,
+            client_external_id=self._user_external_id,
+            status=None,
+        )
+        active = [
+            a for a in appointments
+            if a.get("status") not in ("cancelled", "completed", "no_show")
+        ]
+        if not active:
+            raise RuntimeError(
+                f"No active appointments found for {date_str}. "
+                "Please specify the date and time more precisely."
+            )
+        if len(active) > 1:
+            raise RuntimeError(
+                f"Multiple appointments found for {date_str}. "
+                "Please specify the exact time or staff member."
+            )
+        return int(active[0]["id"])
 
     async def execute_tool(self, tool_name: str, raw_arguments: str) -> dict[str, Any]:
         if len((raw_arguments or "").encode("utf-8")) > _MAX_RAW_ARGUMENTS_BYTES:
@@ -319,24 +379,33 @@ class AdminBookingToolRegistry:
                 notes=data.get("notes"),
             )
         elif tool_name == "reschedule_appointment":
+            appt_id = data.get("appointment_id")
+            if not appt_id:
+                appt_id = await self._lookup_appointment_id(
+                    service=service,
+                    appointment_date=str(data.get("appointment_date") or ""),
+                    staff_id=data.get("lookup_staff_id"),
+                )
             result = await service.reschedule_appointment(
                 agent_id=self._agent_id,
-                appointment_id=int(data["appointment_id"]),
-                starts_at=_parse_iso_datetime(str(data.get("starts_at") or "")),
-                ends_at=_parse_iso_datetime(str(data.get("ends_at") or "")),
-                staff_id=data.get("staff_id"),
-                resource_id=data.get("resource_id"),
+                appointment_id=int(appt_id),
+                starts_at=_parse_iso_datetime(str(data.get("new_starts_at") or "")),
+                ends_at=_parse_iso_datetime(str(data.get("new_ends_at") or "")),
+                staff_id=data.get("new_staff_id"),
+                resource_id=data.get("new_resource_id"),
             )
         elif tool_name == "cancel_appointment":
+            appt_id = data.get("appointment_id")
+            if not appt_id:
+                appt_id = await self._lookup_appointment_id(
+                    service=service,
+                    appointment_date=str(data.get("appointment_date") or ""),
+                    staff_id=data.get("staff_id"),
+                )
             result = await service.cancel_appointment(
                 agent_id=self._agent_id,
-                appointment_id=int(data["appointment_id"]),
+                appointment_id=int(appt_id),
                 reason=data.get("reason"),
-            )
-        elif tool_name == "confirm_appointment":
-            result = await service.confirm_appointment(
-                agent_id=self._agent_id,
-                appointment_id=int(data["appointment_id"]),
             )
         elif tool_name == "list_appointments":
             result = await service.list_appointments(
