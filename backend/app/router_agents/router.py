@@ -153,21 +153,70 @@ WIDGET_CSS = """
 .rsd-widget-root{position:fixed;z-index:2147483000;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}
 .rsd-widget-root[data-position="bottom-right"]{right:20px;bottom:20px}
 .rsd-widget-root[data-position="bottom-left"]{left:20px;bottom:20px}
-.rsd-widget-toggle{width:56px;height:56px;border-radius:50%;border:none;cursor:pointer;background:#111827;color:#fff;box-shadow:0 10px 30px rgba(17,24,39,.35);font-size:22px}
+.rsd-widget-toggle{width:56px;height:56px;border-radius:50%;border:none;cursor:pointer;background:#111827;color:#fff;box-shadow:0 10px 30px rgba(17,24,39,.35);font-size:22px;transition:transform .15s,box-shadow .15s}
+.rsd-widget-toggle:hover{transform:scale(1.08);box-shadow:0 14px 36px rgba(17,24,39,.45)}
 .rsd-widget-panel{position:absolute;bottom:70px;right:0;width:360px;max-width:calc(100vw - 24px);height:540px;max-height:calc(100vh - 110px);background:#fff;border-radius:16px;box-shadow:0 24px 60px rgba(15,23,42,.25);display:flex;flex-direction:column;overflow:hidden;border:1px solid #e5e7eb}
 .rsd-widget-root[data-position="bottom-left"] .rsd-widget-panel{right:auto;left:0}
-.rsd-widget-header{padding:14px 16px;background:#111827;color:#fff;font-weight:600;font-size:14px}
+.rsd-widget-header{padding:14px 16px;background:#111827;color:#fff;font-weight:600;font-size:14px;display:flex;align-items:center;justify-content:space-between}
+.rsd-widget-header-close{background:none;border:none;color:rgba(255,255,255,.65);cursor:pointer;font-size:18px;line-height:1;padding:0 0 0 8px;flex-shrink:0}
+.rsd-widget-header-close:hover{color:#fff}
 .rsd-widget-messages{flex:1;overflow:auto;padding:14px;background:#f8fafc;display:flex;flex-direction:column;gap:8px}
 .rsd-widget-msg{max-width:86%;padding:10px 12px;border-radius:14px;line-height:1.35;font-size:14px;white-space:pre-wrap;word-break:break-word}
 .rsd-widget-msg--agent{background:#fff;border:1px solid #e5e7eb;align-self:flex-start}
 .rsd-widget-msg--user{background:#111827;color:#fff;align-self:flex-end}
 .rsd-widget-msg--error{background:#fee2e2;color:#991b1b;align-self:flex-start}
 .rsd-widget-form{display:flex;gap:8px;padding:12px;border-top:1px solid #e5e7eb;background:#fff}
-.rsd-widget-input{flex:1;border:1px solid #d1d5db;border-radius:10px;padding:10px 12px;font-size:14px;outline:none}
+.rsd-widget-input{flex:1;border:1px solid #d1d5db;border-radius:10px;padding:10px 12px;font-size:14px;outline:none;background:#fff;color:#111827}
 .rsd-widget-input:focus{border-color:#6b7280}
-.rsd-widget-send{border:none;border-radius:10px;padding:10px 14px;background:#111827;color:#fff;cursor:pointer}
+.rsd-widget-send{border:none;border-radius:10px;padding:10px 14px;background:#111827;color:#fff;cursor:pointer;font-size:14px}
 .rsd-widget-send:disabled{opacity:.55;cursor:not-allowed}
-@media (max-width:480px){.rsd-widget-root[data-position="bottom-right"],.rsd-widget-root[data-position="bottom-left"]{left:12px;right:12px;bottom:12px}.rsd-widget-panel{width:100%;left:0;right:0;max-height:calc(100vh - 94px)}}
+.rsd-widget-bubble{position:absolute;bottom:70px;right:0;max-width:280px;background:#fff;border:1px solid #e5e7eb;border-radius:14px 14px 4px 14px;padding:12px 38px 12px 14px;box-shadow:0 8px 24px rgba(15,23,42,.18);font-size:14px;line-height:1.4;color:#111827;cursor:pointer;animation:rsd-in .3s ease}
+.rsd-widget-root[data-position="bottom-left"] .rsd-widget-bubble{right:auto;left:0;border-radius:14px 14px 14px 4px}
+@keyframes rsd-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.rsd-widget-bubble-close{position:absolute;top:7px;right:8px;background:none;border:none;cursor:pointer;font-size:16px;color:#9ca3af;line-height:1;padding:2px 4px}
+.rsd-widget-bubble-close:hover{color:#374151}
+.rsd-widget-bubble p{margin:0;pointer-events:none}
+.rsd-widget-root[data-theme="light"] .rsd-widget-toggle{background:#6b7280;box-shadow:0 10px 30px rgba(107,114,128,.35)}
+.rsd-widget-root[data-theme="light"] .rsd-widget-header{background:#6b7280}
+.rsd-widget-root[data-theme="light"] .rsd-widget-msg--user{background:#6b7280}
+.rsd-widget-root[data-theme="light"] .rsd-widget-send{background:#6b7280}
+.rsd-widget-root[data-theme="light"] .rsd-widget-input:focus{border-color:#6b7280}
+.rsd-widget-root[data-theme="ocean"] .rsd-widget-toggle{background:#0369a1;box-shadow:0 10px 30px rgba(3,105,161,.35)}
+.rsd-widget-root[data-theme="ocean"] .rsd-widget-header{background:#0369a1}
+.rsd-widget-root[data-theme="ocean"] .rsd-widget-messages{background:#f0f9ff}
+.rsd-widget-root[data-theme="ocean"] .rsd-widget-msg--agent{border-color:#bae6fd}
+.rsd-widget-root[data-theme="ocean"] .rsd-widget-msg--user{background:#0369a1}
+.rsd-widget-root[data-theme="ocean"] .rsd-widget-panel{border-color:#bae6fd}
+.rsd-widget-root[data-theme="ocean"] .rsd-widget-send{background:#0369a1}
+.rsd-widget-root[data-theme="ocean"] .rsd-widget-input:focus{border-color:#0369a1}
+.rsd-widget-root[data-theme="forest"] .rsd-widget-toggle{background:#166534;box-shadow:0 10px 30px rgba(22,101,52,.35)}
+.rsd-widget-root[data-theme="forest"] .rsd-widget-header{background:#166534}
+.rsd-widget-root[data-theme="forest"] .rsd-widget-messages{background:#f0fdf4}
+.rsd-widget-root[data-theme="forest"] .rsd-widget-msg--agent{border-color:#bbf7d0}
+.rsd-widget-root[data-theme="forest"] .rsd-widget-msg--user{background:#166534}
+.rsd-widget-root[data-theme="forest"] .rsd-widget-panel{border-color:#bbf7d0}
+.rsd-widget-root[data-theme="forest"] .rsd-widget-send{background:#166534}
+.rsd-widget-root[data-theme="forest"] .rsd-widget-input:focus{border-color:#166534}
+.rsd-widget-root[data-theme="sunset"] .rsd-widget-toggle{background:#c2410c;box-shadow:0 10px 30px rgba(194,65,12,.35)}
+.rsd-widget-root[data-theme="sunset"] .rsd-widget-header{background:#c2410c}
+.rsd-widget-root[data-theme="sunset"] .rsd-widget-messages{background:#fff7ed}
+.rsd-widget-root[data-theme="sunset"] .rsd-widget-msg--agent{border-color:#fed7aa}
+.rsd-widget-root[data-theme="sunset"] .rsd-widget-msg--user{background:#c2410c}
+.rsd-widget-root[data-theme="sunset"] .rsd-widget-panel{border-color:#fed7aa}
+.rsd-widget-root[data-theme="sunset"] .rsd-widget-send{background:#c2410c}
+.rsd-widget-root[data-theme="sunset"] .rsd-widget-input:focus{border-color:#c2410c}
+.rsd-widget-root[data-theme="darkmode"] .rsd-widget-toggle{background:#4f46e5;box-shadow:0 10px 30px rgba(79,70,229,.35)}
+.rsd-widget-root[data-theme="darkmode"] .rsd-widget-panel{background:#1f2937;border-color:#374151}
+.rsd-widget-root[data-theme="darkmode"] .rsd-widget-header{background:#111827}
+.rsd-widget-root[data-theme="darkmode"] .rsd-widget-messages{background:#111827}
+.rsd-widget-root[data-theme="darkmode"] .rsd-widget-msg--agent{background:#374151;border-color:#4b5563;color:#f9fafb}
+.rsd-widget-root[data-theme="darkmode"] .rsd-widget-msg--user{background:#4f46e5}
+.rsd-widget-root[data-theme="darkmode"] .rsd-widget-form{background:#1f2937;border-top-color:#374151}
+.rsd-widget-root[data-theme="darkmode"] .rsd-widget-input{background:#374151;border-color:#4b5563;color:#f9fafb}
+.rsd-widget-root[data-theme="darkmode"] .rsd-widget-input:focus{border-color:#6366f1}
+.rsd-widget-root[data-theme="darkmode"] .rsd-widget-send{background:#4f46e5}
+.rsd-widget-root[data-theme="darkmode"] .rsd-widget-bubble{background:#1f2937;border-color:#374151;color:#f9fafb}
+@media (max-width:480px){.rsd-widget-root[data-position="bottom-right"],.rsd-widget-root[data-position="bottom-left"]{left:12px;right:12px;bottom:12px}.rsd-widget-panel{width:100%;left:0;right:0;max-height:calc(100vh - 94px)}.rsd-widget-bubble{max-width:calc(100vw - 48px)}}
 """.strip()
 
 WIDGET_JS = """
@@ -181,8 +230,7 @@ WIDGET_JS = """
   }
 
   function ensureCss(href) {
-    var existing = document.querySelector('link[data-rsd-widget-css="1"]');
-    if (existing) return;
+    if (document.querySelector('link[data-rsd-widget-css="1"]')) return;
     var link = document.createElement("link");
     link.rel = "stylesheet";
     link.href = href;
@@ -190,23 +238,16 @@ WIDGET_JS = """
     document.head.appendChild(link);
   }
 
-  function uid(storageKey) {
+  function uid(key) {
     try {
-      var existing = localStorage.getItem(storageKey);
-      if (existing) return existing;
-      var generated = "web_" + Math.random().toString(36).slice(2) + Date.now().toString(36);
-      localStorage.setItem(storageKey, generated);
-      return generated;
+      var v = localStorage.getItem(key);
+      if (v) return v;
+      v = "web_" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+      localStorage.setItem(key, v);
+      return v;
     } catch (e) {
       return "web_" + Math.random().toString(36).slice(2);
     }
-  }
-
-  function esc(value) {
-    return String(value || "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
   }
 
   var script = pickScript();
@@ -214,34 +255,54 @@ WIDGET_JS = """
 
   var apiBase = (script.dataset.apiBase || "").replace(/\\/$/, "");
   var apiKey = script.dataset.apiKey || "";
-  var title = script.dataset.title || "Онлайн-консультант";
-  var greeting = script.dataset.greeting || "Здравствуйте! Чем могу помочь?";
-  var placeholder = script.dataset.placeholder || "Напишите сообщение...";
-  var position = script.dataset.position === "bottom-left" ? "bottom-left" : "bottom-right";
-  var providedUserId = script.dataset.userId || "";
-  var userName = script.dataset.userName || "";
-  var openOnStart = script.dataset.open === "true";
-  var proactiveMessage = (script.dataset.proactiveMessage || "").trim();
-  var proactiveDelayRaw = Number(script.dataset.proactiveDelayMs || "0");
-  var proactiveDelayMs = Number.isFinite(proactiveDelayRaw) && proactiveDelayRaw > 0 ? proactiveDelayRaw : 0;
-  var proactiveOpen = script.dataset.proactiveOpen === "true";
-  var proactiveShown = false;
-
   if (!apiBase || !apiKey) {
     console.error("[RSD widget] Missing data-api-base or data-api-key");
     return;
   }
 
+  var title = script.dataset.title || "Онлайн-консультант";
+  var greeting = script.dataset.greeting || "Здравствуйте! Чем могу помочь?";
+  var placeholder = script.dataset.placeholder || "Напишите сообщение...";
+  var position = script.dataset.position === "bottom-left" ? "bottom-left" : "bottom-right";
+  var theme = (script.dataset.theme || "dark").trim();
+  var providedUserId = script.dataset.userId || "";
+  var userName = script.dataset.userName || "";
+  var openOnStart = script.dataset.open === "true";
+
+  var proactiveMsg1 = (script.dataset.proactiveMessage || "").trim();
+  var proactiveMsg2 = (script.dataset.proactiveMessage2 || "").trim();
+  var delay1Sec = parseFloat(script.dataset.proactiveDelay || "0");
+  var legacyDelayMs = Number(script.dataset.proactiveDelayMs || "0");
+  var delay1Ms = delay1Sec > 0 ? delay1Sec * 1000 : (legacyDelayMs > 0 ? legacyDelayMs : 3000);
+  var delay2Sec = parseFloat(script.dataset.proactiveDelay2 || "0");
+  var delay2Ms = delay2Sec > 0 ? delay2Sec * 1000 : 1000;
+
   ensureCss(apiBase + "/api/agents/external/widget.css");
-  var userId = providedUserId || uid("rsd_widget_uid_" + apiKey.slice(-8));
+  var userId = providedUserId || uid("rsd_uid_" + apiKey.slice(-8));
+
+  var histKey = "rsd_hist_" + apiKey.slice(-8) + "_" + userId.slice(-8);
+  function loadHistory() {
+    try { var r = localStorage.getItem(histKey); return r ? JSON.parse(r) : null; } catch (e) { return null; }
+  }
+  function saveHistory(arr) {
+    try {
+      var trimmed = arr.length > 100 ? arr.slice(arr.length - 100) : arr;
+      localStorage.setItem(histKey, JSON.stringify(trimmed));
+    } catch (e) {}
+  }
+  var chatHistory = [];
 
   var root = document.createElement("div");
   root.className = "rsd-widget-root";
   root.setAttribute("data-position", position);
+  root.setAttribute("data-theme", theme);
   root.innerHTML =
     '<button type="button" class="rsd-widget-toggle" aria-label="Открыть чат">💬</button>' +
     '<section class="rsd-widget-panel" style="display:none;">' +
-    '<header class="rsd-widget-header"></header>' +
+    '<header class="rsd-widget-header">' +
+    '<span class="rsd-widget-header-title"></span>' +
+    '<button type="button" class="rsd-widget-header-close" aria-label="Закрыть">✕</button>' +
+    '</header>' +
     '<div class="rsd-widget-messages"></div>' +
     '<form class="rsd-widget-form">' +
     '<input class="rsd-widget-input" type="text" maxlength="4000" />' +
@@ -251,20 +312,33 @@ WIDGET_JS = """
 
   var toggle = root.querySelector(".rsd-widget-toggle");
   var panel = root.querySelector(".rsd-widget-panel");
-  var header = root.querySelector(".rsd-widget-header");
+  var headerTitle = root.querySelector(".rsd-widget-header-title");
+  var headerClose = root.querySelector(".rsd-widget-header-close");
   var messages = root.querySelector(".rsd-widget-messages");
   var form = root.querySelector(".rsd-widget-form");
   var input = root.querySelector(".rsd-widget-input");
   var sendBtn = root.querySelector(".rsd-widget-send");
-  header.textContent = title;
+  headerTitle.textContent = title;
   input.placeholder = placeholder;
 
-  function pushMessage(role, text) {
+  function pushMessage(role, text, persist) {
     var el = document.createElement("div");
     el.className = "rsd-widget-msg " + (role === "user" ? "rsd-widget-msg--user" : role === "error" ? "rsd-widget-msg--error" : "rsd-widget-msg--agent");
-    el.innerHTML = esc(text);
+    el.textContent = text;
     messages.appendChild(el);
     messages.scrollTop = messages.scrollHeight;
+    if (persist !== false && role !== "error") {
+      chatHistory.push({ role: role, text: text });
+      saveHistory(chatHistory);
+    }
+  }
+
+  var stored = loadHistory();
+  if (stored && stored.length > 0) {
+    chatHistory = stored;
+    stored.forEach(function (m) { pushMessage(m.role, m.text, false); });
+  } else {
+    pushMessage("agent", greeting);
   }
 
   function setLoading(flag) {
@@ -277,19 +351,10 @@ WIDGET_JS = """
     try {
       var response = await fetch(apiBase + "/api/agents/external/chat", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Agent-API-Key": apiKey
-        },
-        body: JSON.stringify({
-          message: text,
-          external_user_id: userId,
-          external_user_name: userName || null
-        })
+        headers: { "Content-Type": "application/json", "X-Agent-API-Key": apiKey },
+        body: JSON.stringify({ message: text, external_user_id: userId, external_user_name: userName || null })
       });
-      if (!response.ok) {
-        throw new Error("HTTP " + response.status);
-      }
+      if (!response.ok) throw new Error("HTTP " + response.status);
       var payload = await response.json();
       pushMessage("agent", payload.answer || "Нет ответа");
     } catch (err) {
@@ -299,11 +364,54 @@ WIDGET_JS = """
     }
   }
 
+  var bubble = null;
+
+  function dismissBubble() {
+    if (!bubble) return;
+    var b = bubble;
+    bubble = null;
+    b.style.opacity = "0";
+    b.style.transition = "opacity .2s";
+    setTimeout(function () { if (b.parentNode) b.parentNode.removeChild(b); }, 220);
+  }
+
+  function openPanel() {
+    if (panel.style.display !== "none") return;
+    panel.style.display = "flex";
+    dismissBubble();
+    setTimeout(function () { input.focus(); }, 50);
+  }
+
+  function closePanel() {
+    panel.style.display = "none";
+  }
+
+  function showBubble(text) {
+    if (!bubble) {
+      bubble = document.createElement("div");
+      bubble.className = "rsd-widget-bubble";
+      var closeBtn = document.createElement("button");
+      closeBtn.type = "button";
+      closeBtn.className = "rsd-widget-bubble-close";
+      closeBtn.setAttribute("aria-label", "Закрыть");
+      closeBtn.textContent = "✕";
+      closeBtn.addEventListener("click", function (e) { e.stopPropagation(); dismissBubble(); });
+      var p = document.createElement("p");
+      p.textContent = text;
+      bubble.appendChild(closeBtn);
+      bubble.appendChild(p);
+      bubble.addEventListener("click", function () { openPanel(); });
+      root.insertBefore(bubble, panel);
+    } else {
+      bubble.querySelector("p").textContent = text;
+    }
+  }
+
   toggle.addEventListener("click", function () {
-    var opened = panel.style.display !== "none";
-    panel.style.display = opened ? "none" : "flex";
-    if (!opened) input.focus();
+    if (panel.style.display !== "none") { closePanel(); } else { openPanel(); }
   });
+
+  headerClose.addEventListener("click", closePanel);
 
   form.addEventListener("submit", function (event) {
     event.preventDefault();
@@ -314,19 +422,19 @@ WIDGET_JS = """
     sendMessage(text);
   });
 
-  pushMessage("agent", greeting);
-  if (openOnStart) {
-    panel.style.display = "flex";
-  }
-  if (proactiveMessage && proactiveDelayMs > 0) {
-    window.setTimeout(function () {
-      if (proactiveShown) return;
-      proactiveShown = true;
-      pushMessage("agent", proactiveMessage);
-      if (proactiveOpen) {
-        panel.style.display = "flex";
+  if (openOnStart) openPanel();
+
+  if (proactiveMsg1) {
+    setTimeout(function () {
+      if (panel.style.display !== "none") return;
+      showBubble(proactiveMsg1);
+      if (proactiveMsg2) {
+        setTimeout(function () {
+          if (panel.style.display !== "none") { dismissBubble(); return; }
+          showBubble(proactiveMsg2);
+        }, delay2Ms);
       }
-    }, proactiveDelayMs);
+    }, delay1Ms);
   }
 })();
 """.strip()

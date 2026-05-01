@@ -687,7 +687,7 @@ const AgentsPageContent = () => {
       return;
     }
     const origin = window.location.origin;
-    const snippet = `<script src="${origin}/api/agents/external/widget.js" data-rsd-widget="1" data-api-base="${origin}" data-api-key="${selectedAgent.external_api_key}" data-position="bottom-right" data-title="Онлайн-консультант"></script>`;
+    const snippet = `<script src="${origin}/api/agents/external/widget.js" data-rsd-widget="1" data-api-base="${origin}" data-api-key="${selectedAgent.external_api_key}" data-position="bottom-right" data-title="Онлайн-консультант" data-theme="dark"></script>`;
     try {
       await navigator.clipboard.writeText(snippet);
       showSuccess('Сниппет виджета скопирован');
@@ -1117,7 +1117,7 @@ const AgentsPageContent = () => {
     String(selectedAgent?.template_type || 'qa').trim().toLowerCase()
   );
   const widgetSnippet = selectedAgent?.external_api_key
-    ? `<script src="${window.location.origin}/api/agents/external/widget.js" data-rsd-widget="1" data-api-base="${window.location.origin}" data-api-key="${selectedAgent.external_api_key}" data-position="bottom-right" data-title="Онлайн-консультант"></script>`
+    ? `<script src="${window.location.origin}/api/agents/external/widget.js" data-rsd-widget="1" data-api-base="${window.location.origin}" data-api-key="${selectedAgent.external_api_key}" data-position="bottom-right" data-title="Онлайн-консультант" data-theme="dark"></script>`
     : '';
 
   if (isLoading && isAuthenticated) {

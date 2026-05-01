@@ -132,13 +132,16 @@
         script.dataset.title = (env.VITE_WIDGET_TITLE || 'Онлайн-консультант').trim();
         script.dataset.greeting = (env.VITE_WIDGET_GREETING || 'Здравствуйте! Чем могу помочь?').trim();
         script.dataset.placeholder = (env.VITE_WIDGET_PLACEHOLDER || 'Напишите сообщение...').trim();
+        script.dataset.theme = (env.VITE_WIDGET_THEME || 'dark').trim();
 
         const proactiveMessage = (env.VITE_WIDGET_PROACTIVE_MESSAGE || '').trim();
-        const proactiveDelayMs = (env.VITE_WIDGET_PROACTIVE_DELAY_MS || '').trim();
-        const proactiveOpen = (env.VITE_WIDGET_PROACTIVE_OPEN || '').trim();
+        const proactiveDelay = (env.VITE_WIDGET_PROACTIVE_DELAY || '').trim();
+        const proactiveMessage2 = (env.VITE_WIDGET_PROACTIVE_MESSAGE_2 || '').trim();
+        const proactiveDelay2 = (env.VITE_WIDGET_PROACTIVE_DELAY_2 || '').trim();
         if (proactiveMessage) script.dataset.proactiveMessage = proactiveMessage;
-        if (proactiveDelayMs) script.dataset.proactiveDelayMs = proactiveDelayMs;
-        if (proactiveOpen) script.dataset.proactiveOpen = proactiveOpen;
+        if (proactiveDelay) script.dataset.proactiveDelay = proactiveDelay;
+        if (proactiveMessage2) script.dataset.proactiveMessage2 = proactiveMessage2;
+        if (proactiveDelay2) script.dataset.proactiveDelay2 = proactiveDelay2;
 
         document.body.appendChild(script);
       }

@@ -81,13 +81,18 @@ const WIDGET_CONNECTOR_EXAMPLE = `<script
   data-rsd-widget="1"
   data-api-base="https://rsd-ai.ru"
   data-api-key="agnt_xxxxxxxxxxxxxxxxxxxxxxxxx"
+
   data-position="bottom-right"
   data-title="Онлайн-консультант"
   data-greeting="Здравствуйте! Чем могу помочь?"
   data-placeholder="Напишите ваш вопрос..."
-  data-proactive-message="Если хотите, помогу подобрать решение за 2-3 вопроса."
-  data-proactive-delay-ms="12000"
-  data-proactive-open="false"
+
+  data-theme="dark"
+
+  data-proactive-message="Добрый день! Чем могу помочь?"
+  data-proactive-delay="3"
+  data-proactive-message-2="Готов ответить на любые вопросы 😊"
+  data-proactive-delay-2="1"
 ></script>`;
 
 const DocumentationContent = () => {
@@ -286,9 +291,16 @@ const DocumentationContent = () => {
             <code>{WIDGET_CONNECTOR_EXAMPLE}</code>
           </pre>
           <p>
-            Для “исходящего” сообщения по таймеру используйте атрибуты <code>data-proactive-message</code> и{' '}
-            <code>data-proactive-delay-ms</code> (в миллисекундах). Если нужно автоматически раскрывать окно при таком
-            сообщении, добавьте <code>data-proactive-open="true"</code>.
+            <strong>Исходящие сообщения</strong> — всплывающий пузырёк над кнопкой чата. Первое сообщение:{' '}
+            <code>data-proactive-message</code> + <code>data-proactive-delay</code> (секунды, по умолчанию 3). Второе сообщение:{' '}
+            <code>data-proactive-message-2</code> + <code>data-proactive-delay-2</code> (секунды после первого, по умолчанию 1). Оба необязательны.
+          </p>
+          <p>
+            <strong>Темы оформления</strong> задаются атрибутом <code>data-theme</code>: <code>dark</code> (по умолчанию),{' '}
+            <code>light</code>, <code>ocean</code>, <code>forest</code>, <code>sunset</code>, <code>darkmode</code>.
+          </p>
+          <p>
+            <strong>История чата</strong> сохраняется в <code>localStorage</code> и восстанавливается при обновлении страницы автоматически.
           </p>
           <p>
             Для production не публикуйте ключ в открытом фронтенде: используйте серверный прокси или подписанные
