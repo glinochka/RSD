@@ -1221,19 +1221,17 @@ const AgentsPageContent = () => {
                       >
                         Перевыпустить API ключ
                       </button>
-                    </div>
-                    {isWidgetSupportedTemplate ? (
-                      <div className="api-key-row">
+                      {isWidgetSupportedTemplate ? (
                         <button
-                          className="btn btn-black"
+                          className="btn btn-black api-key-row__full-width"
                           onClick={handleCopyWidgetSnippet}
                           title="Скопировать script сниппет"
                           aria-label="Copy widget snippet"
                         >
                           Скопировать сниппет виджета
                         </button>
-                      </div>
-                    ) : null}
+                      ) : null}
+                    </div>
                   </div>
 
                   <div className="agent-management-block">

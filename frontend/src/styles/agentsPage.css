@@ -197,11 +197,15 @@
 }
 
 .api-key-row {
-  display: flex;
-  align-items: flex-start;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
   gap: var(--spacing-sm);
   min-width: 0;
+}
+
+.api-key-row__full-width {
+  grid-column: 1 / -1;
 }
 
 .agent-management-empty {
@@ -696,8 +700,7 @@
   }
 
   .api-key-row {
-    flex-direction: column;
-    align-items: stretch;
+    grid-template-columns: 1fr;
   }
 
   .api-key-row .btn {
@@ -705,6 +708,10 @@
     max-width: 100%;
     box-sizing: border-box;
     white-space: normal;
+  }
+
+  .api-key-row__full-width {
+    grid-column: auto;
   }
 
   .docs-header-row {
