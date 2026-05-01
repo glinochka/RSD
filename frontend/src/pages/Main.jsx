@@ -710,7 +710,7 @@ const Main = () => {
             {FAQ_ITEMS.map((item) => {
               const isOpen = openFaqId === item.id;
               return (
-                <div key={item.id} className={`faq-item reveal-on-scroll reveal-from-right${isOpen ? ' is-open' : ''}`}>
+                <div key={item.id} className={`faq-item${isOpen ? ' is-open' : ''}`}>
                   <button
                     type="button"
                     className="faq-summary"
