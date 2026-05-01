@@ -1649,16 +1649,14 @@ const CreateAgentContent = () => {
                           rows={3}
                           maxLength={4000}
                         />
-                        <label className="mt-input">
-                          <input
-                            type="checkbox"
-                            checked={resourcesEnabled}
-                            onChange={(e) => setResourcesEnabled(e.target.checked)}
-                            disabled={form.isSubmitting}
-                            style={{ marginRight: '8px' }}
-                          />
-                          Включить отдельные ресурсы (комнаты, оборудование и т.п.)
-                        </label>
+                        <FeatureToggle
+                          checked={resourcesEnabled}
+                          onChange={setResourcesEnabled}
+                          disabled={form.isSubmitting}
+                          title="Включить отдельные ресурсы"
+                          description="Комнаты, оборудование и другие рабочие места будут отдельными сущностями."
+                          helpText="Включите, если сотрудник и рабочее место не совпадают 1:1."
+                        />
                       </div>
                     )}
 
