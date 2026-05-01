@@ -28,6 +28,8 @@ class BookingProvider(ABC):
         full_name: str,
         specializations: list[str] | None = None,
         is_active: bool = True,
+        auto_create_resource: bool = False,
+        resource_type: str = "workplace",
     ) -> dict[str, Any]:
         raise NotImplementedError
 
@@ -54,6 +56,7 @@ class BookingProvider(ABC):
         agent_id: int,
         resource_type: str | None = None,
         active_only: bool = True,
+        exclude_linked: bool = False,
     ) -> list[dict[str, Any]]:
         raise NotImplementedError
 

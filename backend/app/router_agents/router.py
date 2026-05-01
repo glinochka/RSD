@@ -46,6 +46,7 @@ from ..channels.message_processor import (
 )
 from ..services.ai_authoring import generate_welcome_with_ai, improve_prompt_with_ai
 from ..services.admin_booking import get_admin_booking_service
+from ..services.admin_booking.domains import DOMAIN_REGISTRY as _DOMAIN_REGISTRY
 from ..services.crm import build_provider
 from ..services.qa_handoff_service import EscalationType as QAEscalationType, get_qa_handoff_service
 from ..services.template_runtime import EscalationType, get_template_runtime
@@ -71,7 +72,7 @@ SUPPORTED_TEMPLATE_TYPES = {"qa", "crm_admin", "lead_generation", "content_facto
 CRM_PROVIDERS = {"amocrm", "bitrix24"}
 CRM_CONFIRMATION_POLICIES = {"always_confirm", "confirm_risky", "never_confirm"}
 CRM_FALLBACK_MODES = {"ask_clarifying_question", "text_only"}
-CRM_DOMAIN_TYPES = {"beauty_salon", "dental_clinic"}
+CRM_DOMAIN_TYPES = set(_DOMAIN_REGISTRY.keys())
 CRM_MODES = {"disabled", "optional", "required"}
 CRM_BOOKING_BACKENDS = {"local", "crm", "auto"}
 DEFAULT_CRM_ALLOWED_TOOLS = [
@@ -86,11 +87,11 @@ DEFAULT_CRM_ALLOWED_TOOLS = [
 ]
 DEFAULT_BOOKING_ALLOWED_TOOLS = [
     "check_availability",
+    "find_next_available",
     "list_appointments",
     "create_appointment",
     "reschedule_appointment",
     "cancel_appointment",
-    "confirm_appointment",
     "list_staff",
     "list_services",
 ]
@@ -497,6 +498,12 @@ def _default_crm_admin_config() -> dict[str, object]:
         "manual_confirmation_duration_minutes": 120,
         "appointment_confirmation_enabled": True,
         "field_mapping": None,
+        "resources_enabled": True,
+        "resource_linked_to_staff": True,
+        "custom_staff_role": None,
+        "custom_staff_label": None,
+        "custom_resource_types": None,
+        "custom_domain_instruction": None,
     }
 
 
@@ -514,9 +521,10 @@ def _migrate_crm_admin_config(raw_config: dict | None) -> dict[str, object]:
     fallback_mode = str(raw.get("fallback_mode") or defaults["fallback_mode"]).strip().lower()
 
     if domain_type not in CRM_DOMAIN_TYPES:
+        valid = ", ".join(sorted(CRM_DOMAIN_TYPES))
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="template_config.domain_type must be one of: beauty_salon, dental_clinic",
+            detail=f"template_config.domain_type must be one of: {valid}",
         )
     if crm_mode not in CRM_MODES:
         raise HTTPException(
@@ -638,6 +646,26 @@ def _migrate_crm_admin_config(raw_config: dict | None) -> dict[str, object]:
                 normalized_mapping[k] = v
         field_mapping = normalized_mapping or None
 
+    resources_enabled = bool(raw.get("resources_enabled", defaults["resources_enabled"]))
+    resource_linked_to_staff = bool(raw.get("resource_linked_to_staff", defaults["resource_linked_to_staff"]))
+
+    custom_staff_role_raw = raw.get("custom_staff_role")
+    custom_staff_role = str(custom_staff_role_raw).strip()[:32] if custom_staff_role_raw else None
+
+    custom_staff_label_raw = raw.get("custom_staff_label")
+    custom_staff_label = str(custom_staff_label_raw).strip()[:64] if custom_staff_label_raw else None
+
+    custom_resource_types_raw = raw.get("custom_resource_types")
+    if custom_resource_types_raw is None:
+        custom_resource_types = None
+    elif isinstance(custom_resource_types_raw, list):
+        custom_resource_types = [str(t).strip()[:32] for t in custom_resource_types_raw if str(t).strip()] or None
+    else:
+        custom_resource_types = None
+
+    custom_domain_instruction_raw = raw.get("custom_domain_instruction")
+    custom_domain_instruction = str(custom_domain_instruction_raw).strip()[:4000] if custom_domain_instruction_raw else None
+
     return {
         "domain_type": domain_type,
         "crm_mode": crm_mode,
@@ -655,6 +683,12 @@ def _migrate_crm_admin_config(raw_config: dict | None) -> dict[str, object]:
         "manual_confirmation_duration_minutes": manual_confirmation_duration_minutes,
         "appointment_confirmation_enabled": appointment_confirmation_enabled,
         "field_mapping": field_mapping,
+        "resources_enabled": resources_enabled,
+        "resource_linked_to_staff": resource_linked_to_staff,
+        "custom_staff_role": custom_staff_role,
+        "custom_staff_label": custom_staff_label,
+        "custom_resource_types": custom_resource_types,
+        "custom_domain_instruction": custom_domain_instruction,
     }
 
 
@@ -1917,9 +1951,10 @@ async def _find_admin_template_agent(
     if domain_type:
         requested = str(domain_type).strip().lower()
         if requested and requested not in CRM_DOMAIN_TYPES:
+            valid = ", ".join(sorted(CRM_DOMAIN_TYPES))
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="domain_type must be one of: beauty_salon, dental_clinic",
+                detail=f"domain_type must be one of: {valid}",
             )
         if requested and normalized_domain and requested != normalized_domain:
             raise HTTPException(
@@ -6289,6 +6324,18 @@ async def external_chat(
         },
         status_code=status.HTTP_200_OK,
     )
+
+
+@router.get("/admin_template/domain-registry")
+async def admin_template_domain_registry(
+    _current_user=Depends(get_current_user_required),
+):
+    """Return the full domain registry for the crm_admin template.
+
+    Frontend uses this to populate the domain selector and adapt UI labels.
+    """
+    items = [cfg.to_dict(key) for key, cfg in _DOMAIN_REGISTRY.items()]
+    return JSONResponse(content={"items": items}, status_code=status.HTTP_200_OK)
 
 
 @router.get("/admin_template/staff")

@@ -27,7 +27,7 @@ const CRM_TOOL_OPTIONS = [
   { value: 'assign_owner', label: 'Назначение ответственного' },
 ];
 
-const CRM_DOMAIN_OPTIONS = [
+const CRM_DOMAIN_OPTIONS_FALLBACK = [
   { value: 'beauty_salon', label: 'Салон красоты' },
   { value: 'dental_clinic', label: 'Стоматологическая клиника' },
 ];
@@ -61,30 +61,17 @@ const newStaffId = () => `local-${++_staffLocalIdCounter}`;
 let _serviceLocalIdCounter = 0;
 const newServiceLocalId = () => `svc-${++_serviceLocalIdCounter}`;
 
-const buildAdminDomainPromptAppendix = (domainType, staffList, serviceList, chairsOrCabinets) => {
-  if (domainType === 'beauty_salon') {
-    const chairsCount = Number.parseInt(chairsOrCabinets || '0', 10);
-    const masterNames = staffList.map((m) => `${m.firstName} ${m.lastName}`.trim()).filter(Boolean);
-    const serviceNames = serviceList.map((s) => s.title).filter(Boolean);
-    return [
-      '---',
-      'Admin domain profile:',
-      'domain_type: beauty_salon',
-      `chairs_count: ${Number.isFinite(chairsCount) ? Math.max(0, chairsCount) : 0}`,
-      `masters: ${masterNames.join(', ') || '-'}`,
-      `services: ${serviceNames.join(', ') || '-'}`,
-    ].join('\n');
-  }
-
-  const cabinetsCount = Number.parseInt(chairsOrCabinets || '0', 10);
-  const doctorNames = staffList.map((d) => `${d.firstName} ${d.lastName}`.trim()).filter(Boolean);
+const buildAdminDomainPromptAppendix = (domainConfig, staffList, serviceList) => {
+  const domainType = domainConfig?.key || 'beauty_salon';
+  const staffRole = domainConfig?.staff_role_default || 'master';
+  const staffNames = staffList.map((m) => `${m.firstName} ${m.lastName}`.trim()).filter(Boolean);
   const serviceNames = serviceList.map((s) => s.title).filter(Boolean);
   return [
     '---',
     'Admin domain profile:',
-    'domain_type: dental_clinic',
-    `cabinets_count: ${Number.isFinite(cabinetsCount) ? Math.max(0, cabinetsCount) : 0}`,
-    `doctors: ${doctorNames.join(', ') || '-'}`,
+    `domain_type: ${domainType}`,
+    `staff_role: ${staffRole}`,
+    `staff: ${staffNames.join(', ') || '-'}`,
     `services: ${serviceNames.join(', ') || '-'}`,
   ].join('\n');
 };
@@ -553,10 +540,12 @@ const CreateAgentContent = () => {
   const [crmValidationSignature, setCrmValidationSignature] = useState('');
   const whatsappUserbotLastAuthStatusRef = useRef('');
 
-  const [beautyMasters, setBeautyMasters] = useState([]);
-  const [beautyServices, setBeautyServices] = useState([]);
-  const [dentalDoctors, setDentalDoctors] = useState([]);
-  const [dentalServices, setDentalServices] = useState([]);
+  const [staffList, setStaffList] = useState([]);
+  const [serviceList, setServiceList] = useState([]);
+  const [domainRegistry, setDomainRegistry] = useState(CRM_DOMAIN_OPTIONS_FALLBACK);
+  const [customStaffRole, setCustomStaffRole] = useState('');
+  const [customDomainInstruction, setCustomDomainInstruction] = useState('');
+  const [resourcesEnabled, setResourcesEnabled] = useState(false);
 
   const isEditMode = !!agentId;
 
@@ -603,8 +592,6 @@ const CreateAgentContent = () => {
       manual_confirmation_enabled: false,
       manual_confirmation_price_minor: '15000',
       manual_confirmation_duration_minutes: '120',
-      beauty_chairs_count: '4',
-      dental_cabinets_count: '3',
       sales_product_name: '',
       sales_offer_type: '',
       sales_usp: '',
@@ -743,9 +730,13 @@ const CreateAgentContent = () => {
             return;
           }
         }
+        const _selectedDomainType = values.crm_domain_type?.trim() || 'beauty_salon';
+        const _selectedDomainCfg = (Array.isArray(domainRegistry) ? domainRegistry : []).find(
+          (d) => (d.key || d.value) === _selectedDomainType
+        );
         const templateConfig = selectedTemplate === 'crm_admin'
           ? {
-              domain_type: values.crm_domain_type?.trim() || 'beauty_salon',
+              domain_type: _selectedDomainType,
               crm_mode: crmMode === 'optional' ? 'optional' : 'disabled',
               booking_backend:
                 crmMode === 'disabled'
@@ -757,12 +748,13 @@ const CreateAgentContent = () => {
               allowed_tools: parseAllowedTools(values.crm_allowed_tools),
               allowed_booking_tools: [
                 'check_availability',
+                'find_next_available',
                 'create_appointment',
                 'reschedule_appointment',
                 'cancel_appointment',
                 'list_staff',
                 'list_services',
-                'find_next_available',
+                'list_appointments',
               ],
               confirmation_policy: values.crm_confirmation_policy?.trim() || 'confirm_risky',
               fallback_mode: values.crm_fallback_mode?.trim() || 'ask_clarifying_question',
@@ -776,6 +768,11 @@ const CreateAgentContent = () => {
               manual_confirmation_price_minor: Number(values.manual_confirmation_price_minor || 0),
               manual_confirmation_duration_minutes: Number(values.manual_confirmation_duration_minutes || 120),
               appointment_confirmation_enabled: true,
+              resources_enabled: _selectedDomainCfg?.resources_mode !== 'none',
+              resource_linked_to_staff: _selectedDomainCfg?.resource_linked_to_staff ?? true,
+              custom_staff_role: _selectedDomainType === 'custom' ? (customStaffRole.trim() || null) : null,
+              custom_staff_label: null,
+              custom_domain_instruction: _selectedDomainType === 'custom' ? (customDomainInstruction.trim() || null) : null,
             }
           : selectedTemplate === 'sales_manager'
             ? {
@@ -796,13 +793,13 @@ const CreateAgentContent = () => {
             : undefined;
 
         const domainType = values.crm_domain_type?.trim() || 'beauty_salon';
-        const staffList = domainType === 'beauty_salon' ? beautyMasters : dentalDoctors;
-        const serviceList = domainType === 'beauty_salon' ? beautyServices : dentalServices;
-        const chairsOrCabinets = domainType === 'beauty_salon' ? values.beauty_chairs_count : values.dental_cabinets_count;
+        const activeDomainConfig = (Array.isArray(domainRegistry) ? domainRegistry : []).find(
+          (d) => d.value === domainType || d.key === domainType
+        ) || { key: domainType, staff_role_default: 'specialist' };
 
         const adminOnboardingPrompt =
           selectedTemplate === 'crm_admin'
-            ? buildAdminDomainPromptAppendix(domainType, staffList, serviceList, chairsOrCabinets)
+            ? buildAdminDomainPromptAppendix(activeDomainConfig, staffList, serviceList)
             : '';
         const finalSystemPrompt = selectedTemplate === 'crm_admin'
           ? [values.system_prompt.trim(), adminOnboardingPrompt].filter(Boolean).join('\n\n')
@@ -829,7 +826,8 @@ const CreateAgentContent = () => {
         }
 
         if (selectedTemplate === 'crm_admin') {
-          const staffRole = domainType === 'beauty_salon' ? 'master' : 'doctor';
+          const staffRole = activeDomainConfig.staff_role_default
+            || (domainType === 'custom' ? (customStaffRole.trim() || 'specialist') : 'specialist');
           const localIdToApiId = {};
           for (const member of staffList) {
             const fullName = `${member.firstName} ${member.lastName}`.trim();
@@ -946,8 +944,16 @@ const CreateAgentContent = () => {
   const isSalesManagerTemplate = form.values.template_type === 'sales_manager';
   const isContentFactoryTemplate = form.values.template_type === 'content_factory';
   const isCrmAdminTemplate = form.values.template_type === 'crm_admin';
-  const isBeautyDomain = form.values.crm_domain_type === 'beauty_salon';
   const isCrmConnectionEnabled = form.values.crm_mode === 'optional';
+
+  const domainConfig = (Array.isArray(domainRegistry) ? domainRegistry : []).find(
+    (d) => (d.key || d.value) === form.values.crm_domain_type
+  ) || null;
+  const isCustomDomain = form.values.crm_domain_type === 'custom';
+  const crmDomainOptions = (Array.isArray(domainRegistry) ? domainRegistry : []).map((d) => ({
+    value: d.key || d.value,
+    label: d.label_ru || d.label,
+  }));
   const shouldShowCrmCredentials = isCrmConnectionEnabled && form.values.crm_connect_timing === 'now';
   const skipChannelSelection = isContentFactoryTemplate;
 
@@ -1333,6 +1339,19 @@ const CreateAgentContent = () => {
   };
 
   useEffect(() => {
+    let cancelled = false;
+    agentService.getAdminDomainRegistry().then((data) => {
+      if (cancelled) return;
+      if (Array.isArray(data?.items) && data.items.length > 0) {
+        setDomainRegistry(data.items);
+      }
+    }).catch(() => {
+      // fallback to hardcoded options on error
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
     if (!isCrmAdminTemplate || !shouldShowCrmCredentials) {
       setCrmValidationResult(null);
       setCrmValidationSignature('');
@@ -1522,7 +1541,7 @@ const CreateAgentContent = () => {
                   className="input-main"
                   value={form.values.crm_domain_type}
                   onChange={form.handleChange}
-                  options={CRM_DOMAIN_OPTIONS}
+                  options={crmDomainOptions.length > 0 ? crmDomainOptions : CRM_DOMAIN_OPTIONS_FALLBACK}
                   disabled={form.isSubmitting}
                 />
 
@@ -1602,41 +1621,69 @@ const CreateAgentContent = () => {
                   />
                 </div>
 
-                {isBeautyDomain ? (
-                  <div className="admin-template-onboarding-block">
-                    <h4 className="admin-template-onboarding-title">Настройки салона красоты</h4>
-                    <label htmlFor="beauty_chairs_count">Количество кресел:</label>
-                    <input
-                      id="beauty_chairs_count"
-                      type="number"
-                      min="0"
-                      name="beauty_chairs_count"
-                      className="input-main"
-                      value={form.values.beauty_chairs_count}
-                      onChange={form.handleChange}
-                      disabled={form.isSubmitting}
-                    />
+                <div className="admin-template-onboarding-block">
+                    <h4 className="admin-template-onboarding-title">
+                      {domainConfig ? domainConfig.label_ru || domainConfig.label : 'Настройки'} — Настройки
+                    </h4>
 
-                    <label className="mt-input">Мастера:</label>
+                    {/* Custom domain extra settings */}
+                    {isCustomDomain && (
+                      <div className="admin-template-custom-domain-settings">
+                        <label className="mt-input">Название роли сотрудника:</label>
+                        <input
+                          type="text"
+                          className="input-main"
+                          placeholder="Например: Тренер, Инструктор, Консультант"
+                          value={customStaffRole}
+                          onChange={(e) => setCustomStaffRole(e.target.value)}
+                          disabled={form.isSubmitting}
+                          maxLength={32}
+                        />
+                        <label className="mt-input">Доменная инструкция (для ИИ):</label>
+                        <textarea
+                          className="input-main"
+                          placeholder="Опишите сферу деятельности, терминологию, что уточнять у клиента..."
+                          value={customDomainInstruction}
+                          onChange={(e) => setCustomDomainInstruction(e.target.value)}
+                          disabled={form.isSubmitting}
+                          rows={3}
+                          maxLength={4000}
+                        />
+                        <label className="mt-input">
+                          <input
+                            type="checkbox"
+                            checked={resourcesEnabled}
+                            onChange={(e) => setResourcesEnabled(e.target.checked)}
+                            disabled={form.isSubmitting}
+                            style={{ marginRight: '8px' }}
+                          />
+                          Включить отдельные ресурсы (комнаты, оборудование и т.п.)
+                        </label>
+                      </div>
+                    )}
+
+                    <label className="mt-input">
+                      {domainConfig?.staff_label_ru || 'Сотрудники'}:
+                    </label>
                     <CardCarousel
                       addCard={() =>
-                        setBeautyMasters((prev) => [
+                        setStaffList((prev) => [
                           ...prev,
                           { localId: newStaffId(), firstName: '', lastName: '', specialization: '' },
                         ])
                       }
                     >
-                      {beautyMasters.map((m) => (
+                      {staffList.map((m) => (
                         <StaffCard
                           key={m.localId}
                           staff={m}
-                          roleLabel="master"
+                          roleLabel={domainConfig?.staff_role_default || customStaffRole || 'specialist'}
                           disabled={form.isSubmitting}
                           onChange={(updated) =>
-                            setBeautyMasters((prev) => prev.map((x) => (x.localId === m.localId ? updated : x)))
+                            setStaffList((prev) => prev.map((x) => (x.localId === m.localId ? updated : x)))
                           }
                           onRemove={() =>
-                            setBeautyMasters((prev) => prev.filter((x) => x.localId !== m.localId))
+                            setStaffList((prev) => prev.filter((x) => x.localId !== m.localId))
                           }
                         />
                       ))}
@@ -1645,94 +1692,28 @@ const CreateAgentContent = () => {
                     <label className="mt-input">Услуги:</label>
                     <CardCarousel
                       addCard={() =>
-                        setBeautyServices((prev) => [
+                        setServiceList((prev) => [
                           ...prev,
                           { localId: newServiceLocalId(), title: '', price: '', duration: '', staffLocalIds: [] },
                         ])
                       }
                     >
-                      {beautyServices.map((s) => (
+                      {serviceList.map((s) => (
                         <ServiceCard
                           key={s.localId}
                           service={s}
-                          staffList={beautyMasters}
+                          staffList={staffList}
                           disabled={form.isSubmitting}
                           onChange={(updated) =>
-                            setBeautyServices((prev) => prev.map((x) => (x.localId === s.localId ? updated : x)))
+                            setServiceList((prev) => prev.map((x) => (x.localId === s.localId ? updated : x)))
                           }
                           onRemove={() =>
-                            setBeautyServices((prev) => prev.filter((x) => x.localId !== s.localId))
+                            setServiceList((prev) => prev.filter((x) => x.localId !== s.localId))
                           }
                         />
                       ))}
                     </CardCarousel>
                   </div>
-                ) : (
-                  <div className="admin-template-onboarding-block">
-                    <h4 className="admin-template-onboarding-title">Настройки стоматологии</h4>
-                    <label htmlFor="dental_cabinets_count">Количество кабинетов:</label>
-                    <input
-                      id="dental_cabinets_count"
-                      type="number"
-                      min="0"
-                      name="dental_cabinets_count"
-                      className="input-main"
-                      value={form.values.dental_cabinets_count}
-                      onChange={form.handleChange}
-                      disabled={form.isSubmitting}
-                    />
-
-                    <label className="mt-input">Врачи:</label>
-                    <CardCarousel
-                      addCard={() =>
-                        setDentalDoctors((prev) => [
-                          ...prev,
-                          { localId: newStaffId(), firstName: '', lastName: '', specialization: '' },
-                        ])
-                      }
-                    >
-                      {dentalDoctors.map((d) => (
-                        <StaffCard
-                          key={d.localId}
-                          staff={d}
-                          roleLabel="doctor"
-                          disabled={form.isSubmitting}
-                          onChange={(updated) =>
-                            setDentalDoctors((prev) => prev.map((x) => (x.localId === d.localId ? updated : x)))
-                          }
-                          onRemove={() =>
-                            setDentalDoctors((prev) => prev.filter((x) => x.localId !== d.localId))
-                          }
-                        />
-                      ))}
-                    </CardCarousel>
-
-                    <label className="mt-input">Услуги:</label>
-                    <CardCarousel
-                      addCard={() =>
-                        setDentalServices((prev) => [
-                          ...prev,
-                          { localId: newServiceLocalId(), title: '', price: '', duration: '', staffLocalIds: [] },
-                        ])
-                      }
-                    >
-                      {dentalServices.map((s) => (
-                        <ServiceCard
-                          key={s.localId}
-                          service={s}
-                          staffList={dentalDoctors}
-                          disabled={form.isSubmitting}
-                          onChange={(updated) =>
-                            setDentalServices((prev) => prev.map((x) => (x.localId === s.localId ? updated : x)))
-                          }
-                          onRemove={() =>
-                            setDentalServices((prev) => prev.filter((x) => x.localId !== s.localId))
-                          }
-                        />
-                      ))}
-                    </CardCarousel>
-                  </div>
-                )}
 
                 {isCrmConnectionEnabled ? (
                   <>

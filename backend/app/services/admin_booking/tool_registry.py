@@ -42,12 +42,12 @@ def _parse_iso_datetime(raw: str) -> datetime:
 
 
 class _ListStaffArgs(BaseModel):
-    role: str | None = Field(default=None, pattern="^(master|doctor)$")
+    role: str | None = Field(default=None, max_length=32)
     active_only: bool = Field(default=True)
 
 
 class _ListServicesArgs(BaseModel):
-    target_role: str | None = Field(default=None, pattern="^(master|doctor)$")
+    target_role: str | None = Field(default=None, max_length=32)
     active_only: bool = Field(default=True)
 
 

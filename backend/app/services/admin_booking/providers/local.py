@@ -94,6 +94,7 @@ def _serialize_resource(row: AdminResource) -> dict[str, Any]:
         "agent_id": row.agent_id,
         "resource_type": row.resource_type,
         "title": row.title,
+        "linked_staff_id": row.linked_staff_id,
         "is_active": bool(row.is_active),
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
@@ -180,6 +181,8 @@ class LocalBookingProvider(BookingProvider):
         full_name: str,
         specializations: list[str] | None = None,
         is_active: bool = True,
+        auto_create_resource: bool = False,
+        resource_type: str = "workplace",
     ) -> dict[str, Any]:
         normalized_role = _normalize_string(role)
         normalized_name = _normalize_string(full_name)
@@ -198,25 +201,34 @@ class LocalBookingProvider(BookingProvider):
                 session.add(row)
                 await session.flush()
                 await session.refresh(row)
-                
-                # Создаем дефолтное расписание пн-пт 8:00-17:00
+
                 staff_id = row.id
+
+                # Auto-create a linked resource when resource_linked_to_staff=True
+                if auto_create_resource:
+                    linked_resource = AdminResource(
+                        agent_id=agent_id,
+                        resource_type=resource_type.strip().lower() or "workplace",
+                        title=normalized_name,
+                        linked_staff_id=staff_id,
+                        is_active=bool(is_active),
+                    )
+                    session.add(linked_resource)
+
+                # Default schedule mon-fri 08:00-17:00 for 4 weeks ahead
                 today = datetime.now().date()
-                # Найдем ближайший понедельник
                 days_ahead = 0 - today.weekday()
                 if days_ahead <= 0:
                     days_ahead += 7
                 next_monday = today + timedelta(days=days_ahead)
-                
-                # Создаем расписание на 4 недели вперед
+
                 for week in range(4):
                     week_start = next_monday + timedelta(weeks=week)
-                    for day in range(5):  # пн-пт
+                    for day in range(5):  # mon-fri
                         slot_date = week_start + timedelta(days=day)
                         starts_at = datetime.combine(slot_date, datetime.min.time().replace(hour=8))
                         ends_at = datetime.combine(slot_date, datetime.min.time().replace(hour=17))
-                        
-                        # Проверяем, нет ли уже такого слота
+
                         existing = await session.scalar(
                             select(AdminScheduleSlot).where(
                                 AdminScheduleSlot.agent_id == agent_id,
@@ -236,7 +248,7 @@ class LocalBookingProvider(BookingProvider):
                                 is_active=True,
                             )
                             session.add(slot)
-                
+
                 await session.flush()
                 return _serialize_staff(row)
 
@@ -284,6 +296,15 @@ class LocalBookingProvider(BookingProvider):
                 )
                 if row is None:
                     raise ValueError("Staff not found")
+                # Delete auto-linked resource if exists
+                linked_resource = await session.scalar(
+                    select(AdminResource).where(
+                        AdminResource.agent_id == agent_id,
+                        AdminResource.linked_staff_id == staff_id,
+                    )
+                )
+                if linked_resource is not None:
+                    await session.delete(linked_resource)
                 await session.delete(row)
 
     async def list_resources(
@@ -292,6 +313,7 @@ class LocalBookingProvider(BookingProvider):
         agent_id: int,
         resource_type: str | None = None,
         active_only: bool = True,
+        exclude_linked: bool = False,
     ) -> list[dict[str, Any]]:
         async with self._session_factory() as session:
             query = select(AdminResource).where(AdminResource.agent_id == agent_id)
@@ -299,6 +321,8 @@ class LocalBookingProvider(BookingProvider):
                 query = query.where(AdminResource.resource_type == resource_type.strip().lower())
             if active_only:
                 query = query.where(AdminResource.is_active.is_(True))
+            if exclude_linked:
+                query = query.where(AdminResource.linked_staff_id.is_(None))
             rows = (await session.execute(query.order_by(AdminResource.id.asc()))).scalars().all()
             return [_serialize_resource(row) for row in rows]
 

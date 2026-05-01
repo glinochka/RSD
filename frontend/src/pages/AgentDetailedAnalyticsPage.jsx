@@ -600,6 +600,11 @@ const AgentDetailedAnalyticsPageContent = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [selectedSection, setSelectedSection] = useState(ANALYTICS_SECTIONS.OVERVIEW);
   const [agent, setAgent] = useState(null);
+  const _DEFAULT_RESOURCE_TYPE_OPTIONS = [
+    { value: 'chair', label: 'chair' },
+    { value: 'room', label: 'room' },
+    { value: 'equipment', label: 'equipment' },
+  ];
   const [metrics, setMetrics] = useState([]);
   const [crmActionMetrics, setCrmActionMetrics] = useState([]);
   const [crmActions, setCrmActions] = useState(null);
@@ -645,7 +650,7 @@ const AgentDetailedAnalyticsPageContent = () => {
   const [editingResourceId, setEditingResourceId] = useState(null);
   const [editingServiceId, setEditingServiceId] = useState(null);
   const [editingStaffDraft, setEditingStaffDraft] = useState({ full_name: '', role: 'master', specializations: '' });
-  const [editingResourceDraft, setEditingResourceDraft] = useState({ title: '', resource_type: 'chair' });
+  const [editingResourceDraft, setEditingResourceDraft] = useState({ title: '', resource_type: '' });
   const [editingServiceDraft, setEditingServiceDraft] = useState({
     title: '',
     target_role: 'master',
@@ -654,7 +659,7 @@ const AgentDetailedAnalyticsPageContent = () => {
     resource_type_filters: '',
   });
   const [newStaffDraft, setNewStaffDraft] = useState({ full_name: '', role: 'master', specializations: '' });
-  const [newResourceDraft, setNewResourceDraft] = useState({ title: '', resource_type: 'chair' });
+  const [newResourceDraft, setNewResourceDraft] = useState({ title: '', resource_type: '' });
   const [newServiceDraft, setNewServiceDraft] = useState({
     title: '',
     target_role: 'master',
@@ -1160,7 +1165,7 @@ const AgentDetailedAnalyticsPageContent = () => {
         resource_type: newResourceDraft.resource_type,
         title: newResourceDraft.title.trim(),
       });
-      setNewResourceDraft({ title: '', resource_type: 'chair' });
+      setNewResourceDraft({ title: '', resource_type: '' });
       await loadOperationsDashboard();
     } catch (error) {
       showError(error?.message || 'Не удалось создать ресурс');
@@ -2303,11 +2308,16 @@ const AgentDetailedAnalyticsPageContent = () => {
                       value={newResourceDraft.resource_type}
                       onChange={(selectedValue) => setNewResourceDraft((prev) => ({ ...prev, resource_type: selectedValue }))}
                       ariaLabel="Выбор типа ресурса"
-                      options={[
-                        { value: 'chair', label: 'chair' },
-                        { value: 'room', label: 'room' },
-                        { value: 'equipment', label: 'equipment' },
-                      ]}
+                      options={(() => {
+                        const examples = agent?.template_config?.custom_resource_types
+                          || (agent?.template_config?.domain_type
+                            ? undefined
+                            : null);
+                        if (Array.isArray(examples) && examples.length > 0) {
+                          return examples.map((t) => ({ value: t, label: t }));
+                        }
+                        return _DEFAULT_RESOURCE_TYPE_OPTIONS;
+                      })()}
                     />
                     <button type="button" className="btn btn-black" onClick={handleCreateResource}>
                       Добавить
@@ -2342,7 +2352,7 @@ const AgentDetailedAnalyticsPageContent = () => {
                                     setEditingResourceId(item.id);
                                     setEditingResourceDraft({
                                       title: item.title || '',
-                                      resource_type: item.resource_type || 'chair',
+                                      resource_type: item.resource_type || '',
                                     });
                                   }}
                                 >

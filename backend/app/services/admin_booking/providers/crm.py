@@ -37,6 +37,8 @@ class CrmBookingProvider(BookingProvider):
         full_name: str,
         specializations: list[str] | None = None,
         is_active: bool = True,
+        auto_create_resource: bool = False,
+        resource_type: str = "workplace",
     ) -> dict[str, Any]:
         return await self._local.create_staff(
             agent_id=agent_id,
@@ -44,6 +46,8 @@ class CrmBookingProvider(BookingProvider):
             full_name=full_name,
             specializations=specializations,
             is_active=is_active,
+            auto_create_resource=auto_create_resource,
+            resource_type=resource_type,
         )
 
     async def update_staff(
@@ -72,11 +76,13 @@ class CrmBookingProvider(BookingProvider):
         agent_id: int,
         resource_type: str | None = None,
         active_only: bool = True,
+        exclude_linked: bool = False,
     ) -> list[dict[str, Any]]:
         return await self._local.list_resources(
             agent_id=agent_id,
             resource_type=resource_type,
             active_only=active_only,
+            exclude_linked=exclude_linked,
         )
 
     async def create_resource(

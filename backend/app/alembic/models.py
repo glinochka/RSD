@@ -298,14 +298,13 @@ class AgentCrmConnection(Base):
 class AdminStaff(Base):
     __tablename__ = "admin_staff"
     __table_args__ = (
-        CheckConstraint("role IN ('master','doctor')", name="ck_admin_staff_role"),
         Index("ix_admin_staff_agent_role_active", "agent_id", "role", "is_active"),
         {"extend_existing": True},
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
-    role: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     full_name: Mapped[str] = mapped_column(String(128), nullable=False)
     specializations_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
@@ -326,21 +325,25 @@ class AdminStaff(Base):
 class AdminResource(Base):
     __tablename__ = "admin_resources"
     __table_args__ = (
-        CheckConstraint("resource_type IN ('chair','room','equipment')", name="ck_admin_resources_type"),
         UniqueConstraint("agent_id", "resource_type", "title", name="uq_admin_resources_agent_type_title"),
         Index("ix_admin_resources_agent_type_active", "agent_id", "resource_type", "is_active"),
+        Index("ix_admin_resources_linked_staff_id", "linked_staff_id"),
         {"extend_existing": True},
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
-    resource_type: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    resource_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(128), nullable=False)
+    linked_staff_id: Mapped[int | None] = mapped_column(
+        ForeignKey("admin_staff.id", ondelete="SET NULL"), nullable=True
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
 
     agent: Mapped["Agent"] = relationship(back_populates="admin_resources")
+    linked_staff: Mapped["AdminStaff | None"] = relationship(foreign_keys=[linked_staff_id])
     schedule_slots: Mapped[list["AdminScheduleSlot"]] = relationship(
         back_populates="resource",
         cascade="all, delete-orphan",
@@ -363,7 +366,7 @@ class AdminService(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
-    target_role: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    target_role: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     staff_id: Mapped[int | None] = mapped_column(ForeignKey("admin_staff.id", ondelete="SET NULL"), nullable=True, index=True)
     title: Mapped[str] = mapped_column(String(128), nullable=False)
     duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)

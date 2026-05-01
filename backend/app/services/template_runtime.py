@@ -550,9 +550,12 @@ class TemplateRuntimeService:
         if not agent_id:
             return None
 
+        from .admin_booking.domains import DOMAIN_REGISTRY as _domain_registry
         domain_type = str(template_config.get("domain_type") or "beauty_salon").strip().lower()
-        if domain_type not in {"beauty_salon", "dental_clinic"}:
+        if domain_type not in _domain_registry:
             domain_type = "beauty_salon"
+        resource_linked_to_staff = bool(template_config.get("resource_linked_to_staff", True))
+        custom_domain_instruction = template_config.get("custom_domain_instruction") or None
         booking_backend = str(template_config.get("booking_backend") or "auto").strip().lower()
         if booking_backend not in {"local", "crm", "auto"}:
             booking_backend = "auto"
@@ -617,12 +620,25 @@ class TemplateRuntimeService:
         )
 
         portrait_block = self._format_portrait_block(chat_portrait)
-        domain_instruction = self._crm_admin_domain_instruction(domain_type=domain_type)
+        domain_instruction = self._crm_admin_domain_instruction(
+            domain_type=domain_type,
+            custom_domain_instruction=custom_domain_instruction,
+        )
         backend_instruction = self._crm_admin_backend_instruction(
             booking_backend=booking_backend,
             crm_connected=connection is not None,
             crm_provider_name=crm_provider_name,
         )
+        if resource_linked_to_staff:
+            resource_model_hint = (
+                "Модель ресурсов: каждый сотрудник является одновременно рабочим местом. "
+                "Не нужно отдельно выбирать ресурс при записи — ресурс определяется автоматически по сотруднику."
+            )
+        else:
+            resource_model_hint = (
+                "Модель ресурсов: сотрудники и рабочие места (ресурсы) — это отдельные сущности. "
+                "При записи может потребоваться выбрать и сотрудника, и ресурс."
+            )
         now_local = datetime.now()
         now_context = (
             f"Сейчас: {now_local.strftime('%Y-%m-%d %H:%M')} "
@@ -649,7 +665,7 @@ class TemplateRuntimeService:
             "НЕ передавай staff_id в cancel_appointment или reschedule_appointment, если ты не уверен в его актуальности — система найдёт запись по дате и клиенту без него. "
             "Никогда не проси у пользователя ID записи. "
             "Отвечай только чистым текстом, без markdown.\n\n"
-            f"{now_context}\n{domain_instruction}\n{backend_instruction}"
+            f"{now_context}\n{domain_instruction}\n{resource_model_hint}\n{backend_instruction}"
         ).strip()
         if portrait_block:
             system_prompt = f"{system_prompt}\n\n{portrait_block}"
@@ -814,16 +830,11 @@ class TemplateRuntimeService:
         )
 
     @staticmethod
-    def _crm_admin_domain_instruction(*, domain_type: str) -> str:
-        if domain_type == "dental_clinic":
-            return (
-                "Предметная область: стоматологическая клиника. "
-                "Используй терминологию врач/кабинет/процедура и уточняй длительность приема."
-            )
-        return (
-            "Предметная область: салон красоты. "
-            "Используй терминологию мастер/кресло/услуга и уточняй предпочтения по времени."
-        )
+    def _crm_admin_domain_instruction(
+        *, domain_type: str, custom_domain_instruction: str | None = None
+    ) -> str:
+        from .admin_booking.domains import get_domain_instruction
+        return get_domain_instruction(domain_type, custom_instruction=custom_domain_instruction)
 
     @staticmethod
     def _crm_admin_backend_instruction(

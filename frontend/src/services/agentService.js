@@ -314,6 +314,10 @@ export const agentService = {
     });
     return response.data;
   },
+  getAdminDomainRegistry: async () => {
+    const response = await apiClient.get('/api/agents/admin_template/domain-registry');
+    return response.data;
+  },
   createAdminTemplateStaff: async (data) => {
     const response = await apiClient.post(API_ROUTES.AGENTS_ADMIN_TEMPLATE_STAFF, data);
     return response.data;
