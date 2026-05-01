@@ -118,6 +118,18 @@
   padding: var(--spacing-base) var(--spacing-2xl);
 }
 
+@media (min-width: 1280px) {
+  .hero-content {
+    justify-content: space-between;
+  }
+
+  .hero-content h1,
+  .hero-content .description,
+  .hero-content .description-lead {
+    margin-bottom: 0;
+  }
+}
+
 .hero-media {
   display: flex;
   flex-direction: column;
@@ -573,6 +585,10 @@
 .launch-roadmap {
   padding: var(--spacing-3xl) 0;
   border-top: 1px solid var(--color-border);
+}
+
+.launch-roadmap .section-title {
+  margin-bottom: var(--spacing-2xl);
 }
 
 .roadmap-list {

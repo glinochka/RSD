@@ -713,6 +713,7 @@ class TemplateRuntimeService:
                             "ok": bool(tool_result.get("ok")),
                             "idempotent_replay": bool(tool_result.get("idempotent_replay")),
                             "idempotency_key": tool_result.get("idempotency_key"),
+                            "tool_args_summary": tool_result.get("tool_args_summary") or "",
                             "error": None,
                         }
                     )

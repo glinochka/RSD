@@ -612,16 +612,26 @@ class LocalBookingProvider(BookingProvider):
             ).scalars().all()
             available: list[dict[str, Any]] = []
             for slot in slots:
-                occupied = await self._has_appointment_overlap(
+                effective_staff_id = slot.staff_id if staff_id is None else staff_id
+                effective_resource_id = slot.resource_id if resource_id is None else resource_id
+                busy = await self._get_busy_intervals(
                     session,
                     agent_id=agent_id,
                     starts_at=slot.starts_at,
                     ends_at=slot.ends_at,
-                    staff_id=slot.staff_id if staff_id is None else staff_id,
-                    resource_id=slot.resource_id if resource_id is None else resource_id,
+                    staff_id=effective_staff_id,
+                    resource_id=effective_resource_id,
                 )
-                if not occupied:
-                    available.append(_serialize_schedule_slot(slot))
+                free_intervals = self._compute_free_intervals(slot.starts_at, slot.ends_at, busy)
+                for free_start, free_end in free_intervals:
+                    clipped_start = max(free_start, starts_at)
+                    clipped_end = min(free_end, ends_at)
+                    if clipped_end <= clipped_start:
+                        continue
+                    slot_data = _serialize_schedule_slot(slot)
+                    slot_data["starts_at"] = clipped_start.isoformat()
+                    slot_data["ends_at"] = clipped_end.isoformat()
+                    available.append(slot_data)
             return available
 
     async def create_appointment(
@@ -1115,6 +1125,65 @@ class LocalBookingProvider(BookingProvider):
             )
             if conflict:
                 raise ValueError("Schedule slot overlaps with existing resource slot")
+
+    @staticmethod
+    def _compute_free_intervals(
+        slot_start: datetime,
+        slot_end: datetime,
+        busy: list[tuple[datetime, datetime]],
+    ) -> list[tuple[datetime, datetime]]:
+        """Return free sub-intervals within [slot_start, slot_end] after subtracting busy periods."""
+        if not busy:
+            return [(slot_start, slot_end)]
+        merged: list[tuple[datetime, datetime]] = []
+        for bs, be in sorted(busy, key=lambda x: x[0]):
+            bs = max(bs, slot_start)
+            be = min(be, slot_end)
+            if be <= bs:
+                continue
+            if merged and bs <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], be))
+            else:
+                merged.append((bs, be))
+        free: list[tuple[datetime, datetime]] = []
+        cursor = slot_start
+        for bs, be in merged:
+            if bs > cursor:
+                free.append((cursor, bs))
+            cursor = max(cursor, be)
+        if cursor < slot_end:
+            free.append((cursor, slot_end))
+        return free
+
+    async def _get_busy_intervals(
+        self,
+        session: Any,
+        *,
+        agent_id: int,
+        starts_at: datetime,
+        ends_at: datetime,
+        staff_id: int | None,
+        resource_id: int | None,
+    ) -> list[tuple[datetime, datetime]]:
+        """Return list of (starts_at, ends_at) for active appointments overlapping the window."""
+        if staff_id is None and resource_id is None:
+            return []
+        conditions = [
+            AdminAppointment.agent_id == agent_id,
+            AdminAppointment.status.in_(ACTIVE_APPOINTMENT_STATUSES),
+            AdminAppointment.starts_at < ends_at,
+            AdminAppointment.ends_at > starts_at,
+        ]
+        if staff_id is not None:
+            conditions.append(AdminAppointment.staff_id == staff_id)
+        if resource_id is not None:
+            conditions.append(AdminAppointment.resource_id == resource_id)
+        rows = (
+            await session.execute(
+                select(AdminAppointment.starts_at, AdminAppointment.ends_at).where(and_(*conditions))
+            )
+        ).all()
+        return [(r.starts_at, r.ends_at) for r in rows]
 
     async def _has_appointment_overlap(
         self,

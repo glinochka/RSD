@@ -2195,16 +2195,16 @@ const CreateAgentContent = () => {
               <div className="form-group">
                 <h3 className="agent-form-channel-title">MAX бот (официальный API)</h3>
                 <label htmlFor="max_bot_token">MAX bot token:</label>
-                <textarea
+                <input
                   id="max_bot_token"
+                  type="text"
                   name="max_bot_token"
                   placeholder="Токен из MAX для партнеров: Чат-боты → Интеграция → Получить токен"
-                  className={`input-main textarea ${form.errors.max_bot_token ? 'error' : ''}`}
+                  className={`input-main ${form.errors.max_bot_token ? 'error' : ''}`}
                   value={form.values.max_bot_token}
                   onChange={form.handleChange}
                   disabled={form.isSubmitting}
-                  rows="3"
-                ></textarea>
+                />
                 {form.errors.max_bot_token && (
                   <span className="error-message">{form.errors.max_bot_token}</span>
                 )}

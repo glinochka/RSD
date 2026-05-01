@@ -167,6 +167,49 @@ class _FindNextAvailableArgs(BaseModel):
     search_days_ahead: int = Field(default=7, gt=0, le=30)
 
 
+def _fmt_dt(raw: str | None) -> str:
+    if not raw:
+        return "?"
+    try:
+        return str(raw)[:16].replace("T", " ")
+    except Exception:
+        return str(raw)
+
+
+def _build_args_summary(tool_name: str, data: dict) -> str:
+    if tool_name == "check_availability":
+        parts = [f"{_fmt_dt(data.get('starts_at'))}→{_fmt_dt(data.get('ends_at'))}"]
+        if data.get("staff_id"):
+            parts.append(f"staff={data['staff_id']}")
+        if data.get("resource_id"):
+            parts.append(f"res={data['resource_id']}")
+        return " ".join(parts)
+    if tool_name == "create_appointment":
+        parts = [f"{_fmt_dt(data.get('starts_at'))}→{_fmt_dt(data.get('ends_at'))}"]
+        if data.get("staff_id"):
+            parts.append(f"staff={data['staff_id']}")
+        if data.get("client_name"):
+            parts.append(f"client={data['client_name']}")
+        return " ".join(parts)
+    if tool_name == "find_next_available":
+        parts = []
+        if data.get("earliest_starts_at"):
+            parts.append(f"from={_fmt_dt(data.get('earliest_starts_at'))}")
+        if data.get("duration_minutes"):
+            parts.append(f"{data['duration_minutes']}min")
+        if data.get("staff_id"):
+            parts.append(f"staff={data['staff_id']}")
+        return " ".join(parts)
+    if tool_name in ("cancel_appointment", "reschedule_appointment"):
+        parts = []
+        if data.get("appointment_date"):
+            parts.append(f"date={_fmt_dt(data.get('appointment_date'))}")
+        if data.get("new_starts_at"):
+            parts.append(f"new={_fmt_dt(data.get('new_starts_at'))}")
+        return " ".join(parts)
+    return ""
+
+
 _TOOL_MODELS: dict[str, type[BaseModel]] = {
     "check_availability": _CheckAvailabilityArgs,
     "create_appointment": _CreateAppointmentArgs,
@@ -456,5 +499,6 @@ class AdminBookingToolRegistry:
             "crm_provider": "booking",
             "latency_ms": latency_ms,
             "idempotency_key": idempotency_key,
+            "tool_args_summary": _build_args_summary(tool_name, data),
             "result": result,
         }

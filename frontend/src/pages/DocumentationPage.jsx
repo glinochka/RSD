@@ -28,7 +28,11 @@ async function askAgent(message) {
       'Content-Type': 'application/json',
       'X-Agent-API-Key': AGENT_API_KEY
     },
-    body: JSON.stringify({ message })
+    body: JSON.stringify({
+      message,
+      external_user_id: 'site-user-42',
+      external_user_name: 'Иван'
+    })
   });
 
   if (!response.ok) {
@@ -60,7 +64,11 @@ def ask_agent(message: str) -> dict:
             "Content-Type": "application/json",
             "X-Agent-API-Key": AGENT_API_KEY,
         },
-        json={"message": message},
+        json={
+            "message": message,
+            "external_user_id": "site-user-42",
+            "external_user_name": "Иван",
+        },
         timeout=30,
     )
     response.raise_for_status()
@@ -74,7 +82,7 @@ if __name__ == "__main__":
 const CURL_EXAMPLE = `curl -X POST "https://rsd-ai.ru/api/agents/external/chat" \
   -H "Content-Type: application/json" \
   -H "X-Agent-API-Key: agnt_xxxxxxxxxxxxxxxxxxxxxxxxx" \
-  -d '{"message":"Подскажите стоимость внедрения"}'`;
+  -d '{"message":"Подскажите стоимость внедрения","external_user_id":"site-user-42","external_user_name":"Иван"}'`;
 
 const WIDGET_CONNECTOR_EXAMPLE = `<script
   src="https://rsd-ai.ru/api/agents/external/widget.js"
@@ -86,6 +94,9 @@ const WIDGET_CONNECTOR_EXAMPLE = `<script
   data-title="Онлайн-консультант"
   data-greeting="Здравствуйте! Чем могу помочь?"
   data-placeholder="Напишите ваш вопрос..."
+  data-open="false"
+  data-user-id="crm-contact-42"
+  data-user-name="Иван Петров"
 
   data-theme="dark"
 
@@ -160,13 +171,16 @@ const DocumentationContent = () => {
         <section id="create-agent">
           <h2>Создание агента</h2>
           <ol>
-            <li>Откройте раздел «Создать агента» в верхнем меню сайта.</li>
-            <li>Подключите Telegram-бота через токен от BotFather.</li>
-            <li>Задайте системный промпт: роль, задачи, стиль ответов и ограничения.</li>
-            <li>Сохраните агента и откройте его карточку в разделе «Мои агенты».</li>
+            <li>Откройте раздел «Создать агента» и выберите шаблон: Консультант, Администратор, Менеджер продаж или Контент-завод.</li>
+            <li>Выберите тип подключения. Для «Менеджера продаж» доступен только Telegram юзербот, для «Контент-завода» — только YouTube.</li>
+            <li>Заполните обязательные поля выбранного канала (например, bot token / userbot / CRM-параметры), затем задайте системный промпт.</li>
+            <li>Сохраните агента и откройте карточку в «Мои агенты»: там доступны API-ключ, сниппет виджета (для поддерживаемых шаблонов) и управление каналами.</li>
           </ol>
           <p>
-            Совет: в промпте фиксируйте границы компетенции. Это сильно повышает стабильность качества ответов.
+            Для внешнего endpoint чата и виджета поддерживаются шаблоны <code>qa</code> и <code>crm_admin</code>. Для остальных шаблонов используйте профильные каналы интеграции.
+          </p>
+          <p>
+            Совет: в промпте фиксируйте роль агента, границы компетенции и правила эскалации к оператору. Это снижает количество неоднозначных ответов.
           </p>
         </section>
 
@@ -185,20 +199,26 @@ const DocumentationContent = () => {
 
         <section id="scenarios">
           <h2>Сценарии использования</h2>
-          <h3>1) Онлайн-консультант на сайте</h3>
+          <h3>1) Консультант на сайте через виджет</h3>
           <p>
-            Подключите внешний виджет и отправляйте сообщения пользователя в API агента. Это подход для FAQ,
-            консультаций и первичной квалификации заявок.
+            Используйте шаблон <code>qa</code> или <code>crm_admin</code>, вставьте script виджета и передавайте стабильный идентификатор
+            пользователя (через <code>data-user-id</code> или авто-генерацию). Сценарий подходит для FAQ, поддержки и первичной квалификации.
           </p>
-          <h3>2) Внутренний ассистент команды</h3>
+          <h3>2) Внешняя интеграция через backend API</h3>
           <p>
-            Интегрируйте API в CRM/ERP или внутреннюю панель, чтобы сотрудники быстро получали ответы на основе
-            регламентов и базы знаний.
+            Отправляйте запросы в <code>POST /api/agents/external/chat</code> от своего сервера: обязательны{' '}
+            <code>X-Agent-API-Key</code>, <code>message</code> и <code>external_user_id</code> (или <code>chat_id</code>).
+            Подходит для CRM/ERP, внутренних кабинетов и омниканальной маршрутизации.
           </p>
-          <h3>3) Ассистент для лендингов и форм</h3>
+          <h3>3) Администратор с CRM-функциями</h3>
           <p>
-            Используйте агента как слой логики перед отправкой формы: можно собирать требования клиента и уточнять
-            детали до передачи в отдел продаж.
+            Шаблон <code>crm_admin</code> может работать как администратор салона/клиники: отвечать клиенту и выполнять
+            разрешенные CRM-действия после настройки провайдера и прав.
+          </p>
+          <h3>4) Менеджер продаж в Telegram</h3>
+          <p>
+            Для сценария outbound/inbound-продаж используйте шаблон <code>sales_manager</code> с каналом Telegram юзербот.
+            Этот режим не предназначен для внешнего endpoint чата и сайт-виджета.
           </p>
         </section>
 
@@ -212,6 +232,9 @@ const DocumentationContent = () => {
             Передавайте ключ в заголовке <code>X-Agent-API-Key</code>. Не вставляйте ключ в фронтенд в открытом виде:
             используйте серверный прокси для production-среды.
           </p>
+          <p>
+            Ключ можно скопировать или перевыпустить в карточке агента в разделе «Мои агенты».
+          </p>
         </section>
 
         <section id="api-chat-endpoint">
@@ -224,7 +247,13 @@ const DocumentationContent = () => {
             <code>X-Agent-API-Key: &lt;ваш_ключ&gt;</code>
           </p>
           <p>
-            <strong>Body:</strong> <code>{'{ "message": "Ваш вопрос" }'}</code> (поле <code>message</code> обязательно)
+            <strong>Body:</strong>{' '}
+            <code>{'{ "message": "Ваш вопрос", "external_user_id": "site-user-42", "external_user_name": "Иван" }'}</code>
+            <br />
+            Поля <code>message</code> и <code>external_user_id</code> (или <code>chat_id</code>) обязательны.
+          </p>
+          <p>
+            Endpoint доступен только для шаблонов <code>qa</code> и <code>crm_admin</code>.
           </p>
           <p>
             <strong>Response:</strong> <code>{'{ "bot_id": 123, "bot_username": "...", "answer": "...", "sources": [] }'}</code>
@@ -246,7 +275,17 @@ const DocumentationContent = () => {
           <h3>Что принимается (request)</h3>
           <ul>
             <li>
-              <code>message</code> (<code>string</code>, обязательно) — текст сообщения пользователя.
+              <code>message</code> (<code>string</code>, обязательно, 1..4000) — текст сообщения пользователя.
+            </li>
+            <li>
+              <code>external_user_id</code> (<code>string</code>, обязательно, до 128) — ID пользователя/чата во внешней системе.
+            </li>
+            <li>
+              <code>chat_id</code> (<code>string</code>, опционально, до 128) — алиас для <code>external_user_id</code>, если удобнее
+              использовать терминологию вашей системы.
+            </li>
+            <li>
+              <code>external_user_name</code> (<code>string</code>, опционально, до 128) — отображаемое имя пользователя для аналитики.
             </li>
             <li>
               Заголовок <code>X-Agent-API-Key</code> (<code>string</code>, обязательно) — ключ конкретного агента.
@@ -291,9 +330,22 @@ const DocumentationContent = () => {
             <code>{WIDGET_CONNECTOR_EXAMPLE}</code>
           </pre>
           <p>
+            <strong>Обязательные параметры:</strong> <code>data-rsd-widget="1"</code>, <code>data-api-base</code>, <code>data-api-key</code>.
+          </p>
+          <p>
+            <strong>Параметры UI:</strong> <code>data-title</code>, <code>data-greeting</code>, <code>data-placeholder</code>,{' '}
+            <code>data-position</code> (<code>bottom-right</code> по умолчанию, поддерживается <code>bottom-left</code>),{' '}
+            <code>data-open</code> (<code>true/false</code>, открыть чат сразу).
+          </p>
+          <p>
+            <strong>Контекст пользователя:</strong> <code>data-user-id</code> (если не передан, виджет генерирует локальный ID),{' '}
+            <code>data-user-name</code> (опционально).
+          </p>
+          <p>
             <strong>Исходящие сообщения</strong> — всплывающий пузырёк над кнопкой чата. Первое сообщение:{' '}
             <code>data-proactive-message</code> + <code>data-proactive-delay</code> (секунды, по умолчанию 3). Второе сообщение:{' '}
             <code>data-proactive-message-2</code> + <code>data-proactive-delay-2</code> (секунды после первого, по умолчанию 1). Оба необязательны.
+            Для совместимости также поддерживается legacy-параметр <code>data-proactive-delay-ms</code>.
           </p>
           <p>
             <strong>Темы оформления</strong> задаются атрибутом <code>data-theme</code>: <code>dark</code> (по умолчанию),{' '}
@@ -336,10 +388,14 @@ const DocumentationContent = () => {
           <h2>Коды ошибок и диагностика</h2>
           <ul>
             <li>
-              <code>400 Bad Request</code> — невалидный JSON или отсутствует поле <code>message</code>.
+              <code>401 Unauthorized</code> — отсутствует или некорректный <code>X-Agent-API-Key</code>.
             </li>
             <li>
-              <code>401/403</code> — отсутствует или некорректный <code>X-Agent-API-Key</code>.
+              <code>403 Forbidden</code> — агент выключен или используется шаблон, для которого внешний чат недоступен.
+            </li>
+            <li>
+              <code>422 Unprocessable Entity</code> — невалидное тело запроса, пустой <code>message</code> или не передан{' '}
+              <code>external_user_id</code>/<code>chat_id</code>.
             </li>
             <li>
               <code>429</code> — превышен лимит запросов, добавьте ретраи с паузой.

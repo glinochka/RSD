@@ -231,6 +231,7 @@ const AgentsPageContent = () => {
   const [userbotAuthToken, setUserbotAuthToken] = useState('');
   const [userbotSessionString, setUserbotSessionString] = useState('');
   const [maxBotTokenDraft, setMaxBotTokenDraft] = useState('');
+  const [maxUserbotTokenDraft, setMaxUserbotTokenDraft] = useState('');
   const [isSendingUserbotCode, setIsSendingUserbotCode] = useState(false);
   const [isVerifyingUserbotCode, setIsVerifyingUserbotCode] = useState(false);
   const [whatsappUserbotPhone, setWhatsappUserbotPhone] = useState('');
@@ -721,6 +722,7 @@ const AgentsPageContent = () => {
     setUserbotAuthToken('');
     setUserbotSessionString('');
     setMaxBotTokenDraft('');
+    setMaxUserbotTokenDraft('');
     setIsSendingUserbotCode(false);
     setIsVerifyingUserbotCode(false);
     setWhatsappUserbotPhone('');
@@ -929,6 +931,32 @@ const AgentsPageContent = () => {
     }
   };
 
+  const handleAddMaxUserbotChannel = async () => {
+    if (!selectedBotId) return;
+    if (!maxUserbotTokenDraft.trim()) {
+      showError('Введите MAX token');
+      return;
+    }
+    setIsSavingChannel(true);
+    try {
+      const res = await agentService.addMaxUserbotChannel({
+        agent_id: selectedBotId,
+        max_token: maxUserbotTokenDraft.trim(),
+        make_primary: makePrimaryChannel,
+      });
+      const list = res?.channels || [];
+      setChannels(list);
+      setSelectedAgent((prev) => (prev ? { ...prev, channels: list } : prev));
+      showSuccess('MAX userbot канал подключен');
+      await loadAgentDetails(selectedBotId);
+      resetChannelModalFields();
+    } catch (error) {
+      showError(error?.message || 'Ошибка при подключении MAX userbot');
+    } finally {
+      setIsSavingChannel(false);
+    }
+  };
+
   const handleAddWhatsAppBusinessApiChannel = async () => {
     if (!selectedBotId) return;
     if (!whatsappPhoneNumberId.trim()) {
@@ -1116,9 +1144,6 @@ const AgentsPageContent = () => {
   const isWidgetSupportedTemplate = WIDGET_TEMPLATE_TYPES.has(
     String(selectedAgent?.template_type || 'qa').trim().toLowerCase()
   );
-  const widgetSnippet = selectedAgent?.external_api_key
-    ? `<script src="${window.location.origin}/api/agents/external/widget.js" data-rsd-widget="1" data-api-base="${window.location.origin}" data-api-key="${selectedAgent.external_api_key}" data-position="bottom-right" data-title="Онлайн-консультант" data-theme="dark"></script>`
-    : '';
 
   if (isLoading && isAuthenticated) {
     return <Loading message="Загрузка агентов..." />;
@@ -1197,37 +1222,19 @@ const AgentsPageContent = () => {
                         Перевыпустить API ключ
                       </button>
                     </div>
+                    {isWidgetSupportedTemplate ? (
+                      <div className="api-key-row">
+                        <button
+                          className="btn btn-black"
+                          onClick={handleCopyWidgetSnippet}
+                          title="Скопировать script сниппет"
+                          aria-label="Copy widget snippet"
+                        >
+                          Скопировать сниппет виджета
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
-
-                  {isWidgetSupportedTemplate ? (
-                    <div className="agent-management-block">
-                      <label>Виджет-коннектор для сайта</label>
-                      <p className="docs-empty">
-                        Вставьте этот `script` на сайт, и чат появится в углу экрана.
-                      </p>
-                      <textarea
-                        rows="4"
-                        className="input-main textarea"
-                        value={widgetSnippet}
-                        readOnly
-                      />
-                      <button
-                        className="btn btn-black"
-                        onClick={handleCopyWidgetSnippet}
-                        title="Скопировать script сниппет"
-                        aria-label="Copy widget snippet"
-                      >
-                        Скопировать сниппет виджета
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="agent-management-block">
-                      <label>Виджет-коннектор для сайта</label>
-                      <p className="docs-empty">
-                        Виджет доступен только для шаблонов: Консультант (QA) и Администратор CRM.
-                      </p>
-                    </div>
-                  )}
 
                   <div className="agent-management-block">
                     <div className="docs-header-row">
@@ -1466,7 +1473,15 @@ const AgentsPageContent = () => {
                     onClick={() => setChannelModalTab('max_bot')}
                     disabled={isSavingChannel || isSalesManagerTemplate}
                   >
-                    MAX bot (API)
+                    MAX бот
+                  </button>
+                  <button
+                    type="button"
+                    className={`connection-type-card ${channelModalTab === 'max_userbot' ? 'active' : ''} ${isSalesManagerTemplate ? 'connection-type-card--disabled' : ''}`}
+                    onClick={() => setChannelModalTab('max_userbot')}
+                    disabled={isSavingChannel || isSalesManagerTemplate}
+                  >
+                    MAX userbot
                   </button>
                   <button
                     type="button"
@@ -1603,9 +1618,9 @@ const AgentsPageContent = () => {
                   </div>
                 ) : channelModalTab === 'max_bot' ? (
                   <div className="agent-management-block">
-                    <textarea
-                      className="input-main textarea"
-                      rows={4}
+                    <input
+                      type="text"
+                      className="input-main"
                       placeholder="MAX bot token (из MAX для партнеров)"
                       value={maxBotTokenDraft}
                       onChange={(event) => setMaxBotTokenDraft(event.target.value)}
@@ -1627,6 +1642,37 @@ const AgentsPageContent = () => {
                       disabled={isSavingChannel}
                     >
                       {isSavingChannel ? 'Сохранение...' : 'Подключить MAX bot'}
+                    </button>
+                  </div>
+                ) : channelModalTab === 'max_userbot' ? (
+                  <div className="agent-management-block">
+                    <textarea
+                      className="input-main textarea"
+                      rows={4}
+                      placeholder="MAX token (из localStorage.__oneme_auth.token)"
+                      value={maxUserbotTokenDraft}
+                      onChange={(event) => setMaxUserbotTokenDraft(event.target.value)}
+                      disabled={isSavingChannel}
+                    />
+                    <p className="help-text">
+                      Будут обрабатываться все личные сообщения (ЛС) в MAX.
+                    </p>
+                    <label className="channel-primary-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={makePrimaryChannel}
+                        onChange={(event) => setMakePrimaryChannel(event.target.checked)}
+                        disabled={isSavingChannel}
+                      />
+                      Сделать канал основным
+                    </label>
+                    <button
+                      type="button"
+                      className="btn btn-black"
+                      onClick={handleAddMaxUserbotChannel}
+                      disabled={isSavingChannel}
+                    >
+                      {isSavingChannel ? 'Сохранение...' : 'Подключить MAX userbot'}
                     </button>
                   </div>
                 ) : channelModalTab === 'whatsapp_userbot' ? (

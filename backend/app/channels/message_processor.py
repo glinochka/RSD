@@ -87,6 +87,7 @@ class MessageProcessor:
         latency_ms = int(event.get("latency_ms") or 0)
         provider = str(event.get("crm_provider") or "unknown")
         replay = bool(event.get("idempotent_replay"))
+        args_summary = str(event.get("tool_args_summary") or "").strip()
         error = redact_pii_text(str(event.get("error") or "")).strip()
         parts = [
             f"tool={tool_name}",
@@ -95,6 +96,8 @@ class MessageProcessor:
             f"crm_provider={provider}",
             f"idempotent_replay={str(replay).lower()}",
         ]
+        if args_summary:
+            parts.append(f"args=[{args_summary}]")
         if error:
             parts.append(f"error={error}")
         return " ".join(parts)
