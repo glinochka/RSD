@@ -2523,26 +2523,32 @@ const AgentDetailedAnalyticsPageContent = () => {
                         onChange={(e) => setNewScheduleDraft((prev) => ({ ...prev, ends_at: e.target.value }))}
                       />
                     </div>
-                    <AnalyticsCustomSelect
-                      value={newScheduleDraft.staff_id}
-                      onChange={(selectedValue) => setNewScheduleDraft((prev) => ({ ...prev, staff_id: selectedValue }))}
-                      placeholder="Сотрудник (опц.)"
-                      ariaLabel="Выбор сотрудника для слота"
-                      options={[
-                        { value: '', label: 'Сотрудник (опц.)' },
-                        ...staffItems.map((staff) => ({ value: staff.id, label: staff.full_name })),
-                      ]}
-                    />
-                    <AnalyticsCustomSelect
-                      value={newScheduleDraft.resource_id}
-                      onChange={(selectedValue) => setNewScheduleDraft((prev) => ({ ...prev, resource_id: selectedValue }))}
-                      placeholder="Ресурс (опц.)"
-                      ariaLabel="Выбор ресурса для слота"
-                      options={[
-                        { value: '', label: 'Ресурс (опц.)' },
-                        ...resourceItems.map((resource) => ({ value: resource.id, label: resource.title })),
-                      ]}
-                    />
+                    <div className="analytics-time-field">
+                      <span className="analytics-time-field-label">Сотрудник</span>
+                      <AnalyticsCustomSelect
+                        value={newScheduleDraft.staff_id}
+                        onChange={(selectedValue) => setNewScheduleDraft((prev) => ({ ...prev, staff_id: selectedValue }))}
+                        placeholder="Сотрудник (опц.)"
+                        ariaLabel="Выбор сотрудника для слота"
+                        options={[
+                          { value: '', label: 'Сотрудник (опц.)' },
+                          ...staffItems.map((staff) => ({ value: staff.id, label: staff.full_name })),
+                        ]}
+                      />
+                    </div>
+                    <div className="analytics-time-field">
+                      <span className="analytics-time-field-label">Ресурс</span>
+                      <AnalyticsCustomSelect
+                        value={newScheduleDraft.resource_id}
+                        onChange={(selectedValue) => setNewScheduleDraft((prev) => ({ ...prev, resource_id: selectedValue }))}
+                        placeholder="Ресурс (опц.)"
+                        ariaLabel="Выбор ресурса для слота"
+                        options={[
+                          { value: '', label: 'Ресурс (опц.)' },
+                          ...resourceItems.map((resource) => ({ value: resource.id, label: resource.title })),
+                        ]}
+                      />
+                    </div>
                     <button type="button" className="btn btn-black" onClick={handleCreateScheduleSlot}>
                       Добавить слот
                     </button>
