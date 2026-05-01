@@ -121,6 +121,8 @@
 @media (min-width: 1280px) {
   .hero-content {
     justify-content: space-between;
+    padding-top: var(--spacing-lg);
+    padding-bottom: var(--spacing-lg);
   }
 
   .hero-content h1,
