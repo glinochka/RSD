@@ -14,6 +14,8 @@ from .service import get_admin_booking_service
 _IDEMPOTENCY_TTL_SECONDS = 120
 _IDEMPOTENCY_CACHE: dict[str, tuple[datetime, dict[str, Any]]] = {}
 _MAX_RAW_ARGUMENTS_BYTES = 16_000
+# Only write/mutating operations are idempotency-protected; reads always get fresh data.
+_IDEMPOTENCY_PROTECTED_TOOLS = {"create_appointment", "reschedule_appointment", "cancel_appointment"}
 
 
 class AdminBookingNeedsConfirmationError(RuntimeError):
@@ -309,7 +311,12 @@ class AdminBookingToolRegistry:
         appointment_date: str,
         staff_id: int | None,
     ) -> int:
-        """Find an active appointment for the current user by date, return its ID."""
+        """Find an active appointment for the current user by date, return its ID.
+
+        Strategy: always search by client + time window ignoring staff_id first
+        (LLM may pass a stale/wrong staff_id from portrait).  If multiple active
+        appointments are found in the window, narrow by staff_id.
+        """
         date_str = appointment_date.strip()
         if not date_str:
             raise RuntimeError("appointment_date is required to look up the appointment")
@@ -323,16 +330,17 @@ class AdminBookingToolRegistry:
             window_start = pivot.replace(hour=0, minute=0, second=0)
             window_end = pivot.replace(hour=23, minute=59, second=59)
 
-        appointments = await service.list_appointments(
+        # Search without staff_id to avoid failures when LLM passes a wrong ID
+        all_appointments = await service.list_appointments(
             agent_id=self._agent_id,
             starts_at=window_start,
             ends_at=window_end,
-            staff_id=staff_id,
+            staff_id=None,
             client_external_id=self._user_external_id,
             status=None,
         )
         active = [
-            a for a in appointments
+            a for a in all_appointments
             if a.get("status") not in ("cancelled", "completed", "no_show")
         ]
         if not active:
@@ -340,12 +348,17 @@ class AdminBookingToolRegistry:
                 f"No active appointments found for {date_str}. "
                 "Please specify the date and time more precisely."
             )
-        if len(active) > 1:
-            raise RuntimeError(
-                f"Multiple appointments found for {date_str}. "
-                "Please specify the exact time or staff member."
-            )
-        return int(active[0]["id"])
+        if len(active) == 1:
+            return int(active[0]["id"])
+        # Multiple hits — try to narrow by staff_id hint
+        if staff_id is not None:
+            narrowed = [a for a in active if a.get("staff_id") == staff_id]
+            if len(narrowed) == 1:
+                return int(narrowed[0]["id"])
+        raise RuntimeError(
+            f"Multiple appointments found for {date_str}. "
+            "Please specify the exact time or staff member."
+        )
 
     async def execute_tool(self, tool_name: str, raw_arguments: str) -> dict[str, Any]:
         if len((raw_arguments or "").encode("utf-8")) > _MAX_RAW_ARGUMENTS_BYTES:
@@ -366,22 +379,24 @@ class AdminBookingToolRegistry:
 
         canonical_args = self._canonical_args(args)
         tool_args_hash = self._tool_args_hash(canonical_args)
+        use_idempotency = tool_name in _IDEMPOTENCY_PROTECTED_TOOLS
         _cleanup_idempotency_cache()
         idempotency_key = self._idempotency_key(tool_name, canonical_args)
-        cached = _IDEMPOTENCY_CACHE.get(idempotency_key)
-        if cached:
-            _, value = cached
-            return {
-                "ok": True,
-                "tool_name": tool_name,
-                "tool_args_hash": tool_args_hash,
-                "tool_status": "success",
-                "crm_provider": "booking",
-                "latency_ms": 0,
-                "idempotent_replay": True,
-                "idempotency_key": idempotency_key,
-                "result": value,
-            }
+        if use_idempotency:
+            cached = _IDEMPOTENCY_CACHE.get(idempotency_key)
+            if cached:
+                _, value = cached
+                return {
+                    "ok": True,
+                    "tool_name": tool_name,
+                    "tool_args_hash": tool_args_hash,
+                    "tool_status": "success",
+                    "crm_provider": "booking",
+                    "latency_ms": 0,
+                    "idempotent_replay": True,
+                    "idempotency_key": idempotency_key,
+                    "result": value,
+                }
 
         data = args.model_dump()
         started = time.perf_counter()
@@ -486,10 +501,11 @@ class AdminBookingToolRegistry:
         else:
             raise RuntimeError(f"Tool '{tool_name}' is not supported")
 
-        _IDEMPOTENCY_CACHE[idempotency_key] = (
-            _now_utc() + timedelta(seconds=_IDEMPOTENCY_TTL_SECONDS),
-            {"tool": tool_name, "result": result},
-        )
+        if use_idempotency:
+            _IDEMPOTENCY_CACHE[idempotency_key] = (
+                _now_utc() + timedelta(seconds=_IDEMPOTENCY_TTL_SECONDS),
+                {"tool": tool_name, "result": result},
+            )
         latency_ms = max(0, int((time.perf_counter() - started) * 1000))
         return {
             "ok": True,
