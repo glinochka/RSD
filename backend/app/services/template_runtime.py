@@ -630,14 +630,15 @@ class TemplateRuntimeService:
         )
         system_prompt = (
             f"{prompt}\n\n"
-            "Ты AI-администратор записи. Работай через function tools для операций расписания и записи. "
+            "Ты администратор записи(Не ИИ, живой человек). Работай через function tools для операций расписания и записи. "
             "Не выдумывай результаты операций: опирайся только на ответы tools. "
             "Если не хватает параметров для tool call — задай уточняющий вопрос. "
             "Никогда не показывай пользователю служебные блоки tool_calls/DSML/XML/JSON и не печатай внутренние id сотрудников/ресурсов. "
-            "ВАЖНО: Никогда не запрашивай у пользователя подтверждение перед созданием записи — создавай запись сразу после получения всех данных (дата, время, мастер/услуга). "
+            "ВАЖНО: Перед созданием, переносом или отменой записи ВСЕГДА уточни детали у клиента в одном сообщении — кратко и по-человечески перечисли дату, время, мастера/врача и услугу и спроси всё ли верно. Дождись согласия и только потом выполняй tool call. Не используй роботизированные фразы типа 'подтвердите' или 'напишите «подтверждаю»' — просто спроси естественно. "
+            "ВАЖНО: Перед созданием записи ВСЕГДА спрашивай имя клиента, если оно ещё не известно из контекста разговора. Записывай реальное имя человека в поле client_name — никогда не используй Telegram ID, username или технические идентификаторы в качестве имени. "
             "Даты и время в системе — локальные (бизнес-время). Не конвертируй в UTC. "
             f"Сегодняшняя дата: {now_local.strftime('%Y-%m-%d')}. "
-            "Если пользователь называет дату без года, используй текущий год. Всегда передавай даты в формате YYYY-MM-DDTHH:MM:SS. "
+            "Если пользователь называет дату без года, используй текущий год(2026). Всегда передавай даты в формате YYYY-MM-DDTHH:MM:SS. "
             "Для проверки конкретной даты ВСЕГДА используй check_availability с полным диапазоном дня (starts_at=ДАТА 00:00:00, ends_at=ДАТА 23:59:59). "
             "find_next_available используй ТОЛЬКО когда пользователь не указал дату и просит найти ближайшее свободное время; не используй его для проверки конкретной даты. "
             "Для отмены или переноса записи: "
@@ -655,7 +656,7 @@ class TemplateRuntimeService:
         messages.extend(chat_history)
         messages.append({"role": "user", "content": user_message})
         tool_events: list[dict[str, Any]] = []
-        max_iterations = 5
+        max_iterations = 15
 
         for iteration in range(max_iterations):
             completion = await ai_client.chat.completions.create(
@@ -780,7 +781,7 @@ class TemplateRuntimeService:
                     }
                 )
 
-            if all_tools_succeeded and iteration == max_iterations - 1:
+            if iteration == max_iterations - 1:
                 final_completion = await ai_client.chat.completions.create(
                     model="deepseek-chat",
                     messages=messages,
@@ -788,11 +789,21 @@ class TemplateRuntimeService:
                 )
                 final_content = (final_completion.choices[0].message.content or "").strip()
                 cleaned = self._clean_llm_text(final_content)
-                if cleaned:
-                    return TemplateExecutionResult(answer=cleaned, sources=[], tool_events=tool_events)
+                return TemplateExecutionResult(
+                    answer=cleaned or "Уточните запрос.",
+                    sources=[],
+                    tool_events=tool_events,
+                )
 
+        final_completion = await ai_client.chat.completions.create(
+            model="deepseek-chat",
+            messages=messages,
+            temperature=0.2,
+        )
+        final_content = (final_completion.choices[0].message.content or "").strip()
+        cleaned = self._clean_llm_text(final_content)
         return TemplateExecutionResult(
-            answer="Не удалось завершить CRM-операцию за допустимое число шагов. Попробуйте уточнить запрос.",
+            answer=cleaned or "Уточните запрос.",
             sources=[],
             tool_events=tool_events,
         )

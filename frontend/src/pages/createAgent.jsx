@@ -1359,7 +1359,7 @@ const CreateAgentContent = () => {
     if (!isCrmAdminTemplate || shouldShowCrmCredentials) return;
     form.setFieldError('crm_account_base_url', undefined);
     form.setFieldError('crm_access_token', undefined);
-  }, [form, isCrmAdminTemplate, shouldShowCrmCredentials]);
+  }, [form.setFieldError, isCrmAdminTemplate, shouldShowCrmCredentials]);
 
   useEffect(() => {
     if (!isContentFactoryTemplate) return;
@@ -1367,7 +1367,7 @@ const CreateAgentContent = () => {
     setUseMaxUserbotChannel(false);
     form.setFieldValue('max_token', '');
     form.setFieldError('max_token', undefined);
-  }, [form, isContentFactoryTemplate, useMaxUserbotChannel]);
+  }, [form.setFieldValue, form.setFieldError, isContentFactoryTemplate, useMaxUserbotChannel]);
 
   useEffect(() => {
     if (!isContentFactoryTemplate) return;
