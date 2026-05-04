@@ -172,6 +172,107 @@ const adminService = {
     );
     return response.data;
   },
+
+  // --- Article Publisher ---
+
+  async apGetSettings(token) {
+    const response = await adminClient.get(API_ROUTES.ADMIN_AP_SETTINGS, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return response.data;
+  },
+
+  async apUpdateSettings(token, settings) {
+    const response = await adminClient.put(API_ROUTES.ADMIN_AP_SETTINGS, settings, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return response.data;
+  },
+
+  async apGetTopics(token, { page = 1, pageSize = 50, unusedOnly = false } = {}) {
+    const response = await adminClient.get(API_ROUTES.ADMIN_AP_TOPICS, {
+      headers: { Authorization: `Bearer ${token}` },
+      params: { page, page_size: pageSize, unused_only: unusedOnly },
+    });
+    return response.data;
+  },
+
+  async apAddTopics(token, topics) {
+    const response = await adminClient.post(
+      API_ROUTES.ADMIN_AP_TOPICS,
+      { topics },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data;
+  },
+
+  async apGenerateTopics(token, { categories, count = 10 } = {}) {
+    const response = await adminClient.post(
+      API_ROUTES.ADMIN_AP_TOPICS_GENERATE,
+      { categories, count },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data;
+  },
+
+  async apDeleteTopic(token, topicId) {
+    const response = await adminClient.delete(API_ROUTES.ADMIN_AP_TOPIC_DELETE(topicId), {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return response.data;
+  },
+
+  async apGetImages(token) {
+    const response = await adminClient.get(API_ROUTES.ADMIN_AP_IMAGES, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return response.data;
+  },
+
+  async apUploadImage(token, file) {
+    const form = new FormData();
+    form.append('file', file);
+    const response = await adminClient.post(API_ROUTES.ADMIN_AP_IMAGES, form, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data;
+  },
+
+  async apDeleteImage(token, imageId) {
+    const response = await adminClient.delete(API_ROUTES.ADMIN_AP_IMAGE_DELETE(imageId), {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return response.data;
+  },
+
+  async apGetJobs(token, { page = 1, pageSize = 20 } = {}) {
+    const response = await adminClient.get(API_ROUTES.ADMIN_AP_JOBS, {
+      headers: { Authorization: `Bearer ${token}` },
+      params: { page, page_size: pageSize },
+    });
+    return response.data;
+  },
+
+  async apRunNow(token, { platform, topic } = {}) {
+    const response = await adminClient.post(
+      API_ROUTES.ADMIN_AP_RUN_NOW,
+      { platform: platform || null, topic: topic || null },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data;
+  },
+
+  async apPreviewArticle(token, { topic, platform = 'vcru' }) {
+    const response = await adminClient.post(
+      API_ROUTES.ADMIN_AP_PREVIEW,
+      { topic, platform },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data;
+  },
 };
 
 export default adminService;

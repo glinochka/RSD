@@ -801,3 +801,93 @@ class UserErrorReport(Base):
 
     user: Mapped["User"] = relationship(back_populates="error_reports")
 
+
+# ---------------------------------------------------------------------------
+# Article Publisher — private automation template for vc.ru / Yandex Zen
+# ---------------------------------------------------------------------------
+
+class ArticlePublisherSettings(Base):
+    """Global settings for the article publisher automation."""
+    __tablename__ = "article_publisher_settings"
+    __table_args__ = {"extend_existing": True}
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    posting_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    posting_frequency_hours: Mapped[int] = mapped_column(Integer, default=24, server_default="24", nullable=False)
+    # Platform flags
+    vcru_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    vcru_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    vcru_password_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    vcru_subsite_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    zen_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    zen_login: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    zen_password_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Legacy field kept for backward compatibility; new flow uses browser emulation login/password.
+    zen_oauth_token_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    zen_channel_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Content settings
+    auto_topics_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
+    topic_categories_json: Mapped[str] = mapped_column(
+        Text, default='["ИИ","IT","Автоматизация","Искусственный интеллект","Нейросети"]',
+        server_default='["ИИ","IT","Автоматизация","Искусственный интеллект","Нейросети"]', nullable=False,
+    )
+    promo_ratio: Mapped[int] = mapped_column(Integer, default=60, server_default="60", nullable=False)
+    company_name: Mapped[str] = mapped_column(String(256), default="RSD AI", server_default="RSD AI", nullable=False)
+    company_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    company_description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    article_min_words: Mapped[int] = mapped_column(Integer, default=600, server_default="600", nullable=False)
+    article_max_words: Mapped[int] = mapped_column(Integer, default=1500, server_default="1500", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+
+class ArticlePublisherTopic(Base):
+    """Topic pool for article generation."""
+    __tablename__ = "article_publisher_topics"
+    __table_args__ = {"extend_existing": True}
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    topic: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="manual", server_default="manual")
+    used: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+
+
+class ArticlePublisherImage(Base):
+    """Uploaded images pool for article illustrations."""
+    __tablename__ = "article_publisher_images"
+    __table_args__ = {"extend_existing": True}
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    original_name: Mapped[str] = mapped_column(String(512), nullable=False)
+    storage_filename: Mapped[str] = mapped_column(String(512), nullable=False, unique=True)
+    mime_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    size_bytes: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+
+
+class ArticlePublisherJob(Base):
+    """Publication job tracking for the article publisher pipeline."""
+    __tablename__ = "article_publisher_jobs"
+    __table_args__ = (
+        Index("ix_article_publisher_jobs_status_scheduled", "status", "scheduled_for"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="pending", server_default="pending",
+    )  # pending, generating, publishing, published, failed
+    platform: Mapped[str] = mapped_column(String(32), nullable=False)  # vcru, yandex_zen
+    topic: Mapped[str] = mapped_column(Text, nullable=False)
+    is_promo: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    article_title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    article_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    published_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scheduled_for: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+

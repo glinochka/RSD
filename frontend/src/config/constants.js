@@ -114,6 +114,18 @@ export const API_ROUTES = {
   ADMIN_ERROR_REPORTS: '/api/admin/error-reports',
   ADMIN_EMAIL_BROADCAST: '/api/admin/email-broadcast',
   TURNKEY_REQUESTS: '/api/payments/turnkey-requests',
+
+  // Article Publisher
+  ADMIN_AP_SETTINGS: '/api/admin/article-publisher/settings',
+  ADMIN_AP_TOPICS: '/api/admin/article-publisher/topics',
+  ADMIN_AP_TOPICS_GENERATE: '/api/admin/article-publisher/topics/generate',
+  ADMIN_AP_TOPIC_DELETE: (id) => `/api/admin/article-publisher/topics/${id}`,
+  ADMIN_AP_IMAGES: '/api/admin/article-publisher/images',
+  ADMIN_AP_IMAGE_DELETE: (id) => `/api/admin/article-publisher/images/${id}`,
+  ADMIN_AP_IMAGE_FILE: (id) => `/api/admin/article-publisher/images/${id}/file`,
+  ADMIN_AP_JOBS: '/api/admin/article-publisher/jobs',
+  ADMIN_AP_RUN_NOW: '/api/admin/article-publisher/run-now',
+  ADMIN_AP_PREVIEW: '/api/admin/article-publisher/preview-article',
 };
 
 export const AGENT_ROLES = {

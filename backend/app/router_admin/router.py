@@ -1,10 +1,12 @@
 from datetime import datetime, timezone
 from html import escape
+import json
 from logging import getLogger
+import os
 from secrets import compare_digest
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, UploadFile, status
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 import httpx
 import jwt
@@ -18,9 +20,13 @@ from .schemas import (
     AdminLoginRequest,
     AdminPromoCodeCreateRequest,
     AdminSubscriptionPlansUpdateRequest,
+    ArticlePublisherAddTopicsRequest,
+    ArticlePublisherGenerateTopicsRequest,
+    ArticlePublisherRunNowRequest,
+    ArticlePublisherSettingsUpdateRequest,
 )
 from ..alembic.database import async_session_maker
-from ..alembic.models import PromoCode, User
+from ..alembic.models import ArticlePublisherImage, PromoCode, User
 from ..config import get_auth_data, settings
 from ..qdrant.search_service import delete_agent_vectors
 from ..router_agents.dao import AgentDAO
@@ -649,4 +655,338 @@ async def admin_email_broadcast(
             "subject": subject,
         },
         status_code=status.HTTP_200_OK,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Article Publisher endpoints
+# ---------------------------------------------------------------------------
+
+def _get_article_publisher_service():
+    from ..services.article_publisher.service import get_article_publisher_service
+    return get_article_publisher_service()
+
+
+@router.get("/article-publisher/settings")
+async def ap_get_settings(_admin=Depends(get_current_admin)):
+    service = _get_article_publisher_service()
+    row = await service.get_settings()
+    return JSONResponse(content={"settings": service.serialize_settings(row)})
+
+
+@router.put("/article-publisher/settings")
+async def ap_update_settings(
+    payload: ArticlePublisherSettingsUpdateRequest,
+    _admin=Depends(get_current_admin),
+):
+    from ..utils.crypto import encrypt_token
+
+    service = _get_article_publisher_service()
+    updates: dict = {}
+
+    for field in (
+        "posting_enabled", "posting_frequency_hours",
+        "vcru_enabled", "vcru_email", "vcru_subsite_id",
+        "zen_enabled", "zen_login", "zen_channel_id",
+        "auto_topics_enabled", "promo_ratio",
+        "company_name", "company_url", "company_description",
+        "article_min_words", "article_max_words",
+    ):
+        val = getattr(payload, field, None)
+        if val is not None:
+            updates[field] = val
+
+    if payload.topic_categories is not None:
+        updates["topic_categories_json"] = json.dumps(
+            [t.strip() for t in payload.topic_categories if t.strip()],
+            ensure_ascii=False,
+        )
+    if payload.vcru_password is not None and payload.vcru_password.strip():
+        updates["vcru_password_enc"] = encrypt_token(payload.vcru_password.strip())
+    if payload.zen_password is not None and payload.zen_password.strip():
+        updates["zen_password_enc"] = encrypt_token(payload.zen_password.strip())
+
+    row = await service.update_settings(updates)
+    return JSONResponse(content={"settings": service.serialize_settings(row)})
+
+
+@router.get("/article-publisher/topics")
+async def ap_list_topics(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    unused_only: bool = Query(default=False),
+    _admin=Depends(get_current_admin),
+):
+    service = _get_article_publisher_service()
+    rows, total = await service.list_topics(page=page, page_size=page_size, unused_only=unused_only)
+    items = [
+        {
+            "id": r.id,
+            "topic": r.topic,
+            "source": r.source,
+            "used": r.used,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rows
+    ]
+    return JSONResponse(
+        content={
+            "items": items,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+        }
+    )
+
+
+@router.post("/article-publisher/topics")
+async def ap_add_topics(
+    payload: ArticlePublisherAddTopicsRequest,
+    _admin=Depends(get_current_admin),
+):
+    service = _get_article_publisher_service()
+    valid_topics = [t.strip() for t in payload.topics if t.strip()][:100]
+    if not valid_topics:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No valid topics provided")
+    added = await service.add_topics(valid_topics, source="manual")
+    return JSONResponse(
+        content={"added": len(added)},
+        status_code=status.HTTP_201_CREATED,
+    )
+
+
+@router.post("/article-publisher/topics/generate")
+async def ap_generate_topics(
+    payload: ArticlePublisherGenerateTopicsRequest,
+    _admin=Depends(get_current_admin),
+):
+    from ..services.article_publisher.topic_generator import fetch_topics_from_search
+
+    service = _get_article_publisher_service()
+    categories = payload.categories
+    if not categories:
+        row = await service.get_settings()
+        try:
+            categories = json.loads(row.topic_categories_json or "[]")
+        except Exception:
+            categories = ["ИИ", "IT", "Автоматизация"]
+    if not categories:
+        categories = ["ИИ", "IT", "Автоматизация"]
+
+    try:
+        topics = await fetch_topics_from_search(categories, count=payload.count)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Topic generation failed: {exc}",
+        )
+
+    added = await service.add_topics(topics, source="auto")
+    return JSONResponse(content={"added": len(added), "topics": topics})
+
+
+@router.delete("/article-publisher/topics/{topic_id}")
+async def ap_delete_topic(
+    topic_id: int = Path(..., ge=1),
+    _admin=Depends(get_current_admin),
+):
+    service = _get_article_publisher_service()
+    deleted = await service.delete_topic(topic_id)
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Topic not found")
+    return JSONResponse(content={"detail": "deleted"})
+
+
+@router.get("/article-publisher/images")
+async def ap_list_images(_admin=Depends(get_current_admin)):
+    service = _get_article_publisher_service()
+    images = await service.list_images()
+    return JSONResponse(content={"items": images})
+
+
+@router.post("/article-publisher/images")
+async def ap_upload_image(
+    file: UploadFile = File(...),
+    _admin=Depends(get_current_admin),
+):
+    allowed_types = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+    if file.content_type not in allowed_types:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only JPEG, PNG, WEBP, GIF images are allowed",
+        )
+    max_size = 10 * 1024 * 1024
+    data = await file.read()
+    if len(data) > max_size:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Image too large (max 10 MB)",
+        )
+    service = _get_article_publisher_service()
+    result = await service.save_image(
+        file_bytes=data,
+        original_name=file.filename or "upload.jpg",
+        mime_type=file.content_type,
+    )
+    return JSONResponse(content={"image": result}, status_code=status.HTTP_201_CREATED)
+
+
+@router.get("/article-publisher/images/{image_id}/file")
+async def ap_serve_image(
+    image_id: int = Path(..., ge=1),
+):
+    async with async_session_maker() as session:
+        async with session.begin():
+            row = await session.scalar(
+                select(ArticlePublisherImage).where(ArticlePublisherImage.id == image_id)
+            )
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image not found")
+
+    from ..services.article_publisher.service import _get_images_dir
+    path = os.path.join(_get_images_dir(), row.storage_filename)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image file not found")
+    return FileResponse(path, media_type=row.mime_type or "image/jpeg")
+
+
+@router.delete("/article-publisher/images/{image_id}")
+async def ap_delete_image(
+    image_id: int = Path(..., ge=1),
+    _admin=Depends(get_current_admin),
+):
+    service = _get_article_publisher_service()
+    deleted = await service.delete_image(image_id)
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image not found")
+    return JSONResponse(content={"detail": "deleted"})
+
+
+@router.get("/article-publisher/jobs")
+async def ap_list_jobs(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    _admin=Depends(get_current_admin),
+):
+    service = _get_article_publisher_service()
+    rows, total = await service.list_jobs(page=page, page_size=page_size)
+    return JSONResponse(
+        content={
+            "items": [service.serialize_job(r) for r in rows],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+        }
+    )
+
+
+@router.post("/article-publisher/run-now")
+async def ap_run_now(
+    payload: ArticlePublisherRunNowRequest,
+    _admin=Depends(get_current_admin),
+):
+    """Trigger an immediate article generation + publish job."""
+    import asyncio
+    from ..services.article_publisher.worker import get_article_publisher_worker
+
+    service = _get_article_publisher_service()
+    settings_row = await service.get_settings()
+
+    active_platforms = []
+    if settings_row.vcru_enabled and settings_row.vcru_email and settings_row.vcru_password_enc:
+        active_platforms.append("vcru")
+    if settings_row.zen_enabled and settings_row.zen_login and settings_row.zen_password_enc:
+        active_platforms.append("yandex_zen")
+
+    platform = payload.platform
+    if platform and platform not in ("vcru", "yandex_zen"):
+        raise HTTPException(status_code=400, detail="platform must be 'vcru' or 'yandex_zen'")
+    if not platform:
+        if not active_platforms:
+            raise HTTPException(status_code=400, detail="No active platforms configured")
+        import random
+        platform = random.choice(active_platforms)
+
+    topic = (payload.topic or "").strip()
+    if not topic:
+        from ..services.article_publisher.topic_generator import fetch_topics_from_search
+        topic = await service.pick_next_topic()
+        if not topic:
+            if settings_row.auto_topics_enabled:
+                try:
+                    cats = json.loads(settings_row.topic_categories_json or "[]") or ["ИИ", "IT"]
+                    new_topics = await fetch_topics_from_search(cats, count=5)
+                    if new_topics:
+                        await service.add_topics(new_topics, source="auto")
+                        topic = await service.pick_next_topic()
+                except Exception:
+                    pass
+        if not topic:
+            raise HTTPException(status_code=400, detail="No topics available. Add topics first.")
+
+    is_promo = await service.determine_next_is_promo(settings_row.promo_ratio)
+    from datetime import datetime, timezone
+    job = await service.create_job(
+        platform=platform,
+        topic=topic,
+        is_promo=is_promo,
+        scheduled_for=datetime.now(timezone.utc).replace(tzinfo=None),
+    )
+
+    worker = get_article_publisher_worker()
+    asyncio.create_task(
+        worker._process_job(job_id=job.id, settings=settings_row, platform=platform)
+    )
+
+    return JSONResponse(
+        content={
+            "job_id": job.id,
+            "platform": platform,
+            "topic": topic,
+            "is_promo": is_promo,
+            "status": "started",
+        },
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+
+
+@router.post("/article-publisher/preview-article")
+async def ap_preview_article(
+    payload: ArticlePublisherRunNowRequest,
+    _admin=Depends(get_current_admin),
+):
+    """Generate article content without publishing."""
+    from ..services.article_publisher.content_generator import generate_article
+
+    service = _get_article_publisher_service()
+    settings_row = await service.get_settings()
+
+    topic = (payload.topic or "").strip()
+    if not topic:
+        raise HTTPException(status_code=400, detail="topic is required for preview")
+
+    platform = payload.platform or "vcru"
+    is_promo = await service.determine_next_is_promo(settings_row.promo_ratio)
+
+    try:
+        article = await generate_article(
+            topic=topic,
+            is_promo=is_promo,
+            company_name=settings_row.company_name or "RSD AI",
+            company_url=settings_row.company_url or "",
+            company_description=settings_row.company_description or "",
+            min_words=settings_row.article_min_words,
+            max_words=settings_row.article_max_words,
+            platform=platform,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Generation failed: {exc}")
+
+    return JSONResponse(
+        content={
+            "title": article.title,
+            "content": article.content,
+            "is_promo": article.is_promo,
+            "topic": topic,
+        }
     )

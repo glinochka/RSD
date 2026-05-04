@@ -15,6 +15,7 @@ const MENU_ITEMS = [
   { id: 'billing', label: 'Тарифы' },
   { id: 'promoCodes', label: 'Промокоды' },
   { id: 'emailBroadcast', label: 'Email рассылка' },
+  { id: 'contentPublisher', label: '📝 Контент' },
 ];
 
 function formatError(error) {
@@ -78,6 +79,29 @@ const ManagementPortal = () => {
   const [giftModal, setGiftModal] = useState({ open: false, user: null, planCode: 'Advanced' });
   const [broadcastDraft, setBroadcastDraft] = useState({ subject: '', body: '' });
   const [broadcastResult, setBroadcastResult] = useState(null);
+
+  // --- Content Publisher state ---
+  const [apTab, setApTab] = useState('settings');
+  const [apSettings, setApSettings] = useState(null);
+  const [apSettingsDraft, setApSettingsDraft] = useState({});
+  const [apIsLoadingSettings, setApIsLoadingSettings] = useState(false);
+  const [apIsSavingSettings, setApIsSavingSettings] = useState(false);
+  const [apTopics, setApTopics] = useState([]);
+  const [apTopicsTotal, setApTopicsTotal] = useState(0);
+  const [apIsLoadingTopics, setApIsLoadingTopics] = useState(false);
+  const [apNewTopicsText, setApNewTopicsText] = useState('');
+  const [apImages, setApImages] = useState([]);
+  const [apIsLoadingImages, setApIsLoadingImages] = useState(false);
+  const [apJobs, setApJobs] = useState([]);
+  const [apJobsTotal, setApJobsTotal] = useState(0);
+  const [apIsLoadingJobs, setApIsLoadingJobs] = useState(false);
+  const [apRunNowPlatform, setApRunNowPlatform] = useState('');
+  const [apRunNowTopic, setApRunNowTopic] = useState('');
+  const [apPreviewTopic, setApPreviewTopic] = useState('');
+  const [apPreviewResult, setApPreviewResult] = useState(null);
+  const [apActionInProgress, setApActionInProgress] = useState(null);
+  const [apError, setApError] = useState('');
+  const [apSuccess, setApSuccess] = useState('');
 
   const statsCards = useMemo(() => {
     if (!stats) return [];
@@ -269,6 +293,236 @@ const ManagementPortal = () => {
       cancelled = true;
     };
   }, [activeSection, adminToken]);
+
+  // --- Content Publisher effects ---
+  useEffect(() => {
+    if (!adminToken || activeSection !== 'contentPublisher') return;
+    let cancelled = false;
+
+    const load = async () => {
+      setApError('');
+      if (apTab === 'settings') {
+        try {
+          setApIsLoadingSettings(true);
+          const data = await adminService.apGetSettings(adminToken);
+          if (cancelled) return;
+          const s = data.settings ?? {};
+          setApSettings(s);
+          setApSettingsDraft({
+            posting_enabled: s.posting_enabled ?? false,
+            posting_frequency_hours: s.posting_frequency_hours ?? 24,
+            vcru_enabled: s.vcru_enabled ?? false,
+            vcru_email: s.vcru_email ?? '',
+            vcru_password: '',
+            vcru_subsite_id: s.vcru_subsite_id ?? '',
+            zen_enabled: s.zen_enabled ?? false,
+            zen_login: s.zen_login ?? '',
+            zen_password: '',
+            zen_channel_id: s.zen_channel_id ?? '',
+            auto_topics_enabled: s.auto_topics_enabled ?? true,
+            topic_categories: (s.topic_categories ?? []).join(', '),
+            promo_ratio: s.promo_ratio ?? 60,
+            company_name: s.company_name ?? 'RSD AI',
+            company_url: s.company_url ?? '',
+            company_description: s.company_description ?? '',
+            article_min_words: s.article_min_words ?? 600,
+            article_max_words: s.article_max_words ?? 1500,
+          });
+        } catch (err) {
+          if (!cancelled) setApError(formatError(err));
+        } finally {
+          if (!cancelled) setApIsLoadingSettings(false);
+        }
+      } else if (apTab === 'topics') {
+        try {
+          setApIsLoadingTopics(true);
+          const data = await adminService.apGetTopics(adminToken);
+          if (cancelled) return;
+          setApTopics(data.items ?? []);
+          setApTopicsTotal(data.total ?? 0);
+        } catch (err) {
+          if (!cancelled) setApError(formatError(err));
+        } finally {
+          if (!cancelled) setApIsLoadingTopics(false);
+        }
+      } else if (apTab === 'images') {
+        try {
+          setApIsLoadingImages(true);
+          const data = await adminService.apGetImages(adminToken);
+          if (cancelled) return;
+          setApImages(data.items ?? []);
+        } catch (err) {
+          if (!cancelled) setApError(formatError(err));
+        } finally {
+          if (!cancelled) setApIsLoadingImages(false);
+        }
+      } else if (apTab === 'jobs') {
+        try {
+          setApIsLoadingJobs(true);
+          const data = await adminService.apGetJobs(adminToken);
+          if (cancelled) return;
+          setApJobs(data.items ?? []);
+          setApJobsTotal(data.total ?? 0);
+        } catch (err) {
+          if (!cancelled) setApError(formatError(err));
+        } finally {
+          if (!cancelled) setApIsLoadingJobs(false);
+        }
+      }
+    };
+
+    load();
+    return () => { cancelled = true; };
+  }, [activeSection, adminToken, apTab]);
+
+  const handleApSaveSettings = async (e) => {
+    e.preventDefault();
+    try {
+      setApIsSavingSettings(true);
+      setApError('');
+      setApSuccess('');
+      const cats = (apSettingsDraft.topic_categories || '')
+        .split(',')
+        .map((c) => c.trim())
+        .filter(Boolean);
+      const payload = {
+        ...apSettingsDraft,
+        topic_categories: cats,
+      };
+      if (!payload.vcru_password) delete payload.vcru_password;
+      if (!payload.zen_password) delete payload.zen_password;
+      const data = await adminService.apUpdateSettings(adminToken, payload);
+      const s = data.settings ?? {};
+      setApSettings(s);
+      setApSuccess('Настройки сохранены');
+    } catch (err) {
+      setApError(formatError(err));
+    } finally {
+      setApIsSavingSettings(false);
+    }
+  };
+
+  const handleApAddTopics = async (e) => {
+    e.preventDefault();
+    const lines = apNewTopicsText.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (!lines.length) return;
+    try {
+      setApActionInProgress('add-topics');
+      setApError('');
+      await adminService.apAddTopics(adminToken, lines);
+      setApNewTopicsText('');
+      const data = await adminService.apGetTopics(adminToken);
+      setApTopics(data.items ?? []);
+      setApTopicsTotal(data.total ?? 0);
+      setApSuccess(`Добавлено тем: ${lines.length}`);
+    } catch (err) {
+      setApError(formatError(err));
+    } finally {
+      setApActionInProgress(null);
+    }
+  };
+
+  const handleApGenerateTopics = async () => {
+    try {
+      setApActionInProgress('gen-topics');
+      setApError('');
+      const data = await adminService.apGenerateTopics(adminToken, { count: 10 });
+      const refreshed = await adminService.apGetTopics(adminToken);
+      setApTopics(refreshed.items ?? []);
+      setApTopicsTotal(refreshed.total ?? 0);
+      setApSuccess(`Сгенерировано тем: ${data.added ?? 0}`);
+    } catch (err) {
+      setApError(formatError(err));
+    } finally {
+      setApActionInProgress(null);
+    }
+  };
+
+  const handleApDeleteTopic = async (id) => {
+    if (!window.confirm('Удалить тему?')) return;
+    try {
+      setApActionInProgress(`del-topic-${id}`);
+      setApError('');
+      await adminService.apDeleteTopic(adminToken, id);
+      setApTopics((prev) => prev.filter((t) => t.id !== id));
+    } catch (err) {
+      setApError(formatError(err));
+    } finally {
+      setApActionInProgress(null);
+    }
+  };
+
+  const handleApUploadImages = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    try {
+      setApActionInProgress('upload-images');
+      setApError('');
+      for (const file of files) {
+        await adminService.apUploadImage(adminToken, file);
+      }
+      const data = await adminService.apGetImages(adminToken);
+      setApImages(data.items ?? []);
+      setApSuccess(`Загружено изображений: ${files.length}`);
+    } catch (err) {
+      setApError(formatError(err));
+    } finally {
+      setApActionInProgress(null);
+      e.target.value = '';
+    }
+  };
+
+  const handleApDeleteImage = async (id) => {
+    if (!window.confirm('Удалить изображение?')) return;
+    try {
+      setApActionInProgress(`del-img-${id}`);
+      setApError('');
+      await adminService.apDeleteImage(adminToken, id);
+      setApImages((prev) => prev.filter((img) => img.id !== id));
+    } catch (err) {
+      setApError(formatError(err));
+    } finally {
+      setApActionInProgress(null);
+    }
+  };
+
+  const handleApRunNow = async (e) => {
+    if (e?.preventDefault) e.preventDefault();
+    try {
+      setApActionInProgress('run-now');
+      setApError('');
+      setApSuccess('');
+      const data = await adminService.apRunNow(adminToken, {
+        platform: apRunNowPlatform || undefined,
+        topic: apRunNowTopic || undefined,
+      });
+      setApSuccess(`Задача создана! job_id=${data.job_id}, платформа: ${data.platform}, тема: "${data.topic}"`);
+      setApRunNowTopic('');
+    } catch (err) {
+      setApError(formatError(err));
+    } finally {
+      setApActionInProgress(null);
+    }
+  };
+
+  const handleApPreview = async (e) => {
+    e.preventDefault();
+    if (!apPreviewTopic.trim()) return;
+    try {
+      setApActionInProgress('preview');
+      setApError('');
+      setApPreviewResult(null);
+      const data = await adminService.apPreviewArticle(adminToken, {
+        topic: apPreviewTopic.trim(),
+        platform: 'vcru',
+      });
+      setApPreviewResult(data);
+    } catch (err) {
+      setApError(formatError(err));
+    } finally {
+      setApActionInProgress(null);
+    }
+  };
 
   const handleLogin = async (event) => {
     event.preventDefault();
@@ -1080,6 +1334,606 @@ const ManagementPortal = () => {
     </>
   );
 
+  const renderContentPublisher = () => {
+    const AP_TABS = [
+      { id: 'settings', label: 'Настройки' },
+      { id: 'topics', label: 'Темы' },
+      { id: 'images', label: 'Изображения' },
+      { id: 'jobs', label: 'История' },
+      { id: 'run', label: 'Запуск / Превью' },
+    ];
+
+    const statusLabel = (s) => ({
+      pending: 'Ожидает',
+      generating: 'Генерация',
+      publishing: 'Публикация',
+      published: 'Опубликовано',
+      failed: 'Ошибка',
+    }[s] || s);
+
+    const statusClass = (s) => ({
+      published: 'management-badge-success',
+      failed: 'management-badge-danger',
+      generating: 'management-badge-info',
+      publishing: 'management-badge-info',
+    }[s] || 'management-badge-muted');
+
+    return (
+      <>
+        <div className="management-content-head">
+          <h2>Контент — автопубликация статей</h2>
+          <button
+            type="button"
+            className="btn btn-black"
+            disabled={apActionInProgress === 'run-now'}
+            onClick={handleApRunNow}
+            title="Запустить автопубликацию сразу, без ожидания окна времени"
+          >
+            {apActionInProgress === 'run-now' ? 'Запуск...' : 'Выпустить статью сейчас'}
+          </button>
+        </div>
+
+        {apError && <div className="management-error">{apError}</div>}
+        {apSuccess && <div className="management-success">{apSuccess}</div>}
+
+        <div className="ap-tabs">
+          {AP_TABS.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              className={`ap-tab-btn ${apTab === tab.id ? 'active' : ''}`}
+              onClick={() => { setApTab(tab.id); setApError(''); setApSuccess(''); }}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {/* SETTINGS TAB */}
+        {apTab === 'settings' && (
+          <div className="ap-panel">
+            {apIsLoadingSettings ? <p>Загрузка настроек...</p> : (
+              <form onSubmit={handleApSaveSettings} className="ap-settings-form">
+                <section className="ap-section">
+                  <h3>Расписание публикаций</h3>
+                  <div className="management-form-row">
+                    <label className="management-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={apSettingsDraft.posting_enabled ?? false}
+                        onChange={(e) => setApSettingsDraft((p) => ({ ...p, posting_enabled: e.target.checked }))}
+                      />
+                      Автопубликация включена
+                    </label>
+                  </div>
+                  <div className="management-form-row">
+                    <label>Частота (часов между постами)</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={720}
+                      value={apSettingsDraft.posting_frequency_hours ?? 24}
+                      onChange={(e) => setApSettingsDraft((p) => ({ ...p, posting_frequency_hours: Number(e.target.value) }))}
+                    />
+                  </div>
+                </section>
+
+                <section className="ap-section">
+                  <h3>Платформы</h3>
+
+                  <div className="ap-platform-block">
+                    <h4>vc.ru</h4>
+                    <div className="management-form-row">
+                      <label className="management-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={apSettingsDraft.vcru_enabled ?? false}
+                          onChange={(e) => setApSettingsDraft((p) => ({ ...p, vcru_enabled: e.target.checked }))}
+                        />
+                        Включить vc.ru
+                      </label>
+                    </div>
+                    <div className="management-form-row">
+                      <label>Email аккаунта</label>
+                      <input
+                        type="email"
+                        placeholder="user@example.com"
+                        value={apSettingsDraft.vcru_email ?? ''}
+                        onChange={(e) => setApSettingsDraft((p) => ({ ...p, vcru_email: e.target.value }))}
+                      />
+                    </div>
+                    <div className="management-form-row">
+                      <label>
+                        Пароль
+                        {apSettings?.vcru_has_password && (
+                          <span className="ap-hint"> (уже задан, оставьте пустым чтобы не менять)</span>
+                        )}
+                      </label>
+                      <input
+                        type="password"
+                        placeholder={apSettings?.vcru_has_password ? '••••••••' : 'Пароль'}
+                        value={apSettingsDraft.vcru_password ?? ''}
+                        onChange={(e) => setApSettingsDraft((p) => ({ ...p, vcru_password: e.target.value }))}
+                        autoComplete="new-password"
+                      />
+                    </div>
+                    <div className="management-form-row">
+                      <label>Subsite ID (необязательно)</label>
+                      <input
+                        type="text"
+                        placeholder="ID раздела/субсайта"
+                        value={apSettingsDraft.vcru_subsite_id ?? ''}
+                        onChange={(e) => setApSettingsDraft((p) => ({ ...p, vcru_subsite_id: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="ap-platform-block">
+                    <h4>Яндекс Дзен (dzen.ru)</h4>
+                    <div className="management-form-row">
+                      <label className="management-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={apSettingsDraft.zen_enabled ?? false}
+                          onChange={(e) => setApSettingsDraft((p) => ({ ...p, zen_enabled: e.target.checked }))}
+                        />
+                        Включить Яндекс Дзен
+                      </label>
+                    </div>
+                    <div className="management-form-row">
+                      <label>
+                        Логин Яндекс
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="login@yandex.ru"
+                        value={apSettingsDraft.zen_login ?? ''}
+                        onChange={(e) => setApSettingsDraft((p) => ({ ...p, zen_login: e.target.value }))}
+                      />
+                    </div>
+                    <div className="management-form-row">
+                      <label>
+                        Пароль Яндекс
+                        {apSettings?.zen_has_password && (
+                          <span className="ap-hint"> (уже задан, оставьте пустым чтобы не менять)</span>
+                        )}
+                      </label>
+                      <input
+                        type="password"
+                        placeholder={apSettings?.zen_has_password ? '••••••••' : 'Пароль Яндекс'}
+                        value={apSettingsDraft.zen_password ?? ''}
+                        onChange={(e) => setApSettingsDraft((p) => ({ ...p, zen_password: e.target.value }))}
+                        autoComplete="new-password"
+                      />
+                    </div>
+                    <div className="management-form-row">
+                      <label>Channel ID (необязательно)</label>
+                      <input
+                        type="text"
+                        placeholder="ID вашего канала"
+                        value={apSettingsDraft.zen_channel_id ?? ''}
+                        onChange={(e) => setApSettingsDraft((p) => ({ ...p, zen_channel_id: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+                </section>
+
+                <section className="ap-section">
+                  <h3>Контент и правило 60/40</h3>
+                  <div className="management-form-row">
+                    <label>Процент постов с рекламой RSD AI ({apSettingsDraft.promo_ratio ?? 60}%)</label>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      step={5}
+                      value={apSettingsDraft.promo_ratio ?? 60}
+                      onChange={(e) => setApSettingsDraft((p) => ({ ...p, promo_ratio: Number(e.target.value) }))}
+                    />
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={apSettingsDraft.promo_ratio ?? 60}
+                      onChange={(e) => {
+                        const next = Number(e.target.value);
+                        const safe = Number.isNaN(next) ? 60 : Math.max(0, Math.min(100, next));
+                        setApSettingsDraft((p) => ({ ...p, promo_ratio: safe }));
+                      }}
+                    />
+                    <div className="ap-ratio-labels">
+                      <span>Реклама RSD AI: {apSettingsDraft.promo_ratio ?? 60}%</span>
+                      <span>Нейтральные: {100 - (apSettingsDraft.promo_ratio ?? 60)}%</span>
+                    </div>
+                  </div>
+                  <div className="management-form-row">
+                    <label>Название компании</label>
+                    <input
+                      type="text"
+                      value={apSettingsDraft.company_name ?? ''}
+                      onChange={(e) => setApSettingsDraft((p) => ({ ...p, company_name: e.target.value }))}
+                    />
+                  </div>
+                  <div className="management-form-row">
+                    <label>URL сайта</label>
+                    <input
+                      type="url"
+                      placeholder="https://rsd.ai"
+                      value={apSettingsDraft.company_url ?? ''}
+                      onChange={(e) => setApSettingsDraft((p) => ({ ...p, company_url: e.target.value }))}
+                    />
+                  </div>
+                  <div className="management-form-row">
+                    <label>Описание компании (для промо-постов)</label>
+                    <textarea
+                      rows={3}
+                      placeholder="Кратко опишите ваш сервис..."
+                      value={apSettingsDraft.company_description ?? ''}
+                      onChange={(e) => setApSettingsDraft((p) => ({ ...p, company_description: e.target.value }))}
+                    />
+                  </div>
+                </section>
+
+                <section className="ap-section">
+                  <h3>Темы и генерация контента</h3>
+                  <div className="management-form-row">
+                    <label className="management-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={apSettingsDraft.auto_topics_enabled ?? true}
+                        onChange={(e) => setApSettingsDraft((p) => ({ ...p, auto_topics_enabled: e.target.checked }))}
+                      />
+                      Автоматическая генерация тем (веб-поиск)
+                    </label>
+                  </div>
+                  <div className="management-form-row">
+                    <label>Категории тем (через запятую)</label>
+                    <input
+                      type="text"
+                      placeholder="ИИ, IT, Автоматизация, Нейросети"
+                      value={apSettingsDraft.topic_categories ?? ''}
+                      onChange={(e) => setApSettingsDraft((p) => ({ ...p, topic_categories: e.target.value }))}
+                    />
+                  </div>
+                  <div className="management-form-row">
+                    <label>Минимальная длина статьи (слов)</label>
+                    <input
+                      type="number"
+                      min={100}
+                      max={5000}
+                      value={apSettingsDraft.article_min_words ?? 600}
+                      onChange={(e) => setApSettingsDraft((p) => ({ ...p, article_min_words: Number(e.target.value) }))}
+                    />
+                  </div>
+                  <div className="management-form-row">
+                    <label>Максимальная длина статьи (слов)</label>
+                    <input
+                      type="number"
+                      min={200}
+                      max={10000}
+                      value={apSettingsDraft.article_max_words ?? 1500}
+                      onChange={(e) => setApSettingsDraft((p) => ({ ...p, article_max_words: Number(e.target.value) }))}
+                    />
+                  </div>
+                </section>
+
+                <button
+                  type="submit"
+                  className="btn btn-black"
+                  disabled={apIsSavingSettings}
+                >
+                  {apIsSavingSettings ? 'Сохранение...' : 'Сохранить настройки'}
+                </button>
+              </form>
+            )}
+          </div>
+        )}
+
+        {/* TOPICS TAB */}
+        {apTab === 'topics' && (
+          <div className="ap-panel">
+            <div className="management-content-head">
+              <span>Всего тем: {apTopicsTotal}</span>
+              <button
+                type="button"
+                className="btn btn-outline"
+                disabled={apActionInProgress === 'gen-topics' || apIsLoadingTopics}
+                onClick={handleApGenerateTopics}
+              >
+                {apActionInProgress === 'gen-topics' ? 'Генерация...' : 'Сгенерировать темы (веб)'}
+              </button>
+            </div>
+
+            <form onSubmit={handleApAddTopics} className="ap-topics-form">
+              <div className="management-form-row">
+                <label htmlFor="ap-topics-input">Добавить темы вручную (каждая с новой строки)</label>
+                <textarea
+                  id="ap-topics-input"
+                  rows={5}
+                  placeholder={'Как ИИ меняет рынок труда\nТоп-5 нейросетей для бизнеса\n...'}
+                  value={apNewTopicsText}
+                  onChange={(e) => setApNewTopicsText(e.target.value)}
+                />
+              </div>
+              <button
+                type="submit"
+                className="btn btn-black"
+                disabled={apActionInProgress === 'add-topics' || !apNewTopicsText.trim()}
+              >
+                {apActionInProgress === 'add-topics' ? 'Добавление...' : 'Добавить темы'}
+              </button>
+            </form>
+
+            {apIsLoadingTopics ? (
+              <p>Загрузка тем...</p>
+            ) : (
+              <div className="management-table-wrap">
+                <table className="management-table">
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>Тема</th>
+                      <th>Источник</th>
+                      <th>Статус</th>
+                      <th>Дата</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {apTopics.map((t) => (
+                      <tr key={t.id} className={t.used ? 'ap-row-used' : ''}>
+                        <td>{t.id}</td>
+                        <td>{t.topic}</td>
+                        <td>{t.source === 'auto' ? 'Авто' : 'Ручная'}</td>
+                        <td>{t.used ? 'Использована' : 'Свободна'}</td>
+                        <td>{t.created_at ? new Date(t.created_at).toLocaleDateString() : '-'}</td>
+                        <td>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-danger"
+                            disabled={apActionInProgress === `del-topic-${t.id}`}
+                            onClick={() => handleApDeleteTopic(t.id)}
+                          >
+                            {apActionInProgress === `del-topic-${t.id}` ? '...' : 'Удалить'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {apTopics.length === 0 && (
+                      <tr><td colSpan={6}>Тем пока нет. Добавьте вручную или сгенерируйте.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* IMAGES TAB */}
+        {apTab === 'images' && (
+          <div className="ap-panel">
+            <div className="management-content-head">
+              <span>Изображений: {apImages.length}</span>
+              <label className="btn btn-black ap-upload-btn" htmlFor="ap-image-upload">
+                {apActionInProgress === 'upload-images' ? 'Загрузка...' : '+ Загрузить'}
+                <input
+                  id="ap-image-upload"
+                  type="file"
+                  multiple
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  style={{ display: 'none' }}
+                  onChange={handleApUploadImages}
+                  disabled={apActionInProgress === 'upload-images'}
+                />
+              </label>
+            </div>
+
+            {apIsLoadingImages ? (
+              <p>Загрузка изображений...</p>
+            ) : (
+              <div className="ap-images-grid">
+                {apImages.map((img) => (
+                  <div key={img.id} className="ap-image-card">
+                    <img
+                      src={`${ENV_CONFIG.API.BASE_URL}${img.url}`}
+                      alt={img.original_name}
+                      className="ap-image-thumb"
+                      loading="lazy"
+                    />
+                    <div className="ap-image-info">
+                      <span className="ap-image-name" title={img.original_name}>
+                        {img.original_name.length > 20
+                          ? `${img.original_name.slice(0, 18)}…`
+                          : img.original_name}
+                      </span>
+                      <span className="ap-image-size">
+                        {img.size_bytes > 1024 * 1024
+                          ? `${(img.size_bytes / 1024 / 1024).toFixed(1)} МБ`
+                          : `${(img.size_bytes / 1024).toFixed(0)} КБ`}
+                      </span>
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-danger"
+                        disabled={apActionInProgress === `del-img-${img.id}`}
+                        onClick={() => handleApDeleteImage(img.id)}
+                      >
+                        {apActionInProgress === `del-img-${img.id}` ? '...' : 'Удалить'}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {apImages.length === 0 && (
+                  <p>Изображений нет. Загрузите PNG/JPG/WEBP для вставки в статьи.</p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* JOBS TAB */}
+        {apTab === 'jobs' && (
+          <div className="ap-panel">
+            <div className="management-content-head">
+              <span>Всего задач: {apJobsTotal}</span>
+              <button
+                type="button"
+                className="btn btn-outline"
+                disabled={apIsLoadingJobs}
+                onClick={async () => {
+                  try {
+                    setApIsLoadingJobs(true);
+                    const data = await adminService.apGetJobs(adminToken);
+                    setApJobs(data.items ?? []);
+                    setApJobsTotal(data.total ?? 0);
+                  } catch (err) {
+                    setApError(formatError(err));
+                  } finally {
+                    setApIsLoadingJobs(false);
+                  }
+                }}
+              >
+                Обновить
+              </button>
+            </div>
+            {apIsLoadingJobs ? (
+              <p>Загрузка истории...</p>
+            ) : (
+              <div className="management-table-wrap">
+                <table className="management-table">
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>Статус</th>
+                      <th>Платформа</th>
+                      <th>Тема</th>
+                      <th>Тип</th>
+                      <th>Дата</th>
+                      <th>Ссылка</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {apJobs.map((job) => (
+                      <tr key={job.id}>
+                        <td>{job.id}</td>
+                        <td>
+                          <span className={`management-badge ${statusClass(job.status)}`}>
+                            {statusLabel(job.status)}
+                          </span>
+                        </td>
+                        <td>{job.platform === 'vcru' ? 'vc.ru' : 'Яндекс Дзен'}</td>
+                        <td title={job.topic}>
+                          {job.topic.length > 50 ? `${job.topic.slice(0, 48)}…` : job.topic}
+                        </td>
+                        <td>
+                          <span className={job.is_promo ? 'ap-badge-promo' : 'ap-badge-neutral'}>
+                            {job.is_promo ? 'Промо' : 'Нейтральный'}
+                          </span>
+                        </td>
+                        <td>
+                          {job.created_at
+                            ? new Date(job.created_at).toLocaleString('ru-RU')
+                            : '-'}
+                        </td>
+                        <td>
+                          {job.published_url ? (
+                            <a href={job.published_url} target="_blank" rel="noopener noreferrer">
+                              Открыть
+                            </a>
+                          ) : job.last_error ? (
+                            <span className="ap-error-hint" title={job.last_error}>Ошибка</span>
+                          ) : '-'}
+                        </td>
+                      </tr>
+                    ))}
+                    {apJobs.length === 0 && (
+                      <tr><td colSpan={7}>Задач пока нет</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* RUN / PREVIEW TAB */}
+        {apTab === 'run' && (
+          <div className="ap-panel">
+            <section className="ap-section">
+              <h3>Запустить публикацию сейчас</h3>
+              <form onSubmit={handleApRunNow} className="ap-run-form">
+                <div className="management-form-row">
+                  <label>Платформа</label>
+                  <select
+                    value={apRunNowPlatform}
+                    onChange={(e) => setApRunNowPlatform(e.target.value)}
+                  >
+                    <option value="">Авто (по настройкам)</option>
+                    <option value="vcru">vc.ru</option>
+                    <option value="yandex_zen">Яндекс Дзен</option>
+                  </select>
+                </div>
+                <div className="management-form-row">
+                  <label>Тема (необязательно)</label>
+                  <input
+                    type="text"
+                    placeholder="Оставьте пустым для автовыбора из пула"
+                    value={apRunNowTopic}
+                    onChange={(e) => setApRunNowTopic(e.target.value)}
+                  />
+                </div>
+                <button
+                  type="submit"
+                  className="btn btn-black"
+                  disabled={apActionInProgress === 'run-now'}
+                >
+                  {apActionInProgress === 'run-now' ? 'Запуск...' : 'Опубликовать сейчас'}
+                </button>
+              </form>
+            </section>
+
+            <section className="ap-section">
+              <h3>Предпросмотр статьи</h3>
+              <form onSubmit={handleApPreview} className="ap-run-form">
+                <div className="management-form-row">
+                  <label>Тема статьи</label>
+                  <input
+                    type="text"
+                    placeholder="Например: Как автоматизировать бизнес с помощью ИИ"
+                    value={apPreviewTopic}
+                    onChange={(e) => setApPreviewTopic(e.target.value)}
+                    required
+                  />
+                </div>
+                <button
+                  type="submit"
+                  className="btn btn-outline"
+                  disabled={apActionInProgress === 'preview' || !apPreviewTopic.trim()}
+                >
+                  {apActionInProgress === 'preview' ? 'Генерация...' : 'Сгенерировать предпросмотр'}
+                </button>
+              </form>
+
+              {apPreviewResult && (
+                <div className="ap-preview-result">
+                  <div className="ap-preview-header">
+                    <strong>Заголовок:</strong> {apPreviewResult.title}
+                    <span className={apPreviewResult.is_promo ? 'ap-badge-promo' : 'ap-badge-neutral'}>
+                      {apPreviewResult.is_promo ? 'Промо' : 'Нейтральный'}
+                    </span>
+                  </div>
+                  <div
+                    className="ap-preview-content"
+                    dangerouslySetInnerHTML={{ __html: apPreviewResult.content }}
+                  />
+                </div>
+              )}
+            </section>
+          </div>
+        )}
+      </>
+    );
+  };
+
   const renderEmailBroadcast = () => (
     <>
       <div className="management-content-head">
@@ -1205,6 +2059,7 @@ const ManagementPortal = () => {
             {activeSection === 'billing' && renderBilling()}
             {activeSection === 'promoCodes' && renderPromoCodes()}
             {activeSection === 'emailBroadcast' && renderEmailBroadcast()}
+            {activeSection === 'contentPublisher' && renderContentPublisher()}
           </section>
         </main>
       )}

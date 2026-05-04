@@ -19,6 +19,7 @@ from app.services.subscription_maintenance import downgrade_expired_subscription
 from app.services.reindex_jobs import run_reindex_worker_forever
 from app.services.content_factory_worker import get_content_factory_worker
 from app.services.sales.dm_outreach_worker import get_dm_outreach_worker
+from app.services.article_publisher.worker import get_article_publisher_worker
 from app.channels import UserbotManager, MaxBotManager, MaxUserbotManager, WhatsAppUserbotManager
 from app.qdrant.embeddings import get_active_dense_model_name, get_dense_vector_size
 from app.utils.internal_auth import is_request_secure
@@ -45,6 +46,8 @@ async def lifespan(app: FastAPI):
     content_factory_task: asyncio.Task | None = None
     dm_outreach_worker = None
     dm_outreach_task: asyncio.Task | None = None
+    article_publisher_worker = None
+    article_publisher_task: asyncio.Task | None = None
 
     async def run_subscription_cron():
         while True:
@@ -119,6 +122,12 @@ async def lifespan(app: FastAPI):
     dm_outreach_worker = get_dm_outreach_worker()
     dm_outreach_task = asyncio.create_task(dm_outreach_worker.run_forever())
     logger.info("DmOutreachWorker enabled")
+    if settings.ARTICLE_PUBLISHER_ENABLED:
+        article_publisher_worker = get_article_publisher_worker()
+        article_publisher_task = asyncio.create_task(article_publisher_worker.run_forever())
+        logger.info("ArticlePublisherWorker enabled")
+    else:
+        logger.info("ArticlePublisherWorker disabled via ARTICLE_PUBLISHER_ENABLED")
 
     yield 
 
@@ -180,6 +189,14 @@ async def lifespan(app: FastAPI):
         dm_outreach_task.cancel()
         try:
             await dm_outreach_task
+        except asyncio.CancelledError:
+            pass
+    if article_publisher_worker:
+        await article_publisher_worker.shutdown()
+    if article_publisher_task:
+        article_publisher_task.cancel()
+        try:
+            await article_publisher_task
         except asyncio.CancelledError:
             pass
 
