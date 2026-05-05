@@ -17,6 +17,14 @@ class LoginUser(BaseModel):
 class GoogleOAuthLoginRequest(BaseModel):
     id_token: str = Field(..., min_length=100, max_length=6000, description="Google ID token from GIS")
     nonce: str = Field(..., min_length=8, max_length=255, description="Client-generated nonce")
+    consent_personal_data: bool = Field(
+        default=False,
+        description="Подтверждение согласия на обработку персональных данных (для новых аккаунтов)",
+    )
+    consent_terms: bool = Field(
+        default=False,
+        description="Подтверждение принятия оферты и пользовательского соглашения (для новых аккаунтов)",
+    )
 
 
 class RefreshTokenRequest(BaseModel):

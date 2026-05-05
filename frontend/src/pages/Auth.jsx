@@ -327,6 +327,16 @@ const Auth = () => {
     if (isRecoveryMode || isAwaitingEmailCode || form.isSubmitting) {
       return;
     }
+    if (isRegister && (!form.values.consentPersonal || !form.values.consentTerms)) {
+      if (!form.values.consentPersonal) {
+        form.setFieldError('consentPersonal', 'Отметьте согласие на обработку персональных данных');
+      }
+      if (!form.values.consentTerms) {
+        form.setFieldError('consentTerms', 'Примите условия Публичной оферты и Пользовательского соглашения');
+      }
+      showError('Для регистрации через Google необходимо принять все обязательные соглашения');
+      return;
+    }
     if (!ENV_CONFIG.APP.GOOGLE_CLIENT_ID) {
       showError('Google OAuth не настроен на клиенте (VITE_GOOGLE_CLIENT_ID)');
       return;
@@ -365,7 +375,10 @@ const Auth = () => {
                 }
               }
               console.log('Google credential received, attempting login with nonce:', nonce);
-              await loginWithGoogle(response.credential, nonce);
+              await loginWithGoogle(response.credential, nonce, {
+                consentPersonalData: Boolean(form.values.consentPersonal),
+                consentTerms: Boolean(form.values.consentTerms),
+              });
               showSuccess(SUCCESS_MESSAGES.LOGIN_SUCCESS, 3000);
               navigate(NAVIGATION_ROUTES.AGENTS);
             } catch (error) {

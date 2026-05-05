@@ -3041,8 +3041,14 @@ async def read_all_agents(
                 user = await user_dao.find_one_by_filter(load_relations=True, telegram_id=tg_id)
             if not user:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+            visible_agents: list[dict] = []
+            for agent in (user.agents or []):
+                channels = await _list_agent_channels(session, agent.id)
+                if not channels:
+                    continue
+                visible_agents.append(_serialize_agent(agent, include_encrypted_token=internal))
             return JSONResponse(
-                content=[_serialize_agent(agent, include_encrypted_token=internal) for agent in (user.agents or [])],
+                content=visible_agents,
                 status_code=status.HTTP_200_OK,
             )
 
@@ -3145,11 +3151,26 @@ async def create_agent_by_token(new_agent: NewAgent_byToken, current_user=Depend
 
     try:
         me = await _telegram_get_me(token_value)
-    except Exception as e:
+    except HTTPError as exc:
+        if exc.code == status.HTTP_401_UNAUTHORIZED:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Некорректный API ключ Telegram бота",
+            ) from exc
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Не удалось связаться с Telegram для проверки токена: {e}",
-        )
+            detail=f"Telegram вернул ошибку HTTP {exc.code} при проверке токена",
+        ) from exc
+    except URLError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Не удалось связаться с Telegram для проверки токена: {exc.reason or exc}",
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Ошибка при проверке токена Telegram: {exc}",
+        ) from exc
 
     if not me or me.get("ok") is not True:
         raise HTTPException(
@@ -3814,11 +3835,26 @@ async def add_agent_telegram_bot_channel(
     token_value = payload.bot_token.strip()
     try:
         me = await _telegram_get_me(token_value)
+    except HTTPError as exc:
+        if exc.code == status.HTTP_401_UNAUTHORIZED:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Некорректный API ключ Telegram бота",
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Telegram вернул ошибку HTTP {exc.code} при проверке токена",
+        ) from exc
+    except URLError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Не удалось связаться с Telegram для проверки токена: {exc.reason or exc}",
+        ) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Не удалось связаться с Telegram для проверки токена: {exc}",
-        )
+            detail=f"Ошибка при проверке токена Telegram: {exc}",
+        ) from exc
     if not me or me.get("ok") is not True:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

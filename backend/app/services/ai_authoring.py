@@ -1,4 +1,5 @@
 from openai import AsyncOpenAI
+import re
 
 from ..config import settings
 
@@ -7,12 +8,17 @@ ai_client = AsyncOpenAI(
     api_key=settings.DEEPSEEK_API_KEY,
     base_url="https://api.deepseek.com",
 )
+_TEMPLATE_VAR_RE = re.compile(r"(\{\{[^{}]+\}\}|\$\{[^{}]+\}|%\([^)]+\)s)")
+_ASSIGNMENT_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]{2,}\s*=\s*[^\s,;]+")
 
 
 def _clean_plain_text(text: str) -> str:
     if not text:
         return ""
-    return text.replace("#", "").replace("*", "").strip()
+    cleaned = text.replace("#", "").replace("*", "")
+    cleaned = _TEMPLATE_VAR_RE.sub("технические данные скрыты", cleaned)
+    cleaned = _ASSIGNMENT_RE.sub("технические данные скрыты", cleaned)
+    return cleaned.strip()
 
 
 async def improve_prompt_with_ai(current_prompt: str) -> str:
@@ -30,7 +36,8 @@ async def improve_prompt_with_ai(current_prompt: str) -> str:
         f"Текущее описание/промпт: {current_prompt}\n\n"
         "Напиши только текст итогового промпта, без лишних вступлений.\n"
         "ВАЖНО: Промпт должен быть кратким и лаконичным. Не более"
-        "ВАЖНО: Отвечай только чистым текстом. Не используй markdown-форматирование."
+        "ВАЖНО: Отвечай только чистым текстом. Не используй markdown-форматирование. "
+        "Никогда не выводи названия переменных/шаблонов и их значения ({{...}}, ${...}, key=value, JSON/XML-поля)."
     )
     response = await ai_client.chat.completions.create(
         model="deepseek-chat",
@@ -51,7 +58,8 @@ async def generate_welcome_with_ai(system_prompt: str) -> str:
         "Обязательно опирайся на системный промпт бота, чтобы передать его характер и суть работы.\n"
         "Пиши только текст приветствия, без кавычек и лишних пояснений.\n\n"
         f"Системный промпт бота:\n{system_prompt}\n\n"
-        "ВАЖНО: Отвечай только чистым текстом. Не используй markdown-форматирование."
+        "ВАЖНО: Отвечай только чистым текстом. Не используй markdown-форматирование. "
+        "Никогда не выводи названия переменных/шаблонов и их значения ({{...}}, ${...}, key=value, JSON/XML-поля)."
     )
     response = await ai_client.chat.completions.create(
         model="deepseek-chat",
@@ -72,7 +80,8 @@ async def generate_answer_with_context(question: str, context_list: list, system
     full_system_prompt = (
         f"{system_prompt}\n\n"
         "ВАЖНО: Отвечай только чистым текстом.\n"
-        "ЗАПРЕЩЕНО использовать markdown-форматирование."
+        "ЗАПРЕЩЕНО использовать markdown-форматирование.\n"
+        "ЗАПРЕЩЕНО показывать названия переменных/шаблонов и их значения ({{...}}, ${...}, key=value, JSON/XML-поля)."
     )
     user_prompt = f"КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ:\n{context_text}\n\nВОПРОС ПОЛЬЗОВАТЕЛЯ: {question}"
 

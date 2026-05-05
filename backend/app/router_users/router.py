@@ -1316,6 +1316,14 @@ async def user_google_oauth_login(payload: GoogleOAuthLoginRequest):
                         user = await user_dao.find_one_by_filter(email=normalized_email)
 
                     if user is None:
+                        if not payload.consent_personal_data or not payload.consent_terms:
+                            raise HTTPException(
+                                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                detail=(
+                                    "Для регистрации через Google необходимо принять согласие на обработку "
+                                    "персональных данных и условия оферты/пользовательского соглашения"
+                                ),
+                            )
                         generated_name = await _build_unique_username(user_dao, normalized_email)
                         await user_dao.add(
                             {

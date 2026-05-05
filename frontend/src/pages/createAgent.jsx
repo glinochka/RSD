@@ -32,6 +32,26 @@ const CRM_DOMAIN_OPTIONS_FALLBACK = [
   { value: 'dental_clinic', label: 'Стоматологическая клиника' },
 ];
 
+const CRM_DOMAIN_PLACEHOLDERS = {
+  beauty_salon: {
+    specialization: 'Парикмахер',
+    serviceTitle: 'Стрижка',
+  },
+  dental_clinic: {
+    specialization: 'Стоматолог-терапевт',
+    serviceTitle: 'Профессиональная чистка зубов',
+  },
+  custom: {
+    specialization: 'Специалист',
+    serviceTitle: 'Консультация',
+  },
+};
+
+const getCrmDomainPlaceholders = (domainConfig) => {
+  const domainKey = String(domainConfig?.key || domainConfig?.value || 'beauty_salon').trim();
+  return CRM_DOMAIN_PLACEHOLDERS[domainKey] || CRM_DOMAIN_PLACEHOLDERS.custom;
+};
+
 const CRM_MODE_OPTIONS = [
   { value: 'disabled', label: 'Работать без CRM' },
   { value: 'optional', label: 'Подключить CRM (опционально сейчас / позже)' },
@@ -55,6 +75,18 @@ const parseAllowedTools = (raw) =>
 const buildCrmValidationSignature = (provider, baseUrl, token) =>
   `${String(provider || '').trim().toLowerCase()}|${String(baseUrl || '').trim()}|${String(token || '').trim()}`;
 
+const normalizeChannelConnectError = (error) => {
+  const rawMessage = String(error?.message || '').trim();
+  const lower = rawMessage.toLowerCase();
+  if (
+    lower.includes('telegram') &&
+    (lower.includes('401') || lower.includes('unauthorized') || lower.includes('некорректный api ключ'))
+  ) {
+    return 'Некорректный API ключ Telegram бота. Проверьте токен в BotFather и попробуйте снова.';
+  }
+  return rawMessage || 'Не удалось подключить выбранный канал';
+};
+
 let _staffLocalIdCounter = 0;
 const newStaffId = () => `local-${++_staffLocalIdCounter}`;
 
@@ -76,7 +108,7 @@ const buildAdminDomainPromptAppendix = (domainConfig, staffList, serviceList) =>
   ].join('\n');
 };
 
-const StaffCard = ({ staff, onChange, onRemove, disabled, roleLabel }) => (
+const StaffCard = ({ staff, onChange, onRemove, disabled, roleLabel, specializationPlaceholder }) => (
   <div className="onboarding-card onboarding-card--staff">
     <button
       type="button"
@@ -118,7 +150,7 @@ const StaffCard = ({ staff, onChange, onRemove, disabled, roleLabel }) => (
         className="onboarding-card__input"
         value={staff.specialization}
         onChange={(e) => onChange({ ...staff, specialization: e.target.value })}
-        placeholder={roleLabel === 'master' ? 'Парикмахер' : 'Терапевт'}
+        placeholder={specializationPlaceholder || (roleLabel === 'master' ? 'Парикмахер' : 'Терапевт')}
         disabled={disabled}
         maxLength={64}
       />
@@ -191,7 +223,7 @@ const ServiceStaffSelect = ({ values = [], onChange, staffList, disabled }) => {
   );
 };
 
-const ServiceCard = ({ service, onChange, onRemove, staffList, disabled }) => (
+const ServiceCard = ({ service, onChange, onRemove, staffList, disabled, titlePlaceholder }) => (
   <div className="onboarding-card onboarding-card--service">
     <button
       type="button"
@@ -209,7 +241,7 @@ const ServiceCard = ({ service, onChange, onRemove, staffList, disabled }) => (
         className="onboarding-card__input"
         value={service.title}
         onChange={(e) => onChange({ ...service, title: e.target.value })}
-        placeholder="Стрижка"
+        placeholder={titlePlaceholder || 'Услуга'}
         disabled={disabled}
         maxLength={128}
       />
@@ -609,6 +641,8 @@ const CreateAgentContent = () => {
         return;
       }
 
+      let createdAgentId = null;
+      let hasConnectedAtLeastOneChannel = false;
       try {
         if (isEditMode) {
           showError('Редактирование агента сейчас недоступно на этой странице');
@@ -631,7 +665,9 @@ const CreateAgentContent = () => {
           !isWhatsAppUserbotMode &&
           !isWhatsAppBusinessApiMode
         ) {
-          showError('Выберите хотя бы один способ подключения');
+          const message = 'Добавьте хотя бы 1 канал подключения перед созданием агента.';
+          showError(message);
+          window.alert(message);
           return;
         }
 
@@ -815,6 +851,7 @@ const CreateAgentContent = () => {
           showError('Не удалось определить id агента после создания');
           return;
         }
+        createdAgentId = agentId;
 
         if (shouldConnectCrmNow) {
           await agentService.connectCrm({
@@ -874,54 +911,72 @@ const CreateAgentContent = () => {
               ? 'whatsapp_userbot'
               : 'whatsapp_business_api';
 
-        if (isBotMode) {
-          await agentService.addBotChannel({
-            agent_id: agentId,
-            bot_token: values.bot_token.trim(),
-            make_primary: primaryProvider === 'telegram_bot',
-          });
-        }
-        if (isMaxBotMode) {
-          await agentService.addMaxBotChannel({
-            agent_id: agentId,
-            bot_token: values.max_bot_token.trim(),
-            make_primary: primaryProvider === 'max_bot',
-          });
-        }
-        if (isUserbotMode) {
-          await agentService.addUserbotChannel({
-            agent_id: agentId,
-            api_id: Number(values.api_id),
-            api_hash: values.api_hash.trim(),
-            session_string: values.session_string.trim(),
-            make_primary: primaryProvider === 'telegram_userbot',
-          });
-        }
-        if (isMaxUserbotMode) {
-          await agentService.addMaxUserbotChannel({
-            agent_id: agentId,
-            max_token: values.max_token.trim(),
-            make_primary: primaryProvider === 'max_userbot',
-          });
-        }
-        if (isWhatsAppUserbotMode) {
-          await agentService.addWhatsAppUserbotChannel({
-            agent_id: agentId,
-            phone_number: values.whatsapp_userbot_phone_number.trim(),
-            session_string: values.whatsapp_userbot_session_string.trim(),
-            client_label: values.whatsapp_userbot_client_label?.trim() || undefined,
-            make_primary: primaryProvider === 'whatsapp_userbot',
-          });
-        }
-        if (isWhatsAppBusinessApiMode) {
-          await agentService.addWhatsAppBusinessApiChannel({
-            agent_id: agentId,
-            phone_number_id: values.whatsapp_phone_number_id.trim(),
-            access_token: values.whatsapp_access_token.trim(),
-            business_account_id: values.whatsapp_business_account_id?.trim() || undefined,
-            verify_token: values.whatsapp_verify_token?.trim() || undefined,
-            make_primary: primaryProvider === 'whatsapp_business_api',
-          });
+        try {
+          if (isBotMode) {
+            await agentService.addBotChannel({
+              agent_id: agentId,
+              bot_token: values.bot_token.trim(),
+              make_primary: primaryProvider === 'telegram_bot',
+            });
+            hasConnectedAtLeastOneChannel = true;
+          }
+          if (isMaxBotMode) {
+            await agentService.addMaxBotChannel({
+              agent_id: agentId,
+              bot_token: values.max_bot_token.trim(),
+              make_primary: primaryProvider === 'max_bot',
+            });
+            hasConnectedAtLeastOneChannel = true;
+          }
+          if (isUserbotMode) {
+            await agentService.addUserbotChannel({
+              agent_id: agentId,
+              api_id: Number(values.api_id),
+              api_hash: values.api_hash.trim(),
+              session_string: values.session_string.trim(),
+              make_primary: primaryProvider === 'telegram_userbot',
+            });
+            hasConnectedAtLeastOneChannel = true;
+          }
+          if (isMaxUserbotMode) {
+            await agentService.addMaxUserbotChannel({
+              agent_id: agentId,
+              max_token: values.max_token.trim(),
+              make_primary: primaryProvider === 'max_userbot',
+            });
+            hasConnectedAtLeastOneChannel = true;
+          }
+          if (isWhatsAppUserbotMode) {
+            await agentService.addWhatsAppUserbotChannel({
+              agent_id: agentId,
+              phone_number: values.whatsapp_userbot_phone_number.trim(),
+              session_string: values.whatsapp_userbot_session_string.trim(),
+              client_label: values.whatsapp_userbot_client_label?.trim() || undefined,
+              make_primary: primaryProvider === 'whatsapp_userbot',
+            });
+            hasConnectedAtLeastOneChannel = true;
+          }
+          if (isWhatsAppBusinessApiMode) {
+            await agentService.addWhatsAppBusinessApiChannel({
+              agent_id: agentId,
+              phone_number_id: values.whatsapp_phone_number_id.trim(),
+              access_token: values.whatsapp_access_token.trim(),
+              business_account_id: values.whatsapp_business_account_id?.trim() || undefined,
+              verify_token: values.whatsapp_verify_token?.trim() || undefined,
+              make_primary: primaryProvider === 'whatsapp_business_api',
+            });
+            hasConnectedAtLeastOneChannel = true;
+          }
+        } catch (channelError) {
+          if (!hasConnectedAtLeastOneChannel && Number.isFinite(agentId)) {
+            try {
+              await agentService.delete(agentId);
+            } catch {
+              // Best-effort rollback; original channel error is still returned to user.
+            }
+          }
+          const normalizedMessage = normalizeChannelConnectError(channelError);
+          throw new Error(normalizedMessage);
         }
 
         for (const file of uploadedFiles) {
@@ -936,6 +991,13 @@ const CreateAgentContent = () => {
 
         navigate(NAVIGATION_ROUTES.AGENTS);
       } catch (error) {
+        if (Number.isFinite(createdAgentId) && !hasConnectedAtLeastOneChannel) {
+          try {
+            await agentService.delete(createdAgentId);
+          } catch {
+            // Best-effort rollback for any pre-channel or channel-stage failure.
+          }
+        }
         showError(error.message || 'Ошибка при сохранении агента');
       }
     },
@@ -949,6 +1011,7 @@ const CreateAgentContent = () => {
   const domainConfig = (Array.isArray(domainRegistry) ? domainRegistry : []).find(
     (d) => (d.key || d.value) === form.values.crm_domain_type
   ) || null;
+  const crmDomainPlaceholders = getCrmDomainPlaceholders(domainConfig);
   const isCustomDomain = form.values.crm_domain_type === 'custom';
   const crmDomainOptions = (Array.isArray(domainRegistry) ? domainRegistry : []).map((d) => ({
     value: d.key || d.value,
@@ -1676,6 +1739,7 @@ const CreateAgentContent = () => {
                           key={m.localId}
                           staff={m}
                           roleLabel={domainConfig?.staff_role_default || customStaffRole || 'specialist'}
+                          specializationPlaceholder={crmDomainPlaceholders.specialization}
                           disabled={form.isSubmitting}
                           onChange={(updated) =>
                             setStaffList((prev) => prev.map((x) => (x.localId === m.localId ? updated : x)))
@@ -1700,6 +1764,7 @@ const CreateAgentContent = () => {
                         <ServiceCard
                           key={s.localId}
                           service={s}
+                          titlePlaceholder={crmDomainPlaceholders.serviceTitle}
                           staffList={staffList}
                           disabled={form.isSubmitting}
                           onChange={(updated) =>

@@ -793,7 +793,7 @@
   display: flex;
   flex-direction: row;
   gap: var(--spacing-base);
-  align-items: flex-start;
+  align-items: stretch;
   min-width: max-content;
 }
 
@@ -823,7 +823,7 @@
   background: transparent;
   align-items: center;
   justify-content: center;
-  min-height: 120px;
+  min-height: 240px;
   cursor: pointer;
   color: var(--color-text-secondary, #888);
   font-size: var(--font-size-sm);
@@ -906,6 +906,7 @@
 /* Staff card min-height */
 .onboarding-card--staff {
   padding-top: 28px;
+  min-height: 240px;
 }
 
 /* Service card is slightly wider */

@@ -47,7 +47,7 @@ export const authService = {
     return normalizeAuthResponse(response.data, name.trim());
   },
 
-  loginWithGoogleIdToken: async (idToken, nonce) => {
+  loginWithGoogleIdToken: async (idToken, nonce, consents = {}) => {
     try {
       // Log what we're sending
       console.log('Sending Google OAuth request:', {
@@ -59,6 +59,8 @@ export const authService = {
       const response = await apiClient.post(API_ROUTES.AUTH_GOOGLE, {
         id_token: idToken,
         nonce,
+        consent_personal_data: Boolean(consents.consentPersonalData),
+        consent_terms: Boolean(consents.consentTerms),
       });
       
       console.log('Google OAuth success:', { status: response.status });

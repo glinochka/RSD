@@ -35,6 +35,12 @@ _DSML_PARAM_RE = re.compile(
     r"<｜DSML｜parameter name=\"(?P<name>[^\"]+)\"[^>]*>(?P<value>.*?)</｜DSML｜parameter>",
     re.DOTALL,
 )
+_CODE_BLOCK_RE = re.compile(r"```[\s\S]*?```", re.MULTILINE)
+_TEMPLATE_VAR_RE = re.compile(r"(\{\{[^{}]+\}\}|\$\{[^{}]+\}|%\([^)]+\)s)")
+_ASSIGNMENT_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]{2,}\s*=\s*[^\s,;]+")
+_JSON_PAIR_RE = re.compile(
+    r"([\"'])?[A-Za-z_][A-Za-z0-9_]{2,}\1?\s*:\s*([\"'][^\"']*[\"']|[^,\]\}\n]+)"
+)
 
 
 class EscalationType(str, Enum):
@@ -246,7 +252,7 @@ class TemplateRuntimeService:
                 chat_portrait=chat_portrait,
             )
             if crm_result is not None:
-                return crm_result
+                return self._sanitize_result(crm_result)
             logger.warning("crm_admin runtime fallback to qa strategy")
             qa_result = await self._execute_qa_like(
                 prompt=prompt,
@@ -256,10 +262,10 @@ class TemplateRuntimeService:
             )
             qa_result.fallback_to_text = True
             qa_result.fallback_reason = "crm_runtime_unavailable"
-            return qa_result
+            return self._sanitize_result(qa_result)
 
         if normalized == "sales_manager":
-            return await self._execute_sales_manager(
+            sales_result = await self._execute_sales_manager(
                 prompt=prompt,
                 user_message=user_message,
                 knowledge_scope_id=knowledge_scope_id,
@@ -270,17 +276,19 @@ class TemplateRuntimeService:
                 chat_portrait=chat_portrait,
                 runtime_context=runtime_context or {},
             )
+            return self._sanitize_result(sales_result)
 
         if normalized == "content_factory":
-            return await self._execute_content_factory(
+            content_result = await self._execute_content_factory(
                 prompt=prompt,
                 user_message=user_message,
                 knowledge_scope_id=knowledge_scope_id,
                 chat_portrait=chat_portrait,
             )
+            return self._sanitize_result(content_result)
 
         if normalized == "qa":
-            return await self._execute_qa_like(
+            qa_result = await self._execute_qa_like(
                 prompt=prompt,
                 user_message=user_message,
                 knowledge_scope_id=knowledge_scope_id,
@@ -288,25 +296,28 @@ class TemplateRuntimeService:
                 enable_owner_handoff=self._is_chat_freeze_enabled(template_config),
                 enable_smart_search=self._is_smart_search_enabled(template_config),
             )
+            return self._sanitize_result(qa_result)
 
         if normalized == "lead_generation":
-            return await self._execute_qa_like(
+            lead_result = await self._execute_qa_like(
                 prompt=prompt,
                 user_message=user_message,
                 knowledge_scope_id=knowledge_scope_id,
                 chat_portrait=chat_portrait,
                 enable_smart_search=self._is_smart_search_enabled(template_config),
             )
+            return self._sanitize_result(lead_result)
 
         # Unknown template types should not break runtime.
         logger.warning("Unknown template_type=%s, fallback to qa strategy", normalized)
-        return await self._execute_qa_like(
+        fallback_result = await self._execute_qa_like(
             prompt=prompt,
             user_message=user_message,
             knowledge_scope_id=knowledge_scope_id,
             chat_portrait=chat_portrait,
             enable_smart_search=self._is_smart_search_enabled(template_config),
         )
+        return self._sanitize_result(fallback_result)
 
     @staticmethod
     def _format_portrait_block(chat_portrait: str | None) -> str:
@@ -320,7 +331,34 @@ class TemplateRuntimeService:
         return _DSML_TOOL_CALLS_RE.sub("", text or "")
 
     def _clean_llm_text(self, text: str) -> str:
-        return self._strip_dsml_tool_markup(text).replace("#", "").replace("*", "").strip()
+        cleaned = self._strip_dsml_tool_markup(text).replace("#", "").replace("*", "").strip()
+        return self._sanitize_final_answer(cleaned)
+
+    @staticmethod
+    def _sanitize_final_answer(text: str) -> str:
+        """Remove leaked variable names/values from customer-facing answers."""
+        sanitized = _CODE_BLOCK_RE.sub("Технические детали скрыты.", text or "")
+        sanitized = _TEMPLATE_VAR_RE.sub("технические данные скрыты", sanitized)
+        sanitized = _ASSIGNMENT_RE.sub("технические данные скрыты", sanitized)
+        sanitized = _JSON_PAIR_RE.sub("технические данные скрыты", sanitized)
+
+        safe_lines: list[str] = []
+        for raw_line in sanitized.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            if _TEMPLATE_VAR_RE.search(line) or _ASSIGNMENT_RE.search(line):
+                continue
+            safe_lines.append(line)
+
+        collapsed = "\n".join(safe_lines).strip()
+        return collapsed or "Технические детали скрыты."
+
+    def _sanitize_result(self, result: TemplateExecutionResult) -> TemplateExecutionResult:
+        result.answer = self._sanitize_final_answer(result.answer)
+        if result.owner_handoff_reason:
+            result.owner_handoff_reason = self._sanitize_final_answer(result.owner_handoff_reason)
+        return result
 
     @staticmethod
     def _serialize_tool_call(tool_call: Any) -> dict[str, Any]:
@@ -438,7 +476,8 @@ class TemplateRuntimeService:
             "Ты модуль памяти клиента. Обнови портрет клиента/чата на основе нового сообщения. "
             "Портрет должен быть кратким, фактическим и полезным для будущих ответов ассистента. "
             "Включай: цели, интересы, ограничения, предпочтительный стиль общения, важные факты и текущий контекст. "
-            "Не выдумывай данные, не добавляй markdown, верни только итоговый портрет."
+            "Не выдумывай данные, не добавляй markdown, верни только итоговый портрет. "
+            "Никогда не выводи служебные переменные, шаблонные placeholders и их значения (например {{...}}, ${...}, key=value, JSON/XML-пары)."
         )
         if (base_prompt or "").strip():
             system_prompt = f"{base_prompt.strip()}\n\n{system_prompt}"
@@ -664,7 +703,8 @@ class TemplateRuntimeService:
             "Для отмены или переноса записи: вызывай cancel_appointment или reschedule_appointment с полем appointment_date (дата/время записи) — система найдёт запись автоматически. "
             "НЕ передавай staff_id в cancel_appointment или reschedule_appointment, если ты не уверен в его актуальности — система найдёт запись по дате и клиенту без него. "
             "Никогда не проси у пользователя ID записи. "
-            "Отвечай только чистым текстом, без markdown.\n\n"
+            "Отвечай только чистым текстом, без markdown. "
+            "Строго запрещено показывать в ответе любые названия переменных, placeholders и их содержимое ({{...}}, ${...}, key=value, JSON/XML-поля и аналогичные техфрагменты).\n\n"
             f"{now_context}\n{domain_instruction}\n{resource_model_hint}\n{backend_instruction}"
         ).strip()
         if portrait_block:
@@ -1421,7 +1461,8 @@ class TemplateRuntimeService:
             f"{prompt}\n\n"
             "Ты управляешь действиями sales-агента через function tools. "
             "Не пиши свободный ответ вместо действия, выбери tool call. "
-            "Если лид нецелевой — используй skip_lead."
+            "Если лид нецелевой — используй skip_lead. "
+            "Никогда не выводи в сообщениях названия переменных, placeholders и их значения ({{...}}, ${...}, key=value, JSON/XML-поля)."
         )
         if portrait_block:
             system_prompt = f"{system_prompt}\n\n{portrait_block}"
@@ -1994,7 +2035,8 @@ class TemplateRuntimeService:
             f"Инструкция по стадии: {stage_instruction}\n"
             "Все сообщения должны быть ненавязчивыми, человеческими и полезными. "
             "Не выдумывай факты про клиента. "
-            "Верни только чистый текст, без markdown."
+            "Верни только чистый текст, без markdown. "
+            "Не показывай служебные переменные и их значения: {{...}}, ${...}, key=value, JSON/XML-пары и любые технические поля."
         )
         if portrait_block:
             system_prompt = f"{system_prompt}\n\n{portrait_block}"

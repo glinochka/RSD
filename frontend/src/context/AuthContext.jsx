@@ -42,8 +42,8 @@ export const AuthProvider = ({ children }) => {
   );
 
   const loginWithGoogle = useCallback(
-    async (idToken, nonce) => {
-      const response = await authService.loginWithGoogleIdToken(idToken, nonce);
+    async (idToken, nonce, consents = {}) => {
+      const response = await authService.loginWithGoogleIdToken(idToken, nonce, consents);
       setToken(response.token);
       setRefreshToken(response.refreshToken);
       setUser(response.user);
