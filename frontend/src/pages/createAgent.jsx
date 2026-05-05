@@ -80,6 +80,14 @@ const normalizeChannelConnectError = (error) => {
   const lower = rawMessage.toLowerCase();
   if (
     lower.includes('telegram') &&
+    (lower.includes('404') ||
+      lower.includes('not found') ||
+      lower.includes('не распознал токен'))
+  ) {
+    return 'Telegram не распознал токен бота. Проверьте, что вы вставили полный токен из BotFather без лишних пробелов и символов.';
+  }
+  if (
+    lower.includes('telegram') &&
     (lower.includes('401') || lower.includes('unauthorized') || lower.includes('некорректный api ключ'))
   ) {
     return 'Некорректный API ключ Telegram бота. Проверьте токен в BotFather и попробуйте снова.';
