@@ -110,6 +110,12 @@ async def _handle_private_message(
         + (getattr(sender, "last_name", "") or "").strip()
     ).strip() or getattr(sender, "username", None)
 
+    # Mark incoming message as read for better DM UX.
+    try:
+        await event.client.send_read_acknowledge(event.chat_id, max_id=event.message.id)
+    except Exception:
+        logger.debug("userbot: failed to mark message as read bot_id=%s", bot_id, exc_info=True)
+
     request = MessageRequest(
         bot_id=bot_id,
         query=query,
@@ -124,7 +130,21 @@ async def _handle_private_message(
             "is_private_chat": True,
         },
     )
-    response = await get_message_processor().process(request)
+    try:
+        try:
+            async with event.client.action(event.chat_id, "typing"):
+                response = await get_message_processor().process(request)
+        except Exception:
+            logger.debug(
+                "userbot: typing action unavailable bot_id=%s agent_id=%s, fallback without typing",
+                bot_id,
+                agent_id,
+                exc_info=True,
+            )
+            response = await get_message_processor().process(request)
+    except Exception:
+        logger.exception("userbot: failed to process private message bot_id=%s agent_id=%s", bot_id, agent_id)
+        raise
     await event.respond(response.text)
 
 

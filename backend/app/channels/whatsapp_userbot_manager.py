@@ -49,6 +49,13 @@ async def _bridge_post(path: str, payload: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+async def _bridge_post_best_effort(path: str, payload: dict[str, Any]) -> None:
+    try:
+        await _bridge_post(path, payload)
+    except Exception:
+        logger.debug("whatsapp_userbot: bridge call failed path=%s payload=%s", path, payload, exc_info=True)
+
+
 async def _fetch_whatsapp_configs() -> list[dict[str, Any]]:
     async with async_session_maker() as session:
         async with session.begin():
@@ -139,6 +146,24 @@ async def _process_incoming(cfg: dict[str, Any], incoming: dict[str, Any]) -> No
     text = _extract_text(incoming)
     if not text:
         return
+    connection_id = int(cfg["connection_id"])
+
+    await _bridge_post_best_effort(
+        "session/read",
+        {
+            "connection_id": connection_id,
+            "remote_jid": remote_jid,
+            "message_id": incoming.get("id"),
+        },
+    )
+    await _bridge_post_best_effort(
+        "session/typing",
+        {
+            "connection_id": connection_id,
+            "to_jid": remote_jid,
+            "is_typing": True,
+        },
+    )
 
     bot_id = int(cfg["bot_id"])
     request = MessageRequest(
@@ -150,16 +175,25 @@ async def _process_incoming(cfg: dict[str, Any], incoming: dict[str, Any]) -> No
         welcome_message=cfg.get("welcome_message"),
         user_display_name=str(incoming.get("push_name") or "").strip() or None,
     )
-    response = await get_message_processor().process(request)
-
-    await _bridge_post(
-        "session/send",
-        {
-            "connection_id": cfg["connection_id"],
-            "to_jid": remote_jid,
-            "text": response.text,
-        },
-    )
+    try:
+        response = await get_message_processor().process(request)
+        await _bridge_post(
+            "session/send",
+            {
+                "connection_id": connection_id,
+                "to_jid": remote_jid,
+                "text": response.text,
+            },
+        )
+    finally:
+        await _bridge_post_best_effort(
+            "session/typing",
+            {
+                "connection_id": connection_id,
+                "to_jid": remote_jid,
+                "is_typing": False,
+            },
+        )
 
 
 async def _run_one_client(cfg: dict[str, Any], stop: asyncio.Event) -> None:
@@ -174,40 +208,43 @@ async def _run_one_client(cfg: dict[str, Any], stop: asyncio.Event) -> None:
         return
 
     connection_id = int(cfg["connection_id"])
-    await _bridge_post(
-        "session/connect",
-        {
-            "connection_id": connection_id,
-            "session_string": session_string,
-        },
-    )
-    logger.info("whatsapp_userbot: connected connection_id=%s bot_id=%s", connection_id, cfg.get("bot_id"))
-
-    poll_interval = max(1, int(settings.WHATSAPP_USERBOT_POLL_INTERVAL_SECONDS))
-    while not stop.is_set():
-        payload = await _bridge_post(
-            "session/pull",
+    try:
+        await _bridge_post(
+            "session/connect",
             {
                 "connection_id": connection_id,
-                "limit": 20,
+                "session_string": session_string,
             },
         )
-        messages = payload.get("messages") if isinstance(payload, dict) else None
-        if isinstance(messages, list):
-            for item in messages:
-                if not isinstance(item, dict):
-                    continue
-                try:
-                    await _process_incoming(cfg, item)
-                except Exception:
-                    logger.exception(
-                        "whatsapp_userbot: failed processing message connection_id=%s",
-                        connection_id,
-                    )
-        try:
-            await asyncio.wait_for(stop.wait(), timeout=poll_interval)
-        except asyncio.TimeoutError:
-            continue
+        logger.info("whatsapp_userbot: connected connection_id=%s bot_id=%s", connection_id, cfg.get("bot_id"))
+
+        poll_interval = max(1, int(settings.WHATSAPP_USERBOT_POLL_INTERVAL_SECONDS))
+        while not stop.is_set():
+            payload = await _bridge_post(
+                "session/pull",
+                {
+                    "connection_id": connection_id,
+                    "limit": 20,
+                },
+            )
+            messages = payload.get("messages") if isinstance(payload, dict) else None
+            if isinstance(messages, list):
+                for item in messages:
+                    if not isinstance(item, dict):
+                        continue
+                    try:
+                        await _process_incoming(cfg, item)
+                    except Exception:
+                        logger.exception(
+                            "whatsapp_userbot: failed processing message connection_id=%s",
+                            connection_id,
+                        )
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=poll_interval)
+            except asyncio.TimeoutError:
+                continue
+    finally:
+        await _bridge_post_best_effort("session/disconnect", {"connection_id": connection_id})
 
 
 class WhatsAppUserbotManager:

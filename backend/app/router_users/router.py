@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 import re
@@ -558,25 +559,44 @@ async def _send_welcome_email(email: str) -> None:
     payload = {
         "from_email": from_email,
         "to": email,
-        "subject": "Добро пожаловать в RSD! Ваш промокод START50",
+        "subject": "Добро пожаловать в RSD AI! Ваш промокод START50",
         "text": (
-            "Добро пожаловать в RSD!\n\n"
-            "Спасибо за регистрацию.\n"
+            "Здравствуйте!\n\n"
+            "Спасибо за регистрацию в RSD AI.\n\n"
             "Ваш персональный промокод: START50\n"
             "Промокод активен в течение 7 дней с момента регистрации.\n\n"
-            "RSD — это сервис для быстрого создания AI-агентов, управления каналами общения "
-            "и автоматизации коммуникаций с клиентами."
+            "В сервисе можно создать ИИ сотрудника по шаблонам:\n"
+            "- Консультант\n"
+            "- Администратор\n"
+            "- МОП-лидогенератор\n\n"
+            "Каналы подключения: Telegram, МАКС, WhatsApp.\n"
+            "Если вам нужна индивидуальная ИИ автоматизация под ваш бизнес, то мы можем сделать ее под ключ!\n"
+            "Просто оставьте заявку на сайте или в ответном письме.\n\n"
+            "Если нужна помощь, напишите в ответ на письмо, в чате на сайте "
+            "или в Telegram: t.me/fakerebellious"
         ),
         "html": _render_mailopost_card_html(
-            title="Добро пожаловать в RSD!",
+            title="Добро пожаловать в RSD AI!",
             paragraphs=[
                 "Спасибо за регистрацию — рады видеть вас в сервисе.",
-                "Ваш персональный промокод активен 7 дней с момента регистрации.",
-                "RSD помогает быстро создавать AI-агентов, подключать каналы и автоматизировать коммуникации с клиентами.",
+                "Ваш персональный промокод START50 активен 7 дней с момента регистрации.",
+                "RSD помогает быстро запускать ИИ сотрудников для бизнеса.",
+                "Шаблоны для старта: Консультант, Администратор, МОП-лидогенератор.",
+                "Доступные подключения: Telegram, МАКС и WhatsApp.",
+                "Нужна помощь или доработка под ваши процессы? Сделаем автоматизацию под ключ.",
+                "Вопросы: ответным письмом, в чате на сайте или в Telegram: t.me/fakerebellious.",
             ],
             accent_block_html=(
                 "<tr><td style='padding:8px 24px 8px 24px;'>"
-                "<div style='display:inline-block;background:#111827;color:#ffffff;font-size:20px;font-weight:700;letter-spacing:2px;padding:12px 16px;border-radius:10px;'>START50</div>"
+                "<div style='display:inline-block;background:#111827;color:#ffffff;font-size:20px;font-weight:700;letter-spacing:2px;padding:12px 16px;border-radius:10px;'>"
+                "START50"
+                "</div>"
+                "</td></tr>"
+                "<tr><td style='padding:4px 24px 8px 24px;'>"
+                "<div style='display:inline-block;background:#eef2ff;color:#3730a3;font-size:13px;font-weight:600;padding:10px 14px;border-radius:10px;'>"
+                "Если вам нужна индивидуальная ИИ автоматизация под ваш бизнес, то мы можем сделать ее под ключ! "
+                "Просто оставьте заявку на сайте или в ответном письме."
+                "</div>"
                 "</td></tr>"
             ),
         ),
@@ -591,15 +611,36 @@ async def _send_welcome_email(email: str) -> None:
     }
     url = f"{base_url}/email/messages"
     timeout = httpx.Timeout(settings.MAILOPOST_SEND_TIMEOUT_SECONDS, connect=5.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.post(url, json=payload, headers=headers)
+    attempts = 2
+    for attempt in range(attempts):
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.post(url, json=payload, headers=headers)
+        except httpx.HTTPError as exc:
+            logger.error("MailoPost welcome email transport error: %s", exc)
+            if attempt < attempts - 1:
+                await asyncio.sleep(2)
+                continue
+            return
 
-    if not response.is_success:
+        if response.is_success:
+            return
+
         logger.error(
             "MailoPost welcome email send failed: status=%s body=%s",
             response.status_code,
             response.text[:500],
         )
+        is_retryable = response.status_code == 429 or response.status_code >= 500
+        if not is_retryable or attempt >= attempts - 1:
+            return
+
+        retry_after = response.headers.get("Retry-After")
+        try:
+            retry_delay = min(5, max(1, int(retry_after or "2")))
+        except ValueError:
+            retry_delay = 2
+        await asyncio.sleep(retry_delay)
 
 
 async def get_current_user_required(
@@ -1298,6 +1339,7 @@ async def user_google_oauth_login(payload: GoogleOAuthLoginRequest):
     display_name = str(google_payload.get("name") or "").strip()[:128] or None
 
     for attempt in range(2):
+        should_send_welcome = False
         try:
             async with async_session_maker() as session:
                 user_dao = UserDAO(session)
@@ -1335,6 +1377,7 @@ async def user_google_oauth_login(payload: GoogleOAuthLoginRequest):
                         )
                         await session.flush()
                         user = await user_dao.find_one_by_filter(email=normalized_email)
+                        should_send_welcome = True
 
                     if user is None:
                         raise HTTPException(
@@ -1367,6 +1410,8 @@ async def user_google_oauth_login(payload: GoogleOAuthLoginRequest):
                         identity.display_name = display_name
 
                     access_token, refresh_token = await _issue_user_tokens(session, user.id)
+            if should_send_welcome:
+                await _send_welcome_email(normalized_email)
             return JSONResponse(
                 content={
                     "access_token": access_token,

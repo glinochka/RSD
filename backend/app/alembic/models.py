@@ -46,6 +46,7 @@ class User(Base):
     password_reset_last_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     password_reset_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     password_reset_verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    onboarding_reminder_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     password: Mapped[str] = mapped_column(String(100), nullable=True)
     
     subscription_type: Mapped[str] = mapped_column(String(50), default="Free")

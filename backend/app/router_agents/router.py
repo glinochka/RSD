@@ -1855,6 +1855,57 @@ async def _telegram_userbot_send_message(
         await client.disconnect()
 
 
+async def _terminate_telegram_userbot_session(encrypted_bundle: str) -> None:
+    if not encrypted_bundle:
+        return
+    try:
+        raw = decrypt_token(encrypted_bundle)
+        data = json.loads(raw)
+        api_id = int(data.get("api_id"))
+        api_hash = str(data.get("api_hash") or "").strip()
+        session_string = str(data.get("session_string") or "").strip()
+    except Exception:
+        logger.warning("telegram_userbot: failed to decode credentials for session termination", exc_info=True)
+        return
+    if not api_id or not api_hash or not session_string:
+        return
+
+    client = _create_telethon_client(api_id=api_id, api_hash=api_hash, session_string=session_string)
+    try:
+        await client.connect()
+        if await client.is_user_authorized():
+            await client.log_out()
+    except Exception:
+        logger.warning("telegram_userbot: failed to terminate session", exc_info=True)
+    finally:
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
+
+
+async def _terminate_whatsapp_userbot_session(connection_id: int) -> None:
+    try:
+        await _wa_userbot_bridge_post("session/disconnect", {"connection_id": connection_id})
+    except Exception:
+        logger.warning("whatsapp_userbot: failed to disconnect runtime session connection_id=%s", connection_id, exc_info=True)
+    try:
+        await _wa_userbot_bridge_post("session/logout", {"connection_id": connection_id})
+    except Exception:
+        logger.debug("whatsapp_userbot: session/logout is unavailable for connection_id=%s", connection_id, exc_info=True)
+
+
+async def _terminate_channel_session_if_supported(channel: AgentChannelConnection) -> None:
+    provider = (channel.provider or "").strip().lower()
+    connection_type = (channel.connection_type or "").strip().lower()
+    if connection_type != "userbot":
+        return
+    if provider == "telegram_userbot":
+        await _terminate_telegram_userbot_session(str(channel.encrypted_credentials or ""))
+    elif provider == "whatsapp_userbot":
+        await _terminate_whatsapp_userbot_session(int(channel.id))
+
+
 async def _find_agent_with_access(
     agent_dao: AgentDAO,
     *,
@@ -4490,6 +4541,7 @@ async def delete_agent_channel(
                 except HTTPException:
                     # Do not block channel deletion if webhook is already detached.
                     pass
+            await _terminate_channel_session_if_supported(channel)
 
             deleting_primary = bool(channel.is_primary)
             await session.delete(channel)
@@ -4618,6 +4670,9 @@ async def delete_by_bot_id(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="Qdrant deleting error",
                 )
+            channels = await _list_agent_channels(session, agent.id)
+            for channel in channels:
+                await _terminate_channel_session_if_supported(channel)
             await agent_dao.delete(agent)
     return Response(status_code=status.HTTP_200_OK)
 

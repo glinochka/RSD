@@ -16,6 +16,7 @@ from app.router_admin import router as admin_router
 from app.origins import origins
 from app.config import settings
 from app.services.subscription_maintenance import downgrade_expired_subscriptions_once
+from app.services.onboarding_email_maintenance import send_onboarding_inactive_user_reminders_once
 from app.services.reindex_jobs import run_reindex_worker_forever
 from app.services.content_factory_worker import get_content_factory_worker
 from app.services.sales.dm_outreach_worker import get_dm_outreach_worker
@@ -53,6 +54,7 @@ async def lifespan(app: FastAPI):
         while True:
             try:
                 await downgrade_expired_subscriptions_once()
+                await send_onboarding_inactive_user_reminders_once()
             except Exception:
                 logger.exception("Subscription cron failed")
             await asyncio.sleep(3600)
