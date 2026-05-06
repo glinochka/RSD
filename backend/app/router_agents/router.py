@@ -171,7 +171,7 @@ WIDGET_CSS = """
 .rsd-widget-input:focus{border-color:#6b7280}
 .rsd-widget-send{border:none;border-radius:10px;padding:10px 14px;background:#111827;color:#fff;cursor:pointer;font-size:14px}
 .rsd-widget-send:disabled{opacity:.55;cursor:not-allowed}
-.rsd-widget-bubbles{position:absolute;bottom:70px;right:0;display:flex;flex-direction:column-reverse;align-items:flex-end;gap:8px;max-width:min(420px,calc(100vw - 24px));pointer-events:none}
+.rsd-widget-bubbles{position:absolute;bottom:70px;right:0;display:flex;flex-direction:column;align-items:flex-end;gap:8px;max-width:min(420px,calc(100vw - 24px));pointer-events:none}
 .rsd-widget-root[data-position="bottom-left"] .rsd-widget-bubbles{right:auto;left:0;align-items:flex-start}
 .rsd-widget-bubble{position:relative;width:fit-content;max-width:min(420px,calc(100vw - 24px));background:#fff;border:1px solid #e5e7eb;border-radius:14px 14px 4px 14px;padding:12px 38px 12px 14px;box-shadow:0 8px 24px rgba(15,23,42,.18);font-size:14px;line-height:1.4;color:#111827;cursor:pointer;animation:rsd-in .3s ease;pointer-events:auto;transition:transform .28s ease,opacity .22s ease}
 .rsd-widget-root[data-position="bottom-left"] .rsd-widget-bubble{border-radius:14px 14px 14px 4px}
