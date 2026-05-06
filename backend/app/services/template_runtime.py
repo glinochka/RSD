@@ -41,6 +41,7 @@ _ASSIGNMENT_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]{2,}\s*=\s*[^\s,;]+")
 _JSON_PAIR_RE = re.compile(
     r"([\"'])?[A-Za-z_][A-Za-z0-9_]{2,}\1?\s*:\s*([\"'][^\"']*[\"']|[^,\]\}\n]+)"
 )
+_INTERNAL_MARKER_RE = re.compile(r"\[[A-Z][A-Z0-9_]{2,}\]")
 
 
 class EscalationType(str, Enum):
@@ -338,13 +339,14 @@ class TemplateRuntimeService:
     def _sanitize_final_answer(text: str) -> str:
         """Remove leaked variable names/values from customer-facing answers."""
         sanitized = _CODE_BLOCK_RE.sub("Технические детали скрыты.", text or "")
+        sanitized = _INTERNAL_MARKER_RE.sub("", sanitized)
         sanitized = _TEMPLATE_VAR_RE.sub("технические данные скрыты", sanitized)
         sanitized = _ASSIGNMENT_RE.sub("технические данные скрыты", sanitized)
         sanitized = _JSON_PAIR_RE.sub("технические данные скрыты", sanitized)
 
         safe_lines: list[str] = []
         for raw_line in sanitized.splitlines():
-            line = raw_line.strip()
+            line = re.sub(r"\s{2,}", " ", raw_line).strip()
             if not line:
                 continue
             if _TEMPLATE_VAR_RE.search(line) or _ASSIGNMENT_RE.search(line):
@@ -1027,8 +1029,8 @@ class TemplateRuntimeService:
         if not text:
             return text, False, None, EscalationType.NONE
 
-        operator_assist_match = re.match(
-            r"^\[OPERATOR_ASSIST\]\s*(.*)$", text, flags=re.IGNORECASE | re.DOTALL
+        operator_assist_match = re.search(
+            r"\[OPERATOR_ASSIST\]\s*(.*)", text, flags=re.IGNORECASE | re.DOTALL
         )
         if operator_assist_match:
             reason_text = (operator_assist_match.group(1) or "").strip()
@@ -1036,8 +1038,8 @@ class TemplateRuntimeService:
             default_msg = "Вызываю старшего менеджера, подождите пожалуйста. А пока могу помочь вам с другими вопросами."
             return reason_text or default_msg, True, first_sentence, EscalationType.NOTIFY_ONLY
 
-        owner_handoff_match = re.match(
-            r"^\[OWNER_HANDOFF\]\s*(.*)$", text, flags=re.IGNORECASE | re.DOTALL
+        owner_handoff_match = re.search(
+            r"\[OWNER_HANDOFF\]\s*(.*)", text, flags=re.IGNORECASE | re.DOTALL
         )
         if owner_handoff_match:
             reason_text = (owner_handoff_match.group(1) or "").strip()

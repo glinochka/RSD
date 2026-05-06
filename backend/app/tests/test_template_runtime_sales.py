@@ -415,7 +415,10 @@ async def test_qa_runtime_operator_assist_does_not_freeze_chat(monkeypatch):
         return [{"source": "kb://faq", "text": "FAQ context"}]
 
     async def fake_generate(user_message, context_list, prompt):
-        return "[OPERATOR_ASSIST] Вызываю старшего менеджера для уточнения деталей."
+        return (
+            "Конечно, я передам ваш запрос. "
+            "[OPERATOR_ASSIST] Вызываю старшего менеджера для уточнения деталей."
+        )
 
     monkeypatch.setattr("app.services.template_runtime.search_knowledge_base", fake_search)
     monkeypatch.setattr("app.services.template_runtime.generate_answer_with_context", fake_generate)
@@ -428,6 +431,7 @@ async def test_qa_runtime_operator_assist_does_not_freeze_chat(monkeypatch):
     )
 
     assert "менеджер" in result.answer.lower()
+    assert "[OPERATOR_ASSIST]" not in result.answer
     assert result.requires_owner_handoff is True
     assert result.owner_handoff_reason is not None
     assert result.escalation_type == EscalationType.NOTIFY_ONLY
@@ -453,7 +457,8 @@ async def test_lead_generation_does_not_enable_owner_handoff(monkeypatch):
         knowledge_scope_id=101,
     )
 
-    assert result.answer == "[OWNER_HANDOFF] Формальный маркер"
+    assert "[OWNER_HANDOFF]" not in result.answer
+    assert result.answer == "Формальный маркер"
     assert result.requires_owner_handoff is False
     assert result.owner_handoff_reason is None
 
