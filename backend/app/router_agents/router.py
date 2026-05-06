@@ -171,8 +171,8 @@ WIDGET_CSS = """
 .rsd-widget-input:focus{border-color:#6b7280}
 .rsd-widget-send{border:none;border-radius:10px;padding:10px 14px;background:#111827;color:#fff;cursor:pointer;font-size:14px}
 .rsd-widget-send:disabled{opacity:.55;cursor:not-allowed}
-.rsd-widget-bubbles{position:absolute;bottom:70px;right:0;display:flex;flex-direction:column-reverse;align-items:flex-end;gap:8px;max-width:min(420px,calc(100vw - 24px));pointer-events:none;transform:translateX(calc(-100% - 12px))}
-.rsd-widget-root[data-position="bottom-left"] .rsd-widget-bubbles{right:auto;left:0;align-items:flex-start;transform:translateX(calc(100% + 12px))}
+.rsd-widget-bubbles{position:absolute;bottom:70px;right:0;display:flex;flex-direction:column-reverse;align-items:flex-end;gap:8px;max-width:min(420px,calc(100vw - 24px));pointer-events:none}
+.rsd-widget-root[data-position="bottom-left"] .rsd-widget-bubbles{right:auto;left:0;align-items:flex-start}
 .rsd-widget-bubble{position:relative;width:fit-content;max-width:min(420px,calc(100vw - 24px));background:#fff;border:1px solid #e5e7eb;border-radius:14px 14px 4px 14px;padding:12px 38px 12px 14px;box-shadow:0 8px 24px rgba(15,23,42,.18);font-size:14px;line-height:1.4;color:#111827;cursor:pointer;animation:rsd-in .3s ease;pointer-events:auto;transition:transform .28s ease,opacity .22s ease}
 .rsd-widget-root[data-position="bottom-left"] .rsd-widget-bubble{border-radius:14px 14px 14px 4px}
 @keyframes rsd-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
@@ -219,7 +219,7 @@ WIDGET_CSS = """
 .rsd-widget-root[data-theme="darkmode"] .rsd-widget-input:focus{border-color:#6366f1}
 .rsd-widget-root[data-theme="darkmode"] .rsd-widget-send{background:#4f46e5}
 .rsd-widget-root[data-theme="darkmode"] .rsd-widget-bubble{background:#1f2937;border-color:#374151;color:#f9fafb}
-@media (max-width:480px){.rsd-widget-root[data-position="bottom-right"]{right:12px;bottom:12px;left:auto}.rsd-widget-root[data-position="bottom-left"]{left:12px;bottom:12px;right:auto}.rsd-widget-panel{width:min(calc(100vw - 24px),400px);left:auto;right:0;max-height:calc(100vh - 94px)}.rsd-widget-root[data-position="bottom-left"] .rsd-widget-panel{left:0;right:auto}.rsd-widget-bubbles{bottom:64px;right:0;transform:none;max-width:calc(100vw - 24px)}.rsd-widget-root[data-position="bottom-left"] .rsd-widget-bubbles{left:0;right:auto;transform:none}.rsd-widget-bubble{max-width:calc(100vw - 24px)}}
+@media (max-width:480px){.rsd-widget-root[data-position="bottom-right"]{right:12px;bottom:12px;left:auto}.rsd-widget-root[data-position="bottom-left"]{left:12px;bottom:12px;right:auto}.rsd-widget-panel{width:min(calc(100vw - 24px),400px);left:auto;right:0;max-height:calc(100vh - 94px)}.rsd-widget-root[data-position="bottom-left"] .rsd-widget-panel{left:0;right:auto}.rsd-widget-bubbles,.rsd-widget-bubble{max-width:calc(100vw - 24px)}}
 """.strip()
 
 WIDGET_JS = """
