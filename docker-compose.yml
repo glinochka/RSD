@@ -77,6 +77,17 @@ services:
             args:
                 VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
                 VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}
+                VITE_WIDGET_API_BASE: ${VITE_WIDGET_API_BASE:-}
+                VITE_WIDGET_API_KEY: ${VITE_WIDGET_API_KEY:-}
+                VITE_WIDGET_POSITION: ${VITE_WIDGET_POSITION:-bottom-right}
+                VITE_WIDGET_TITLE: ${VITE_WIDGET_TITLE:-}
+                VITE_WIDGET_GREETING: ${VITE_WIDGET_GREETING:-}
+                VITE_WIDGET_PLACEHOLDER: ${VITE_WIDGET_PLACEHOLDER:-}
+                VITE_WIDGET_THEME: ${VITE_WIDGET_THEME:-dark}
+                VITE_WIDGET_PROACTIVE_MESSAGE: ${VITE_WIDGET_PROACTIVE_MESSAGE:-}
+                VITE_WIDGET_PROACTIVE_DELAY: ${VITE_WIDGET_PROACTIVE_DELAY:-}
+                VITE_WIDGET_PROACTIVE_MESSAGE_2: ${VITE_WIDGET_PROACTIVE_MESSAGE_2:-}
+                VITE_WIDGET_PROACTIVE_DELAY_2: ${VITE_WIDGET_PROACTIVE_DELAY_2:-}
         container_name: rsd_frontend
         ports:
             # Port 3000 to align with backend/app/origins.py (CORS allows http://localhost:3000)
