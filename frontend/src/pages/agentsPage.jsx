@@ -64,6 +64,88 @@ const channelLabel = (channel) => {
 };
 const WIDGET_TEMPLATE_TYPES = new Set(['qa', 'crm_admin']);
 
+const CustomSelect = ({
+  id,
+  name,
+  value,
+  options,
+  onChange,
+  disabled = false,
+  className = 'input-main',
+}) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const selectRef = useRef(null);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const handleOutsideClick = (event) => {
+      if (!selectRef.current?.contains(event.target)) {
+        setIsOpen(false);
+      }
+    };
+    const handleEscape = (event) => {
+      if (event.key === 'Escape') {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [isOpen]);
+
+  const selectedOption = options.find((option) => option.value === value) || options[0];
+  const buttonClassName = ['custom-select-trigger', className].filter(Boolean).join(' ');
+
+  const handleSelectOption = (nextValue) => {
+    const optionToSelect = options.find((option) => option.value === nextValue);
+    if (optionToSelect?.disabled) return;
+    onChange({
+      target: {
+        name,
+        value: nextValue,
+      },
+    });
+    setIsOpen(false);
+  };
+
+  return (
+    <div className={`custom-select ${disabled ? 'disabled' : ''}`} ref={selectRef}>
+      <button
+        id={id}
+        type="button"
+        className={buttonClassName}
+        onClick={() => setIsOpen((prev) => !prev)}
+        disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
+      >
+        <span className="custom-select-value">{selectedOption?.label || ''}</span>
+        <span className={`custom-select-arrow ${isOpen ? 'open' : ''}`} aria-hidden="true" />
+      </button>
+      {isOpen && !disabled ? (
+        <div className="custom-select-dropdown" role="listbox" aria-labelledby={id}>
+          {options.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              className={`custom-select-option ${option.value === value ? 'selected' : ''} ${
+                option.disabled ? 'disabled' : ''
+              }`}
+              onClick={() => handleSelectOption(option.value)}
+              disabled={option.disabled}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
 const FeatureToggle = ({ checked, onChange, disabled, title, description, helpText }) => {
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const toggleRef = useRef(null);
@@ -652,6 +734,50 @@ const AgentsPageContent = () => {
       await refreshAgents();
     } catch (error) {
       showError(error?.message || 'Не удалось обновить настройки шаблона Менеджер продаж');
+    } finally {
+      setIsSavingTemplateConfig(false);
+    }
+  };
+
+  const handleToggleSalesActivity = async (field, enabled) => {
+    if (!selectedBotId || !selectedAgent) return;
+    const currentConfig = getTemplateConfig(selectedAgent);
+    const nextConfig = {
+      ...currentConfig,
+      [field]: Boolean(enabled),
+    };
+    const leadGenerationEnabled = Boolean(nextConfig.lead_generation_enabled);
+    const neuroCommentingEnabled = Boolean(nextConfig.neuro_commenting_enabled);
+    const liveChatSimulationEnabled = Boolean(nextConfig.live_chat_simulation_enabled);
+    const allSalesActivitiesDisabled =
+      !leadGenerationEnabled && !neuroCommentingEnabled && !liveChatSimulationEnabled;
+
+    setIsSavingTemplateConfig(true);
+    try {
+      await agentService.update(selectedBotId, {
+        template_config: nextConfig,
+        ...(allSalesActivitiesDisabled ? { is_active: false } : {}),
+      });
+      setSelectedAgent((prev) =>
+        prev
+          ? {
+              ...prev,
+              template_config: nextConfig,
+              ...(allSalesActivitiesDisabled ? { is_active: false } : {}),
+            }
+          : prev
+      );
+      setSalesLeadGenerationEnabled(leadGenerationEnabled);
+      setSalesNeuroCommentingEnabled(neuroCommentingEnabled);
+      setSalesLiveChatSimulationEnabled(liveChatSimulationEnabled);
+      showSuccess(
+        allSalesActivitiesDisabled
+          ? 'Все активности отключены: агент автоматически деактивирован'
+          : 'Настройка активности обновлена'
+      );
+      await refreshAgents();
+    } catch (error) {
+      showError(error?.message || 'Не удалось обновить настройку активности');
     } finally {
       setIsSavingTemplateConfig(false);
     }
@@ -1505,34 +1631,40 @@ const AgentsPageContent = () => {
                         <label htmlFor="sales_workflow_completion_mode_edit" className="mt-input">
                           Завершение диалога:
                         </label>
-                        <select
+                        <CustomSelect
                           id="sales_workflow_completion_mode_edit"
-                          className="input-main"
+                          name="sales_workflow_completion_mode_edit"
                           value={salesWorkflowCompletionMode}
                           onChange={(event) => setSalesWorkflowCompletionMode(event.target.value)}
+                          options={[
+                            {
+                              value: 'auto_finish_on_signal',
+                              label: 'Продажа/окончание диалога (останавливать автопрогрев)',
+                            },
+                            {
+                              value: 'continue_dialog',
+                              label: 'Продолжать диалог по стадиям без авто-остановки',
+                            },
+                          ]}
                           disabled={isSavingTemplateConfig}
-                        >
-                          <option value="auto_finish_on_signal">
-                            Продажа/окончание диалога (останавливать автопрогрев)
-                          </option>
-                          <option value="continue_dialog">Продолжать диалог по стадиям без авто-остановки</option>
-                        </select>
+                        />
                         <label htmlFor="sales_lead_score_scale_edit" className="mt-input">
                           Шкала оценки лида:
                         </label>
-                        <select
+                        <CustomSelect
                           id="sales_lead_score_scale_edit"
-                          className="input-main"
+                          name="sales_lead_score_scale_edit"
                           value={salesLeadScoreScale}
                           onChange={(event) => setSalesLeadScoreScale(event.target.value)}
+                          options={[
+                            { value: '100', label: '0-100 (детальная)' },
+                            { value: '10', label: '0-10 (компактная)' },
+                          ]}
                           disabled={isSavingTemplateConfig}
-                        >
-                          <option value="100">0-100 (детальная)</option>
-                          <option value="10">0-10 (компактная)</option>
-                        </select>
+                        />
                         <FeatureToggle
                           checked={salesLeadGenerationEnabled}
-                          onChange={setSalesLeadGenerationEnabled}
+                          onChange={(enabled) => handleToggleSalesActivity('lead_generation_enabled', enabled)}
                           disabled={isSavingTemplateConfig}
                           title="Лидогенерация"
                           description="Основной контур sales_manager: анализ чатов, отлов лидов и продажа."
@@ -1540,7 +1672,7 @@ const AgentsPageContent = () => {
                         />
                         <FeatureToggle
                           checked={salesNeuroCommentingEnabled}
-                          onChange={setSalesNeuroCommentingEnabled}
+                          onChange={(enabled) => handleToggleSalesActivity('neuro_commenting_enabled', enabled)}
                           disabled={isSavingTemplateConfig}
                           title="Нейрокомментинг"
                           description="Юзербот мониторит посты в доступных каналах и оставляет LLM-комментарии."
@@ -1548,7 +1680,7 @@ const AgentsPageContent = () => {
                         />
                         <FeatureToggle
                           checked={salesLiveChatSimulationEnabled}
-                          onChange={setSalesLiveChatSimulationEnabled}
+                          onChange={(enabled) => handleToggleSalesActivity('live_chat_simulation_enabled', enabled)}
                           disabled={isSavingTemplateConfig}
                           title="Имитация живого общения"
                           description="Юзербот периодически включается в обсуждения по LLM-триггерам."

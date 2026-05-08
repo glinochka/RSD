@@ -320,6 +320,7 @@ class UserbotManager:
     def __init__(self) -> None:
         self._stop = asyncio.Event()
         self._tasks: dict[int, asyncio.Task[None]] = {}
+        self._config_fingerprints: dict[int, str] = {}
         self._leader_lock = PgLeaderLock(20_001, "telegram_userbot_manager")
 
     async def _cancel_all_tasks(self) -> None:
@@ -328,6 +329,7 @@ class UserbotManager:
         if self._tasks:
             await asyncio.gather(*self._tasks.values(), return_exceptions=True)
         self._tasks.clear()
+        self._config_fingerprints.clear()
 
     async def shutdown(self) -> None:
         self._stop.set()
@@ -352,6 +354,7 @@ class UserbotManager:
                         for bot_id in list(self._tasks):
                             if bot_id not in wanted:
                                 task = self._tasks.pop(bot_id)
+                                self._config_fingerprints.pop(bot_id, None)
                                 task.cancel()
                                 try:
                                     await task
@@ -361,16 +364,31 @@ class UserbotManager:
 
                         by_id = {int(c["bot_id"]): c for c in configs if c.get("bot_id") is not None}
                         for bot_id, cfg in by_id.items():
+                            fingerprint = json.dumps(cfg, sort_keys=True, ensure_ascii=False, default=str)
                             existing = self._tasks.get(bot_id)
                             if existing and existing.done():
                                 self._tasks.pop(bot_id, None)
+                                self._config_fingerprints.pop(bot_id, None)
                                 try:
                                     existing.result()
                                 except Exception:
                                     logger.exception("userbot: previous worker crashed bot_id=%s", bot_id)
                                 existing = None
+                            previous_fingerprint = self._config_fingerprints.get(bot_id)
+                            if existing and previous_fingerprint != fingerprint:
+                                logger.info("userbot: config changed, restarting worker bot_id=%s", bot_id)
+                                existing.cancel()
+                                try:
+                                    await existing
+                                except asyncio.CancelledError:
+                                    pass
+                                except Exception:
+                                    logger.exception("userbot: worker failed during restart bot_id=%s", bot_id)
+                                self._tasks.pop(bot_id, None)
+                                existing = None
                             if existing is None:
                                 self._tasks[bot_id] = asyncio.create_task(_run_one_client(cfg))
+                                self._config_fingerprints[bot_id] = fingerprint
                                 logger.info("userbot: started worker bot_id=%s", bot_id)
                 except Exception:
                     logger.exception("UserbotManager cycle failed")
