@@ -191,6 +191,8 @@ async def _handle_chat_message(
     # Only process if template is sales_manager
     if template_type != "sales_manager":
         return
+    if not bool((template_config or {}).get("lead_generation_enabled", True)):
+        return
 
     query = str(raw).strip()
     user_external_id = str(getattr(sender, "id", None) or "")

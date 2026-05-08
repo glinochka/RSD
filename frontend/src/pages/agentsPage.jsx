@@ -36,6 +36,22 @@ const isChatFreezeEnabled = (agent) => {
   return cfg.enable_chat_freeze !== false;
 };
 const isStartProcessingEnabled = (agent) => Boolean(agent?.process_start_with_llm);
+const getTemplateConfig = (agent) => {
+  const cfg = agent?.template_config;
+  return cfg && typeof cfg === 'object' ? cfg : {};
+};
+const toCsvOffsets = (value) => {
+  if (!Array.isArray(value)) return '24,2';
+  const normalized = value
+    .map((item) => Number(item))
+    .filter((item) => Number.isFinite(item) && item > 0 && item <= 72);
+  return normalized.length > 0 ? normalized.join(',') : '24,2';
+};
+const parseReminderOffsets = (value) =>
+  String(value || '')
+    .split(',')
+    .map((item) => Number(item.trim()))
+    .filter((item) => Number.isFinite(item) && item > 0 && item <= 72);
 const channelLabel = (channel) => {
   if (!channel) return 'Канал';
   if (channel.provider === 'telegram_bot') return 'Telegram бот';
@@ -209,6 +225,7 @@ const AgentsPageContent = () => {
   const [isSavingSmartSearch, setIsSavingSmartSearch] = useState(false);
   const [isSavingChatFreeze, setIsSavingChatFreeze] = useState(false);
   const [isSavingStartProcessing, setIsSavingStartProcessing] = useState(false);
+  const [isSavingTemplateConfig, setIsSavingTemplateConfig] = useState(false);
   const [isGeneratingPrompt, setIsGeneratingPrompt] = useState(false);
   const [isGeneratingWelcome, setIsGeneratingWelcome] = useState(false);
   const [isUploadingDocs, setIsUploadingDocs] = useState(false);
@@ -248,6 +265,20 @@ const AgentsPageContent = () => {
   const [whatsappAccessToken, setWhatsappAccessToken] = useState('');
   const [whatsappBusinessAccountId, setWhatsappBusinessAccountId] = useState('');
   const [whatsappVerifyToken, setWhatsappVerifyToken] = useState('');
+  const [adminWaitlistEnabled, setAdminWaitlistEnabled] = useState(true);
+  const [adminReminderEnabled, setAdminReminderEnabled] = useState(true);
+  const [adminReminderOffsets, setAdminReminderOffsets] = useState('24,2');
+  const [adminManualConfirmationEnabled, setAdminManualConfirmationEnabled] = useState(false);
+  const [adminManualConfirmationPriceMinor, setAdminManualConfirmationPriceMinor] = useState('15000');
+  const [adminManualConfirmationDurationMinutes, setAdminManualConfirmationDurationMinutes] = useState('120');
+  const [salesProductName, setSalesProductName] = useState('');
+  const [salesOfferType, setSalesOfferType] = useState('');
+  const [salesUsp, setSalesUsp] = useState('');
+  const [salesWorkflowCompletionMode, setSalesWorkflowCompletionMode] = useState('auto_finish_on_signal');
+  const [salesLeadScoreScale, setSalesLeadScoreScale] = useState('100');
+  const [salesLeadGenerationEnabled, setSalesLeadGenerationEnabled] = useState(true);
+  const [salesNeuroCommentingEnabled, setSalesNeuroCommentingEnabled] = useState(false);
+  const [salesLiveChatSimulationEnabled, setSalesLiveChatSimulationEnabled] = useState(false);
   const detailsRequestIdRef = useRef(0);
   const { data: agents, isLoading, execute } = useAsync(
     () => agentService.getAll(),
@@ -546,6 +577,86 @@ const AgentsPageContent = () => {
     }
   };
 
+  const handleSaveAdminTemplateConfig = async () => {
+    if (!selectedBotId || !selectedAgent) return;
+    const currentConfig = getTemplateConfig(selectedAgent);
+    const nextConfig = {
+      ...currentConfig,
+      waitlist_enabled: Boolean(adminWaitlistEnabled),
+      reminder_enabled: Boolean(adminReminderEnabled),
+      reminder_offsets_hours: parseReminderOffsets(adminReminderOffsets),
+      manual_confirmation_enabled: Boolean(adminManualConfirmationEnabled),
+      manual_confirmation_price_minor: Math.max(0, Number(adminManualConfirmationPriceMinor) || 0),
+      manual_confirmation_duration_minutes: Math.max(1, Number(adminManualConfirmationDurationMinutes) || 120),
+    };
+    setIsSavingTemplateConfig(true);
+    try {
+      await agentService.update(selectedBotId, { template_config: nextConfig });
+      setSelectedAgent((prev) => (prev ? { ...prev, template_config: nextConfig } : prev));
+      showSuccess('Настройки шаблона Администратор обновлены');
+      await refreshAgents();
+    } catch (error) {
+      showError(error?.message || 'Не удалось обновить настройки шаблона Администратор');
+    } finally {
+      setIsSavingTemplateConfig(false);
+    }
+  };
+
+  const handleSaveSalesTemplateConfig = async () => {
+    if (!selectedBotId || !selectedAgent) return;
+    if (!salesProductName.trim()) {
+      showError('Укажите продукт');
+      return;
+    }
+    if (!salesOfferType.trim()) {
+      showError('Укажите категорию предложения');
+      return;
+    }
+    const currentConfig = getTemplateConfig(selectedAgent);
+    const nextConfig = {
+      ...currentConfig,
+      sales_product_name: salesProductName.trim(),
+      sales_offer_type: salesOfferType.trim(),
+      sales_usp: salesUsp.trim(),
+      workflow_completion_mode:
+        salesWorkflowCompletionMode === 'continue_dialog' ? 'continue_dialog' : 'auto_finish_on_signal',
+      lead_score_scale: salesLeadScoreScale === '10' ? 10 : 100,
+      lead_generation_enabled: Boolean(salesLeadGenerationEnabled),
+      neuro_commenting_enabled: Boolean(salesNeuroCommentingEnabled),
+      live_chat_simulation_enabled: Boolean(salesLiveChatSimulationEnabled),
+    };
+    const allSalesActivitiesDisabled =
+      !nextConfig.lead_generation_enabled
+      && !nextConfig.neuro_commenting_enabled
+      && !nextConfig.live_chat_simulation_enabled;
+    setIsSavingTemplateConfig(true);
+    try {
+      await agentService.update(selectedBotId, {
+        template_config: nextConfig,
+        ...(allSalesActivitiesDisabled ? { is_active: false } : {}),
+      });
+      setSelectedAgent((prev) => (
+        prev
+          ? {
+              ...prev,
+              template_config: nextConfig,
+              ...(allSalesActivitiesDisabled ? { is_active: false } : {}),
+            }
+          : prev
+      ));
+      showSuccess(
+        allSalesActivitiesDisabled
+          ? 'Все активности отключены: агент автоматически деактивирован'
+          : 'Настройки шаблона Менеджер продаж обновлены'
+      );
+      await refreshAgents();
+    } catch (error) {
+      showError(error?.message || 'Не удалось обновить настройки шаблона Менеджер продаж');
+    } finally {
+      setIsSavingTemplateConfig(false);
+    }
+  };
+
   const handleUploadDocuments = async (event) => {
     const files = Array.from(event.target.files || []);
     if (!selectedBotId || files.length === 0) return;
@@ -774,6 +885,29 @@ const AgentsPageContent = () => {
 
   const isSalesManagerTemplate = selectedAgent?.template_type === 'sales_manager';
   const isQATemplate = String(selectedAgent?.template_type || 'qa').trim().toLowerCase() === 'qa';
+  const isCrmAdminTemplate = selectedAgent?.template_type === 'crm_admin';
+
+  useEffect(() => {
+    const cfg = getTemplateConfig(selectedAgent);
+    setAdminWaitlistEnabled(cfg.waitlist_enabled !== false);
+    setAdminReminderEnabled(cfg.reminder_enabled !== false);
+    setAdminReminderOffsets(toCsvOffsets(cfg.reminder_offsets_hours));
+    setAdminManualConfirmationEnabled(Boolean(cfg.manual_confirmation_enabled));
+    setAdminManualConfirmationPriceMinor(String(Number(cfg.manual_confirmation_price_minor) || 15000));
+    setAdminManualConfirmationDurationMinutes(
+      String(Number(cfg.manual_confirmation_duration_minutes) || 120)
+    );
+    setSalesProductName(String(cfg.sales_product_name || ''));
+    setSalesOfferType(String(cfg.sales_offer_type || ''));
+    setSalesUsp(String(cfg.sales_usp || ''));
+    setSalesWorkflowCompletionMode(
+      cfg.workflow_completion_mode === 'continue_dialog' ? 'continue_dialog' : 'auto_finish_on_signal'
+    );
+    setSalesLeadScoreScale(String(Number(cfg.lead_score_scale) === 10 ? 10 : 100));
+    setSalesLeadGenerationEnabled(cfg.lead_generation_enabled !== false);
+    setSalesNeuroCommentingEnabled(Boolean(cfg.neuro_commenting_enabled));
+    setSalesLiveChatSimulationEnabled(Boolean(cfg.live_chat_simulation_enabled));
+  }, [selectedAgent]);
 
   useEffect(() => {
     if (!isChannelsModalOpen || !isSalesManagerTemplate) return;
@@ -1262,6 +1396,174 @@ const AgentsPageContent = () => {
                   </div>
 
                   <div className="agent-management-block">
+                    {isCrmAdminTemplate ? (
+                      <>
+                        <h4 className="agent-form-channel-title">Настройки Администратора (Stage 8)</h4>
+                        <FeatureToggle
+                          checked={adminWaitlistEnabled}
+                          onChange={setAdminWaitlistEnabled}
+                          disabled={isSavingTemplateConfig}
+                          title="Включить waitlist с авто-подбором окон"
+                          helpText="Когда включено, агент сможет предлагать клиентам окна из waitlist при освобождении слотов."
+                        />
+                        <FeatureToggle
+                          checked={adminReminderEnabled}
+                          onChange={setAdminReminderEnabled}
+                          disabled={isSavingTemplateConfig}
+                          title="Включить напоминания о визите"
+                          helpText="При включении отправляются напоминания клиенту по расписанию, заданному в offsets."
+                        />
+                        <label htmlFor="admin_reminder_offsets_hours" className="mt-input">
+                          Reminder offsets (часы через запятую):
+                        </label>
+                        <input
+                          id="admin_reminder_offsets_hours"
+                          className="input-main"
+                          value={adminReminderOffsets}
+                          onChange={(event) => setAdminReminderOffsets(event.target.value)}
+                          placeholder="24,2"
+                          disabled={isSavingTemplateConfig}
+                        />
+                        <FeatureToggle
+                          checked={adminManualConfirmationEnabled}
+                          onChange={setAdminManualConfirmationEnabled}
+                          disabled={isSavingTemplateConfig}
+                          title="Ручное подтверждение дорогих/долгих услуг"
+                          helpText="Агент будет запрашивать ручное подтверждение при превышении ценового порога или длительности услуги."
+                        />
+                        <label htmlFor="admin_manual_confirmation_price_minor" className="mt-input">
+                          Порог цены (minor):
+                        </label>
+                        <input
+                          id="admin_manual_confirmation_price_minor"
+                          type="number"
+                          min="0"
+                          className="input-main"
+                          value={adminManualConfirmationPriceMinor}
+                          onChange={(event) => setAdminManualConfirmationPriceMinor(event.target.value)}
+                          disabled={isSavingTemplateConfig}
+                        />
+                        <label htmlFor="admin_manual_confirmation_duration_minutes" className="mt-input">
+                          Порог длительности (мин):
+                        </label>
+                        <input
+                          id="admin_manual_confirmation_duration_minutes"
+                          type="number"
+                          min="1"
+                          className="input-main"
+                          value={adminManualConfirmationDurationMinutes}
+                          onChange={(event) => setAdminManualConfirmationDurationMinutes(event.target.value)}
+                          disabled={isSavingTemplateConfig}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-black"
+                          onClick={handleSaveAdminTemplateConfig}
+                          disabled={isSavingTemplateConfig}
+                        >
+                          {isSavingTemplateConfig ? 'Сохранение...' : 'Сохранить настройки Администратора'}
+                        </button>
+                      </>
+                    ) : null}
+                    {isSalesManagerTemplate ? (
+                      <>
+                        <h4 className="agent-form-channel-title">Конфигурация Sales Manager</h4>
+                        <label htmlFor="sales_product_name_edit">Продукт:</label>
+                        <input
+                          id="sales_product_name_edit"
+                          type="text"
+                          className="input-main"
+                          value={salesProductName}
+                          onChange={(event) => setSalesProductName(event.target.value)}
+                          placeholder="Например: ИИ-автоматизация продаж RSD AI"
+                          disabled={isSavingTemplateConfig}
+                        />
+                        <label htmlFor="sales_offer_type_edit" className="mt-input">
+                          Что продаете (категория):
+                        </label>
+                        <input
+                          id="sales_offer_type_edit"
+                          type="text"
+                          className="input-main"
+                          value={salesOfferType}
+                          onChange={(event) => setSalesOfferType(event.target.value)}
+                          placeholder="Например: SaaS, курсы, консалтинг, внедрение под ключ"
+                          disabled={isSavingTemplateConfig}
+                        />
+                        <label htmlFor="sales_usp_edit" className="mt-input">
+                          УТП (опционально):
+                        </label>
+                        <textarea
+                          id="sales_usp_edit"
+                          rows="3"
+                          className="input-main textarea"
+                          value={salesUsp}
+                          onChange={(event) => setSalesUsp(event.target.value)}
+                          placeholder="Например: подключение за 5 минут, быстрая интеграция с CRM, единый дашборд"
+                          disabled={isSavingTemplateConfig}
+                        />
+                        <label htmlFor="sales_workflow_completion_mode_edit" className="mt-input">
+                          Завершение диалога:
+                        </label>
+                        <select
+                          id="sales_workflow_completion_mode_edit"
+                          className="input-main"
+                          value={salesWorkflowCompletionMode}
+                          onChange={(event) => setSalesWorkflowCompletionMode(event.target.value)}
+                          disabled={isSavingTemplateConfig}
+                        >
+                          <option value="auto_finish_on_signal">
+                            Продажа/окончание диалога (останавливать автопрогрев)
+                          </option>
+                          <option value="continue_dialog">Продолжать диалог по стадиям без авто-остановки</option>
+                        </select>
+                        <label htmlFor="sales_lead_score_scale_edit" className="mt-input">
+                          Шкала оценки лида:
+                        </label>
+                        <select
+                          id="sales_lead_score_scale_edit"
+                          className="input-main"
+                          value={salesLeadScoreScale}
+                          onChange={(event) => setSalesLeadScoreScale(event.target.value)}
+                          disabled={isSavingTemplateConfig}
+                        >
+                          <option value="100">0-100 (детальная)</option>
+                          <option value="10">0-10 (компактная)</option>
+                        </select>
+                        <FeatureToggle
+                          checked={salesLeadGenerationEnabled}
+                          onChange={setSalesLeadGenerationEnabled}
+                          disabled={isSavingTemplateConfig}
+                          title="Лидогенерация"
+                          description="Основной контур sales_manager: анализ чатов, отлов лидов и продажа."
+                          helpText="Если выключить, агент прекращает выполнение основной задачи sales_manager. Если одновременно выключить Лидогенерацию, Нейрокомментинг и Имитацию живого общения, агент будет автоматически выключен."
+                        />
+                        <FeatureToggle
+                          checked={salesNeuroCommentingEnabled}
+                          onChange={setSalesNeuroCommentingEnabled}
+                          disabled={isSavingTemplateConfig}
+                          title="Нейрокомментинг"
+                          description="Юзербот мониторит посты в доступных каналах и оставляет LLM-комментарии."
+                          helpText="Когда включено, в каналах, где состоит юзербот, будут автоматически публиковаться комментарии, сгенерированные LLM."
+                        />
+                        <FeatureToggle
+                          checked={salesLiveChatSimulationEnabled}
+                          onChange={setSalesLiveChatSimulationEnabled}
+                          disabled={isSavingTemplateConfig}
+                          title="Имитация живого общения"
+                          description="Юзербот периодически включается в обсуждения по LLM-триггерам."
+                          helpText="Когда включено, юзербот может периодически вступать в разговор в чатах и отправлять 2-3 сообщения за одно включение."
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-black"
+                          onClick={handleSaveSalesTemplateConfig}
+                          disabled={isSavingTemplateConfig}
+                        >
+                          {isSavingTemplateConfig ? 'Сохранение...' : 'Сохранить настройки Sales Manager'}
+                        </button>
+                      </>
+                    ) : null}
                     <FeatureToggle
                       checked={isPortraitFeatureEnabled(selectedAgent)}
                       onChange={handleTogglePortraitFeature}

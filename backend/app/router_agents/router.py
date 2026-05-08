@@ -117,6 +117,9 @@ SALES_DEFAULT_CONFIG = {
     "sales_usp": "",
     "workflow_completion_mode": "auto_finish_on_signal",
     "lead_score_scale": 100,
+    "lead_generation_enabled": True,
+    "neuro_commenting_enabled": False,
+    "live_chat_simulation_enabled": False,
     "scan_scope": {
         "include_chat_ids": [],
         "exclude_chat_ids": [],
@@ -897,6 +900,18 @@ def _normalize_template_config(template_type: str, template_config: dict | None)
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="template_config sales fields are too long",
             )
+        lead_generation_enabled = bool(
+            raw.get("lead_generation_enabled", SALES_DEFAULT_CONFIG["lead_generation_enabled"])
+        )
+        neuro_commenting_enabled = bool(
+            raw.get("neuro_commenting_enabled", SALES_DEFAULT_CONFIG["neuro_commenting_enabled"])
+        )
+        live_chat_simulation_enabled = bool(
+            raw.get(
+                "live_chat_simulation_enabled",
+                SALES_DEFAULT_CONFIG["live_chat_simulation_enabled"],
+            )
+        )
 
         scan_scope_raw = raw.get("scan_scope")
         if scan_scope_raw is None:
@@ -1054,6 +1069,9 @@ def _normalize_template_config(template_type: str, template_config: dict | None)
             "sales_usp": sales_usp,
             "workflow_completion_mode": workflow_completion_mode,
             "lead_score_scale": lead_score_scale,
+            "lead_generation_enabled": lead_generation_enabled,
+            "neuro_commenting_enabled": neuro_commenting_enabled,
+            "live_chat_simulation_enabled": live_chat_simulation_enabled,
             "scan_scope": scan_scope,
             "dm_limits": dm_limits,
             "cooldown_days": cooldown_days,
@@ -4619,6 +4637,22 @@ async def update_by_bot_id(
                     normalized_type,
                     updates.get("template_config"),
                 )
+                if normalized_type == "sales_manager":
+                    try:
+                        normalized_config = json.loads(updates["template_config"] or "{}")
+                    except Exception:
+                        normalized_config = {}
+                    lead_generation_enabled = bool(normalized_config.get("lead_generation_enabled", True))
+                    neuro_commenting_enabled = bool(normalized_config.get("neuro_commenting_enabled", False))
+                    live_chat_simulation_enabled = bool(
+                        normalized_config.get("live_chat_simulation_enabled", False)
+                    )
+                    if (
+                        not lead_generation_enabled
+                        and not neuro_commenting_enabled
+                        and not live_chat_simulation_enabled
+                    ):
+                        updates["is_active"] = False
             await agent_dao.update(agent, updates)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -6304,6 +6338,39 @@ async def external_chat(
         )
 
     knowledge_scope_id = agent.bot_id if agent.bot_id is not None else agent.id
+    template_config = _decode_template_config(
+        agent.template_config,
+        template_type=agent.template_type,
+    )
+    portrait_enabled = bool((template_config or {}).get("enable_chat_portrait", True))
+    if template_type == "content_factory":
+        portrait_enabled = False
+
+    # Keep parity with channel flows: persist user message before portrait refresh
+    # so portrait can use the latest user turn.
+    async with async_session_maker() as session:
+        async with session.begin():
+            await _log_analytics_message(
+                session=session,
+                agent=agent,
+                role="user",
+                channel="external_api",
+                user_external_id=external_user_id,
+                user_display_name=external_user_name,
+                message_text=message,
+            )
+    chat_portrait = ""
+    if portrait_enabled:
+        chat_portrait = await get_template_runtime().update_chat_portrait(
+            agent_id=agent.id,
+            analytics_namespace_id=knowledge_scope_id,
+            user_external_id=external_user_id,
+            source_channel="external_api",
+            user_message=message,
+            base_prompt=agent.system_prompt or "Ты — полезный ассистент.",
+            template_config=template_config,
+        )
+
     try:
         execution = await get_template_runtime().execute(
             template_type=agent.template_type,
@@ -6312,11 +6379,9 @@ async def external_chat(
             knowledge_scope_id=knowledge_scope_id,
             agent_id=agent.id,
             user_external_id=external_user_id,
-            template_config=_decode_template_config(
-                agent.template_config,
-                template_type=agent.template_type,
-            ),
+            template_config=template_config,
             source_channel="external_api",
+            chat_portrait=chat_portrait,
         )
         answer = execution.answer
     except Exception:
@@ -6348,15 +6413,6 @@ async def external_chat(
 
     async with async_session_maker() as session:
         async with session.begin():
-            await _log_analytics_message(
-                session=session,
-                agent=agent,
-                role="user",
-                channel="external_api",
-                user_external_id=external_user_id,
-                user_display_name=external_user_name,
-                message_text=message,
-            )
             await _log_analytics_message(
                 session=session,
                 agent=agent,
