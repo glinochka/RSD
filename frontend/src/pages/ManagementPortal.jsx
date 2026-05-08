@@ -10,6 +10,7 @@ const MENU_ITEMS = [
   { id: 'overview', label: 'Обзор' },
   { id: 'users', label: 'Пользователи' },
   { id: 'agents', label: 'Агенты' },
+  { id: 'chats', label: 'Чаты' },
   { id: 'turnkeyRequests', label: 'Заявки под ключ' },
   { id: 'errorReports', label: 'Сообщения об ошибках' },
   { id: 'billing', label: 'Тарифы' },
@@ -24,6 +25,19 @@ function formatError(error) {
     || error?.message
     || 'Не удалось выполнить запрос к админ-панели'
   );
+}
+
+function formatChatChannel(channel) {
+  const map = {
+    telegram: 'Telegram Bot',
+    telegram_userbot: 'Telegram Userbot',
+    whatsapp_userbot: 'WhatsApp',
+    external_api: 'External API',
+    max_bot: 'MAX Bot',
+    max_userbot: 'MAX Userbot',
+    dashboard: 'Оператор',
+  };
+  return map[channel] || channel || '—';
 }
 
 const ManagementPortal = () => {
@@ -68,6 +82,17 @@ const ManagementPortal = () => {
     total: 0,
     search: '',
   });
+  const [chatsState, setChatsState] = useState({
+    items: [],
+    page: 1,
+    pageSize: 25,
+    totalPages: 1,
+    total: 0,
+    search: '',
+    agentId: '',
+    agentUsername: '',
+  });
+  const [selectedChatKey, setSelectedChatKey] = useState(null);
 
   const [isLoadingPlans, setIsLoadingPlans] = useState(false);
   const [isSavingPlans, setIsSavingPlans] = useState(false);
@@ -154,6 +179,7 @@ const ManagementPortal = () => {
       if (
         activeSection !== 'users'
         && activeSection !== 'agents'
+        && activeSection !== 'chats'
         && activeSection !== 'turnkeyRequests'
         && activeSection !== 'errorReports'
       ) return;
@@ -209,6 +235,25 @@ const ManagementPortal = () => {
             total: data.pagination?.total ?? 0,
             totalPages: data.pagination?.total_pages ?? 1,
           }));
+        } else if (activeSection === 'chats') {
+          const data = await adminService.getChats(adminToken, {
+            page: chatsState.page,
+            pageSize: chatsState.pageSize,
+            search: chatsState.search,
+            agentId: chatsState.agentId ? Number(chatsState.agentId) : null,
+            agentUsername: chatsState.agentUsername,
+          });
+          const nextItems = data.items ?? [];
+          setChatsState((prev) => ({
+            ...prev,
+            items: nextItems,
+            total: data.pagination?.total ?? 0,
+            totalPages: data.pagination?.total_pages ?? 1,
+          }));
+          setSelectedChatKey((prev) => {
+            if (prev && nextItems.some((item) => item.chat_key === prev)) return prev;
+            return nextItems[0]?.chat_key ?? null;
+          });
         }
       } catch (err) {
         setError(formatError(err));
@@ -232,6 +277,11 @@ const ManagementPortal = () => {
     errorReportsState.page,
     errorReportsState.pageSize,
     errorReportsState.search,
+    chatsState.page,
+    chatsState.pageSize,
+    chatsState.search,
+    chatsState.agentId,
+    chatsState.agentUsername,
   ]);
 
   useEffect(() => {
@@ -985,6 +1035,138 @@ const ManagementPortal = () => {
               className="btn btn-outline"
               disabled={agentsState.page >= agentsState.totalPages}
               onClick={() => setAgentsState((prev) => ({ ...prev, page: prev.page + 1 }))}
+            >
+              Вперед
+            </button>
+          </div>
+        </>
+      )}
+    </>
+  );
+
+  const selectedChat = chatsState.items.find((item) => item.chat_key === selectedChatKey) || null;
+
+  const renderChats = () => (
+    <>
+      <div className="management-content-head">
+        <h2>Чаты всех агентов</h2>
+        <div className="management-inline-controls management-inline-controls-grid">
+          <input
+            type="text"
+            placeholder="Поиск по пользователю, username агента или external_id"
+            value={chatsState.search}
+            onChange={(e) => setChatsState((prev) => ({ ...prev, page: 1, search: e.target.value }))}
+          />
+          <input
+            type="number"
+            min={1}
+            placeholder="ID агента"
+            value={chatsState.agentId}
+            onChange={(e) => setChatsState((prev) => ({ ...prev, page: 1, agentId: e.target.value }))}
+          />
+          <input
+            type="text"
+            placeholder="Username агента"
+            value={chatsState.agentUsername}
+            onChange={(e) => setChatsState((prev) => ({ ...prev, page: 1, agentUsername: e.target.value }))}
+          />
+        </div>
+      </div>
+      {error && <div className="management-error">{error}</div>}
+      {isLoadingTable ? <p>Загрузка чатов...</p> : (
+        <>
+          <div className="management-chats-layout">
+            <aside className="management-chats-list">
+              {chatsState.items.length === 0 ? (
+                <p className="management-chat-empty">Чаты не найдены</p>
+              ) : (
+                chatsState.items.map((chat) => (
+                  <button
+                    key={chat.chat_key}
+                    type="button"
+                    className={`management-chat-item ${selectedChatKey === chat.chat_key ? 'active' : ''}`}
+                    onClick={() => setSelectedChatKey(chat.chat_key)}
+                  >
+                    <div className="management-chat-item-top">
+                      <strong>{chat.user_display_name || `User ${chat.user_external_id}`}</strong>
+                      {chat.is_frozen ? <span className="management-badge management-badge-banned">Заморожен</span> : null}
+                    </div>
+                    <div className="management-chat-item-meta">
+                      <span>@{chat.agent_bot_username || 'unknown_agent'} · {formatChatChannel(chat.chat_channel)}</span>
+                      <span>{chat.last_message_at ? new Date(chat.last_message_at).toLocaleString() : '—'}</span>
+                    </div>
+                  </button>
+                ))
+              )}
+            </aside>
+            <section className="management-chat-thread">
+              {!selectedChat ? (
+                <p className="management-chat-empty">Выберите чат слева для просмотра переписки</p>
+              ) : (
+                <>
+                  <div className="management-chat-thread-head">
+                    <div className="management-cell-stack">
+                      <strong>{selectedChat.user_display_name || `User ${selectedChat.user_external_id}`}</strong>
+                      <span className="management-cell-muted">
+                        Агент: @{selectedChat.agent_bot_username || 'unknown_agent'} ·
+                        {' '}
+                        {formatChatChannel(selectedChat.chat_channel)}
+                        {' '}
+                        · external_id:
+                        {' '}
+                        {selectedChat.user_external_id}
+                      </span>
+                    </div>
+                    <span className="management-cell-muted">
+                      Сообщений пользователя:
+                      {' '}
+                      {selectedChat.questions_count ?? 0}
+                    </span>
+                  </div>
+                  <div className="management-chat-messages">
+                    {(selectedChat.messages || []).length === 0 ? (
+                      <p className="management-chat-empty">Сообщений в чате пока нет</p>
+                    ) : (
+                      selectedChat.messages.map((message, index) => (
+                        <article
+                          key={`${selectedChat.chat_key}-${index}-${message.created_at || 'no-time'}`}
+                          className={`management-chat-message ${message.role === 'user' ? 'user' : 'operator'}`}
+                        >
+                          <header>
+                            <span>
+                              {message.role === 'user' ? 'Пользователь' : message.role === 'operator' ? 'Оператор' : 'Агент'}
+                              {' '}
+                              ·
+                              {' '}
+                              {formatChatChannel(message.channel)}
+                            </span>
+                            <time>{message.created_at ? new Date(message.created_at).toLocaleString() : '—'}</time>
+                          </header>
+                          <p>{message.text || '—'}</p>
+                        </article>
+                      ))
+                    )}
+                  </div>
+                </>
+              )}
+            </section>
+          </div>
+
+          <div className="management-pagination">
+            <button
+              type="button"
+              className="btn btn-outline"
+              disabled={chatsState.page <= 1}
+              onClick={() => setChatsState((prev) => ({ ...prev, page: prev.page - 1 }))}
+            >
+              Назад
+            </button>
+            <span>Стр. {chatsState.page} из {chatsState.totalPages} (всего: {chatsState.total})</span>
+            <button
+              type="button"
+              className="btn btn-outline"
+              disabled={chatsState.page >= chatsState.totalPages}
+              onClick={() => setChatsState((prev) => ({ ...prev, page: prev.page + 1 }))}
             >
               Вперед
             </button>
@@ -2054,6 +2236,7 @@ const ManagementPortal = () => {
             {activeSection === 'overview' && renderOverview()}
             {activeSection === 'users' && renderUsers()}
             {activeSection === 'agents' && renderAgents()}
+            {activeSection === 'chats' && renderChats()}
             {activeSection === 'turnkeyRequests' && renderTurnkeyRequests()}
             {activeSection === 'errorReports' && renderErrorReports()}
             {activeSection === 'billing' && renderBilling()}

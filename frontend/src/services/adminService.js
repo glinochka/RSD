@@ -53,6 +53,33 @@ const adminService = {
     return response.data;
   },
 
+  async getChats(
+    token,
+    {
+      page = 1,
+      pageSize = 25,
+      search = '',
+      messagesPerChat = 50,
+      agentId = null,
+      agentUsername = '',
+    } = {}
+  ) {
+    const response = await adminClient.get(API_ROUTES.ADMIN_CHATS, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      params: {
+        page,
+        page_size: pageSize,
+        search: search || undefined,
+        messages_per_chat: messagesPerChat,
+        agent_id: agentId || undefined,
+        agent_username: agentUsername || undefined,
+      },
+    });
+    return response.data;
+  },
+
   async getTurnkeyRequests(token, { page = 1, pageSize = 10, search = '' } = {}) {
     const response = await adminClient.get(API_ROUTES.ADMIN_TURNKEY_REQUESTS, {
       headers: {

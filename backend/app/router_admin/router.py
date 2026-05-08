@@ -12,7 +12,7 @@ import httpx
 import jwt
 from jwt.exceptions import InvalidTokenError
 from passlib.exc import UnknownHashError
-from sqlalchemy import select
+from sqlalchemy import and_, func, or_, select, tuple_
 
 from .schemas import (
     AdminEmailBroadcastRequest,
@@ -26,7 +26,7 @@ from .schemas import (
     ArticlePublisherSettingsUpdateRequest,
 )
 from ..alembic.database import async_session_maker
-from ..alembic.models import ArticlePublisherImage, PromoCode, User
+from ..alembic.models import Agent, AgentAnalyticsMessage, AgentFrozenUser, ArticlePublisherImage, PromoCode, User
 from ..config import get_auth_data, settings
 from ..qdrant.search_service import delete_agent_vectors
 from ..router_agents.dao import AgentDAO
@@ -330,6 +330,221 @@ async def admin_agents(
                 "page_size": page_size,
                 "total": total or 0,
                 "total_pages": max(1, ((total or 0) + page_size - 1) // page_size),
+            },
+        },
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@router.get("/chats")
+async def admin_chats(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=100),
+    search: str | None = Query(default=None),
+    agent_id: int | None = Query(default=None, ge=1),
+    agent_username: str | None = Query(default=None),
+    messages_per_chat: int = Query(default=50, ge=1, le=200),
+    _admin=Depends(get_current_admin),
+):
+    search_value = (search or "").strip().lower()
+    agent_username_value = (agent_username or "").strip().lower()
+    supported_chat_channels = {
+        "telegram",
+        "telegram_userbot",
+        "max_bot",
+        "max_userbot",
+        "whatsapp_userbot",
+        "external_api",
+    }
+
+    async with async_session_maker() as session:
+        async with session.begin():
+            base_where = [
+                AgentAnalyticsMessage.role == "user",
+                AgentAnalyticsMessage.user_external_id.is_not(None),
+                AgentAnalyticsMessage.channel.in_(supported_chat_channels),
+            ]
+            if search_value:
+                like_pattern = f"%{search_value}%"
+                base_where.append(
+                    func.lower(
+                        func.coalesce(AgentAnalyticsMessage.user_display_name, "")
+                    ).like(like_pattern)
+                    | func.lower(
+                        func.coalesce(AgentAnalyticsMessage.user_external_id, "")
+                    ).like(like_pattern)
+                    | func.lower(func.coalesce(Agent.bot_username, "")).like(like_pattern)
+                )
+            if agent_id is not None:
+                base_where.append(AgentAnalyticsMessage.agent_id == agent_id)
+            if agent_username_value:
+                base_where.append(
+                    func.lower(func.coalesce(Agent.bot_username, "")).like(f"%{agent_username_value}%")
+                )
+
+            total_query = (
+                select(func.count())
+                .select_from(
+                    select(
+                        AgentAnalyticsMessage.agent_id,
+                        AgentAnalyticsMessage.user_external_id,
+                        AgentAnalyticsMessage.channel,
+                    )
+                    .join(Agent, Agent.id == AgentAnalyticsMessage.agent_id)
+                    .where(*base_where)
+                    .group_by(
+                        AgentAnalyticsMessage.agent_id,
+                        AgentAnalyticsMessage.user_external_id,
+                        AgentAnalyticsMessage.channel,
+                    )
+                    .subquery()
+                )
+            )
+            total = int((await session.scalar(total_query)) or 0)
+
+            chats_query = (
+                select(
+                    AgentAnalyticsMessage.agent_id.label("agent_id"),
+                    AgentAnalyticsMessage.bot_id.label("bot_id"),
+                    AgentAnalyticsMessage.user_external_id.label("user_external_id"),
+                    AgentAnalyticsMessage.channel.label("chat_channel"),
+                    func.max(AgentAnalyticsMessage.user_display_name).label("user_display_name"),
+                    func.count(AgentAnalyticsMessage.id).label("questions_count"),
+                    func.max(AgentAnalyticsMessage.created_at).label("last_message_at"),
+                    func.max(Agent.bot_username).label("agent_bot_username"),
+                )
+                .join(Agent, Agent.id == AgentAnalyticsMessage.agent_id)
+                .where(*base_where)
+                .group_by(
+                    AgentAnalyticsMessage.agent_id,
+                    AgentAnalyticsMessage.bot_id,
+                    AgentAnalyticsMessage.user_external_id,
+                    AgentAnalyticsMessage.channel,
+                )
+                .order_by(func.max(AgentAnalyticsMessage.created_at).desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
+            chat_rows = (await session.execute(chats_query)).mappings().all()
+
+            if not chat_rows:
+                return JSONResponse(
+                    content={
+                        "items": [],
+                        "pagination": {
+                            "page": page,
+                            "page_size": page_size,
+                            "total": total,
+                            "total_pages": max(1, (total + page_size - 1) // page_size),
+                        },
+                    },
+                    status_code=status.HTTP_200_OK,
+                )
+
+            chat_pairs = [
+                (row["agent_id"], row["user_external_id"])
+                for row in chat_rows
+                if row["agent_id"] is not None and row["user_external_id"] is not None
+            ]
+            frozen_rows = await session.execute(
+                select(AgentFrozenUser.agent_id, AgentFrozenUser.user_external_id).where(
+                    tuple_(AgentFrozenUser.agent_id, AgentFrozenUser.user_external_id).in_(chat_pairs)
+                )
+            )
+            frozen_pairs = {
+                (agent_id, user_external_id)
+                for agent_id, user_external_id in frozen_rows.all()
+            }
+
+            message_filters = [
+                and_(
+                    AgentAnalyticsMessage.agent_id == row["agent_id"],
+                    AgentAnalyticsMessage.user_external_id == row["user_external_id"],
+                    AgentAnalyticsMessage.channel.in_([row["chat_channel"], "dashboard"]),
+                )
+                for row in chat_rows
+            ]
+            messages_query = (
+                select(
+                    AgentAnalyticsMessage.agent_id,
+                    AgentAnalyticsMessage.user_external_id,
+                    AgentAnalyticsMessage.channel,
+                    AgentAnalyticsMessage.role,
+                    AgentAnalyticsMessage.message_text,
+                    AgentAnalyticsMessage.created_at,
+                )
+                .where(or_(*message_filters))
+                .order_by(AgentAnalyticsMessage.created_at.asc())
+            )
+            message_rows = (await session.execute(messages_query)).mappings().all()
+
+    grouped_messages: dict[tuple[int, str, str], list[dict]] = {}
+    for row in message_rows:
+        if row["channel"] == "dashboard":
+            continue
+        key = (row["agent_id"], row["user_external_id"], row["channel"])
+        grouped_messages.setdefault(key, []).append(
+            {
+                "role": row["role"],
+                "channel": row["channel"],
+                "text": row["message_text"],
+                "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+            }
+        )
+
+    for row in message_rows:
+        if row["channel"] != "dashboard":
+            continue
+        for chat_row in chat_rows:
+            if (
+                chat_row["agent_id"] == row["agent_id"]
+                and chat_row["user_external_id"] == row["user_external_id"]
+            ):
+                key = (
+                    chat_row["agent_id"],
+                    chat_row["user_external_id"],
+                    chat_row["chat_channel"],
+                )
+                grouped_messages.setdefault(key, []).append(
+                    {
+                        "role": row["role"],
+                        "channel": row["channel"],
+                        "text": row["message_text"],
+                        "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                    }
+                )
+
+    items = []
+    for row in chat_rows:
+        key = (row["agent_id"], row["user_external_id"], row["chat_channel"])
+        messages = grouped_messages.get(key, [])
+        if messages_per_chat > 0 and len(messages) > messages_per_chat:
+            messages = messages[-messages_per_chat:]
+
+        items.append(
+            {
+                "chat_key": f"{row['agent_id']}:{row['chat_channel']}:{row['user_external_id']}",
+                "agent_id": row["agent_id"],
+                "agent_bot_id": row["bot_id"],
+                "agent_bot_username": row["agent_bot_username"],
+                "chat_channel": row["chat_channel"],
+                "user_external_id": row["user_external_id"],
+                "user_display_name": row["user_display_name"] or f"User {row['user_external_id']}",
+                "questions_count": int(row["questions_count"] or 0),
+                "last_message_at": row["last_message_at"].isoformat() if row["last_message_at"] else None,
+                "is_frozen": (row["agent_id"], row["user_external_id"]) in frozen_pairs,
+                "messages": messages,
+            }
+        )
+
+    return JSONResponse(
+        content={
+            "items": items,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": max(1, (total + page_size - 1) // page_size),
             },
         },
         status_code=status.HTTP_200_OK,
