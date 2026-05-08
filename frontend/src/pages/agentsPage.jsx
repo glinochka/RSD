@@ -472,12 +472,19 @@ const AgentsPageContent = () => {
 
     setIsSavingPrompt(true);
     try {
+      const nextSystemPrompt = systemPromptDraft.trim();
       await agentService.update(selectedBotId, {
-        system_prompt: systemPromptDraft.trim(),
+        system_prompt: nextSystemPrompt,
       });
+      setSelectedAgent((prev) => (
+        prev
+          ? {
+              ...prev,
+              system_prompt: nextSystemPrompt,
+            }
+          : prev
+      ));
       showSuccess('Системный промпт обновлен');
-      await loadAgentDetails(selectedBotId);
-      await refreshAgents();
     } catch (error) {
       showError(error?.message || 'Ошибка при обновлении системного промпта');
     } finally {
@@ -490,11 +497,19 @@ const AgentsPageContent = () => {
 
     setIsSavingWelcome(true);
     try {
+      const nextWelcome = welcomeDraft.trim() || null;
       await agentService.update(selectedBotId, {
-        welcome_message: welcomeDraft.trim() || null,
+        welcome_message: nextWelcome,
       });
+      setSelectedAgent((prev) => (
+        prev
+          ? {
+              ...prev,
+              welcome_message: nextWelcome,
+            }
+          : prev
+      ));
       showSuccess('Приветственное сообщение обновлено');
-      await loadAgentDetails(selectedBotId);
     } catch (error) {
       showError(error?.message || 'Ошибка при обновлении приветствия');
     } finally {
@@ -511,7 +526,6 @@ const AgentsPageContent = () => {
       setSystemPromptDraft(nextPrompt);
       setSelectedAgent((prev) => ({ ...(prev || {}), system_prompt: nextPrompt }));
       showSuccess('ИИ улучшил системный промпт');
-      await refreshAgents();
     } catch (error) {
       showError(error?.message || 'Ошибка при улучшении промпта через ИИ');
     } finally {
@@ -559,7 +573,6 @@ const AgentsPageContent = () => {
           : prev
       );
       showSuccess(enabled ? 'Функция портрета включена' : 'Функция портрета отключена');
-      await refreshAgents();
     } catch (error) {
       showError(error?.message || 'Не удалось обновить настройку портрета');
     } finally {
@@ -591,7 +604,6 @@ const AgentsPageContent = () => {
           : prev
       );
       showSuccess(enabled ? 'Умный поиск включен' : 'Умный поиск отключен');
-      await refreshAgents();
     } catch (error) {
       showError(error?.message || 'Не удалось обновить настройку умного поиска');
     } finally {
@@ -627,7 +639,6 @@ const AgentsPageContent = () => {
           : prev
       );
       showSuccess(enabled ? 'Функция заморозки чата включена' : 'Функция заморозки чата отключена');
-      await refreshAgents();
     } catch (error) {
       showError(error?.message || 'Не удалось обновить настройку заморозки чата');
     } finally {
@@ -651,7 +662,6 @@ const AgentsPageContent = () => {
           : prev
       );
       showSuccess(enabled ? 'Обработка /start через LLM включена' : 'Обработка /start через LLM отключена');
-      await refreshAgents();
     } catch (error) {
       showError(error?.message || 'Не удалось обновить настройку обработки /start');
     } finally {
@@ -676,7 +686,6 @@ const AgentsPageContent = () => {
       await agentService.update(selectedBotId, { template_config: nextConfig });
       setSelectedAgent((prev) => (prev ? { ...prev, template_config: nextConfig } : prev));
       showSuccess('Настройки шаблона Администратор обновлены');
-      await refreshAgents();
     } catch (error) {
       showError(error?.message || 'Не удалось обновить настройки шаблона Администратор');
     } finally {
@@ -731,7 +740,6 @@ const AgentsPageContent = () => {
           ? 'Все активности отключены: агент автоматически деактивирован'
           : 'Настройки шаблона Менеджер продаж обновлены'
       );
-      await refreshAgents();
     } catch (error) {
       showError(error?.message || 'Не удалось обновить настройки шаблона Менеджер продаж');
     } finally {
@@ -775,7 +783,6 @@ const AgentsPageContent = () => {
           ? 'Все активности отключены: агент автоматически деактивирован'
           : 'Настройка активности обновлена'
       );
-      await refreshAgents();
     } catch (error) {
       showError(error?.message || 'Не удалось обновить настройку активности');
     } finally {
