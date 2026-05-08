@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from typing import Any
 
 from telethon import TelegramClient, events
@@ -24,6 +25,50 @@ logger = logging.getLogger(__name__)
 
 def _make_client(session_string: str, api_id: int, api_hash: str) -> TelegramClient:
     return TelegramClient(StringSession(session_string), api_id, api_hash)
+
+
+def _should_process_sales_manager_public_event(
+    *,
+    is_group_message: bool,
+    is_channel_message: bool,
+    lead_generation_enabled: bool,
+    neuro_commenting_enabled: bool,
+    live_chat_simulation_enabled: bool,
+) -> tuple[bool, bool]:
+    """Return (should_process_group, should_process_channel) for public messages."""
+    should_process_group = is_group_message and (lead_generation_enabled or live_chat_simulation_enabled)
+    should_process_channel = is_channel_message and neuro_commenting_enabled
+    return should_process_group, should_process_channel
+
+
+def _normalize_trigger_token(value: str) -> str:
+    return re.sub(r"[^a-zа-яё0-9]+", "", (value or "").strip().lower(), flags=re.IGNORECASE)
+
+
+def _extract_message_tokens(value: str) -> list[str]:
+    parts = re.split(r"[^a-zа-яё0-9]+", (value or "").strip().lower(), flags=re.IGNORECASE)
+    normalized: list[str] = []
+    for item in parts:
+        token = _normalize_trigger_token(item)
+        if token:
+            normalized.append(token)
+    return normalized
+
+
+def _is_message_matching_triggers(message_text: str, trigger_words: list[str]) -> bool:
+    tokens = _extract_message_tokens(message_text)
+    normalized_triggers = [_normalize_trigger_token(item) for item in (trigger_words or [])]
+    normalized_triggers = [item for item in normalized_triggers if item]
+    if not normalized_triggers:
+        normalized_triggers = ["купить"]
+    if not tokens:
+        return False
+    for token in tokens:
+        for trigger in normalized_triggers:
+            # Non-strict matching in both directions ("купи" <-> "купить")
+            if token in trigger or trigger in token:
+                return True
+    return False
 
 
 async def _fetch_userbot_configs() -> list[dict[str, Any]]:
@@ -157,10 +202,31 @@ async def _handle_chat_message(
     template_type: str,
     template_config: dict[str, Any],
 ) -> None:
-    """Handle incoming messages from groups/chats for sales_manager scanning."""
+    """Handle incoming group/channel messages for sales_manager scanning."""
     if event.is_private:
         return
-    if not event.is_group:
+    if template_type != "sales_manager":
+        return
+
+    cfg = template_config or {}
+    lead_generation_enabled = bool(cfg.get("lead_generation_enabled", True))
+    neuro_commenting_enabled = bool(cfg.get("neuro_commenting_enabled", False))
+    live_chat_simulation_enabled = bool(cfg.get("live_chat_simulation_enabled", False))
+
+    # Routing rules for sales_manager:
+    # - DMs are always handled separately in _handle_private_message
+    # - groups are scanned by lead-generation and live-chat-simulation flows
+    # - channels are scanned only by neuro-commenting flow
+    is_group_message = bool(getattr(event, "is_group", False))
+    is_channel_message = bool(getattr(event, "is_channel", False) and not is_group_message)
+    should_process_group, should_process_channel = _should_process_sales_manager_public_event(
+        is_group_message=is_group_message,
+        is_channel_message=is_channel_message,
+        lead_generation_enabled=lead_generation_enabled,
+        neuro_commenting_enabled=neuro_commenting_enabled,
+        live_chat_simulation_enabled=live_chat_simulation_enabled,
+    )
+    if not should_process_group and not should_process_channel:
         return
 
     # Skip system messages
@@ -188,13 +254,11 @@ async def _handle_chat_message(
     if raw is None or not str(raw).strip():
         return
 
-    # Only process if template is sales_manager
-    if template_type != "sales_manager":
-        return
-    if not bool((template_config or {}).get("lead_generation_enabled", True)):
-        return
-
     query = str(raw).strip()
+    trigger_words = cfg.get("trigger_words")
+    normalized_trigger_words = trigger_words if isinstance(trigger_words, list) else []
+    if should_process_group and not _is_message_matching_triggers(query, normalized_trigger_words):
+        return
     user_external_id = str(getattr(sender, "id", None) or "")
     if not user_external_id:
         return
@@ -219,8 +283,12 @@ async def _handle_chat_message(
         telegram_peer_access_hash=None,
         skip_chat_portrait_update=True,
         runtime_context={
-            "is_group_chat": True,
+            "is_group_chat": should_process_group,
+            "is_channel_chat": should_process_channel,
             "lead_initiated_private_dialog": False,
+            "lead_generation_enabled": lead_generation_enabled,
+            "neuro_commenting_enabled": neuro_commenting_enabled,
+            "live_chat_simulation_enabled": live_chat_simulation_enabled,
         },
     )
     
@@ -240,6 +308,21 @@ async def _handle_chat_message(
             user_external_id,
             response.status.value,
         )
+        # Neuro-commenting mode should publish comment under the same channel post.
+        if should_process_channel and response.text.strip():
+            try:
+                await event.client.send_message(
+                    entity=event.chat_id,
+                    message=response.text.strip(),
+                    comment_to=event.message.id,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to post channel comment: bot_id=%s chat_id=%s msg_id=%s",
+                    bot_id,
+                    source_chat_id,
+                    getattr(event.message, "id", None),
+                )
     except Exception as exc:
         logger.exception(
             "sales_manager chat scanning error: bot_id=%s chat_id=%s user_id=%s error=%s",

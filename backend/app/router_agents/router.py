@@ -8,9 +8,10 @@ from urllib.request import Request as UrlRequest, urlopen
 from urllib.error import HTTPError, URLError
 from datetime import datetime, timedelta
 from collections import defaultdict
+from typing import Any
 
 import jwt
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse, Response, PlainTextResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt.exceptions import InvalidTokenError
@@ -44,7 +45,7 @@ from ..channels.message_processor import (
     MessageRequest as RuntimeMessageRequest,
     get_message_processor,
 )
-from ..services.ai_authoring import generate_welcome_with_ai, improve_prompt_with_ai
+from ..services.ai_authoring import ai_client, generate_welcome_with_ai, improve_prompt_with_ai
 from ..services.admin_booking import get_admin_booking_service
 from ..services.admin_booking.domains import DOMAIN_REGISTRY as _DOMAIN_REGISTRY
 from ..services.crm import build_provider
@@ -137,6 +138,7 @@ SALES_DEFAULT_CONFIG = {
     "offer_profile_id": None,
     "confirmation_policy": "never_confirm",
     "allowed_tools": list(SALES_DEFAULT_ALLOWED_TOOLS),
+    "trigger_words": ["купить"],
 }
 YOUTUBE_OAUTH_STATE_TTL_SECONDS = 15 * 60
 YOUTUBE_OAUTH_STATE_SCOPE = "youtube_oauth_connect"
@@ -152,6 +154,89 @@ CONTENT_FACTORY_TIME_PATTERN = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 CONTENT_FACTORY_LANGUAGE_PATTERN = re.compile(r"^[a-z]{2,16}(?:-[a-z]{2,16})?$")
 CONTENT_FACTORY_TIMEZONE_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_+\-]*/?[A-Za-z0-9_+\-]*$")
 WIDGET_ALLOWED_TEMPLATE_TYPES = {"qa", "crm_admin"}
+
+
+def _normalize_sales_trigger_words(raw_value: Any) -> list[str]:
+    if not isinstance(raw_value, list):
+        return ["купить"]
+    normalized: list[str] = []
+    for item in raw_value:
+        word = str(item or "").strip().lower()
+        if not word:
+            continue
+        if len(word) > 64:
+            word = word[:64]
+        if word not in normalized:
+            normalized.append(word)
+        if len(normalized) >= 30:
+            break
+    return normalized or ["купить"]
+
+
+async def _generate_sales_trigger_words_via_llm(
+    *,
+    system_prompt: str,
+    template_config: dict[str, Any],
+) -> list[str]:
+    product = str(template_config.get("sales_product_name") or "").strip()
+    offer_type = str(template_config.get("sales_offer_type") or "").strip()
+    usp = str(template_config.get("sales_usp") or "").strip()
+    instruction = (
+        "Сгенерируй список до 20 коротких слов/корней-триггеров для фильтра входящих сообщений в продажах. "
+        "Нужны слова, которые часто встречаются в намерении купить или запросить цену/условия/демо. "
+        "Верни строго JSON-массив строк без пояснений.\n"
+        f"Продукт: {product or 'не указан'}\n"
+        f"Тип оффера: {offer_type or 'не указан'}\n"
+        f"УТП: {usp or 'не указано'}\n"
+        f"Системный промпт: {system_prompt or 'не указан'}"
+    )
+    response = await ai_client.chat.completions.create(
+        model="deepseek-chat",
+        messages=[{"role": "user", "content": instruction}],
+        temperature=0.2,
+        max_tokens=250,
+    )
+    raw = str(response.choices[0].message.content or "").strip()
+    parsed: Any = []
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        parsed = [segment.strip() for segment in raw.split(",") if segment.strip()]
+    return _normalize_sales_trigger_words(parsed)
+
+
+async def _schedule_sales_trigger_words_generation(
+    *,
+    agent_id: int,
+    system_prompt: str,
+    template_config_json: str | None,
+) -> None:
+    try:
+        cfg_raw = json.loads(template_config_json or "{}")
+        cfg = cfg_raw if isinstance(cfg_raw, dict) else {}
+    except Exception:
+        cfg = {}
+    trigger_words = await _generate_sales_trigger_words_via_llm(
+        system_prompt=system_prompt,
+        template_config=cfg,
+    )
+    cfg["trigger_words"] = _normalize_sales_trigger_words(trigger_words)
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent = await agent_dao.find_one_by_filter(id=agent_id)
+            if not agent:
+                return
+            try:
+                current_cfg_raw = json.loads(agent.template_config or "{}")
+                current_cfg = current_cfg_raw if isinstance(current_cfg_raw, dict) else {}
+            except Exception:
+                current_cfg = {}
+            current_cfg["trigger_words"] = _normalize_sales_trigger_words(cfg.get("trigger_words"))
+            await agent_dao.update(
+                agent,
+                {"template_config": json.dumps(current_cfg, ensure_ascii=False)},
+            )
 
 WIDGET_CSS = """
 .rsd-widget-root{position:fixed;z-index:2147483000;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}
@@ -1058,6 +1143,7 @@ def _normalize_template_config(template_type: str, template_config: dict | None)
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="template_config.allowed_tools must be an array of strings",
             )
+        trigger_words = _normalize_sales_trigger_words(raw.get("trigger_words"))
 
         normalized_config = {
             "mode": mode,
@@ -1081,6 +1167,7 @@ def _normalize_template_config(template_type: str, template_config: dict | None)
             "offer_profile_id": offer_profile_id,
             "confirmation_policy": confirmation_policy,
             "allowed_tools": allowed_tools,
+            "trigger_words": trigger_words,
             **common_config,
         }
         return json.dumps(normalized_config, ensure_ascii=False)
@@ -3172,6 +3259,7 @@ async def read_all_agents(
 @router.post("")
 async def create_empty_agent(
     payload: CreateEmptyAgent,
+    background_tasks: BackgroundTasks,
     current_user=Depends(get_current_user_required),
 ):
     if current_user.is_banned:
@@ -3198,6 +3286,13 @@ async def create_empty_agent(
                 }
             )
             await session.flush()
+            if template_type == "sales_manager":
+                background_tasks.add_task(
+                    _schedule_sales_trigger_words_generation,
+                    agent_id=int(created_agent.id),
+                    system_prompt=str(payload.system_prompt or "").strip(),
+                    template_config_json=template_config,
+                )
             return JSONResponse(
                 content=_serialize_agent(created_agent, include_external_api_key=True),
                 status_code=status.HTTP_201_CREATED,
@@ -3207,6 +3302,7 @@ async def create_empty_agent(
 @router.post("/ByUserWith_tgID")
 async def create_agent_by_tg_id(
     new_agent: NewAgent_byUserWith_tgID,
+    background_tasks: BackgroundTasks,
     internal: bool = Depends(is_internal_request),
 ):
     if not internal:
@@ -3244,6 +3340,13 @@ async def create_agent_by_tg_id(
             payload["external_api_key_hash"] = hash_agent_external_api_key(external_api_key)
             created_agent = await agent_dao.add(payload)
             await session.flush()
+            if payload["template_type"] == "sales_manager":
+                background_tasks.add_task(
+                    _schedule_sales_trigger_words_generation,
+                    agent_id=int(created_agent.id),
+                    system_prompt=str(payload.get("system_prompt") or "").strip(),
+                    template_config_json=payload.get("template_config"),
+                )
             await channel_connection_dao.add(
                 {
                     "agent_id": created_agent.id,
@@ -3259,7 +3362,11 @@ async def create_agent_by_tg_id(
 
 
 @router.post("/by_token")
-async def create_agent_by_token(new_agent: NewAgent_byToken, current_user=Depends(get_current_user_required)):
+async def create_agent_by_token(
+    new_agent: NewAgent_byToken,
+    background_tasks: BackgroundTasks,
+    current_user=Depends(get_current_user_required),
+):
     if current_user.is_banned:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
 
@@ -3315,6 +3422,13 @@ async def create_agent_by_token(new_agent: NewAgent_byToken, current_user=Depend
                 }
             )
             await session.flush()
+            if template_type == "sales_manager":
+                background_tasks.add_task(
+                    _schedule_sales_trigger_words_generation,
+                    agent_id=int(created_agent.id),
+                    system_prompt=str(new_agent.system_prompt or "").strip(),
+                    template_config_json=template_config,
+                )
             await channel_connection_dao.add(
                 {
                     "agent_id": created_agent.id,
@@ -3339,7 +3453,9 @@ async def create_agent_by_token(new_agent: NewAgent_byToken, current_user=Depend
 
 @router.post("/by_userbot_session")
 async def create_agent_by_userbot_session(
-    new_agent: NewAgent_byUserbotSession, current_user=Depends(get_current_user_required)
+    new_agent: NewAgent_byUserbotSession,
+    background_tasks: BackgroundTasks,
+    current_user=Depends(get_current_user_required),
 ):
     if current_user.is_banned:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
@@ -3417,6 +3533,13 @@ async def create_agent_by_userbot_session(
                 }
             )
             await session.flush()
+            if template_type == "sales_manager":
+                background_tasks.add_task(
+                    _schedule_sales_trigger_words_generation,
+                    agent_id=int(created_agent.id),
+                    system_prompt=str(new_agent.system_prompt or "").strip(),
+                    template_config_json=template_config,
+                )
             await channel_connection_dao.add(
                 {
                     "agent_id": created_agent.id,
