@@ -38,6 +38,10 @@ class MessageRequest:
     process_start_with_llm: bool = False
     user_display_name: str | None = None
     telegram_peer_access_hash: int | None = None
+    voice_base64: str | None = None
+    voice_mime_type: str | None = None
+    image_base64: str | None = None
+    image_mime_type: str | None = None
 
 
 @dataclass
@@ -74,6 +78,10 @@ class MessageProcessor:
                 process_start_with_llm=request.process_start_with_llm,
                 user_display_name=request.user_display_name,
                 telegram_peer_access_hash=request.telegram_peer_access_hash,
+                voice_base64=request.voice_base64,
+                voice_mime_type=request.voice_mime_type,
+                image_base64=request.image_base64,
+                image_mime_type=request.image_mime_type,
             )
             if payload.get("error_code"):
                 self.logger.error(

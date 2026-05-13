@@ -197,6 +197,18 @@ class MessageProcessor:
                     template_config=template_config,
                 )
 
+            merged_runtime_ctx: dict[str, object] = dict(request.runtime_context or {})
+            if isinstance(template_config, dict):
+                vm = (
+                    str(
+                        template_config.get("vision_chat_model")
+                        or template_config.get("generation_model")
+                        or "deepseek-chat",
+                    ).strip()
+                    or "deepseek-chat"
+                )
+                merged_runtime_ctx.setdefault("vision_chat_model", vm)
+
             execution = await get_template_runtime().execute(
                 template_type=resolved_agent.template_type,
                 prompt=request.system_prompt or (resolved_agent.system_prompt or ""),
@@ -207,7 +219,7 @@ class MessageProcessor:
                 template_config=template_config,
                 source_channel=request.channel.value,
                 chat_portrait=chat_portrait,
-                runtime_context=request.runtime_context or {},
+                runtime_context=merged_runtime_ctx,
             )
             answer = execution.answer
             handoff_applied = False

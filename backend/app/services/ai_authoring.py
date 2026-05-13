@@ -1,7 +1,10 @@
 from openai import AsyncOpenAI
+import logging
 import re
 
 from ..config import settings
+
+logger = logging.getLogger(__name__)
 
 
 ai_client = AsyncOpenAI(
@@ -74,7 +77,14 @@ async def generate_welcome_with_ai(system_prompt: str) -> str:
     return (response.choices[0].message.content or "").strip()
 
 
-async def generate_answer_with_context(question: str, context_list: list, system_prompt: str) -> str:
+async def generate_answer_with_context(
+    question: str,
+    context_list: list,
+    system_prompt: str,
+    *,
+    vision_image_data_url: str | None = None,
+    chat_model: str | None = None,
+) -> str:
     if not context_list:
         context_text = "Информации в базе знаний не найдено."
     else:
@@ -87,16 +97,49 @@ async def generate_answer_with_context(question: str, context_list: list, system
         "ЗАПРЕЩЕНО использовать markdown-форматирование.\n"
         "ЗАПРЕЩЕНО показывать названия переменных/шаблонов и их значения ({{...}}, ${...}, key=value, JSON/XML-поля)."
     )
+    if vision_image_data_url:
+        full_system_prompt = (
+            f"{full_system_prompt}\n\n"
+            "Пользователь приложил изображение: опиши, что на нём важно для вопроса, и ответь по сути, "
+            "используя контекст базы знаний где уместно."
+        )
     user_prompt = f"КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ:\n{context_text}\n\nВОПРОС ПОЛЬЗОВАТЕЛЯ: {question}"
 
-    response = await ai_client.chat.completions.create(
-        model="deepseek-chat",
-        messages=[
-            {"role": "system", "content": full_system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        temperature=0.3,
-    )
+    model = (chat_model or "deepseek-chat").strip() or "deepseek-chat"
+    user_content: str | list[dict[str, object]] = user_prompt
+    if vision_image_data_url:
+        user_content = [
+            {"type": "text", "text": user_prompt},
+            {"type": "image_url", "image_url": {"url": vision_image_data_url}},
+        ]
+
+    try:
+        response = await ai_client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": full_system_prompt},
+                {"role": "user", "content": user_content},
+            ],
+            temperature=0.3,
+        )
+    except Exception:
+        if not vision_image_data_url:
+            raise
+        logger.warning("DeepSeek multimodal request failed; retrying text-only", exc_info=True)
+        response = await ai_client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": full_system_prompt},
+                {
+                    "role": "user",
+                    "content": (
+                        user_prompt
+                        + "\n\n(Изображение не удалось передать в модель — ответь по тексту вопроса и контексту.)"
+                    ),
+                },
+            ],
+            temperature=0.3,
+        )
     raw_answer = (response.choices[0].message.content or "").strip()
     if not raw_answer:
         return "Не удалось сформулировать ответ. Задайте вопрос чуть подробнее."

@@ -280,6 +280,8 @@ class TemplateRuntimeService:
                 user_message=user_message,
                 knowledge_scope_id=knowledge_scope_id,
                 chat_portrait=chat_portrait,
+                runtime_context=runtime_context or {},
+                template_config=template_config or {},
             )
             qa_result.fallback_to_text = True
             qa_result.fallback_reason = "crm_runtime_unavailable"
@@ -305,6 +307,8 @@ class TemplateRuntimeService:
                 user_message=user_message,
                 knowledge_scope_id=knowledge_scope_id,
                 chat_portrait=chat_portrait,
+                runtime_context=runtime_context or {},
+                template_config=template_config or {},
             )
             return self._sanitize_result(content_result)
 
@@ -316,6 +320,8 @@ class TemplateRuntimeService:
                 chat_portrait=chat_portrait,
                 enable_owner_handoff=self._is_chat_freeze_enabled(template_config),
                 enable_smart_search=self._is_smart_search_enabled(template_config),
+                runtime_context=runtime_context or {},
+                template_config=template_config or {},
             )
             return self._sanitize_result(qa_result)
 
@@ -326,6 +332,8 @@ class TemplateRuntimeService:
                 knowledge_scope_id=knowledge_scope_id,
                 chat_portrait=chat_portrait,
                 enable_smart_search=self._is_smart_search_enabled(template_config),
+                runtime_context=runtime_context or {},
+                template_config=template_config or {},
             )
             return self._sanitize_result(lead_result)
 
@@ -337,6 +345,8 @@ class TemplateRuntimeService:
             knowledge_scope_id=knowledge_scope_id,
             chat_portrait=chat_portrait,
             enable_smart_search=self._is_smart_search_enabled(template_config),
+            runtime_context=runtime_context or {},
+            template_config=template_config or {},
         )
         return self._sanitize_result(fallback_result)
 
@@ -1111,7 +1121,21 @@ class TemplateRuntimeService:
         chat_portrait: str | None = None,
         enable_owner_handoff: bool = False,
         enable_smart_search: bool = True,
+        runtime_context: dict[str, Any] | None = None,
+        template_config: dict[str, Any] | None = None,
     ) -> TemplateExecutionResult:
+        runtime_ctx = runtime_context or {}
+        cfg = template_config or {}
+        vision_raw = runtime_ctx.get("vision_image_data_url")
+        vision_url = vision_raw.strip() if isinstance(vision_raw, str) else None
+        vision_model_raw = (
+            runtime_ctx.get("vision_chat_model")
+            or cfg.get("vision_chat_model")
+            or cfg.get("generation_model")
+            or "deepseek-chat"
+        )
+        vision_model = str(vision_model_raw).strip() or "deepseek-chat"
+
         if enable_smart_search:
             context = await search_knowledge_base(user_message, agent_id=knowledge_scope_id)
         else:
@@ -1141,7 +1165,13 @@ class TemplateRuntimeService:
             ).strip()
         if portrait_block:
             effective_prompt = f"{effective_prompt}\n\n{portrait_block}" if effective_prompt else portrait_block
-        answer = await generate_answer_with_context(user_message, context_list, effective_prompt)
+        answer = await generate_answer_with_context(
+            user_message,
+            context_list,
+            effective_prompt,
+            vision_image_data_url=vision_url,
+            chat_model=vision_model,
+        )
         requires_owner_handoff = False
         owner_handoff_reason: str | None = None
         escalation_type = EscalationType.NONE
@@ -1229,6 +1259,8 @@ class TemplateRuntimeService:
         user_message: str,
         knowledge_scope_id: int,
         chat_portrait: str | None = None,
+        runtime_context: dict[str, Any] | None = None,
+        template_config: dict[str, Any] | None = None,
     ) -> TemplateExecutionResult:
         decision = get_content_factory_orchestrator().route_incoming_message(user_message=user_message)
         if decision.fallback_to_text_runtime:
@@ -1237,6 +1269,8 @@ class TemplateRuntimeService:
                 user_message=user_message,
                 knowledge_scope_id=knowledge_scope_id,
                 chat_portrait=chat_portrait,
+                runtime_context=runtime_context or {},
+                template_config=template_config or {},
             )
             fallback.fallback_to_text = True
             fallback.fallback_reason = decision.fallback_reason or "content_factory_runtime_fallback"
@@ -1564,6 +1598,8 @@ class TemplateRuntimeService:
                     knowledge_scope_id=knowledge_scope_id,
                     chat_portrait=chat_portrait,
                     enable_smart_search=self._is_smart_search_enabled(template_config),
+                    runtime_context=runtime_context,
+                    template_config=template_config,
                 )
                 qa_result.fallback_to_text = True
                 qa_result.fallback_reason = "sales_low_confidence_fallback"

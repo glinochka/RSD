@@ -391,7 +391,7 @@ async def test_content_factory_runtime_technical_message_fallback(monkeypatch):
     async def fake_search(query, agent_id):
         return [{"source": "kb://ops", "text": "Проверьте OAuth и refresh token."}]
 
-    async def fake_generate(user_message, context_list, prompt):
+    async def fake_generate(user_message, context_list, prompt, **kwargs):
         return "Техподсказка: обновите OAuth токен и переподключите YouTube."
 
     monkeypatch.setattr("app.services.template_runtime.search_knowledge_base", fake_search)
@@ -421,7 +421,7 @@ async def test_qa_runtime_marks_owner_handoff_by_marker(monkeypatch):
     async def fake_search(query, agent_id):
         return [{"source": "kb://faq", "text": "FAQ context"}]
 
-    async def fake_generate(user_message, context_list, prompt):
+    async def fake_generate(user_message, context_list, prompt, **kwargs):
         return "[OWNER_HANDOFF] Нужна ручная проверка тарифа у владельца."
 
     monkeypatch.setattr("app.services.template_runtime.search_knowledge_base", fake_search)
@@ -450,7 +450,7 @@ async def test_qa_runtime_operator_assist_does_not_freeze_chat(monkeypatch):
     async def fake_search(query, agent_id):
         return [{"source": "kb://faq", "text": "FAQ context"}]
 
-    async def fake_generate(user_message, context_list, prompt):
+    async def fake_generate(user_message, context_list, prompt, **kwargs):
         return (
             "Конечно, я передам ваш запрос. "
             "[OPERATOR_ASSIST] Вызываю старшего менеджера для уточнения деталей."
@@ -480,7 +480,7 @@ async def test_lead_generation_does_not_enable_owner_handoff(monkeypatch):
     async def fake_search(query, agent_id):
         return [{"source": "kb://lead", "text": "Lead context"}]
 
-    async def fake_generate(user_message, context_list, prompt):
+    async def fake_generate(user_message, context_list, prompt, **kwargs):
         return "[OWNER_HANDOFF] Формальный маркер"
 
     monkeypatch.setattr("app.services.template_runtime.search_knowledge_base", fake_search)

@@ -18,6 +18,19 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
     QDRANT_API_KEY:str = ''
     DEEPSEEK_API_KEY: str
+    # Fallback STT when local faster-whisper is disabled or returns empty (optional).
+    OPENAI_API_KEY: str = ""
+    # Speech-to-text: faster_whisper (local), openai (API), auto = try local then API.
+    VOICE_STT_BACKEND: Literal["auto", "faster_whisper", "openai"] = "auto"
+    FASTER_WHISPER_MODEL: str = "base"
+    FASTER_WHISPER_DEVICE: str = "cpu"
+    FASTER_WHISPER_COMPUTE_TYPE: str = "int8"
+    # Empty = auto-detect language; e.g. "ru" for Russian-only short voice notes.
+    FASTER_WHISPER_LANGUAGE: str = ""
+    # STT / vision resource limits (abuse + DoS guardrails).
+    VOICE_MAX_BYTES: int = 10 * 1024 * 1024
+    IMAGE_MAX_BYTES: int = 10 * 1024 * 1024
+    VOICE_TRANSCRIPTION_TIMEOUT_SECONDS: float = 120.0
     KLING_API_KEY: str = ""
     KLING_API_BASE_URL: str = "https://api.klingai.com"
     KLING_TIMEOUT_SECONDS: float = 30.0

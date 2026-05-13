@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import math
 import re
@@ -44,12 +45,14 @@ from ..router_users.dao import UserDAO
 from ..channels.message_processor import (
     Channel as RuntimeChannel,
     MessageRequest as RuntimeMessageRequest,
+    ProcessingStatus as RuntimeProcessingStatus,
     get_message_processor,
 )
 from ..services.agent_availability import normalize_agent_availability_for_storage
 from ..services.ai_authoring import ai_client, generate_welcome_with_ai, improve_prompt_with_ai
 from ..services.admin_booking import get_admin_booking_service
 from ..services.admin_booking.domains import DOMAIN_REGISTRY as _DOMAIN_REGISTRY
+from ..services.voice_transcription import is_voice_stt_configured, transcribe_voice_bytes
 from ..services.http_integration.errors import HttpIntegrationValidationError
 from ..services.http_integration.tool_registry import validate_integration_config_dict
 from ..services.qa_handoff_service import EscalationType as QAEscalationType, get_qa_handoff_service
@@ -2942,13 +2945,13 @@ async def list_whatsapp_userbot_clients(request: Request, internal: bool = Depen
 
 @router.post("/internal/process_message")
 async def internal_process_message(
-    request: Request,
+    http_request: Request,
     payload: InternalProcessMessageRequest,
     internal: bool = Depends(is_internal_request),
 ):
     if not internal:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Internal API key required")
-    await verify_internal_signature(request)
+    await verify_internal_signature(http_request)
 
     try:
         channel = RuntimeChannel(payload.channel)
@@ -2958,9 +2961,63 @@ async def internal_process_message(
             detail="Unsupported channel",
         )
 
-    request = RuntimeMessageRequest(
+    query_text = (payload.query or "").strip()
+    runtime_ctx: dict[str, object] = {}
+
+    if payload.voice_base64:
+        raw_voice = (payload.voice_base64 or "").strip()
+        try:
+            audio_bytes = base64.b64decode(raw_voice, validate=True)
+        except Exception:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid voice_base64")
+        if len(audio_bytes) > int(settings.VOICE_MAX_BYTES):
+            raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="voice payload too large")
+        if is_voice_stt_configured():
+            transcript = await transcribe_voice_bytes(
+                audio_bytes,
+                mime_type=(payload.voice_mime_type or "audio/ogg"),
+            )
+            if transcript:
+                query_text = (
+                    f"{query_text}\n\nТекст голосового сообщения: {transcript}".strip()
+                    if query_text
+                    else f"Текст голосового сообщения: {transcript}"
+                )
+            elif not query_text:
+                query_text = "Пользователь прислал голосовое сообщение, но текст распознать не удалось."
+        elif not query_text:
+            return JSONResponse(
+                content={
+                    "text": (
+                        "Голосовые сообщения недоступны: не настроено распознавание речи "
+                        "(установите faster-whisper и модель, либо задайте OPENAI_API_KEY; DeepSeek аудио не принимает). "
+                        "Напишите, пожалуйста, текстом."
+                    ),
+                    "status": RuntimeProcessingStatus.SUCCESS.value,
+                },
+                status_code=status.HTTP_200_OK,
+            )
+
+    if payload.image_base64:
+        mime = ((payload.image_mime_type or "image/jpeg").strip() or "image/jpeg")
+        raw_img = (payload.image_base64 or "").strip()
+        try:
+            img_bytes = base64.b64decode(raw_img, validate=True)
+        except Exception:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid image_base64")
+        if len(img_bytes) > int(settings.IMAGE_MAX_BYTES):
+            raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="image payload too large")
+        runtime_ctx["vision_image_data_url"] = f"data:{mime};base64,{raw_img}"
+        if not query_text:
+            query_text = "[Изображение без текстовой подписи]"
+
+    query_text = query_text.strip()
+    if not query_text:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Empty query after processing")
+
+    runtime_request = RuntimeMessageRequest(
         bot_id=payload.bot_id,
-        query=payload.query.strip(),
+        query=query_text,
         user_external_id=payload.user_external_id.strip(),
         channel=channel,
         system_prompt=(payload.system_prompt or "").strip(),
@@ -2968,8 +3025,9 @@ async def internal_process_message(
         process_start_with_llm=bool(payload.process_start_with_llm),
         user_display_name=(payload.user_display_name or "").strip() or None,
         telegram_peer_access_hash=payload.telegram_peer_access_hash,
+        runtime_context=runtime_ctx or None,
     )
-    response = await get_message_processor().process(request)
+    response = await get_message_processor().process(runtime_request)
     return JSONResponse(
         content={
             "text": response.text,

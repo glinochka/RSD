@@ -384,7 +384,7 @@ class AgentWhatsappUserbotBroadcastPayload(AgentLookup):
 
 class InternalProcessMessageRequest(BaseModel):
     bot_id: int = Field(..., gt=0, description="ID публичного канала/агента")
-    query: str = Field(..., min_length=1, max_length=4000, description="Сообщение пользователя")
+    query: str = Field(default="", max_length=4000, description="Текст сообщения пользователя")
     user_external_id: str = Field(..., min_length=1, max_length=128, description="Внешний ID пользователя")
     channel: str = Field(
         ...,
@@ -402,6 +402,27 @@ class InternalProcessMessageRequest(BaseModel):
         default=None,
         description="Telegram access_hash для userbot-сценария",
     )
+    voice_base64: Optional[str] = Field(
+        default=None,
+        max_length=15_000_000,
+        description="Аудио в Base64; см. VOICE_MAX_BYTES на сервере",
+    )
+    voice_mime_type: Optional[str] = Field(default="audio/ogg", max_length=128)
+    image_base64: Optional[str] = Field(
+        default=None,
+        max_length=15_000_000,
+        description="Изображение в Base64; см. IMAGE_MAX_BYTES на сервере",
+    )
+    image_mime_type: Optional[str] = Field(default="image/jpeg", max_length=128)
+
+    @model_validator(mode="after")
+    def validate_any_content(self):
+        q = (self.query or "").strip()
+        voice = (self.voice_base64 or "").strip()
+        image = (self.image_base64 or "").strip()
+        if not q and not voice and not image:
+            raise ValueError("Укажите query, voice_base64 или image_base64.")
+        return self
 
 
 class AgentCrmConnectPayload(AgentLookup):

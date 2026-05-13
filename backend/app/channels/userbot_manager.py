@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import re
+from io import BytesIO
 from typing import Any
 
 from telethon import TelegramClient, events
@@ -17,6 +19,7 @@ from ..alembic.database import async_session_maker
 from ..alembic.models import Agent, AgentChannelConnection
 from ..config import settings
 from ..utils.crypto import decrypt_token
+from ..services.voice_transcription import is_voice_stt_configured, transcribe_voice_bytes
 from .leader_lock import PgLeaderLock
 from .message_processor import Channel, MessageRequest, get_message_processor
 
@@ -128,12 +131,6 @@ async def _handle_private_message(
     if not event.is_private:
         return
 
-    raw = event.message.message
-    if raw is None or not str(raw).strip():
-        await event.respond("Напишите, пожалуйста, текстовое сообщение.")
-        return
-
-    query = str(raw).strip()
     sender = await event.get_sender()
     user_external_id = str(getattr(sender, "id", None) or "")
     if not user_external_id:
@@ -155,6 +152,77 @@ async def _handle_private_message(
         + (getattr(sender, "last_name", "") or "").strip()
     ).strip() or getattr(sender, "username", None)
 
+    caption_or_text = (event.message.message or "").strip()
+    runtime_ctx: dict[str, Any] = {
+        "lead_initiated_private_dialog": template_type == "sales_manager",
+        "is_private_chat": True,
+    }
+    query = caption_or_text
+    voice_bytes: bytes | None = None
+
+    try:
+        if event.message.photo:
+            buf = BytesIO()
+            await event.message.download_media(buf)
+            raw = buf.getvalue()
+            if len(raw) > int(settings.IMAGE_MAX_BYTES):
+                await event.respond("Изображение слишком большое. Отправьте файл поменьше.")
+                return
+            mime = "image/jpeg"
+            runtime_ctx["vision_image_data_url"] = (
+                f"data:{mime};base64,{base64.standard_b64encode(raw).decode('ascii')}"
+            )
+            query = caption_or_text or "[Фото без подписи]"
+        elif getattr(event.message, "voice", None):
+            buf = BytesIO()
+            await event.message.download_media(buf)
+            voice_bytes = buf.getvalue()
+            if len(voice_bytes) > int(settings.VOICE_MAX_BYTES):
+                await event.respond("Голосовое сообщение слишком большое.")
+                return
+            if not caption_or_text:
+                query = ""
+        elif caption_or_text:
+            query = caption_or_text
+        else:
+            await event.respond(
+                "Пока поддерживаются текст, фото и голосовые сообщения. Отправьте что-то из этого."
+            )
+            return
+    except Exception:
+        logger.exception(
+            "userbot: failed to download/process media bot_id=%s agent_id=%s",
+            bot_id,
+            agent_id,
+        )
+        await event.respond("Не удалось обработать вложение. Попробуйте ещё раз.")
+        return
+
+    if voice_bytes is not None:
+        if is_voice_stt_configured():
+            transcript = await transcribe_voice_bytes(voice_bytes, mime_type="audio/ogg")
+            if transcript:
+                query = (
+                    f"{caption_or_text}\n\nТекст голосового сообщения: {transcript}".strip()
+                    if caption_or_text
+                    else f"Текст голосового сообщения: {transcript}"
+                )
+            else:
+                query = caption_or_text or (
+                    "Пользователь прислал голосовое сообщение, но текст распознать не удалось."
+                )
+        else:
+            await event.respond(
+                "Голосовые сообщения недоступны: не настроено распознавание речи "
+                "(установите faster-whisper или задайте OPENAI_API_KEY). Напишите, пожалуйста, текстом."
+            )
+            return
+
+    query = str(query or "").strip()
+    if not query:
+        await event.respond("Не удалось получить текст сообщения.")
+        return
+
     # Mark incoming message as read for better DM UX.
     try:
         await event.client.send_read_acknowledge(event.chat_id, max_id=event.message.id)
@@ -170,10 +238,7 @@ async def _handle_private_message(
         welcome_message=welcome_message,
         user_display_name=user_display_name,
         telegram_peer_access_hash=peer_access_hash,
-        runtime_context={
-            "lead_initiated_private_dialog": template_type == "sales_manager",
-            "is_private_chat": True,
-        },
+        runtime_context=runtime_ctx,
     )
     try:
         try:
