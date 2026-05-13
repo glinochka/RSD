@@ -1,7 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
-from pydantic import field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class AdminLoginRequest(BaseModel):
@@ -47,6 +46,54 @@ class AdminPromoCodeCreateRequest(BaseModel):
 class AdminEmailBroadcastRequest(BaseModel):
     subject: str = Field(..., min_length=3, max_length=200)
     body: str = Field(..., min_length=10, max_length=15000)
+
+
+class AdminEmailGroupInput(BaseModel):
+    title: str = Field(..., min_length=1, max_length=120)
+    emails_raw: str = Field(default="", max_length=500_000)
+
+    @field_validator("title")
+    @classmethod
+    def strip_title(cls, value: str) -> str:
+        s = value.strip()
+        if not s:
+            raise ValueError("Название группы не может быть пустым")
+        return s
+
+
+class AdminEmailTargetedPreviewRequest(BaseModel):
+    groups: list[AdminEmailGroupInput] = Field(..., min_length=1, max_length=50)
+    selected_titles: list[str] = Field(..., min_length=1, max_length=50)
+
+    @field_validator("selected_titles")
+    @classmethod
+    def strip_titles(cls, titles: list[str]) -> list[str]:
+        out = [t.strip() for t in titles if t and str(t).strip()]
+        if not out:
+            raise ValueError("Нужно выбрать хотя бы одну группу")
+        return out
+
+    @model_validator(mode="after")
+    def unique_group_titles_and_selection(self):
+        titles = [g.title.strip() for g in self.groups]
+        if len(titles) != len(set(titles)):
+            raise ValueError("Названия групп должны быть уникальны")
+        avail = set(titles)
+        for st in self.selected_titles:
+            if st not in avail:
+                raise ValueError(f'Группа «{st}» не найдена среди переданных')
+        return self
+
+
+class AdminTargetedBroadcastRequest(AdminEmailTargetedPreviewRequest):
+    subject: str = Field(..., min_length=3, max_length=200)
+    body: str = Field(..., min_length=10, max_length=15000)
+    interval_seconds: int = Field(
+        default=900,
+        ge=30,
+        le=86_400,
+        description="Пауза между письмами (по умолчанию 900 с = 15 мин)",
+    )
 
 
 # ---------------------------------------------------------------------------

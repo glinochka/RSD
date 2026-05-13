@@ -9,7 +9,11 @@ ai_client = AsyncOpenAI(
     base_url="https://api.deepseek.com",
 )
 _TEMPLATE_VAR_RE = re.compile(r"(\{\{[^{}]+\}\}|\$\{[^{}]+\}|%\([^)]+\)s)")
-_ASSIGNMENT_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]{2,}\s*=\s*[^\s,;]+")
+_INTERNAL_ASSIGNMENT_RE = re.compile(
+    r"\b(staff_id|resource_id|service_id|agent_id|appointment_id|client_external_id|"
+    r"slot_id|user_id|chat_id|template_id|lookup_staff_id|new_staff_id|new_resource_id)\s*=\s*\S+",
+    re.IGNORECASE,
+)
 
 
 def _clean_plain_text(text: str) -> str:
@@ -17,7 +21,7 @@ def _clean_plain_text(text: str) -> str:
         return ""
     cleaned = text.replace("#", "").replace("*", "")
     cleaned = _TEMPLATE_VAR_RE.sub("технические данные скрыты", cleaned)
-    cleaned = _ASSIGNMENT_RE.sub("технические данные скрыты", cleaned)
+    cleaned = _INTERNAL_ASSIGNMENT_RE.sub("технические данные скрыты", cleaned)
     return cleaned.strip()
 
 

@@ -40,6 +40,47 @@ const getTemplateConfig = (agent) => {
   const cfg = agent?.template_config;
   return cfg && typeof cfg === 'object' ? cfg : {};
 };
+const DEFAULT_AGENT_OUTSIDE_MESSAGE =
+  'Сейчас вне рабочего времени ассистента. Пожалуйста, напишите в рабочие часы — мы обязательно ответим.';
+const AGENT_AVAILABILITY_WEEKDAY_LABELS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+const COMMON_AGENT_TIMEZONES = [
+  'Europe/Moscow',
+  'Europe/Kaliningrad',
+  'Asia/Yekaterinburg',
+  'Asia/Novosibirsk',
+  'Asia/Vladivostok',
+  'Europe/Helsinki',
+  'Europe/Berlin',
+  'UTC',
+  'Europe/London',
+  'America/New_York',
+];
+
+const getBrowserTimezoneSafe = () => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Moscow';
+  } catch {
+    return 'Europe/Moscow';
+  }
+};
+
+const buildDefaultAgentAvailabilityWeekdays = () =>
+  Array.from({ length: 7 }, (_, i) =>
+    i < 5
+      ? { enabled: true, start: '09:00', end: '18:00' }
+      : { enabled: false, start: '09:00', end: '18:00' }
+  );
+
+const normalizeWeekdaysFromConfig = (raw) => {
+  if (!Array.isArray(raw) || raw.length !== 7) {
+    return buildDefaultAgentAvailabilityWeekdays();
+  }
+  return raw.map((d) => ({
+    enabled: Boolean(d?.enabled),
+    start: String(d?.start || '09:00').slice(0, 5),
+    end: String(d?.end || '18:00').slice(0, 5),
+  }));
+};
 const toCsvOffsets = (value) => {
   if (!Array.isArray(value)) return '24,2';
   const normalized = value
@@ -52,6 +93,18 @@ const parseReminderOffsets = (value) =>
     .split(',')
     .map((item) => Number(item.trim()))
     .filter((item) => Number.isFinite(item) && item > 0 && item <= 72);
+
+const normalizeSalesTriggerWordsList = (raw) => {
+  const list = Array.isArray(raw) ? raw : [];
+  const out = [];
+  for (const item of list) {
+    const w = String(item || '').trim().toLowerCase();
+    if (!w || w.length > 64) continue;
+    if (!out.includes(w)) out.push(w);
+    if (out.length >= 30) break;
+  }
+  return out.length > 0 ? out : ['купить'];
+};
 const channelLabel = (channel) => {
   if (!channel) return 'Канал';
   if (channel.provider === 'telegram_bot') return 'Telegram бот';
@@ -361,6 +414,13 @@ const AgentsPageContent = () => {
   const [salesLeadGenerationEnabled, setSalesLeadGenerationEnabled] = useState(true);
   const [salesNeuroCommentingEnabled, setSalesNeuroCommentingEnabled] = useState(false);
   const [salesLiveChatSimulationEnabled, setSalesLiveChatSimulationEnabled] = useState(false);
+  const [salesTriggerWords, setSalesTriggerWords] = useState(() => ['купить']);
+  const [salesTriggerWordDraft, setSalesTriggerWordDraft] = useState('');
+  const [agentAvailAlwaysOn, setAgentAvailAlwaysOn] = useState(true);
+  const [agentAvailTimezone, setAgentAvailTimezone] = useState(() => getBrowserTimezoneSafe());
+  const [agentAvailOutsideMessage, setAgentAvailOutsideMessage] = useState(DEFAULT_AGENT_OUTSIDE_MESSAGE);
+  const [agentAvailWeekdays, setAgentAvailWeekdays] = useState(buildDefaultAgentAvailabilityWeekdays);
+  const [isSavingAgentAvailability, setIsSavingAgentAvailability] = useState(false);
   const detailsRequestIdRef = useRef(0);
   const { data: agents, isLoading, execute } = useAsync(
     () => agentService.getAll(),
@@ -715,6 +775,7 @@ const AgentsPageContent = () => {
       lead_generation_enabled: Boolean(salesLeadGenerationEnabled),
       neuro_commenting_enabled: Boolean(salesNeuroCommentingEnabled),
       live_chat_simulation_enabled: Boolean(salesLiveChatSimulationEnabled),
+      trigger_words: normalizeSalesTriggerWordsList(salesTriggerWords),
     };
     const allSalesActivitiesDisabled =
       !nextConfig.lead_generation_enabled
@@ -753,6 +814,7 @@ const AgentsPageContent = () => {
     const nextConfig = {
       ...currentConfig,
       [field]: Boolean(enabled),
+      trigger_words: normalizeSalesTriggerWordsList(salesTriggerWords),
     };
     const leadGenerationEnabled = Boolean(nextConfig.lead_generation_enabled);
     const neuroCommentingEnabled = Boolean(nextConfig.neuro_commenting_enabled);
@@ -787,6 +849,28 @@ const AgentsPageContent = () => {
       showError(error?.message || 'Не удалось обновить настройку активности');
     } finally {
       setIsSavingTemplateConfig(false);
+    }
+  };
+
+  const handleAddSalesTriggerWord = () => {
+    const w = salesTriggerWordDraft.trim().toLowerCase();
+    if (!w || w.length > 64) return;
+    setSalesTriggerWords((prev) => {
+      if (prev.includes(w)) return prev;
+      if (prev.length >= 30) return prev;
+      return [...prev, w];
+    });
+    setSalesTriggerWordDraft('');
+  };
+
+  const handleRemoveSalesTriggerWord = (word) => {
+    setSalesTriggerWords((prev) => prev.filter((x) => x !== word));
+  };
+
+  const handleSalesTriggerWordDraftKeyDown = (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      handleAddSalesTriggerWord();
     }
   };
 
@@ -1040,6 +1124,23 @@ const AgentsPageContent = () => {
     setSalesLeadGenerationEnabled(cfg.lead_generation_enabled !== false);
     setSalesNeuroCommentingEnabled(Boolean(cfg.neuro_commenting_enabled));
     setSalesLiveChatSimulationEnabled(Boolean(cfg.live_chat_simulation_enabled));
+    setSalesTriggerWords(normalizeSalesTriggerWordsList(cfg.trigger_words));
+    setSalesTriggerWordDraft('');
+
+    const av = cfg.agent_availability;
+    if (av && typeof av === 'object') {
+      setAgentAvailAlwaysOn(av.always_on !== false);
+      setAgentAvailTimezone(String(av.timezone || getBrowserTimezoneSafe()).trim() || 'Europe/Moscow');
+      setAgentAvailOutsideMessage(
+        String(av.outside_message || '').trim() || DEFAULT_AGENT_OUTSIDE_MESSAGE
+      );
+      setAgentAvailWeekdays(normalizeWeekdaysFromConfig(av.weekdays));
+    } else {
+      setAgentAvailAlwaysOn(true);
+      setAgentAvailTimezone(getBrowserTimezoneSafe());
+      setAgentAvailOutsideMessage(DEFAULT_AGENT_OUTSIDE_MESSAGE);
+      setAgentAvailWeekdays(buildDefaultAgentAvailabilityWeekdays());
+    }
   }, [selectedAgent]);
 
   useEffect(() => {
@@ -1048,6 +1149,70 @@ const AgentsPageContent = () => {
       setChannelModalTab('userbot');
     }
   }, [channelModalTab, isChannelsModalOpen, isSalesManagerTemplate]);
+
+  const agentAvailabilityTimezoneOptions = useMemo(() => {
+    const browser = getBrowserTimezoneSafe();
+    const ordered = [...new Set([browser, agentAvailTimezone, ...COMMON_AGENT_TIMEZONES])];
+    return ordered.map((tz) => ({ value: tz, label: tz }));
+  }, [agentAvailTimezone]);
+
+  const handleSaveAgentAvailability = async () => {
+    if (!selectedBotId || !selectedAgent) return;
+    if (!agentAvailAlwaysOn) {
+      const anyDay = agentAvailWeekdays.some((d) => d.enabled);
+      if (!anyDay) {
+        showError('Включите хотя бы один день недели или вернитесь в режим 24/7');
+        return;
+      }
+    }
+    const currentConfig = getTemplateConfig(selectedAgent);
+    const nextBlock = agentAvailAlwaysOn
+      ? {
+          always_on: true,
+          timezone: agentAvailTimezone.trim() || 'Europe/Moscow',
+          outside_message: agentAvailOutsideMessage.trim() || DEFAULT_AGENT_OUTSIDE_MESSAGE,
+        }
+      : {
+          always_on: false,
+          timezone: agentAvailTimezone.trim() || 'Europe/Moscow',
+          outside_message: agentAvailOutsideMessage.trim() || DEFAULT_AGENT_OUTSIDE_MESSAGE,
+          weekdays: agentAvailWeekdays.map((d) => ({
+            enabled: Boolean(d.enabled),
+            start: d.start,
+            end: d.end,
+          })),
+        };
+    const nextConfig = {
+      ...currentConfig,
+      agent_availability: nextBlock,
+    };
+    setIsSavingAgentAvailability(true);
+    try {
+      await agentService.update(selectedBotId, { template_config: nextConfig });
+      setSelectedAgent((prev) => (prev ? { ...prev, template_config: nextConfig } : prev));
+      showSuccess('Режим работы ассистента сохранён');
+    } catch (error) {
+      showError(error?.message || 'Не удалось сохранить режим работы');
+    } finally {
+      setIsSavingAgentAvailability(false);
+    }
+  };
+
+  const handleToggleAgentAvailabilityDay = (index, enabled) => {
+    setAgentAvailWeekdays((prev) =>
+      prev.map((row, i) => (i === index ? { ...row, enabled: Boolean(enabled) } : row))
+    );
+  };
+
+  const handleAgentAvailabilityTimeChange = (index, field, value) => {
+    setAgentAvailWeekdays((prev) =>
+      prev.map((row, i) => (i === index ? { ...row, [field]: value } : row))
+    );
+  };
+
+  const handlePresetOfficeWeek = () => {
+    setAgentAvailWeekdays(buildDefaultAgentAvailabilityWeekdays());
+  };
 
   const handleRemoveChannel = async (connectionId) => {
     if (!selectedBotId) return;
@@ -1528,6 +1693,121 @@ const AgentsPageContent = () => {
                     )}
                   </div>
 
+                  <div className="agent-management-block agent-availability-block">
+                    <h4 className="agent-form-channel-title">Время работы ассистента</h4>
+                    <p className="agent-availability-hint">
+                      Время проверяется в выбранном часовом поясе (IANA), независимо от того, где физически
+                      расположен сервер. По умолчанию ассистент доступен круглосуточно.
+                    </p>
+                    <FeatureToggle
+                      checked={agentAvailAlwaysOn}
+                      onChange={(next) => setAgentAvailAlwaysOn(Boolean(next))}
+                      disabled={isSavingAgentAvailability}
+                      title="Круглосуточный режим (24/7)"
+                      description="Выключите, чтобы ограничить ответы LLM расписанием по дням недели."
+                      helpText="Команда /start в Telegram без режима «Обработка /start через LLM» по-прежнему показывает приветствие в любое время. Остальные сообщения вне окна получат ваш текст-заглушку."
+                    />
+                    <label htmlFor="agent_avail_timezone" className="mt-input">
+                      Часовой пояс расписания
+                    </label>
+                    <CustomSelect
+                      id="agent_avail_timezone"
+                      name="agent_avail_timezone"
+                      value={agentAvailTimezone}
+                      onChange={(event) => setAgentAvailTimezone(event.target.value)}
+                      options={agentAvailabilityTimezoneOptions}
+                      disabled={isSavingAgentAvailability}
+                    />
+                    <label htmlFor="agent_avail_outside_message" className="mt-input">
+                      Сообщение вне рабочего времени
+                    </label>
+                    <textarea
+                      id="agent_avail_outside_message"
+                      rows={3}
+                      className="input-main textarea"
+                      value={agentAvailOutsideMessage}
+                      onChange={(event) => setAgentAvailOutsideMessage(event.target.value)}
+                      disabled={isSavingAgentAvailability}
+                      placeholder={DEFAULT_AGENT_OUTSIDE_MESSAGE}
+                    />
+                    {!agentAvailAlwaysOn ? (
+                      <div className="agent-availability-weeksheet">
+                        <div className="agent-availability-weeksheet-header">
+                          <span className="agent-availability-weeksheet-title">Расписание по дням</span>
+                          <button
+                            type="button"
+                            className="btn btn-outline btn-compact"
+                            onClick={handlePresetOfficeWeek}
+                            disabled={isSavingAgentAvailability}
+                          >
+                            Пн–Пт 9–18
+                          </button>
+                        </div>
+                        <div className="agent-availability-weekdays" role="list">
+                          {agentAvailWeekdays.map((row, index) => (
+                            <div
+                              key={`${AGENT_AVAILABILITY_WEEKDAY_LABELS[index]}-${String(index)}`}
+                              className={`agent-availability-day-row ${row.enabled ? 'agent-availability-day-row--on' : ''}`}
+                              role="listitem"
+                            >
+                              <label className="agent-availability-day-toggle">
+                                <input
+                                  type="checkbox"
+                                  className="agent-availability-day-checkbox"
+                                  checked={row.enabled}
+                                  onChange={(event) =>
+                                    handleToggleAgentAvailabilityDay(index, event.target.checked)
+                                  }
+                                  disabled={isSavingAgentAvailability}
+                                />
+                                <span className="agent-availability-day-label">
+                                  {AGENT_AVAILABILITY_WEEKDAY_LABELS[index]}
+                                </span>
+                              </label>
+                              <div className="agent-availability-day-times">
+                                <input
+                                  type="time"
+                                  className="input-main agent-availability-time"
+                                  value={row.start}
+                                  onChange={(event) =>
+                                    handleAgentAvailabilityTimeChange(index, 'start', event.target.value)
+                                  }
+                                  disabled={isSavingAgentAvailability || !row.enabled}
+                                  aria-label={`Начало ${AGENT_AVAILABILITY_WEEKDAY_LABELS[index]}`}
+                                />
+                                <span className="agent-availability-time-sep" aria-hidden="true">
+                                  —
+                                </span>
+                                <input
+                                  type="time"
+                                  className="input-main agent-availability-time"
+                                  value={row.end}
+                                  onChange={(event) =>
+                                    handleAgentAvailabilityTimeChange(index, 'end', event.target.value)
+                                  }
+                                  disabled={isSavingAgentAvailability || !row.enabled}
+                                  aria-label={`Конец ${AGENT_AVAILABILITY_WEEKDAY_LABELS[index]}`}
+                                />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        <p className="agent-availability-footnote">
+                          Допускаются «ночные» окна (например 22:00—06:00): конец раньше начала означает
+                          переход через полночь.
+                        </p>
+                      </div>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="btn btn-black"
+                      onClick={handleSaveAgentAvailability}
+                      disabled={isSavingAgentAvailability}
+                    >
+                      {isSavingAgentAvailability ? 'Сохранение...' : 'Сохранить время работы'}
+                    </button>
+                  </div>
+
                   <div className="agent-management-block">
                     {isCrmAdminTemplate ? (
                       <>
@@ -1682,17 +1962,67 @@ const AgentsPageContent = () => {
                           onChange={(enabled) => handleToggleSalesActivity('neuro_commenting_enabled', enabled)}
                           disabled={isSavingTemplateConfig}
                           title="Нейрокомментинг"
-                          description="Юзербот мониторит посты в доступных каналах и оставляет LLM-комментарии."
-                          helpText="Когда включено, в каналах, где состоит юзербот, будут автоматически публиковаться комментарии, сгенерированные LLM."
+                          description="Юзербот комментирует посты в каналах аккаунта, где доступен как участник."
+                          helpText="К каждому новому посту формируется короткий LLM-комментарий без фильтра по триггер-словам и без квалификации целевого лида. Для групп и чатов по-прежнему действует список триггер-слов ниже (лидогенерация и имитация общения)."
                         />
                         <FeatureToggle
                           checked={salesLiveChatSimulationEnabled}
                           onChange={(enabled) => handleToggleSalesActivity('live_chat_simulation_enabled', enabled)}
                           disabled={isSavingTemplateConfig}
                           title="Имитация живого общения"
-                          description="Юзербот периодически включается в обсуждения по LLM-триггерам."
-                          helpText="Когда включено, юзербот может периодически вступать в разговор в чатах и отправлять 2-3 сообщения за одно включение."
+                          description="Юзербот периодически включается в обсуждения по триггер-словам из списка ниже."
+                          helpText="Когда включено, юзербот может периодически вступать в разговор в чатах и отправлять 2–3 сообщения за одно включение; сообщение учитывается только если совпало хотя бы с одним триггер-словом."
                         />
+                        <div className="sales-trigger-words-block">
+                          <label htmlFor="sales_trigger_word_draft" className="sales-trigger-words-label">
+                            Триггер-слова (лидогенерация и имитация живого общения)
+                          </label>
+                          <p className="sales-trigger-words-hint">
+                            Сообщения в группах проходят дальше к проверке целевого лида только если текст содержит
+                            совпадение с одним из слов (поиск по подстроке внутри слова). На каналы и нейрокомментинг
+                            этот список не распространяется.
+                          </p>
+                          <ul className="sales-trigger-words-list">
+                            {salesTriggerWords.map((word) => (
+                              <li key={word} className="sales-trigger-word-row">
+                                <span className="sales-trigger-word-text">{word}</span>
+                                <button
+                                  type="button"
+                                  className="sales-trigger-word-remove"
+                                  onClick={() => handleRemoveSalesTriggerWord(word)}
+                                  disabled={isSavingTemplateConfig}
+                                >
+                                  Удалить
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                          <div className="sales-trigger-word-add-row">
+                            <input
+                              id="sales_trigger_word_draft"
+                              type="text"
+                              className="input-main"
+                              value={salesTriggerWordDraft}
+                              onChange={(event) => setSalesTriggerWordDraft(event.target.value)}
+                              onKeyDown={handleSalesTriggerWordDraftKeyDown}
+                              placeholder="Новое слово или корень"
+                              disabled={isSavingTemplateConfig}
+                              maxLength={64}
+                            />
+                            <button
+                              type="button"
+                              className="btn btn-black sales-trigger-word-add-btn"
+                              onClick={handleAddSalesTriggerWord}
+                              disabled={
+                                isSavingTemplateConfig
+                                || !salesTriggerWordDraft.trim()
+                                || salesTriggerWords.length >= 30
+                              }
+                            >
+                              Добавить
+                            </button>
+                          </div>
+                        </div>
                         <button
                           type="button"
                           className="btn btn-black"

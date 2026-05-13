@@ -114,6 +114,9 @@ export const API_ROUTES = {
   ADMIN_DELETE_PROMO_CODE: (promoCodeId) => `/api/admin/promo-codes/${promoCodeId}`,
   ADMIN_ERROR_REPORTS: '/api/admin/error-reports',
   ADMIN_EMAIL_BROADCAST: '/api/admin/email-broadcast',
+  ADMIN_EMAIL_TARGETED_PREVIEW: '/api/admin/email-targeted-preview',
+  ADMIN_EMAIL_TARGETED_BROADCAST: '/api/admin/email-targeted-broadcast',
+  ADMIN_EMAIL_TARGETED_JOB: (jobId) => `/api/admin/email-targeted-broadcast/jobs/${jobId}`,
   TURNKEY_REQUESTS: '/api/payments/turnkey-requests',
 
   // Article Publisher

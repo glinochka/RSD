@@ -45,6 +45,7 @@ from ..channels.message_processor import (
     MessageRequest as RuntimeMessageRequest,
     get_message_processor,
 )
+from ..services.agent_availability import normalize_agent_availability_for_storage
 from ..services.ai_authoring import ai_client, generate_welcome_with_ai, improve_prompt_with_ai
 from ..services.admin_booking import get_admin_booking_service
 from ..services.admin_booking.domains import DOMAIN_REGISTRY as _DOMAIN_REGISTRY
@@ -810,6 +811,10 @@ def _normalize_template_config(template_type: str, template_config: dict | None)
     # Chat freeze feature is available only for QA template.
     if template_type == "qa" and "enable_chat_freeze" in raw:
         common_config["enable_chat_freeze"] = bool(raw.get("enable_chat_freeze"))
+    if "agent_availability" in raw:
+        common_config["agent_availability"] = normalize_agent_availability_for_storage(
+            raw.get("agent_availability")
+        )
     if "portrait_model" in raw:
         portrait_model = str(raw.get("portrait_model") or "").strip()
         if portrait_model:

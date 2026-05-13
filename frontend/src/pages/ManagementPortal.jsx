@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import adminService from '../services/adminService';
 import { ENV_CONFIG } from '../config/environment';
 import { NAVIGATION_ROUTES } from '../config/constants';
@@ -104,6 +104,17 @@ const ManagementPortal = () => {
   const [giftModal, setGiftModal] = useState({ open: false, user: null, planCode: 'Advanced' });
   const [broadcastDraft, setBroadcastDraft] = useState({ subject: '', body: '' });
   const [broadcastResult, setBroadcastResult] = useState(null);
+
+  const targetedGroupIdRef = useRef(2);
+  const [targetedGroups, setTargetedGroups] = useState([
+    { id: 'g1', title: 'Группа 1', emailsRaw: '', selected: true },
+  ]);
+  const [targetedBroadcastDraft, setTargetedBroadcastDraft] = useState({ subject: '', body: '' });
+  const [targetedIntervalSeconds, setTargetedIntervalSeconds] = useState(900);
+  const [targetedPreview, setTargetedPreview] = useState(null);
+  const [targetedJobStatus, setTargetedJobStatus] = useState(null);
+  const [targetedJobId, setTargetedJobId] = useState(null);
+  const [targetedPreviewLoading, setTargetedPreviewLoading] = useState(false);
 
   // --- Content Publisher state ---
   const [apTab, setApTab] = useState('settings');
@@ -782,6 +793,142 @@ const ManagementPortal = () => {
       setError('');
       const result = await adminService.sendEmailBroadcast(adminToken, { subject, body });
       setBroadcastResult(result);
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setActionInProgress(null);
+    }
+  };
+
+  useEffect(() => {
+    if (!targetedJobId || !adminToken) {
+      return undefined;
+    }
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const job = await adminService.getEmailTargetedBroadcastJob(adminToken, targetedJobId);
+        if (cancelled) return;
+        setTargetedJobStatus(job);
+        if (job.status === 'completed' || job.status === 'failed') {
+          setTargetedJobId(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(formatError(err));
+          setTargetedJobId(null);
+        }
+      }
+    };
+    poll();
+    const interval = setInterval(poll, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [targetedJobId, adminToken]);
+
+  const addTargetedGroup = () => {
+    const n = targetedGroupIdRef.current;
+    targetedGroupIdRef.current = n + 1;
+    setTargetedGroups((prev) => [
+      ...prev,
+      { id: `g${n}`, title: `Группа ${n}`, emailsRaw: '', selected: true },
+    ]);
+  };
+
+  const removeTargetedGroup = (groupId) => {
+    setTargetedGroups((prev) => {
+      if (prev.length <= 1) return prev;
+      return prev.filter((g) => g.id !== groupId);
+    });
+  };
+
+  const buildTargetedPayload = () => {
+    const groups = targetedGroups.map((g) => ({
+      title: g.title.trim(),
+      emails_raw: g.emailsRaw,
+    }));
+    const selected_titles = targetedGroups
+      .filter((g) => g.selected && g.title.trim())
+      .map((g) => g.title.trim());
+    return { groups, selected_titles };
+  };
+
+  const handleTargetedPreview = async (event) => {
+    event.preventDefault();
+    const { groups, selected_titles } = buildTargetedPayload();
+    if (!selected_titles.length) {
+      setError('Отметьте хотя бы одну группу с непустым названием');
+      return;
+    }
+    const emptyTitle = groups.some((g) => !g.title);
+    if (emptyTitle) {
+      setError('У каждой группы должно быть название');
+      return;
+    }
+    try {
+      setTargetedPreviewLoading(true);
+      setError('');
+      const data = await adminService.previewEmailTargeted(adminToken, { groups, selected_titles });
+      setTargetedPreview(data);
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setTargetedPreviewLoading(false);
+    }
+  };
+
+  const handleTargetedSend = async (event) => {
+    event.preventDefault();
+    const subject = targetedBroadcastDraft.subject.trim();
+    const body = targetedBroadcastDraft.body.trim();
+    if (subject.length < 3) {
+      setError('Тема письма (точечная рассылка) — не короче 3 символов');
+      return;
+    }
+    if (body.length < 10) {
+      setError('Текст письма — не короче 10 символов');
+      return;
+    }
+    const interval = Number(targetedIntervalSeconds);
+    if (Number.isNaN(interval) || interval < 30) {
+      setError('Интервал между письмами — не меньше 30 секунд');
+      return;
+    }
+    const { groups, selected_titles } = buildTargetedPayload();
+    if (!selected_titles.length) {
+      setError('Отметьте хотя бы одну группу');
+      return;
+    }
+    if (groups.some((g) => !g.title)) {
+      setError('У каждой группы должно быть название');
+      return;
+    }
+    if (
+      !window.confirm(
+        `Запустить точечную рассылку? Получатели: после разбора списков — смотрите превью. Пауза между письмами: ${interval} с.`
+      )
+    ) {
+      return;
+    }
+    try {
+      setActionInProgress('email-targeted');
+      setError('');
+      setTargetedJobStatus(null);
+      const result = await adminService.sendEmailTargetedBroadcast(adminToken, {
+        groups,
+        selected_titles,
+        subject,
+        body,
+        interval_seconds: Math.min(Math.max(Math.round(interval), 30), 86400),
+      });
+      setTargetedJobId(result.job_id);
+      setTargetedPreview((prev) => ({
+        ...(prev || {}),
+        unique_total: result.total_recipients,
+        per_group: result.preview?.per_group || prev?.per_group,
+      }));
     } catch (err) {
       setError(formatError(err));
     } finally {
@@ -2123,53 +2270,234 @@ const ManagementPortal = () => {
       </div>
       {error && <div className="management-error">{error}</div>}
 
-      <form className="management-broadcast-form" onSubmit={handleSendEmailBroadcast}>
-        <div className="management-form-row">
-          <label htmlFor="broadcast-subject">Тема письма</label>
-          <input
-            id="broadcast-subject"
-            type="text"
-            maxLength={200}
-            placeholder="Например: Важное обновление RSD"
-            value={broadcastDraft.subject}
-            onChange={(e) => setBroadcastDraft((prev) => ({ ...prev, subject: e.target.value }))}
-          />
-        </div>
+      <div className="management-broadcast-stack">
+        <section className="management-broadcast-card">
+          <h3 className="management-broadcast-card-title">Все подтверждённые пользователи</h3>
+          <p className="management-broadcast-card-desc">
+            Одно письмо подряд каждому пользователю с подтверждённым email в базе (без регулируемой паузы).
+          </p>
+          <form className="management-broadcast-form" onSubmit={handleSendEmailBroadcast}>
+            <div className="management-form-row">
+              <label htmlFor="broadcast-subject">Тема письма</label>
+              <input
+                id="broadcast-subject"
+                type="text"
+                maxLength={200}
+                placeholder="Например: Важное обновление RSD"
+                value={broadcastDraft.subject}
+                onChange={(e) => setBroadcastDraft((prev) => ({ ...prev, subject: e.target.value }))}
+              />
+            </div>
 
-        <div className="management-form-row">
-          <label htmlFor="broadcast-body">Текст письма</label>
-          <textarea
-            id="broadcast-body"
-            rows={10}
-            maxLength={15000}
-            placeholder="Введите текст рассылки. HTML-оформление будет применено автоматически."
-            value={broadcastDraft.body}
-            onChange={(e) => setBroadcastDraft((prev) => ({ ...prev, body: e.target.value }))}
-          />
-        </div>
+            <div className="management-form-row">
+              <label htmlFor="broadcast-body">Текст письма</label>
+              <textarea
+                id="broadcast-body"
+                rows={10}
+                maxLength={15000}
+                placeholder="Введите текст рассылки. HTML-оформление будет применено автоматически."
+                value={broadcastDraft.body}
+                onChange={(e) => setBroadcastDraft((prev) => ({ ...prev, body: e.target.value }))}
+              />
+            </div>
 
-        <div className="management-broadcast-actions">
-          <button
-            type="submit"
-            className="btn btn-black"
-            disabled={actionInProgress === 'email-broadcast'}
-          >
-            {actionInProgress === 'email-broadcast' ? 'Отправка...' : 'Запустить рассылку'}
-          </button>
-          <span className="management-broadcast-hint">
-            Рассылка отправляется по всем пользователям с подтвержденным email.
-          </span>
-        </div>
-      </form>
+            <div className="management-broadcast-actions">
+              <button
+                type="submit"
+                className="btn btn-black"
+                disabled={actionInProgress === 'email-broadcast' || actionInProgress === 'email-targeted'}
+              >
+                {actionInProgress === 'email-broadcast' ? 'Отправка...' : 'Запустить рассылку'}
+              </button>
+            </div>
+          </form>
+          {broadcastResult && (
+            <div className="management-broadcast-result">
+              <strong>Результат:</strong>
+              <span> всего: {broadcastResult.total_recipients ?? 0}</span>
+              <span> отправлено: {broadcastResult.sent ?? 0}</span>
+              <span> ошибок: {broadcastResult.failed ?? 0}</span>
+            </div>
+          )}
+        </section>
 
-      {broadcastResult && (
-        <div className="management-broadcast-result">
-          <strong>Результат:</strong>
-          <span> всего: {broadcastResult.total_recipients ?? 0}</span>
-          <span> отправлено: {broadcastResult.sent ?? 0}</span>
-          <span> ошибок: {broadcastResult.failed ?? 0}</span>
-        </div>
-      )}
+        <section className="management-broadcast-card management-targeted-card">
+          <h3 className="management-broadcast-card-title">Точечная рассылка по группам</h3>
+          <p className="management-broadcast-card-desc">
+            Создайте группы и вставьте списки email (через запятую, с новой строки, из Excel). Адреса будут
+            извлечены и приведены к одному формату. Отправка через API MailoPost (
+            <a href="https://mailopost.ru/api.html" target="_blank" rel="noreferrer">
+              документация
+            </a>
+            ) — по одному письму с настраиваемой паузой, чтобы снизить риск лимитов.
+          </p>
+
+          <form className="management-targeted-groups" onSubmit={(e) => e.preventDefault()}>
+            {targetedGroups.map((g) => (
+              <div key={g.id} className="management-targeted-group-row">
+                <label className="management-targeted-group-check">
+                  <input
+                    type="checkbox"
+                    checked={g.selected}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setTargetedGroups((prev) =>
+                        prev.map((row) => (row.id === g.id ? { ...row, selected: checked } : row))
+                      );
+                    }}
+                  />
+                  <span>Включить в рассылку</span>
+                </label>
+                <div className="management-form-row">
+                  <label>Название группы</label>
+                  <input
+                    type="text"
+                    maxLength={120}
+                    value={g.title}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setTargetedGroups((prev) =>
+                        prev.map((row) => (row.id === g.id ? { ...row, title: v } : row))
+                      );
+                    }}
+                    placeholder="Например: Партнёры Q2"
+                  />
+                </div>
+                <div className="management-form-row">
+                  <label>Список email</label>
+                  <textarea
+                    rows={5}
+                    className="management-targeted-emails-input"
+                    value={g.emailsRaw}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setTargetedGroups((prev) =>
+                        prev.map((row) => (row.id === g.id ? { ...row, emailsRaw: v } : row))
+                      );
+                    }}
+                    placeholder={'Один адрес на строку или через запятую:\nuser@mail.ru, other@company.org'}
+                  />
+                </div>
+                {targetedGroups.length > 1 && (
+                  <button
+                    type="button"
+                    className="btn btn-outline management-targeted-remove"
+                    onClick={() => removeTargetedGroup(g.id)}
+                  >
+                    Удалить группу
+                  </button>
+                )}
+              </div>
+            ))}
+            <button type="button" className="btn btn-outline" onClick={addTargetedGroup}>
+              + Добавить группу
+            </button>
+          </form>
+
+          <form className="management-broadcast-form management-targeted-message" onSubmit={handleTargetedSend}>
+            <div className="management-form-row">
+              <label>Пауза между письмами (секунд)</label>
+              <input
+                type="number"
+                min={30}
+                max={86400}
+                step={1}
+                value={targetedIntervalSeconds}
+                onChange={(e) => setTargetedIntervalSeconds(Number(e.target.value))}
+              />
+              <span className="management-broadcast-hint">
+                По умолчанию 900 с (15 мин). Минимум 30 с, максимум сутки.
+              </span>
+            </div>
+            <div className="management-form-row">
+              <label htmlFor="targeted-subject">Тема письма</label>
+              <input
+                id="targeted-subject"
+                type="text"
+                maxLength={200}
+                value={targetedBroadcastDraft.subject}
+                onChange={(e) =>
+                  setTargetedBroadcastDraft((prev) => ({ ...prev, subject: e.target.value }))
+                }
+              />
+            </div>
+            <div className="management-form-row">
+              <label htmlFor="targeted-body">Текст письма</label>
+              <textarea
+                id="targeted-body"
+                rows={8}
+                maxLength={15000}
+                value={targetedBroadcastDraft.body}
+                onChange={(e) =>
+                  setTargetedBroadcastDraft((prev) => ({ ...prev, body: e.target.value }))
+                }
+                placeholder="Текст точечной рассылки (как для общей рассылки — простой текст, оформление в письме)."
+              />
+            </div>
+            <div className="management-broadcast-actions management-targeted-actions">
+              <button
+                type="button"
+                className="btn btn-outline"
+                disabled={targetedPreviewLoading || actionInProgress === 'email-targeted'}
+                onClick={handleTargetedPreview}
+              >
+                {targetedPreviewLoading ? 'Разбор списков...' : 'Проверить списки'}
+              </button>
+              <button
+                type="submit"
+                className="btn btn-black"
+                disabled={actionInProgress === 'email-targeted' || actionInProgress === 'email-broadcast'}
+              >
+                {actionInProgress === 'email-targeted' ? 'Постановка в очередь...' : 'Запустить точечную рассылку'}
+              </button>
+            </div>
+          </form>
+
+          {targetedPreview && (
+            <div className="management-targeted-preview">
+              <strong>Разбор адресов:</strong>
+              <span> уникальных получателей: {targetedPreview.unique_total ?? 0}</span>
+              {targetedPreview.recipient_preview?.length > 0 && (
+                <div className="management-targeted-preview-emails">
+                  Примеры: {targetedPreview.recipient_preview.join(', ')}
+                  {(targetedPreview.unique_total || 0) > targetedPreview.recipient_preview.length ? '…' : ''}
+                </div>
+              )}
+              {targetedPreview.per_group && (
+                <ul className="management-targeted-per-group">
+                  {Object.entries(targetedPreview.per_group).map(([title, info]) => (
+                    <li key={title}>
+                      <strong>{title}</strong>: в группе {info.parsed_in_group}, в кампанию добавлено{' '}
+                      {info.new_unique_for_campaign}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {targetedJobStatus && (
+            <div
+              className={`management-broadcast-result management-targeted-job ${
+                targetedJobStatus.status === 'failed' ? 'is-error' : ''
+              }`}
+            >
+              <strong>Статус точечной рассылки:</strong>
+              <span>{targetedJobStatus.status}</span>
+              <span>
+                {targetedJobStatus.sent ?? 0} / {targetedJobStatus.total ?? 0} отправлено
+              </span>
+              <span>ошибок: {targetedJobStatus.failed ?? 0}</span>
+              {targetedJobStatus.status === 'running' && targetedJobStatus.last_recipient && (
+                <span className="management-cell-muted">текущий: {targetedJobStatus.last_recipient}</span>
+              )}
+              {targetedJobStatus.error && (
+                <span className="management-targeted-job-error">{targetedJobStatus.error}</span>
+              )}
+            </div>
+          )}
+        </section>
+      </div>
     </>
   );
 

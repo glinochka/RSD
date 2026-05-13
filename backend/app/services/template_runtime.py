@@ -26,6 +26,17 @@ from ..qdrant.search_service import search_knowledge_base
 
 logger = logging.getLogger(__name__)
 MAX_CHAT_PORTRAIT_CHARS = 2000
+
+# When sanitization strips everything, avoid robotic system copy for the end user.
+_SANITIZE_EMPTY_ANSWER_FALLBACK = (
+    "У меня сейчас сбилось сообщение — напишите, пожалуйста, ещё раз дату и время "
+    "и к какому специалисту хотите запись, я всё перепроверю."
+)
+
+_CRM_ADMIN_LLM_EMPTY_FALLBACK = (
+    "Не совсем понятно — напишите, пожалуйста, что нужно записать и на когда, "
+    "я посмотрю расписание."
+)
 _DSML_TOOL_CALLS_RE = re.compile(r"<｜DSML｜tool_calls>.*?</｜DSML｜tool_calls>", re.DOTALL)
 _DSML_INVOKE_RE = re.compile(
     r"<｜DSML｜invoke name=\"(?P<name>[^\"]+)\">(?P<body>.*?)</｜DSML｜invoke>",
@@ -37,7 +48,14 @@ _DSML_PARAM_RE = re.compile(
 )
 _CODE_BLOCK_RE = re.compile(r"```[\s\S]*?```", re.MULTILINE)
 _TEMPLATE_VAR_RE = re.compile(r"(\{\{[^{}]+\}\}|\$\{[^{}]+\}|%\([^)]+\)s)")
-_ASSIGNMENT_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]{2,}\s*=\s*[^\s,;]+")
+# Only strip obviously leaked API/internal identifiers — a broad "word=value" rule
+# mangles legitimate phrases (e.g. rare English words before "=") and produces
+# "технические данные скрыты" in the middle of customer-facing sentences.
+_INTERNAL_ASSIGNMENT_RE = re.compile(
+    r"\b(staff_id|resource_id|service_id|agent_id|appointment_id|client_external_id|"
+    r"slot_id|user_id|chat_id|template_id|lookup_staff_id|new_staff_id|new_resource_id)\s*=\s*\S+",
+    re.IGNORECASE,
+)
 _JSON_PAIR_RE = re.compile(
     r"([\"'])?[A-Za-z_][A-Za-z0-9_]{2,}\1?\s*:\s*([\"'][^\"']*[\"']|[^,\]\}\n]+)"
 )
@@ -336,12 +354,30 @@ class TemplateRuntimeService:
         return self._sanitize_final_answer(cleaned)
 
     @staticmethod
+    def _is_degenerate_sanitized_answer(text: str) -> bool:
+        """True if nothing usable remains except placeholder tokens from scrubbing."""
+        s = (text or "").strip()
+        if not s:
+            return True
+        junk_only = re.compile(
+            r"^(технические данные скрыты|технические детали скрыты\.?)([\s,;]*)$",
+            re.IGNORECASE,
+        )
+        for raw_line in s.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            if not junk_only.match(line):
+                return False
+        return True
+
+    @staticmethod
     def _sanitize_final_answer(text: str) -> str:
         """Remove leaked variable names/values from customer-facing answers."""
         sanitized = _CODE_BLOCK_RE.sub("Технические детали скрыты.", text or "")
         sanitized = _INTERNAL_MARKER_RE.sub("", sanitized)
         sanitized = _TEMPLATE_VAR_RE.sub("технические данные скрыты", sanitized)
-        sanitized = _ASSIGNMENT_RE.sub("технические данные скрыты", sanitized)
+        sanitized = _INTERNAL_ASSIGNMENT_RE.sub("технические данные скрыты", sanitized)
         sanitized = _JSON_PAIR_RE.sub("технические данные скрыты", sanitized)
 
         safe_lines: list[str] = []
@@ -349,17 +385,20 @@ class TemplateRuntimeService:
             line = re.sub(r"\s{2,}", " ", raw_line).strip()
             if not line:
                 continue
-            if _TEMPLATE_VAR_RE.search(line) or _ASSIGNMENT_RE.search(line):
+            if _TEMPLATE_VAR_RE.search(line) or _INTERNAL_ASSIGNMENT_RE.search(line):
                 continue
             safe_lines.append(line)
 
         collapsed = "\n".join(safe_lines).strip()
-        return collapsed or "Технические детали скрыты."
+        if not collapsed or TemplateRuntimeService._is_degenerate_sanitized_answer(collapsed):
+            return _SANITIZE_EMPTY_ANSWER_FALLBACK
+        return collapsed
 
     def _sanitize_result(self, result: TemplateExecutionResult) -> TemplateExecutionResult:
         result.answer = self._sanitize_final_answer(result.answer)
-        if result.owner_handoff_reason:
-            result.owner_handoff_reason = self._sanitize_final_answer(result.owner_handoff_reason)
+        handoff = getattr(result, "owner_handoff_reason", None)
+        if handoff:
+            result.owner_handoff_reason = self._sanitize_final_answer(str(handoff))
         return result
 
     @staticmethod
@@ -691,12 +730,16 @@ class TemplateRuntimeService:
             "Не выдумывай результаты операций: опирайся только на ответы tools. "
             "Если не хватает параметров для tool call — задай уточняющий вопрос. "
             "Никогда не показывай пользователю служебные блоки tool_calls/DSML/XML/JSON и не печатай внутренние id сотрудников/ресурсов. "
+            "Имена врачей и услуг бери из ответов list_staff и list_services (там же будет staff_full_name у привязанных услуг). "
+            "Не предлагай процедуру у мастера, если в list_services эта услуга закреплена за другим staff_id. "
             "ИЕРАРХИЯ ИСТОЧНИКОВ ДАННЫХ (соблюдай строго): "
             "1. Ответы tools — единственная актуальная истина. Всегда вызывай нужный tool; никогда не используй данные из портрета/истории как замену вызову tool. "
             "2. Портрет клиента — вспомогательный контекст (имя, предпочтения), НЕ замена вызову инструмента. "
             "3. Особенно важно: ID сотрудников (staff_id) и ID ресурсов могут меняться — ВСЕГДА бери их из ответа list_staff/list_services, не из памяти или портрета. "
             "ВАЖНО: Перед созданием, переносом или отменой записи ВСЕГДА уточни детали у клиента в одном сообщении — кратко и по-человечески перечисли дату, время, мастера/врача и услугу и спроси всё ли верно. Дождись согласия и только потом выполняй tool call. Не используй роботизированные фразы типа 'подтвердите' или 'напишите «подтверждаю»' — просто спроси естественно. "
             "ВАЖНО: Перед созданием записи ВСЕГДА спрашивай имя клиента, если оно ещё не известно из контекста разговора. Записывай реальное имя человека в поле client_name — никогда не используй Telegram ID, username или технические идентификаторы в качестве имени. "
+            "Для проверки даты вызывай check_availability: при конкретной услуге передавай service_id из list_services и duration_minutes как duration_minutes услуги "
+            "(чтобы отличить короткое свободное окно от полного приёма нужной длительности). "
             "Даты и время в системе — локальные (бизнес-время). Не конвертируй в UTC. "
             f"Сегодняшняя дата: {now_local.strftime('%Y-%m-%d')}. "
             "Если пользователь называет дату без года, используй текущий год(2026). Всегда передавай даты в формате YYYY-MM-DDTHH:MM:SS. "
@@ -706,7 +749,10 @@ class TemplateRuntimeService:
             "НЕ передавай staff_id в cancel_appointment или reschedule_appointment, если ты не уверен в его актуальности — система найдёт запись по дате и клиенту без него. "
             "Никогда не проси у пользователя ID записи. "
             "Отвечай только чистым текстом, без markdown. "
-            "Строго запрещено показывать в ответе любые названия переменных, placeholders и их содержимое ({{...}}, ${...}, key=value, JSON/XML-поля и аналогичные техфрагменты).\n\n"
+            "Строго запрещено показывать в ответе любые названия переменных, placeholders и их содержимое ({{...}}, ${...}, key=value, JSON/XML-поля и аналогичные техфрагменты). "
+            "Если из ответа инструмента следует, что запрос и каталог не сходятся (например, услуга у другого врача), скажи это клиенту своими словами, по-деловому и спокойно, без канцелярита и без служебных названий полей. "
+            "Если свободных окон нет и отдельной подсказки об ошибке тоже нет — не придумывай время; предложи соседний день или другого специалиста, как сделала бы администратор. "
+            "Если клиент повторяет тот же вопрос, опирайся на свежий ответ инструмента, а не на догадку из начала разговора.\n\n"
             f"{now_context}\n{domain_instruction}\n{resource_model_hint}\n{backend_instruction}"
         ).strip()
         if portrait_block:
@@ -737,7 +783,7 @@ class TemplateRuntimeService:
             if not tool_calls:
                 cleaned = self._clean_llm_text(content)
                 if not cleaned:
-                    cleaned = "Не удалось сформировать ответ. Уточните запрос."
+                    cleaned = _CRM_ADMIN_LLM_EMPTY_FALLBACK
                 return TemplateExecutionResult(answer=cleaned, sources=[], tool_events=tool_events)
 
             messages.append(
@@ -759,6 +805,11 @@ class TemplateRuntimeService:
                 try:
                     if booking_registry.has_tool(tool_name):
                         tool_result = await booking_registry.execute_tool(tool_name, raw_args)
+                        self._log_crm_admin_booking_tool(
+                            agent_id=agent_id,
+                            tool_name=tool_name,
+                            tool_result=tool_result,
+                        )
                     elif crm_registry is not None and tool_name in crm_tool_names:
                         tool_result = await crm_registry.execute_tool(tool_name, raw_args)
                     else:
@@ -853,7 +904,7 @@ class TemplateRuntimeService:
                 final_content = (final_completion.choices[0].message.content or "").strip()
                 cleaned = self._clean_llm_text(final_content)
                 return TemplateExecutionResult(
-                    answer=cleaned or "Уточните запрос.",
+                    answer=cleaned or _CRM_ADMIN_LLM_EMPTY_FALLBACK,
                     sources=[],
                     tool_events=tool_events,
                 )
@@ -866,10 +917,39 @@ class TemplateRuntimeService:
         final_content = (final_completion.choices[0].message.content or "").strip()
         cleaned = self._clean_llm_text(final_content)
         return TemplateExecutionResult(
-            answer=cleaned or "Уточните запрос.",
+            answer=cleaned or _CRM_ADMIN_LLM_EMPTY_FALLBACK,
             sources=[],
             tool_events=tool_events,
         )
+
+    @staticmethod
+    def _log_crm_admin_booking_tool(
+        *,
+        agent_id: int | None,
+        tool_name: str,
+        tool_result: dict[str, Any],
+    ) -> None:
+        """Lightweight diagnostics for booking reads (no PII, no slot times in logs)."""
+        if agent_id is None or tool_name != "check_availability" or not tool_result.get("ok"):
+            return
+        payload = tool_result.get("result")
+        if isinstance(payload, dict):
+            if payload.get("validation_error"):
+                logger.info("crm_admin check_availability validation_hint agent_id=%s", agent_id)
+            else:
+                slots = payload.get("available_slots")
+                if isinstance(slots, list):
+                    logger.info(
+                        "crm_admin check_availability slot_count=%s agent_id=%s",
+                        len(slots),
+                        agent_id,
+                    )
+        elif isinstance(payload, list):
+            logger.info(
+                "crm_admin check_availability slot_count=%s agent_id=%s",
+                len(payload),
+                agent_id,
+            )
 
     @staticmethod
     def _crm_admin_domain_instruction(
@@ -1097,6 +1177,90 @@ class TemplateRuntimeService:
 
         return TemplateExecutionResult(answer=decision.answer, sources=[])
 
+    async def _compose_neuro_channel_comment(
+        self,
+        *,
+        prompt: str,
+        post_text: str,
+        context_list: list[dict[str, Any]],
+        template_config: dict[str, Any],
+    ) -> str:
+        """Short public comment for channel posts; no lead qualification."""
+        model = str(template_config.get("generation_model") or "deepseek-chat").strip() or "deepseek-chat"
+        product_name = str(template_config.get("sales_product_name") or "ваш продукт").strip() or "ваш продукт"
+        offer_type = str(template_config.get("sales_offer_type") or "услуга").strip() or "услуга"
+        usp = str(template_config.get("sales_usp") or "").strip()
+        context_parts = [
+            f"Источник: {c.get('source', 'Unknown')}\nТекст: {c.get('text', '')}"
+            for c in context_list
+        ]
+        context_text = "\n\n---\n\n".join(context_parts) if context_parts else "Дополнительный контекст не найден."
+        system_prompt = (
+            f"{prompt}\n\n"
+            "Ты участник обсуждения под постом в Telegram-канале. "
+            "Напиши один короткий публичный комментарий (1–2 предложения): по сути поста, естественный тон, без канцелярита. "
+            "Допустимо мягко указать релевантность темы бренда, но без навязчивой рекламы, без призыва «пишите в личку», без спама. "
+            "Только обычный текст, без markdown и без хештегов.\n"
+            f"Тема бренда для уместности: {product_name} ({offer_type})."
+        )
+        if usp:
+            system_prompt = f"{system_prompt}\nУТП: {usp}"
+        user_prompt = (
+            f"Текст поста:\n{post_text}\n\n"
+            f"Материалы из базы знаний:\n{context_text}\n\n"
+            "Верни только текст комментария."
+        )
+        completion = await ai_client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.35,
+        )
+        content = (completion.choices[0].message.content or "").strip()
+        return content.replace("#", "").replace("*", "").strip()[:600]
+
+    async def _execute_sales_manager_neuro_comment(
+        self,
+        *,
+        prompt: str,
+        user_message: str,
+        knowledge_scope_id: int,
+        template_config: dict[str, Any],
+        source_channel: str,
+        user_external_id: str | None,
+    ) -> TemplateExecutionResult:
+        """Neuro-commenting on channel posts: compose comment only, skip lead pipeline."""
+        context_list, sources = await self.retrieve_offer_context(
+            user_message=user_message,
+            knowledge_scope_id=knowledge_scope_id,
+            enable_smart_search=self._is_smart_search_enabled(template_config),
+        )
+        raw_comment = await self._compose_neuro_channel_comment(
+            prompt=prompt,
+            post_text=user_message,
+            context_list=context_list,
+            template_config=template_config,
+        )
+        cleaned = self._clean_llm_text(raw_comment)
+        if self._is_degenerate_sanitized_answer(cleaned):
+            cleaned = "Интересный пост, спасибо за материал."
+        event: dict[str, Any] = {
+            "tool_name": "sales_neuro_channel_comment",
+            "tool_args_hash": None,
+            "tool_status": "neuro_comment_composed",
+            "latency_ms": 0,
+            "crm_provider": None,
+            "source_channel": source_channel,
+            "user_external_id": mask_external_id(user_external_id),
+            "ok": True,
+            "idempotent_replay": False,
+            "idempotency_key": None,
+            "error": None,
+        }
+        return TemplateExecutionResult(answer=cleaned, sources=sources, tool_events=[event])
+
     async def _execute_sales_manager(
         self,
         *,
@@ -1111,6 +1275,17 @@ class TemplateRuntimeService:
         runtime_context: dict[str, Any] | None = None,
     ) -> TemplateExecutionResult:
         runtime_context = runtime_context or {}
+        if bool(runtime_context.get("is_channel_chat")) and bool(
+            runtime_context.get("neuro_commenting_enabled")
+        ):
+            return await self._execute_sales_manager_neuro_comment(
+                prompt=prompt,
+                user_message=user_message,
+                knowledge_scope_id=knowledge_scope_id,
+                template_config=template_config,
+                source_channel=source_channel,
+                user_external_id=user_external_id,
+            )
         contact_key = self._resolve_sales_contact_key(template_config=template_config)
         workflow_completion_mode = self._sales_workflow_completion_mode(template_config)
         lead_score_scale = self._resolve_sales_score_scale(template_config)

@@ -128,6 +128,42 @@ async def test_sales_runtime_skip_low_confidence(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_sales_runtime_neuro_channel_skips_lead_pipeline(monkeypatch):
+    service = TemplateRuntimeService()
+
+    async def fake_create(**kwargs):
+        msgs = kwargs.get("messages") or []
+        user_blob = "\n".join(str(m.get("content") or "") for m in msgs if m.get("role") == "user")
+        assert "Верни только текст комментария." in user_blob
+        return _completion("Сильная мысль, полезно для практики.")
+
+    async def fake_search(query, agent_id):
+        return [{"source": "kb://offer", "text": "контекст"}]
+
+    async def must_not_qualify(*args, **kwargs):
+        raise AssertionError("_qualify_and_compose_unified must not run for neuro channel comments")
+
+    monkeypatch.setattr("app.services.template_runtime.ai_client.chat.completions.create", fake_create)
+    monkeypatch.setattr("app.services.template_runtime.search_knowledge_base", fake_search)
+    monkeypatch.setattr(TemplateRuntimeService, "_qualify_and_compose_unified", must_not_qualify)
+
+    result = await service.execute(
+        template_type="sales_manager",
+        prompt="Ты агент бренда",
+        user_message="Разбор новых правил рынка на этой неделе",
+        knowledge_scope_id=101,
+        agent_id=999,
+        template_config={"mode": "draft_only", "min_confidence": 0.99},
+        source_channel="telegram_userbot",
+        user_external_id="777",
+        runtime_context={"is_channel_chat": True, "neuro_commenting_enabled": True},
+    )
+
+    assert "Сильная мысль" in result.answer
+    assert result.tool_events and result.tool_events[0]["tool_name"] == "sales_neuro_channel_comment"
+
+
+@pytest.mark.asyncio
 async def test_sales_runtime_function_call_schedule_dm(monkeypatch, mock_db_session):
     service = TemplateRuntimeService()
     calls = {"n": 0}

@@ -448,6 +448,109 @@
   color: #1e3a8a;
 }
 
+.management-broadcast-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+}
+
+.management-broadcast-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-base);
+  padding: var(--spacing-base);
+  background: var(--color-bg, #fff);
+}
+
+.management-broadcast-card-title {
+  margin: 0 0 var(--spacing-xs);
+  font-size: 1.1rem;
+}
+
+.management-broadcast-card-desc {
+  margin: 0 0 var(--spacing-base);
+  color: var(--color-text-light);
+  font-size: var(--font-size-sm, 0.875rem);
+  line-height: 1.5;
+}
+
+.management-targeted-card .management-form-row {
+  margin-bottom: var(--spacing-sm);
+}
+
+.management-targeted-groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-base);
+  margin-bottom: var(--spacing-base);
+}
+
+.management-targeted-group-row {
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-base);
+  padding: var(--spacing-base);
+}
+
+.management-targeted-group-check {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-sm);
+  font-size: var(--font-size-sm, 0.875rem);
+}
+
+.management-targeted-emails-input {
+  width: 100%;
+  resize: vertical;
+  min-height: 100px;
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+}
+
+.management-targeted-remove {
+  margin-top: var(--spacing-sm);
+}
+
+.management-targeted-message {
+  margin-top: var(--spacing-base);
+}
+
+.management-targeted-actions {
+  align-items: flex-start;
+}
+
+.management-targeted-preview {
+  margin-top: var(--spacing-base);
+  padding: var(--spacing-sm) var(--spacing-base);
+  border-radius: var(--radius-base);
+  border: 1px solid #d1d5db;
+  background: #f9fafb;
+  font-size: var(--font-size-sm, 0.875rem);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.management-targeted-preview-emails {
+  word-break: break-all;
+  color: var(--color-text-light);
+}
+
+.management-targeted-per-group {
+  margin: var(--spacing-xs) 0 0;
+  padding-left: 1.25rem;
+}
+
+.management-targeted-job.is-error {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.management-targeted-job-error {
+  flex-basis: 100%;
+  margin-top: var(--spacing-xs);
+}
+
 .management-chats-layout {
   display: grid;
   grid-template-columns: minmax(280px, 340px) 1fr;

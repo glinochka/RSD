@@ -200,6 +200,31 @@ const adminService = {
     return response.data;
   },
 
+  async previewEmailTargeted(token, { groups, selected_titles }) {
+    const response = await adminClient.post(
+      API_ROUTES.ADMIN_EMAIL_TARGETED_PREVIEW,
+      { groups, selected_titles },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data;
+  },
+
+  async sendEmailTargetedBroadcast(token, { groups, selected_titles, subject, body, interval_seconds }) {
+    const response = await adminClient.post(
+      API_ROUTES.ADMIN_EMAIL_TARGETED_BROADCAST,
+      { groups, selected_titles, subject, body, interval_seconds },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data;
+  },
+
+  async getEmailTargetedBroadcastJob(token, jobId) {
+    const response = await adminClient.get(API_ROUTES.ADMIN_EMAIL_TARGETED_JOB(jobId), {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return response.data;
+  },
+
   // --- Article Publisher ---
 
   async apGetSettings(token) {

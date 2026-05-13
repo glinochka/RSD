@@ -1,9 +1,12 @@
+import asyncio
 from datetime import datetime, timezone
 from html import escape
 import json
 from logging import getLogger
 import os
+import re
 from secrets import compare_digest
+import uuid
 
 from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, UploadFile, status
 from fastapi.responses import FileResponse, JSONResponse
@@ -16,6 +19,7 @@ from sqlalchemy import and_, func, or_, select, tuple_
 
 from .schemas import (
     AdminEmailBroadcastRequest,
+    AdminEmailTargetedPreviewRequest,
     AdminGiftSubscriptionRequest,
     AdminLoginRequest,
     AdminPromoCodeCreateRequest,
@@ -24,6 +28,7 @@ from .schemas import (
     ArticlePublisherGenerateTopicsRequest,
     ArticlePublisherRunNowRequest,
     ArticlePublisherSettingsUpdateRequest,
+    AdminTargetedBroadcastRequest,
 )
 from ..alembic.database import async_session_maker
 from ..alembic.models import Agent, AgentAnalyticsMessage, AgentFrozenUser, ArticlePublisherImage, PromoCode, User
@@ -39,6 +44,7 @@ from ..subscription_plans import (
     get_subscription_plan,
     update_subscription_plan_overrides,
 )
+from ..utils.email_list_parse import parse_emails_from_raw_text
 from ..utils.JWT import create_access_token
 from ..utils.rate_limit import rate_limit
 from ..utils.security import verify_password
@@ -47,6 +53,25 @@ logger = getLogger(__name__)
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 http_bearer = HTTPBearer(auto_error=False)
+
+MAILOPOST_RATE_LIMIT_RETRY_RE = re.compile(r"try again in (\d+)\s*seconds?", re.IGNORECASE)
+MAX_TARGETED_RECIPIENTS = 10_000
+_targeted_broadcast_job_lock = asyncio.Lock()
+_targeted_broadcast_jobs: dict[str, dict] = {}
+_current_targeted_broadcast_job_id: str | None = None
+
+
+def _mailopost_rate_limit_retry_seconds(response: httpx.Response) -> int | None:
+    try:
+        data = response.json()
+    except Exception:
+        return None
+    for err in data.get("errors") or []:
+        detail = str(err.get("detail", ""))
+        match = MAILOPOST_RATE_LIMIT_RETRY_RE.search(detail)
+        if match:
+            return int(match.group(1))
+    return None
 
 
 def _render_broadcast_html(*, subject: str, body: str) -> str:
@@ -75,7 +100,9 @@ def _render_broadcast_html(*, subject: str, body: str) -> str:
     )
 
 
-async def _send_mailopost_email(*, recipient: str, subject: str, plain_text: str, html: str) -> bool:
+async def _post_mailopost_email_response(
+    *, recipient: str, subject: str, plain_text: str, html: str
+) -> httpx.Response:
     api_token = settings.MAILOPOST_API_TOKEN.strip()
     from_email = settings.MAILOPOST_FROM_EMAIL.strip()
     base_url = settings.MAILOPOST_API_URL.strip().rstrip("/")
@@ -102,8 +129,108 @@ async def _send_mailopost_email(*, recipient: str, subject: str, plain_text: str
     }
     timeout = httpx.Timeout(settings.MAILOPOST_SEND_TIMEOUT_SECONDS, connect=5.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.post(f"{base_url}/email/messages", json=payload, headers=headers)
+        return await client.post(f"{base_url}/email/messages", json=payload, headers=headers)
+
+
+async def _send_mailopost_email(*, recipient: str, subject: str, plain_text: str, html: str) -> bool:
+    response = await _post_mailopost_email_response(
+        recipient=recipient, subject=subject, plain_text=plain_text, html=html
+    )
     return response.is_success
+
+
+def _targeted_preview_stats(payload: AdminEmailTargetedPreviewRequest) -> tuple[list[str], dict]:
+    selected = set(payload.selected_titles)
+    per_group: dict[str, dict[str, int]] = {}
+    seen_union: set[str] = set()
+    ordered: list[str] = []
+
+    for g in payload.groups:
+        title = g.title.strip()
+        if title not in selected:
+            continue
+        emails = parse_emails_from_raw_text(g.emails_raw)
+        added_here = 0
+        for email in emails:
+            if email not in seen_union:
+                seen_union.add(email)
+                ordered.append(email)
+                added_here += 1
+        per_group[title] = {
+            "parsed_in_group": len(emails),
+            "new_unique_for_campaign": added_here,
+        }
+
+    return ordered, {"per_group": per_group, "unique_total": len(ordered)}
+
+
+async def _send_one_targeted_with_backoff(
+    *, recipient: str, subject: str, plain_text: str, html: str
+) -> bool:
+    max_attempts = 12
+    for attempt in range(max_attempts):
+        response = await _post_mailopost_email_response(
+            recipient=recipient, subject=subject, plain_text=plain_text, html=html
+        )
+        if response.is_success:
+            return True
+        if response.status_code == 429:
+            wait_sec = _mailopost_rate_limit_retry_seconds(response)
+            if wait_sec is not None:
+                await asyncio.sleep(min(wait_sec + 1, 7200))
+                continue
+        logger.error(
+            "Targeted broadcast MailoPost error: status=%s body=%s recipient=%s attempt=%s",
+            response.status_code,
+            response.text[:500],
+            recipient,
+            attempt,
+        )
+        return False
+    return False
+
+
+async def _run_targeted_broadcast_job(
+    job_id: str,
+    *,
+    recipients: list[str],
+    subject: str,
+    body: str,
+    interval_seconds: int,
+) -> None:
+    global _current_targeted_broadcast_job_id
+    job = _targeted_broadcast_jobs.get(job_id)
+    if not job:
+        return
+    plain_text = f"{subject}\n\n{body}"
+    html = _render_broadcast_html(subject=subject, body=body)
+    try:
+        for i, recipient in enumerate(recipients):
+            job["progress_index"] = i
+            job["last_recipient"] = recipient
+            ok = await _send_one_targeted_with_backoff(
+                recipient=recipient,
+                subject=subject,
+                plain_text=plain_text,
+                html=html,
+            )
+            if ok:
+                job["sent"] = job.get("sent", 0) + 1
+            else:
+                job["failed"] = job.get("failed", 0) + 1
+            if i + 1 < len(recipients):
+                await asyncio.sleep(interval_seconds)
+        job["status"] = "completed"
+    except Exception as exc:
+        logger.exception("Targeted broadcast job %s failed", job_id)
+        job["status"] = "failed"
+        job["error"] = str(exc)
+    finally:
+        job["finished_at"] = datetime.now(timezone.utc).isoformat()
+        job["last_recipient"] = None
+        async with _targeted_broadcast_job_lock:
+            if _current_targeted_broadcast_job_id == job_id:
+                _current_targeted_broadcast_job_id = None
 
 
 def _ensure_admin_credentials_configured() -> None:
@@ -871,6 +998,116 @@ async def admin_email_broadcast(
         },
         status_code=status.HTTP_200_OK,
     )
+
+
+@router.post("/email-targeted-preview")
+async def admin_email_targeted_preview(
+    payload: AdminEmailTargetedPreviewRequest,
+    _admin=Depends(get_current_admin),
+):
+    _ordered, meta = _targeted_preview_stats(payload)
+    return JSONResponse(
+        content={
+            **meta,
+            "recipient_preview": _ordered[:8],
+        },
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@router.post("/email-targeted-broadcast")
+async def admin_email_targeted_broadcast(
+    payload: AdminTargetedBroadcastRequest,
+    _admin=Depends(get_current_admin),
+):
+    preview_payload = AdminEmailTargetedPreviewRequest(
+        groups=payload.groups,
+        selected_titles=payload.selected_titles,
+    )
+    recipients, meta = _targeted_preview_stats(preview_payload)
+    if not recipients:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Нет ни одного корректного email в выбранных группах",
+        )
+    if len(recipients) > MAX_TARGETED_RECIPIENTS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Слишком много получателей (максимум {MAX_TARGETED_RECIPIENTS})",
+        )
+
+    global _current_targeted_broadcast_job_id
+
+    async with _targeted_broadcast_job_lock:
+        if _current_targeted_broadcast_job_id:
+            existing = _targeted_broadcast_jobs.get(_current_targeted_broadcast_job_id)
+            if existing and existing.get("status") == "running":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "Уже выполняется точечная рассылка. Дождитесь окончания "
+                        "или запросите статус текущей задачи."
+                    ),
+                )
+        job_id = str(uuid.uuid4())
+        subject = payload.subject.strip()
+        body = payload.body.strip()
+        _targeted_broadcast_jobs[job_id] = {
+            "id": job_id,
+            "status": "running",
+            "total": len(recipients),
+            "sent": 0,
+            "failed": 0,
+            "progress_index": 0,
+            "last_recipient": None,
+            "error": None,
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "finished_at": None,
+            "interval_seconds": payload.interval_seconds,
+            "subject": subject,
+            "preview": meta,
+        }
+        _current_targeted_broadcast_job_id = job_id
+
+    asyncio.create_task(
+        _run_targeted_broadcast_job(
+            job_id,
+            recipients=recipients,
+            subject=subject,
+            body=body,
+            interval_seconds=payload.interval_seconds,
+        )
+    )
+
+    logger.info(
+        "Admin targeted email broadcast queued: job_id=%s total=%s interval=%ss subject=%s",
+        job_id,
+        len(recipients),
+        payload.interval_seconds,
+        subject,
+    )
+
+    return JSONResponse(
+        status_code=status.HTTP_202_ACCEPTED,
+        content={
+            "job_id": job_id,
+            "status": "started",
+            "total_recipients": len(recipients),
+            "interval_seconds": payload.interval_seconds,
+            "preview": meta,
+        },
+    )
+
+
+@router.get("/email-targeted-broadcast/jobs/{job_id}")
+async def admin_email_targeted_broadcast_job_status(
+    job_id: str = Path(...),
+    _admin=Depends(get_current_admin),
+):
+    job = _targeted_broadcast_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задача не найдена")
+    return JSONResponse(content=job, status_code=status.HTTP_200_OK)
 
 
 # ---------------------------------------------------------------------------

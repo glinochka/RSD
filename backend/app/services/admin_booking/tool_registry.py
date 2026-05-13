@@ -41,6 +41,64 @@ def _parse_iso_datetime(raw: str) -> datetime:
     return parsed
 
 
+def _filter_slots_by_min_duration(
+    slots: list[dict[str, Any]],
+    duration_minutes: int | None,
+) -> list[dict[str, Any]]:
+    if not duration_minutes or int(duration_minutes) <= 0:
+        return slots
+    min_sec = float(int(duration_minutes) * 60)
+    out: list[dict[str, Any]] = []
+    for slot in slots:
+        try:
+            start = _parse_iso_datetime(str(slot.get("starts_at") or ""))
+            end = _parse_iso_datetime(str(slot.get("ends_at") or ""))
+        except Exception:
+            continue
+        if (end - start).total_seconds() + 0.001 >= min_sec:
+            out.append(slot)
+    return out
+
+
+async def _enrich_services_with_staff_names(
+    booking_service: Any,
+    agent_id: int,
+    services: list[dict[str, Any]],
+) -> None:
+    if not services:
+        return
+    need_ids = set()
+    for item in services:
+        raw = item.get("staff_id")
+        if raw is not None:
+            try:
+                need_ids.add(int(raw))
+            except (TypeError, ValueError):
+                continue
+    if not need_ids:
+        return
+    staff_rows = await booking_service.list_staff(agent_id=agent_id, active_only=False)
+    names_by_id: dict[int, str] = {}
+    for row in staff_rows:
+        try:
+            sid = int(row["id"])
+        except (TypeError, ValueError, KeyError):
+            continue
+        name = str(row.get("full_name") or "").strip()
+        if name:
+            names_by_id[sid] = name
+    for item in services:
+        raw = item.get("staff_id")
+        if raw is None:
+            continue
+        try:
+            sid = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if sid in names_by_id:
+            item["staff_full_name"] = names_by_id[sid]
+
+
 class _ListStaffArgs(BaseModel):
     role: str | None = Field(default=None, max_length=32)
     active_only: bool = Field(default=True)
@@ -57,6 +115,10 @@ class _CheckAvailabilityArgs(BaseModel):
     staff_id: int | None = Field(default=None, gt=0)
     resource_id: int | None = Field(default=None, gt=0)
     service_id: int | None = Field(default=None, gt=0)
+    duration_minutes: int | None = Field(
+        default=None,
+        description="Optional. When set, only return slots at least this long (matches the requested service).",
+    )
 
     @model_validator(mode="after")
     def _validate_window(self):
@@ -64,6 +126,8 @@ class _CheckAvailabilityArgs(BaseModel):
         ends = _parse_iso_datetime(self.ends_at)
         if ends <= starts:
             raise ValueError("ends_at must be greater than starts_at")
+        if self.duration_minutes is not None and int(self.duration_minutes) <= 0:
+            raise ValueError("duration_minutes must be positive when provided")
         return self
 
 
@@ -225,9 +289,12 @@ _TOOL_MODELS: dict[str, type[BaseModel]] = {
 
 _TOOL_DESCRIPTIONS = {
     "check_availability": (
-        "Check available booking slots for a specific date or period. "
-        "Always use a full-day window (starts_at=DATE 00:00, ends_at=DATE 23:59) when checking a specific date. "
-        "Returns only slots with actual staff schedule entries."
+        "Check free time inside staff schedule for a date range. "
+        "Always use a full calendar day (starts_at=DATE 00:00:00, ends_at=DATE 23:59:59) when checking one day. "
+        "staff_id must be taken from the latest list_staff response (integer id field) — never guess or reuse resource/service ids. "
+        "When the user names a service, pass service_id from list_services and set duration_minutes to that service's duration_minutes "
+        "so short gaps are not mistaken for a full appointment. "
+        "Returns schedule-backed free intervals (not 'invented' windows)."
     ),
     "create_appointment": "Create a booking appointment immediately without asking the user for confirmation.",
     "reschedule_appointment": (
@@ -242,7 +309,10 @@ _TOOL_DESCRIPTIONS = {
     ),
     "list_appointments": "List appointments by period/client/staff/status filters. Use client_external_id filter to find appointments for the current user.",
     "list_staff": "List staff members available for booking.",
-    "list_services": "List available services for booking.",
+    "list_services": (
+        "List bookable services. Each item may include staff_id and staff_full_name when the service is tied to one specialist; "
+        "use this so you know which doctor performs which procedure before offering a time."
+    ),
     "find_next_available": (
         "Find the next available time slot starting from a given date. "
         "Use ONLY when the user asks for 'nearest available time' or does not specify a date. "
@@ -414,15 +484,73 @@ class AdminBookingToolRegistry:
                 target_role=data.get("target_role"),
                 active_only=bool(data.get("active_only", True)),
             )
+            await _enrich_services_with_staff_names(service, self._agent_id, result)
         elif tool_name == "check_availability":
-            result = await service.list_available_slots(
-                agent_id=self._agent_id,
-                starts_at=_parse_iso_datetime(str(data.get("starts_at") or "")),
-                ends_at=_parse_iso_datetime(str(data.get("ends_at") or "")),
-                staff_id=data.get("staff_id"),
-                resource_id=data.get("resource_id"),
-                service_id=data.get("service_id"),
-            )
+            raw_staff = data.get("staff_id")
+            raw_service = data.get("service_id")
+            duration_minutes = data.get("duration_minutes")
+            staff_rows_list = await service.list_staff(agent_id=self._agent_id, active_only=False)
+            valid_staff_ids = set()
+            staff_name_by_id: dict[int, str] = {}
+            for row in staff_rows_list:
+                try:
+                    sid = int(row["id"])
+                except (TypeError, ValueError, KeyError):
+                    continue
+                valid_staff_ids.add(sid)
+                n = str(row.get("full_name") or "").strip()
+                if n:
+                    staff_name_by_id[sid] = n
+
+            if raw_staff is not None and int(raw_staff) not in valid_staff_ids:
+                result = {
+                    "validation_error": (
+                        "Указанный staff_id отсутствует в списке сотрудников этого агента. "
+                        "Вызови list_staff и используй поле id из актуального ответа. "
+                        "Не смешивай id сотрудника с id услуги, ресурса или произвольными числами из памяти."
+                    ),
+                    "available_slots": [],
+                }
+            elif raw_staff is not None and raw_service is not None:
+                svc_list = await service.list_services(agent_id=self._agent_id, active_only=False)
+                await _enrich_services_with_staff_names(service, self._agent_id, svc_list)
+                srv = next((x for x in svc_list if int(x["id"]) == int(raw_service)), None)
+                bound: int | None = None
+                if srv is not None and srv.get("staff_id") is not None:
+                    bound = int(srv["staff_id"])
+                if bound is not None and bound != int(raw_staff):
+                    title = str((srv or {}).get("title") or "услуга")
+                    other_name = staff_name_by_id.get(bound, "")
+                    result = {
+                        "validation_error": (
+                            f"Услуга «{title}» в каталоге привязана к другому специалисту"
+                            + (f" ({other_name})" if other_name else "")
+                            + ". Указанному мастеру эту услугу искать нельзя. "
+                            "Предложи записаться к нужному врачу из list_services (поля staff_id / staff_full_name) "
+                            "или выбрать у этого мастера другую услугу из его списка."
+                        ),
+                        "available_slots": [],
+                    }
+                else:
+                    slots = await service.list_available_slots(
+                        agent_id=self._agent_id,
+                        starts_at=_parse_iso_datetime(str(data.get("starts_at") or "")),
+                        ends_at=_parse_iso_datetime(str(data.get("ends_at") or "")),
+                        staff_id=data.get("staff_id"),
+                        resource_id=data.get("resource_id"),
+                        service_id=data.get("service_id"),
+                    )
+                    result = _filter_slots_by_min_duration(slots, duration_minutes)
+            else:
+                slots = await service.list_available_slots(
+                    agent_id=self._agent_id,
+                    starts_at=_parse_iso_datetime(str(data.get("starts_at") or "")),
+                    ends_at=_parse_iso_datetime(str(data.get("ends_at") or "")),
+                    staff_id=data.get("staff_id"),
+                    resource_id=data.get("resource_id"),
+                    service_id=data.get("service_id"),
+                )
+                result = _filter_slots_by_min_duration(slots, duration_minutes)
         elif tool_name == "create_appointment":
             result = await service.create_appointment(
                 agent_id=self._agent_id,
@@ -485,19 +613,50 @@ class AdminBookingToolRegistry:
                 status=data.get("status"),
             )
         elif tool_name == "find_next_available":
-            result = await service.find_next_available_slot(
-                agent_id=self._agent_id,
-                duration_minutes=int(data.get("duration_minutes") or 30),
-                staff_id=data.get("staff_id"),
-                resource_id=data.get("resource_id"),
-                service_id=data.get("service_id"),
-                earliest_starts_at=(
-                    _parse_iso_datetime(str(data.get("earliest_starts_at") or ""))
-                    if data.get("earliest_starts_at")
-                    else None
-                ),
-                search_days_ahead=int(data.get("search_days_ahead") or 7),
-            )
+            fsid = data.get("staff_id")
+            if fsid is not None:
+                staff_chk = await service.list_staff(agent_id=self._agent_id, active_only=False)
+                ok_ids = set()
+                for row in staff_chk:
+                    try:
+                        ok_ids.add(int(row["id"]))
+                    except (TypeError, ValueError, KeyError):
+                        continue
+                if int(fsid) not in ok_ids:
+                    result = {
+                        "validation_error": (
+                            "Указанный staff_id не найден. Вызови list_staff и используй актуальное поле id."
+                        ),
+                        "available": False,
+                    }
+                else:
+                    result = await service.find_next_available_slot(
+                        agent_id=self._agent_id,
+                        duration_minutes=int(data.get("duration_minutes") or 30),
+                        staff_id=data.get("staff_id"),
+                        resource_id=data.get("resource_id"),
+                        service_id=data.get("service_id"),
+                        earliest_starts_at=(
+                            _parse_iso_datetime(str(data.get("earliest_starts_at") or ""))
+                            if data.get("earliest_starts_at")
+                            else None
+                        ),
+                        search_days_ahead=int(data.get("search_days_ahead") or 7),
+                    )
+            else:
+                result = await service.find_next_available_slot(
+                    agent_id=self._agent_id,
+                    duration_minutes=int(data.get("duration_minutes") or 30),
+                    staff_id=data.get("staff_id"),
+                    resource_id=data.get("resource_id"),
+                    service_id=data.get("service_id"),
+                    earliest_starts_at=(
+                        _parse_iso_datetime(str(data.get("earliest_starts_at") or ""))
+                        if data.get("earliest_starts_at")
+                        else None
+                    ),
+                    search_days_ahead=int(data.get("search_days_ahead") or 7),
+                )
         else:
             raise RuntimeError(f"Tool '{tool_name}' is not supported")
 
