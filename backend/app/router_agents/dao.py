@@ -68,5 +68,9 @@ class AgentChannelConnectionDAO(BaseDAO):
     model = AgentChannelConnection
 
 
+class AgentCrmConnectionDAO(BaseDAO):
+    model = AgentCrmConnection
+
+
 class AgentHttpIntegrationDAO(BaseDAO):
     model = AgentHttpIntegration
