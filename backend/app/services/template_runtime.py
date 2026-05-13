@@ -20,6 +20,8 @@ from .ai_authoring import ai_client, generate_answer_with_context
 from .content_factory_runtime import get_content_factory_orchestrator
 from .crm import build_provider
 from .crm.tool_registry import CRMNeedsConfirmationError, CRMToolRegistry
+from .http_integration.errors import HttpIntegrationNeedsConfirmationError, HttpIntegrationValidationError
+from .http_integration.tool_registry import load_http_integration_registry
 from .sales.tool_registry import SalesNeedsConfirmationError, SalesToolRegistry
 from .sales.fsm import SalesFSMError, get_sales_fsm_service
 from ..qdrant.search_service import search_knowledge_base
@@ -647,6 +649,13 @@ class TemplateRuntimeService:
         allowed_booking_tools = (
             allowed_booking_tools_raw if isinstance(allowed_booking_tools_raw, list) else None
         )
+        http_integrations_enabled = bool(template_config.get("http_integrations_enabled", True))
+        http_integration_names_raw = template_config.get("http_integration_names")
+        http_integration_names_allow: list[str] | None = None
+        if isinstance(http_integration_names_raw, list):
+            http_integration_names_allow = [
+                str(x or "").strip().lower() for x in http_integration_names_raw if str(x or "").strip()
+            ]
 
         booking_registry = AdminBookingToolRegistry(
             agent_id=agent_id,
@@ -686,10 +695,19 @@ class TemplateRuntimeService:
             except Exception:
                 logger.exception("Failed to initialize CRM provider for agent_id=%s", agent_id)
 
+        http_registry = await load_http_integration_registry(
+            agent_id=agent_id,
+            enabled=http_integrations_enabled,
+            name_allowlist=http_integration_names_allow,
+            user_message=user_message or "",
+        )
+
         llm_tools: list[dict[str, Any]] = []
         llm_tools.extend(booking_llm_tools)
         if crm_registry is not None:
             llm_tools.extend(crm_registry.tools_for_llm())
+        if http_registry is not None:
+            llm_tools.extend(http_registry.tools_for_llm())
         if not llm_tools:
             return None
 
@@ -724,6 +742,16 @@ class TemplateRuntimeService:
             f"Сейчас: {now_local.strftime('%Y-%m-%d %H:%M')} "
             f"(день недели: {now_local.strftime('%A')})."
         )
+        http_integration_hint = ""
+        if http_registry is not None:
+            http_integration_hint = (
+                "Дополнительно подключены внешние HTTP‑операции (имена функций вида external_i…). "
+                "Вызывай их за реальными данными из медицинской/учётной системы клиента; не смешивай их с операциями "
+                "локальной записи, если параметры конфликтуют."
+            )
+        context_tail = f"{now_context}\n{domain_instruction}\n{resource_model_hint}\n{backend_instruction}"
+        if http_integration_hint:
+            context_tail = f"{context_tail}\n\n{http_integration_hint}"
         system_prompt = (
             f"{prompt}\n\n"
             "Ты администратор записи(Не ИИ, живой человек). Работай через function tools для операций расписания и записи. "
@@ -753,7 +781,7 @@ class TemplateRuntimeService:
             "Если из ответа инструмента следует, что запрос и каталог не сходятся (например, услуга у другого врача), скажи это клиенту своими словами, по-деловому и спокойно, без канцелярита и без служебных названий полей. "
             "Если свободных окон нет и отдельной подсказки об ошибке тоже нет — не придумывай время; предложи соседний день или другого специалиста, как сделала бы администратор. "
             "Если клиент повторяет тот же вопрос, опирайся на свежий ответ инструмента, а не на догадку из начала разговора.\n\n"
-            f"{now_context}\n{domain_instruction}\n{resource_model_hint}\n{backend_instruction}"
+            f"{context_tail}"
         ).strip()
         if portrait_block:
             system_prompt = f"{system_prompt}\n\n{portrait_block}"
@@ -812,6 +840,8 @@ class TemplateRuntimeService:
                         )
                     elif crm_registry is not None and tool_name in crm_tool_names:
                         tool_result = await crm_registry.execute_tool(tool_name, raw_args)
+                    elif http_registry is not None and http_registry.has_tool(tool_name):
+                        tool_result = await http_registry.execute_tool(tool_name, raw_args)
                     else:
                         raise RuntimeError(f"Tool '{tool_name}' is not available in current runtime")
                     tool_events.append(
@@ -866,6 +896,43 @@ class TemplateRuntimeService:
                         }
                     )
                     return TemplateExecutionResult(answer=safe_error, sources=[], tool_events=tool_events)
+                except HttpIntegrationNeedsConfirmationError as exc:
+                    safe_error = redact_pii_text(str(exc))
+                    tool_events.append(
+                        {
+                            "tool_name": tool_name,
+                            "tool_args_hash": None,
+                            "tool_status": "confirmation_required",
+                            "latency_ms": 0,
+                            "crm_provider": "http_integration",
+                            "source_channel": source_channel,
+                            "user_external_id": mask_external_id(user_external_id),
+                            "ok": False,
+                            "idempotent_replay": False,
+                            "idempotency_key": None,
+                            "error": safe_error,
+                        }
+                    )
+                    return TemplateExecutionResult(answer=safe_error, sources=[], tool_events=tool_events)
+                except HttpIntegrationValidationError as exc:
+                    safe_error = redact_pii_text(str(exc))
+                    tool_result = {"ok": False, "error": safe_error}
+                    all_tools_succeeded = False
+                    tool_events.append(
+                        {
+                            "tool_name": tool_name,
+                            "tool_args_hash": None,
+                            "tool_status": "error",
+                            "latency_ms": 0,
+                            "crm_provider": "http_integration",
+                            "source_channel": source_channel,
+                            "user_external_id": mask_external_id(user_external_id),
+                            "ok": False,
+                            "idempotent_replay": False,
+                            "idempotency_key": None,
+                            "error": safe_error,
+                        }
+                    )
                 except Exception as exc:
                     safe_error = redact_pii_text(str(exc))
                     tool_result = {"ok": False, "error": safe_error}

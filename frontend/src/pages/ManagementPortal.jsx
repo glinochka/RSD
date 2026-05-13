@@ -103,7 +103,9 @@ const ManagementPortal = () => {
   const [actionInProgress, setActionInProgress] = useState(null);
   const [giftModal, setGiftModal] = useState({ open: false, user: null, planCode: 'Advanced' });
   const [broadcastDraft, setBroadcastDraft] = useState({ subject: '', body: '' });
-  const [broadcastResult, setBroadcastResult] = useState(null);
+  const [broadcastIntervalSeconds, setBroadcastIntervalSeconds] = useState(900);
+  const [broadcastJobId, setBroadcastJobId] = useState(null);
+  const [broadcastJobStatus, setBroadcastJobStatus] = useState(null);
 
   const targetedGroupIdRef = useRef(2);
   const [targetedGroups, setTargetedGroups] = useState([
@@ -784,15 +786,29 @@ const ManagementPortal = () => {
       setError('Текст рассылки должен быть не короче 10 символов');
       return;
     }
-    if (!window.confirm('Запустить email-рассылку по подтвержденным пользователям?')) {
+    const interval = Number(broadcastIntervalSeconds);
+    if (Number.isNaN(interval) || interval < 30) {
+      setError('Интервал между письмами — не меньше 30 секунд');
+      return;
+    }
+    if (
+      !window.confirm(
+        `Запустить рассылку по всем с подтверждённым email? Пауза между письмами: ${interval} с.`
+      )
+    ) {
       return;
     }
 
     try {
       setActionInProgress('email-broadcast');
       setError('');
-      const result = await adminService.sendEmailBroadcast(adminToken, { subject, body });
-      setBroadcastResult(result);
+      setBroadcastJobStatus(null);
+      const result = await adminService.sendEmailBroadcast(adminToken, {
+        subject,
+        body,
+        interval_seconds: Math.min(Math.max(Math.round(interval), 30), 86400),
+      });
+      setBroadcastJobId(result.job_id);
     } catch (err) {
       setError(formatError(err));
     } finally {
@@ -801,22 +817,32 @@ const ManagementPortal = () => {
   };
 
   useEffect(() => {
-    if (!targetedJobId || !adminToken) {
+    const jobId = targetedJobId || broadcastJobId;
+    if (!jobId || !adminToken) {
       return undefined;
     }
     let cancelled = false;
     const poll = async () => {
       try {
-        const job = await adminService.getEmailTargetedBroadcastJob(adminToken, targetedJobId);
+        const job = await adminService.getEmailTargetedBroadcastJob(adminToken, jobId);
         if (cancelled) return;
-        setTargetedJobStatus(job);
+        if (job.kind === 'all_verified') {
+          setBroadcastJobStatus(job);
+        } else {
+          setTargetedJobStatus(job);
+        }
         if (job.status === 'completed' || job.status === 'failed') {
-          setTargetedJobId(null);
+          if (job.kind === 'all_verified') {
+            setBroadcastJobId(null);
+          } else {
+            setTargetedJobId(null);
+          }
         }
       } catch (err) {
         if (!cancelled) {
           setError(formatError(err));
-          setTargetedJobId(null);
+          setTargetedJobId((prev) => (prev === jobId ? null : prev));
+          setBroadcastJobId((prev) => (prev === jobId ? null : prev));
         }
       }
     };
@@ -826,7 +852,7 @@ const ManagementPortal = () => {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [targetedJobId, adminToken]);
+  }, [targetedJobId, broadcastJobId, adminToken]);
 
   const addTargetedGroup = () => {
     const n = targetedGroupIdRef.current;
@@ -2274,9 +2300,22 @@ const ManagementPortal = () => {
         <section className="management-broadcast-card">
           <h3 className="management-broadcast-card-title">Все подтверждённые пользователи</h3>
           <p className="management-broadcast-card-desc">
-            Одно письмо подряд каждому пользователю с подтверждённым email в базе (без регулируемой паузы).
+            По одному письму на адрес, с паузой между отправками (как в MailoPost). Значение паузы по умолчанию
+            можно задать в окружении сервера <code>MAILOPOST_BROADCAST_INTERVAL_SECONDS</code> (например 900 = 15 мин).
           </p>
           <form className="management-broadcast-form" onSubmit={handleSendEmailBroadcast}>
+            <div className="management-form-row">
+              <label htmlFor="broadcast-interval">Пауза между письмами (секунд)</label>
+              <input
+                id="broadcast-interval"
+                type="number"
+                min={30}
+                max={86400}
+                step={1}
+                value={broadcastIntervalSeconds}
+                onChange={(e) => setBroadcastIntervalSeconds(Number(e.target.value))}
+              />
+            </div>
             <div className="management-form-row">
               <label htmlFor="broadcast-subject">Тема письма</label>
               <input
@@ -2307,16 +2346,30 @@ const ManagementPortal = () => {
                 className="btn btn-black"
                 disabled={actionInProgress === 'email-broadcast' || actionInProgress === 'email-targeted'}
               >
-                {actionInProgress === 'email-broadcast' ? 'Отправка...' : 'Запустить рассылку'}
+                {actionInProgress === 'email-broadcast' ? 'Постановка в очередь...' : 'Запустить рассылку'}
               </button>
             </div>
           </form>
-          {broadcastResult && (
-            <div className="management-broadcast-result">
-              <strong>Результат:</strong>
-              <span> всего: {broadcastResult.total_recipients ?? 0}</span>
-              <span> отправлено: {broadcastResult.sent ?? 0}</span>
-              <span> ошибок: {broadcastResult.failed ?? 0}</span>
+          {broadcastJobStatus && (
+            <div
+              className={`management-broadcast-result management-targeted-job ${
+                broadcastJobStatus.status === 'failed' ? 'is-error' : ''
+              }`}
+            >
+              <strong>Статус рассылки (все подтверждённые):</strong>
+              <span>{broadcastJobStatus.status}</span>
+              <span>
+                {broadcastJobStatus.sent ?? 0} / {broadcastJobStatus.total ?? 0} отправлено
+              </span>
+              <span>ошибок: {broadcastJobStatus.failed ?? 0}</span>
+              {broadcastJobStatus.status === 'running' && broadcastJobStatus.last_recipient && (
+                <span className="management-cell-muted">
+                  текущий: {broadcastJobStatus.last_recipient}
+                </span>
+              )}
+              {broadcastJobStatus.error && (
+                <span className="management-targeted-job-error">{broadcastJobStatus.error}</span>
+              )}
             </div>
           )}
         </section>

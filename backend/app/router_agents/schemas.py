@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, model_validator
-from typing import Optional
+from typing import Any, Literal, Optional
 
 
 class ContentFactoryTemplateConfig(BaseModel):
@@ -458,6 +458,48 @@ class AgentCrmRotateSecretPayload(AgentLookup):
         pattern="^(amocrm|bitrix24)$",
         description="Опционально: конкретный CRM провайдер для ротации",
     )
+
+
+class HttpIntegrationAuthPayload(BaseModel):
+    type: Literal["none", "bearer", "header", "basic"] = Field(
+        default="none",
+        description="Способ авторизации ко внешнему HTTP API",
+    )
+    token: Optional[str] = Field(default=None, max_length=8192, description="Bearer token")
+    header_name: Optional[str] = Field(default=None, max_length=256)
+    header_value: Optional[str] = Field(default=None, max_length=8192)
+    username: Optional[str] = Field(default=None, max_length=256)
+    password: Optional[str] = Field(default=None, max_length=8192)
+
+
+class HttpIntegrationToolPayload(BaseModel):
+    name: str = Field(..., min_length=1, max_length=64)
+    description: str = Field(..., min_length=1, max_length=2000)
+    method: Literal["GET", "POST", "PUT", "PATCH", "DELETE"] = "GET"
+    path: str = Field(..., min_length=1, max_length=512)
+    requires_confirmation: Optional[bool] = None
+    parameters: dict[str, Any] = Field(
+        ...,
+        description="Параметры вызова в формате JSON Schema с корнем type=object",
+    )
+
+
+class HttpIntegrationConnectPayload(AgentLookup):
+    integration_name: str = Field(
+        ...,
+        min_length=1,
+        max_length=64,
+        description="Slug интеграции (латиница / цифры / дефис / подчёркивание)",
+    )
+    base_url: str = Field(..., min_length=8, max_length=2048)
+    timeout_seconds: float = Field(default=25.0, ge=3.0, le=120.0)
+    default_headers: dict[str, str] = Field(default_factory=dict)
+    auth: HttpIntegrationAuthPayload = Field(default_factory=HttpIntegrationAuthPayload)
+    tools: list[HttpIntegrationToolPayload] = Field(..., min_length=1, max_length=16)
+
+
+class HttpIntegrationDeactivatePayload(AgentLookup):
+    integration_id: int = Field(..., gt=0, description="ID строки интеграции (agent_http_integrations.id)")
 
 
 class AdminTemplateStaffCreatePayload(AgentLookup):

@@ -56,9 +56,10 @@ http_bearer = HTTPBearer(auto_error=False)
 
 MAILOPOST_RATE_LIMIT_RETRY_RE = re.compile(r"try again in (\d+)\s*seconds?", re.IGNORECASE)
 MAX_TARGETED_RECIPIENTS = 10_000
-_targeted_broadcast_job_lock = asyncio.Lock()
-_targeted_broadcast_jobs: dict[str, dict] = {}
-_current_targeted_broadcast_job_id: str | None = None
+MAX_ALL_VERIFIED_BROADCAST_RECIPIENTS = 500_000
+_admin_mass_mail_job_lock = asyncio.Lock()
+_admin_mass_mail_jobs: dict[str, dict] = {}
+_current_admin_mass_mail_job_id: str | None = None
 
 
 def _mailopost_rate_limit_retry_seconds(response: httpx.Response) -> int | None:
@@ -132,13 +133,6 @@ async def _post_mailopost_email_response(
         return await client.post(f"{base_url}/email/messages", json=payload, headers=headers)
 
 
-async def _send_mailopost_email(*, recipient: str, subject: str, plain_text: str, html: str) -> bool:
-    response = await _post_mailopost_email_response(
-        recipient=recipient, subject=subject, plain_text=plain_text, html=html
-    )
-    return response.is_success
-
-
 def _targeted_preview_stats(payload: AdminEmailTargetedPreviewRequest) -> tuple[list[str], dict]:
     selected = set(payload.selected_titles)
     per_group: dict[str, dict[str, int]] = {}
@@ -190,7 +184,7 @@ async def _send_one_targeted_with_backoff(
     return False
 
 
-async def _run_targeted_broadcast_job(
+async def _run_admin_mass_mail_job(
     job_id: str,
     *,
     recipients: list[str],
@@ -198,8 +192,8 @@ async def _run_targeted_broadcast_job(
     body: str,
     interval_seconds: int,
 ) -> None:
-    global _current_targeted_broadcast_job_id
-    job = _targeted_broadcast_jobs.get(job_id)
+    global _current_admin_mass_mail_job_id
+    job = _admin_mass_mail_jobs.get(job_id)
     if not job:
         return
     plain_text = f"{subject}\n\n{body}"
@@ -228,9 +222,9 @@ async def _run_targeted_broadcast_job(
     finally:
         job["finished_at"] = datetime.now(timezone.utc).isoformat()
         job["last_recipient"] = None
-        async with _targeted_broadcast_job_lock:
-            if _current_targeted_broadcast_job_id == job_id:
-                _current_targeted_broadcast_job_id = None
+        async with _admin_mass_mail_job_lock:
+            if _current_admin_mass_mail_job_id == job_id:
+                _current_admin_mass_mail_job_id = None
 
 
 def _ensure_admin_credentials_configured() -> None:
@@ -944,8 +938,11 @@ async def admin_email_broadcast(
 ):
     subject = payload.subject.strip()
     body = payload.body.strip()
-    plain_text = f"{subject}\n\n{body}"
-    html = _render_broadcast_html(subject=subject, body=body)
+
+    interval_seconds = payload.interval_seconds
+    if interval_seconds is None:
+        interval_seconds = settings.MAILOPOST_BROADCAST_INTERVAL_SECONDS
+    interval_seconds = max(30, min(int(interval_seconds), 86_400))
 
     async with async_session_maker() as session:
         async with session.begin():
@@ -958,45 +955,73 @@ async def admin_email_broadcast(
                 )
             ).all()
 
-    total = len(emails)
-    sent = 0
-    failed = 0
-    for recipient in emails:
-        if not recipient:
-            continue
-        try:
-            ok = await _send_mailopost_email(
-                recipient=recipient,
-                subject=subject,
-                plain_text=plain_text,
-                html=html,
-            )
-            if ok:
-                sent += 1
-            else:
-                failed += 1
-        except HTTPException:
-            raise
-        except Exception:
-            logger.exception("Admin broadcast failed for recipient=%s", recipient)
-            failed += 1
+    recipients = [e for e in emails if e]
+    total = len(recipients)
+    if total > MAX_ALL_VERIFIED_BROADCAST_RECIPIENTS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Слишком много получателей (максимум {MAX_ALL_VERIFIED_BROADCAST_RECIPIENTS})",
+        )
+
+    global _current_admin_mass_mail_job_id
+
+    async with _admin_mass_mail_job_lock:
+        if _current_admin_mass_mail_job_id:
+            existing = _admin_mass_mail_jobs.get(_current_admin_mass_mail_job_id)
+            if existing and existing.get("status") == "running":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "Уже выполняется массовая рассылка. Дождитесь окончания "
+                        "или запросите статус текущей задачи."
+                    ),
+                )
+        job_id = str(uuid.uuid4())
+        _admin_mass_mail_jobs[job_id] = {
+            "id": job_id,
+            "kind": "all_verified",
+            "status": "running",
+            "total": total,
+            "sent": 0,
+            "failed": 0,
+            "progress_index": 0,
+            "last_recipient": None,
+            "error": None,
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "finished_at": None,
+            "interval_seconds": interval_seconds,
+            "subject": subject,
+            "preview": None,
+        }
+        _current_admin_mass_mail_job_id = job_id
+
+    asyncio.create_task(
+        _run_admin_mass_mail_job(
+            job_id,
+            recipients=recipients,
+            subject=subject,
+            body=body,
+            interval_seconds=interval_seconds,
+        )
+    )
 
     logger.info(
-        "Admin email broadcast finished: total=%d sent=%d failed=%d subject=%s",
+        "Admin all-verified email broadcast queued: job_id=%s total=%s interval=%ss subject=%s",
+        job_id,
         total,
-        sent,
-        failed,
+        interval_seconds,
         subject,
     )
+
     return JSONResponse(
+        status_code=status.HTTP_202_ACCEPTED,
         content={
-            "status": "completed",
+            "job_id": job_id,
+            "status": "started",
             "total_recipients": total,
-            "sent": sent,
-            "failed": failed,
+            "interval_seconds": interval_seconds,
             "subject": subject,
         },
-        status_code=status.HTTP_200_OK,
     )
 
 
@@ -1036,24 +1061,30 @@ async def admin_email_targeted_broadcast(
             detail=f"Слишком много получателей (максимум {MAX_TARGETED_RECIPIENTS})",
         )
 
-    global _current_targeted_broadcast_job_id
+    interval_seconds = payload.interval_seconds
+    if interval_seconds is None:
+        interval_seconds = settings.MAILOPOST_BROADCAST_INTERVAL_SECONDS
+    interval_seconds = max(30, min(int(interval_seconds), 86_400))
 
-    async with _targeted_broadcast_job_lock:
-        if _current_targeted_broadcast_job_id:
-            existing = _targeted_broadcast_jobs.get(_current_targeted_broadcast_job_id)
+    global _current_admin_mass_mail_job_id
+
+    async with _admin_mass_mail_job_lock:
+        if _current_admin_mass_mail_job_id:
+            existing = _admin_mass_mail_jobs.get(_current_admin_mass_mail_job_id)
             if existing and existing.get("status") == "running":
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail=(
-                        "Уже выполняется точечная рассылка. Дождитесь окончания "
+                        "Уже выполняется массовая рассылка. Дождитесь окончания "
                         "или запросите статус текущей задачи."
                     ),
                 )
         job_id = str(uuid.uuid4())
         subject = payload.subject.strip()
         body = payload.body.strip()
-        _targeted_broadcast_jobs[job_id] = {
+        _admin_mass_mail_jobs[job_id] = {
             "id": job_id,
+            "kind": "targeted",
             "status": "running",
             "total": len(recipients),
             "sent": 0,
@@ -1063,19 +1094,19 @@ async def admin_email_targeted_broadcast(
             "error": None,
             "started_at": datetime.now(timezone.utc).isoformat(),
             "finished_at": None,
-            "interval_seconds": payload.interval_seconds,
+            "interval_seconds": interval_seconds,
             "subject": subject,
             "preview": meta,
         }
-        _current_targeted_broadcast_job_id = job_id
+        _current_admin_mass_mail_job_id = job_id
 
     asyncio.create_task(
-        _run_targeted_broadcast_job(
+        _run_admin_mass_mail_job(
             job_id,
             recipients=recipients,
             subject=subject,
             body=body,
-            interval_seconds=payload.interval_seconds,
+            interval_seconds=interval_seconds,
         )
     )
 
@@ -1083,7 +1114,7 @@ async def admin_email_targeted_broadcast(
         "Admin targeted email broadcast queued: job_id=%s total=%s interval=%ss subject=%s",
         job_id,
         len(recipients),
-        payload.interval_seconds,
+        interval_seconds,
         subject,
     )
 
@@ -1093,7 +1124,7 @@ async def admin_email_targeted_broadcast(
             "job_id": job_id,
             "status": "started",
             "total_recipients": len(recipients),
-            "interval_seconds": payload.interval_seconds,
+            "interval_seconds": interval_seconds,
             "preview": meta,
         },
     )
@@ -1104,7 +1135,7 @@ async def admin_email_targeted_broadcast_job_status(
     job_id: str = Path(...),
     _admin=Depends(get_current_admin),
 ):
-    job = _targeted_broadcast_jobs.get(job_id)
+    job = _admin_mass_mail_jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задача не найдена")
     return JSONResponse(content=job, status_code=status.HTTP_200_OK)

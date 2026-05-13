@@ -1,5 +1,5 @@
 
-from ..alembic.models import Agent, AgentChannelConnection, AgentCrmConnection, User
+from ..alembic.models import Agent, AgentChannelConnection, AgentCrmConnection, AgentHttpIntegration, User
 from ..BaseDAO import BaseDAO
 from sqlalchemy import String, cast, desc, func, or_, select
 
@@ -68,5 +68,5 @@ class AgentChannelConnectionDAO(BaseDAO):
     model = AgentChannelConnection
 
 
-class AgentCrmConnectionDAO(BaseDAO):
-    model = AgentCrmConnection
+class AgentHttpIntegrationDAO(BaseDAO):
+    model = AgentHttpIntegration

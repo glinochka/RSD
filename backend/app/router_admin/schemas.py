@@ -46,6 +46,12 @@ class AdminPromoCodeCreateRequest(BaseModel):
 class AdminEmailBroadcastRequest(BaseModel):
     subject: str = Field(..., min_length=3, max_length=200)
     body: str = Field(..., min_length=10, max_length=15000)
+    interval_seconds: int | None = Field(
+        default=None,
+        ge=30,
+        le=86_400,
+        description="Пауза между письмами; None = MAILOPOST_BROADCAST_INTERVAL_SECONDS",
+    )
 
 
 class AdminEmailGroupInput(BaseModel):
@@ -88,11 +94,11 @@ class AdminEmailTargetedPreviewRequest(BaseModel):
 class AdminTargetedBroadcastRequest(AdminEmailTargetedPreviewRequest):
     subject: str = Field(..., min_length=3, max_length=200)
     body: str = Field(..., min_length=10, max_length=15000)
-    interval_seconds: int = Field(
-        default=900,
+    interval_seconds: int | None = Field(
+        default=None,
         ge=30,
         le=86_400,
-        description="Пауза между письмами (по умолчанию 900 с = 15 мин)",
+        description="Пауза между письмами; None = MAILOPOST_BROADCAST_INTERVAL_SECONDS",
     )
 
 

@@ -191,10 +191,10 @@ const adminService = {
     return response.data;
   },
 
-  async sendEmailBroadcast(token, { subject, body }) {
+  async sendEmailBroadcast(token, { subject, body, interval_seconds }) {
     const response = await adminClient.post(
       API_ROUTES.ADMIN_EMAIL_BROADCAST,
-      { subject, body },
+      { subject, body, interval_seconds },
       { headers: { Authorization: `Bearer ${token}` } }
     );
     return response.data;

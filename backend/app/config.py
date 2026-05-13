@@ -71,6 +71,10 @@ class Settings(BaseSettings):
     MAILOPOST_FROM_EMAIL: str = ""
     MAILOPOST_FROM_NAME: str = ""
     MAILOPOST_SEND_TIMEOUT_SECONDS: float = 10.0
+    # Пауза между письмами в админских рассылках (подтверждённые пользователи, точечные группы), сек.
+    MAILOPOST_BROADCAST_INTERVAL_SECONDS: int = 900
+    # Пауза между автоматическими напоминаниям (onboarding), сек. (30 мин).
+    MAILOPOST_REMINDER_BATCH_INTERVAL_SECONDS: int = 1800
     WHATSAPP_USERBOT_BRIDGE_URL: str = ""
     WHATSAPP_USERBOT_BRIDGE_API_KEY: str = ""
     WHATSAPP_USERBOT_BRIDGE_TIMEOUT_SECONDS: float = 60.0

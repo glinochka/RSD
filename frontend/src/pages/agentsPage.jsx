@@ -81,6 +81,130 @@ const normalizeWeekdaysFromConfig = (raw) => {
     end: String(d?.end || '18:00').slice(0, 5),
   }));
 };
+
+/** Parse HH:MM into two padded strings (clamps to valid clock). */
+const splitTimeValue = (v) => {
+  const raw = String(v ?? '00:00').trim();
+  const [a0 = '0', b0 = '0'] = raw.split(':');
+  const hd = (a0 || '').replace(/\D/g, '').slice(0, 2);
+  const md = (b0 || '').replace(/\D/g, '').slice(0, 2);
+  const hi = Math.max(0, Math.min(23, parseInt(hd || '0', 10) || 0));
+  const mi = Math.max(0, Math.min(59, parseInt(md || '0', 10) || 0));
+  return [String(hi).padStart(2, '0'), String(mi).padStart(2, '0')];
+};
+
+const digits2 = (s) => (s || '').replace(/\D/g, '').slice(0, 2);
+
+/** Два поля ЧЧ и ММ: только набор с клавиатуры, без нативного time-picker браузера. */
+const TimeDigitsField = ({ value, onChange, disabled, ariaLabel }) => {
+  const hourRef = useRef(null);
+  const minRef = useRef(null);
+  const [hour, setHour] = useState(() => splitTimeValue(value)[0]);
+  const [minute, setMinute] = useState(() => splitTimeValue(value)[1]);
+  const focusedRef = useRef(false);
+  const hourStrRef = useRef(hour);
+  const minStrRef = useRef(minute);
+  hourStrRef.current = hour;
+  minStrRef.current = minute;
+
+  useEffect(() => {
+    if (!focusedRef.current) {
+      const [h, m] = splitTimeValue(value);
+      setHour(h);
+      setMinute(m);
+    }
+  }, [value]);
+
+  const emitPair = (hStr, mStr) => {
+    const hi = Math.max(0, Math.min(23, parseInt(digits2(hStr) || '0', 10) || 0));
+    const mi = Math.max(0, Math.min(59, parseInt(digits2(mStr) || '0', 10) || 0));
+    const H = String(hi).padStart(2, '0');
+    const M = String(mi).padStart(2, '0');
+    setHour(H);
+    setMinute(M);
+    onChange(`${H}:${M}`);
+  };
+
+  const handleContainerBlur = () => {
+    requestAnimationFrame(() => {
+      const ae = document.activeElement;
+      if (ae !== hourRef.current && ae !== minRef.current) {
+        focusedRef.current = false;
+        emitPair(hourStrRef.current, minStrRef.current);
+      }
+    });
+  };
+
+  const onHourChange = (e) => {
+    const v = digits2(e.target.value);
+    setHour(v);
+    if (v.length === 2) {
+      requestAnimationFrame(() => {
+        minRef.current?.focus();
+        minRef.current?.select?.();
+      });
+    }
+  };
+
+  const onMinuteChange = (e) => {
+    setMinute(digits2(e.target.value));
+  };
+
+  const onHourFocus = () => {
+    focusedRef.current = true;
+    requestAnimationFrame(() => hourRef.current?.select());
+  };
+
+  const onMinuteFocus = () => {
+    focusedRef.current = true;
+  };
+
+  return (
+    <div
+      className={`agent-availability-time-field ${disabled ? 'agent-availability-time-field--disabled' : ''}`}
+    >
+      <div
+        className="agent-availability-time-field__box"
+        role="group"
+        aria-label={ariaLabel}
+      >
+        <input
+          ref={hourRef}
+          type="text"
+          inputMode="numeric"
+          autoComplete="off"
+          spellCheck={false}
+          className="agent-availability-time-digit"
+          value={hour}
+          onChange={onHourChange}
+          onBlur={handleContainerBlur}
+          onFocus={onHourFocus}
+          disabled={disabled}
+          aria-label={`${ariaLabel}, часы (0–23)`}
+          maxLength={2}
+        />
+        <span className="agent-availability-time-colon" aria-hidden="true">
+          :
+        </span>
+        <input
+          ref={minRef}
+          type="text"
+          inputMode="numeric"
+          autoComplete="off"
+          spellCheck={false}
+          className="agent-availability-time-digit"
+          value={minute}
+          onChange={onMinuteChange}
+          onBlur={handleContainerBlur}
+          onFocus={onMinuteFocus}
+          disabled={disabled}
+          aria-label={`${ariaLabel}, минуты (0–59)`}
+          maxLength={2}
+        />
+      </div>
+    </div>
+  );
+};
 const toCsvOffsets = (value) => {
   if (!Array.isArray(value)) return '24,2';
   const normalized = value
@@ -272,6 +396,29 @@ const FeatureToggle = ({ checked, onChange, disabled, title, description, helpTe
     </div>
   );
 };
+
+/** Same switch UX as FeatureToggle, без справки — для компактных рядов (дни недели). */
+const FeatureToggleCompact = ({ checked, onChange, disabled, title }) => (
+  <div className={`feature-toggle feature-toggle--compact ${checked ? 'feature-toggle--on' : ''}`}>
+    <button
+      type="button"
+      className="feature-toggle__main"
+      onClick={() => {
+        onChange(!checked);
+      }}
+      disabled={disabled}
+      aria-pressed={checked}
+      title={title}
+    >
+      <span className="feature-toggle__content">
+        <span className="feature-toggle__title">{title}</span>
+      </span>
+      <span className="feature-toggle__switch" aria-hidden="true">
+        <span className="feature-toggle__thumb" />
+      </span>
+    </button>
+  </div>
+);
 
 const AgentCard = ({ agent, isSelected, onManage, onDelete, onToggle }) => {
   const agentName = agent.bot_username || agent.name || 'Агент';
@@ -1750,43 +1897,33 @@ const AgentsPageContent = () => {
                               className={`agent-availability-day-row ${row.enabled ? 'agent-availability-day-row--on' : ''}`}
                               role="listitem"
                             >
-                              <label className="agent-availability-day-toggle">
-                                <input
-                                  type="checkbox"
-                                  className="agent-availability-day-checkbox"
+                              <div className="agent-availability-day-toggle-wrap">
+                                <FeatureToggleCompact
                                   checked={row.enabled}
-                                  onChange={(event) =>
-                                    handleToggleAgentAvailabilityDay(index, event.target.checked)
-                                  }
+                                  onChange={(next) => handleToggleAgentAvailabilityDay(index, next)}
                                   disabled={isSavingAgentAvailability}
+                                  title={AGENT_AVAILABILITY_WEEKDAY_LABELS[index]}
                                 />
-                                <span className="agent-availability-day-label">
-                                  {AGENT_AVAILABILITY_WEEKDAY_LABELS[index]}
-                                </span>
-                              </label>
+                              </div>
                               <div className="agent-availability-day-times">
-                                <input
-                                  type="time"
-                                  className="input-main agent-availability-time"
+                                <TimeDigitsField
                                   value={row.start}
-                                  onChange={(event) =>
-                                    handleAgentAvailabilityTimeChange(index, 'start', event.target.value)
+                                  onChange={(next) =>
+                                    handleAgentAvailabilityTimeChange(index, 'start', next)
                                   }
                                   disabled={isSavingAgentAvailability || !row.enabled}
-                                  aria-label={`Начало ${AGENT_AVAILABILITY_WEEKDAY_LABELS[index]}`}
+                                  ariaLabel={`Начало, ${AGENT_AVAILABILITY_WEEKDAY_LABELS[index]}`}
                                 />
                                 <span className="agent-availability-time-sep" aria-hidden="true">
                                   —
                                 </span>
-                                <input
-                                  type="time"
-                                  className="input-main agent-availability-time"
+                                <TimeDigitsField
                                   value={row.end}
-                                  onChange={(event) =>
-                                    handleAgentAvailabilityTimeChange(index, 'end', event.target.value)
+                                  onChange={(next) =>
+                                    handleAgentAvailabilityTimeChange(index, 'end', next)
                                   }
                                   disabled={isSavingAgentAvailability || !row.enabled}
-                                  aria-label={`Конец ${AGENT_AVAILABILITY_WEEKDAY_LABELS[index]}`}
+                                  ariaLabel={`Конец, ${AGENT_AVAILABILITY_WEEKDAY_LABELS[index]}`}
                                 />
                               </div>
                             </div>

@@ -585,6 +585,19 @@
   transform: translateX(20px);
 }
 
+.feature-toggle--compact .feature-toggle__main {
+  padding: var(--spacing-xs) var(--spacing-sm);
+}
+
+.feature-toggle--compact .feature-toggle__title {
+  font-size: var(--font-size-sm);
+}
+
+.feature-toggle--compact {
+  width: 100%;
+  max-width: 220px;
+}
+
 .feature-toggle__help {
   position: absolute;
   top: 10px;
@@ -958,25 +971,9 @@
   background: var(--color-bg);
 }
 
-.agent-availability-day-toggle {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-  min-width: 4.5rem;
-  cursor: pointer;
-  font-weight: var(--font-weight-medium);
-  font-size: var(--font-size-sm);
-}
-
-.agent-availability-day-checkbox {
-  width: 1rem;
-  height: 1rem;
-  accent-color: var(--color-primary);
-  cursor: pointer;
-}
-
-.agent-availability-day-label {
-  min-width: 1.75rem;
+.agent-availability-day-toggle-wrap {
+  flex: 0 1 220px;
+  min-width: min(220px, 100%);
 }
 
 .agent-availability-day-times {
@@ -984,13 +981,81 @@
   align-items: center;
   gap: var(--spacing-sm);
   flex: 1;
-  min-width: min(100%, 240px);
+  min-width: min(100%, 280px);
+  flex-wrap: wrap;
 }
 
-.agent-availability-time {
-  flex: 1;
-  min-width: 0;
-  max-width: 9rem;
+.agent-availability-time-field {
+  flex: 0 0 auto;
+}
+
+.agent-availability-time-field--disabled {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.agent-availability-time-field__box {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 2px var(--spacing-xs);
+  min-height: 40px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 28%, var(--color-border));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-primary) 6%, var(--color-bg));
+  transition: border-color var(--transition-base), box-shadow var(--transition-base), background-color var(--transition-base);
+}
+
+.agent-availability-time-field__box:focus-within {
+  border-color: color-mix(in srgb, var(--color-primary) 48%, var(--color-border));
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.14);
+}
+
+.agent-availability-time-digit {
+  width: 2.125rem;
+  padding: var(--spacing-xs) 4px;
+  margin: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  text-align: center;
+  font-size: var(--font-size-base);
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+  box-shadow: none;
+  outline: none;
+  line-height: 1.25;
+}
+
+.agent-availability-time-digit::selection {
+  background: color-mix(in srgb, var(--color-primary) 28%, transparent);
+}
+
+.agent-availability-time-digit:disabled {
+  opacity: 1;
+}
+
+.agent-availability-time-colon {
+  color: var(--color-text-light);
+  font-weight: var(--font-weight-semibold);
+  font-size: var(--font-size-base);
+  line-height: 1;
+  padding: 0 1px;
+  user-select: none;
+}
+
+@supports not (background: color-mix(in srgb, white 50%, black)) {
+  .agent-availability-time-field__box {
+    border-color: var(--color-border);
+    background: var(--color-bg);
+  }
+
+  .agent-availability-time-field__box:focus-within {
+    border-color: var(--color-primary);
+  }
 }
 
 .agent-availability-time-sep {
@@ -1004,6 +1069,17 @@
   color: var(--color-text-light);
   margin: 0;
   line-height: 1.4;
+}
+
+@media (max-width: 600px) {
+  .agent-availability-day-toggle-wrap {
+    flex: 1 1 100%;
+    max-width: none;
+  }
+
+  .feature-toggle--compact {
+    max-width: none;
+  }
 }
 
 @media (max-width: 480px) {

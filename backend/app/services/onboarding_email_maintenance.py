@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from logging import getLogger
 
+import asyncio
 import httpx
 from sqlalchemy import exists, select
 
@@ -127,7 +128,9 @@ async def send_onboarding_inactive_user_reminders_once() -> int:
                 )
             ).all()
 
-        for user in rows:
+        for idx, user in enumerate(rows):
+            if idx > 0:
+                await asyncio.sleep(settings.MAILOPOST_REMINDER_BATCH_INTERVAL_SECONDS)
             if not user.email:
                 continue
             delivered = await _send_inactive_user_reminder_email(user.email)

@@ -166,6 +166,10 @@ class Agent(Base):
         back_populates="agent",
         cascade="all, delete-orphan",
     )
+    http_integrations: Mapped[list["AgentHttpIntegration"]] = relationship(
+        back_populates="agent",
+        cascade="all, delete-orphan",
+    )
     sales_contacts: Mapped[list["AgentSalesContact"]] = relationship(
         back_populates="agent",
         cascade="all, delete-orphan",
@@ -294,6 +298,24 @@ class AgentCrmConnection(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
 
     agent: Mapped["Agent"] = relationship(back_populates="crm_connections")
+
+
+class AgentHttpIntegration(Base):
+    __tablename__ = "agent_http_integrations"
+    __table_args__ = (
+        UniqueConstraint("agent_id", "name", name="uq_agent_http_integrations_agent_name"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    encrypted_config: Mapped[str] = mapped_column(Text, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    agent: Mapped["Agent"] = relationship(back_populates="http_integrations")
 
 
 class AdminStaff(Base):

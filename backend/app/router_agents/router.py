@@ -17,7 +17,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt.exceptions import InvalidTokenError
 from sqlalchemy import Date, and_, cast, func, select
 
-from .dao import AgentChannelConnectionDAO, AgentCrmConnectionDAO, AgentDAO
+from .dao import AgentChannelConnectionDAO, AgentCrmConnectionDAO, AgentDAO, AgentHttpIntegrationDAO
 from .schemas import *
 from ..alembic.database import async_session_maker
 from ..alembic.models import (
@@ -36,6 +36,7 @@ from ..alembic.models import (
     AgentContentJob,
     AgentCrmConnection,
     AgentFrozenUser,
+    AgentHttpIntegration,
 )
 from ..config import settings
 from ..qdrant.search_service import delete_agent_vectors
@@ -49,7 +50,8 @@ from ..services.agent_availability import normalize_agent_availability_for_stora
 from ..services.ai_authoring import ai_client, generate_welcome_with_ai, improve_prompt_with_ai
 from ..services.admin_booking import get_admin_booking_service
 from ..services.admin_booking.domains import DOMAIN_REGISTRY as _DOMAIN_REGISTRY
-from ..services.crm import build_provider
+from ..services.http_integration.errors import HttpIntegrationValidationError
+from ..services.http_integration.tool_registry import validate_integration_config_dict
 from ..services.qa_handoff_service import EscalationType as QAEscalationType, get_qa_handoff_service
 from ..services.template_runtime import EscalationType, get_template_runtime
 from ..services.youtube_client import get_youtube_client
@@ -608,6 +610,8 @@ def _default_crm_admin_config() -> dict[str, object]:
         "custom_staff_label": None,
         "custom_resource_types": None,
         "custom_domain_instruction": None,
+        "http_integrations_enabled": True,
+        "http_integration_names": None,
     }
 
 
@@ -770,6 +774,22 @@ def _migrate_crm_admin_config(raw_config: dict | None) -> dict[str, object]:
     custom_domain_instruction_raw = raw.get("custom_domain_instruction")
     custom_domain_instruction = str(custom_domain_instruction_raw).strip()[:4000] if custom_domain_instruction_raw else None
 
+    http_integrations_enabled = bool(raw.get("http_integrations_enabled", defaults["http_integrations_enabled"]))
+    http_integration_names_raw = raw.get("http_integration_names")
+    if http_integration_names_raw is None:
+        http_integration_names = defaults["http_integration_names"]
+    elif isinstance(http_integration_names_raw, list):
+        http_integration_names = []
+        for item in http_integration_names_raw:
+            slug = str(item or "").strip().lower()
+            if slug and slug not in http_integration_names:
+                http_integration_names.append(slug)
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="template_config.http_integration_names must be an array of strings or null",
+        )
+
     return {
         "domain_type": domain_type,
         "crm_mode": crm_mode,
@@ -793,6 +813,8 @@ def _migrate_crm_admin_config(raw_config: dict | None) -> dict[str, object]:
         "custom_staff_label": custom_staff_label,
         "custom_resource_types": custom_resource_types,
         "custom_domain_instruction": custom_domain_instruction,
+        "http_integrations_enabled": http_integrations_enabled,
+        "http_integration_names": http_integration_names,
     }
 
 
@@ -1300,6 +1322,95 @@ def _serialize_crm_connection(connection: AgentCrmConnection) -> dict:
     }
 
 
+_HTTP_INTEGRATION_NAME_RE = re.compile(r"^[a-z0-9](?:[-a-z0-9_]{0,61}[a-z0-9])?$")
+
+
+def _normalize_http_integration_slug(name: str) -> str:
+    raw = str(name or "").strip().lower()
+    if len(raw) > 64 or not _HTTP_INTEGRATION_NAME_RE.fullmatch(raw):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="integration_name must be a lowercase slug (a-z / digits / hyphen / underscore, max 64 chars)",
+        )
+    return raw
+
+
+def _bundle_auth_payload_to_dict(auth_model: HttpIntegrationAuthPayload) -> dict[str, object]:
+    mode = auth_model.type
+    if mode == "none":
+        return {"type": "none"}
+    if mode == "bearer":
+        token = (auth_model.token or "").strip()
+        if not token:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Bearer token is required")
+        return {"type": "bearer", "token": token}
+    if mode == "header":
+        hn = (auth_model.header_name or "").strip()
+        if not hn:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="header_name is required")
+        return {"type": "header", "name": hn, "value": (auth_model.header_value or "").strip()}
+    if mode == "basic":
+        user = (auth_model.username or "").strip()
+        if not user:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="username is required for basic auth")
+        return {
+            "type": "basic",
+            "username": user,
+            "password": auth_model.password or "",
+        }
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail="Unsupported authentication type",
+    )
+
+
+def _http_integration_manifest_for_api(bundle: dict[str, object]) -> dict[str, object]:
+    tools = bundle.get("tools") if isinstance(bundle.get("tools"), list) else []
+    summarized = []
+    for item in tools:
+        if isinstance(item, dict):
+            summarized.append(
+                {
+                    "name": item.get("name"),
+                    "description": item.get("description"),
+                    "method": item.get("method"),
+                    "path": item.get("path"),
+                }
+            )
+    auth_raw = bundle.get("auth") if isinstance(bundle.get("auth"), dict) else {}
+    return {
+        "base_url": bundle.get("base_url"),
+        "timeout_seconds": bundle.get("timeout_seconds"),
+        "default_headers": sorted((bundle.get("default_headers") or {}).keys())
+        if isinstance(bundle.get("default_headers"), dict)
+        else [],
+        "auth_type": auth_raw.get("type"),
+        "tools": summarized,
+    }
+
+
+def _serialize_http_integration(connection: AgentHttpIntegration) -> dict:
+    preview: dict[str, object] | None = None
+    try:
+        decrypted, _ = decrypt_crm_credentials(connection.encrypted_config)
+        loaded = json.loads(decrypted)
+        if isinstance(loaded, dict):
+            validated = validate_integration_config_dict(loaded)
+            preview = _http_integration_manifest_for_api(validated)
+    except HttpIntegrationValidationError:
+        preview = {"error": "invalid_stored_integration"}
+    except Exception:
+        preview = {"error": "manifest_unreadable"}
+    return {
+        "id": connection.id,
+        "name": connection.name,
+        "is_active": bool(connection.is_active),
+        "created_at": _safe_iso(connection.created_at),
+        "updated_at": _safe_iso(connection.updated_at),
+        "manifest": preview or {},
+    }
+
+
 def _parse_content_job_metadata(raw_metadata: str | None) -> dict:
     if not raw_metadata or not str(raw_metadata).strip():
         return {}
@@ -1461,6 +1572,15 @@ async def _list_agent_crm_connections(session, agent_id: int) -> list[AgentCrmCo
         select(AgentCrmConnection)
         .where(AgentCrmConnection.agent_id == agent_id)
         .order_by(AgentCrmConnection.created_at.asc(), AgentCrmConnection.id.asc())
+    )
+    return list(rows.all())
+
+
+async def _list_agent_http_integrations(session, agent_id: int) -> list[AgentHttpIntegration]:
+    rows = await session.scalars(
+        select(AgentHttpIntegration)
+        .where(AgentHttpIntegration.agent_id == agent_id)
+        .order_by(AgentHttpIntegration.created_at.asc(), AgentHttpIntegration.id.asc())
     )
     return list(rows.all())
 
@@ -2977,6 +3097,135 @@ async def connect_crm(
             )
 
 
+@router.post("/http_integration/connect")
+async def http_integration_connect(
+    request: Request,
+    payload: HttpIntegrationConnectPayload,
+    current_user=Depends(get_current_user_required),
+):
+    _assert_https_for_sensitive_endpoint(request)
+    slug = _normalize_http_integration_slug(payload.integration_name)
+    tools_manifest = []
+    for item in payload.tools:
+        tools_manifest.append(
+            {
+                "name": item.name.strip(),
+                "description": item.description.strip(),
+                "method": item.method,
+                "path": item.path.strip(),
+                "requires_confirmation": item.requires_confirmation,
+                "parameters": item.parameters,
+            }
+        )
+
+    bundle: dict[str, object] = {
+        "base_url": payload.base_url.strip().rstrip("/"),
+        "timeout_seconds": float(payload.timeout_seconds),
+        "default_headers": {str(k): str(v) for k, v in (payload.default_headers or {}).items() if str(k)},
+        "auth": _bundle_auth_payload_to_dict(payload.auth),
+        "tools": tools_manifest,
+    }
+    try:
+        validated = validate_integration_config_dict(bundle)
+    except HttpIntegrationValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    encrypted_config = encrypt_crm_credentials(json.dumps(validated, ensure_ascii=False))
+
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        hid = AgentHttpIntegrationDAO(session)
+        async with session.begin():
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
+                current_user=current_user,
+                internal=False,
+            )
+            if _normalize_template_type(agent.template_type) != "crm_admin":
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Интеграции доступны только для шаблона ИИ‑администратора (crm_admin)",
+                )
+
+            existing = await hid.find_one_by_filter(agent_id=agent.id, name=slug)
+            now = datetime.utcnow()
+            if existing:
+                await hid.update(
+                    existing,
+                    {
+                        "encrypted_config": encrypted_config,
+                        "is_active": True,
+                        "updated_at": now,
+                    },
+                )
+                row = existing
+            else:
+                row = await hid.add(
+                    {
+                        "agent_id": agent.id,
+                        "name": slug,
+                        "encrypted_config": encrypted_config,
+                        "is_active": True,
+                        "created_at": now,
+                        "updated_at": now,
+                    }
+                )
+                await session.flush()
+
+            return JSONResponse(
+                content={
+                    "agent_id": agent.id,
+                    "bot_id": agent.bot_id,
+                    "http_integration": _serialize_http_integration(row),
+                },
+                status_code=status.HTTP_200_OK,
+            )
+
+
+@router.post("/http_integration/deactivate")
+async def http_integration_deactivate(
+    request: Request,
+    payload: HttpIntegrationDeactivatePayload,
+    current_user=Depends(get_current_user_required),
+):
+    _assert_https_for_sensitive_endpoint(request)
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        hid = AgentHttpIntegrationDAO(session)
+        async with session.begin():
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
+                current_user=current_user,
+                internal=False,
+            )
+            row = await hid.find_one_by_filter(agent_id=agent.id, id=payload.integration_id)
+            if row is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Integration not found")
+            now = datetime.utcnow()
+            await hid.update(
+                row,
+                {
+                    "is_active": False,
+                    "updated_at": now,
+                },
+            )
+            return JSONResponse(
+                content={"http_integration": _serialize_http_integration(row)},
+                status_code=status.HTTP_200_OK,
+            )
+
+
 @router.post("/crm/validate")
 async def validate_crm_connection(
     request: Request,
@@ -3218,6 +3467,7 @@ async def read_agent(
             await _ensure_single_primary_flag(session=session, agent_id=found_agent.id)
             channels = await _list_agent_channels(session, found_agent.id)
             crm_connections = await _list_agent_crm_connections(session, found_agent.id)
+            http_integrations = await _list_agent_http_integrations(session, found_agent.id)
             payload = _serialize_agent(
                 found_agent,
                 include_external_api_key=True,
@@ -3225,6 +3475,7 @@ async def read_agent(
             )
             payload["channels"] = [_serialize_channel_connection(item) for item in channels]
             payload["crm_connections"] = [_serialize_crm_connection(item) for item in crm_connections]
+            payload["http_integrations"] = [_serialize_http_integration(item) for item in http_integrations]
             if internal and resolved_channel and resolved_channel.encrypted_credentials:
                 # Internal webhook lookup by Telegram Bot ID must return that bot token.
                 payload["encrypted_token"] = resolved_channel.encrypted_credentials
