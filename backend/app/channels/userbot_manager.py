@@ -11,7 +11,7 @@ from typing import Any
 
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
-from telethon.tl.types import User
+from telethon.tl.types import InputPeerUser, User
 
 from sqlalchemy import select
 
@@ -28,6 +28,38 @@ logger = logging.getLogger(__name__)
 
 def _make_client(session_string: str, api_id: int, api_hash: str) -> TelegramClient:
     return TelegramClient(StringSession(session_string), api_id, api_hash)
+
+
+async def _resolve_peer_access_hash_for_private_dm(
+    event: events.NewMessage.Event,
+    *,
+    sender: Any,
+    user_external_id: str,
+) -> int | None:
+    """Full User from get_sender() sometimes has no access_hash (e.g. some media updates)."""
+    if isinstance(sender, User):
+        ah = getattr(sender, "access_hash", None)
+        if ah is not None:
+            h = int(ah)
+            return h if h != 0 else None
+    try:
+        inp = await event.get_input_sender()
+        if isinstance(inp, InputPeerUser) and getattr(inp, "access_hash", None) is not None:
+            h = int(inp.access_hash)
+            return h if h != 0 else None
+    except Exception:
+        logger.debug("userbot: get_input_sender failed for access_hash", exc_info=True)
+    try:
+        uid = int(str(user_external_id).strip())
+        full = await event.client.get_entity(uid)
+        if isinstance(full, User):
+            ah = getattr(full, "access_hash", None)
+            if ah is not None:
+                h = int(ah)
+                return h if h != 0 else None
+    except Exception:
+        logger.debug("userbot: get_entity failed for access_hash", exc_info=True)
+    return None
 
 
 def _should_process_sales_manager_public_event(
@@ -136,11 +168,9 @@ async def _handle_private_message(
     if not user_external_id:
         return
 
-    peer_access_hash: int | None = None
-    if isinstance(sender, User):
-        ah = getattr(sender, "access_hash", None)
-        if ah is not None:
-            peer_access_hash = int(ah)
+    peer_access_hash = await _resolve_peer_access_hash_for_private_dm(
+        event, sender=sender, user_external_id=user_external_id
+    )
 
     sender_is_bot = bool(getattr(sender, "bot", False))
     if sender_is_bot:

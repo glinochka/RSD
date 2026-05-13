@@ -18,10 +18,10 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
     QDRANT_API_KEY:str = ''
     DEEPSEEK_API_KEY: str
-    # Official api.deepseek.com chat completions usually do not accept vision (image_url).
-    # False = one text-only LLM call with honest instructions (recommended).
-    # True = attempt OpenAI-style multimodal first; falls back on API error.
-    DEEPSEEK_CHAT_TRY_IMAGE_MULTIMODAL: bool = False
+    # Try DeepSeek /chat/completions with OpenAI-style multimodal payloads (content array + image_url,
+    # including data:image/...;base64,...). If the gateway/model rejects vision, we fall back to a
+    # text-only call with frank instructions for the assistant.
+    DEEPSEEK_CHAT_TRY_IMAGE_MULTIMODAL: bool = True
     # Fallback STT when local faster-whisper is disabled or returns empty (optional).
     OPENAI_API_KEY: str = ""
     # Speech-to-text: faster_whisper (local), openai (API), auto = try local then API.

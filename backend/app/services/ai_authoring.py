@@ -12,6 +12,11 @@ ai_client = AsyncOpenAI(
     base_url="https://api.deepseek.com",
 )
 
+_VISION_ANALYSIS_SYSTEM_ADDON = (
+    "\n\nПользователь приложил изображение: опиши, что на нём важно для вопроса, и ответь по сути, "
+    "используя контекст базы знаний где уместно."
+)
+
 # When multimodal request fails (unsupported or rejected), steer the text-only retry.
 _VISION_FALLBACK_ASSISTANT_NOTE = (
     "\n\nСлужебное указание для ассистента: изображение в мультимодальную модель передать не удалось. "
@@ -86,6 +91,14 @@ async def generate_welcome_with_ai(system_prompt: str) -> str:
     return (response.choices[0].message.content or "").strip()
 
 
+def _polish_answer(raw_answer: str | None) -> str:
+    text = (raw_answer or "").strip()
+    if not text:
+        return "Не удалось сформулировать ответ. Задайте вопрос чуть подробнее."
+    cleaned = _clean_plain_text(text)
+    return cleaned or "Не удалось сформулировать ответ. Задайте вопрос чуть подробнее."
+
+
 async def generate_answer_with_context(
     question: str,
     context_list: list,
@@ -100,67 +113,65 @@ async def generate_answer_with_context(
         context_parts = [f"Источник: {c.get('source', 'Unknown')}\nТекст: {c.get('text', '')}" for c in context_list]
         context_text = "\n\n---\n\n".join(context_parts)
 
-    full_system_prompt = (
+    base_system = (
         f"{system_prompt}\n\n"
         "ВАЖНО: Отвечай только чистым текстом.\n"
         "ЗАПРЕЩЕНО использовать markdown-форматирование.\n"
         "ЗАПРЕЩЕНО показывать названия переменных/шаблонов и их значения ({{...}}, ${...}, key=value, JSON/XML-поля)."
     )
 
-    try_multimodal = bool(vision_image_data_url) and bool(
-        getattr(settings, "DEEPSEEK_CHAT_TRY_IMAGE_MULTIMODAL", False)
-    )
-
-    if vision_image_data_url:
-        if try_multimodal:
-            full_system_prompt = (
-                f"{full_system_prompt}\n\n"
-                "Пользователь приложил изображение: опиши, что на нём важно для вопроса, и ответь по сути, "
-                "используя контекст базы знаний где уместно."
-            )
-        else:
-            full_system_prompt = (
-                f"{full_system_prompt}\n\n"
-                "Пользователь отправил изображение. Подключённая через DeepSeek текстовая модель не получает файл "
-                "(изображение в неё не загружается). Не утверждай, что видишь фото или можешь его прочитать. "
-                "Ответь по тексту вопроса и базе знаний; если без содержимого снимка ответить нельзя — попроси "
-                "пользователя кратко описать, что на картинке. Не используй формулировки про «техническую передачу "
-                "медиафайлов», API или ошибки сервера."
-            )
-
     user_prompt = f"КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ:\n{context_text}\n\nВОПРОС ПОЛЬЗОВАТЕЛЯ: {question}"
 
     model = (chat_model or "deepseek-chat").strip() or "deepseek-chat"
-    user_content: str | list[dict[str, object]] = user_prompt
-    if vision_image_data_url and try_multimodal:
-        user_content = [
+    vision_url = (vision_image_data_url or "").strip() or None
+    analyze_system = f"{base_system}{_VISION_ANALYSIS_SYSTEM_ADDON}"
+    honesty_system = (
+        f"{base_system}\n\n"
+        "Пользователь отправил изображение. Изображение в языковую модель сейчас не удалось использовать. "
+        "Не утверждай, что видишь фото или можешь его прочитать. Ответь по тексту вопроса и базе знаний; "
+        "если без содержимого снимка ответить нельзя — попроси пользователя кратко описать, что на картинке. "
+        "Не используй формулировки про «техническую передачу медиафайлов», API или ошибки сервера."
+    )
+    multimodal_user: list[dict[str, object]] | None = None
+    if vision_url:
+        multimodal_user = [
             {"type": "text", "text": user_prompt},
-            {"type": "image_url", "image_url": {"url": vision_image_data_url}},
+            {"type": "image_url", "image_url": {"url": vision_url}},
         ]
 
-    try:
+    if not vision_url:
         response = await ai_client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": full_system_prompt},
-                {"role": "user", "content": user_content},
+                {"role": "system", "content": base_system},
+                {"role": "user", "content": user_prompt},
             ],
             temperature=0.3,
         )
-    except Exception:
-        if not vision_image_data_url or not try_multimodal:
-            raise
-        logger.warning("DeepSeek multimodal request failed; retrying text-only", exc_info=True)
-        response = await ai_client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": full_system_prompt},
-                {"role": "user", "content": user_prompt + _VISION_FALLBACK_ASSISTANT_NOTE},
-            ],
-            temperature=0.3,
-        )
-    raw_answer = (response.choices[0].message.content or "").strip()
-    if not raw_answer:
-        return "Не удалось сформулировать ответ. Задайте вопрос чуть подробнее."
-    cleaned = _clean_plain_text(raw_answer)
-    return cleaned or "Не удалось сформулировать ответ. Задайте вопрос чуть подробнее."
+        return _polish_answer(response.choices[0].message.content)
+
+    try_deepseek_mm = bool(getattr(settings, "DEEPSEEK_CHAT_TRY_IMAGE_MULTIMODAL", True))
+
+    if try_deepseek_mm and multimodal_user is not None:
+        try:
+            response = await ai_client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": analyze_system},
+                    {"role": "user", "content": multimodal_user},
+                ],
+                temperature=0.3,
+            )
+            return _polish_answer(response.choices[0].message.content)
+        except Exception:
+            logger.warning("DeepSeek multimodal request failed", exc_info=True)
+
+    response = await ai_client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": honesty_system},
+            {"role": "user", "content": user_prompt + _VISION_FALLBACK_ASSISTANT_NOTE},
+        ],
+        temperature=0.3,
+    )
+    return _polish_answer(response.choices[0].message.content)
