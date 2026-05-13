@@ -328,6 +328,12 @@ async def _handle_chat_message(
     if not user_external_id:
         return
 
+    peer_access_hash: int | None = None
+    if isinstance(sender, User):
+        ah = getattr(sender, "access_hash", None)
+        if ah is not None:
+            peer_access_hash = int(ah)
+
     source_chat_id = str(event.chat_id) if hasattr(event, "chat_id") else "0"
     
     user_display_name = (
@@ -345,7 +351,7 @@ async def _handle_chat_message(
         system_prompt=system_prompt,
         welcome_message=None,
         user_display_name=user_display_name,
-        telegram_peer_access_hash=None,
+        telegram_peer_access_hash=peer_access_hash,
         skip_chat_portrait_update=True,
         runtime_context={
             "is_group_chat": should_process_group,
