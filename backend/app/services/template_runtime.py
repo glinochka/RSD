@@ -1647,6 +1647,7 @@ class TemplateRuntimeService:
         allowed_tools_raw = template_config.get("allowed_tools")
         allowed_tools = allowed_tools_raw if isinstance(allowed_tools_raw, list) else None
         if allowed_tools:
+            peer_hash = self._telegram_peer_access_hash_from_runtime(runtime_context)
             tool_driven = await self._execute_sales_tools(
                 prompt=prompt,
                 user_message=user_message,
@@ -1658,6 +1659,7 @@ class TemplateRuntimeService:
                 agent_id=agent_id,
                 sources=sources,
                 chat_portrait=chat_portrait,
+                telegram_peer_access_hash=peer_hash,
             )
             if tool_driven is not None:
                 if agent_id and user_external_id and tool_driven.tool_events:
@@ -1704,6 +1706,18 @@ class TemplateRuntimeService:
                 )
         return result
 
+    @staticmethod
+    def _telegram_peer_access_hash_from_runtime(runtime_context: dict[str, Any] | None) -> int | None:
+        rc = runtime_context or {}
+        raw = rc.get("telegram_peer_access_hash")
+        if raw is None:
+            return None
+        try:
+            h = int(raw)
+        except (TypeError, ValueError):
+            return None
+        return h if h != 0 else None
+
     async def _execute_sales_tools(
         self,
         *,
@@ -1717,6 +1731,7 @@ class TemplateRuntimeService:
         agent_id: int | None,
         sources: list[str],
         chat_portrait: str | None = None,
+        telegram_peer_access_hash: int | None = None,
     ) -> TemplateExecutionResult | None:
         allowed_tools_raw = template_config.get("allowed_tools")
         allowed_tools = allowed_tools_raw if isinstance(allowed_tools_raw, list) else None
@@ -1730,6 +1745,7 @@ class TemplateRuntimeService:
             agent_id=agent_id,
             user_external_id=user_external_id,
             mode=mode,
+            telegram_peer_access_hash=telegram_peer_access_hash,
         )
         llm_tools = registry.tools_for_llm()
         if not llm_tools:

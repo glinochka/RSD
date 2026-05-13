@@ -15,7 +15,7 @@ ALLOWED_TRANSITIONS: dict[str, set[str]] = {
     "DISCOVERED": {"QUALIFIED", "SKIPPED"},
     "QUALIFIED": {"QUEUED", "SKIPPED"},
     "QUEUED": {"SENT", "SKIPPED"},
-    "SENT": {"REPLIED_POSITIVE", "REPLIED_NEGATIVE", "NO_REPLY"},
+    "SENT": {"REPLIED_POSITIVE", "REPLIED_NEGATIVE", "NO_REPLY", "QUEUED"},
     "REPLIED_POSITIVE": {"HANDOFF_CRM"},
     "REPLIED_NEGATIVE": set(),
     "NO_REPLY": set(),
@@ -107,6 +107,8 @@ class SalesFSMService:
 
                 current_state = (row.state or "DISCOVERED").strip().upper()
                 next_state = (to_state or "").strip().upper()
+                if current_state == next_state:
+                    return row
                 if not self._can_transition(current_state, next_state):
                     raise SalesFSMError(f"Illegal transition: {current_state} -> {next_state}")
 

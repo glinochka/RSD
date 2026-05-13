@@ -2017,6 +2017,7 @@ async def _map_telegram_userbot_access_hashes(
                     AgentAnalyticsMessage.channel == "telegram_userbot",
                     AgentAnalyticsMessage.user_external_id.in_(user_external_ids),
                     AgentAnalyticsMessage.telegram_peer_access_hash.is_not(None),
+                    AgentAnalyticsMessage.telegram_peer_access_hash > 0,
                 )
                 .order_by(AgentAnalyticsMessage.created_at.desc())
             )

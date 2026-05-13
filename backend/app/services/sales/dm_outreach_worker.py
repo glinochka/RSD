@@ -33,6 +33,7 @@ async def _latest_telegram_userbot_peer_access_hash(
             AgentAnalyticsMessage.channel == "telegram_userbot",
             AgentAnalyticsMessage.user_external_id == uid,
             AgentAnalyticsMessage.telegram_peer_access_hash.is_not(None),
+            AgentAnalyticsMessage.telegram_peer_access_hash > 0,
         )
         .order_by(AgentAnalyticsMessage.created_at.desc())
         .limit(1)
@@ -107,6 +108,16 @@ class DmOutreachWorker:
         peer_access_hash: int | None = None
         target_external = str(item.target_user_external_id or "").strip()
 
+        if item.metadata_json:
+            try:
+                meta = json.loads(item.metadata_json)
+                if isinstance(meta, dict) and meta.get("telegram_peer_access_hash") is not None:
+                    mh = int(meta["telegram_peer_access_hash"])
+                    if mh > 0:
+                        peer_access_hash = mh
+            except (json.JSONDecodeError, TypeError, ValueError):
+                pass
+
         async with async_session_maker() as session:
             async with session.begin():
                 agent = await session.scalar(select(Agent).where(Agent.id == item.agent_id))
@@ -138,11 +149,12 @@ class DmOutreachWorker:
 
                 encrypted_credentials = str(channel.encrypted_credentials)
                 analytics_ns = int(agent.bot_id or agent.id)
-                peer_access_hash = await _latest_telegram_userbot_peer_access_hash(
-                    session,
-                    analytics_namespace_id=analytics_ns,
-                    user_external_id=target_external,
-                )
+                if peer_access_hash is None:
+                    peer_access_hash = await _latest_telegram_userbot_peer_access_hash(
+                        session,
+                        analytics_namespace_id=analytics_ns,
+                        user_external_id=target_external,
+                    )
 
         # Send via Telethon userbot (needs InputPeerUser when entity is not in session cache)
         try:
@@ -205,12 +217,18 @@ class DmOutreachWorker:
         except Exception as exc:
             error_msg = str(exc)[:500]
             low = error_msg.lower()
+            non_retry_substrings = (
+                "could not find the input entity",
+                "не удалось отправить dm",
+                "invalid target_user_external_id",
+            )
+            is_peer_resolution = any(s in low for s in non_retry_substrings)
+            if isinstance(exc, ValueError) and "input entity" in low:
+                is_peer_resolution = True
             should_retry = (
                 "auth" not in low
                 and "not found" not in low
-                and "could not find the input entity" not in low
-                and "не удалось отправить dm" not in low
-                and "invalid target_user_external_id" not in low
+                and not is_peer_resolution
             )
             
             logger.warning(

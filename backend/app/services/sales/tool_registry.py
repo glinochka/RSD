@@ -92,6 +92,7 @@ class SalesToolRegistry:
         agent_id: int | None,
         user_external_id: str | None,
         mode: str,
+        telegram_peer_access_hash: int | None = None,
     ) -> None:
         requested = [str(tool or "").strip() for tool in (allowed_tools or [])]
         unique: list[str] = []
@@ -104,6 +105,14 @@ class SalesToolRegistry:
         self._agent_id = int(agent_id or 0)
         self._user_external_id = (user_external_id or "").strip() or "anonymous"
         self._mode = (mode or "draft_only").strip().lower()
+        self._telegram_peer_access_hash: int | None = None
+        if telegram_peer_access_hash is not None:
+            try:
+                h = int(telegram_peer_access_hash)
+                if h != 0:
+                    self._telegram_peer_access_hash = h
+            except (TypeError, ValueError):
+                self._telegram_peer_access_hash = None
 
     def tools_for_llm(self) -> list[dict[str, Any]]:
         tools: list[dict[str, Any]] = []
@@ -195,15 +204,18 @@ class SalesToolRegistry:
             target_uid = data.get("target_user_external_id") or self._user_external_id
             source_cid = str(data.get("source_chat_id") or "global")
             
+            meta: dict[str, Any] = {
+                "mode": self._mode,
+                "qualification": "auto" if self._mode == "auto" else "manual",
+            }
+            if self._telegram_peer_access_hash is not None:
+                meta["telegram_peer_access_hash"] = self._telegram_peer_access_hash
             await queue_service.enqueue_dm(
                 agent_id=self._agent_id,
                 target_user_external_id=target_uid,
                 source_chat_id=source_cid,
                 message_text=data.get("text", ""),
-                metadata={
-                    "mode": self._mode,
-                    "qualification": "auto" if self._mode == "auto" else "manual",
-                },
+                metadata=meta,
             )
             
             if self._mode == "auto":

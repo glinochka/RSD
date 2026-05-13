@@ -198,6 +198,8 @@ class MessageProcessor:
                 )
 
             merged_runtime_ctx: dict[str, object] = dict(request.runtime_context or {})
+            if request.telegram_peer_access_hash is not None and int(request.telegram_peer_access_hash) != 0:
+                merged_runtime_ctx["telegram_peer_access_hash"] = int(request.telegram_peer_access_hash)
             if isinstance(template_config, dict):
                 vm = (
                     str(

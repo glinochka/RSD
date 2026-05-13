@@ -11,6 +11,15 @@ ai_client = AsyncOpenAI(
     api_key=settings.DEEPSEEK_API_KEY,
     base_url="https://api.deepseek.com",
 )
+
+# When multimodal request fails (unsupported or rejected), steer the text-only retry.
+_VISION_FALLBACK_ASSISTANT_NOTE = (
+    "\n\nСлужебное указание для ассистента: изображение в мультимодальную модель передать не удалось. "
+    "Не утверждай, что видишь фото. Ответь по тексту вопроса и базе знаний; если нужно содержимое снимка — "
+    "попроси пользователя кратко описать его словами. Не упоминай API, серверы, «техническую передачу медиа» "
+    "и подобные формулировки."
+)
+
 _TEMPLATE_VAR_RE = re.compile(r"(\{\{[^{}]+\}\}|\$\{[^{}]+\}|%\([^)]+\)s)")
 _INTERNAL_ASSIGNMENT_RE = re.compile(
     r"\b(staff_id|resource_id|service_id|agent_id|appointment_id|client_external_id|"
@@ -97,17 +106,33 @@ async def generate_answer_with_context(
         "ЗАПРЕЩЕНО использовать markdown-форматирование.\n"
         "ЗАПРЕЩЕНО показывать названия переменных/шаблонов и их значения ({{...}}, ${...}, key=value, JSON/XML-поля)."
     )
+
+    try_multimodal = bool(vision_image_data_url) and bool(
+        getattr(settings, "DEEPSEEK_CHAT_TRY_IMAGE_MULTIMODAL", False)
+    )
+
     if vision_image_data_url:
-        full_system_prompt = (
-            f"{full_system_prompt}\n\n"
-            "Пользователь приложил изображение: опиши, что на нём важно для вопроса, и ответь по сути, "
-            "используя контекст базы знаний где уместно."
-        )
+        if try_multimodal:
+            full_system_prompt = (
+                f"{full_system_prompt}\n\n"
+                "Пользователь приложил изображение: опиши, что на нём важно для вопроса, и ответь по сути, "
+                "используя контекст базы знаний где уместно."
+            )
+        else:
+            full_system_prompt = (
+                f"{full_system_prompt}\n\n"
+                "Пользователь отправил изображение. Подключённая через DeepSeek текстовая модель не получает файл "
+                "(изображение в неё не загружается). Не утверждай, что видишь фото или можешь его прочитать. "
+                "Ответь по тексту вопроса и базе знаний; если без содержимого снимка ответить нельзя — попроси "
+                "пользователя кратко описать, что на картинке. Не используй формулировки про «техническую передачу "
+                "медиафайлов», API или ошибки сервера."
+            )
+
     user_prompt = f"КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ:\n{context_text}\n\nВОПРОС ПОЛЬЗОВАТЕЛЯ: {question}"
 
     model = (chat_model or "deepseek-chat").strip() or "deepseek-chat"
     user_content: str | list[dict[str, object]] = user_prompt
-    if vision_image_data_url:
+    if vision_image_data_url and try_multimodal:
         user_content = [
             {"type": "text", "text": user_prompt},
             {"type": "image_url", "image_url": {"url": vision_image_data_url}},
@@ -123,20 +148,14 @@ async def generate_answer_with_context(
             temperature=0.3,
         )
     except Exception:
-        if not vision_image_data_url:
+        if not vision_image_data_url or not try_multimodal:
             raise
         logger.warning("DeepSeek multimodal request failed; retrying text-only", exc_info=True)
         response = await ai_client.chat.completions.create(
             model=model,
             messages=[
                 {"role": "system", "content": full_system_prompt},
-                {
-                    "role": "user",
-                    "content": (
-                        user_prompt
-                        + "\n\n(Изображение не удалось передать в модель — ответь по тексту вопроса и контексту.)"
-                    ),
-                },
+                {"role": "user", "content": user_prompt + _VISION_FALLBACK_ASSISTANT_NOTE},
             ],
             temperature=0.3,
         )
