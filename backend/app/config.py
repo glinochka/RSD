@@ -92,6 +92,8 @@ class Settings(BaseSettings):
     EMBEDDING_SCHEMA_VERSION: int = 1
     EMBEDDING_CHUNK_SIZE: int = 1000
     EMBEDDING_CHUNK_OVERLAP: int = 100
+    # If set, load the SentenceTransformer from this directory (no Hub download). For air-gapped / offline deploys.
+    EMBEDDING_LOCAL_MODEL_PATH: str = ""
     model_config = SettingsConfigDict(
         env_file= Path(__file__).parent.parent.parent / '.env',  
         env_file_encoding='utf-8',

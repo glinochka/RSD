@@ -27,10 +27,15 @@ DEFAULT_EMBEDDING_PROFILE_KEY = settings.EMBEDDING_PROFILE_KEY
 
 ACTIVE_DENSE_MODEL = PRIMARY_DENSE_MODEL
 
-dense_model = SentenceTransformer(
-    ACTIVE_DENSE_MODEL,
-    device="cpu",
-)
+
+def _init_dense_model() -> SentenceTransformer:
+    local = (settings.EMBEDDING_LOCAL_MODEL_PATH or "").strip()
+    if local:
+        return SentenceTransformer(local, device="cpu", local_files_only=True)
+    return SentenceTransformer(ACTIVE_DENSE_MODEL, device="cpu")
+
+
+dense_model = _init_dense_model()
 
 
 async def run_in_cpu_pool(func, /, *args, **kwargs):

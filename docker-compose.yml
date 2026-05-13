@@ -30,7 +30,9 @@ services:
                 
         container_name: rsd_backend
         environment:
-            HF_ENDPOINT: https://hf-mirror.com
+            # Do not set HF_ENDPOINT here. Mirroring sites (e.g. hf-mirror.com) often break
+            # with current huggingface_hub (redirects / domain checks). Use the public hub by
+            # default; override HF_ENDPOINT in .env only if you have a compatible mirror.
             DB_HOST: ${DB_HOST}
             DB_PORT: ${DB_PORT}
             DB_USER: ${DB_USER}

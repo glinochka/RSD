@@ -17,11 +17,10 @@ RUN pip install -r requirements.txt
 # Принудительно скачиваем модель при сборке (best-effort).
 # Любые ошибки (например, CPU/NumPy несовместимость на хосте сборки)
 # не должны останавливать build.
+# Uses the default Hugging Face Hub URL (do not point HF_ENDPOINT at hf-mirror.com — recent
+# huggingface_hub builds fail metadata checks on many mirrors).
 RUN python - <<'PY'
-import os
-
 try:
-    os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
     from sentence_transformers import SentenceTransformer
 
     model_name = "BAAI/bge-m3"
