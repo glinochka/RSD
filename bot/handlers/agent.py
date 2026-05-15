@@ -5,7 +5,7 @@ import logging
 from aiogram import Router, types
 
 from core.config import settings
-from core.message_processor import Channel, MessageRequest, get_message_processor
+from core.message_processor import Channel, MessageRequest, ProcessingStatus, get_message_processor
 
 logger = logging.getLogger(__name__)
 
@@ -94,5 +94,8 @@ async def handle_agent_message(message: types.Message, agent_config: dict):
 
     processor = get_message_processor()
     response = await processor.process(request)
+
+    if response.status == ProcessingStatus.DISCARDED:
+        return
 
     await message.answer(response.text)

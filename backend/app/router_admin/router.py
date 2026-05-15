@@ -1473,3 +1473,8 @@ async def ap_preview_article(
             "topic": topic,
         }
     )
+
+
+from .sales_admin import router as admin_sales_router  # noqa: E402
+
+router.include_router(admin_sales_router)

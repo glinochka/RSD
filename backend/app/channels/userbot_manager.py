@@ -21,7 +21,7 @@ from ..config import settings
 from ..utils.crypto import decrypt_token
 from ..services.voice_transcription import is_voice_stt_configured, transcribe_voice_bytes
 from .leader_lock import PgLeaderLock
-from .message_processor import Channel, MessageRequest, get_message_processor
+from .message_processor import Channel, MessageRequest, ProcessingStatus, get_message_processor
 
 logger = logging.getLogger(__name__)
 
@@ -285,7 +285,8 @@ async def _handle_private_message(
     except Exception:
         logger.exception("userbot: failed to process private message bot_id=%s agent_id=%s", bot_id, agent_id)
         raise
-    await event.respond(response.text)
+    if response.status != ProcessingStatus.DISCARDED:
+        await event.respond(response.text)
 
 
 async def _handle_chat_message(

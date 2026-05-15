@@ -14,7 +14,7 @@ from ..alembic.models import Agent, AgentChannelConnection
 from ..config import settings
 from ..utils.crypto import decrypt_token
 from .leader_lock import PgLeaderLock
-from .message_processor import Channel, MessageRequest, get_message_processor
+from .message_processor import Channel, MessageRequest, ProcessingStatus, get_message_processor
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +177,8 @@ async def _process_incoming(cfg: dict[str, Any], incoming: dict[str, Any]) -> No
     )
     try:
         response = await get_message_processor().process(request)
+        if response.status == ProcessingStatus.DISCARDED:
+            return
         await _bridge_post(
             "session/send",
             {

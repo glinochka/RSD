@@ -11,10 +11,6 @@ from fastapi import HTTPException, status
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_OUTSIDE_MESSAGE = (
-    "Сейчас вне рабочего времени ассистента. Пожалуйста, напишите в рабочие часы — мы обязательно ответим."
-)
-
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 _TZ_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_+\-]*/?[A-Za-z0-9_+\-]*$")
 
@@ -43,7 +39,6 @@ def normalize_agent_availability_for_storage(raw_block: object | None) -> dict[s
         return {
             "always_on": True,
             "timezone": "Europe/Moscow",
-            "outside_message": DEFAULT_OUTSIDE_MESSAGE,
         }
     if not isinstance(raw_block, dict):
         raise HTTPException(
@@ -59,15 +54,8 @@ def normalize_agent_availability_for_storage(raw_block: object | None) -> dict[s
             detail="agent_availability.timezone must be a valid IANA timezone name",
         )
 
-    msg = str(raw_block.get("outside_message") or DEFAULT_OUTSIDE_MESSAGE).strip() or DEFAULT_OUTSIDE_MESSAGE
-    if len(msg) > 500:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="agent_availability.outside_message is too long (max 500)",
-        )
-
     if always_on:
-        return {"always_on": True, "timezone": tz_name, "outside_message": msg}
+        return {"always_on": True, "timezone": tz_name}
 
     weekdays_raw = raw_block.get("weekdays")
     if not isinstance(weekdays_raw, list) or len(weekdays_raw) != 7:
@@ -109,7 +97,6 @@ def normalize_agent_availability_for_storage(raw_block: object | None) -> dict[s
     return {
         "always_on": False,
         "timezone": tz_name,
-        "outside_message": msg,
         "weekdays": weekdays,
     }
 
@@ -121,24 +108,13 @@ def get_agent_availability(template_config: dict | None) -> dict[str, Any]:
     out: dict[str, Any] = {"always_on": bool(raw.get("always_on", True))}
     if "timezone" in raw:
         out["timezone"] = str(raw.get("timezone") or "Europe/Moscow")
-    if "outside_message" in raw:
-        out["outside_message"] = str(raw.get("outside_message") or DEFAULT_OUTSIDE_MESSAGE)
     if "weekdays" in raw and isinstance(raw.get("weekdays"), list):
         out["weekdays"] = raw.get("weekdays")
     return out
 
 
-def outside_hours_message(template_config: dict | None) -> str:
-    raw = (template_config or {}).get("agent_availability")
-    if isinstance(raw, dict):
-        msg = str(raw.get("outside_message") or "").strip()
-        if msg:
-            return msg
-    return DEFAULT_OUTSIDE_MESSAGE
-
-
 def agent_availability_allows_now(template_config: dict | None, *, now: datetime | None = None) -> bool:
-    """True if the agent should accept LLM processing now (24/7 or inside weekly window)."""
+    """True if incoming messages should be processed now (24/7 or inside weekly window)."""
     block = get_agent_availability(template_config)
     if block.get("always_on", True):
         return True

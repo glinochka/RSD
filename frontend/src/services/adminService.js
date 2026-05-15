@@ -325,6 +325,56 @@ const adminService = {
     );
     return response.data;
   },
+
+  async salesGetTeam(token) {
+    const response = await adminClient.get(API_ROUTES.ADMIN_SALES_TEAM, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return response.data;
+  },
+
+  async salesCreateMember(token, body) {
+    const response = await adminClient.post(API_ROUTES.ADMIN_SALES_TEAM, body, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return response.data;
+  },
+
+  async salesUpdateMember(token, memberId, body) {
+    const response = await adminClient.patch(API_ROUTES.ADMIN_SALES_TEAM_MEMBER(memberId), body, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return response.data;
+  },
+
+  async salesGetFunnel(token) {
+    const response = await adminClient.get(API_ROUTES.ADMIN_SALES_FUNNEL, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return response.data;
+  },
+
+  async salesUploadExcel(token, file, assigneeId) {
+    const form = new FormData();
+    form.append('assignee_id', String(assigneeId));
+    form.append('file', file);
+    const response = await adminClient.post(API_ROUTES.ADMIN_SALES_EXCEL_UPLOAD, form, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data;
+  },
+
+  async salesAddContactManual(token, { assignee_id, org_name, label }) {
+    const response = await adminClient.post(
+      API_ROUTES.ADMIN_SALES_CONTACT_MANUAL,
+      { assignee_id, org_name: org_name || '', label: label || '' },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data;
+  },
 };
 
 export default adminService;

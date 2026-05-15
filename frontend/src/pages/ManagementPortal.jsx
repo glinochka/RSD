@@ -1,10 +1,216 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import adminService from '../services/adminService';
+import salesService from '../services/salesService';
 import { ENV_CONFIG } from '../config/environment';
 import { NAVIGATION_ROUTES } from '../config/constants';
 import '../styles/managementPortal.css';
 
 const ADMIN_TOKEN_KEY = ENV_CONFIG.STORAGE_KEYS.ADMIN_TOKEN;
+const SALES_TOKEN_KEY = ENV_CONFIG.STORAGE_KEYS.SALES_TOKEN;
+
+const SALES_ROLE_LABELS = { trainee: 'Стажер', mop: 'МОП', rop: 'РОП' };
+const FUNNEL_LABELS = {
+  in_base: 'В базе',
+  called: 'В работе',
+  demo: 'Демо',
+  closed: 'Закрыто',
+  rejected: 'Отказ',
+  hesitating: 'Сомневается',
+};
+
+const WORKFLOW_STATUS_LABELS = {
+  new: 'Новый',
+  in_progress: 'Взят в работу',
+  demo: 'Демо',
+  closed: 'Закрыт',
+  rejected: 'Отказ',
+  hesitating: 'Сомневается',
+};
+
+function SalesMemberPlanRow({
+  member,
+  onSave,
+  busy,
+  showSupervisor = true,
+}) {
+  const [calls, setCalls] = useState(member.plan_calls_monthly ?? 0);
+  const [demos, setDemos] = useState(member.plan_demos_monthly ?? 0);
+  const [closes, setCloses] = useState(member.plan_closes_monthly ?? 0);
+  const [daily, setDaily] = useState(member.daily_contacts_quota ?? 0);
+
+  useEffect(() => {
+    setCalls(member.plan_calls_monthly ?? 0);
+    setDemos(member.plan_demos_monthly ?? 0);
+    setCloses(member.plan_closes_monthly ?? 0);
+    setDaily(member.daily_contacts_quota ?? 0);
+  }, [member]);
+
+  return (
+    <tr>
+      <td>{member.id}</td>
+      <td>{member.login}</td>
+      <td>{SALES_ROLE_LABELS[member.role] || member.role}</td>
+      {showSupervisor && <td>{member.supervisor_id ?? '—'}</td>}
+      <td>
+        <input
+          className="management-inline-num"
+          type="number"
+          min={0}
+          value={calls}
+          onChange={(e) => setCalls(Number(e.target.value))}
+        />
+      </td>
+      <td>
+        <input
+          className="management-inline-num"
+          type="number"
+          min={0}
+          value={demos}
+          onChange={(e) => setDemos(Number(e.target.value))}
+        />
+      </td>
+      <td>
+        <input
+          className="management-inline-num"
+          type="number"
+          min={0}
+          value={closes}
+          onChange={(e) => setCloses(Number(e.target.value))}
+        />
+      </td>
+      <td>
+        <input
+          className="management-inline-num"
+          type="number"
+          min={0}
+          value={daily}
+          onChange={(e) => setDaily(Number(e.target.value))}
+        />
+      </td>
+      <td>
+        <button
+          type="button"
+          className="btn btn-sm btn-black"
+          disabled={!!busy}
+          onClick={() =>
+            onSave(member.id, {
+              plan_calls_monthly: calls,
+              plan_demos_monthly: demos,
+              plan_closes_monthly: closes,
+              daily_contacts_quota: daily,
+            })
+          }
+        >
+          {busy ? '…' : 'Сохранить'}
+        </button>
+      </td>
+    </tr>
+  );
+}
+
+function SalesContactRow({ contact, busy, onSaveRow, onInvoice }) {
+  const [lprName, setLprName] = useState(contact.lpr_name || '');
+  const [lprPhone, setLprPhone] = useState(contact.lpr_phone || '');
+  const [comment, setComment] = useState(contact.comment || '');
+  const [status, setStatus] = useState(contact.workflow_status || 'new');
+
+  useEffect(() => {
+    setLprName(contact.lpr_name || '');
+    setLprPhone(contact.lpr_phone || '');
+    setComment(contact.comment || '');
+    setStatus(contact.workflow_status || 'new');
+  }, [
+    contact.id,
+    contact.lpr_name,
+    contact.lpr_phone,
+    contact.comment,
+    contact.workflow_status,
+    contact.updated_at,
+  ]);
+
+  const save = () => {
+    onSaveRow(contact.id, {
+      lpr_name: lprName,
+      lpr_phone: lprPhone,
+      comment,
+      workflow_status: status,
+    });
+  };
+
+  const site = contact.website || '';
+  const siteHref = site && !/^https?:\/\//i.test(site) ? `https://${site}` : site;
+
+  return (
+    <tr>
+      <td>{contact.id}</td>
+      <td>{contact.org_name || '—'}</td>
+      <td>
+        <input
+          type="text"
+          className="management-table-input"
+          value={lprName}
+          onChange={(e) => setLprName(e.target.value)}
+          placeholder="ФИО ЛПР"
+        />
+      </td>
+      <td>
+        <input
+          type="text"
+          className="management-table-input"
+          value={lprPhone}
+          onChange={(e) => setLprPhone(e.target.value)}
+          placeholder="Телефон ЛПР"
+        />
+      </td>
+      <td>{contact.org_phone || '—'}</td>
+      <td>{contact.org_mobile || '—'}</td>
+      <td className="management-cell-muted" style={{ maxWidth: '120px' }} title={contact.import_status || ''}>
+        {contact.import_status || '—'}
+      </td>
+      <td>
+        <select
+          value={status}
+          onChange={(e) => setStatus(e.target.value)}
+          className="management-table-input"
+        >
+          {Object.entries(WORKFLOW_STATUS_LABELS).map(([k, lab]) => (
+            <option key={k} value={k}>{lab}</option>
+          ))}
+        </select>
+      </td>
+      <td>
+        <textarea
+          className="management-table-textarea"
+          rows={2}
+          value={comment}
+          onChange={(e) => setComment(e.target.value)}
+          placeholder="Комментарий"
+        />
+      </td>
+      <td style={{ maxWidth: '140px', wordBreak: 'break-all' }}>{contact.email || '—'}</td>
+      <td style={{ maxWidth: '120px', wordBreak: 'break-all' }}>
+        {site ? (
+          <a href={siteHref} target="_blank" rel="noopener noreferrer">{site}</a>
+        ) : '—'}
+      </td>
+      <td>
+        <div className="management-sales-contact-actions">
+          <button type="button" className="btn btn-sm btn-black" disabled={!!busy} onClick={save}>
+            Сохранить
+          </button>
+          <button
+            type="button"
+            className="btn btn-sm btn-outline"
+            disabled={!!busy}
+            onClick={() => onInvoice(contact.id)}
+          >
+            Счёт
+          </button>
+        </div>
+      </td>
+    </tr>
+  );
+}
 
 const MENU_ITEMS = [
   { id: 'overview', label: 'Обзор' },
@@ -17,6 +223,7 @@ const MENU_ITEMS = [
   { id: 'promoCodes', label: 'Промокоды' },
   { id: 'emailBroadcast', label: 'Email рассылка' },
   { id: 'contentPublisher', label: '📝 Контент' },
+  { id: 'salesDepartment', label: 'Отдел продаж' },
 ];
 
 function formatError(error) {
@@ -44,6 +251,31 @@ const ManagementPortal = () => {
   const [login, setLogin] = useState('');
   const [password, setPassword] = useState('');
   const [adminToken, setAdminToken] = useState(localStorage.getItem(ADMIN_TOKEN_KEY) || '');
+  const [salesToken, setSalesToken] = useState(localStorage.getItem(SALES_TOKEN_KEY) || '');
+  const [loginPortal, setLoginPortal] = useState('admin');
+  const [salesSection, setSalesSection] = useState('desk');
+  const [salesMe, setSalesMe] = useState(null);
+  const [salesContacts, setSalesContacts] = useState({
+    items: [],
+    page: 1,
+    totalPages: 1,
+    total: 0,
+  });
+  const [salesDeskLoading, setSalesDeskLoading] = useState(false);
+  const [salesDeskError, setSalesDeskError] = useState('');
+
+  const [salesDeptMembers, setSalesDeptMembers] = useState([]);
+  const [salesDeptFunnel, setSalesDeptFunnel] = useState(null);
+  const [salesDeptLoading, setSalesDeptLoading] = useState(false);
+  const [salesNewMember, setSalesNewMember] = useState({
+    login: '',
+    password: '',
+    role: 'trainee',
+    supervisor_id: '',
+  });
+  const [salesManualContact, setSalesManualContact] = useState({ assignee_id: '', org_name: '', label: '' });
+  const [salesRopImportAssigneeId, setSalesRopImportAssigneeId] = useState('');
+  const [salesTeamBusy, setSalesTeamBusy] = useState(null);
   const [stats, setStats] = useState(null);
   const [activeSection, setActiveSection] = useState('overview');
   const [error, setError] = useState('');
@@ -438,6 +670,77 @@ const ManagementPortal = () => {
     return () => { cancelled = true; };
   }, [activeSection, adminToken, apTab]);
 
+  useEffect(() => {
+    if (!adminToken || activeSection !== 'salesDepartment') return;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        setSalesDeptLoading(true);
+        setError('');
+        const [team, funnel] = await Promise.all([
+          adminService.salesGetTeam(adminToken),
+          adminService.salesGetFunnel(adminToken),
+        ]);
+        if (cancelled) return;
+        setSalesDeptMembers(team.items ?? []);
+        setSalesDeptFunnel(funnel);
+      } catch (err) {
+        if (!cancelled) setError(formatError(err));
+      } finally {
+        if (!cancelled) setSalesDeptLoading(false);
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [adminToken, activeSection]);
+
+  useEffect(() => {
+    if (!salesToken) {
+      setSalesMe(null);
+      setSalesContacts({ items: [], page: 1, totalPages: 1, total: 0 });
+      return;
+    }
+    let cancelled = false;
+    const load = async () => {
+      try {
+        setSalesDeskLoading(true);
+        setSalesDeskError('');
+        const me = await salesService.getMe(salesToken);
+        if (cancelled) return;
+        setSalesMe(me);
+        if (salesSection === 'desk') {
+          const cdata = await salesService.getContacts(salesToken, { page: 1, pageSize: 50 });
+          if (cancelled) return;
+          setSalesContacts({
+            items: cdata.items ?? [],
+            page: cdata.page ?? 1,
+            totalPages: cdata.total_pages ?? 1,
+            total: cdata.total ?? 0,
+          });
+        } else if (salesSection === 'team' && me.member?.role === 'rop') {
+          const [team, funnel] = await Promise.all([
+            salesService.mgmtGetTeam(salesToken),
+            salesService.mgmtGetFunnel(salesToken),
+          ]);
+          if (cancelled) return;
+          setSalesDeptMembers(team.items ?? []);
+          setSalesDeptFunnel(funnel);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setSalesDeskError(formatError(err));
+          localStorage.removeItem(SALES_TOKEN_KEY);
+          setSalesToken('');
+          setSalesMe(null);
+        }
+      } finally {
+        if (!cancelled) setSalesDeskLoading(false);
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [salesToken, salesSection]);
+
   const handleApSaveSettings = async (e) => {
     e.preventDefault();
     try {
@@ -597,6 +900,8 @@ const ManagementPortal = () => {
     try {
       setIsSubmitting(true);
       setError('');
+      localStorage.removeItem(SALES_TOKEN_KEY);
+      setSalesToken('');
       const response = await adminService.login(login.trim(), password);
       const token = response?.access_token;
       if (!token) {
@@ -611,6 +916,43 @@ const ManagementPortal = () => {
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const handleSalesLogin = async (event) => {
+    event.preventDefault();
+    if (!login.trim() || !password) {
+      setError('Введите логин и пароль');
+      return;
+    }
+    try {
+      setIsSubmitting(true);
+      setError('');
+      localStorage.removeItem(ADMIN_TOKEN_KEY);
+      setAdminToken('');
+      setStats(null);
+      const response = await salesService.login(login.trim(), password);
+      const token = response?.access_token;
+      if (!token) {
+        setError('Сервер не вернул токен');
+        return;
+      }
+      localStorage.setItem(SALES_TOKEN_KEY, token);
+      setSalesToken(token);
+      setPassword('');
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleSalesLogout = () => {
+    localStorage.removeItem(SALES_TOKEN_KEY);
+    setSalesToken('');
+    setSalesMe(null);
+    setSalesSection('desk');
+    setSalesDeskError('');
+    setPassword('');
   };
 
   const handleLogout = () => {
@@ -1689,6 +2031,621 @@ const ManagementPortal = () => {
     </>
   );
 
+  const refreshAdminSalesDept = async () => {
+    if (!adminToken) return;
+    try {
+      setSalesDeptLoading(true);
+      const [team, funnel] = await Promise.all([
+        adminService.salesGetTeam(adminToken),
+        adminService.salesGetFunnel(adminToken),
+      ]);
+      setSalesDeptMembers(team.items ?? []);
+      setSalesDeptFunnel(funnel);
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setSalesDeptLoading(false);
+    }
+  };
+
+  const handleAdminCreateSalesMember = async (e) => {
+    e.preventDefault();
+    try {
+      setSalesTeamBusy('create');
+      setError('');
+      const sup = salesNewMember.supervisor_id.trim();
+      await adminService.salesCreateMember(adminToken, {
+        login: salesNewMember.login.trim(),
+        password: salesNewMember.password,
+        role: salesNewMember.role,
+        supervisor_id: sup === '' ? null : Number(sup),
+      });
+      setSalesNewMember({ login: '', password: '', role: 'trainee', supervisor_id: '' });
+      await refreshAdminSalesDept();
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setSalesTeamBusy(null);
+    }
+  };
+
+  const handleAdminPatchSalesMember = async (memberId, patch) => {
+    try {
+      setSalesTeamBusy(`patch-a-${memberId}`);
+      setError('');
+      await adminService.salesUpdateMember(adminToken, memberId, patch);
+      await refreshAdminSalesDept();
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setSalesTeamBusy(null);
+    }
+  };
+
+  const handleAdminSalesExcel = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const aid = Number(salesManualContact.assignee_id);
+    if (!aid) {
+      setError('Укажите ID сотрудника для назначения импорта');
+      e.target.value = '';
+      return;
+    }
+    try {
+      setSalesTeamBusy('excel');
+      setError('');
+      const res = await adminService.salesUploadExcel(adminToken, file, aid);
+      await refreshAdminSalesDept();
+      alert(res?.message || `Импортировано: ${res?.imported ?? 0}`);
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setSalesTeamBusy(null);
+      e.target.value = '';
+    }
+  };
+
+  const handleAdminManualContact = async (e) => {
+    e.preventDefault();
+    try {
+      setSalesTeamBusy('manual-contact');
+      setError('');
+      await adminService.salesAddContactManual(adminToken, {
+        assignee_id: Number(salesManualContact.assignee_id),
+        org_name: (salesManualContact.org_name || salesManualContact.label || '').trim(),
+      });
+      setSalesManualContact({ assignee_id: '', org_name: '', label: '' });
+      await refreshAdminSalesDept();
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setSalesTeamBusy(null);
+    }
+  };
+
+  const handleRopPatchSalesMember = async (memberId, patch) => {
+    try {
+      setSalesTeamBusy(`patch-r-${memberId}`);
+      setSalesDeskError('');
+      await salesService.mgmtUpdateMember(salesToken, memberId, patch);
+      const [team, funnel] = await Promise.all([
+        salesService.mgmtGetTeam(salesToken),
+        salesService.mgmtGetFunnel(salesToken),
+      ]);
+      setSalesDeptMembers(team.items ?? []);
+      setSalesDeptFunnel(funnel);
+    } catch (err) {
+      setSalesDeskError(formatError(err));
+    } finally {
+      setSalesTeamBusy(null);
+    }
+  };
+
+  const handleRopCreateSalesMember = async (e) => {
+    e.preventDefault();
+    try {
+      setSalesTeamBusy('rop-create');
+      setSalesDeskError('');
+      const sup = salesNewMember.supervisor_id.trim();
+      await salesService.mgmtCreateMember(salesToken, {
+        login: salesNewMember.login.trim(),
+        password: salesNewMember.password,
+        role: salesNewMember.role,
+        supervisor_id: sup === '' ? null : Number(sup),
+      });
+      setSalesNewMember({ login: '', password: '', role: 'trainee', supervisor_id: '' });
+      const [team, funnel] = await Promise.all([
+        salesService.mgmtGetTeam(salesToken),
+        salesService.mgmtGetFunnel(salesToken),
+      ]);
+      setSalesDeptMembers(team.items ?? []);
+      setSalesDeptFunnel(funnel);
+    } catch (err) {
+      setSalesDeskError(formatError(err));
+    } finally {
+      setSalesTeamBusy(null);
+    }
+  };
+
+  const handleRopSalesExcel = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const aid = Number(salesRopImportAssigneeId || salesManualContact.assignee_id);
+    if (!aid) {
+      setSalesDeskError('Укажите ID сотрудника в поле над кнопкой выбора файла.');
+      e.target.value = '';
+      return;
+    }
+    try {
+      setSalesTeamBusy('rop-excel');
+      setSalesDeskError('');
+      const res = await salesService.mgmtUploadExcel(salesToken, file, aid);
+      const [team, funnel] = await Promise.all([
+        salesService.mgmtGetTeam(salesToken),
+        salesService.mgmtGetFunnel(salesToken),
+      ]);
+      setSalesDeptMembers(team.items ?? []);
+      setSalesDeptFunnel(funnel);
+      alert(res?.message || `Импортировано: ${res?.imported ?? 0}`);
+    } catch (err) {
+      setSalesDeskError(formatError(err));
+    } finally {
+      setSalesTeamBusy(null);
+      e.target.value = '';
+    }
+  };
+
+  const handleSalesSaveContact = async (contactId, body) => {
+    if (!salesToken) return;
+    try {
+      setSalesTeamBusy(`save-contact-${contactId}`);
+      setSalesDeskError('');
+      await salesService.patchContact(salesToken, contactId, body);
+      const cdata = await salesService.getContacts(salesToken, { page: 1, pageSize: 50 });
+      setSalesContacts({
+        items: cdata.items ?? [],
+        page: cdata.page ?? 1,
+        totalPages: cdata.total_pages ?? 1,
+        total: cdata.total ?? 0,
+      });
+      const me = await salesService.getMe(salesToken);
+      setSalesMe(me);
+    } catch (err) {
+      setSalesDeskError(formatError(err));
+    } finally {
+      setSalesTeamBusy(null);
+    }
+  };
+
+  const handleSalesInvoiceDownload = async (contactId) => {
+    if (!salesToken) return;
+    try {
+      setSalesTeamBusy(`invoice-${contactId}`);
+      setSalesDeskError('');
+      const blob = await salesService.downloadInvoice(salesToken, contactId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `schet_${contactId}.docx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setSalesDeskError(formatError(err));
+    } finally {
+      setSalesTeamBusy(null);
+    }
+  };
+
+  const renderFunnelSummary = (funnel) => {
+    if (!funnel) return null;
+    const keys = ['in_base', 'called', 'demo', 'closed', 'rejected', 'hesitating'];
+    return (
+      <div className="management-sales-funnel">
+        {keys.map((k) => (
+          <div key={k} className="management-sales-funnel-card">
+            <span className="management-sales-funnel-label">{FUNNEL_LABELS[k]}</span>
+            <span className="management-sales-funnel-value">{funnel[k] ?? 0}</span>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const renderSalesByMemberTable = (byMember) => {
+    if (!Array.isArray(byMember) || !byMember.length) {
+      return <p className="management-cell-muted">Нет данных по сотрудникам.</p>;
+    }
+    return (
+      <div className="management-table-wrap">
+        <table className="management-table">
+          <thead>
+            <tr>
+              <th>Сотрудник</th>
+              <th>Роль</th>
+              <th>В базе</th>
+              <th>В работе</th>
+              <th>Демо</th>
+              <th>Закрыто</th>
+              <th>Отказ</th>
+              <th>Сомневается</th>
+            </tr>
+          </thead>
+          <tbody>
+            {byMember.map((row) => (
+              <tr key={row.member?.id}>
+                <td>{row.member?.login}</td>
+                <td>{SALES_ROLE_LABELS[row.member?.role] || row.member?.role}</td>
+                <td>{row.funnel?.in_base ?? 0}</td>
+                <td>{row.funnel?.called ?? 0}</td>
+                <td>{row.funnel?.demo ?? 0}</td>
+                <td>{row.funnel?.closed ?? 0}</td>
+                <td>{row.funnel?.rejected ?? 0}</td>
+                <td>{row.funnel?.hesitating ?? 0}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
+
+  const renderSalesDepartment = () => (
+    <>
+      <div className="management-content-head">
+        <h2>Отдел продаж</h2>
+        <p className="management-cell-muted">
+          Учётные записи, воронка, импорт выгрузок (как из 2GIS: Название, ФИО ЛПР, телефоны и т.д.).
+        </p>
+      </div>
+      {error && activeSection === 'salesDepartment' && <div className="management-error">{error}</div>}
+      {salesDeptLoading ? (
+        <p>Загрузка...</p>
+      ) : (
+        <>
+          <h3>Общая воронка</h3>
+          {renderFunnelSummary(salesDeptFunnel?.total)}
+          <h3 style={{ marginTop: '1.5rem' }}>По сотрудникам</h3>
+          {renderSalesByMemberTable(salesDeptFunnel?.by_member)}
+
+          <h3 style={{ marginTop: '1.5rem' }}>Новый сотрудник</h3>
+          <form className="management-form-grid" onSubmit={handleAdminCreateSalesMember}>
+            <label>
+              Логин
+              <input
+                value={salesNewMember.login}
+                onChange={(e) => setSalesNewMember((p) => ({ ...p, login: e.target.value }))}
+                required
+              />
+            </label>
+            <label>
+              Пароль
+              <input
+                type="password"
+                value={salesNewMember.password}
+                onChange={(e) => setSalesNewMember((p) => ({ ...p, password: e.target.value }))}
+                minLength={6}
+                required
+              />
+            </label>
+            <label>
+              Роль
+              <select
+                value={salesNewMember.role}
+                onChange={(e) => setSalesNewMember((p) => ({ ...p, role: e.target.value }))}
+              >
+                <option value="trainee">Стажер</option>
+                <option value="mop">МОП</option>
+                <option value="rop">РОП</option>
+              </select>
+            </label>
+            <label>
+              ID руководителя (пусто для РОП)
+              <input
+                value={salesNewMember.supervisor_id}
+                onChange={(e) => setSalesNewMember((p) => ({ ...p, supervisor_id: e.target.value }))}
+                placeholder="например 1"
+              />
+            </label>
+            <div className="management-form-actions">
+              <button type="submit" className="btn btn-black" disabled={salesTeamBusy === 'create'}>
+                {salesTeamBusy === 'create' ? 'Создание...' : 'Добавить'}
+              </button>
+            </div>
+          </form>
+
+          <h3 style={{ marginTop: '1.5rem' }}>Планы и норма контактов</h3>
+          <div className="management-table-wrap">
+            <table className="management-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Логин</th>
+                  <th>Роль</th>
+                  <th>Руководитель</th>
+                  <th>План прозвонов / мес</th>
+                  <th>План демо / мес</th>
+                  <th>План закрытий / мес</th>
+                  <th>Контактов в день</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {salesDeptMembers.map((m) => (
+                  <SalesMemberPlanRow
+                    key={m.id}
+                    member={m}
+                    busy={salesTeamBusy === `patch-a-${m.id}`}
+                    onSave={(id, patch) => handleAdminPatchSalesMember(id, patch)}
+                  />
+                ))}
+                {salesDeptMembers.length === 0 && (
+                  <tr>
+                    <td colSpan={9}>Сотрудников пока нет</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <h3 style={{ marginTop: '1.5rem' }}>Загрузка Excel</h3>
+          <p className="management-cell-muted">
+            Укажите ID сотрудника в поле ниже или в блоке «Добавить контакт вручную»; затем выберите файл .xlsx / .xls.
+            Колонки из типовой выгрузки сопоставляются автоматически.
+          </p>
+          <input type="file" accept=".xlsx,.xls" onChange={handleAdminSalesExcel} disabled={!!salesTeamBusy} />
+
+          <h3 style={{ marginTop: '1.5rem' }}>Добавить контакт вручную</h3>
+          <form className="management-form-grid" onSubmit={handleAdminManualContact}>
+            <label>
+              ID сотрудника (на кого назначить)
+              <input
+                value={salesManualContact.assignee_id}
+                onChange={(e) =>
+                  setSalesManualContact((p) => ({ ...p, assignee_id: e.target.value }))
+                }
+                required
+              />
+            </label>
+            <label>
+              Название организации
+              <input
+                value={salesManualContact.org_name}
+                onChange={(e) => setSalesManualContact((p) => ({ ...p, org_name: e.target.value }))}
+                placeholder="Как в базе"
+              />
+            </label>
+            <label>
+              Подпись (устарело, необязательно)
+              <input
+                value={salesManualContact.label}
+                onChange={(e) => setSalesManualContact((p) => ({ ...p, label: e.target.value }))}
+                placeholder="если не заполнено название — можно сюда"
+              />
+            </label>
+            <div className="management-form-actions">
+              <button
+                type="submit"
+                className="btn btn-outline"
+                disabled={salesTeamBusy === 'manual-contact'}
+              >
+                Добавить в базу
+              </button>
+            </div>
+          </form>
+        </>
+      )}
+    </>
+  );
+
+  const renderSalesStaffDesk = () => {
+    const p = salesMe?.plan;
+    const ach = salesMe?.achievement_month;
+    return (
+      <>
+        <div className="management-content-head">
+          <h2>
+            Здравствуйте, {salesMe?.member?.login}{' '}
+            <span className="management-cell-muted">
+              ({SALES_ROLE_LABELS[salesMe?.member?.role] || salesMe?.member?.role})
+            </span>
+          </h2>
+          <p className="management-cell-muted">Токен действует сутки; при истечении войдите снова.</p>
+        </div>
+        {salesDeskError && <div className="management-error">{salesDeskError}</div>}
+        {salesDeskLoading ? (
+          <p>Загрузка...</p>
+        ) : (
+          <>
+            <h3>План на месяц</h3>
+            <div className="management-stats-grid">
+              <div className="management-stat-card">
+                <span>Прозвоны</span>
+                <strong>
+                  {ach?.calls_done ?? 0} / {p?.calls_monthly ?? 0}
+                </strong>
+              </div>
+              <div className="management-stat-card">
+                <span>Демо</span>
+                <strong>
+                  {ach?.demos_done ?? 0} / {p?.demos_monthly ?? 0}
+                </strong>
+              </div>
+              <div className="management-stat-card">
+                <span>Закрытия</span>
+                <strong>
+                  {ach?.closes_done ?? 0} / {p?.closes_monthly ?? 0}
+                </strong>
+              </div>
+              <div className="management-stat-card">
+                <span>Норма «контактов в день»</span>
+                <strong>{p?.daily_contacts_quota ?? 0}</strong>
+              </div>
+              <div className="management-stat-card">
+                <span>В работе (в базе)</span>
+                <strong>{salesMe?.backlog_in_base ?? 0}</strong>
+              </div>
+            </div>
+            <h3 style={{ marginTop: '1.5rem' }}>Моя воронка</h3>
+            {renderFunnelSummary(salesMe?.funnel_assigned)}
+            <h3 style={{ marginTop: '1.5rem' }}>Мои контакты</h3>
+            <div className="management-table-wrap management-table-wide">
+              <table className="management-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Название</th>
+                    <th>ФИО ЛПР</th>
+                    <th>Тел. ЛПР</th>
+                    <th>Тел. орг.</th>
+                    <th>Моб.</th>
+                    <th>Статус (файл)</th>
+                    <th>Статус</th>
+                    <th>Комментарий</th>
+                    <th>Email</th>
+                    <th>Сайт</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {salesContacts.items.map((c) => (
+                    <SalesContactRow
+                      key={c.id}
+                      contact={c}
+                      busy={salesTeamBusy}
+                      onSaveRow={handleSalesSaveContact}
+                      onInvoice={handleSalesInvoiceDownload}
+                    />
+                  ))}
+                  {salesContacts.items.length === 0 && (
+                    <tr>
+                      <td colSpan={12}>Контактов нет — РОП/админ загрузит Excel или добавит вручную.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </>
+    );
+  };
+
+  const renderSalesStaffTeam = () => (
+    <>
+      <div className="management-content-head">
+        <h2>Команда и воронка</h2>
+      </div>
+      {salesDeskError && <div className="management-error">{salesDeskError}</div>}
+      {salesDeskLoading ? (
+        <p>Загрузка...</p>
+      ) : (
+        <>
+          <h3>Общая воронка команды</h3>
+          {renderFunnelSummary(salesDeptFunnel?.total)}
+          <h3 style={{ marginTop: '1.5rem' }}>По сотрудникам</h3>
+          {renderSalesByMemberTable(salesDeptFunnel?.by_member)}
+
+          <h3 style={{ marginTop: '1.5rem' }}>Новый сотрудник</h3>
+          <form className="management-form-grid" onSubmit={handleRopCreateSalesMember}>
+            <label>
+              Логин
+              <input
+                value={salesNewMember.login}
+                onChange={(e) => setSalesNewMember((p) => ({ ...p, login: e.target.value }))}
+                required
+              />
+            </label>
+            <label>
+              Пароль
+              <input
+                type="password"
+                value={salesNewMember.password}
+                onChange={(e) => setSalesNewMember((p) => ({ ...p, password: e.target.value }))}
+                minLength={6}
+                required
+              />
+            </label>
+            <label>
+              Роль
+              <select
+                value={salesNewMember.role}
+                onChange={(e) => setSalesNewMember((p) => ({ ...p, role: e.target.value }))}
+              >
+                <option value="trainee">Стажер</option>
+                <option value="mop">МОП</option>
+              </select>
+            </label>
+            <label>
+              ID руководителя (по умолчанию — вы)
+              <input
+                value={salesNewMember.supervisor_id}
+                onChange={(e) => setSalesNewMember((p) => ({ ...p, supervisor_id: e.target.value }))}
+                placeholder="оставьте пустым — будет вы"
+              />
+            </label>
+            <div className="management-form-actions">
+              <button type="submit" className="btn btn-black" disabled={salesTeamBusy === 'rop-create'}>
+                {salesTeamBusy === 'rop-create' ? 'Создание...' : 'Добавить'}
+              </button>
+            </div>
+          </form>
+
+          <h3 style={{ marginTop: '1.5rem' }}>Планы команды</h3>
+          <div className="management-table-wrap">
+            <table className="management-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Логин</th>
+                  <th>Роль</th>
+                  <th>Руководитель</th>
+                  <th>План прозвонов / мес</th>
+                  <th>План демо / мес</th>
+                  <th>План закрытий / мес</th>
+                  <th>Контактов в день</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {salesDeptMembers
+                  .filter((m) => m.id !== salesMe?.member?.id)
+                  .map((m) => (
+                    <SalesMemberPlanRow
+                      key={m.id}
+                      member={m}
+                      busy={salesTeamBusy === `patch-r-${m.id}`}
+                      onSave={(id, patch) => handleRopPatchSalesMember(id, patch)}
+                    />
+                  ))}
+                {salesDeptMembers.filter((m) => m.id !== salesMe?.member?.id).length === 0 && (
+                  <tr>
+                    <td colSpan={9}>Подчинённых пока нет</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <h3 style={{ marginTop: '1.5rem' }}>Загрузка Excel</h3>
+          <p className="management-cell-muted">
+            ID сотрудника, кому назначить импортированные строки:
+          </p>
+          <input
+            type="text"
+            className="management-table-input"
+            style={{ maxWidth: '200px', marginBottom: '8px' }}
+            placeholder="ID"
+            value={salesRopImportAssigneeId}
+            onChange={(e) => setSalesRopImportAssigneeId(e.target.value)}
+          />
+          <input type="file" accept=".xlsx,.xls" onChange={handleRopSalesExcel} disabled={!!salesTeamBusy} />
+        </>
+      )}
+    </>
+  );
+
   const renderContentPublisher = () => {
     const AP_TABS = [
       { id: 'settings', label: 'Настройки' },
@@ -2554,6 +3511,45 @@ const ManagementPortal = () => {
     </>
   );
 
+  if (salesToken && !adminToken) {
+    return (
+      <div className="management-page">
+        <header className="management-header">
+          <h1>Отдел продаж</h1>
+        </header>
+        <main className="management-dashboard">
+          <aside className="management-sidebar">
+            <h3>Меню</h3>
+            <nav>
+              <button
+                type="button"
+                className={`management-menu-item ${salesSection === 'desk' ? 'active' : ''}`}
+                onClick={() => setSalesSection('desk')}
+              >
+                Рабочий стол
+              </button>
+              {salesMe?.member?.role === 'rop' && (
+                <button
+                  type="button"
+                  className={`management-menu-item ${salesSection === 'team' ? 'active' : ''}`}
+                  onClick={() => setSalesSection('team')}
+                >
+                  Команда
+                </button>
+              )}
+            </nav>
+            <button type="button" className="btn btn-outline management-logout" onClick={handleSalesLogout}>
+              Выйти
+            </button>
+          </aside>
+          <section className="management-content">
+            {salesSection === 'desk' ? renderSalesStaffDesk() : renderSalesStaffTeam()}
+          </section>
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="management-page">
       <header className="management-header">
@@ -2562,35 +3558,86 @@ const ManagementPortal = () => {
 
       {!adminToken ? (
         <main className="management-login-wrap">
-          <form className="management-login-card" onSubmit={handleLogin}>
-            <h2>Вход для администратора</h2>
-
-            <label htmlFor="admin-login">Логин</label>
-            <input
-              id="admin-login"
-              type="text"
-              value={login}
-              onChange={(e) => setLogin(e.target.value)}
-              autoComplete="username"
-              disabled={isSubmitting}
-            />
-
-            <label htmlFor="admin-password">Пароль</label>
-            <input
-              id="admin-password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="current-password"
-              disabled={isSubmitting}
-            />
-
-            {error && <div className="management-error">{error}</div>}
-
-            <button type="submit" className="btn btn-black management-login-btn" disabled={isSubmitting}>
-              {isSubmitting ? 'Проверка...' : 'Войти'}
+          <div className="management-login-tabs">
+            <button
+              type="button"
+              className={`management-login-tab ${loginPortal === 'admin' ? 'active' : ''}`}
+              onClick={() => { setLoginPortal('admin'); setError(''); }}
+            >
+              Администратор
             </button>
-          </form>
+            <button
+              type="button"
+              className={`management-login-tab ${loginPortal === 'sales' ? 'active' : ''}`}
+              onClick={() => { setLoginPortal('sales'); setError(''); }}
+            >
+              Отдел продаж
+            </button>
+          </div>
+          {loginPortal === 'admin' ? (
+            <form className="management-login-card" onSubmit={handleLogin}>
+              <h2>Вход для администратора</h2>
+
+              <label htmlFor="admin-login">Логин</label>
+              <input
+                id="admin-login"
+                type="text"
+                value={login}
+                onChange={(e) => setLogin(e.target.value)}
+                autoComplete="username"
+                disabled={isSubmitting}
+              />
+
+              <label htmlFor="admin-password">Пароль</label>
+              <input
+                id="admin-password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
+                disabled={isSubmitting}
+              />
+
+              {error && <div className="management-error">{error}</div>}
+
+              <button type="submit" className="btn btn-black management-login-btn" disabled={isSubmitting}>
+                {isSubmitting ? 'Проверка...' : 'Войти'}
+              </button>
+            </form>
+          ) : (
+            <form className="management-login-card" onSubmit={handleSalesLogin}>
+              <h2>Вход для отдела продаж</h2>
+              <p className="management-cell-muted">
+                Стажёр, МОП или РОП — те же логин и пароль, что выдал администратор или РОП.
+              </p>
+
+              <label htmlFor="sales-login">Логин</label>
+              <input
+                id="sales-login"
+                type="text"
+                value={login}
+                onChange={(e) => setLogin(e.target.value)}
+                autoComplete="username"
+                disabled={isSubmitting}
+              />
+
+              <label htmlFor="sales-password">Пароль</label>
+              <input
+                id="sales-password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
+                disabled={isSubmitting}
+              />
+
+              {error && <div className="management-error">{error}</div>}
+
+              <button type="submit" className="btn btn-black management-login-btn" disabled={isSubmitting}>
+                {isSubmitting ? 'Проверка...' : 'Войти'}
+              </button>
+            </form>
+          )}
         </main>
       ) : (
         <main className="management-dashboard">
@@ -2623,7 +3670,7 @@ const ManagementPortal = () => {
             {activeSection === 'billing' && renderBilling()}
             {activeSection === 'promoCodes' && renderPromoCodes()}
             {activeSection === 'emailBroadcast' && renderEmailBroadcast()}
-            {activeSection === 'contentPublisher' && renderContentPublisher()}
+            {activeSection === 'salesDepartment' && renderSalesDepartment()}
           </section>
         </main>
       )}

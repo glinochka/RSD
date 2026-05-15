@@ -914,3 +914,85 @@ class ArticlePublisherJob(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
 
+
+class SalesTeamMember(Base):
+    """Внутренние учётные записи отдела продаж (портал управления, не путать с users/agents)."""
+
+    __tablename__ = "sales_team_members"
+    __table_args__ = (
+        CheckConstraint("role IN ('trainee','mop','rop')", name="ck_sales_team_members_role"),
+        Index("ix_sales_team_members_supervisor_id", "supervisor_id"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    login: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    password_hash: Mapped[str] = mapped_column(String(100), nullable=False)
+    role: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    supervisor_id: Mapped[int | None] = mapped_column(
+        ForeignKey("sales_team_members.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+
+    plan_calls_monthly: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    plan_demos_monthly: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    plan_closes_monthly: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    daily_contacts_quota: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    supervisor: Mapped["SalesTeamMember | None"] = relationship(
+        "SalesTeamMember",
+        remote_side=[id],
+        back_populates="subordinates",
+    )
+    subordinates: Mapped[list["SalesTeamMember"]] = relationship(
+        "SalesTeamMember",
+        back_populates="supervisor",
+    )
+    outreach_contacts: Mapped[list["SalesOutboundContact"]] = relationship(
+        back_populates="assignee",
+        cascade="all, delete-orphan",
+    )
+
+
+class SalesOutboundContact(Base):
+    """Локальная база контактов для прозвонов (импорт Excel 2GIS и др.)."""
+
+    __tablename__ = "sales_outbound_contacts"
+    __table_args__ = (
+        CheckConstraint(
+            "workflow_status IN ('new','in_progress','demo','closed','rejected','hesitating')",
+            name="ck_sales_outbound_contacts_workflow",
+        ),
+        Index("ix_sales_outbound_contacts_assignee", "assignee_id"),
+        Index("ix_sales_outbound_contacts_workflow_status", "workflow_status"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    assignee_id: Mapped[int] = mapped_column(
+        ForeignKey("sales_team_members.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    workflow_status: Mapped[str] = mapped_column(String(32), nullable=False, default="new", server_default="new")
+    org_name: Mapped[str] = mapped_column(String(512), nullable=False, default="", server_default="")
+    lpr_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    lpr_phone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    org_phone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    org_mobile: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    import_status: Mapped[str | None] = mapped_column(Text, nullable=True)
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    website: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    extra_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    called_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    demo_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    assignee: Mapped["SalesTeamMember"] = relationship(back_populates="outreach_contacts")

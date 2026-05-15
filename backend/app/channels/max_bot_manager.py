@@ -14,7 +14,7 @@ from ..alembic.models import Agent, AgentChannelConnection
 from ..config import settings
 from ..utils.crypto import decrypt_token
 from .leader_lock import PgLeaderLock
-from .message_processor import Channel, MessageRequest, get_message_processor
+from .message_processor import Channel, MessageRequest, ProcessingStatus, get_message_processor
 
 logger = logging.getLogger(__name__)
 
@@ -225,7 +225,7 @@ async def _process_update(cfg: dict[str, Any], access_token: str, update: dict[s
         user_display_name=user_display_name,
     )
     response = await get_message_processor().process(request)
-    if not response.text.strip():
+    if response.status == ProcessingStatus.DISCARDED or not response.text.strip():
         return
     await _send_max_message(access_token=access_token, chat_id=chat_id, text=response.text)
 

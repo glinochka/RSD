@@ -66,6 +66,7 @@ export const ENV_CONFIG = {
     REFRESH_TOKEN: 'refresh_token',
     USER: 'user',
     ADMIN_TOKEN: 'admin_token',
+    SALES_TOKEN: 'sales_token',
     THEME: 'theme',
   },
 };

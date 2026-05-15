@@ -40,8 +40,6 @@ const getTemplateConfig = (agent) => {
   const cfg = agent?.template_config;
   return cfg && typeof cfg === 'object' ? cfg : {};
 };
-const DEFAULT_AGENT_OUTSIDE_MESSAGE =
-  'Сейчас вне рабочего времени ассистента. Пожалуйста, напишите в рабочие часы — мы обязательно ответим.';
 const AGENT_AVAILABILITY_WEEKDAY_LABELS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 const COMMON_AGENT_TIMEZONES = [
   'Europe/Moscow',
@@ -565,7 +563,6 @@ const AgentsPageContent = () => {
   const [salesTriggerWordDraft, setSalesTriggerWordDraft] = useState('');
   const [agentAvailAlwaysOn, setAgentAvailAlwaysOn] = useState(true);
   const [agentAvailTimezone, setAgentAvailTimezone] = useState(() => getBrowserTimezoneSafe());
-  const [agentAvailOutsideMessage, setAgentAvailOutsideMessage] = useState(DEFAULT_AGENT_OUTSIDE_MESSAGE);
   const [agentAvailWeekdays, setAgentAvailWeekdays] = useState(buildDefaultAgentAvailabilityWeekdays);
   const [isSavingAgentAvailability, setIsSavingAgentAvailability] = useState(false);
   const detailsRequestIdRef = useRef(0);
@@ -1278,14 +1275,10 @@ const AgentsPageContent = () => {
     if (av && typeof av === 'object') {
       setAgentAvailAlwaysOn(av.always_on !== false);
       setAgentAvailTimezone(String(av.timezone || getBrowserTimezoneSafe()).trim() || 'Europe/Moscow');
-      setAgentAvailOutsideMessage(
-        String(av.outside_message || '').trim() || DEFAULT_AGENT_OUTSIDE_MESSAGE
-      );
       setAgentAvailWeekdays(normalizeWeekdaysFromConfig(av.weekdays));
     } else {
       setAgentAvailAlwaysOn(true);
       setAgentAvailTimezone(getBrowserTimezoneSafe());
-      setAgentAvailOutsideMessage(DEFAULT_AGENT_OUTSIDE_MESSAGE);
       setAgentAvailWeekdays(buildDefaultAgentAvailabilityWeekdays());
     }
   }, [selectedAgent]);
@@ -1317,12 +1310,10 @@ const AgentsPageContent = () => {
       ? {
           always_on: true,
           timezone: agentAvailTimezone.trim() || 'Europe/Moscow',
-          outside_message: agentAvailOutsideMessage.trim() || DEFAULT_AGENT_OUTSIDE_MESSAGE,
         }
       : {
           always_on: false,
           timezone: agentAvailTimezone.trim() || 'Europe/Moscow',
-          outside_message: agentAvailOutsideMessage.trim() || DEFAULT_AGENT_OUTSIDE_MESSAGE,
           weekdays: agentAvailWeekdays.map((d) => ({
             enabled: Boolean(d.enabled),
             start: d.start,
@@ -1851,8 +1842,8 @@ const AgentsPageContent = () => {
                       onChange={(next) => setAgentAvailAlwaysOn(Boolean(next))}
                       disabled={isSavingAgentAvailability}
                       title="Круглосуточный режим (24/7)"
-                      description="Выключите, чтобы ограничить ответы LLM расписанием по дням недели."
-                      helpText="Команда /start в Telegram без режима «Обработка /start через LLM» по-прежнему показывает приветствие в любое время. Остальные сообщения вне окна получат ваш текст-заглушку."
+                      description="Выключите, чтобы вне заданного расписания входящие сообщения не обрабатывались и не получали ответа."
+                      helpText="Вне окна сообщение не попадает в аналитику и не вызывает LLM; пользователь не получает ответ. Подписка и блокировки пользователя проверяются как обычно."
                     />
                     <label htmlFor="agent_avail_timezone" className="mt-input">
                       Часовой пояс расписания
@@ -1864,18 +1855,6 @@ const AgentsPageContent = () => {
                       onChange={(event) => setAgentAvailTimezone(event.target.value)}
                       options={agentAvailabilityTimezoneOptions}
                       disabled={isSavingAgentAvailability}
-                    />
-                    <label htmlFor="agent_avail_outside_message" className="mt-input">
-                      Сообщение вне рабочего времени
-                    </label>
-                    <textarea
-                      id="agent_avail_outside_message"
-                      rows={3}
-                      className="input-main textarea"
-                      value={agentAvailOutsideMessage}
-                      onChange={(event) => setAgentAvailOutsideMessage(event.target.value)}
-                      disabled={isSavingAgentAvailability}
-                      placeholder={DEFAULT_AGENT_OUTSIDE_MESSAGE}
                     />
                     {!agentAvailAlwaysOn ? (
                       <div className="agent-availability-weeksheet">

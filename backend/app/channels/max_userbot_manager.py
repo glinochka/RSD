@@ -16,7 +16,7 @@ from ..alembic.models import Agent, AgentChannelConnection
 from ..config import settings
 from ..utils.crypto import decrypt_token
 from .leader_lock import PgLeaderLock
-from .message_processor import Channel, MessageRequest, get_message_processor
+from .message_processor import Channel, MessageRequest, ProcessingStatus, get_message_processor
 
 logger = logging.getLogger(__name__)
 
@@ -255,6 +255,8 @@ async def _process_event(client: MaxWsClient, cfg: dict[str, Any], raw_event: st
         user_display_name=sender_name,
     )
     response = await get_message_processor().process(request)
+    if response.status == ProcessingStatus.DISCARDED:
+        return
     await asyncio.to_thread(client.send_message, chat_id, response.text)
 
 

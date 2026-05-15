@@ -24,6 +24,7 @@ class ProcessingStatus(str, Enum):
     EXPIRED_SUBSCRIPTION = "expired_subscription"
     WELCOME = "welcome"
     ERROR = "error"
+    DISCARDED = "discarded"
 
 
 @dataclass
@@ -97,14 +98,17 @@ class MessageProcessor:
                 )
 
             answer = str(payload.get("text") or "").strip()
-            if not answer:
-                answer = "⚠️ Произошла ошибка при обработке вашего сообщения. Попробуйте позже."
-
             status_raw = str(payload.get("status") or "").strip().lower()
             try:
                 response_status = ProcessingStatus(status_raw)
             except ValueError:
                 response_status = ProcessingStatus.ERROR
+
+            if response_status == ProcessingStatus.DISCARDED:
+                return MessageResponse(text="", status=response_status)
+
+            if not answer:
+                answer = "⚠️ Произошла ошибка при обработке вашего сообщения. Попробуйте позже."
 
             return MessageResponse(text=answer, status=response_status)
 

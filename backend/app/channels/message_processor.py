@@ -11,7 +11,8 @@ from sqlalchemy import select
 
 from ..alembic.database import async_session_maker
 from ..alembic.models import Agent, AgentAnalyticsMessage, AgentFrozenUser, User
-from ..services.agent_availability import agent_availability_allows_now, outside_hours_message
+from ..services.agent_availability import agent_availability_allows_now
+from ..services.ai_authoring import resolve_multimodal_chat_model
 from ..services.qa_handoff_service import EscalationType as QAEscalationType, get_qa_handoff_service
 from ..services.template_runtime import EscalationType, get_template_runtime
 from ..utils.pii import redact_pii_text
@@ -33,6 +34,7 @@ class ProcessingStatus(str, Enum):
     EXPIRED_SUBSCRIPTION = "expired_subscription"
     WELCOME = "welcome"
     ERROR = "error"
+    DISCARDED = "discarded"
 
 
 @dataclass
@@ -134,6 +136,10 @@ class MessageProcessor:
                     status=ProcessingStatus.BLOCKED_USER,
                 )
 
+            template_config = self._parse_template_config(resolved_agent.template_config)
+            if not agent_availability_allows_now(template_config):
+                return MessageResponse(text="", status=ProcessingStatus.DISCARDED)
+
             if (
                 request.query.strip() == "/start"
                 and request.channel == Channel.TELEGRAM
@@ -143,31 +149,6 @@ class MessageProcessor:
                     text=request.welcome_message or "Здравствуйте! Чем я могу вам помочь?",
                     status=ProcessingStatus.WELCOME,
                 )
-
-            template_config = self._parse_template_config(resolved_agent.template_config)
-            if not agent_availability_allows_now(template_config):
-                ooh_text = outside_hours_message(template_config)
-                await self._log_message(
-                    agent_id=resolved_agent.id,
-                    analytics_namespace_id=resolved_agent.bot_id or resolved_agent.id,
-                    role="user",
-                    message_text=request.query,
-                    user_external_id=normalized_user_external_id,
-                    user_display_name=request.user_display_name,
-                    channel=request.channel.value,
-                    telegram_peer_access_hash=request.telegram_peer_access_hash,
-                )
-                await self._log_message(
-                    agent_id=resolved_agent.id,
-                    analytics_namespace_id=resolved_agent.bot_id or resolved_agent.id,
-                    role="agent",
-                    message_text=ooh_text,
-                    user_external_id=normalized_user_external_id,
-                    user_display_name=request.user_display_name,
-                    channel=request.channel.value,
-                    telegram_peer_access_hash=request.telegram_peer_access_hash,
-                )
-                return MessageResponse(text=ooh_text, status=ProcessingStatus.SUCCESS)
 
             await self._log_message(
                 agent_id=resolved_agent.id,
@@ -201,13 +182,9 @@ class MessageProcessor:
             if request.telegram_peer_access_hash is not None and int(request.telegram_peer_access_hash) != 0:
                 merged_runtime_ctx["telegram_peer_access_hash"] = int(request.telegram_peer_access_hash)
             if isinstance(template_config, dict):
-                vm = (
-                    str(
-                        template_config.get("vision_chat_model")
-                        or template_config.get("generation_model")
-                        or "deepseek-chat",
-                    ).strip()
-                    or "deepseek-chat"
+                vm = resolve_multimodal_chat_model(
+                    vision_chat_model=str(template_config.get("vision_chat_model") or "").strip() or None,
+                    generation_model=str(template_config.get("generation_model") or "").strip() or None,
                 )
                 merged_runtime_ctx.setdefault("vision_chat_model", vm)
 

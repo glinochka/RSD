@@ -130,6 +130,22 @@ export const API_ROUTES = {
   ADMIN_AP_JOBS: '/api/admin/article-publisher/jobs',
   ADMIN_AP_RUN_NOW: '/api/admin/article-publisher/run-now',
   ADMIN_AP_PREVIEW: '/api/admin/article-publisher/preview-article',
+
+  ADMIN_SALES_TEAM: '/api/admin/sales/team-members',
+  ADMIN_SALES_FUNNEL: '/api/admin/sales/funnel',
+  ADMIN_SALES_TEAM_MEMBER: (id) => `/api/admin/sales/team-members/${id}`,
+  ADMIN_SALES_EXCEL_UPLOAD: '/api/admin/sales/contacts/excel-upload',
+  ADMIN_SALES_CONTACT_MANUAL: '/api/admin/sales/contacts/manual',
+
+  SALES_LOGIN: '/api/sales/login',
+  SALES_ME: '/api/sales/me',
+  SALES_CONTACTS: '/api/sales/contacts',
+  SALES_CONTACT: (id) => `/api/sales/contacts/${id}`,
+  SALES_CONTACT_INVOICE: (id) => `/api/sales/contacts/${id}/invoice`,
+  SALES_MGMT_TEAM: '/api/sales/management/team-members',
+  SALES_MGMT_FUNNEL: '/api/sales/management/funnel',
+  SALES_MGMT_TEAM_MEMBER: (id) => `/api/sales/management/team-members/${id}`,
+  SALES_MGMT_EXCEL_UPLOAD: '/api/sales/management/contacts/excel-upload',
 };
 
 export const AGENT_ROLES = {

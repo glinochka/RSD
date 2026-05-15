@@ -27,7 +27,6 @@ def test_scheduled_weekday_respects_timezone():
             {
                 "always_on": False,
                 "timezone": "Europe/Moscow",
-                "outside_message": "closed",
                 "weekdays": weekdays,
             }
         )

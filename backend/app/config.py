@@ -1,3 +1,4 @@
+from datetime import timedelta
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pathlib import Path
@@ -15,9 +16,14 @@ class Settings(BaseSettings):
     ALGORITHM: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     ADMIN_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    # Внутренний портал отдела продаж (отдельный JWT, как у пользователей — тот же SECRET в get_auth_data).
+    SALES_STAFF_TOKEN_EXPIRE_HOURS: int = 24
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
     QDRANT_API_KEY:str = ''
     DEEPSEEK_API_KEY: str
+    # Chat model for requests that include image_url. deepseek-chat / deepseek-reasoner are text-oriented;
+    # multimodal needs a VL id (e.g. deepseek-vl). Name must match current DeepSeek API docs.
+    DEEPSEEK_VISION_MODEL: str = "deepseek-vl"
     # Try DeepSeek /chat/completions with OpenAI-style multimodal payloads (content array + image_url,
     # including data:image/...;base64,...). If the gateway/model rejects vision, we fall back to a
     # text-only call with frank instructions for the assistant.
@@ -81,6 +87,9 @@ class Settings(BaseSettings):
     YOOKASSA_SECRET_KEY: str = ""
     YOOKASSA_RETURN_URL: str | None = None
     MASTER_BOT_TOKEN: str = ""
+    # Текст в автоматическом счёте (.docx) для отдела продаж.
+    SALES_INVOICE_SUPPLIER_NAME: str = 'ООО «RSD»'
+    SALES_INVOICE_SUPPLIER_DETAILS: str = ""
     GOOGLE_OAUTH_CLIENT_ID: str = ""
     GOOGLE_OAUTH_ALLOWED_HD: str = ""
     MAILOPOST_API_URL: str = "https://api.mailopost.ru/v1"
@@ -133,7 +142,7 @@ def get_db_url():
             f"{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}")
 
 
-def get_auth_data(token_kind: Literal["user", "admin"] = "user"):
+def get_auth_data(token_kind: Literal["user", "admin", "sales_staff"] = "user"):
     if token_kind == "admin":
         secret_key = settings.ADMIN_JWT_SECRET_KEY.strip()
         if not secret_key:
@@ -144,3 +153,8 @@ def get_auth_data(token_kind: Literal["user", "admin"] = "user"):
             raise RuntimeError("USER_JWT_SECRET_KEY is not configured")
 
     return {"secret_key": secret_key, "algorithm": settings.ALGORITHM}
+
+
+def sales_staff_token_expire_delta() -> timedelta:
+    hours = max(1, int(settings.SALES_STAFF_TOKEN_EXPIRE_HOURS))
+    return timedelta(hours=hours)

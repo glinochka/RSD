@@ -6,6 +6,24 @@ from ..config import settings
 
 logger = logging.getLogger(__name__)
 
+# DeepSeek text endpoints (incl. legacy names); do not send image_url with these unless API explicitly supports it.
+_DEEPSEEK_TEXT_CHAT_ALIASES = frozenset({"deepseek-chat", "deepseek-reasoner"})
+
+
+def resolve_multimodal_chat_model(
+    *,
+    vision_chat_model: str | None = None,
+    generation_model: str | None = None,
+) -> str:
+    """Pick model for OpenAI-style multimodal chat (text + image_url)."""
+    v = (vision_chat_model or "").strip()
+    if v and v.lower() not in _DEEPSEEK_TEXT_CHAT_ALIASES:
+        return v
+    g = (generation_model or "").strip()
+    if g and g.lower() not in _DEEPSEEK_TEXT_CHAT_ALIASES:
+        return g
+    return (settings.DEEPSEEK_VISION_MODEL or "deepseek-vl").strip() or "deepseek-vl"
+
 
 ai_client = AsyncOpenAI(
     api_key=settings.DEEPSEEK_API_KEY,
@@ -122,8 +140,10 @@ async def generate_answer_with_context(
 
     user_prompt = f"КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ:\n{context_text}\n\nВОПРОС ПОЛЬЗОВАТЕЛЯ: {question}"
 
-    model = (chat_model or "deepseek-chat").strip() or "deepseek-chat"
     vision_url = (vision_image_data_url or "").strip() or None
+    model = (chat_model or "deepseek-chat").strip() or "deepseek-chat"
+    if vision_url and model.lower() in _DEEPSEEK_TEXT_CHAT_ALIASES:
+        model = (settings.DEEPSEEK_VISION_MODEL or "deepseek-vl").strip() or "deepseek-vl"
     analyze_system = f"{base_system}{_VISION_ANALYSIS_SYSTEM_ADDON}"
     honesty_system = (
         f"{base_system}\n\n"

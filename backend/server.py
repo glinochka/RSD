@@ -13,6 +13,8 @@ from app.router_agents import router as agents_router
 from app.router_documents import router as documents_router
 from app.router_payments import router as payments_router
 from app.router_admin import router as admin_router
+from app.router_sales import management_router as sales_management_router
+from app.router_sales import router as sales_portal_router
 from app.origins import origins
 from app.config import settings
 from app.services.subscription_maintenance import downgrade_expired_subscriptions_once
@@ -244,6 +246,8 @@ app.include_router(agents_router.router)
 app.include_router(documents_router.router)
 app.include_router(payments_router.router)
 app.include_router(admin_router.router)
+app.include_router(sales_portal_router, prefix="/api/sales")
+app.include_router(sales_management_router, prefix="/api/sales/management")
 
 
 if __name__ == "__main__":
