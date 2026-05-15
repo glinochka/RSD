@@ -51,6 +51,11 @@ def upgrade() -> None:
     op.add_column("sales_outbound_contacts", sa.Column("comment", sa.Text(), nullable=True))
     op.add_column("sales_outbound_contacts", sa.Column("email", sa.String(length=255), nullable=True))
     op.add_column("sales_outbound_contacts", sa.Column("website", sa.String(length=512), nullable=True))
+    op.drop_index(
+        "ix_sales_outbound_contacts_stage",
+        table_name="sales_outbound_contacts",
+        if_exists=True,
+    )
     op.drop_column("sales_outbound_contacts", "funnel_stage")
     op.drop_column("sales_outbound_contacts", "label")
     op.create_index(
@@ -59,7 +64,6 @@ def upgrade() -> None:
         ["workflow_status"],
         unique=False,
     )
-    op.drop_index("ix_sales_outbound_contacts_stage", table_name="sales_outbound_contacts")
     op.create_check_constraint(
         "ck_sales_outbound_contacts_workflow",
         "sales_outbound_contacts",
