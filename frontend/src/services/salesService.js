@@ -99,6 +99,13 @@ const salesService = {
     });
     return response.data;
   },
+
+  async mgmtClearCrm(token) {
+    const response = await salesClient.post(API_ROUTES.SALES_MGMT_CRM_CLEAR, null, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return response.data;
+  },
 };
 
 export default salesService;

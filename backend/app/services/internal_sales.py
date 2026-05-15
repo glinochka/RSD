@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from typing import Any
 
-from sqlalchemy import Select, func, select, update
+from sqlalchemy import Select, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..alembic.models import SalesOutboundContact, SalesTeamMember
@@ -59,6 +59,19 @@ def effective_daily_quota(member: SalesTeamMember) -> int:
     if role == "mop":
         return max(0, int(settings.SALES_MOP_DAILY_QUOTA))
     return 0
+
+
+async def clear_sales_crm_data(session: AsyncSession) -> None:
+    """Удаляет все строки локальной outbound CRM и сбрасывает дневную выдачу у сотрудников отдела."""
+    now = utc_now_naive()
+    await session.execute(delete(SalesOutboundContact))
+    await session.execute(
+        update(SalesTeamMember).values(
+            last_daily_allocation_date=None,
+            daily_pool_alloc_total=0,
+            updated_at=now,
+        )
+    )
 
 
 async def pool_contacts_count(session: AsyncSession) -> int:

@@ -136,6 +136,7 @@ export const API_ROUTES = {
   ADMIN_SALES_TEAM_MEMBER: (id) => `/api/admin/sales/team-members/${id}`,
   ADMIN_SALES_EXCEL_UPLOAD: '/api/admin/sales/contacts/excel-upload',
   ADMIN_SALES_CONTACT_MANUAL: '/api/admin/sales/contacts/manual',
+  ADMIN_SALES_CRM_CLEAR: '/api/admin/sales/contacts/clear',
 
   SALES_LOGIN: '/api/sales/login',
   SALES_ME: '/api/sales/me',
@@ -147,6 +148,7 @@ export const API_ROUTES = {
   SALES_MGMT_FUNNEL: '/api/sales/management/funnel',
   SALES_MGMT_TEAM_MEMBER: (id) => `/api/sales/management/team-members/${id}`,
   SALES_MGMT_EXCEL_UPLOAD: '/api/sales/management/contacts/excel-upload',
+  SALES_MGMT_CRM_CLEAR: '/api/sales/management/contacts/clear',
 };
 
 export const AGENT_ROLES = {

@@ -13,6 +13,7 @@ from ..alembic.models import SalesOutboundContact, SalesTeamMember
 from ..config import settings
 from ..services.internal_sales import (
     apply_role_default_quota,
+    clear_sales_crm_data,
     contact_to_api_dict,
     effective_daily_quota,
     ensure_daily_allocation,
@@ -383,6 +384,24 @@ async def rop_sales_funnel(auth: SalesAuthContext = Depends(require_sales_rop)):
             fc = await funnel_counts(session, [mid])
             by_member.append({"member": member_public_dict(m), "funnel": fc})
     return JSONResponse(content={"total": total, "by_member": by_member, "crm_pool_available": pool_size})
+
+
+@management_router.post(
+    "/contacts/clear",
+    dependencies=[Depends(rate_limit(max_requests=15, window_seconds=60, scope="rop_sales_clear"))],
+)
+async def rop_sales_clear_crm(_auth: SalesAuthContext = Depends(require_sales_rop)):
+    async with async_session_maker() as session:
+        async with session.begin():
+            await clear_sales_crm_data(session)
+        pool_size = await pool_contacts_count(session)
+    return JSONResponse(
+        content={
+            "status": "ok",
+            "message": "Локальная CRM очищена (контакты удалены, счётчики дневной выдачи сброшены).",
+            "crm_pool_available": pool_size,
+        },
+    )
 
 
 @management_router.post(

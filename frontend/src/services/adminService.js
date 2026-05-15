@@ -374,6 +374,15 @@ const adminService = {
     );
     return response.data;
   },
+
+  async salesClearCrm(token) {
+    const response = await adminClient.post(
+      API_ROUTES.ADMIN_SALES_CRM_CLEAR,
+      {},
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data;
+  },
 };
 
 export default adminService;

@@ -12,6 +12,7 @@ from ..alembic.models import SalesOutboundContact, SalesTeamMember
 from ..router_sales.schemas import SalesTeamMemberCreate, SalesTeamMemberUpdate
 from ..services.internal_sales import (
     apply_role_default_quota,
+    clear_sales_crm_data,
     funnel_counts,
     import_contacts_from_excel,
     member_public_dict,
@@ -158,6 +159,24 @@ async def admin_sales_add_contact_manual(payload: SalesContactManualCreate, _adm
     return JSONResponse(
         status_code=status.HTTP_201_CREATED,
         content={"id": row.id, "crm_pool_available": pool_size},
+    )
+
+
+@router.post(
+    "/contacts/clear",
+    dependencies=[Depends(rate_limit(max_requests=15, window_seconds=60, scope="admin_sales_clear"))],
+)
+async def admin_sales_clear_crm(_admin=Depends(get_current_admin)):
+    async with async_session_maker() as session:
+        async with session.begin():
+            await clear_sales_crm_data(session)
+        pool_size = await pool_contacts_count(session)
+    return JSONResponse(
+        content={
+            "status": "ok",
+            "message": "Локальная CRM очищена (контакты удалены, счётчики дневной выдачи сброшены).",
+            "crm_pool_available": pool_size,
+        },
     )
 
 

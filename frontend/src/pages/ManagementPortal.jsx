@@ -2185,6 +2185,27 @@ const ManagementPortal = () => {
     }
   };
 
+  const handleAdminClearSalesCrm = async () => {
+    if (
+      !window.confirm(
+        'Удалить все контакты локальной CRM (пул, назначённые, архив)? Учётные записи сотрудников и планы не затрагиваются. Сбросится дневная выдача контактов.'
+      )
+    ) {
+      return;
+    }
+    try {
+      setSalesTeamBusy('clear-crm');
+      setError('');
+      const res = await adminService.salesClearCrm(adminToken);
+      await refreshAdminSalesDept();
+      alert(res?.message || 'CRM очищена.');
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setSalesTeamBusy(null);
+    }
+  };
+
   const handleRopPatchSalesMember = async (memberId, patch) => {
     try {
       setSalesTeamBusy(`patch-r-${memberId}`);
@@ -2248,6 +2269,32 @@ const ManagementPortal = () => {
     } finally {
       setSalesTeamBusy(null);
       e.target.value = '';
+    }
+  };
+
+  const handleRopClearSalesCrm = async () => {
+    if (
+      !window.confirm(
+        'Удалить все контакты локальной CRM (пул, назначённые, архив)? Учётные записи сотрудников и планы не затрагиваются. Сбросится дневная выдача контактов.'
+      )
+    ) {
+      return;
+    }
+    try {
+      setSalesTeamBusy('rop-clear-crm');
+      setSalesDeskError('');
+      const res = await salesService.mgmtClearCrm(salesToken);
+      const [team, funnel] = await Promise.all([
+        salesService.mgmtGetTeam(salesToken),
+        salesService.mgmtGetFunnel(salesToken),
+      ]);
+      setSalesDeptMembers(team.items ?? []);
+      setSalesDeptFunnel(funnel);
+      alert(res?.message || 'CRM очищена.');
+    } catch (err) {
+      setSalesDeskError(formatError(err));
+    } finally {
+      setSalesTeamBusy(null);
     }
   };
 
@@ -2521,6 +2568,19 @@ const ManagementPortal = () => {
             Выберите файл .xlsx / .xls — контакты попадут в общий пул CRM, не на конкретного сотрудника.
           </p>
           <input type="file" accept=".xlsx,.xls" onChange={handleAdminSalesExcel} disabled={!!salesTeamBusy} />
+          <div className="management-form-actions" style={{ marginTop: '0.75rem' }}>
+            <button
+              type="button"
+              className="btn btn-danger"
+              disabled={!!salesTeamBusy}
+              onClick={handleAdminClearSalesCrm}
+            >
+              {salesTeamBusy === 'clear-crm' ? 'Очистка…' : 'Очистить CRM'}
+            </button>
+            <span className="management-cell-muted" style={{ alignSelf: 'center' }}>
+              Пул, все назначения и архив. Сотрудников не удаляет.
+            </span>
+          </div>
 
           <h3 style={{ marginTop: '1.5rem' }}>Добавить контакт в общую базу</h3>
           <form className="management-form-grid" onSubmit={handleAdminManualContact}>
@@ -2861,6 +2921,19 @@ const ManagementPortal = () => {
             В пуле свободно: <strong>{salesDeptFunnel?.crm_pool_available ?? 0}</strong>
           </p>
           <input type="file" accept=".xlsx,.xls" onChange={handleRopSalesExcel} disabled={!!salesTeamBusy} />
+          <div className="management-form-actions" style={{ marginTop: '0.75rem' }}>
+            <button
+              type="button"
+              className="btn btn-danger"
+              disabled={!!salesTeamBusy}
+              onClick={handleRopClearSalesCrm}
+            >
+              {salesTeamBusy === 'rop-clear-crm' ? 'Очистка…' : 'Очистить CRM'}
+            </button>
+            <span className="management-cell-muted" style={{ alignSelf: 'center' }}>
+              Пул, все назначения и архив. Сотрудников не удаляет.
+            </span>
+          </div>
         </>
       )}
     </>
