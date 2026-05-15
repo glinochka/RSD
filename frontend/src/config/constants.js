@@ -142,6 +142,7 @@ export const API_ROUTES = {
   SALES_CONTACTS: '/api/sales/contacts',
   SALES_CONTACT: (id) => `/api/sales/contacts/${id}`,
   SALES_CONTACT_INVOICE: (id) => `/api/sales/contacts/${id}/invoice`,
+  SALES_CONTACTS_REQUEST_MORE: '/api/sales/contacts/request-more',
   SALES_MGMT_TEAM: '/api/sales/management/team-members',
   SALES_MGMT_FUNNEL: '/api/sales/management/funnel',
   SALES_MGMT_TEAM_MEMBER: (id) => `/api/sales/management/team-members/${id}`,

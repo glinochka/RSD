@@ -74,9 +74,15 @@ const salesService = {
     return response.data;
   },
 
-  async mgmtUploadExcel(token, file, assigneeId) {
+  async requestMoreContacts(token) {
+    const response = await salesClient.post(API_ROUTES.SALES_CONTACTS_REQUEST_MORE, null, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return response.data;
+  },
+
+  async mgmtUploadExcel(token, file) {
     const form = new FormData();
-    form.append('assignee_id', String(assigneeId));
     form.append('file', file);
     const response = await salesClient.post(API_ROUTES.SALES_MGMT_EXCEL_UPLOAD, form, {
       headers: {

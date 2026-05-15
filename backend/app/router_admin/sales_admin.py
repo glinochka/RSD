@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -11,9 +11,11 @@ from ..alembic.database import async_session_maker
 from ..alembic.models import SalesOutboundContact, SalesTeamMember
 from ..router_sales.schemas import SalesTeamMemberCreate, SalesTeamMemberUpdate
 from ..services.internal_sales import (
+    apply_role_default_quota,
     funnel_counts,
     import_contacts_from_excel,
     member_public_dict,
+    pool_contacts_count,
     utc_now_naive,
 )
 from ..utils.rate_limit import rate_limit
@@ -25,7 +27,6 @@ router = APIRouter(prefix="/sales", tags=["admin-sales"])
 
 
 class SalesContactManualCreate(BaseModel):
-    assignee_id: int = Field(..., ge=1)
     org_name: str = Field("", max_length=512)
     label: str = Field("", max_length=256)  # совместимость со старым полем «Подпись»
 
@@ -40,7 +41,6 @@ async def _all_active_member_ids(session) -> list[int]:
 @router.get("/team-members")
 async def admin_sales_list_team(_admin=Depends(get_current_admin)):
     async with async_session_maker() as session:
-        mids = await _all_active_member_ids(session)
         members = (
             await session.scalars(
                 select(SalesTeamMember)
@@ -77,6 +77,7 @@ async def admin_sales_create_member(payload: SalesTeamMemberCreate, _admin=Depen
             created_at=utc_now_naive(),
             updated_at=utc_now_naive(),
         )
+        apply_role_default_quota(row)
         session.add(row)
         await session.commit()
         await session.refresh(row)
@@ -124,6 +125,7 @@ async def admin_sales_funnel(_admin=Depends(get_current_admin)):
     async with async_session_maker() as session:
         mids = await _all_active_member_ids(session)
         total = await funnel_counts(session, mids if mids else None)
+        pool_size = await pool_contacts_count(session)
         by_member = []
         for mid in mids:
             m = await session.get(SalesTeamMember, mid)
@@ -131,7 +133,7 @@ async def admin_sales_funnel(_admin=Depends(get_current_admin)):
                 continue
             fc = await funnel_counts(session, [mid])
             by_member.append({"member": member_public_dict(m), "funnel": fc})
-    return JSONResponse(content={"total": total, "by_member": by_member})
+    return JSONResponse(content={"total": total, "by_member": by_member, "crm_pool_available": pool_size})
 
 
 @router.post(
@@ -142,11 +144,8 @@ async def admin_sales_add_contact_manual(payload: SalesContactManualCreate, _adm
     now = utc_now_naive()
     raw_name = (payload.org_name or payload.label or "").strip() or "Контакт без названия"
     async with async_session_maker() as session:
-        assignee = await session.get(SalesTeamMember, payload.assignee_id)
-        if not assignee or not assignee.is_active:
-            raise HTTPException(status_code=400, detail="Сотрудник не найден")
         row = SalesOutboundContact(
-            assignee_id=payload.assignee_id,
+            assignee_id=None,
             workflow_status="new",
             org_name=raw_name[:512],
             created_at=now,
@@ -155,9 +154,10 @@ async def admin_sales_add_contact_manual(payload: SalesContactManualCreate, _adm
         session.add(row)
         await session.commit()
         await session.refresh(row)
+        pool_size = await pool_contacts_count(session)
     return JSONResponse(
         status_code=status.HTTP_201_CREATED,
-        content={"id": row.id, "assignee_id": row.assignee_id},
+        content={"id": row.id, "crm_pool_available": pool_size},
     )
 
 
@@ -167,21 +167,22 @@ async def admin_sales_add_contact_manual(payload: SalesContactManualCreate, _adm
 )
 async def admin_sales_excel_upload(
     _admin=Depends(get_current_admin),
-    assignee_id: int = Form(...),
     file: UploadFile = File(...),
 ):
     raw = await file.read()
     if not raw:
         raise HTTPException(status_code=400, detail="Пустой файл")
     async with async_session_maker() as session:
-        assignee = await session.get(SalesTeamMember, assignee_id)
-        if not assignee or not assignee.is_active:
-            raise HTTPException(status_code=400, detail="Сотрудник не найден")
         try:
-            imported, _skipped = await import_contacts_from_excel(session, assignee_id=assignee_id, file_bytes=raw)
+            imported, _skipped = await import_contacts_from_excel(session, file_bytes=raw)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
+        pool_size = await pool_contacts_count(session)
     return JSONResponse(
         status_code=status.HTTP_201_CREATED,
-        content={"imported": imported, "message": f"Импортировано строк: {imported}"},
+        content={
+            "imported": imported,
+            "crm_pool_available": pool_size,
+            "message": f"В общую базу добавлено: {imported}. Свободно в пуле: {pool_size}",
+        },
     )

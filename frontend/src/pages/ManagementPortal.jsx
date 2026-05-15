@@ -273,8 +273,7 @@ const ManagementPortal = () => {
     role: 'trainee',
     supervisor_id: '',
   });
-  const [salesManualContact, setSalesManualContact] = useState({ assignee_id: '', org_name: '', label: '' });
-  const [salesRopImportAssigneeId, setSalesRopImportAssigneeId] = useState('');
+  const [salesManualContact, setSalesManualContact] = useState({ org_name: '', label: '' });
   const [salesTeamBusy, setSalesTeamBusy] = useState(null);
   const [stats, setStats] = useState(null);
   const [activeSection, setActiveSection] = useState('overview');
@@ -2085,16 +2084,10 @@ const ManagementPortal = () => {
   const handleAdminSalesExcel = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const aid = Number(salesManualContact.assignee_id);
-    if (!aid) {
-      setError('Укажите ID сотрудника для назначения импорта');
-      e.target.value = '';
-      return;
-    }
     try {
       setSalesTeamBusy('excel');
       setError('');
-      const res = await adminService.salesUploadExcel(adminToken, file, aid);
+      const res = await adminService.salesUploadExcel(adminToken, file);
       await refreshAdminSalesDept();
       alert(res?.message || `Импортировано: ${res?.imported ?? 0}`);
     } catch (err) {
@@ -2111,10 +2104,9 @@ const ManagementPortal = () => {
       setSalesTeamBusy('manual-contact');
       setError('');
       await adminService.salesAddContactManual(adminToken, {
-        assignee_id: Number(salesManualContact.assignee_id),
         org_name: (salesManualContact.org_name || salesManualContact.label || '').trim(),
       });
-      setSalesManualContact({ assignee_id: '', org_name: '', label: '' });
+      setSalesManualContact({ org_name: '', label: '' });
       await refreshAdminSalesDept();
     } catch (err) {
       setError(formatError(err));
@@ -2170,16 +2162,10 @@ const ManagementPortal = () => {
   const handleRopSalesExcel = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const aid = Number(salesRopImportAssigneeId || salesManualContact.assignee_id);
-    if (!aid) {
-      setSalesDeskError('Укажите ID сотрудника в поле над кнопкой выбора файла.');
-      e.target.value = '';
-      return;
-    }
     try {
       setSalesTeamBusy('rop-excel');
       setSalesDeskError('');
-      const res = await salesService.mgmtUploadExcel(salesToken, file, aid);
+      const res = await salesService.mgmtUploadExcel(salesToken, file);
       const [team, funnel] = await Promise.all([
         salesService.mgmtGetTeam(salesToken),
         salesService.mgmtGetFunnel(salesToken),
@@ -2210,6 +2196,31 @@ const ManagementPortal = () => {
       });
       const me = await salesService.getMe(salesToken);
       setSalesMe(me);
+    } catch (err) {
+      setSalesDeskError(formatError(err));
+    } finally {
+      setSalesTeamBusy(null);
+    }
+  };
+
+  const handleSalesRequestMore = async () => {
+    if (!salesToken) return;
+    try {
+      setSalesTeamBusy('request-more');
+      setSalesDeskError('');
+      const res = await salesService.requestMoreContacts(salesToken);
+      const [cdata, me] = await Promise.all([
+        salesService.getContacts(salesToken, { page: 1, pageSize: 50 }),
+        salesService.getMe(salesToken),
+      ]);
+      setSalesContacts({
+        items: cdata.items ?? [],
+        page: cdata.page ?? 1,
+        totalPages: cdata.total_pages ?? 1,
+        total: cdata.total ?? 0,
+      });
+      setSalesMe(me);
+      alert(res?.message || `Назначено: ${res?.allocated ?? 0}`);
     } catch (err) {
       setSalesDeskError(formatError(err));
     } finally {
@@ -2296,7 +2307,8 @@ const ManagementPortal = () => {
       <div className="management-content-head">
         <h2>Отдел продаж</h2>
         <p className="management-cell-muted">
-          Учётные записи, воронка, импорт выгрузок (как из 2GIS: Название, ФИО ЛПР, телефоны и т.д.).
+          Общая локальная CRM: Excel и ручные контакты попадают в пул. Стажёру и МОПу контакты выдаются
+          ежедневно (по умолчанию 30 / 50). Отработанные уходят в архив.
         </p>
       </div>
       {error && activeSection === 'salesDepartment' && <div className="management-error">{error}</div>}
@@ -2305,6 +2317,9 @@ const ManagementPortal = () => {
       ) : (
         <>
           <h3>Общая воронка</h3>
+          <p className="management-cell-muted">
+            В общем пуле (ещё не назначено): <strong>{salesDeptFunnel?.crm_pool_available ?? 0}</strong>
+          </p>
           {renderFunnelSummary(salesDeptFunnel?.total)}
           <h3 style={{ marginTop: '1.5rem' }}>По сотрудникам</h3>
           {renderSalesByMemberTable(salesDeptFunnel?.by_member)}
@@ -2389,25 +2404,14 @@ const ManagementPortal = () => {
             </table>
           </div>
 
-          <h3 style={{ marginTop: '1.5rem' }}>Загрузка Excel</h3>
+          <h3 style={{ marginTop: '1.5rem' }}>Загрузка Excel в общую базу</h3>
           <p className="management-cell-muted">
-            Укажите ID сотрудника в поле ниже или в блоке «Добавить контакт вручную»; затем выберите файл .xlsx / .xls.
-            Колонки из типовой выгрузки сопоставляются автоматически.
+            Выберите файл .xlsx / .xls — контакты попадут в общий пул CRM, не на конкретного сотрудника.
           </p>
           <input type="file" accept=".xlsx,.xls" onChange={handleAdminSalesExcel} disabled={!!salesTeamBusy} />
 
-          <h3 style={{ marginTop: '1.5rem' }}>Добавить контакт вручную</h3>
+          <h3 style={{ marginTop: '1.5rem' }}>Добавить контакт в общую базу</h3>
           <form className="management-form-grid" onSubmit={handleAdminManualContact}>
-            <label>
-              ID сотрудника (на кого назначить)
-              <input
-                value={salesManualContact.assignee_id}
-                onChange={(e) =>
-                  setSalesManualContact((p) => ({ ...p, assignee_id: e.target.value }))
-                }
-                required
-              />
-            </label>
             <label>
               Название организации
               <input
@@ -2479,14 +2483,30 @@ const ManagementPortal = () => {
                 </strong>
               </div>
               <div className="management-stat-card">
-                <span>Норма «контактов в день»</span>
-                <strong>{p?.daily_contacts_quota ?? 0}</strong>
+                <span>Норма в день</span>
+                <strong>{p?.effective_daily_quota ?? p?.daily_contacts_quota ?? 0}</strong>
               </div>
               <div className="management-stat-card">
-                <span>В работе (в базе)</span>
-                <strong>{salesMe?.backlog_in_base ?? 0}</strong>
+                <span>Новых в работе</span>
+                <strong>{salesMe?.pending_new_contacts ?? salesMe?.backlog_in_base ?? 0}</strong>
+              </div>
+              <div className="management-stat-card">
+                <span>В общем пуле</span>
+                <strong>{salesMe?.crm_pool_available ?? 0}</strong>
               </div>
             </div>
+            {salesMe?.can_request_more && (
+              <div className="management-form-actions" style={{ marginTop: '0.75rem' }}>
+                <button
+                  type="button"
+                  className="btn btn-black"
+                  disabled={salesTeamBusy === 'request-more'}
+                  onClick={handleSalesRequestMore}
+                >
+                  {salesTeamBusy === 'request-more' ? 'Загрузка...' : 'Подгрузить ещё контакты'}
+                </button>
+              </div>
+            )}
             <h3 style={{ marginTop: '1.5rem' }}>Моя воронка</h3>
             {renderFunnelSummary(salesMe?.funnel_assigned)}
             <h3 style={{ marginTop: '1.5rem' }}>Мои контакты</h3>
@@ -2628,18 +2648,10 @@ const ManagementPortal = () => {
             </table>
           </div>
 
-          <h3 style={{ marginTop: '1.5rem' }}>Загрузка Excel</h3>
+          <h3 style={{ marginTop: '1.5rem' }}>Загрузка Excel в общую базу</h3>
           <p className="management-cell-muted">
-            ID сотрудника, кому назначить импортированные строки:
+            В пуле свободно: <strong>{salesDeptFunnel?.crm_pool_available ?? 0}</strong>
           </p>
-          <input
-            type="text"
-            className="management-table-input"
-            style={{ maxWidth: '200px', marginBottom: '8px' }}
-            placeholder="ID"
-            value={salesRopImportAssigneeId}
-            onChange={(e) => setSalesRopImportAssigneeId(e.target.value)}
-          />
           <input type="file" accept=".xlsx,.xls" onChange={handleRopSalesExcel} disabled={!!salesTeamBusy} />
         </>
       )}

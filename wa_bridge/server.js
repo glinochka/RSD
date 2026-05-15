@@ -10,6 +10,7 @@ const {
   fetchLatestBaileysVersion,
   DisconnectReason,
   Browsers,
+  downloadMediaMessage,
 } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 
@@ -25,6 +26,8 @@ const VERIFY_WINDOW_SECONDS = Number.parseFloat(process.env.WA_USERBOT_VERIFY_WI
 const VERIFY_LIMIT = Number.parseInt(process.env.WA_USERBOT_VERIFY_PER_PHONE_LIMIT || '10', 10);
 const DATA_DIR = process.env.WA_USERBOT_DATA_DIR || '/data/wa-auth';
 const HTTP_PORT = Number.parseInt(process.env.PORT || '8090', 10);
+const DOWNLOAD_MEDIA_MAX_BYTES = Number.parseInt(process.env.WA_USERBOT_DOWNLOAD_MEDIA_MAX_BYTES || '15728640', 10);
+const INBOUND_DEDUP_MAX = Math.max(100, Number.parseInt(process.env.WA_USERBOT_INBOUND_DEDUP_MAX || '2000', 10));
 const WA_BROWSER_SIGNATURE = [
   String(process.env.WA_USERBOT_BROWSER_PLATFORM || 'Ubuntu').trim() || 'Ubuntu',
   String(process.env.WA_USERBOT_BROWSER_NAME || 'Chrome').trim() || 'Chrome',
@@ -415,6 +418,8 @@ async function connectRuntimeSession(connectionId, sessionString) {
     sessionDir: runtimeDir,
     sock,
     queue: [],
+    recentInboundKeys: [],
+    recentInboundKeySet: new Set(),
     status: 'connecting',
     lastError: null,
     user: null,
@@ -433,10 +438,29 @@ async function connectRuntimeSession(connectionId, sessionString) {
     }
   });
   sock.ev.on('messages.upsert', (upsert) => {
+    // Only real-time notifications — "append" / sync batches replay old messages and would
+    // duplicate bot replies (see Baileys messages.upsert types: notify vs append).
+    const uType = upsert?.type;
+    if (uType != null && uType !== 'notify') {
+      return;
+    }
     const items = Array.isArray(upsert?.messages) ? upsert.messages : [];
     for (const item of items) {
       const remoteJid = String(item?.key?.remoteJid || '').trim();
       if (!remoteJid) continue;
+      const mid = item?.key?.id != null ? String(item.key.id) : '';
+      const dedupKey = mid ? `${remoteJid}\0${mid}` : '';
+      if (dedupKey) {
+        if (runtime.recentInboundKeySet.has(dedupKey)) {
+          continue;
+        }
+        runtime.recentInboundKeySet.add(dedupKey);
+        runtime.recentInboundKeys.push(dedupKey);
+        while (runtime.recentInboundKeys.length > INBOUND_DEDUP_MAX) {
+          const old = runtime.recentInboundKeys.shift();
+          if (old) runtime.recentInboundKeySet.delete(old);
+        }
+      }
       runtime.queue.push({
         id: item?.key?.id || null,
         remote_jid: remoteJid,
@@ -444,6 +468,8 @@ async function connectRuntimeSession(connectionId, sessionString) {
         push_name: item?.pushName || null,
         message_timestamp: item?.messageTimestamp || null,
         message: item?.message || {},
+        // Full WAMessage for downloadMediaMessage (image/audio/sticker).
+        wa_message: item,
       });
       if (runtime.queue.length > 1000) {
         runtime.queue.splice(0, runtime.queue.length - 1000);
@@ -586,6 +612,54 @@ app.post('/session/connect', enforceApiKey, async (req, res) => {
   } catch (error) {
     logger.error({ err: error }, 'session/connect failed');
     return res.status(error.status || 500).json({ detail: error.message || 'session/connect failed' });
+  }
+});
+
+app.post('/session/download_media', enforceApiKey, async (req, res) => {
+  try {
+    const connectionId = String(req.body?.connection_id || '').trim();
+    const waMessage = req.body?.wa_message;
+    if (!connectionId) {
+      return res.status(422).json({ detail: 'connection_id is required' });
+    }
+    if (!waMessage || typeof waMessage !== 'object') {
+      return res.status(422).json({ detail: 'wa_message is required' });
+    }
+    const runtime = runtimeSessions.get(connectionId);
+    if (!runtime?.sock) {
+      return res.status(404).json({ detail: 'Runtime session not found' });
+    }
+    const buffer = await downloadMediaMessage(
+      waMessage,
+      'buffer',
+      {},
+      {
+        logger,
+        reuploadRequest: runtime.sock.updateMediaMessage,
+      },
+    );
+    if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
+      return res.status(500).json({ detail: 'empty media buffer' });
+    }
+    const maxB = Math.max(1024 * 1024, Number.isFinite(DOWNLOAD_MEDIA_MAX_BYTES) ? DOWNLOAD_MEDIA_MAX_BYTES : 15_728_640);
+    if (buffer.length > maxB) {
+      return res.status(413).json({ detail: 'media too large' });
+    }
+    const msg = waMessage.message || {};
+    let mime = 'application/octet-stream';
+    if (msg.imageMessage?.mimetype) mime = String(msg.imageMessage.mimetype);
+    else if (msg.stickerMessage?.mimetype) mime = String(msg.stickerMessage.mimetype) || 'image/webp';
+    else if (msg.audioMessage?.mimetype) mime = String(msg.audioMessage.mimetype);
+    else if (msg.videoMessage?.mimetype) mime = String(msg.videoMessage.mimetype);
+    else if (msg.documentMessage?.mimetype) mime = String(msg.documentMessage.mimetype);
+
+    return res.status(200).json({
+      mime_type: mime,
+      base64: buffer.toString('base64'),
+    });
+  } catch (error) {
+    logger.error({ err: error }, 'session/download_media failed');
+    return res.status(error.status || 500).json({ detail: error.message || 'session/download_media failed' });
   }
 });
 

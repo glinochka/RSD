@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 from typing import Any
@@ -12,6 +13,7 @@ from sqlalchemy import select
 from ..alembic.database import async_session_maker
 from ..alembic.models import Agent, AgentChannelConnection
 from ..config import settings
+from ..services.voice_transcription import is_voice_stt_configured, transcribe_voice_bytes
 from ..utils.crypto import decrypt_token
 from .leader_lock import PgLeaderLock
 from .message_processor import Channel, MessageRequest, ProcessingStatus, get_message_processor
@@ -105,9 +107,60 @@ def _extract_text(message: dict[str, Any]) -> str:
         or (msg.get("extendedTextMessage") or {}).get("text")
         or (msg.get("imageMessage") or {}).get("caption")
         or (msg.get("videoMessage") or {}).get("caption")
+        or (msg.get("documentMessage") or {}).get("caption")
         or ""
     )
     return str(text).strip()
+
+
+def _whatsapp_media_kind(inner: dict[str, Any]) -> str | None:
+    """Baileys message content kind for multimodal handling."""
+    if not isinstance(inner, dict):
+        return None
+    if inner.get("imageMessage") is not None:
+        return "image"
+    if inner.get("stickerMessage") is not None:
+        return "image"
+    if inner.get("audioMessage") is not None:
+        return "audio"
+    if inner.get("videoMessage") is not None:
+        return "video"
+    dm = inner.get("documentMessage")
+    if isinstance(dm, dict):
+        mt = str(dm.get("mimetype") or "").lower()
+        if mt.startswith("image/"):
+            return "image"
+        if mt.startswith("audio/"):
+            return "audio"
+    return None
+
+
+async def _bridge_download_media(connection_id: int, wa_message: dict[str, Any]) -> tuple[bytes, str] | None:
+    try:
+        data = await _bridge_post(
+            "session/download_media",
+            {
+                "connection_id": str(connection_id),
+                "wa_message": wa_message,
+            },
+        )
+    except Exception:
+        logger.exception(
+            "whatsapp_userbot: session/download_media failed connection_id=%s",
+            connection_id,
+        )
+        return None
+    b64 = data.get("base64")
+    mime = str(data.get("mime_type") or "application/octet-stream").strip() or "application/octet-stream"
+    if not b64 or not isinstance(b64, str):
+        return None
+    try:
+        raw = base64.standard_b64decode(b64, validate=True)
+    except Exception:
+        return None
+    if not raw:
+        return None
+    return raw, mime
 
 
 def _user_external_id_for_whatsapp_analytics(remote_jid: str) -> str:
@@ -143,10 +196,104 @@ async def _process_incoming(cfg: dict[str, Any], incoming: dict[str, Any]) -> No
     if str(incoming.get("from_me") or "").lower() == "true":
         return
 
-    text = _extract_text(incoming)
-    if not text:
-        return
     connection_id = int(cfg["connection_id"])
+    inner = incoming.get("message") or {}
+    if not isinstance(inner, dict):
+        inner = {}
+    text = _extract_text(incoming)
+    kind = _whatsapp_media_kind(inner)
+    wa_full = incoming.get("wa_message") if isinstance(incoming.get("wa_message"), dict) else None
+
+    runtime_ctx: dict[str, Any] = {}
+    query = text
+
+    if kind == "video":
+        query = text or "[Видео без текстовой подписи]"
+    elif kind == "image":
+        if wa_full is None:
+            if not text:
+                logger.warning(
+                    "whatsapp_userbot: image without wa_message (deploy wa_bridge with session/download_media)"
+                )
+                return
+        else:
+            downloaded = await _bridge_download_media(connection_id, wa_full)
+            if downloaded:
+                raw, mime = downloaded
+                if len(raw) > int(settings.IMAGE_MAX_BYTES):
+                    query = (
+                        f"{text}\n\n(Вложенное изображение слишком большое.)".strip()
+                        if text
+                        else "Изображение слишком большое для обработки."
+                    )
+                else:
+                    b64 = base64.standard_b64encode(raw).decode("ascii")
+                    runtime_ctx["vision_image_data_url"] = f"data:{mime};base64,{b64}"
+                    query = text or "[Изображение без подписи]"
+            elif not text:
+                return
+    elif kind == "audio":
+        if wa_full is None:
+            if not text:
+                return
+        else:
+            downloaded = await _bridge_download_media(connection_id, wa_full)
+            if not downloaded:
+                if not text:
+                    return
+            else:
+                raw, mime = downloaded
+                if len(raw) > int(settings.VOICE_MAX_BYTES):
+                    query = (
+                        f"{text}\n\n(Голосовое вложение слишком большое.)".strip()
+                        if text
+                        else "Голосовое сообщение слишком большое."
+                    )
+                elif not is_voice_stt_configured():
+                    await _bridge_post_best_effort(
+                        "session/read",
+                        {
+                            "connection_id": connection_id,
+                            "remote_jid": remote_jid,
+                            "message_id": incoming.get("id"),
+                        },
+                    )
+                    try:
+                        await _bridge_post(
+                            "session/send",
+                            {
+                                "connection_id": connection_id,
+                                "to_jid": remote_jid,
+                                "text": (
+                                    "Голосовые сообщения недоступны: не настроено распознавание речи "
+                                    "(установите faster-whisper или задайте OPENAI_API_KEY). Напишите, пожалуйста, текстом."
+                                ),
+                            },
+                        )
+                    except Exception:
+                        logger.exception(
+                            "whatsapp_userbot: failed to send STT-unavailable notice connection_id=%s",
+                            connection_id,
+                        )
+                    return
+                else:
+                    transcript = await transcribe_voice_bytes(raw, mime_type=mime or "audio/ogg")
+                    if transcript:
+                        query = (
+                            f"{text}\n\nТекст голосового сообщения: {transcript}".strip()
+                            if text
+                            else f"Текст голосового сообщения: {transcript}"
+                        )
+                    else:
+                        query = text or (
+                            "Пользователь прислал голосовое сообщение, но текст распознать не удалось."
+                        )
+    elif not kind and not text:
+        return
+
+    query = str(query or "").strip()
+    if not query:
+        return
 
     await _bridge_post_best_effort(
         "session/read",
@@ -168,12 +315,13 @@ async def _process_incoming(cfg: dict[str, Any], incoming: dict[str, Any]) -> No
     bot_id = int(cfg["bot_id"])
     request = MessageRequest(
         bot_id=bot_id,
-        query=text,
+        query=query,
         user_external_id=_user_external_id_for_whatsapp_analytics(remote_jid),
         channel=Channel.WHATSAPP_USERBOT,
         system_prompt=cfg.get("system_prompt") or "",
         welcome_message=cfg.get("welcome_message"),
         user_display_name=str(incoming.get("push_name") or "").strip() or None,
+        runtime_context=runtime_ctx or None,
     )
     try:
         response = await get_message_processor().process(request)

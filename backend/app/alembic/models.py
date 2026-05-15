@@ -11,6 +11,7 @@ from sqlalchemy import (
     ForeignKey,
     Text,
     DateTime,
+    Date,
     Integer,
     UniqueConstraint,
     Index,
@@ -939,6 +940,7 @@ class SalesTeamMember(Base):
     plan_demos_monthly: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     plan_closes_monthly: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     daily_contacts_quota: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    last_daily_allocation_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
@@ -973,11 +975,13 @@ class SalesOutboundContact(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    assignee_id: Mapped[int] = mapped_column(
-        ForeignKey("sales_team_members.id", ondelete="CASCADE"),
-        nullable=False,
+    assignee_id: Mapped[int | None] = mapped_column(
+        ForeignKey("sales_team_members.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
     )
+    assigned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     workflow_status: Mapped[str] = mapped_column(String(32), nullable=False, default="new", server_default="new")
     org_name: Mapped[str] = mapped_column(String(512), nullable=False, default="", server_default="")
     lpr_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
@@ -995,4 +999,4 @@ class SalesOutboundContact(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
 
-    assignee: Mapped["SalesTeamMember"] = relationship(back_populates="outreach_contacts")
+    assignee: Mapped["SalesTeamMember | None"] = relationship(back_populates="outreach_contacts")

@@ -354,9 +354,8 @@ const adminService = {
     return response.data;
   },
 
-  async salesUploadExcel(token, file, assigneeId) {
+  async salesUploadExcel(token, file) {
     const form = new FormData();
-    form.append('assignee_id', String(assigneeId));
     form.append('file', file);
     const response = await adminClient.post(API_ROUTES.ADMIN_SALES_EXCEL_UPLOAD, form, {
       headers: {
@@ -367,10 +366,10 @@ const adminService = {
     return response.data;
   },
 
-  async salesAddContactManual(token, { assignee_id, org_name, label }) {
+  async salesAddContactManual(token, { org_name, label }) {
     const response = await adminClient.post(
       API_ROUTES.ADMIN_SALES_CONTACT_MANUAL,
-      { assignee_id, org_name: org_name || '', label: label || '' },
+      { org_name: org_name || '', label: label || '' },
       { headers: { Authorization: `Bearer ${token}` } }
     );
     return response.data;

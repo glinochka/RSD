@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     ADMIN_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     # Внутренний портал отдела продаж (отдельный JWT, как у пользователей — тот же SECRET в get_auth_data).
     SALES_STAFF_TOKEN_EXPIRE_HOURS: int = 24
+    # Дневная выдача контактов из общего пула (если у сотрудника daily_contacts_quota = 0).
+    SALES_TRAINEE_DAILY_QUOTA: int = 30
+    SALES_MOP_DAILY_QUOTA: int = 50
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
     QDRANT_API_KEY:str = ''
     DEEPSEEK_API_KEY: str

@@ -189,6 +189,7 @@ async def _handle_private_message(
     }
     query = caption_or_text
     voice_bytes: bytes | None = None
+    voice_mime = "audio/ogg"
 
     try:
         if event.message.photo:
@@ -203,12 +204,55 @@ async def _handle_private_message(
                 f"data:{mime};base64,{base64.standard_b64encode(raw).decode('ascii')}"
             )
             query = caption_or_text or "[Фото без подписи]"
+        elif event.message.document:
+            doc = event.message.document
+            doc_mime = (getattr(doc, "mime_type", None) or "").strip().lower()
+            if doc_mime.startswith("image/"):
+                buf = BytesIO()
+                await event.message.download_media(buf)
+                raw = buf.getvalue()
+                if len(raw) > int(settings.IMAGE_MAX_BYTES):
+                    await event.respond("Изображение слишком большое. Отправьте файл поменьше.")
+                    return
+                mime = getattr(doc, "mime_type", None) or "image/jpeg"
+                runtime_ctx["vision_image_data_url"] = (
+                    f"data:{mime};base64,{base64.standard_b64encode(raw).decode('ascii')}"
+                )
+                query = caption_or_text or "[Изображение без подписи]"
+            elif doc_mime.startswith("audio/"):
+                buf = BytesIO()
+                await event.message.download_media(buf)
+                voice_bytes = buf.getvalue()
+                voice_mime = getattr(doc, "mime_type", None) or "audio/mpeg"
+                if len(voice_bytes) > int(settings.VOICE_MAX_BYTES):
+                    await event.respond("Аудиофайл слишком большой.")
+                    return
+                if not caption_or_text:
+                    query = ""
+            elif caption_or_text:
+                query = caption_or_text
+            else:
+                await event.respond(
+                    "Пока поддерживаются текст, фото, изображения-файлы, голос и аудио. Отправьте что-то из этого."
+                )
+                return
         elif getattr(event.message, "voice", None):
             buf = BytesIO()
             await event.message.download_media(buf)
             voice_bytes = buf.getvalue()
+            voice_mime = getattr(event.message.voice, "mime_type", None) or "audio/ogg"
             if len(voice_bytes) > int(settings.VOICE_MAX_BYTES):
                 await event.respond("Голосовое сообщение слишком большое.")
+                return
+            if not caption_or_text:
+                query = ""
+        elif getattr(event.message, "audio", None):
+            buf = BytesIO()
+            await event.message.download_media(buf)
+            voice_bytes = buf.getvalue()
+            voice_mime = getattr(event.message.audio, "mime_type", None) or "audio/mpeg"
+            if len(voice_bytes) > int(settings.VOICE_MAX_BYTES):
+                await event.respond("Аудиосообщение слишком большое.")
                 return
             if not caption_or_text:
                 query = ""
@@ -216,7 +260,7 @@ async def _handle_private_message(
             query = caption_or_text
         else:
             await event.respond(
-                "Пока поддерживаются текст, фото и голосовые сообщения. Отправьте что-то из этого."
+                "Пока поддерживаются текст, фото, изображения-файлы, голос и аудио. Отправьте что-то из этого."
             )
             return
     except Exception:
@@ -230,7 +274,7 @@ async def _handle_private_message(
 
     if voice_bytes is not None:
         if is_voice_stt_configured():
-            transcript = await transcribe_voice_bytes(voice_bytes, mime_type="audio/ogg")
+            transcript = await transcribe_voice_bytes(voice_bytes, mime_type=voice_mime)
             if transcript:
                 query = (
                     f"{caption_or_text}\n\nТекст голосового сообщения: {transcript}".strip()

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy import func, select
 
@@ -10,16 +10,23 @@ from ..alembic.database import async_session_maker
 from ..alembic.models import SalesOutboundContact, SalesTeamMember
 from ..config import settings
 from ..services.internal_sales import (
+    apply_role_default_quota,
     contact_to_api_dict,
+    effective_daily_quota,
+    ensure_daily_allocation,
     funnel_counts,
     import_contacts_from_excel,
     member_public_dict,
     monthly_done_counts,
     month_start_utc_naive,
+    pending_new_count,
+    pool_contacts_count,
+    request_more_contacts,
     subtree_member_ids,
     apply_workflow_timestamps,
     utc_now_naive,
     WORKFLOW_STATUSES,
+    ALLOCATABLE_ROLES,
 )
 from ..services.sales_invoice_docx import build_contact_invoice_docx
 from ..utils.JWT import create_access_token
@@ -59,17 +66,19 @@ async def sales_login(payload: SalesLoginRequest):
 async def sales_me(auth: SalesAuthContext = Depends(get_sales_auth)):
     ms = month_start_utc_naive()
     async with async_session_maker() as session:
-        member = await session.get(SalesTeamMember, auth.staff_id)
-        if not member or not member.is_active:
-            raise HTTPException(status_code=401, detail="Не авторизован")
-        done = await monthly_done_counts(session, member.id, ms)
-        funnel = await funnel_counts(session, [member.id])
-        backlog = await session.scalar(
-            select(func.count(SalesOutboundContact.id)).where(
-                SalesOutboundContact.assignee_id == member.id,
-                SalesOutboundContact.workflow_status == "new",
-            )
-        )
+        async with session.begin():
+            member = await session.get(SalesTeamMember, auth.staff_id)
+            if not member or not member.is_active:
+                raise HTTPException(status_code=401, detail="Не авторизован")
+            daily_allocated = 0
+            if (member.role or "").strip().lower() in ALLOCATABLE_ROLES:
+                daily_allocated = await ensure_daily_allocation(session, member)
+            done = await monthly_done_counts(session, member.id, ms)
+            funnel = await funnel_counts(session, [member.id])
+            pending = await pending_new_count(session, member.id)
+            pool_size = await pool_contacts_count(session)
+        backlog = pending
+    role = (member.role or "").strip().lower()
     return JSONResponse(
         content={
             "member": member_public_dict(member),
@@ -78,10 +87,15 @@ async def sales_me(auth: SalesAuthContext = Depends(get_sales_auth)):
                 "demos_monthly": member.plan_demos_monthly,
                 "closes_monthly": member.plan_closes_monthly,
                 "daily_contacts_quota": member.daily_contacts_quota,
+                "effective_daily_quota": effective_daily_quota(member),
             },
             "achievement_month": done,
             "funnel_assigned": funnel,
-            "backlog_in_base": int(backlog or 0),
+            "backlog_in_base": backlog,
+            "crm_pool_available": pool_size,
+            "pending_new_contacts": pending,
+            "can_request_more": role in ALLOCATABLE_ROLES and pending == 0 and pool_size > 0,
+            "daily_allocated_now": daily_allocated,
         }
     )
 
@@ -93,12 +107,22 @@ async def sales_list_contacts(
     page_size: int = Query(20, ge=1, le=100),
 ):
     async with async_session_maker() as session:
+        async with session.begin():
+            member = await session.get(SalesTeamMember, auth.staff_id)
+            if not member or not member.is_active:
+                raise HTTPException(status_code=401, detail="Не авторизован")
+            if (member.role or "").strip().lower() in ALLOCATABLE_ROLES:
+                await ensure_daily_allocation(session, member)
+        base_filter = (
+            SalesOutboundContact.assignee_id == auth.staff_id,
+            SalesOutboundContact.archived_at.is_(None),
+        )
         total = await session.scalar(
-            select(func.count(SalesOutboundContact.id)).where(SalesOutboundContact.assignee_id == auth.staff_id)
+            select(func.count(SalesOutboundContact.id)).where(*base_filter)
         )
         q = (
             select(SalesOutboundContact)
-            .where(SalesOutboundContact.assignee_id == auth.staff_id)
+            .where(*base_filter)
             .order_by(SalesOutboundContact.id.desc())
             .offset((page - 1) * page_size)
             .limit(page_size)
@@ -108,6 +132,29 @@ async def sales_list_contacts(
     pages = max(1, (int(total or 0) + page_size - 1) // page_size)
     return JSONResponse(
         content={"items": items, "page": page, "page_size": page_size, "total": int(total or 0), "total_pages": pages}
+    )
+
+
+@router.post(
+    "/contacts/request-more",
+    dependencies=[Depends(rate_limit(max_requests=30, window_seconds=60, scope="sales_request_more"))],
+)
+async def sales_request_more_contacts(auth: SalesAuthContext = Depends(get_sales_auth)):
+    async with async_session_maker() as session:
+        async with session.begin():
+            member = await session.get(SalesTeamMember, auth.staff_id)
+            if not member or not member.is_active:
+                raise HTTPException(status_code=401, detail="Не авторизован")
+            try:
+                allocated = await request_more_contacts(session, member)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            await session.flush()
+    return JSONResponse(
+        content={
+            "allocated": allocated,
+            "message": f"Назначено контактов: {allocated}",
+        }
     )
 
 
@@ -125,7 +172,11 @@ async def sales_update_contact(
         raise HTTPException(status_code=400, detail="Некорректный статус")
     async with async_session_maker() as session:
         contact = await session.get(SalesOutboundContact, contact_id)
-        if not contact or contact.assignee_id != auth.staff_id:
+        if (
+            not contact
+            or contact.assignee_id != auth.staff_id
+            or contact.archived_at is not None
+        ):
             raise HTTPException(status_code=404, detail="Контакт не найден")
         if "lpr_name" in data:
             v = data["lpr_name"]
@@ -141,7 +192,7 @@ async def sales_update_contact(
         else:
             contact.updated_at = now
         await session.commit()
-    return JSONResponse(content={"status": "ok"})
+    return JSONResponse(content={"status": "ok", "archived": contact.archived_at is not None})
 
 
 @router.get("/contacts/{contact_id}/invoice")
@@ -211,6 +262,7 @@ async def rop_sales_create_member(payload: SalesTeamMemberCreate, auth: SalesAut
             created_at=utc_now_naive(),
             updated_at=utc_now_naive(),
         )
+        apply_role_default_quota(row)
         session.add(row)
         await session.commit()
         await session.refresh(row)
@@ -266,7 +318,8 @@ async def rop_sales_update_member(
 async def rop_sales_funnel(auth: SalesAuthContext = Depends(require_sales_rop)):
     async with async_session_maker() as session:
         visible = list(await _rop_visible_member_ids(session, auth.staff_id))
-        total = await funnel_counts(session, visible)
+        total = await funnel_counts(session, visible if visible else None)
+        pool_size = await pool_contacts_count(session)
         by_member = []
         for mid in sorted(visible):
             m = await session.get(SalesTeamMember, mid)
@@ -274,7 +327,7 @@ async def rop_sales_funnel(auth: SalesAuthContext = Depends(require_sales_rop)):
                 continue
             fc = await funnel_counts(session, [mid])
             by_member.append({"member": member_public_dict(m), "funnel": fc})
-    return JSONResponse(content={"total": total, "by_member": by_member})
+    return JSONResponse(content={"total": total, "by_member": by_member, "crm_pool_available": pool_size})
 
 
 @management_router.post(
@@ -283,24 +336,22 @@ async def rop_sales_funnel(auth: SalesAuthContext = Depends(require_sales_rop)):
 )
 async def rop_sales_excel_upload(
     auth: SalesAuthContext = Depends(require_sales_rop),
-    assignee_id: int = Form(...),
     file: UploadFile = File(...),
 ):
     raw = await file.read()
     if not raw:
         raise HTTPException(status_code=400, detail="Пустой файл")
     async with async_session_maker() as session:
-        visible = await _rop_visible_member_ids(session, auth.staff_id)
-        if assignee_id not in visible:
-            raise HTTPException(status_code=400, detail="Некорректный сотрудник")
-        assignee = await session.get(SalesTeamMember, assignee_id)
-        if not assignee or not assignee.is_active:
-            raise HTTPException(status_code=400, detail="Сотрудник не найден")
         try:
-            imported, _skipped = await import_contacts_from_excel(session, assignee_id=assignee_id, file_bytes=raw)
+            imported, _skipped = await import_contacts_from_excel(session, file_bytes=raw)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
+        pool_size = await pool_contacts_count(session)
     return JSONResponse(
         status_code=status.HTTP_201_CREATED,
-        content={"imported": imported, "message": f"Импортировано строк: {imported}"},
+        content={
+            "imported": imported,
+            "crm_pool_available": pool_size,
+            "message": f"В общую базу добавлено: {imported}. Свободно в пуле: {pool_size}",
+        },
     )

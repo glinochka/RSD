@@ -45,6 +45,36 @@ async def handle_agent_message(message: types.Message, agent_config: dict):
             image_mime = "image/jpeg"
             if not query:
                 query = "[Фото без подписи]"
+        elif message.document:
+            doc = message.document
+            mime = (doc.mime_type or "").strip().lower()
+            if mime.startswith("image/"):
+                buf = io.BytesIO()
+                await bot.download(doc, destination=buf)
+                raw = buf.getvalue()
+                if len(raw) > int(settings.IMAGE_DOWNLOAD_MAX_BYTES):
+                    await message.answer("Изображение слишком большое. Отправьте файл поменьше.")
+                    return
+                image_b64 = base64.standard_b64encode(raw).decode("ascii")
+                image_mime = doc.mime_type or "image/jpeg"
+                if not query:
+                    query = "[Изображение без подписи]"
+            elif mime.startswith("audio/"):
+                buf = io.BytesIO()
+                await bot.download(doc, destination=buf)
+                raw = buf.getvalue()
+                if len(raw) > int(settings.VOICE_DOWNLOAD_MAX_BYTES):
+                    await message.answer("Аудиофайл слишком большой.")
+                    return
+                voice_b64 = base64.standard_b64encode(raw).decode("ascii")
+                voice_mime = doc.mime_type or "audio/mpeg"
+            elif plain_text or caption:
+                query = caption if caption else plain_text
+            else:
+                await message.answer(
+                    "Пока поддерживаются текст, фото, изображения-файлы, голос и аудио. Отправьте что-то из этого."
+                )
+                return
         elif message.voice:
             buf = io.BytesIO()
             await bot.download(message.voice, destination=buf)
@@ -54,9 +84,18 @@ async def handle_agent_message(message: types.Message, agent_config: dict):
                 return
             voice_b64 = base64.standard_b64encode(raw).decode("ascii")
             voice_mime = getattr(message.voice, "mime_type", None) or "audio/ogg"
+        elif message.audio:
+            buf = io.BytesIO()
+            await bot.download(message.audio, destination=buf)
+            raw = buf.getvalue()
+            if len(raw) > int(settings.VOICE_DOWNLOAD_MAX_BYTES):
+                await message.answer("Аудиосообщение слишком большое.")
+                return
+            voice_b64 = base64.standard_b64encode(raw).decode("ascii")
+            voice_mime = getattr(message.audio, "mime_type", None) or "audio/mpeg"
         elif not plain_text and not caption:
             await message.answer(
-                "Пока поддерживаются текст, фото и голосовые сообщения. Отправьте что-то из этого."
+                "Пока поддерживаются текст, фото, изображения-файлы, голос и аудио. Отправьте что-то из этого."
             )
             return
     except Exception:
