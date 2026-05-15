@@ -10,6 +10,7 @@ from typing import Any
 from openpyxl import load_workbook
 
 _ws_re = re.compile(r"\s+")
+PHONE_FIELD_MAX_LEN = 256
 
 
 def _norm_header(h: object) -> str:
@@ -29,6 +30,14 @@ def _cell_str(val: object) -> str:
 def _opt_str(val: object) -> str | None:
     s = _cell_str(val)
     return s or None
+
+
+def _fit_phone(value: str | None, *, max_len: int = PHONE_FIELD_MAX_LEN) -> str | None:
+    if not value:
+        return None
+    if len(value) <= max_len:
+        return value
+    return value[:max_len]
 
 
 def _layout_by_position(headers: list[str]) -> dict[str, int] | None:
@@ -141,9 +150,9 @@ def parse_sales_excel(file_bytes: bytes) -> list[dict[str, Any]]:
                 {
                     "org_name": org_name[:512],
                     "lpr_name": _opt_str(picked.get("lpr_name")),
-                    "lpr_phone": _opt_str(picked.get("lpr_phone")),
-                    "org_phone": _opt_str(picked.get("org_phone")),
-                    "org_mobile": _opt_str(picked.get("org_mobile")),
+                    "lpr_phone": _fit_phone(_opt_str(picked.get("lpr_phone"))),
+                    "org_phone": _fit_phone(_opt_str(picked.get("org_phone"))),
+                    "org_mobile": _fit_phone(_opt_str(picked.get("org_mobile"))),
                     "import_status": _opt_str(picked.get("import_status")),
                     "email": _opt_str(picked.get("email")),
                     "website": _opt_str(picked.get("website")),

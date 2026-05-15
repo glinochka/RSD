@@ -25,7 +25,7 @@ class SalesTeamMemberUpdate(BaseModel):
 
 class SalesContactUpdate(BaseModel):
     lpr_name: str | None = Field(None, max_length=256)
-    lpr_phone: str | None = Field(None, max_length=64)
+    lpr_phone: str | None = Field(None, max_length=256)
     comment: str | None = Field(None, max_length=20000)
     workflow_status: str | None = Field(
         None,
