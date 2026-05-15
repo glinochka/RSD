@@ -90,9 +90,17 @@ class Settings(BaseSettings):
     YOOKASSA_SECRET_KEY: str = ""
     YOOKASSA_RETURN_URL: str | None = None
     MASTER_BOT_TOKEN: str = ""
-    # Текст в автоматическом счёте (.docx) для отдела продаж.
-    SALES_INVOICE_SUPPLIER_NAME: str = 'ООО «RSD»'
-    SALES_INVOICE_SUPPLIER_DETAILS: str = ""
+    # Шаблон наименования услуги в чеке «Мой налог» ({org_name}, {contact_id}).
+    SALES_INVOICE_SERVICE_NAME_TEMPLATE: str = "Услуги RSD для {org_name}"
+    SALES_INVOICE_DEFAULT_AMOUNT_RUB: str = "10000.00"
+    # Интеграция «Мой налог» (самозанятый), lknpd.nalog.ru.
+    # Вариант A: MOY_NALOG_REFRESH_TOKEN (+ MOY_NALOG_INN) — без пароля в .env.
+    # Вариант B: MOY_NALOG_INN + MOY_NALOG_PASSWORD (первый вход; дальше — session file).
+    MOY_NALOG_INN: str = ""
+    MOY_NALOG_PASSWORD: str = ""
+    MOY_NALOG_REFRESH_TOKEN: str = ""
+    MOY_NALOG_ACCESS_TOKEN: str = ""
+    MOY_NALOG_SESSION_FILE: str = "data/moy_nalog_session.json"
     GOOGLE_OAUTH_CLIENT_ID: str = ""
     GOOGLE_OAUTH_ALLOWED_HD: str = ""
     MAILOPOST_API_URL: str = "https://api.mailopost.ru/v1"

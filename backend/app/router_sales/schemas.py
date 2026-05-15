@@ -1,4 +1,6 @@
-from pydantic import BaseModel, Field
+from decimal import Decimal
+
+from pydantic import BaseModel, Field, field_validator
 
 
 class SalesLoginRequest(BaseModel):
@@ -21,6 +23,24 @@ class SalesTeamMemberUpdate(BaseModel):
     plan_demos_monthly: int | None = Field(None, ge=0, le=1_000_000)
     plan_closes_monthly: int | None = Field(None, ge=0, le=1_000_000)
     daily_contacts_quota: int | None = Field(None, ge=0, le=1_000_000)
+
+
+class SalesInvoiceCreate(BaseModel):
+    amount_rub: Decimal = Field(..., gt=0, le=Decimal("10000000"))
+    service_name: str | None = Field(None, max_length=512)
+    client_inn: str | None = Field(None, max_length=12)
+
+    @field_validator("client_inn")
+    @classmethod
+    def validate_client_inn(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        digits = v.strip()
+        if not digits:
+            return None
+        if not digits.isdigit() or len(digits) not in (10, 12):
+            raise ValueError("ИНН должен содержать 10 или 12 цифр")
+        return digits
 
 
 class SalesContactUpdate(BaseModel):

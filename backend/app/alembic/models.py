@@ -16,6 +16,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Index,
     CheckConstraint,
+    text,
 )
 from sqlalchemy.orm import  Mapped, mapped_column, relationship
 
@@ -383,7 +384,23 @@ class AdminService(Base):
     __table_args__ = (
         CheckConstraint("duration_minutes > 0", name="ck_admin_services_duration_gt_zero"),
         CheckConstraint("price_minor >= 0", name="ck_admin_services_price_non_negative"),
-        UniqueConstraint("agent_id", "title", name="uq_admin_services_agent_title"),
+        Index(
+            "uq_admin_services_agent_title_staff",
+            "agent_id",
+            "title",
+            "staff_id",
+            unique=True,
+            sqlite_where=text("staff_id IS NOT NULL"),
+            postgresql_where=text("staff_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_admin_services_agent_title_general",
+            "agent_id",
+            "title",
+            unique=True,
+            sqlite_where=text("staff_id IS NULL"),
+            postgresql_where=text("staff_id IS NULL"),
+        ),
         Index("ix_admin_services_agent_role_active", "agent_id", "target_role", "is_active"),
         {"extend_existing": True},
     )

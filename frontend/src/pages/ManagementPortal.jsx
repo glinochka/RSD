@@ -202,9 +202,9 @@ function SalesContactRow({ contact, busy, onSaveRow, onInvoice }) {
             type="button"
             className="btn btn-sm btn-outline"
             disabled={!!busy}
-            onClick={() => onInvoice(contact.id)}
+            onClick={() => onInvoice(contact)}
           >
-            Счёт
+            Чек
           </button>
         </div>
       </td>
@@ -275,6 +275,13 @@ const ManagementPortal = () => {
   });
   const [salesManualContact, setSalesManualContact] = useState({ org_name: '', label: '' });
   const [salesTeamBusy, setSalesTeamBusy] = useState(null);
+  const [salesInvoiceModal, setSalesInvoiceModal] = useState({
+    open: false,
+    contact: null,
+    amountRub: '10000',
+    serviceName: '',
+    clientInn: '',
+  });
   const [stats, setStats] = useState(null);
   const [activeSection, setActiveSection] = useState('overview');
   const [error, setError] = useState('');
@@ -2228,20 +2235,53 @@ const ManagementPortal = () => {
     }
   };
 
-  const handleSalesInvoiceDownload = async (contactId) => {
-    if (!salesToken) return;
+  const openSalesInvoiceModal = (contact) => {
+    const org = contact?.org_name || '';
+    setSalesInvoiceModal({
+      open: true,
+      contact,
+      amountRub: '10000',
+      serviceName: org ? `Услуги RSD для ${org}` : '',
+      clientInn: '',
+    });
+  };
+
+  const closeSalesInvoiceModal = () => {
+    setSalesInvoiceModal({
+      open: false,
+      contact: null,
+      amountRub: '10000',
+      serviceName: '',
+      clientInn: '',
+    });
+  };
+
+  const handleSalesInvoiceSubmit = async (e) => {
+    e.preventDefault();
+    if (!salesToken || !salesInvoiceModal.contact) return;
+    const contactId = salesInvoiceModal.contact.id;
+    const amount = Number(String(salesInvoiceModal.amountRub).replace(',', '.'));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setSalesDeskError('Укажите корректную сумму в рублях');
+      return;
+    }
     try {
       setSalesTeamBusy(`invoice-${contactId}`);
       setSalesDeskError('');
-      const blob = await salesService.downloadInvoice(salesToken, contactId);
+      const { blob, receiptUuid } = await salesService.createInvoice(salesToken, contactId, {
+        amountRub: amount,
+        serviceName: salesInvoiceModal.serviceName.trim() || undefined,
+        clientInn: salesInvoiceModal.clientInn.trim() || undefined,
+      });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `schet_${contactId}.docx`;
+      a.download = `chek_${contactId}${receiptUuid ? `_${receiptUuid.slice(0, 8)}` : ''}.pdf`;
       document.body.appendChild(a);
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
+      closeSalesInvoiceModal();
     } catch (err) {
       setSalesDeskError(formatError(err));
     } finally {
@@ -2535,7 +2575,7 @@ const ManagementPortal = () => {
                       contact={c}
                       busy={salesTeamBusy}
                       onSaveRow={handleSalesSaveContact}
-                      onInvoice={handleSalesInvoiceDownload}
+                      onInvoice={openSalesInvoiceModal}
                     />
                   ))}
                   {salesContacts.items.length === 0 && (
@@ -2546,6 +2586,73 @@ const ManagementPortal = () => {
                 </tbody>
               </table>
             </div>
+            {salesInvoiceModal.open && salesInvoiceModal.contact && (
+              <div className="management-modal-overlay" onClick={closeSalesInvoiceModal}>
+                <div className="management-modal" onClick={(ev) => ev.stopPropagation()}>
+                  <h3>Чек «Мой налог»</h3>
+                  <p className="management-modal-hint">
+                    Будет зарегистрирован доход самозанятого в «Мой налог» и скачан PDF чека.
+                    Контакт: {salesInvoiceModal.contact.org_name || `#${salesInvoiceModal.contact.id}`}
+                  </p>
+                  <form className="management-form-grid" onSubmit={handleSalesInvoiceSubmit}>
+                    <label>
+                      Сумма, ₽
+                      <input
+                        type="number"
+                        min="1"
+                        step="0.01"
+                        required
+                        value={salesInvoiceModal.amountRub}
+                        onChange={(ev) =>
+                          setSalesInvoiceModal((p) => ({ ...p, amountRub: ev.target.value }))
+                        }
+                      />
+                    </label>
+                    <label>
+                      Наименование услуги
+                      <input
+                        type="text"
+                        maxLength={512}
+                        value={salesInvoiceModal.serviceName}
+                        onChange={(ev) =>
+                          setSalesInvoiceModal((p) => ({ ...p, serviceName: ev.target.value }))
+                        }
+                        placeholder="Услуги RSD для …"
+                      />
+                    </label>
+                    <label>
+                      ИНН организации (необязательно)
+                      <input
+                        type="text"
+                        maxLength={12}
+                        value={salesInvoiceModal.clientInn}
+                        onChange={(ev) =>
+                          setSalesInvoiceModal((p) => ({ ...p, clientInn: ev.target.value }))
+                        }
+                        placeholder="10 или 12 цифр для юрлица"
+                      />
+                    </label>
+                    <div className="management-modal-buttons">
+                      <button
+                        type="button"
+                        className="btn btn-outline"
+                        onClick={closeSalesInvoiceModal}
+                        disabled={!!salesTeamBusy}
+                      >
+                        Отмена
+                      </button>
+                      <button
+                        type="submit"
+                        className="btn btn-black"
+                        disabled={!!salesTeamBusy}
+                      >
+                        {salesTeamBusy?.startsWith('invoice-') ? 'Создание…' : 'Создать и скачать PDF'}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
           </>
         )}
       </>

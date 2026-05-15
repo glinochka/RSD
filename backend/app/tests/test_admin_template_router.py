@@ -89,6 +89,63 @@ async def test_admin_template_cards_endpoints(client: AsyncClient, auth_headers)
 
 
 @pytest.mark.asyncio
+async def test_admin_template_service_same_title_different_staff(client: AsyncClient, auth_headers):
+    agent_id = await _create_admin_agent(client, auth_headers)
+
+    staff_one = (
+        await client.post(
+            "/api/agents/admin_template/staff",
+            headers=auth_headers,
+            json={
+                "agent_id": agent_id,
+                "role": "doctor",
+                "full_name": "Ivan Doctor",
+            },
+        )
+    ).json()
+    staff_two = (
+        await client.post(
+            "/api/agents/admin_template/staff",
+            headers=auth_headers,
+            json={
+                "agent_id": agent_id,
+                "role": "doctor",
+                "full_name": "Petr Doctor",
+            },
+        )
+    ).json()
+
+    first = await client.post(
+        "/api/agents/admin_template/services",
+        headers=auth_headers,
+        json={
+            "agent_id": agent_id,
+            "target_role": "doctor",
+            "staff_id": staff_one["id"],
+            "title": "Чистка",
+            "duration_minutes": 60,
+            "price_minor": 1000000,
+        },
+    )
+    assert first.status_code == 201, first.text
+
+    second = await client.post(
+        "/api/agents/admin_template/services",
+        headers=auth_headers,
+        json={
+            "agent_id": agent_id,
+            "target_role": "doctor",
+            "staff_id": staff_two["id"],
+            "title": "Чистка",
+            "duration_minutes": 60,
+            "price_minor": 1000000,
+        },
+    )
+    assert second.status_code == 201, second.text
+    assert second.json()["staff_id"] == staff_two["id"]
+
+
+@pytest.mark.asyncio
 async def test_admin_template_schedule_appointments_and_occupancy(client: AsyncClient, auth_headers):
     agent_id = await _create_admin_agent(client, auth_headers)
 

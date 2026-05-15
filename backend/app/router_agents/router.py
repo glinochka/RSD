@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse, Response, PlainTextResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt.exceptions import InvalidTokenError
 from sqlalchemy import Date, and_, cast, func, select
+from sqlalchemy.exc import IntegrityError
 
 from .dao import AgentChannelConnectionDAO, AgentCrmConnectionDAO, AgentDAO, AgentHttpIntegrationDAO
 from .schemas import *
@@ -1884,6 +1885,68 @@ async def _list_whatsapp_userbot_broadcast_recipients(session, analytics_namespa
     return recipients
 
 
+def _normalize_public_base_url(base_url: str | None) -> str:
+    normalized = (base_url or "").strip().rstrip("/")
+    if not normalized:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="BASE_URL не задан — без него нельзя настроить webhook Telegram",
+        )
+    if not normalized.lower().startswith("https://"):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="BASE_URL должен начинаться с https:// — Telegram принимает только HTTPS для webhook",
+        )
+    return normalized
+
+
+def _extract_telegram_api_error(exc: HTTPError) -> str:
+    try:
+        raw = exc.read().decode("utf-8")
+        payload = json.loads(raw)
+        if isinstance(payload, dict):
+            description = payload.get("description")
+            if description:
+                return str(description)
+        if raw:
+            return raw[:500]
+    except Exception:
+        pass
+    return exc.reason or f"HTTP {exc.code}"
+
+
+async def _telegram_bot_api_json(
+    bot_token: str,
+    method: str,
+    *,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    url = f"https://api.telegram.org/bot{quote(bot_token, safe='')}/{method}"
+    body = None
+    headers: dict[str, str] = {}
+    if payload is not None:
+        body = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    request = UrlRequest(url, data=body, headers=headers, method="POST")
+
+    def _fetch():
+        try:
+            with urlopen(request, timeout=15) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except HTTPError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Telegram API ({method}): {_extract_telegram_api_error(exc)}",
+            ) from exc
+        except URLError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Не удалось связаться с Telegram ({method}): {exc.reason}",
+            ) from exc
+
+    return await asyncio.get_running_loop().run_in_executor(None, _fetch)
+
+
 async def _telegram_get_me(bot_token: str) -> dict:
     url = f"https://api.telegram.org/bot{quote(bot_token, safe='')}/getMe"
 
@@ -1949,29 +2012,22 @@ async def _max_bot_get_me(bot_token: str) -> dict:
 
 
 async def _sync_telegram_bot_webhook(bot_token: str, bot_id: int, enabled: bool) -> None:
-    if not settings.BASE_URL:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="BASE_URL is not configured for webhook setup",
-        )
+    base_url = _normalize_public_base_url(settings.BASE_URL)
     if enabled:
-        webhook_url = f"{settings.BASE_URL}/webhook/{bot_id}"
-        request_url = (
-            f"https://api.telegram.org/bot{quote(bot_token, safe='')}/setWebhook"
-            f"?url={quote(webhook_url, safe='')}&drop_pending_updates=true"
+        webhook_url = f"{base_url}/webhook/{bot_id}"
+        result = await _telegram_bot_api_json(
+            bot_token,
+            "setWebhook",
+            payload={"url": webhook_url, "drop_pending_updates": True},
         )
     else:
-        request_url = f"https://api.telegram.org/bot{quote(bot_token, safe='')}/deleteWebhook"
+        result = await _telegram_bot_api_json(bot_token, "deleteWebhook")
 
-    def _call():
-        with urlopen(request_url, timeout=15) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-
-    result = await asyncio.get_running_loop().run_in_executor(None, _call)
     if not result or result.get("ok") is not True:
+        description = result.get("description") if isinstance(result, dict) else None
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Не удалось синхронизировать webhook Telegram: {result}",
+            detail=description or f"Не удалось синхронизировать webhook Telegram: {result}",
         )
 
 
@@ -5120,7 +5176,18 @@ async def toggle_status(
             telegram_channel = await _get_telegram_bot_channel_for_agent(session, agent.id)
             if telegram_channel and telegram_channel.encrypted_credentials:
                 agent_token = decrypt_token(telegram_channel.encrypted_credentials)
-                await _sync_telegram_bot_webhook(agent_token, int(telegram_channel.external_id), enabled=new_status)
+                try:
+                    await _sync_telegram_bot_webhook(
+                        agent_token,
+                        int(telegram_channel.external_id),
+                        enabled=new_status,
+                    )
+                except HTTPException as exc:
+                    if not new_status and exc.status_code == status.HTTP_502_BAD_GATEWAY:
+                        # Webhook may already be removed; do not block deactivation.
+                        pass
+                    else:
+                        raise
 
             channels = await _list_agent_channels(session, agent.id)
             payload = _serialize_agent(agent, include_external_api_key=True, include_encrypted_token=internal)
@@ -7168,16 +7235,25 @@ async def admin_template_services_create(
                 current_user=current_user,
                 payload=payload,
             )
-            row = await get_admin_booking_service().create_service(
-                agent_id=agent.id,
-                target_role=payload.target_role,
-                staff_id=payload.staff_id,
-                title=payload.title,
-                duration_minutes=payload.duration_minutes,
-                price_minor=payload.price_minor,
-                resource_type_filters=payload.resource_type_filters,
-                is_active=payload.is_active,
-            )
+            try:
+                row = await get_admin_booking_service().create_service(
+                    agent_id=agent.id,
+                    target_role=payload.target_role,
+                    staff_id=payload.staff_id,
+                    title=payload.title,
+                    duration_minutes=payload.duration_minutes,
+                    price_minor=payload.price_minor,
+                    resource_type_filters=payload.resource_type_filters,
+                    is_active=payload.is_active,
+                )
+            except IntegrityError as exc:
+                err = str(exc.orig)
+                if "uq_admin_services_agent_title" in err or "admin_services.agent_id" in err:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Услуга с таким названием уже существует для этого агента",
+                    ) from exc
+                raise
     return JSONResponse(content=row, status_code=status.HTTP_201_CREATED)
 
 

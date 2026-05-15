@@ -140,16 +140,11 @@ class TestAgentsCRUD:
         """Переключение статуса агента"""
         monkeypatch.setenv("BASE_URL", "https://example.com")
         
-        # При переключении с True на False будет вызван deleteWebhook
-        with patch("app.router_agents.router.urlopen") as mock_urlopen:
-            mock_response = MagicMock()
-            mock_response.read.return_value = json.dumps({"ok": True}).encode()
-            
-            mock_context = MagicMock()
-            mock_context.__enter__.return_value = mock_response
-            mock_context.__exit__.return_value = None
-            mock_urlopen.return_value = mock_context
-            
+        with patch(
+            "app.router_agents.router._telegram_bot_api_json",
+            new_callable=AsyncMock,
+            return_value={"ok": True},
+        ):
             response = await client.patch(
                 "/api/agents/toggle_status",
                 headers=auth_headers,
@@ -717,3 +712,28 @@ class TestAgentsCrm:
         assert data["health"]["provider"] == "bitrix24"
         assert data["health"]["external_id"] == "bitrix-user-42"
         assert data["crm_connection"]["provider"] == "bitrix24"
+
+
+class TestTelegramWebhookSync:
+    @pytest.mark.asyncio
+    async def test_toggle_status_surfaces_telegram_webhook_error(
+        self, client: AsyncClient, auth_headers, test_agent, monkeypatch
+    ):
+        monkeypatch.setenv("BASE_URL", "https://example.com")
+
+        with patch(
+            "app.router_agents.router._telegram_bot_api_json",
+            new_callable=AsyncMock,
+            side_effect=__import__("fastapi").HTTPException(
+                status_code=502,
+                detail="Telegram API (setWebhook): Bad Request: bad webhook: HTTPS URL must be provided",
+            ),
+        ):
+            response = await client.patch(
+                "/api/agents/toggle_status",
+                headers=auth_headers,
+                json={"bot_id": test_agent.bot_id},
+            )
+
+        assert response.status_code == 502
+        assert "setWebhook" in response.json()["detail"]

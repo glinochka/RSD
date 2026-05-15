@@ -38,12 +38,19 @@ const salesService = {
     return response.data;
   },
 
-  async downloadInvoice(token, contactId) {
-    const response = await salesClient.get(API_ROUTES.SALES_CONTACT_INVOICE(contactId), {
+  async createInvoice(token, contactId, { amountRub, serviceName, clientInn } = {}) {
+    const body = { amount_rub: amountRub };
+    if (serviceName) body.service_name = serviceName;
+    if (clientInn) body.client_inn = clientInn;
+    const response = await salesClient.post(API_ROUTES.SALES_CONTACT_INVOICE(contactId), body, {
       headers: { Authorization: `Bearer ${token}` },
       responseType: 'blob',
     });
-    return response.data;
+    return {
+      blob: response.data,
+      receiptUuid: response.headers['x-receipt-uuid'] || '',
+      printUrl: response.headers['x-receipt-print-url'] || '',
+    };
   },
 
   async mgmtGetTeam(token) {

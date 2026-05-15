@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy import func, select
@@ -28,12 +30,22 @@ from ..services.internal_sales import (
     WORKFLOW_STATUSES,
     ALLOCATABLE_ROLES,
 )
-from ..services.sales_invoice_docx import build_contact_invoice_docx
+from ..services.sales_moy_nalog_invoice import (
+    create_contact_receipt_pdf,
+    moy_nalog_configured,
+    persist_receipt_metadata,
+)
 from ..utils.JWT import create_access_token
 from ..utils.rate_limit import rate_limit
 from ..utils.security import get_password_hash, verify_password
 from .deps import SalesAuthContext, get_sales_auth, require_sales_rop
-from .schemas import SalesContactUpdate, SalesLoginRequest, SalesTeamMemberCreate, SalesTeamMemberUpdate
+from .schemas import (
+    SalesContactUpdate,
+    SalesInvoiceCreate,
+    SalesLoginRequest,
+    SalesTeamMemberCreate,
+    SalesTeamMemberUpdate,
+)
 
 
 router = APIRouter(tags=["sales-portal"])
@@ -195,21 +207,49 @@ async def sales_update_contact(
     return JSONResponse(content={"status": "ok", "archived": contact.archived_at is not None})
 
 
-@router.get("/contacts/{contact_id}/invoice")
-async def sales_download_invoice(
+@router.post("/contacts/{contact_id}/invoice")
+async def sales_create_invoice(
     contact_id: int,
+    payload: SalesInvoiceCreate,
     auth: SalesAuthContext = Depends(get_sales_auth),
 ):
+    if not moy_nalog_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Интеграция с «Мой налог» не настроена (MOY_NALOG_REFRESH_TOKEN или MOY_NALOG_INN + MOY_NALOG_PASSWORD)",
+        )
+
     async with async_session_maker() as session:
         contact = await session.get(SalesOutboundContact, contact_id)
         if not contact or contact.assignee_id != auth.staff_id:
             raise HTTPException(status_code=404, detail="Контакт не найден")
-        data = build_contact_invoice_docx(contact)
-    filename = f"schet_{contact_id}.docx"
+
+        try:
+            result = await asyncio.to_thread(
+                create_contact_receipt_pdf,
+                contact,
+                amount_rub=payload.amount_rub,
+                service_name=payload.service_name,
+                client_inn=payload.client_inn,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+        persist_receipt_metadata(contact, result)
+        contact.updated_at = utc_now_naive()
+        await session.commit()
+
+    filename = f"chek_{contact_id}_{result.receipt_uuid[:8]}.pdf"
     return Response(
-        content=data,
-        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        content=result.pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Receipt-Uuid": result.receipt_uuid,
+            "X-Receipt-Print-Url": result.print_url,
+        },
     )
 
 
