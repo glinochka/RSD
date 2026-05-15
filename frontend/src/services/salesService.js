@@ -23,10 +23,10 @@ const salesService = {
     return response.data;
   },
 
-  async getContacts(token, { page = 1, pageSize = 20 } = {}) {
+  async getContacts(token, { page = 1, pageSize = 20, archived = false } = {}) {
     const response = await salesClient.get(API_ROUTES.SALES_CONTACTS, {
       headers: { Authorization: `Bearer ${token}` },
-      params: { page, page_size: pageSize },
+      params: { page, page_size: pageSize, archived },
     });
     return response.data;
   },

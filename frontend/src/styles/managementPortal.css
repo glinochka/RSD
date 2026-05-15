@@ -1049,6 +1049,43 @@
   font-size: var(--font-size-sm);
 }
 
+.management-table-input.contact-lpr-field {
+  min-width: 12rem;
+  max-width: none;
+  width: 100%;
+}
+
+.management-contact-values {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px 10px;
+  align-items: flex-start;
+  max-width: 18rem;
+}
+
+.management-contact-values.management-contact-values-wrap {
+  flex-wrap: wrap;
+}
+
+.management-contact-value-chip {
+  white-space: nowrap;
+}
+
+.management-sales-contacts-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.management-sales-contacts-tabs-hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted, #6b7280);
+  flex: 1 1 100%;
+  margin: 0;
+}
+
 .management-table-textarea {
   min-width: 140px;
   max-width: 220px;

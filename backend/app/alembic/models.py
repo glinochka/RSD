@@ -958,6 +958,7 @@ class SalesTeamMember(Base):
     plan_closes_monthly: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     daily_contacts_quota: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     last_daily_allocation_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    daily_pool_alloc_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)

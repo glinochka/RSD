@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from typing import Any
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..alembic.models import SalesOutboundContact, SalesTeamMember
@@ -16,6 +16,14 @@ WORKFLOW_STATUSES = frozenset({"new", "in_progress", "demo", "closed", "rejected
 FUNNEL_API_KEYS = ("in_base", "called", "demo", "closed", "rejected", "hesitating")
 
 ALLOCATABLE_ROLES = frozenset({"trainee", "mop"})
+
+
+def first_daily_batch_size(quota: int) -> int:
+    """Первая выдача за день — половина дневной нормы (минимум 1 контакт)."""
+    q = max(0, int(quota))
+    if q <= 0:
+        return 0
+    return max(1, q // 2)
 
 
 def apply_role_default_quota(member: SalesTeamMember) -> None:
@@ -110,29 +118,59 @@ async def allocate_from_pool(
     return len(rows)
 
 
+async def archive_worked_contacts_for_assignee(
+    session: AsyncSession,
+    *,
+    member_id: int,
+    now: datetime | None = None,
+) -> int:
+    """В архив — назначенные контакты, по которым уже выставлен статус (не «новый»)."""
+    ts = now or utc_now_naive()
+    res = await session.execute(
+        update(SalesOutboundContact)
+        .where(
+            SalesOutboundContact.assignee_id == member_id,
+            SalesOutboundContact.archived_at.is_(None),
+            SalesOutboundContact.workflow_status != "new",
+        )
+        .values(archived_at=ts, updated_at=ts)
+    )
+    return int(res.rowcount or 0)
+
+
 async def ensure_daily_allocation(session: AsyncSession, member: SalesTeamMember) -> int:
-    """Выдача дневной нормы из общего пула (раз в календарный день UTC)."""
+    """Первая половина дневной нормы из пула при первом заходе за календарный день (UTC)."""
     role = (member.role or "").strip().lower()
     if role not in ALLOCATABLE_ROLES:
         return 0
     today = utc_today()
-    if member.last_daily_allocation_date == today:
-        return 0
+    now = utc_now_naive()
     quota = effective_daily_quota(member)
     if quota <= 0:
         return 0
-    allocated = await allocate_from_pool(session, member_id=member.id, limit=quota)
-    if allocated > 0 or await pool_contacts_count(session) == 0:
+
+    if member.last_daily_allocation_date != today:
+        await archive_worked_contacts_for_assignee(session, member_id=member.id, now=now)
+        member.daily_pool_alloc_total = 0
         member.last_daily_allocation_date = today
-        member.updated_at = utc_now_naive()
-    elif quota > 0:
-        member.last_daily_allocation_date = today
-        member.updated_at = utc_now_naive()
+        member.updated_at = now
+
+    first_cap = first_daily_batch_size(quota)
+    already = int(member.daily_pool_alloc_total or 0)
+    if already >= first_cap:
+        return 0
+
+    take = min(first_cap - already, quota - already)
+    if take <= 0:
+        return 0
+    allocated = await allocate_from_pool(session, member_id=member.id, limit=take, now=now)
+    member.daily_pool_alloc_total = already + allocated
+    member.updated_at = now
     return allocated
 
 
 async def request_more_contacts(session: AsyncSession, member: SalesTeamMember) -> int:
-    """Дополнительная порция из пула, если нет необработанных (status=new) контактов."""
+    """Вторая половина дневной нормы, если у всех текущих контактов уже не статус «новый»."""
     role = (member.role or "").strip().lower()
     if role not in ALLOCATABLE_ROLES:
         return 0
@@ -145,14 +183,15 @@ async def request_more_contacts(session: AsyncSession, member: SalesTeamMember) 
     pool_left = await pool_contacts_count(session)
     if pool_left <= 0:
         raise ValueError("В общей базе нет свободных контактов")
-    return await allocate_from_pool(session, member_id=member.id, limit=quota)
-
-
-def archive_if_worked(contact: SalesOutboundContact, *, previous_status: str, now: datetime) -> None:
-    prev = (previous_status or "new").strip().lower()
-    cur = (contact.workflow_status or "new").strip().lower()
-    if prev == "new" and cur != "new" and contact.archived_at is None:
-        contact.archived_at = now
+    already = int(member.daily_pool_alloc_total or 0)
+    remaining = quota - already
+    if remaining <= 0:
+        raise ValueError("На сегодня уже выдана полная дневная норма")
+    now = utc_now_naive()
+    n = await allocate_from_pool(session, member_id=member.id, limit=remaining, now=now)
+    member.daily_pool_alloc_total = already + n
+    member.updated_at = now
+    return n
 
 
 async def subtree_member_ids(session: AsyncSession, root_id: int) -> set[int]:
@@ -235,7 +274,6 @@ async def monthly_done_counts(
 
 
 def apply_workflow_timestamps(contact: SalesOutboundContact, new_status: str, now: datetime) -> None:
-    previous = (contact.workflow_status or "new").strip().lower()
     contact.workflow_status = new_status
     if new_status != "new" and contact.called_at is None:
         contact.called_at = now
@@ -243,7 +281,6 @@ def apply_workflow_timestamps(contact: SalesOutboundContact, new_status: str, no
         contact.demo_at = now
     if new_status == "closed" and contact.closed_at is None:
         contact.closed_at = now
-    archive_if_worked(contact, previous_status=previous, now=now)
     contact.updated_at = now
 
 

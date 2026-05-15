@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import date
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from app.services.internal_sales import (
     apply_workflow_timestamps,
-    archive_if_worked,
     effective_daily_quota,
     ensure_daily_allocation,
+    first_daily_batch_size,
     request_more_contacts,
     utc_today,
 )
@@ -29,28 +28,31 @@ def test_effective_daily_quota_custom_override():
     assert effective_daily_quota(member) == 17
 
 
-def test_archive_if_worked_on_status_change():
-    contact = MagicMock(workflow_status="in_progress", archived_at=None)
-    archive_if_worked(contact, previous_status="new", now=MagicMock())
-    assert contact.archived_at is not None
+def test_first_daily_batch_size():
+    assert first_daily_batch_size(50) == 25
+    assert first_daily_batch_size(51) == 25
+    assert first_daily_batch_size(1) == 1
+    assert first_daily_batch_size(3) == 1
+    assert first_daily_batch_size(0) == 0
 
 
-def test_apply_workflow_timestamps_archives_from_new():
+def test_apply_workflow_timestamps_does_not_archive():
     contact = MagicMock(workflow_status="new", archived_at=None, called_at=None, demo_at=None, closed_at=None)
     now = MagicMock()
     apply_workflow_timestamps(contact, "rejected", now)
     assert contact.workflow_status == "rejected"
-    assert contact.archived_at == now
+    assert contact.archived_at is None
 
 
 @pytest.mark.asyncio
-async def test_ensure_daily_allocation_skips_if_already_today():
+async def test_ensure_daily_allocation_skips_if_first_batch_done():
     session = AsyncMock()
     member = MagicMock(
         id=1,
         role="trainee",
         daily_contacts_quota=0,
         last_daily_allocation_date=utc_today(),
+        daily_pool_alloc_total=30,
     )
     result = await ensure_daily_allocation(session, member)
     assert result == 0
@@ -61,6 +63,6 @@ async def test_ensure_daily_allocation_skips_if_already_today():
 async def test_request_more_requires_no_pending_new():
     session = AsyncMock()
     session.scalar = AsyncMock(return_value=2)
-    member = MagicMock(id=1, role="mop", daily_contacts_quota=0)
+    member = MagicMock(id=1, role="mop", daily_contacts_quota=0, daily_pool_alloc_total=25)
     with pytest.raises(ValueError, match="проставьте статусы"):
         await request_more_contacts(session, member)

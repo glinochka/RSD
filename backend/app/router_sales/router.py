@@ -86,11 +86,13 @@ async def sales_me(auth: SalesAuthContext = Depends(get_sales_auth)):
             if (member.role or "").strip().lower() in ALLOCATABLE_ROLES:
                 daily_allocated = await ensure_daily_allocation(session, member)
             done = await monthly_done_counts(session, member.id, ms)
-            funnel = await funnel_counts(session, [member.id])
+            funnel = await funnel_counts(session, [member.id], include_archived=False)
             pending = await pending_new_count(session, member.id)
             pool_size = await pool_contacts_count(session)
         backlog = pending
     role = (member.role or "").strip().lower()
+    quota_now = effective_daily_quota(member)
+    alloc_total = int(getattr(member, "daily_pool_alloc_total", 0) or 0)
     return JSONResponse(
         content={
             "member": member_public_dict(member),
@@ -99,14 +101,20 @@ async def sales_me(auth: SalesAuthContext = Depends(get_sales_auth)):
                 "demos_monthly": member.plan_demos_monthly,
                 "closes_monthly": member.plan_closes_monthly,
                 "daily_contacts_quota": member.daily_contacts_quota,
-                "effective_daily_quota": effective_daily_quota(member),
+                "effective_daily_quota": quota_now,
             },
             "achievement_month": done,
             "funnel_assigned": funnel,
             "backlog_in_base": backlog,
             "crm_pool_available": pool_size,
             "pending_new_contacts": pending,
-            "can_request_more": role in ALLOCATABLE_ROLES and pending == 0 and pool_size > 0,
+            "daily_pool_allocated": alloc_total,
+            "can_request_more": (
+                role in ALLOCATABLE_ROLES
+                and pending == 0
+                and pool_size > 0
+                and alloc_total < quota_now
+            ),
             "daily_allocated_now": daily_allocated,
         }
     )
@@ -117,6 +125,7 @@ async def sales_list_contacts(
     auth: SalesAuthContext = Depends(get_sales_auth),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    archived: bool = Query(False, description="Архив (за прошлые дни) или активные"),
 ):
     async with async_session_maker() as session:
         async with session.begin():
@@ -125,17 +134,19 @@ async def sales_list_contacts(
                 raise HTTPException(status_code=401, detail="Не авторизован")
             if (member.role or "").strip().lower() in ALLOCATABLE_ROLES:
                 await ensure_daily_allocation(session, member)
-        base_filter = (
-            SalesOutboundContact.assignee_id == auth.staff_id,
-            SalesOutboundContact.archived_at.is_(None),
-        )
+        base_filter = [SalesOutboundContact.assignee_id == auth.staff_id]
+        if archived:
+            base_filter.append(SalesOutboundContact.archived_at.is_not(None))
+        else:
+            base_filter.append(SalesOutboundContact.archived_at.is_(None))
         total = await session.scalar(
             select(func.count(SalesOutboundContact.id)).where(*base_filter)
         )
+        order_col = SalesOutboundContact.archived_at if archived else SalesOutboundContact.id
         q = (
             select(SalesOutboundContact)
             .where(*base_filter)
-            .order_by(SalesOutboundContact.id.desc())
+            .order_by(order_col.desc())
             .offset((page - 1) * page_size)
             .limit(page_size)
         )
@@ -221,7 +232,11 @@ async def sales_create_invoice(
 
     async with async_session_maker() as session:
         contact = await session.get(SalesOutboundContact, contact_id)
-        if not contact or contact.assignee_id != auth.staff_id:
+        if (
+            not contact
+            or contact.assignee_id != auth.staff_id
+            or contact.archived_at is not None
+        ):
             raise HTTPException(status_code=404, detail="Контакт не найден")
 
         try:

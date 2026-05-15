@@ -108,7 +108,32 @@ function SalesMemberPlanRow({
   );
 }
 
-function SalesContactRow({ contact, busy, onSaveRow, onInvoice }) {
+function splitContactTokens(raw) {
+  if (raw == null || String(raw).trim() === '') return [];
+  return String(raw)
+    .split(/[,;|/\n]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function SalesContactTokens({ value }) {
+  const parts = splitContactTokens(value);
+  if (!parts.length) return <span>—</span>;
+  const wrap = parts.length > 2;
+  return (
+    <div
+      className={`management-contact-values${wrap ? ' management-contact-values-wrap' : ''}`}
+    >
+      {parts.map((p, i) => (
+        <span key={i} className="management-contact-value-chip">
+          {p}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function SalesContactRow({ contact, busy, onSaveRow, onInvoice, readOnly = false }) {
   const [lprName, setLprName] = useState(contact.lpr_name || '');
   const [lprPhone, setLprPhone] = useState(contact.lpr_phone || '');
   const [comment, setComment] = useState(contact.comment || '');
@@ -145,68 +170,100 @@ function SalesContactRow({ contact, busy, onSaveRow, onInvoice }) {
       <td>{contact.id}</td>
       <td>{contact.org_name || '—'}</td>
       <td>
-        <input
-          type="text"
-          className="management-table-input"
-          value={lprName}
-          onChange={(e) => setLprName(e.target.value)}
-          placeholder="ФИО ЛПР"
-        />
+        {readOnly ? (
+          <span title={lprName || ''}>{lprName || '—'}</span>
+        ) : (
+          <input
+            type="text"
+            className="management-table-input contact-lpr-field"
+            value={lprName}
+            onChange={(e) => setLprName(e.target.value)}
+            placeholder="ФИО ЛПР"
+          />
+        )}
       </td>
       <td>
-        <input
-          type="text"
-          className="management-table-input"
-          value={lprPhone}
-          onChange={(e) => setLprPhone(e.target.value)}
-          placeholder="Телефон ЛПР"
-        />
-      </td>
-      <td>{contact.org_phone || '—'}</td>
-      <td>{contact.org_mobile || '—'}</td>
-      <td className="management-cell-muted" style={{ maxWidth: '120px' }} title={contact.import_status || ''}>
-        {contact.import_status || '—'}
-      </td>
-      <td>
-        <select
-          value={status}
-          onChange={(e) => setStatus(e.target.value)}
-          className="management-table-input"
-        >
-          {Object.entries(WORKFLOW_STATUS_LABELS).map(([k, lab]) => (
-            <option key={k} value={k}>{lab}</option>
-          ))}
-        </select>
+        {readOnly ? (
+          <span title={lprPhone || ''}>{lprPhone || '—'}</span>
+        ) : (
+          <input
+            type="text"
+            className="management-table-input contact-lpr-field"
+            value={lprPhone}
+            onChange={(e) => setLprPhone(e.target.value)}
+            placeholder="Телефон ЛПР"
+          />
+        )}
       </td>
       <td>
-        <textarea
-          className="management-table-textarea"
-          rows={2}
-          value={comment}
-          onChange={(e) => setComment(e.target.value)}
-          placeholder="Комментарий"
-        />
-      </td>
-      <td style={{ maxWidth: '140px', wordBreak: 'break-all' }}>{contact.email || '—'}</td>
-      <td style={{ maxWidth: '120px', wordBreak: 'break-all' }}>
-        {site ? (
-          <a href={siteHref} target="_blank" rel="noopener noreferrer">{site}</a>
-        ) : '—'}
+        <SalesContactTokens value={contact.org_phone} />
       </td>
       <td>
-        <div className="management-sales-contact-actions">
-          <button type="button" className="btn btn-sm btn-black" disabled={!!busy} onClick={save}>
-            Сохранить
-          </button>
-          <button
-            type="button"
-            className="btn btn-sm btn-outline"
-            disabled={!!busy}
-            onClick={() => onInvoice(contact)}
+        <SalesContactTokens value={contact.org_mobile} />
+      </td>
+      <td>
+        {readOnly ? (
+          WORKFLOW_STATUS_LABELS[status] || status
+        ) : (
+          <select
+            value={status}
+            onChange={(e) => setStatus(e.target.value)}
+            className="management-table-input"
           >
-            Чек
-          </button>
-        </div>
+            {Object.entries(WORKFLOW_STATUS_LABELS).map(([k, lab]) => (
+              <option key={k} value={k}>{lab}</option>
+            ))}
+          </select>
+        )}
+      </td>
+      <td>
+        {readOnly ? (
+          <span style={{ whiteSpace: 'pre-wrap' }}>{comment || '—'}</span>
+        ) : (
+          <textarea
+            className="management-table-textarea"
+            rows={2}
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+            placeholder="Комментарий"
+          />
+        )}
+      </td>
+      <td>
+        <SalesContactTokens value={contact.email} />
+      </td>
+      <td>
+        {site ? (
+          <a
+            href={siteHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn btn-sm btn-outline"
+          >
+            Перейти
+          </a>
+        ) : (
+          <span>—</span>
+        )}
+      </td>
+      <td>
+        {!readOnly ? (
+          <div className="management-sales-contact-actions">
+            <button type="button" className="btn btn-sm btn-black" disabled={!!busy} onClick={save}>
+              Сохранить
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm btn-outline"
+              disabled={!!busy}
+              onClick={() => onInvoice(contact)}
+            >
+              Чек
+            </button>
+          </div>
+        ) : (
+          <span className="management-cell-muted">—</span>
+        )}
       </td>
     </tr>
   );
@@ -261,6 +318,7 @@ const ManagementPortal = () => {
     totalPages: 1,
     total: 0,
   });
+  const [salesContactsScope, setSalesContactsScope] = useState('active');
   const [salesDeskLoading, setSalesDeskLoading] = useState(false);
   const [salesDeskError, setSalesDeskError] = useState('');
 
@@ -704,6 +762,7 @@ const ManagementPortal = () => {
     if (!salesToken) {
       setSalesMe(null);
       setSalesContacts({ items: [], page: 1, totalPages: 1, total: 0 });
+      setSalesContactsScope('active');
       return;
     }
     let cancelled = false;
@@ -715,7 +774,11 @@ const ManagementPortal = () => {
         if (cancelled) return;
         setSalesMe(me);
         if (salesSection === 'desk') {
-          const cdata = await salesService.getContacts(salesToken, { page: 1, pageSize: 50 });
+          const cdata = await salesService.getContacts(salesToken, {
+            page: 1,
+            pageSize: 50,
+            archived: salesContactsScope === 'archive',
+          });
           if (cancelled) return;
           setSalesContacts({
             items: cdata.items ?? [],
@@ -745,7 +808,7 @@ const ManagementPortal = () => {
     };
     load();
     return () => { cancelled = true; };
-  }, [salesToken, salesSection]);
+  }, [salesToken, salesSection, salesContactsScope]);
 
   const handleApSaveSettings = async (e) => {
     e.preventDefault();
@@ -2194,7 +2257,11 @@ const ManagementPortal = () => {
       setSalesTeamBusy(`save-contact-${contactId}`);
       setSalesDeskError('');
       await salesService.patchContact(salesToken, contactId, body);
-      const cdata = await salesService.getContacts(salesToken, { page: 1, pageSize: 50 });
+      const cdata = await salesService.getContacts(salesToken, {
+        page: 1,
+        pageSize: 50,
+        archived: salesContactsScope === 'archive',
+      });
       setSalesContacts({
         items: cdata.items ?? [],
         page: cdata.page ?? 1,
@@ -2217,7 +2284,11 @@ const ManagementPortal = () => {
       setSalesDeskError('');
       const res = await salesService.requestMoreContacts(salesToken);
       const [cdata, me] = await Promise.all([
-        salesService.getContacts(salesToken, { page: 1, pageSize: 50 }),
+        salesService.getContacts(salesToken, {
+          page: 1,
+          pageSize: 50,
+          archived: salesContactsScope === 'archive',
+        }),
         salesService.getMe(salesToken),
       ]);
       setSalesContacts({
@@ -2347,8 +2418,9 @@ const ManagementPortal = () => {
       <div className="management-content-head">
         <h2>Отдел продаж</h2>
         <p className="management-cell-muted">
-          Общая локальная CRM: Excel и ручные контакты попадают в пул. Стажёру и МОПу контакты выдаются
-          ежедневно (по умолчанию 30 / 50). Отработанные уходят в архив.
+          Общая локальная CRM: Excel и ручные контакты попадают в пул. Стажёру и МОПу сначала выдаётся
+          половина дневной нормы (лимит задаёт админ или РОП). После проставления статусов всем в первой
+          порции можно подгрузить остаток нормы. Раз в сутки (UTC) отработанные контакты уходят в архив при новой выдаче.
         </p>
       </div>
       {error && activeSection === 'salesDepartment' && <div className="management-error">{error}</div>}
@@ -2524,7 +2596,13 @@ const ManagementPortal = () => {
               </div>
               <div className="management-stat-card">
                 <span>Норма в день</span>
-                <strong>{p?.effective_daily_quota ?? p?.daily_contacts_quota ?? 0}</strong>
+                <strong>
+                  {salesMe?.plan?.effective_daily_quota ?? 0}
+                </strong>
+                <span className="management-cell-muted" style={{ fontSize: 'var(--font-size-xs)', display: 'block', marginTop: 4 }}>
+                  Из пула сегодня: {salesMe?.daily_pool_allocated ?? 0} / {salesMe?.plan?.effective_daily_quota ?? 0}
+                  . Сначала половина нормы; когда всем проставлены статусы — кнопка ниже.
+                </span>
               </div>
               <div className="management-stat-card">
                 <span>Новых в работе</span>
@@ -2543,13 +2621,32 @@ const ManagementPortal = () => {
                   disabled={salesTeamBusy === 'request-more'}
                   onClick={handleSalesRequestMore}
                 >
-                  {salesTeamBusy === 'request-more' ? 'Загрузка...' : 'Подгрузить ещё контакты'}
+                  {salesTeamBusy === 'request-more' ? 'Загрузка...' : 'Подгрузить вторую половину нормы'}
                 </button>
               </div>
             )}
             <h3 style={{ marginTop: '1.5rem' }}>Моя воронка</h3>
             {renderFunnelSummary(salesMe?.funnel_assigned)}
             <h3 style={{ marginTop: '1.5rem' }}>Мои контакты</h3>
+            <div className="management-sales-contacts-tabs">
+              <button
+                type="button"
+                className={salesContactsScope === 'active' ? 'btn btn-sm btn-black' : 'btn btn-sm btn-outline'}
+                onClick={() => setSalesContactsScope('active')}
+              >
+                Активные
+              </button>
+              <button
+                type="button"
+                className={salesContactsScope === 'archive' ? 'btn btn-sm btn-black' : 'btn btn-sm btn-outline'}
+                onClick={() => setSalesContactsScope('archive')}
+              >
+                Архив
+              </button>
+              <p className="management-sales-contacts-tabs-hint">
+                В архиве контакты со сменённым статусом после нового дня (UTC). Активные — текущая работа.
+              </p>
+            </div>
             <div className="management-table-wrap management-table-wide">
               <table className="management-table">
                 <thead>
@@ -2560,7 +2657,6 @@ const ManagementPortal = () => {
                     <th>Тел. ЛПР</th>
                     <th>Тел. орг.</th>
                     <th>Моб.</th>
-                    <th>Статус (файл)</th>
                     <th>Статус</th>
                     <th>Комментарий</th>
                     <th>Email</th>
@@ -2576,11 +2672,16 @@ const ManagementPortal = () => {
                       busy={salesTeamBusy}
                       onSaveRow={handleSalesSaveContact}
                       onInvoice={openSalesInvoiceModal}
+                      readOnly={salesContactsScope === 'archive'}
                     />
                   ))}
                   {salesContacts.items.length === 0 && (
                     <tr>
-                      <td colSpan={12}>Контактов нет — РОП/админ загрузит Excel или добавит вручную.</td>
+                      <td colSpan={11}>
+                        {salesContactsScope === 'archive'
+                          ? 'Архив пуст.'
+                          : 'Контактов нет — РОП/админ загрузит Excel или добавит вручную.'}
+                      </td>
                     </tr>
                   )}
                 </tbody>
