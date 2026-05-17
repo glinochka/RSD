@@ -326,9 +326,10 @@ const adminService = {
     return response.data;
   },
 
-  async salesGetTeam(token) {
+  async salesGetTeam(token, { includeInactive = false } = {}) {
     const response = await adminClient.get(API_ROUTES.ADMIN_SALES_TEAM, {
       headers: { Authorization: `Bearer ${token}` },
+      params: { include_inactive: includeInactive || undefined },
     });
     return response.data;
   },
@@ -347,9 +348,10 @@ const adminService = {
     return response.data;
   },
 
-  async salesGetFunnel(token) {
+  async salesGetFunnel(token, { period = 'all' } = {}) {
     const response = await adminClient.get(API_ROUTES.ADMIN_SALES_FUNNEL, {
       headers: { Authorization: `Bearer ${token}` },
+      params: { period },
     });
     return response.data;
   },
@@ -366,10 +368,10 @@ const adminService = {
     return response.data;
   },
 
-  async salesAddContactManual(token, { org_name, label }) {
+  async salesAddContactManual(token, body) {
     const response = await adminClient.post(
       API_ROUTES.ADMIN_SALES_CONTACT_MANUAL,
-      { org_name: org_name || '', label: label || '' },
+      body,
       { headers: { Authorization: `Bearer ${token}` } }
     );
     return response.data;

@@ -3055,19 +3055,6 @@ async def internal_process_message(
                 status_code=status.HTTP_200_OK,
             )
 
-    if payload.image_base64:
-        mime = ((payload.image_mime_type or "image/jpeg").strip() or "image/jpeg")
-        raw_img = (payload.image_base64 or "").strip()
-        try:
-            img_bytes = base64.b64decode(raw_img, validate=True)
-        except Exception:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid image_base64")
-        if len(img_bytes) > int(settings.IMAGE_MAX_BYTES):
-            raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="image payload too large")
-        runtime_ctx["vision_image_data_url"] = f"data:{mime};base64,{raw_img}"
-        if not query_text:
-            query_text = "[Изображение без текстовой подписи]"
-
     query_text = query_text.strip()
     if not query_text:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Empty query after processing")

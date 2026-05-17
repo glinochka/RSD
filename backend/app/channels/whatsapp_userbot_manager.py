@@ -114,22 +114,22 @@ def _extract_text(message: dict[str, Any]) -> str:
 
 
 def _whatsapp_media_kind(inner: dict[str, Any]) -> str | None:
-    """Baileys message content kind for multimodal handling."""
+    """Baileys message content kind: audio for STT, or unsupported visual media."""
     if not isinstance(inner, dict):
         return None
     if inner.get("imageMessage") is not None:
-        return "image"
+        return "unsupported"
     if inner.get("stickerMessage") is not None:
-        return "image"
+        return "unsupported"
     if inner.get("audioMessage") is not None:
         return "audio"
     if inner.get("videoMessage") is not None:
-        return "video"
+        return "unsupported"
     dm = inner.get("documentMessage")
     if isinstance(dm, dict):
         mt = str(dm.get("mimetype") or "").lower()
         if mt.startswith("image/"):
-            return "image"
+            return "unsupported"
         if mt.startswith("audio/"):
             return "audio"
     return None
@@ -206,32 +206,39 @@ async def _process_incoming(cfg: dict[str, Any], incoming: dict[str, Any]) -> No
 
     runtime_ctx: dict[str, Any] = {}
     query = text
+    _unsupported_media_reply = (
+        "Спасибо, что написали! Пока я лучше всего понимаю текст и голосовые — "
+        "с картинками и файлами, к сожалению, ещё не справляюсь. "
+        "Напишите, пожалуйста, словами или отправьте голосовое — с радостью помогу."
+    )
 
-    if kind == "video":
-        query = text or "[Видео без текстовой подписи]"
-    elif kind == "image":
-        if wa_full is None:
-            if not text:
-                logger.warning(
-                    "whatsapp_userbot: image without wa_message (deploy wa_bridge with session/download_media)"
-                )
-                return
+    if kind == "unsupported":
+        if text:
+            query = text
         else:
-            downloaded = await _bridge_download_media(connection_id, wa_full)
-            if downloaded:
-                raw, mime = downloaded
-                if len(raw) > int(settings.IMAGE_MAX_BYTES):
-                    query = (
-                        f"{text}\n\n(Вложенное изображение слишком большое.)".strip()
-                        if text
-                        else "Изображение слишком большое для обработки."
-                    )
-                else:
-                    b64 = base64.standard_b64encode(raw).decode("ascii")
-                    runtime_ctx["vision_image_data_url"] = f"data:{mime};base64,{b64}"
-                    query = text or "[Изображение без подписи]"
-            elif not text:
-                return
+            await _bridge_post_best_effort(
+                "session/read",
+                {
+                    "connection_id": connection_id,
+                    "remote_jid": remote_jid,
+                    "message_id": incoming.get("id"),
+                },
+            )
+            try:
+                await _bridge_post(
+                    "session/send",
+                    {
+                        "connection_id": connection_id,
+                        "to_jid": remote_jid,
+                        "text": _unsupported_media_reply,
+                    },
+                )
+            except Exception:
+                logger.exception(
+                    "whatsapp_userbot: failed to send unsupported-media notice connection_id=%s",
+                    connection_id,
+                )
+            return
     elif kind == "audio":
         if wa_full is None:
             if not text:

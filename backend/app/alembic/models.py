@@ -959,6 +959,7 @@ class SalesTeamMember(Base):
     daily_contacts_quota: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     last_daily_allocation_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     daily_pool_alloc_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    daily_allocation_events: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
@@ -974,7 +975,6 @@ class SalesTeamMember(Base):
     )
     outreach_contacts: Mapped[list["SalesOutboundContact"]] = relationship(
         back_populates="assignee",
-        cascade="all, delete-orphan",
     )
 
 
@@ -1001,6 +1001,7 @@ class SalesOutboundContact(Base):
     assigned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     workflow_status: Mapped[str] = mapped_column(String(32), nullable=False, default="new", server_default="new")
+    dedup_key: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     org_name: Mapped[str] = mapped_column(String(512), nullable=False, default="", server_default="")
     lpr_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
     lpr_phone: Mapped[str | None] = mapped_column(String(256), nullable=True)

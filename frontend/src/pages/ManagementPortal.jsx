@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
 import adminService from '../services/adminService';
 import salesService from '../services/salesService';
 import { ENV_CONFIG } from '../config/environment';
@@ -27,30 +27,122 @@ const WORKFLOW_STATUS_LABELS = {
   hesitating: 'Сомневается',
 };
 
+const FUNNEL_PERIOD_OPTIONS = [
+  { id: 'day', label: 'За день' },
+  { id: 'week', label: 'За неделю' },
+  { id: 'month', label: 'За месяц' },
+  { id: 'all', label: 'За всё время' },
+];
+
+const FUNNEL_PERIOD_HINTS = {
+  day: 'Контакты с активностью сегодня: назначение, смена статуса или уход в архив.',
+  week: 'Активность за последние 7 календарных дней (Europe/Moscow).',
+  month: 'Активность с 1-го числа текущего месяца.',
+  all: 'Все когда-либо назначенные контакты, включая архив (итоговый статус).',
+};
+
+function FunnelPeriodPicker({ value, onChange, ariaLabel = 'Период воронки' }) {
+  return (
+    <div className="management-sales-funnel-period" role="tablist" aria-label={ariaLabel}>
+      {FUNNEL_PERIOD_OPTIONS.map((opt) => (
+        <button
+          key={opt.id}
+          type="button"
+          role="tab"
+          aria-selected={value === opt.id}
+          className={`management-sales-funnel-period-btn${value === opt.id ? ' active' : ''}`}
+          onClick={() => onChange(opt.id)}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function SalesMemberPlanRow({
   member,
   onSave,
+  onDeactivate,
   busy,
   showSupervisor = true,
+  allowRopRole = true,
+  supervisorOptions = [],
 }) {
   const [calls, setCalls] = useState(member.plan_calls_monthly ?? 0);
   const [demos, setDemos] = useState(member.plan_demos_monthly ?? 0);
   const [closes, setCloses] = useState(member.plan_closes_monthly ?? 0);
   const [daily, setDaily] = useState(member.daily_contacts_quota ?? 0);
+  const [role, setRole] = useState(member.role || 'trainee');
+  const [supervisorId, setSupervisorId] = useState(
+    member.supervisor_id != null ? String(member.supervisor_id) : ''
+  );
+  const [password, setPassword] = useState('');
 
   useEffect(() => {
     setCalls(member.plan_calls_monthly ?? 0);
     setDemos(member.plan_demos_monthly ?? 0);
     setCloses(member.plan_closes_monthly ?? 0);
     setDaily(member.daily_contacts_quota ?? 0);
+    setRole(member.role || 'trainee');
+    setSupervisorId(member.supervisor_id != null ? String(member.supervisor_id) : '');
+    setPassword('');
   }, [member]);
 
+  const savePatch = () => {
+    const patch = {
+      plan_calls_monthly: calls,
+      plan_demos_monthly: demos,
+      plan_closes_monthly: closes,
+      daily_contacts_quota: daily,
+      role,
+    };
+    const sup = supervisorId.trim();
+    patch.supervisor_id = sup === '' ? null : Number(sup);
+    if (password.trim()) {
+      patch.password = password.trim();
+    }
+    onSave(member.id, patch);
+  };
+
   return (
-    <tr>
+    <tr className={member.is_active === false ? 'management-row-muted' : undefined}>
       <td>{member.id}</td>
-      <td>{member.login}</td>
-      <td>{SALES_ROLE_LABELS[member.role] || member.role}</td>
-      {showSupervisor && <td>{member.supervisor_id ?? '—'}</td>}
+      <td>
+        {member.login}
+        {member.is_active === false && (
+          <span className="management-cell-muted"> (отключён)</span>
+        )}
+      </td>
+      <td>
+        <select
+          className="management-table-input"
+          value={role}
+          disabled={member.is_active === false}
+          onChange={(e) => setRole(e.target.value)}
+        >
+          <option value="trainee">Стажер</option>
+          <option value="mop">МОП</option>
+          {allowRopRole && <option value="rop">РОП</option>}
+        </select>
+      </td>
+      {showSupervisor && (
+        <td>
+          <select
+            className="management-table-input management-supervisor-select"
+            value={supervisorId}
+            disabled={member.is_active === false || role === 'rop'}
+            onChange={(e) => setSupervisorId(e.target.value)}
+          >
+            <option value="">—</option>
+            {supervisorOptions.map((opt) => (
+              <option key={opt.id} value={String(opt.id)}>
+                {opt.login} ({SALES_ROLE_LABELS[opt.role] || opt.role})
+              </option>
+            ))}
+          </select>
+        </td>
+      )}
       <td>
         <input
           className="management-inline-num"
@@ -88,21 +180,36 @@ function SalesMemberPlanRow({
         />
       </td>
       <td>
-        <button
-          type="button"
-          className="btn btn-sm btn-black"
-          disabled={!!busy}
-          onClick={() =>
-            onSave(member.id, {
-              plan_calls_monthly: calls,
-              plan_demos_monthly: demos,
-              plan_closes_monthly: closes,
-              daily_contacts_quota: daily,
-            })
-          }
-        >
-          {busy ? '…' : 'Сохранить'}
-        </button>
+        <input
+          type="password"
+          className="management-table-input"
+          value={password}
+          disabled={member.is_active === false}
+          placeholder="новый пароль"
+          onChange={(e) => setPassword(e.target.value)}
+        />
+      </td>
+      <td>
+        <div className="management-sales-member-actions">
+          <button
+            type="button"
+            className="btn btn-sm btn-black"
+            disabled={!!busy || member.is_active === false}
+            onClick={savePatch}
+          >
+            {busy ? '…' : 'Сохранить'}
+          </button>
+          {member.is_active !== false && onDeactivate && (
+            <button
+              type="button"
+              className="btn btn-sm btn-outline"
+              disabled={!!busy}
+              onClick={() => onDeactivate(member)}
+            >
+              Отключить
+            </button>
+          )}
+        </div>
       </td>
     </tr>
   );
@@ -119,10 +226,9 @@ function splitContactTokens(raw) {
 function SalesContactTokens({ value }) {
   const parts = splitContactTokens(value);
   if (!parts.length) return <span>—</span>;
-  const wrap = parts.length > 2;
   return (
     <div
-      className={`management-contact-values${wrap ? ' management-contact-values-wrap' : ''}`}
+      className="management-contact-values management-contact-values-wrap"
     >
       {parts.map((p, i) => (
         <span key={i} className="management-contact-value-chip">
@@ -133,7 +239,15 @@ function SalesContactTokens({ value }) {
   );
 }
 
-function SalesContactRow({ contact, busy, onSaveRow, onInvoice, readOnly = false }) {
+function SalesContactRow({
+  contact,
+  busy,
+  onSaveRow,
+  onInvoice,
+  readOnly = false,
+  statusLocked = false,
+  hideInvoice = false,
+}) {
   const [lprName, setLprName] = useState(contact.lpr_name || '');
   const [lprPhone, setLprPhone] = useState(contact.lpr_phone || '');
   const [comment, setComment] = useState(contact.comment || '');
@@ -154,12 +268,15 @@ function SalesContactRow({ contact, busy, onSaveRow, onInvoice, readOnly = false
   ]);
 
   const save = () => {
-    onSaveRow(contact.id, {
+    const body = {
       lpr_name: lprName,
       lpr_phone: lprPhone,
       comment,
-      workflow_status: status,
-    });
+    };
+    if (!statusLocked) {
+      body.workflow_status = status;
+    }
+    onSaveRow(contact.id, body);
   };
 
   const site = contact.website || '';
@@ -168,27 +285,29 @@ function SalesContactRow({ contact, busy, onSaveRow, onInvoice, readOnly = false
   return (
     <tr>
       <td>{contact.id}</td>
-      <td>{contact.org_name || '—'}</td>
+      <td className="management-desk-col-org">
+        <span className="management-desk-readonly">{contact.org_name || '—'}</span>
+      </td>
       <td>
         {readOnly ? (
-          <span title={lprName || ''}>{lprName || '—'}</span>
+          <span className="management-desk-readonly">{lprName || '—'}</span>
         ) : (
-          <input
-            type="text"
-            className="management-table-input contact-lpr-field"
+          <textarea
+            className="management-field management-field-lpr"
+            rows={2}
             value={lprName}
             onChange={(e) => setLprName(e.target.value)}
             placeholder="ФИО ЛПР"
           />
         )}
       </td>
-      <td>
+      <td className="management-desk-col-lpr">
         {readOnly ? (
-          <span title={lprPhone || ''}>{lprPhone || '—'}</span>
+          <span className="management-desk-readonly">{lprPhone || '—'}</span>
         ) : (
-          <input
-            type="text"
-            className="management-table-input contact-lpr-field"
+          <textarea
+            className="management-field management-field-lpr"
+            rows={2}
             value={lprPhone}
             onChange={(e) => setLprPhone(e.target.value)}
             placeholder="Телефон ЛПР"
@@ -202,13 +321,13 @@ function SalesContactRow({ contact, busy, onSaveRow, onInvoice, readOnly = false
         <SalesContactTokens value={contact.org_mobile} />
       </td>
       <td>
-        {readOnly ? (
+        {readOnly || statusLocked ? (
           WORKFLOW_STATUS_LABELS[status] || status
         ) : (
           <select
             value={status}
             onChange={(e) => setStatus(e.target.value)}
-            className="management-table-input"
+            className="management-field management-field-select"
           >
             {Object.entries(WORKFLOW_STATUS_LABELS).map(([k, lab]) => (
               <option key={k} value={k}>{lab}</option>
@@ -221,8 +340,8 @@ function SalesContactRow({ contact, busy, onSaveRow, onInvoice, readOnly = false
           <span style={{ whiteSpace: 'pre-wrap' }}>{comment || '—'}</span>
         ) : (
           <textarea
-            className="management-table-textarea"
-            rows={2}
+            className="management-field management-field-comment"
+            rows={3}
             value={comment}
             onChange={(e) => setComment(e.target.value)}
             placeholder="Комментарий"
@@ -252,14 +371,16 @@ function SalesContactRow({ contact, busy, onSaveRow, onInvoice, readOnly = false
             <button type="button" className="btn btn-sm btn-black" disabled={!!busy} onClick={save}>
               Сохранить
             </button>
-            <button
-              type="button"
-              className="btn btn-sm btn-outline"
-              disabled={!!busy}
-              onClick={() => onInvoice(contact)}
-            >
-              Чек
-            </button>
+            {!hideInvoice && (
+              <button
+                type="button"
+                className="btn btn-sm btn-outline"
+                disabled={!!busy}
+                onClick={() => onInvoice(contact)}
+              >
+                Чек
+              </button>
+            )}
           </div>
         ) : (
           <span className="management-cell-muted">—</span>
@@ -291,6 +412,26 @@ function formatError(error) {
   );
 }
 
+function isUnauthorizedError(error) {
+  return error?.response?.status === 401;
+}
+
+function salesContactsPageSize(salesMe) {
+  const quota = Number(salesMe?.plan?.effective_daily_quota ?? 0);
+  return Math.min(100, Math.max(50, quota > 0 ? quota * 2 : 50));
+}
+
+function supervisorPickerOptions(members, { excludeMemberId } = {}) {
+  if (!Array.isArray(members)) return [];
+  return members.filter((m) => {
+    if (m.is_active === false) return false;
+    if (excludeMemberId != null && m.id === excludeMemberId) return false;
+    return m.role === 'rop' || m.role === 'mop';
+  });
+}
+
+const SALES_CRM_CLEAR_CONFIRM = 'ОЧИСТИТЬ';
+
 function formatChatChannel(channel) {
   const map = {
     telegram: 'Telegram Bot',
@@ -321,17 +462,31 @@ const ManagementPortal = () => {
   const [salesContactsScope, setSalesContactsScope] = useState('active');
   const [salesDeskLoading, setSalesDeskLoading] = useState(false);
   const [salesDeskError, setSalesDeskError] = useState('');
+  const [salesDeskExcelMode, setSalesDeskExcelMode] = useState(false);
 
   const [salesDeptMembers, setSalesDeptMembers] = useState([]);
   const [salesDeptFunnel, setSalesDeptFunnel] = useState(null);
+  const [salesFunnelPeriod, setSalesFunnelPeriod] = useState('all');
+  const [salesDeskFunnelPeriod, setSalesDeskFunnelPeriod] = useState('day');
   const [salesDeptLoading, setSalesDeptLoading] = useState(false);
+  const [salesShowInactive, setSalesShowInactive] = useState(false);
   const [salesNewMember, setSalesNewMember] = useState({
     login: '',
     password: '',
     role: 'trainee',
     supervisor_id: '',
   });
-  const [salesManualContact, setSalesManualContact] = useState({ org_name: '', label: '' });
+  const [salesManualContact, setSalesManualContact] = useState({
+    org_name: '',
+    label: '',
+    lpr_name: '',
+    lpr_phone: '',
+    org_phone: '',
+    org_mobile: '',
+    email: '',
+    website: '',
+  });
+  const [salesContactsPage, setSalesContactsPage] = useState(1);
   const [salesTeamBusy, setSalesTeamBusy] = useState(null);
   const [salesInvoiceModal, setSalesInvoiceModal] = useState({
     open: false,
@@ -457,6 +612,16 @@ const ManagementPortal = () => {
       { key: 'pro', title: 'Pro', value: byPlan.Pro ?? 0 },
     ];
   }, [stats]);
+
+  const adminSupervisorOptions = useMemo(
+    () => supervisorPickerOptions(salesDeptMembers),
+    [salesDeptMembers]
+  );
+
+  const ropSupervisorOptions = useMemo(
+    () => supervisorPickerOptions(salesDeptMembers, { excludeMemberId: salesMe?.member?.id }),
+    [salesDeptMembers, salesMe?.member?.id]
+  );
 
   useEffect(() => {
     const fetchStats = async () => {
@@ -743,7 +908,7 @@ const ManagementPortal = () => {
         setError('');
         const [team, funnel] = await Promise.all([
           adminService.salesGetTeam(adminToken),
-          adminService.salesGetFunnel(adminToken),
+          adminService.salesGetFunnel(adminToken, { period: salesFunnelPeriod }),
         ]);
         if (cancelled) return;
         setSalesDeptMembers(team.items ?? []);
@@ -756,13 +921,27 @@ const ManagementPortal = () => {
     };
     load();
     return () => { cancelled = true; };
-  }, [adminToken, activeSection]);
+  }, [adminToken, activeSection, salesFunnelPeriod]);
+
+  const loadSalesDeskContacts = async (token, me, { page = 1, scope } = {}) => {
+    const archived = (scope ?? salesContactsScope) === 'archive';
+    const pageSize = salesContactsPageSize(me);
+    const cdata = await salesService.getContacts(token, { page, pageSize, archived });
+    setSalesContacts({
+      items: cdata.items ?? [],
+      page: cdata.page ?? page,
+      totalPages: cdata.total_pages ?? 1,
+      total: cdata.total ?? 0,
+    });
+    return cdata;
+  };
 
   useEffect(() => {
     if (!salesToken) {
       setSalesMe(null);
       setSalesContacts({ items: [], page: 1, totalPages: 1, total: 0 });
       setSalesContactsScope('active');
+      setSalesContactsPage(1);
       return;
     }
     let cancelled = false;
@@ -770,26 +949,15 @@ const ManagementPortal = () => {
       try {
         setSalesDeskLoading(true);
         setSalesDeskError('');
-        const me = await salesService.getMe(salesToken);
+        const me = await salesService.getMe(salesToken, { funnelPeriod: salesDeskFunnelPeriod });
         if (cancelled) return;
         setSalesMe(me);
-        if (salesSection === 'desk') {
-          const cdata = await salesService.getContacts(salesToken, {
-            page: 1,
-            pageSize: 50,
-            archived: salesContactsScope === 'archive',
-          });
-          if (cancelled) return;
-          setSalesContacts({
-            items: cdata.items ?? [],
-            page: cdata.page ?? 1,
-            totalPages: cdata.total_pages ?? 1,
-            total: cdata.total ?? 0,
-          });
+        if (salesSection === 'desk' && me.member?.role !== 'rop') {
+          await loadSalesDeskContacts(salesToken, me, { page: salesContactsPage });
         } else if (salesSection === 'team' && me.member?.role === 'rop') {
           const [team, funnel] = await Promise.all([
             salesService.mgmtGetTeam(salesToken),
-            salesService.mgmtGetFunnel(salesToken),
+            salesService.mgmtGetFunnel(salesToken, { period: salesFunnelPeriod }),
           ]);
           if (cancelled) return;
           setSalesDeptMembers(team.items ?? []);
@@ -798,9 +966,11 @@ const ManagementPortal = () => {
       } catch (err) {
         if (!cancelled) {
           setSalesDeskError(formatError(err));
-          localStorage.removeItem(SALES_TOKEN_KEY);
-          setSalesToken('');
-          setSalesMe(null);
+          if (isUnauthorizedError(err)) {
+            localStorage.removeItem(SALES_TOKEN_KEY);
+            setSalesToken('');
+            setSalesMe(null);
+          }
         }
       } finally {
         if (!cancelled) setSalesDeskLoading(false);
@@ -808,7 +978,23 @@ const ManagementPortal = () => {
     };
     load();
     return () => { cancelled = true; };
-  }, [salesToken, salesSection, salesContactsScope]);
+  }, [salesToken, salesSection, salesContactsScope, salesContactsPage, salesDeskFunnelPeriod, salesFunnelPeriod]);
+
+  useEffect(() => {
+    setSalesContactsPage(1);
+  }, [salesContactsScope]);
+
+  useEffect(() => {
+    if (salesMe?.member?.role === 'rop' && salesSection === 'desk') {
+      setSalesSection('team');
+    }
+  }, [salesMe?.member?.role, salesMe?.member?.id, salesSection]);
+
+  useEffect(() => {
+    if (salesSection !== 'desk') {
+      setSalesDeskExcelMode(false);
+    }
+  }, [salesSection]);
 
   const handleApSaveSettings = async (e) => {
     e.preventDefault();
@@ -2100,13 +2286,13 @@ const ManagementPortal = () => {
     </>
   );
 
-  const refreshAdminSalesDept = async () => {
+  const refreshAdminSalesDept = async (includeInactive = salesShowInactive) => {
     if (!adminToken) return;
     try {
       setSalesDeptLoading(true);
       const [team, funnel] = await Promise.all([
-        adminService.salesGetTeam(adminToken),
-        adminService.salesGetFunnel(adminToken),
+        adminService.salesGetTeam(adminToken, { includeInactive }),
+        adminService.salesGetFunnel(adminToken, { period: salesFunnelPeriod }),
       ]);
       setSalesDeptMembers(team.items ?? []);
       setSalesDeptFunnel(funnel);
@@ -2151,6 +2337,26 @@ const ManagementPortal = () => {
     }
   };
 
+  const handleAdminDeactivateSalesMember = async (member) => {
+    if (
+      !window.confirm(
+        `Отключить сотрудника «${member.login}»? Незавершённые активные контакты вернутся в общий пул (статусы сохранятся). Архив не затрагивается.`
+      )
+    ) {
+      return;
+    }
+    try {
+      setSalesTeamBusy(`deact-a-${member.id}`);
+      setError('');
+      await adminService.salesUpdateMember(adminToken, member.id, { is_active: false });
+      await refreshAdminSalesDept();
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setSalesTeamBusy(null);
+    }
+  };
+
   const handleAdminSalesExcel = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -2173,10 +2379,26 @@ const ManagementPortal = () => {
     try {
       setSalesTeamBusy('manual-contact');
       setError('');
+      const trim = (v) => (v || '').trim();
       await adminService.salesAddContactManual(adminToken, {
-        org_name: (salesManualContact.org_name || salesManualContact.label || '').trim(),
+        org_name: trim(salesManualContact.org_name || salesManualContact.label),
+        lpr_name: trim(salesManualContact.lpr_name) || undefined,
+        lpr_phone: trim(salesManualContact.lpr_phone) || undefined,
+        org_phone: trim(salesManualContact.org_phone) || undefined,
+        org_mobile: trim(salesManualContact.org_mobile) || undefined,
+        email: trim(salesManualContact.email) || undefined,
+        website: trim(salesManualContact.website) || undefined,
       });
-      setSalesManualContact({ org_name: '', label: '' });
+      setSalesManualContact({
+        org_name: '',
+        label: '',
+        lpr_name: '',
+        lpr_phone: '',
+        org_phone: '',
+        org_mobile: '',
+        email: '',
+        website: '',
+      });
       await refreshAdminSalesDept();
     } catch (err) {
       setError(formatError(err));
@@ -2185,12 +2407,17 @@ const ManagementPortal = () => {
     }
   };
 
+  const confirmSalesCrmClear = () => {
+    const typed = window.prompt(
+      `Удалить ВСЕ контакты локальной CRM (пул, назначения, архив)?\n`
+      + `Сотрудники и планы не затрагиваются. Сбросится дневная выдача.\n\n`
+      + `Введите «${SALES_CRM_CLEAR_CONFIRM}» для подтверждения:`
+    );
+    return typed != null && typed.trim().toUpperCase() === SALES_CRM_CLEAR_CONFIRM;
+  };
+
   const handleAdminClearSalesCrm = async () => {
-    if (
-      !window.confirm(
-        'Удалить все контакты локальной CRM (пул, назначённые, архив)? Учётные записи сотрудников и планы не затрагиваются. Сбросится дневная выдача контактов.'
-      )
-    ) {
+    if (!confirmSalesCrmClear()) {
       return;
     }
     try {
@@ -2213,7 +2440,32 @@ const ManagementPortal = () => {
       await salesService.mgmtUpdateMember(salesToken, memberId, patch);
       const [team, funnel] = await Promise.all([
         salesService.mgmtGetTeam(salesToken),
-        salesService.mgmtGetFunnel(salesToken),
+        salesService.mgmtGetFunnel(salesToken, { period: salesFunnelPeriod }),
+      ]);
+      setSalesDeptMembers(team.items ?? []);
+      setSalesDeptFunnel(funnel);
+    } catch (err) {
+      setSalesDeskError(formatError(err));
+    } finally {
+      setSalesTeamBusy(null);
+    }
+  };
+
+  const handleRopDeactivateSalesMember = async (member) => {
+    if (
+      !window.confirm(
+        `Отключить сотрудника «${member.login}»? Незавершённые активные контакты вернутся в пул (статусы сохранятся).`
+      )
+    ) {
+      return;
+    }
+    try {
+      setSalesTeamBusy(`deact-r-${member.id}`);
+      setSalesDeskError('');
+      await salesService.mgmtUpdateMember(salesToken, member.id, { is_active: false });
+      const [team, funnel] = await Promise.all([
+        salesService.mgmtGetTeam(salesToken),
+        salesService.mgmtGetFunnel(salesToken, { period: salesFunnelPeriod }),
       ]);
       setSalesDeptMembers(team.items ?? []);
       setSalesDeptFunnel(funnel);
@@ -2239,7 +2491,7 @@ const ManagementPortal = () => {
       setSalesNewMember({ login: '', password: '', role: 'trainee', supervisor_id: '' });
       const [team, funnel] = await Promise.all([
         salesService.mgmtGetTeam(salesToken),
-        salesService.mgmtGetFunnel(salesToken),
+        salesService.mgmtGetFunnel(salesToken, { period: salesFunnelPeriod }),
       ]);
       setSalesDeptMembers(team.items ?? []);
       setSalesDeptFunnel(funnel);
@@ -2259,7 +2511,7 @@ const ManagementPortal = () => {
       const res = await salesService.mgmtUploadExcel(salesToken, file);
       const [team, funnel] = await Promise.all([
         salesService.mgmtGetTeam(salesToken),
-        salesService.mgmtGetFunnel(salesToken),
+        salesService.mgmtGetFunnel(salesToken, { period: salesFunnelPeriod }),
       ]);
       setSalesDeptMembers(team.items ?? []);
       setSalesDeptFunnel(funnel);
@@ -2273,11 +2525,7 @@ const ManagementPortal = () => {
   };
 
   const handleRopClearSalesCrm = async () => {
-    if (
-      !window.confirm(
-        'Удалить все контакты локальной CRM (пул, назначённые, архив)? Учётные записи сотрудников и планы не затрагиваются. Сбросится дневная выдача контактов.'
-      )
-    ) {
+    if (!confirmSalesCrmClear()) {
       return;
     }
     try {
@@ -2286,7 +2534,7 @@ const ManagementPortal = () => {
       const res = await salesService.mgmtClearCrm(salesToken);
       const [team, funnel] = await Promise.all([
         salesService.mgmtGetTeam(salesToken),
-        salesService.mgmtGetFunnel(salesToken),
+        salesService.mgmtGetFunnel(salesToken, { period: salesFunnelPeriod }),
       ]);
       setSalesDeptMembers(team.items ?? []);
       setSalesDeptFunnel(funnel);
@@ -2304,21 +2552,16 @@ const ManagementPortal = () => {
       setSalesTeamBusy(`save-contact-${contactId}`);
       setSalesDeskError('');
       await salesService.patchContact(salesToken, contactId, body);
-      const cdata = await salesService.getContacts(salesToken, {
-        page: 1,
-        pageSize: 50,
-        archived: salesContactsScope === 'archive',
-      });
-      setSalesContacts({
-        items: cdata.items ?? [],
-        page: cdata.page ?? 1,
-        totalPages: cdata.total_pages ?? 1,
-        total: cdata.total ?? 0,
-      });
-      const me = await salesService.getMe(salesToken);
+      const me = await salesService.getMe(salesToken, { funnelPeriod: salesDeskFunnelPeriod });
       setSalesMe(me);
+      await loadSalesDeskContacts(salesToken, me, { page: salesContacts.page });
     } catch (err) {
       setSalesDeskError(formatError(err));
+      if (isUnauthorizedError(err)) {
+        localStorage.removeItem(SALES_TOKEN_KEY);
+        setSalesToken('');
+        setSalesMe(null);
+      }
     } finally {
       setSalesTeamBusy(null);
     }
@@ -2330,21 +2573,10 @@ const ManagementPortal = () => {
       setSalesTeamBusy('request-more');
       setSalesDeskError('');
       const res = await salesService.requestMoreContacts(salesToken);
-      const [cdata, me] = await Promise.all([
-        salesService.getContacts(salesToken, {
-          page: 1,
-          pageSize: 50,
-          archived: salesContactsScope === 'archive',
-        }),
-        salesService.getMe(salesToken),
-      ]);
-      setSalesContacts({
-        items: cdata.items ?? [],
-        page: cdata.page ?? 1,
-        totalPages: cdata.total_pages ?? 1,
-        total: cdata.total ?? 0,
-      });
+      setSalesContactsPage(1);
+      const me = await salesService.getMe(salesToken, { funnelPeriod: salesDeskFunnelPeriod });
       setSalesMe(me);
+      await loadSalesDeskContacts(salesToken, me, { page: 1 });
       alert(res?.message || `Назначено: ${res?.allocated ?? 0}`);
     } catch (err) {
       setSalesDeskError(formatError(err));
@@ -2462,12 +2694,13 @@ const ManagementPortal = () => {
 
   const renderSalesDepartment = () => (
     <>
-      <div className="management-content-head">
+      <div className="management-content-head management-content-head--stack">
         <h2>Отдел продаж</h2>
         <p className="management-cell-muted">
-          Общая локальная CRM: Excel и ручные контакты попадают в пул. Стажёру и МОПу сначала выдаётся
-          половина дневной нормы (лимит задаёт админ или РОП). После проставления статусов всем в первой
-          порции можно подгрузить остаток нормы. Раз в сутки (UTC) отработанные контакты уходят в архив при новой выдаче.
+          Общая локальная CRM: Excel и ручные контакты попадают в пул (дубликаты по телефону или названию
+          пропускаются). МОП/стажёр получает до дневной нормы активных контактов, затем — вторую выдачу
+          той же нормы после проставления статусов (не более 2 выдач в день). Новый день (Europe/Moscow):
+          отработанные уходят в архив, рабочий стол дозаполняется до нормы.
         </p>
       </div>
       {error && activeSection === 'salesDepartment' && <div className="management-error">{error}</div>}
@@ -2476,8 +2709,11 @@ const ManagementPortal = () => {
       ) : (
         <>
           <h3>Общая воронка</h3>
-          <p className="management-cell-muted">
-            В общем пуле (ещё не назначено): <strong>{salesDeptFunnel?.crm_pool_available ?? 0}</strong>
+          <FunnelPeriodPicker value={salesFunnelPeriod} onChange={setSalesFunnelPeriod} />
+          <p className="management-cell-muted management-sales-funnel-period-hint">
+            {FUNNEL_PERIOD_HINTS[salesFunnelPeriod] || ''}
+            {' '}
+            В общем пуле (ещё не назначено): <strong>{salesDeptFunnel?.crm_pool_available ?? 0}</strong>.
           </p>
           {renderFunnelSummary(salesDeptFunnel?.total)}
           <h3 style={{ marginTop: '1.5rem' }}>По сотрудникам</h3>
@@ -2515,12 +2751,20 @@ const ManagementPortal = () => {
               </select>
             </label>
             <label>
-              ID руководителя (пусто для РОП)
-              <input
+              Руководитель (для стажёра / МОП)
+              <select
+                className="management-field"
                 value={salesNewMember.supervisor_id}
                 onChange={(e) => setSalesNewMember((p) => ({ ...p, supervisor_id: e.target.value }))}
-                placeholder="например 1"
-              />
+                disabled={salesNewMember.role === 'rop'}
+              >
+                <option value="">—</option>
+                {adminSupervisorOptions.map((opt) => (
+                  <option key={opt.id} value={String(opt.id)}>
+                    {opt.login} ({SALES_ROLE_LABELS[opt.role] || opt.role})
+                  </option>
+                ))}
+              </select>
             </label>
             <div className="management-form-actions">
               <button type="submit" className="btn btn-black" disabled={salesTeamBusy === 'create'}>
@@ -2529,7 +2773,19 @@ const ManagementPortal = () => {
             </div>
           </form>
 
-          <h3 style={{ marginTop: '1.5rem' }}>Планы и норма контактов</h3>
+          <h3 style={{ marginTop: '1.5rem' }}>Сотрудники: планы и управление</h3>
+          <label className="management-checkbox" style={{ marginBottom: '0.75rem' }}>
+            <input
+              type="checkbox"
+              checked={salesShowInactive}
+              onChange={async (e) => {
+                const checked = e.target.checked;
+                setSalesShowInactive(checked);
+                await refreshAdminSalesDept(checked);
+              }}
+            />
+            Показывать отключённых
+          </label>
           <div className="management-table-wrap">
             <table className="management-table">
               <thead>
@@ -2542,6 +2798,7 @@ const ManagementPortal = () => {
                   <th>План демо / мес</th>
                   <th>План закрытий / мес</th>
                   <th>Контактов в день</th>
+                  <th>Пароль</th>
                   <th />
                 </tr>
               </thead>
@@ -2550,13 +2807,15 @@ const ManagementPortal = () => {
                   <SalesMemberPlanRow
                     key={m.id}
                     member={m}
-                    busy={salesTeamBusy === `patch-a-${m.id}`}
+                    supervisorOptions={adminSupervisorOptions.filter((opt) => opt.id !== m.id)}
+                    busy={salesTeamBusy === `patch-a-${m.id}` || salesTeamBusy === `deact-a-${m.id}`}
                     onSave={(id, patch) => handleAdminPatchSalesMember(id, patch)}
+                    onDeactivate={handleAdminDeactivateSalesMember}
                   />
                 ))}
                 {salesDeptMembers.length === 0 && (
                   <tr>
-                    <td colSpan={9}>Сотрудников пока нет</td>
+                    <td colSpan={10}>Сотрудников пока нет</td>
                   </tr>
                 )}
               </tbody>
@@ -2583,24 +2842,75 @@ const ManagementPortal = () => {
           </div>
 
           <h3 style={{ marginTop: '1.5rem' }}>Добавить контакт в общую базу</h3>
-          <form className="management-form-grid" onSubmit={handleAdminManualContact}>
+          <form className="management-form-grid management-manual-contact-form" onSubmit={handleAdminManualContact}>
             <label>
               Название организации
               <input
+                className="management-field"
                 value={salesManualContact.org_name}
                 onChange={(e) => setSalesManualContact((p) => ({ ...p, org_name: e.target.value }))}
                 placeholder="Как в базе"
               />
             </label>
             <label>
+              ФИО ЛПР
+              <input
+                className="management-field"
+                value={salesManualContact.lpr_name}
+                onChange={(e) => setSalesManualContact((p) => ({ ...p, lpr_name: e.target.value }))}
+              />
+            </label>
+            <label>
+              Телефон ЛПР
+              <input
+                className="management-field"
+                value={salesManualContact.lpr_phone}
+                onChange={(e) => setSalesManualContact((p) => ({ ...p, lpr_phone: e.target.value }))}
+              />
+            </label>
+            <label>
+              Телефон организации
+              <input
+                className="management-field"
+                value={salesManualContact.org_phone}
+                onChange={(e) => setSalesManualContact((p) => ({ ...p, org_phone: e.target.value }))}
+              />
+            </label>
+            <label>
+              Мобильный
+              <input
+                className="management-field"
+                value={salesManualContact.org_mobile}
+                onChange={(e) => setSalesManualContact((p) => ({ ...p, org_mobile: e.target.value }))}
+              />
+            </label>
+            <label>
+              Email
+              <input
+                className="management-field"
+                type="email"
+                value={salesManualContact.email}
+                onChange={(e) => setSalesManualContact((p) => ({ ...p, email: e.target.value }))}
+              />
+            </label>
+            <label>
+              Сайт
+              <input
+                className="management-field"
+                value={salesManualContact.website}
+                onChange={(e) => setSalesManualContact((p) => ({ ...p, website: e.target.value }))}
+              />
+            </label>
+            <label>
               Подпись (устарело, необязательно)
               <input
+                className="management-field"
                 value={salesManualContact.label}
                 onChange={(e) => setSalesManualContact((p) => ({ ...p, label: e.target.value }))}
                 placeholder="если не заполнено название — можно сюда"
               />
             </label>
-            <div className="management-form-actions">
+            <div className="management-form-actions management-form-actions--full">
               <button
                 type="submit"
                 className="btn btn-outline"
@@ -2616,78 +2926,151 @@ const ManagementPortal = () => {
   );
 
   const renderSalesStaffDesk = () => {
+    if (salesMe?.member?.role === 'rop') {
+      return (
+        <div className="management-rop-desk-notice">
+          <h2>Рабочий стол МОП</h2>
+          <p>
+            Для руководителя отдела контакты не выдаются. Управляйте командой, загружайте Excel в общую
+            базу и смотрите воронку в разделе «Команда».
+          </p>
+          <button type="button" className="btn btn-black" onClick={() => setSalesSection('team')}>
+            Перейти к команде
+          </button>
+        </div>
+      );
+    }
+
     const p = salesMe?.plan;
     const ach = salesMe?.achievement_month;
+    const isArchiveScope = salesContactsScope === 'archive';
     return (
       <>
-        <div className="management-content-head">
-          <h2>
-            Здравствуйте, {salesMe?.member?.login}{' '}
-            <span className="management-cell-muted">
-              ({SALES_ROLE_LABELS[salesMe?.member?.role] || salesMe?.member?.role})
-            </span>
-          </h2>
-          <p className="management-cell-muted">Токен действует сутки; при истечении войдите снова.</p>
-        </div>
+        {salesDeskExcelMode ? (
+          <div className="management-desk-excel-bar">
+            <div className="management-desk-excel-bar-left">
+              <strong>Excel-режим</strong>
+              <span className="management-cell-muted">
+                {salesMe?.member?.login} · {SALES_ROLE_LABELS[salesMe?.member?.role] || salesMe?.member?.role}
+              </span>
+            </div>
+            <div className="management-desk-excel-bar-actions">
+              {salesMe?.can_request_more && (
+                <button
+                  type="button"
+                  className="btn btn-sm btn-outline"
+                  disabled={salesTeamBusy === 'request-more'}
+                  onClick={handleSalesRequestMore}
+                >
+                  {salesTeamBusy === 'request-more' ? 'Загрузка...' : 'Вторая выдача'}
+                </button>
+              )}
+              <button
+                type="button"
+                className="btn btn-sm btn-black"
+                onClick={() => setSalesDeskExcelMode(false)}
+              >
+                Выйти из Excel-режима
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="management-content-head management-content-head--stack management-desk-head">
+            <div>
+              <h2>
+                Здравствуйте, {salesMe?.member?.login}{' '}
+                <span className="management-cell-muted">
+                  ({SALES_ROLE_LABELS[salesMe?.member?.role] || salesMe?.member?.role})
+                </span>
+              </h2>
+              <p className="management-cell-muted">Токен действует сутки; при истечении войдите снова.</p>
+            </div>
+            <button
+              type="button"
+              className="btn btn-sm btn-outline management-desk-excel-toggle"
+              onClick={() => setSalesDeskExcelMode(true)}
+              title="Скрыть меню и панели, оставить только таблицу контактов"
+            >
+              Excel-режим
+            </button>
+          </div>
+        )}
         {salesDeskError && <div className="management-error">{salesDeskError}</div>}
         {salesDeskLoading ? (
           <p>Загрузка...</p>
         ) : (
           <>
-            <h3>План на месяц</h3>
-            <div className="management-stats-grid">
-              <div className="management-stat-card">
-                <span>Прозвоны</span>
-                <strong>
-                  {ach?.calls_done ?? 0} / {p?.calls_monthly ?? 0}
-                </strong>
-              </div>
-              <div className="management-stat-card">
-                <span>Демо</span>
-                <strong>
-                  {ach?.demos_done ?? 0} / {p?.demos_monthly ?? 0}
-                </strong>
-              </div>
-              <div className="management-stat-card">
-                <span>Закрытия</span>
-                <strong>
-                  {ach?.closes_done ?? 0} / {p?.closes_monthly ?? 0}
-                </strong>
-              </div>
-              <div className="management-stat-card">
-                <span>Норма в день</span>
-                <strong>
-                  {salesMe?.plan?.effective_daily_quota ?? 0}
-                </strong>
-                <span className="management-cell-muted" style={{ fontSize: 'var(--font-size-xs)', display: 'block', marginTop: 4 }}>
-                  Из пула сегодня: {salesMe?.daily_pool_allocated ?? 0} / {salesMe?.plan?.effective_daily_quota ?? 0}
-                  . Сначала половина нормы; когда всем проставлены статусы — кнопка ниже.
-                </span>
-              </div>
-              <div className="management-stat-card">
-                <span>Новых в работе</span>
-                <strong>{salesMe?.pending_new_contacts ?? salesMe?.backlog_in_base ?? 0}</strong>
-              </div>
-              <div className="management-stat-card">
-                <span>В общем пуле</span>
-                <strong>{salesMe?.crm_pool_available ?? 0}</strong>
-              </div>
-            </div>
-            {salesMe?.can_request_more && (
-              <div className="management-form-actions" style={{ marginTop: '0.75rem' }}>
-                <button
-                  type="button"
-                  className="btn btn-black"
-                  disabled={salesTeamBusy === 'request-more'}
-                  onClick={handleSalesRequestMore}
-                >
-                  {salesTeamBusy === 'request-more' ? 'Загрузка...' : 'Подгрузить вторую половину нормы'}
-                </button>
-              </div>
+            {!salesDeskExcelMode && (
+              <>
+                <h3>План на месяц</h3>
+                <div className="management-stats-grid">
+                  <div className="management-stat-card">
+                    <span>Прозвоны</span>
+                    <strong>
+                      {ach?.calls_done ?? 0} / {p?.calls_monthly ?? 0}
+                    </strong>
+                  </div>
+                  <div className="management-stat-card">
+                    <span>Демо</span>
+                    <strong>
+                      {ach?.demos_done ?? 0} / {p?.demos_monthly ?? 0}
+                    </strong>
+                  </div>
+                  <div className="management-stat-card">
+                    <span>Закрытия</span>
+                    <strong>
+                      {ach?.closes_done ?? 0} / {p?.closes_monthly ?? 0}
+                    </strong>
+                  </div>
+                  <div className="management-stat-card">
+                    <span>Норма в день</span>
+                    <strong>
+                      {salesMe?.plan?.effective_daily_quota ?? 0}
+                    </strong>
+                    <span className="management-cell-muted">
+                      Выдач сегодня: {salesMe?.daily_allocation_events ?? 0} / {salesMe?.max_daily_allocation_events ?? 2}.
+                      Назначено из пула: {salesMe?.daily_pool_allocated ?? 0}. После статусов всем — вторая выдача.
+                    </span>
+                  </div>
+                  <div className="management-stat-card">
+                    <span>Новых в работе</span>
+                    <strong>{salesMe?.pending_new_contacts ?? salesMe?.backlog_in_base ?? 0}</strong>
+                  </div>
+                  <div className="management-stat-card">
+                    <span>В общем пуле</span>
+                    <strong>{salesMe?.crm_pool_available ?? 0}</strong>
+                  </div>
+                </div>
+                {salesMe?.can_request_more && (
+                  <div className="management-form-actions" style={{ marginTop: '0.75rem' }}>
+                    <button
+                      type="button"
+                      className="btn btn-black"
+                      disabled={salesTeamBusy === 'request-more'}
+                      onClick={handleSalesRequestMore}
+                    >
+                      {salesTeamBusy === 'request-more' ? 'Загрузка...' : 'Вторая выдача контактов (до нормы)'}
+                    </button>
+                  </div>
+                )}
+                <h3 style={{ marginTop: '1.5rem' }}>Моя воронка</h3>
+                <FunnelPeriodPicker
+                  value={salesDeskFunnelPeriod}
+                  onChange={setSalesDeskFunnelPeriod}
+                  ariaLabel="Период моей воронки"
+                />
+                <p className="management-cell-muted management-sales-funnel-period-hint">
+                  {FUNNEL_PERIOD_HINTS[salesDeskFunnelPeriod] || ''}
+                </p>
+                {renderFunnelSummary(salesMe?.funnel_assigned)}
+              </>
             )}
-            <h3 style={{ marginTop: '1.5rem' }}>Моя воронка</h3>
-            {renderFunnelSummary(salesMe?.funnel_assigned)}
-            <h3 style={{ marginTop: '1.5rem' }}>Мои контакты</h3>
+            <h3
+              className={salesDeskExcelMode ? 'management-desk-contacts-title' : undefined}
+              style={salesDeskExcelMode ? undefined : { marginTop: '1.5rem' }}
+            >
+              Мои контакты
+            </h3>
             <div className="management-sales-contacts-tabs">
               <button
                 type="button"
@@ -2703,12 +3086,16 @@ const ManagementPortal = () => {
               >
                 Архив
               </button>
-              <p className="management-sales-contacts-tabs-hint">
-                В архиве контакты со сменённым статусом после нового дня (UTC). Активные — текущая работа.
-              </p>
+              {!salesDeskExcelMode && (
+                <p className="management-sales-contacts-tabs-hint">
+                  В архиве можно править ФИО, телефон и комментарий; статус зафиксирован. Активные — текущая работа.
+                </p>
+              )}
             </div>
-            <div className="management-table-wrap management-table-wide">
-              <table className="management-table">
+            <div
+              className={`management-table-wrap management-table-wide${salesDeskExcelMode ? ' management-desk-table-excel' : ''}`}
+            >
+              <table className="management-table management-desk-table">
                 <thead>
                   <tr>
                     <th>ID</th>
@@ -2732,7 +3119,8 @@ const ManagementPortal = () => {
                       busy={salesTeamBusy}
                       onSaveRow={handleSalesSaveContact}
                       onInvoice={openSalesInvoiceModal}
-                      readOnly={salesContactsScope === 'archive'}
+                      statusLocked={isArchiveScope}
+                      hideInvoice={isArchiveScope}
                     />
                   ))}
                   {salesContacts.items.length === 0 && (
@@ -2747,6 +3135,29 @@ const ManagementPortal = () => {
                 </tbody>
               </table>
             </div>
+            {salesContacts.totalPages > 1 && (
+              <div className="management-pagination">
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  disabled={salesContacts.page <= 1 || !!salesDeskLoading}
+                  onClick={() => setSalesContactsPage((p) => Math.max(1, p - 1))}
+                >
+                  Назад
+                </button>
+                <span>
+                  Стр. {salesContacts.page} из {salesContacts.totalPages} (всего: {salesContacts.total})
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  disabled={salesContacts.page >= salesContacts.totalPages || !!salesDeskLoading}
+                  onClick={() => setSalesContactsPage((p) => p + 1)}
+                >
+                  Вперёд
+                </button>
+              </div>
+            )}
             {salesInvoiceModal.open && salesInvoiceModal.contact && (
               <div className="management-modal-overlay" onClick={closeSalesInvoiceModal}>
                 <div className="management-modal" onClick={(ev) => ev.stopPropagation()}>
@@ -2763,6 +3174,7 @@ const ManagementPortal = () => {
                         min="1"
                         step="0.01"
                         required
+                        className="management-field"
                         value={salesInvoiceModal.amountRub}
                         onChange={(ev) =>
                           setSalesInvoiceModal((p) => ({ ...p, amountRub: ev.target.value }))
@@ -2774,6 +3186,7 @@ const ManagementPortal = () => {
                       <input
                         type="text"
                         maxLength={512}
+                        className="management-field"
                         value={salesInvoiceModal.serviceName}
                         onChange={(ev) =>
                           setSalesInvoiceModal((p) => ({ ...p, serviceName: ev.target.value }))
@@ -2786,6 +3199,7 @@ const ManagementPortal = () => {
                       <input
                         type="text"
                         maxLength={12}
+                        className="management-field"
                         value={salesInvoiceModal.clientInn}
                         onChange={(ev) =>
                           setSalesInvoiceModal((p) => ({ ...p, clientInn: ev.target.value }))
@@ -2831,6 +3245,10 @@ const ManagementPortal = () => {
       ) : (
         <>
           <h3>Общая воронка команды</h3>
+          <FunnelPeriodPicker value={salesFunnelPeriod} onChange={setSalesFunnelPeriod} />
+          <p className="management-cell-muted management-sales-funnel-period-hint">
+            {FUNNEL_PERIOD_HINTS[salesFunnelPeriod] || ''}
+          </p>
           {renderFunnelSummary(salesDeptFunnel?.total)}
           <h3 style={{ marginTop: '1.5rem' }}>По сотрудникам</h3>
           {renderSalesByMemberTable(salesDeptFunnel?.by_member)}
@@ -2866,12 +3284,19 @@ const ManagementPortal = () => {
               </select>
             </label>
             <label>
-              ID руководителя (по умолчанию — вы)
-              <input
+              Руководитель (пусто — вы)
+              <select
+                className="management-field"
                 value={salesNewMember.supervisor_id}
                 onChange={(e) => setSalesNewMember((p) => ({ ...p, supervisor_id: e.target.value }))}
-                placeholder="оставьте пустым — будет вы"
-              />
+              >
+                <option value="">Я (РОП)</option>
+                {ropSupervisorOptions.map((opt) => (
+                  <option key={opt.id} value={String(opt.id)}>
+                    {opt.login} ({SALES_ROLE_LABELS[opt.role] || opt.role})
+                  </option>
+                ))}
+              </select>
             </label>
             <div className="management-form-actions">
               <button type="submit" className="btn btn-black" disabled={salesTeamBusy === 'rop-create'}>
@@ -2893,6 +3318,7 @@ const ManagementPortal = () => {
                   <th>План демо / мес</th>
                   <th>План закрытий / мес</th>
                   <th>Контактов в день</th>
+                  <th>Пароль</th>
                   <th />
                 </tr>
               </thead>
@@ -2903,13 +3329,18 @@ const ManagementPortal = () => {
                     <SalesMemberPlanRow
                       key={m.id}
                       member={m}
-                      busy={salesTeamBusy === `patch-r-${m.id}`}
+                      allowRopRole={false}
+                      supervisorOptions={ropSupervisorOptions.filter((opt) => opt.id !== m.id)}
+                      busy={
+                        salesTeamBusy === `patch-r-${m.id}` || salesTeamBusy === `deact-r-${m.id}`
+                      }
                       onSave={(id, patch) => handleRopPatchSalesMember(id, patch)}
+                      onDeactivate={handleRopDeactivateSalesMember}
                     />
                   ))}
                 {salesDeptMembers.filter((m) => m.id !== salesMe?.member?.id).length === 0 && (
                   <tr>
-                    <td colSpan={9}>Подчинённых пока нет</td>
+                    <td colSpan={10}>Подчинённых пока нет</td>
                   </tr>
                 )}
               </tbody>
@@ -3805,37 +4236,44 @@ const ManagementPortal = () => {
   );
 
   if (salesToken && !adminToken) {
+    const salesExcelActive = salesDeskExcelMode && salesSection === 'desk';
     return (
-      <div className="management-page">
-        <header className="management-header">
-          <h1>Отдел продаж</h1>
-        </header>
-        <main className="management-dashboard">
-          <aside className="management-sidebar">
-            <h3>Меню</h3>
-            <nav>
-              <button
-                type="button"
-                className={`management-menu-item ${salesSection === 'desk' ? 'active' : ''}`}
-                onClick={() => setSalesSection('desk')}
-              >
-                Рабочий стол
+      <div className={`management-page${salesExcelActive ? ' management-excel-mode' : ''}`}>
+        {!salesExcelActive && (
+          <header className="management-header">
+            <h1>Отдел продаж</h1>
+          </header>
+        )}
+        <main className={`management-dashboard${salesExcelActive ? ' management-excel-dashboard' : ''}`}>
+          {!salesExcelActive && (
+            <aside className="management-sidebar">
+              <h3>Меню</h3>
+              <nav>
+                {salesMe?.member?.role !== 'rop' && (
+                  <button
+                    type="button"
+                    className={`management-menu-item ${salesSection === 'desk' ? 'active' : ''}`}
+                    onClick={() => setSalesSection('desk')}
+                  >
+                    Рабочий стол
+                  </button>
+                )}
+                {salesMe?.member?.role === 'rop' && (
+                  <button
+                    type="button"
+                    className={`management-menu-item ${salesSection === 'team' ? 'active' : ''}`}
+                    onClick={() => setSalesSection('team')}
+                  >
+                    Команда
+                  </button>
+                )}
+              </nav>
+              <button type="button" className="btn btn-outline management-logout" onClick={handleSalesLogout}>
+                Выйти
               </button>
-              {salesMe?.member?.role === 'rop' && (
-                <button
-                  type="button"
-                  className={`management-menu-item ${salesSection === 'team' ? 'active' : ''}`}
-                  onClick={() => setSalesSection('team')}
-                >
-                  Команда
-                </button>
-              )}
-            </nav>
-            <button type="button" className="btn btn-outline management-logout" onClick={handleSalesLogout}>
-              Выйти
-            </button>
-          </aside>
-          <section className="management-content">
+            </aside>
+          )}
+          <section className={`management-content${salesExcelActive ? ' management-excel-content' : ''}`}>
             {salesSection === 'desk' ? renderSalesStaffDesk() : renderSalesStaffTeam()}
           </section>
         </main>
@@ -3851,22 +4289,34 @@ const ManagementPortal = () => {
 
       {!adminToken ? (
         <main className="management-login-wrap">
-          <div className="management-login-tabs">
-            <button
-              type="button"
-              className={`management-login-tab ${loginPortal === 'admin' ? 'active' : ''}`}
-              onClick={() => { setLoginPortal('admin'); setError(''); }}
-            >
-              Администратор
-            </button>
-            <button
-              type="button"
-              className={`management-login-tab ${loginPortal === 'sales' ? 'active' : ''}`}
-              onClick={() => { setLoginPortal('sales'); setError(''); }}
-            >
-              Отдел продаж
-            </button>
-          </div>
+          <div className="management-login-portal-shell">
+            <div className="management-login-portal-header">
+              <p className="management-login-portal-eyebrow">RSD Management</p>
+              <h2 className="management-login-portal-title">Вход в панель</h2>
+              <p className="management-login-portal-subtitle">Выберите раздел и авторизуйтесь</p>
+            </div>
+            <div className="management-login-portal-picker" role="tablist" aria-label="Раздел входа">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={loginPortal === 'admin'}
+                className={`management-login-portal-option${loginPortal === 'admin' ? ' active' : ''}`}
+                onClick={() => { setLoginPortal('admin'); setError(''); }}
+              >
+                <span className="management-login-portal-option-title">Администратор</span>
+                <span className="management-login-portal-option-desc">Пользователи, агенты, CRM</span>
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={loginPortal === 'sales'}
+                className={`management-login-portal-option${loginPortal === 'sales' ? ' active' : ''}`}
+                onClick={() => { setLoginPortal('sales'); setError(''); }}
+              >
+                <span className="management-login-portal-option-title">Отдел продаж</span>
+                <span className="management-login-portal-option-desc">МОП, стажёр, РОП</span>
+              </button>
+            </div>
           {loginPortal === 'admin' ? (
             <form className="management-login-card" onSubmit={handleLogin}>
               <h2>Вход для администратора</h2>
@@ -3875,6 +4325,7 @@ const ManagementPortal = () => {
               <input
                 id="admin-login"
                 type="text"
+                className="management-field"
                 value={login}
                 onChange={(e) => setLogin(e.target.value)}
                 autoComplete="username"
@@ -3885,6 +4336,7 @@ const ManagementPortal = () => {
               <input
                 id="admin-password"
                 type="password"
+                className="management-field"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 autoComplete="current-password"
@@ -3908,6 +4360,7 @@ const ManagementPortal = () => {
               <input
                 id="sales-login"
                 type="text"
+                className="management-field"
                 value={login}
                 onChange={(e) => setLogin(e.target.value)}
                 autoComplete="username"
@@ -3918,6 +4371,7 @@ const ManagementPortal = () => {
               <input
                 id="sales-password"
                 type="password"
+                className="management-field"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 autoComplete="current-password"
@@ -3931,6 +4385,7 @@ const ManagementPortal = () => {
               </button>
             </form>
           )}
+          </div>
         </main>
       ) : (
         <main className="management-dashboard">

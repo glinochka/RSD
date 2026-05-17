@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import logging
 import re
@@ -191,35 +190,23 @@ async def _handle_private_message(
     voice_bytes: bytes | None = None
     voice_mime = "audio/ogg"
 
+    _unsupported_media_reply = (
+        "Спасибо, что написали! Пока я лучше всего понимаю текст и голосовые — "
+        "с картинками и файлами, к сожалению, ещё не справляюсь. "
+        "Напишите, пожалуйста, словами или отправьте голосовое — с радостью помогу."
+    )
+
     try:
         if event.message.photo:
-            buf = BytesIO()
-            await event.message.download_media(buf)
-            raw = buf.getvalue()
-            if len(raw) > int(settings.IMAGE_MAX_BYTES):
-                await event.respond("Изображение слишком большое. Отправьте файл поменьше.")
-                return
-            mime = "image/jpeg"
-            runtime_ctx["vision_image_data_url"] = (
-                f"data:{mime};base64,{base64.standard_b64encode(raw).decode('ascii')}"
-            )
-            query = caption_or_text or "[Фото без подписи]"
-        elif event.message.document:
+            await event.respond(_unsupported_media_reply)
+            return
+        if event.message.document:
             doc = event.message.document
             doc_mime = (getattr(doc, "mime_type", None) or "").strip().lower()
             if doc_mime.startswith("image/"):
-                buf = BytesIO()
-                await event.message.download_media(buf)
-                raw = buf.getvalue()
-                if len(raw) > int(settings.IMAGE_MAX_BYTES):
-                    await event.respond("Изображение слишком большое. Отправьте файл поменьше.")
-                    return
-                mime = getattr(doc, "mime_type", None) or "image/jpeg"
-                runtime_ctx["vision_image_data_url"] = (
-                    f"data:{mime};base64,{base64.standard_b64encode(raw).decode('ascii')}"
-                )
-                query = caption_or_text or "[Изображение без подписи]"
-            elif doc_mime.startswith("audio/"):
+                await event.respond(_unsupported_media_reply)
+                return
+            if doc_mime.startswith("audio/"):
                 buf = BytesIO()
                 await event.message.download_media(buf)
                 voice_bytes = buf.getvalue()
@@ -232,9 +219,7 @@ async def _handle_private_message(
             elif caption_or_text:
                 query = caption_or_text
             else:
-                await event.respond(
-                    "Пока поддерживаются текст, фото, изображения-файлы, голос и аудио. Отправьте что-то из этого."
-                )
+                await event.respond(_unsupported_media_reply)
                 return
         elif getattr(event.message, "voice", None):
             buf = BytesIO()
@@ -259,9 +244,7 @@ async def _handle_private_message(
         elif caption_or_text:
             query = caption_or_text
         else:
-            await event.respond(
-                "Пока поддерживаются текст, фото, изображения-файлы, голос и аудио. Отправьте что-то из этого."
-            )
+            await event.respond(_unsupported_media_reply)
             return
     except Exception:
         logger.exception(

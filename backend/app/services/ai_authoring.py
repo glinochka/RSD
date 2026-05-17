@@ -6,41 +6,9 @@ from ..config import settings
 
 logger = logging.getLogger(__name__)
 
-# DeepSeek text endpoints (incl. legacy names); do not send image_url with these unless API explicitly supports it.
-_DEEPSEEK_TEXT_CHAT_ALIASES = frozenset({"deepseek-chat", "deepseek-reasoner"})
-
-
-def resolve_multimodal_chat_model(
-    *,
-    vision_chat_model: str | None = None,
-    generation_model: str | None = None,
-) -> str:
-    """Pick model for OpenAI-style multimodal chat (text + image_url)."""
-    v = (vision_chat_model or "").strip()
-    if v and v.lower() not in _DEEPSEEK_TEXT_CHAT_ALIASES:
-        return v
-    g = (generation_model or "").strip()
-    if g and g.lower() not in _DEEPSEEK_TEXT_CHAT_ALIASES:
-        return g
-    return (settings.DEEPSEEK_VISION_MODEL or "deepseek-vl").strip() or "deepseek-vl"
-
-
 ai_client = AsyncOpenAI(
     api_key=settings.DEEPSEEK_API_KEY,
     base_url="https://api.deepseek.com",
-)
-
-_VISION_ANALYSIS_SYSTEM_ADDON = (
-    "\n\nПользователь приложил изображение: опиши, что на нём важно для вопроса, и ответь по сути, "
-    "используя контекст базы знаний где уместно."
-)
-
-# When multimodal request fails (unsupported or rejected), steer the text-only retry.
-_VISION_FALLBACK_ASSISTANT_NOTE = (
-    "\n\nСлужебное указание для ассистента: изображение в мультимодальную модель передать не удалось. "
-    "Не утверждай, что видишь фото. Ответь по тексту вопроса и базе знаний; если нужно содержимое снимка — "
-    "попроси пользователя кратко описать его словами. Не упоминай API, серверы, «техническую передачу медиа» "
-    "и подобные формулировки."
 )
 
 _TEMPLATE_VAR_RE = re.compile(r"(\{\{[^{}]+\}\}|\$\{[^{}]+\}|%\([^)]+\)s)")
@@ -122,7 +90,6 @@ async def generate_answer_with_context(
     context_list: list,
     system_prompt: str,
     *,
-    vision_image_data_url: str | None = None,
     chat_model: str | None = None,
 ) -> str:
     if not context_list:
@@ -139,58 +106,13 @@ async def generate_answer_with_context(
     )
 
     user_prompt = f"КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ:\n{context_text}\n\nВОПРОС ПОЛЬЗОВАТЕЛЯ: {question}"
-
-    vision_url = (vision_image_data_url or "").strip() or None
     model = (chat_model or "deepseek-chat").strip() or "deepseek-chat"
-    if vision_url and model.lower() in _DEEPSEEK_TEXT_CHAT_ALIASES:
-        model = (settings.DEEPSEEK_VISION_MODEL or "deepseek-vl").strip() or "deepseek-vl"
-    analyze_system = f"{base_system}{_VISION_ANALYSIS_SYSTEM_ADDON}"
-    honesty_system = (
-        f"{base_system}\n\n"
-        "Пользователь отправил изображение. Изображение в языковую модель сейчас не удалось использовать. "
-        "Не утверждай, что видишь фото или можешь его прочитать. Ответь по тексту вопроса и базе знаний; "
-        "если без содержимого снимка ответить нельзя — попроси пользователя кратко описать, что на картинке. "
-        "Не используй формулировки про «техническую передачу медиафайлов», API или ошибки сервера."
-    )
-    multimodal_user: list[dict[str, object]] | None = None
-    if vision_url:
-        multimodal_user = [
-            {"type": "text", "text": user_prompt},
-            {"type": "image_url", "image_url": {"url": vision_url}},
-        ]
-
-    if not vision_url:
-        response = await ai_client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": base_system},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.3,
-        )
-        return _polish_answer(response.choices[0].message.content)
-
-    try_deepseek_mm = bool(getattr(settings, "DEEPSEEK_CHAT_TRY_IMAGE_MULTIMODAL", True))
-
-    if try_deepseek_mm and multimodal_user is not None:
-        try:
-            response = await ai_client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": analyze_system},
-                    {"role": "user", "content": multimodal_user},
-                ],
-                temperature=0.3,
-            )
-            return _polish_answer(response.choices[0].message.content)
-        except Exception:
-            logger.warning("DeepSeek multimodal request failed", exc_info=True)
 
     response = await ai_client.chat.completions.create(
         model=model,
         messages=[
-            {"role": "system", "content": honesty_system},
-            {"role": "user", "content": user_prompt + _VISION_FALLBACK_ASSISTANT_NOTE},
+            {"role": "system", "content": base_system},
+            {"role": "user", "content": user_prompt},
         ],
         temperature=0.3,
     )

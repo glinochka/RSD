@@ -16,7 +16,7 @@ from ..alembic.models import AgentAnalyticsMessage, AgentCrmConnection, AgentSal
 from ..utils.crypto import decrypt_crm_credentials
 from ..utils.pii import mask_external_id, redact_pii_text
 from .admin_booking import AdminBookingNeedsConfirmationError, AdminBookingToolRegistry
-from .ai_authoring import ai_client, generate_answer_with_context, resolve_multimodal_chat_model
+from .ai_authoring import ai_client, generate_answer_with_context
 from .content_factory_runtime import get_content_factory_orchestrator
 from .crm import build_provider
 from .crm.tool_registry import CRMNeedsConfirmationError, CRMToolRegistry
@@ -1124,17 +1124,8 @@ class TemplateRuntimeService:
         runtime_context: dict[str, Any] | None = None,
         template_config: dict[str, Any] | None = None,
     ) -> TemplateExecutionResult:
-        runtime_ctx = runtime_context or {}
         cfg = template_config or {}
-        vision_raw = runtime_ctx.get("vision_image_data_url")
-        vision_url = vision_raw.strip() if isinstance(vision_raw, str) else None
-        vision_model = resolve_multimodal_chat_model(
-            vision_chat_model=str(
-                runtime_ctx.get("vision_chat_model") or cfg.get("vision_chat_model") or ""
-            ).strip()
-            or None,
-            generation_model=str(cfg.get("generation_model") or "").strip() or None,
-        )
+        chat_model = str(cfg.get("generation_model") or "").strip() or None
 
         if enable_smart_search:
             context = await search_knowledge_base(user_message, agent_id=knowledge_scope_id)
@@ -1169,8 +1160,7 @@ class TemplateRuntimeService:
             user_message,
             context_list,
             effective_prompt,
-            vision_image_data_url=vision_url,
-            chat_model=vision_model,
+            chat_model=chat_model,
         )
         requires_owner_handoff = False
         owner_handoff_reason: str | None = None

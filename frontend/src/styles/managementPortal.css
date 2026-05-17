@@ -26,7 +26,8 @@
   display: flex;
   justify-content: center;
   align-items: center;
-  min-height: calc(100vh - 160px);
+  min-height: calc(100vh - 120px);
+  padding: var(--spacing-xl) var(--spacing-base);
 }
 
 .management-login-card {
@@ -133,6 +134,17 @@
   font-size: var(--font-size-xl);
 }
 
+.management-content-head--stack {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+}
+
+.management-content-head--stack p {
+  margin: 0;
+  max-width: 72ch;
+}
+
 .management-inline-controls {
   width: min(420px, 100%);
 }
@@ -179,6 +191,13 @@
 .management-stat-card strong {
   font-size: var(--font-size-2xl);
   color: var(--color-text);
+}
+
+.management-stat-card .management-cell-muted {
+  display: block;
+  margin-top: var(--spacing-xs);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-normal);
 }
 
 .management-table-wrap {
@@ -288,11 +307,12 @@
 }
 
 .management-badge {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
   padding: 2px 8px;
   border-radius: 999px;
   font-size: var(--font-size-xs, 0.75rem);
-  font-weight: var(--font-weight-semibold);
+  font-weight: var(--font-weight-semibold, 600);
   line-height: 1.5;
 }
 
@@ -847,15 +867,6 @@
   cursor: pointer;
 }
 
-.management-badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 8px;
-  border-radius: 9999px;
-  font-size: var(--font-size-xs, 0.75rem);
-  font-weight: var(--font-weight-semibold, 600);
-}
-
 .management-badge-success {
   background: #dcfce7;
   color: #166534;
@@ -975,6 +986,40 @@
   font-weight: var(--font-weight-semibold);
 }
 
+.management-sales-funnel-period {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 var(--spacing-sm);
+}
+
+.management-sales-funnel-period-btn {
+  border: 1px solid var(--color-border, #e5e7eb);
+  background: #fff;
+  color: var(--color-text, #111827);
+  border-radius: var(--radius-base);
+  padding: 6px 12px;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.management-sales-funnel-period-btn:hover {
+  border-color: #9ca3af;
+}
+
+.management-sales-funnel-period-btn.active {
+  background: #111827;
+  border-color: #111827;
+  color: #fff;
+}
+
+.management-sales-funnel-period-hint {
+  margin: 0 0 var(--spacing-base);
+  max-width: 52rem;
+  line-height: 1.45;
+}
+
 .management-sales-funnel {
   display: flex;
   flex-wrap: wrap;
@@ -1009,32 +1054,6 @@
   border-radius: var(--radius-sm);
 }
 
-.management-stats-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--spacing-base);
-}
-
-.management-stat-card {
-  background: var(--color-bg);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  padding: var(--spacing-base) var(--spacing-lg);
-  min-width: 160px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.management-stat-card span {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted, #6b7280);
-}
-
-.management-stat-card strong {
-  font-size: var(--font-size-lg);
-}
-
 .management-table-wide {
   overflow-x: auto;
   max-width: 100%;
@@ -1053,22 +1072,6 @@
   min-width: 12rem;
   max-width: none;
   width: 100%;
-}
-
-.management-contact-values {
-  display: flex;
-  flex-wrap: nowrap;
-  gap: 6px 10px;
-  align-items: flex-start;
-  max-width: 18rem;
-}
-
-.management-contact-values.management-contact-values-wrap {
-  flex-wrap: wrap;
-}
-
-.management-contact-value-chip {
-  white-space: nowrap;
 }
 
 .management-sales-contacts-tabs {
@@ -1101,4 +1104,364 @@
   flex-direction: column;
   gap: 6px;
   min-width: 100px;
+}
+
+.management-sales-member-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.management-supervisor-select {
+  min-width: 10rem;
+  max-width: 14rem;
+}
+
+.management-manual-contact-form {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.management-form-actions--full {
+  grid-column: 1 / -1;
+}
+
+.management-rop-desk-notice {
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: var(--radius-base);
+  padding: var(--spacing-lg);
+  background: var(--color-surface-muted, #f9fafb);
+  max-width: 36rem;
+}
+
+.management-rop-desk-notice h2 {
+  margin: 0 0 var(--spacing-sm);
+  font-size: 1.25rem;
+}
+
+.management-rop-desk-notice p {
+  margin: 0 0 var(--spacing-base);
+  color: var(--color-text-light);
+  line-height: 1.5;
+}
+
+.management-row-muted {
+  opacity: 0.55;
+}
+
+.management-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--spacing-base);
+  align-items: end;
+  margin-bottom: var(--spacing-base);
+}
+
+.management-form-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  margin-bottom: 0;
+  font-weight: var(--font-weight-medium);
+}
+
+.management-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+  align-items: center;
+}
+
+/* --- Unified form fields (admin + sales) --- */
+.management-field,
+.management-content input:not([type='checkbox']):not([type='file']):not([type='radio']),
+.management-content select,
+.management-content textarea,
+.management-login-card input:not([type='checkbox']):not([type='file']),
+.management-login-card select,
+.management-login-card textarea {
+  width: 100%;
+  padding: var(--spacing-sm) var(--spacing-base);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-base);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+  transition: border-color var(--transition-base), box-shadow var(--transition-base);
+}
+
+.management-field:focus,
+.management-content input:not([type='checkbox']):not([type='file']):not([type='radio']):focus,
+.management-content select:focus,
+.management-content textarea:focus,
+.management-login-card input:focus,
+.management-login-card select:focus,
+.management-login-card textarea:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.12);
+}
+
+.management-field-lpr {
+  min-width: 11rem;
+  min-height: 3.25rem;
+  max-width: none;
+  resize: vertical;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  field-sizing: content;
+}
+
+.management-field-comment {
+  min-width: 12rem;
+  min-height: 4.5rem;
+  max-width: 20rem;
+  resize: vertical;
+}
+
+.management-field-select {
+  min-width: 9rem;
+  max-width: 12rem;
+}
+
+.management-table-input,
+.management-inline-num {
+  padding: var(--spacing-sm) var(--spacing-base);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-base);
+  font-size: var(--font-size-sm);
+  background: var(--color-bg);
+}
+
+.management-inline-num {
+  width: 88px;
+}
+
+/* --- Login portal picker --- */
+.management-login-portal-shell {
+  width: 100%;
+  max-width: 480px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--spacing-lg);
+}
+
+.management-login-portal-header {
+  text-align: center;
+}
+
+.management-login-portal-eyebrow {
+  margin: 0 0 var(--spacing-xs);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-lighter);
+}
+
+.management-login-portal-title {
+  margin: 0 0 var(--spacing-xs);
+  font-size: var(--font-size-2xl);
+  color: var(--color-text);
+}
+
+.management-login-portal-subtitle {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-light);
+}
+
+.management-login-portal-picker {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xs);
+  background: var(--color-bg-lighter);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+.management-login-portal-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: var(--spacing-base);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition-base), border-color var(--transition-base), box-shadow var(--transition-base);
+}
+
+.management-login-portal-option:hover {
+  background: var(--color-bg);
+}
+
+.management-login-portal-option.active {
+  background: var(--color-bg);
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+.management-login-portal-option-title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
+.management-login-portal-option-desc {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-light);
+  line-height: 1.35;
+}
+
+.management-login-card {
+  margin: 0;
+}
+
+.management-login-card label {
+  margin-bottom: var(--spacing-xs);
+}
+
+/* --- MOP desk --- */
+.management-desk-head {
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.management-desk-head h2 {
+  margin-bottom: var(--spacing-xs);
+}
+
+.management-desk-head p {
+  margin: 0;
+}
+
+.management-desk-excel-toggle {
+  flex-shrink: 0;
+  margin-top: var(--spacing-xs);
+}
+
+.management-desk-excel-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-base);
+  flex-wrap: wrap;
+  padding: var(--spacing-sm) var(--spacing-base);
+  margin: calc(-1 * var(--spacing-sm)) calc(-1 * var(--spacing-sm)) var(--spacing-base);
+  background: linear-gradient(180deg, #f8fafc 0%, var(--color-bg) 100%);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.management-desk-excel-bar-left {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.management-desk-excel-bar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+  align-items: center;
+}
+
+.management-desk-contacts-title {
+  margin: 0 0 var(--spacing-sm);
+  font-size: var(--font-size-lg);
+}
+
+.management-desk-table th,
+.management-desk-table td {
+  white-space: normal;
+  vertical-align: top;
+}
+
+.management-desk-table .management-desk-col-org,
+.management-desk-table .management-desk-col-lpr {
+  min-width: 11rem;
+  max-width: 16rem;
+}
+
+.management-desk-readonly {
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+  font-size: var(--font-size-sm);
+}
+
+.management-contact-values {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: flex-start;
+  max-width: none;
+}
+
+.management-contact-value-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-lighter);
+  border: 1px solid var(--color-border);
+  font-size: var(--font-size-xs);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+}
+
+/* --- Excel full-screen mode --- */
+.management-page.management-excel-mode {
+  padding: var(--spacing-sm);
+  min-height: 100vh;
+}
+
+.management-excel-dashboard {
+  grid-template-columns: 1fr;
+  gap: 0;
+  min-height: calc(100vh - var(--spacing-base));
+}
+
+.management-excel-content {
+  border: none;
+  border-radius: var(--radius-md);
+  padding: var(--spacing-base);
+  min-height: calc(100vh - var(--spacing-base));
+  display: flex;
+  flex-direction: column;
+}
+
+.management-desk-table-excel {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  overflow: auto;
+}
+
+.management-desk-table-excel .management-desk-table {
+  min-width: 1200px;
+}
+
+@media (max-width: 640px) {
+  .management-login-portal-picker {
+    grid-template-columns: 1fr;
+  }
+
+  .management-desk-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .management-desk-excel-toggle {
+    align-self: flex-start;
+  }
 }

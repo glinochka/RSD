@@ -283,8 +283,6 @@ class APIcreate(APIbase):
         telegram_peer_access_hash: int | None = None,
         voice_base64: str | None = None,
         voice_mime_type: str | None = None,
-        image_base64: str | None = None,
-        image_mime_type: str | None = None,
     ) -> dict:
         data = {
             "bot_id": bot_id,
@@ -301,10 +299,6 @@ class APIcreate(APIbase):
             data["voice_base64"] = voice_base64
         if voice_mime_type:
             data["voice_mime_type"] = voice_mime_type
-        if image_base64:
-            data["image_base64"] = image_base64
-        if image_mime_type:
-            data["image_mime_type"] = image_mime_type
         return await cls.agent(data, add_url="internal/process_message")
     
 

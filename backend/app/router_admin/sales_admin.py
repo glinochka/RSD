@@ -2,20 +2,24 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from ..alembic.database import async_session_maker
-from ..alembic.models import SalesOutboundContact, SalesTeamMember
+from ..alembic.models import SalesTeamMember
 from ..router_sales.schemas import SalesTeamMemberCreate, SalesTeamMemberUpdate
 from ..services.internal_sales import (
+    add_contact_to_pool,
     apply_role_default_quota,
+    apply_sales_team_member_update,
     clear_sales_crm_data,
     funnel_counts,
+    funnel_counts_by_members,
     import_contacts_from_excel,
     member_public_dict,
+    normalize_funnel_period,
     pool_contacts_count,
     utc_now_naive,
 )
@@ -30,6 +34,12 @@ router = APIRouter(prefix="/sales", tags=["admin-sales"])
 class SalesContactManualCreate(BaseModel):
     org_name: str = Field("", max_length=512)
     label: str = Field("", max_length=256)  # совместимость со старым полем «Подпись»
+    lpr_name: str | None = Field(None, max_length=256)
+    lpr_phone: str | None = Field(None, max_length=256)
+    org_phone: str | None = Field(None, max_length=256)
+    org_mobile: str | None = Field(None, max_length=256)
+    email: str | None = Field(None, max_length=255)
+    website: str | None = Field(None, max_length=512)
 
 
 async def _all_active_member_ids(session) -> list[int]:
@@ -40,19 +50,21 @@ async def _all_active_member_ids(session) -> list[int]:
 
 
 @router.get("/team-members")
-async def admin_sales_list_team(_admin=Depends(get_current_admin)):
+async def admin_sales_list_team(
+    _admin=Depends(get_current_admin),
+    include_inactive: bool = Query(False),
+):
     async with async_session_maker() as session:
-        members = (
-            await session.scalars(
-                select(SalesTeamMember)
-                .where(SalesTeamMember.is_active.is_(True))
-                .order_by(SalesTeamMember.id)
-            )
-        ).all()
-        items = []
-        for m in members:
-            fc = await funnel_counts(session, [m.id])
-            items.append(member_public_dict(m, funnel=fc))
+        q = select(SalesTeamMember).order_by(SalesTeamMember.id)
+        if not include_inactive:
+            q = q.where(SalesTeamMember.is_active.is_(True))
+        members = (await session.scalars(q)).all()
+        member_ids = [m.id for m in members]
+        funnels = await funnel_counts_by_members(session, member_ids, period="all")
+        items = [
+            member_public_dict(m, funnel=funnels.get(m.id))
+            for m in members
+        ]
     return JSONResponse(content={"items": items})
 
 
@@ -99,8 +111,6 @@ async def admin_sales_update_member(
         if not row:
             raise HTTPException(status_code=404, detail="Сотрудник не найден")
         data = payload.model_dump(exclude_unset=True)
-        if "password" in data and data["password"]:
-            row.password_hash = get_password_hash(data.pop("password"))
         if "supervisor_id" in data:
             new_sup = data["supervisor_id"]
             if row.role == "rop" and new_sup is not None:
@@ -111,30 +121,43 @@ async def admin_sales_update_member(
                 sup = await session.get(SalesTeamMember, new_sup)
                 if not sup or not sup.is_active:
                     raise HTTPException(status_code=400, detail="Руководитель не найден")
-            row.supervisor_id = new_sup
-            data.pop("supervisor_id", None)
-        for field in ("is_active", "plan_calls_monthly", "plan_demos_monthly", "plan_closes_monthly", "daily_contacts_quota"):
-            if field in data and data[field] is not None:
-                setattr(row, field, data[field])
-        row.updated_at = utc_now_naive()
+            data["supervisor_id"] = new_sup
+        try:
+            await apply_sales_team_member_update(session, row, data, member_id=member_id)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
         await session.commit()
     return JSONResponse(content={"status": "ok"})
 
 
 @router.get("/funnel")
-async def admin_sales_funnel(_admin=Depends(get_current_admin)):
+async def admin_sales_funnel(
+    _admin=Depends(get_current_admin),
+    period: str = Query("all", description="day | week | month | all"),
+):
+    try:
+        funnel_period = normalize_funnel_period(period)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     async with async_session_maker() as session:
         mids = await _all_active_member_ids(session)
-        total = await funnel_counts(session, mids if mids else None)
+        total = await funnel_counts(session, mids if mids else None, period=funnel_period)
         pool_size = await pool_contacts_count(session)
+        funnels = await funnel_counts_by_members(session, mids, period=funnel_period)
         by_member = []
         for mid in mids:
             m = await session.get(SalesTeamMember, mid)
             if not m:
                 continue
-            fc = await funnel_counts(session, [mid])
-            by_member.append({"member": member_public_dict(m), "funnel": fc})
-    return JSONResponse(content={"total": total, "by_member": by_member, "crm_pool_available": pool_size})
+            by_member.append({"member": member_public_dict(m), "funnel": funnels.get(mid)})
+    return JSONResponse(
+        content={
+            "period": funnel_period,
+            "total": total,
+            "by_member": by_member,
+            "crm_pool_available": pool_size,
+        }
+    )
 
 
 @router.post(
@@ -142,17 +165,27 @@ async def admin_sales_funnel(_admin=Depends(get_current_admin)):
     dependencies=[Depends(rate_limit(max_requests=120, window_seconds=60, scope="admin_sales_contacts"))],
 )
 async def admin_sales_add_contact_manual(payload: SalesContactManualCreate, _admin=Depends(get_current_admin)):
-    now = utc_now_naive()
     raw_name = (payload.org_name or payload.label or "").strip() or "Контакт без названия"
+
+    def _opt(field: str | None) -> str | None:
+        if field is None:
+            return None
+        s = field.strip()
+        return s or None
+
     async with async_session_maker() as session:
-        row = SalesOutboundContact(
-            assignee_id=None,
-            workflow_status="new",
-            org_name=raw_name[:512],
-            created_at=now,
-            updated_at=now,
+        row, skipped = await add_contact_to_pool(
+            session,
+            org_name=raw_name,
+            lpr_name=_opt(payload.lpr_name),
+            lpr_phone=_opt(payload.lpr_phone),
+            org_phone=_opt(payload.org_phone),
+            org_mobile=_opt(payload.org_mobile),
+            email=_opt(payload.email),
+            website=_opt(payload.website),
         )
-        session.add(row)
+        if skipped:
+            raise HTTPException(status_code=409, detail="Такой контакт уже есть в активной CRM")
         await session.commit()
         await session.refresh(row)
         pool_size = await pool_contacts_count(session)
@@ -193,15 +226,19 @@ async def admin_sales_excel_upload(
         raise HTTPException(status_code=400, detail="Пустой файл")
     async with async_session_maker() as session:
         try:
-            imported, _skipped = await import_contacts_from_excel(session, file_bytes=raw)
+            imported, skipped = await import_contacts_from_excel(session, file_bytes=raw)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         pool_size = await pool_contacts_count(session)
+    msg = f"В общую базу добавлено: {imported}. Свободно в пуле: {pool_size}"
+    if skipped:
+        msg += f". Пропущено дублей: {skipped}"
     return JSONResponse(
         status_code=status.HTTP_201_CREATED,
         content={
             "imported": imported,
+            "skipped_duplicates": skipped,
             "crm_pool_available": pool_size,
-            "message": f"В общую базу добавлено: {imported}. Свободно в пуле: {pool_size}",
+            "message": msg,
         },
     )

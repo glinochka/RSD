@@ -21,16 +21,11 @@ class Settings(BaseSettings):
     # Дневная выдача контактов из общего пула (если у сотрудника daily_contacts_quota = 0).
     SALES_TRAINEE_DAILY_QUOTA: int = 30
     SALES_MOP_DAILY_QUOTA: int = 50
+    # Календарный день для архива и лимитов выдачи контактов (IANA timezone).
+    SALES_DAY_TIMEZONE: str = "Europe/Moscow"
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
     QDRANT_API_KEY:str = ''
     DEEPSEEK_API_KEY: str
-    # Chat model for requests that include image_url. deepseek-chat / deepseek-reasoner are text-oriented;
-    # multimodal needs a VL id (e.g. deepseek-vl). Name must match current DeepSeek API docs.
-    DEEPSEEK_VISION_MODEL: str = "deepseek-vl"
-    # Try DeepSeek /chat/completions with OpenAI-style multimodal payloads (content array + image_url,
-    # including data:image/...;base64,...). If the gateway/model rejects vision, we fall back to a
-    # text-only call with frank instructions for the assistant.
-    DEEPSEEK_CHAT_TRY_IMAGE_MULTIMODAL: bool = True
     # Fallback STT when local faster-whisper is disabled or returns empty (optional).
     OPENAI_API_KEY: str = ""
     # Speech-to-text: faster_whisper (local), openai (API), auto = try local then API.
@@ -40,9 +35,8 @@ class Settings(BaseSettings):
     FASTER_WHISPER_COMPUTE_TYPE: str = "int8"
     # Empty = auto-detect language; e.g. "ru" for Russian-only short voice notes.
     FASTER_WHISPER_LANGUAGE: str = ""
-    # STT / vision resource limits (abuse + DoS guardrails).
+    # STT resource limits (abuse + DoS guardrails).
     VOICE_MAX_BYTES: int = 10 * 1024 * 1024
-    IMAGE_MAX_BYTES: int = 10 * 1024 * 1024
     VOICE_TRANSCRIPTION_TIMEOUT_SECONDS: float = 120.0
     KLING_API_KEY: str = ""
     KLING_API_BASE_URL: str = "https://api.klingai.com"

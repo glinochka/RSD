@@ -13,12 +13,16 @@ from ..alembic.models import SalesOutboundContact, SalesTeamMember
 from ..config import settings
 from ..services.internal_sales import (
     apply_role_default_quota,
+    apply_sales_team_member_update,
+    can_request_more_contacts,
     clear_sales_crm_data,
     contact_to_api_dict,
     effective_daily_quota,
     ensure_daily_allocation,
     funnel_counts,
+    funnel_counts_by_members,
     import_contacts_from_excel,
+    normalize_funnel_period,
     member_public_dict,
     monthly_done_counts,
     month_start_utc_naive,
@@ -30,6 +34,7 @@ from ..services.internal_sales import (
     utc_now_naive,
     WORKFLOW_STATUSES,
     ALLOCATABLE_ROLES,
+    MAX_DAILY_ALLOCATION_EVENTS,
 )
 from ..services.sales_moy_nalog_invoice import (
     create_contact_receipt_pdf,
@@ -76,7 +81,14 @@ async def sales_login(payload: SalesLoginRequest):
 
 
 @router.get("/me")
-async def sales_me(auth: SalesAuthContext = Depends(get_sales_auth)):
+async def sales_me(
+    auth: SalesAuthContext = Depends(get_sales_auth),
+    funnel_period: str = Query("day", description="day | week | month | all"),
+):
+    try:
+        period = normalize_funnel_period(funnel_period, default="day")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     ms = month_start_utc_naive()
     async with async_session_maker() as session:
         async with session.begin():
@@ -87,13 +99,14 @@ async def sales_me(auth: SalesAuthContext = Depends(get_sales_auth)):
             if (member.role or "").strip().lower() in ALLOCATABLE_ROLES:
                 daily_allocated = await ensure_daily_allocation(session, member)
             done = await monthly_done_counts(session, member.id, ms)
-            funnel = await funnel_counts(session, [member.id], include_archived=False)
+            funnel = await funnel_counts(session, [member.id], period=period)
             pending = await pending_new_count(session, member.id)
             pool_size = await pool_contacts_count(session)
         backlog = pending
     role = (member.role or "").strip().lower()
     quota_now = effective_daily_quota(member)
     alloc_total = int(getattr(member, "daily_pool_alloc_total", 0) or 0)
+    alloc_events = int(getattr(member, "daily_allocation_events", 0) or 0)
     return JSONResponse(
         content={
             "member": member_public_dict(member),
@@ -106,15 +119,15 @@ async def sales_me(auth: SalesAuthContext = Depends(get_sales_auth)):
             },
             "achievement_month": done,
             "funnel_assigned": funnel,
+            "funnel_period": period,
             "backlog_in_base": backlog,
             "crm_pool_available": pool_size,
             "pending_new_contacts": pending,
             "daily_pool_allocated": alloc_total,
-            "can_request_more": (
-                role in ALLOCATABLE_ROLES
-                and pending == 0
-                and pool_size > 0
-                and alloc_total < quota_now
+            "daily_allocation_events": alloc_events,
+            "max_daily_allocation_events": MAX_DAILY_ALLOCATION_EVENTS,
+            "can_request_more": can_request_more_contacts(
+                member, pending_new=pending, pool_size=pool_size
             ),
             "daily_allocated_now": daily_allocated,
         }
@@ -129,12 +142,9 @@ async def sales_list_contacts(
     archived: bool = Query(False, description="Архив (за прошлые дни) или активные"),
 ):
     async with async_session_maker() as session:
-        async with session.begin():
-            member = await session.get(SalesTeamMember, auth.staff_id)
-            if not member or not member.is_active:
-                raise HTTPException(status_code=401, detail="Не авторизован")
-            if (member.role or "").strip().lower() in ALLOCATABLE_ROLES:
-                await ensure_daily_allocation(session, member)
+        member = await session.get(SalesTeamMember, auth.staff_id)
+        if not member or not member.is_active:
+            raise HTTPException(status_code=401, detail="Не авторизован")
         base_filter = [SalesOutboundContact.assignee_id == auth.staff_id]
         if archived:
             base_filter.append(SalesOutboundContact.archived_at.is_not(None))
@@ -196,12 +206,13 @@ async def sales_update_contact(
         raise HTTPException(status_code=400, detail="Некорректный статус")
     async with async_session_maker() as session:
         contact = await session.get(SalesOutboundContact, contact_id)
-        if (
-            not contact
-            or contact.assignee_id != auth.staff_id
-            or contact.archived_at is not None
-        ):
+        if not contact or contact.assignee_id != auth.staff_id:
             raise HTTPException(status_code=404, detail="Контакт не найден")
+        if "workflow_status" in data and contact.archived_at is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="Статус архивного контакта менять нельзя; можно править ФИО, телефон и комментарий",
+            )
         if "lpr_name" in data:
             v = data["lpr_name"]
             contact.lpr_name = (v.strip() if isinstance(v, str) else None) or None
@@ -233,12 +244,10 @@ async def sales_create_invoice(
 
     async with async_session_maker() as session:
         contact = await session.get(SalesOutboundContact, contact_id)
-        if (
-            not contact
-            or contact.assignee_id != auth.staff_id
-            or contact.archived_at is not None
-        ):
+        if not contact or contact.assignee_id != auth.staff_id:
             raise HTTPException(status_code=404, detail="Контакт не найден")
+        if contact.archived_at is not None:
+            raise HTTPException(status_code=400, detail="Чек для архивного контакта недоступен")
 
         try:
             result = await asyncio.to_thread(
@@ -286,10 +295,9 @@ async def rop_sales_list_team(_auth: SalesAuthContext = Depends(require_sales_ro
                 .order_by(SalesTeamMember.id)
             )
         ).all()
-        items = []
-        for m in members:
-            fc = await funnel_counts(session, [m.id])
-            items.append(member_public_dict(m, funnel=fc))
+        member_ids = [m.id for m in members]
+        funnels = await funnel_counts_by_members(session, member_ids, period="all")
+        items = [member_public_dict(m, funnel=funnels.get(m.id)) for m in members]
     return JSONResponse(content={"items": items})
 
 
@@ -350,40 +358,55 @@ async def rop_sales_update_member(
         if row.role == "rop" and member_id != auth.staff_id:
             raise HTTPException(status_code=403, detail="Нельзя редактировать другого РОП")
         data = payload.model_dump(exclude_unset=True)
-        if "password" in data and data["password"]:
-            row.password_hash = get_password_hash(data.pop("password"))
         if "supervisor_id" in data:
             new_sup = data["supervisor_id"]
+            if row.role == "rop" and new_sup is not None:
+                raise HTTPException(status_code=400, detail="РОП не может иметь руководителя")
             if new_sup is not None:
+                if new_sup == member_id:
+                    raise HTTPException(status_code=400, detail="Некорректный руководитель")
                 candidates = await _rop_visible_member_ids(session, auth.staff_id)
                 if new_sup not in candidates:
                     raise HTTPException(status_code=400, detail="Некорректный руководитель")
-                row.supervisor_id = new_sup
-            else:
-                row.supervisor_id = None
-            data.pop("supervisor_id")
-        for field in ("is_active", "plan_calls_monthly", "plan_demos_monthly", "plan_closes_monthly", "daily_contacts_quota"):
-            if field in data and data[field] is not None:
-                setattr(row, field, data[field])
-        row.updated_at = utc_now_naive()
+            data["supervisor_id"] = new_sup
+        try:
+            await apply_sales_team_member_update(
+                session, row, data, member_id=member_id
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
         await session.commit()
     return JSONResponse(content={"status": "ok"})
 
 
 @management_router.get("/funnel")
-async def rop_sales_funnel(auth: SalesAuthContext = Depends(require_sales_rop)):
+async def rop_sales_funnel(
+    auth: SalesAuthContext = Depends(require_sales_rop),
+    period: str = Query("all", description="day | week | month | all"),
+):
+    try:
+        funnel_period = normalize_funnel_period(period)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     async with async_session_maker() as session:
-        visible = list(await _rop_visible_member_ids(session, auth.staff_id))
-        total = await funnel_counts(session, visible if visible else None)
+        visible_list = sorted(await _rop_visible_member_ids(session, auth.staff_id))
+        total = await funnel_counts(session, visible_list if visible_list else None, period=funnel_period)
         pool_size = await pool_contacts_count(session)
+        funnels = await funnel_counts_by_members(session, visible_list, period=funnel_period)
         by_member = []
-        for mid in sorted(visible):
+        for mid in visible_list:
             m = await session.get(SalesTeamMember, mid)
             if not m or not m.is_active:
                 continue
-            fc = await funnel_counts(session, [mid])
-            by_member.append({"member": member_public_dict(m), "funnel": fc})
-    return JSONResponse(content={"total": total, "by_member": by_member, "crm_pool_available": pool_size})
+            by_member.append({"member": member_public_dict(m), "funnel": funnels.get(mid)})
+    return JSONResponse(
+        content={
+            "period": funnel_period,
+            "total": total,
+            "by_member": by_member,
+            "crm_pool_available": pool_size,
+        }
+    )
 
 
 @management_router.post(
@@ -417,15 +440,19 @@ async def rop_sales_excel_upload(
         raise HTTPException(status_code=400, detail="Пустой файл")
     async with async_session_maker() as session:
         try:
-            imported, _skipped = await import_contacts_from_excel(session, file_bytes=raw)
+            imported, skipped = await import_contacts_from_excel(session, file_bytes=raw)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         pool_size = await pool_contacts_count(session)
+    msg = f"В общую базу добавлено: {imported}. Свободно в пуле: {pool_size}"
+    if skipped:
+        msg += f". Пропущено дублей: {skipped}"
     return JSONResponse(
         status_code=status.HTTP_201_CREATED,
         content={
             "imported": imported,
+            "skipped_duplicates": skipped,
             "crm_pool_available": pool_size,
-            "message": f"В общую базу добавлено: {imported}. Свободно в пуле: {pool_size}",
+            "message": msg,
         },
     )

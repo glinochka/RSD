@@ -408,20 +408,13 @@ class InternalProcessMessageRequest(BaseModel):
         description="Аудио в Base64; см. VOICE_MAX_BYTES на сервере",
     )
     voice_mime_type: Optional[str] = Field(default="audio/ogg", max_length=128)
-    image_base64: Optional[str] = Field(
-        default=None,
-        max_length=15_000_000,
-        description="Изображение в Base64; см. IMAGE_MAX_BYTES на сервере",
-    )
-    image_mime_type: Optional[str] = Field(default="image/jpeg", max_length=128)
 
     @model_validator(mode="after")
     def validate_any_content(self):
         q = (self.query or "").strip()
         voice = (self.voice_base64 or "").strip()
-        image = (self.image_base64 or "").strip()
-        if not q and not voice and not image:
-            raise ValueError("Укажите query, voice_base64 или image_base64.")
+        if not q and not voice:
+            raise ValueError("Укажите query или voice_base64.")
         return self
 
 

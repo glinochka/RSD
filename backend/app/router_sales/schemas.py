@@ -17,6 +17,7 @@ class SalesTeamMemberCreate(BaseModel):
 
 class SalesTeamMemberUpdate(BaseModel):
     supervisor_id: int | None = None
+    role: str | None = Field(None, pattern="^(trainee|mop|rop)$")
     is_active: bool | None = None
     password: str | None = Field(None, min_length=6, max_length=128)
     plan_calls_monthly: int | None = Field(None, ge=0, le=1_000_000)

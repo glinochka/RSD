@@ -16,9 +16,10 @@ const salesService = {
     return response.data;
   },
 
-  async getMe(token) {
+  async getMe(token, { funnelPeriod = 'day' } = {}) {
     const response = await salesClient.get(API_ROUTES.SALES_ME, {
       headers: { Authorization: `Bearer ${token}` },
+      params: { funnel_period: funnelPeriod },
     });
     return response.data;
   },
@@ -74,9 +75,10 @@ const salesService = {
     return response.data;
   },
 
-  async mgmtGetFunnel(token) {
+  async mgmtGetFunnel(token, { period = 'all' } = {}) {
     const response = await salesClient.get(API_ROUTES.SALES_MGMT_FUNNEL, {
       headers: { Authorization: `Bearer ${token}` },
+      params: { period },
     });
     return response.data;
   },

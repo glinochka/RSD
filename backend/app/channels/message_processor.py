@@ -12,7 +12,6 @@ from sqlalchemy import select
 from ..alembic.database import async_session_maker
 from ..alembic.models import Agent, AgentAnalyticsMessage, AgentFrozenUser, User
 from ..services.agent_availability import agent_availability_allows_now
-from ..services.ai_authoring import resolve_multimodal_chat_model
 from ..services.qa_handoff_service import EscalationType as QAEscalationType, get_qa_handoff_service
 from ..services.template_runtime import EscalationType, get_template_runtime
 from ..utils.pii import redact_pii_text
@@ -181,13 +180,6 @@ class MessageProcessor:
             merged_runtime_ctx: dict[str, object] = dict(request.runtime_context or {})
             if request.telegram_peer_access_hash is not None and int(request.telegram_peer_access_hash) != 0:
                 merged_runtime_ctx["telegram_peer_access_hash"] = int(request.telegram_peer_access_hash)
-            if isinstance(template_config, dict):
-                vm = resolve_multimodal_chat_model(
-                    vision_chat_model=str(template_config.get("vision_chat_model") or "").strip() or None,
-                    generation_model=str(template_config.get("generation_model") or "").strip() or None,
-                )
-                merged_runtime_ctx.setdefault("vision_chat_model", vm)
-
             execution = await get_template_runtime().execute(
                 template_type=resolved_agent.template_type,
                 prompt=request.system_prompt or (resolved_agent.system_prompt or ""),
