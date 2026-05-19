@@ -475,6 +475,7 @@ async def admin_chats(
         "max_bot",
         "max_userbot",
         "whatsapp_userbot",
+        "phone",
         "external_api",
     }
 

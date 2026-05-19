@@ -437,6 +437,7 @@ function formatChatChannel(channel) {
     telegram: 'Telegram Bot',
     telegram_userbot: 'Telegram Userbot',
     whatsapp_userbot: 'WhatsApp',
+    telephony_voximplant: 'Телефония',
     external_api: 'External API',
     max_bot: 'MAX Bot',
     max_userbot: 'MAX Userbot',

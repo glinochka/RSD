@@ -1,5 +1,19 @@
 services:
 
+    redis:
+        restart: always
+        image: redis:7-alpine
+        container_name: rsd_redis
+        ports:
+            - "127.0.0.1:6379:6379"
+        networks:
+            - rsd_network
+        healthcheck:
+            test: ["CMD", "redis-cli", "ping"]
+            interval: 5s
+            timeout: 3s
+            retries: 5
+
     postgres:
         restart: always
         image: postgres:15-alpine  
@@ -49,12 +63,38 @@ services:
             WHATSAPP_USERBOT_BRIDGE_API_KEY: ${WHATSAPP_USERBOT_BRIDGE_API_KEY:-}
             WHATSAPP_USERBOT_BRIDGE_TIMEOUT_SECONDS: ${WHATSAPP_USERBOT_BRIDGE_TIMEOUT_SECONDS:-60}
             WA_USERBOT_SESSION_SECRET: ${WA_USERBOT_SESSION_SECRET:?WA_USERBOT_SESSION_SECRET must be set}
+            TELEPHONY_ENABLED: ${TELEPHONY_ENABLED:-false}
+            TELEPHONY_INTERNAL_API_KEY: ${TELEPHONY_INTERNAL_API_KEY:-}
+            INTERNAL_REQUEST_SIGNING_SECRET: ${INTERNAL_REQUEST_SIGNING_SECRET:-}
+            TELEPHONY_WEBHOOK_BASE_URL: ${TELEPHONY_WEBHOOK_BASE_URL:-}
+            TELEPHONY_WEBHOOK_SIGNATURE_TTL_SECONDS: ${TELEPHONY_WEBHOOK_SIGNATURE_TTL_SECONDS:-300}
+            TELEPHONY_WEBHOOK_RATE_LIMIT_PER_CONNECTION: ${TELEPHONY_WEBHOOK_RATE_LIMIT_PER_CONNECTION:-120}
+            TELEPHONY_WEBHOOK_RATE_LIMIT_PER_IP: ${TELEPHONY_WEBHOOK_RATE_LIMIT_PER_IP:-240}
+            TELEPHONY_WEBHOOK_RATE_WINDOW_SECONDS: ${TELEPHONY_WEBHOOK_RATE_WINDOW_SECONDS:-60}
+            TELEPHONY_TURNS_RETENTION_DAYS: ${TELEPHONY_TURNS_RETENTION_DAYS:-90}
+            TELEPHONY_LLM_TIMEOUT_SECONDS: ${TELEPHONY_LLM_TIMEOUT_SECONDS:-8}
+            TELEPHONY_LLM_RETRY_TIMEOUT_SECONDS: ${TELEPHONY_LLM_RETRY_TIMEOUT_SECONDS:-3}
+            TELEPHONY_TURN_LATENCY_ALERT_P95_MS: ${TELEPHONY_TURN_LATENCY_ALERT_P95_MS:-10000}
+            TELEPHONY_MAX_TURNS: ${TELEPHONY_MAX_TURNS:-15}
+            TELEPHONY_MAX_CALL_MINUTES: ${TELEPHONY_MAX_CALL_MINUTES:-15}
+            TELEPHONY_MAX_TURN_SECONDS: ${TELEPHONY_MAX_TURN_SECONDS:-30}
+            TELEPHONY_STREAMING_ENABLED: ${TELEPHONY_STREAMING_ENABLED:-true}
+            TELEPHONY_ENDPOINT_SILENCE_MS: ${TELEPHONY_ENDPOINT_SILENCE_MS:-600}
+            TELEPHONY_CRM_FILLER_THRESHOLD_MS: ${TELEPHONY_CRM_FILLER_THRESHOLD_MS:-1500}
+            TELEPHONY_DEDICATED_POOL_ENABLED: ${TELEPHONY_DEDICATED_POOL_ENABLED:-true}
+            TELEPHONY_DEDICATED_POOL_SIZE: ${TELEPHONY_DEDICATED_POOL_SIZE:-8}
+            TELEPHONY_SSML_ENABLED: ${TELEPHONY_SSML_ENABLED:-true}
+            REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+            VOXIMPLANT_API_BASE_URL: ${VOXIMPLANT_API_BASE_URL:-https://api.voximplant.com/platform_api}
+            TELEPHONY_VOXIMPLANT_API_TIMEOUT_SECONDS: ${TELEPHONY_VOXIMPLANT_API_TIMEOUT_SECONDS:-15}
         ports:
             - '8000:8000'
         depends_on:
             qdrant:
                 condition: service_started
             postgres:
+                condition: service_healthy
+            redis:
                 condition: service_healthy
             wa_bridge:
                 condition: service_healthy
@@ -102,6 +142,8 @@ services:
                 condition: service_started
             bot:
                 condition: service_started
+            telephony_bridge:
+                condition: service_healthy
         networks:
             - rsd_network
 
@@ -133,6 +175,93 @@ services:
             - rsd_network
         volumes:
             - ./bot:/app
+
+    telephony_worker:
+        build: ./backend
+        container_name: rsd_telephony_worker
+        restart: unless-stopped
+        command: >
+            sh -c "python -m app.telephony.worker_main"
+        env_file:
+            - .env
+        environment:
+            DB_HOST: ${DB_HOST}
+            DB_PORT: ${DB_PORT}
+            DB_USER: ${DB_USER}
+            DB_PASSWORD: ${DB_PASSWORD}
+            DB_NAME: ${DB_NAME}
+            TELEPHONY_ENABLED: ${TELEPHONY_ENABLED:-false}
+            TELEPHONY_INTERNAL_API_KEY: ${TELEPHONY_INTERNAL_API_KEY:-}
+            INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+            INTERNAL_REQUEST_SIGNING_SECRET: ${INTERNAL_REQUEST_SIGNING_SECRET:-}
+            TELEPHONY_STREAMING_ENABLED: ${TELEPHONY_STREAMING_ENABLED:-true}
+            TELEPHONY_DEDICATED_POOL_ENABLED: ${TELEPHONY_DEDICATED_POOL_ENABLED:-true}
+            TELEPHONY_DEDICATED_POOL_SIZE: ${TELEPHONY_DEDICATED_POOL_SIZE:-8}
+            TELEPHONY_WORKER_PORT: ${TELEPHONY_WORKER_PORT:-8001}
+            TELEPHONY_LLM_TIMEOUT_SECONDS: ${TELEPHONY_LLM_TIMEOUT_SECONDS:-8}
+            TELEPHONY_LLM_RETRY_TIMEOUT_SECONDS: ${TELEPHONY_LLM_RETRY_TIMEOUT_SECONDS:-3}
+            TELEPHONY_MAX_TURNS: ${TELEPHONY_MAX_TURNS:-15}
+            TELEPHONY_MAX_CALL_MINUTES: ${TELEPHONY_MAX_CALL_MINUTES:-15}
+            TELEPHONY_MAX_TURN_SECONDS: ${TELEPHONY_MAX_TURN_SECONDS:-30}
+            TELEPHONY_CRM_FILLER_THRESHOLD_MS: ${TELEPHONY_CRM_FILLER_THRESHOLD_MS:-1500}
+            TELEPHONY_SSML_ENABLED: ${TELEPHONY_SSML_ENABLED:-true}
+            REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+            QDRANT_URL: ${QDRANT_URL}
+            DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+        ports:
+            - "8001:8001"
+        depends_on:
+            postgres:
+                condition: service_healthy
+            qdrant:
+                condition: service_started
+        networks:
+            - rsd_network
+        volumes:
+            - ./backend:/backend
+
+    telephony_bridge:
+        build: ./telephony_bridge
+        container_name: rsd_telephony_bridge
+        restart: unless-stopped
+        environment:
+            TELEPHONY_BRIDGE_API_KEY: ${TELEPHONY_BRIDGE_API_KEY:-}
+            TELEPHONY_BACKEND_INTERNAL_KEY: ${TELEPHONY_INTERNAL_API_KEY:-${INTERNAL_API_KEY}}
+            TELEPHONY_BACKEND_SIGNING_SECRET: ${INTERNAL_REQUEST_SIGNING_SECRET:-}
+            TELEPHONY_WEBHOOK_SIGNATURE_TTL_SECONDS: ${TELEPHONY_WEBHOOK_SIGNATURE_TTL_SECONDS:-300}
+            TELEPHONY_WEBHOOK_RATE_LIMIT_PER_CONNECTION: ${TELEPHONY_WEBHOOK_RATE_LIMIT_PER_CONNECTION:-120}
+            TELEPHONY_WEBHOOK_RATE_LIMIT_PER_IP: ${TELEPHONY_WEBHOOK_RATE_LIMIT_PER_IP:-240}
+            TELEPHONY_WEBHOOK_RATE_WINDOW_SECONDS: ${TELEPHONY_WEBHOOK_RATE_WINDOW_SECONDS:-60}
+            TELEPHONY_BACKEND_REQUEST_TIMEOUT_MS: ${TELEPHONY_BACKEND_REQUEST_TIMEOUT_MS:-15000}
+            TELEPHONY_TURN_LATENCY_ALERT_P95_MS: ${TELEPHONY_TURN_LATENCY_ALERT_P95_MS:-10000}
+            TELEPHONY_SESSION_STORE: ${TELEPHONY_SESSION_STORE:-redis}
+            REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+            TELEPHONY_BACKEND_URL: ${TELEPHONY_BACKEND_URL:-http://telephony_worker:8001}
+            TELEPHONY_MAX_TURNS: ${TELEPHONY_MAX_TURNS:-15}
+            TELEPHONY_MAX_CALL_MINUTES: ${TELEPHONY_MAX_CALL_MINUTES:-15}
+            TELEPHONY_MAX_TURN_SECONDS: ${TELEPHONY_MAX_TURN_SECONDS:-30}
+            TELEPHONY_ENDPOINT_SILENCE_MS: ${TELEPHONY_ENDPOINT_SILENCE_MS:-600}
+            TELEPHONY_STREAMING_ENABLED: ${TELEPHONY_STREAMING_ENABLED:-true}
+            TELEPHONY_CRM_FILLER_THRESHOLD_MS: ${TELEPHONY_CRM_FILLER_THRESHOLD_MS:-1500}
+            TELEPHONY_RECORD_SILENCE_SEC: ${TELEPHONY_RECORD_SILENCE_SEC:-0}
+            TELEPHONY_BARGE_IN_ENABLED: ${TELEPHONY_BARGE_IN_ENABLED:-true}
+            TELEPHONY_BACKCHANNEL_MIN_MS: ${TELEPHONY_BACKCHANNEL_MIN_MS:-5000}
+            TELEPHONY_SSML_ENABLED: ${TELEPHONY_SSML_ENABLED:-true}
+            PORT: "8100"
+        ports:
+            - "8100:8100"
+        depends_on:
+            redis:
+                condition: service_healthy
+            telephony_worker:
+                condition: service_started
+        healthcheck:
+            test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8100/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+        networks:
+            - rsd_network
 
     wa_bridge:
         build: ./wa_bridge

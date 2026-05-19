@@ -634,6 +634,8 @@
 .turnkey-section {
   padding: var(--spacing-3xl) 0;
   border-top: 1px solid var(--color-border);
+  /* Sticky .header: keep title + lead visible below navbar on anchor scroll */
+  scroll-margin-top: 5.5rem;
 }
 
 .turnkey-request-form {
@@ -897,6 +899,10 @@
 }
 
 @media (max-width: 480px) {
+  .turnkey-section {
+    scroll-margin-top: 4.75rem;
+  }
+
   .hero {
     padding: 0 0 var(--spacing-xl);
     margin-bottom: var(--spacing-2xl);

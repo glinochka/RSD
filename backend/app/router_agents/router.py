@@ -7,7 +7,7 @@ from logging import getLogger
 from urllib.parse import quote
 from urllib.request import Request as UrlRequest, urlopen
 from urllib.error import HTTPError, URLError
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 from typing import Any
 
@@ -67,6 +67,25 @@ from ..utils.internal_auth import is_internal_request, is_request_secure, verify
 from ..utils.pii import redact_pii_text
 from ..utils.rate_limit import rate_limit
 from ..utils.whatsapp_session import decode_whatsapp_session_bundle
+from ..telephony.credentials import (
+    TELEPHONY_CHANNEL_PROVIDER,
+    TelephonyCredentialsV1,
+    parse_telephony_credentials,
+)
+from ..services.voximplant_client import (
+    VoximplantApiError,
+    deactivate_voximplant_inbound_rule,
+    validate_voximplant_account,
+    validate_voximplant_channel_setup,
+)
+from ..telephony.webhook_urls import build_telephony_webhook_url
+from .telephony_channel import (
+    build_encrypted_telephony_bundle,
+    telephony_connect_response_extra,
+    telephony_external_id,
+    validate_telephony_credentials_input,
+)
+from .telephony_analytics import list_agent_telephony_calls
 
 logger = getLogger(__name__)
 router = APIRouter(prefix="/api/agents")
@@ -76,7 +95,15 @@ USERBOT_AUTH_TOKEN_TTL_MINUTES = 10
 LEGACY_TEMPLATE_TYPE_ALIASES = {
     "function_calling": "crm_admin",
 }
-SUPPORTED_TEMPLATE_TYPES = {"qa", "crm_admin", "lead_generation", "content_factory", "sales_manager"}
+SUPPORTED_TEMPLATE_TYPES = {
+    "qa",
+    "crm_admin",
+    "lead_generation",
+    "content_factory",
+    "sales_manager",
+    "ai_logist",
+    "ai_manager",
+}
 CRM_PROVIDERS = {"amocrm", "bitrix24"}
 CRM_CONFIRMATION_POLICIES = {"always_confirm", "confirm_risky", "never_confirm"}
 CRM_FALLBACK_MODES = {"ask_clarifying_question", "text_only"}
@@ -578,7 +605,31 @@ def _summarize_tool_event_for_log(event: dict) -> str:
     return " ".join(parts)
 
 
-def _normalize_template_type(template_type: str | None) -> str:
+def _initial_agent_billing_fields(template_type: str) -> dict[str, object]:
+    from ..agent_template_pricing import (
+        get_agent_template_pricing,
+        initial_maintenance_paid_until_for_template,
+    )
+
+    pricing = get_agent_template_pricing(template_type)
+    if not pricing:
+        return {}
+    fields: dict[str, object] = {}
+    if pricing.setup_rub_min <= 0:
+        fields["activation_paid_at"] = datetime.now(timezone.utc).replace(tzinfo=None)
+    grace_until = initial_maintenance_paid_until_for_template(template_type)
+    if grace_until is not None:
+        fields["maintenance_paid_until"] = grace_until
+    return fields
+
+
+def _normalize_template_type(template_type: str | None, *, allow_legacy: bool = False) -> str:
+    from ..agent_template_pricing import (
+        TEMPLATE_TYPES_IN_DEVELOPMENT,
+        assert_template_selectable,
+        get_agent_template_pricing,
+    )
+
     raw = (template_type or "qa").strip().lower()
     normalized = LEGACY_TEMPLATE_TYPE_ALIASES.get(raw, raw)
     if normalized not in SUPPORTED_TEMPLATE_TYPES:
@@ -586,6 +637,21 @@ def _normalize_template_type(template_type: str | None) -> str:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Unsupported template_type: {template_type}",
         )
+    if not allow_legacy and normalized in TEMPLATE_TYPES_IN_DEVELOPMENT:
+        pricing = get_agent_template_pricing(normalized)
+        title = pricing.title if pricing else normalized
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Шаблон «{title}» находится в разработке и недоступен для создания",
+        )
+    if not allow_legacy:
+        try:
+            assert_template_selectable(normalized)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            ) from exc
     return normalized
 
 
@@ -832,6 +898,8 @@ def _normalize_template_config(template_type: str, template_config: dict | None)
     common_config: dict[str, object] = {}
     if "enable_chat_portrait" in raw:
         common_config["enable_chat_portrait"] = bool(raw.get("enable_chat_portrait"))
+    if "enable_phone_portrait" in raw:
+        common_config["enable_phone_portrait"] = bool(raw.get("enable_phone_portrait"))
     if "enable_smart_search" in raw:
         common_config["enable_smart_search"] = bool(raw.get("enable_smart_search"))
     # Chat freeze feature is available only for QA template.
@@ -1272,12 +1340,14 @@ async def _regenerate_external_api_key(agent, agent_dao: AgentDAO) -> str:
 
 
 def _serialize_agent(agent, *, include_external_api_key: bool = False, include_encrypted_token: bool = False) -> dict:
+    from ..agent_template_pricing import build_agent_billing_state
+
     data = convert_to_dict(agent)
     data.pop("registered", None)
     data.pop("encrypted_external_api_key", None)
     data.pop("external_api_key_hash", None)
     try:
-        data["template_type"] = _normalize_template_type(data.get("template_type"))
+        data["template_type"] = _normalize_template_type(data.get("template_type"), allow_legacy=True)
     except HTTPException:
         data["template_type"] = "qa"
     raw_template_config = data.get("template_config")
@@ -1298,11 +1368,12 @@ def _serialize_agent(agent, *, include_external_api_key: bool = False, include_e
             data["external_api_key"] = decrypt_token(agent.encrypted_external_api_key)
         else:
             data["external_api_key"] = None
+    data["billing"] = build_agent_billing_state(agent)
     return data
 
 
 def _serialize_channel_connection(connection: AgentChannelConnection) -> dict:
-    return {
+    data = {
         "id": connection.id,
         "provider": connection.provider,
         "connection_type": connection.connection_type,
@@ -1312,6 +1383,9 @@ def _serialize_channel_connection(connection: AgentChannelConnection) -> dict:
         "created_at": _safe_iso(connection.created_at),
         "updated_at": _safe_iso(connection.updated_at),
     }
+    if connection.provider == TELEPHONY_CHANNEL_PROVIDER:
+        data["telephony_webhook_url"] = build_telephony_webhook_url(int(connection.id))
+    return data
 
 
 def _serialize_crm_connection(connection: AgentCrmConnection) -> dict:
@@ -2200,7 +2274,26 @@ async def _terminate_whatsapp_userbot_session(connection_id: int) -> None:
         logger.debug("whatsapp_userbot: session/logout is unavailable for connection_id=%s", connection_id, exc_info=True)
 
 
+async def _deactivate_telephony_channel_if_supported(channel: AgentChannelConnection) -> None:
+    if (channel.provider or "").strip() != TELEPHONY_CHANNEL_PROVIDER:
+        return
+    if not channel.encrypted_credentials:
+        return
+    try:
+        creds = parse_telephony_credentials(decrypt_token(channel.encrypted_credentials))
+    except Exception:
+        logger.warning("telephony: skip CPaaS deactivation — invalid credentials connection_id=%s", channel.id)
+        return
+    await deactivate_voximplant_inbound_rule(
+        account_id=creds.account_id,
+        api_key=creds.api_key,
+        application_id=creds.application_id,
+        rule_id=creds.rule_id,
+    )
+
+
 async def _terminate_channel_session_if_supported(channel: AgentChannelConnection) -> None:
+    await _deactivate_telephony_channel_if_supported(channel)
     provider = (channel.provider or "").strip().lower()
     connection_type = (channel.connection_type or "").strip().lower()
     if connection_type != "userbot":
@@ -2786,6 +2879,7 @@ async def _log_analytics_message_for_agent_ids(
         "max_userbot",
         "whatsapp_userbot",
         "whatsapp_business_api",
+        "phone",
         "instagram",
         "tiktok",
         "pinterest",
@@ -3641,6 +3735,7 @@ async def create_empty_agent(
                     "bot_username": None,
                     "system_prompt": payload.system_prompt.strip(),
                     "is_active": False,
+                    **_initial_agent_billing_fields(template_type),
                 }
             )
             await session.flush()
@@ -4922,6 +5017,130 @@ async def add_agent_whatsapp_userbot_channel(
             )
 
 
+@router.post("/channels/add-telephony")
+async def add_agent_telephony_channel(
+    payload: AddTelephonyChannel,
+    current_user=Depends(get_current_user_required),
+):
+    if not settings.TELEPHONY_WEBHOOK_BASE_URL.strip():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="TELEPHONY_WEBHOOK_BASE_URL не настроен на сервере",
+        )
+    creds = await validate_telephony_credentials_input(payload)
+    external_id = telephony_external_id(creds.phone_number_e164)
+    encrypted_bundle = build_encrypted_telephony_bundle(creds, encrypt_token)
+
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        channel_connection_dao = AgentChannelConnectionDAO(session)
+        async with session.begin():
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
+                current_user=current_user,
+                internal=False,
+            )
+            existing = await session.scalar(
+                select(AgentChannelConnection).where(
+                    AgentChannelConnection.agent_id == agent.id,
+                    AgentChannelConnection.provider == TELEPHONY_CHANNEL_PROVIDER,
+                )
+            )
+            if existing:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="У агента уже подключена телефония",
+                )
+            duplicate_connection = await channel_connection_dao.find_one_by_filter(
+                provider=TELEPHONY_CHANNEL_PROVIDER,
+                external_id=external_id,
+            )
+            if duplicate_connection:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Этот телефонный номер уже подключен к другому агенту",
+                )
+
+            now = datetime.utcnow()
+            created_connection = await channel_connection_dao.add(
+                {
+                    "agent_id": agent.id,
+                    "provider": TELEPHONY_CHANNEL_PROVIDER,
+                    "connection_type": "api",
+                    "external_id": external_id,
+                    "encrypted_credentials": encrypted_bundle,
+                    "is_primary": bool(payload.make_primary),
+                    "is_active": True,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            )
+            await session.flush()
+            if payload.make_primary:
+                await _set_primary_channel(
+                    session=session,
+                    agent_id=agent.id,
+                    connection_id=created_connection.id,
+                )
+            await _sync_agent_primary_fields(agent=agent, agent_dao=agent_dao, session=session)
+            channels = await _list_agent_channels(session, agent.id)
+            extra = telephony_connect_response_extra(int(created_connection.id))
+            return JSONResponse(
+                content={
+                    "agent_id": agent.id,
+                    "bot_id": agent.bot_id,
+                    "channels": [_serialize_channel_connection(item) for item in channels],
+                    **extra,
+                },
+                status_code=status.HTTP_201_CREATED,
+            )
+
+
+@router.post("/channels/telephony/validate")
+async def validate_agent_telephony_channel(
+    payload: ValidateTelephonyChannel,
+    current_user=Depends(get_current_user_required),
+):
+    try:
+        await validate_voximplant_channel_setup(
+            account_id=payload.account_id,
+            api_key=payload.api_key,
+            phone_number_e164=payload.phone_number_e164,
+            application_id=payload.application_id,
+            rule_id=payload.rule_id,
+        )
+        creds = TelephonyCredentialsV1(
+            account_id=payload.account_id.strip(),
+            api_key=payload.api_key.strip(),
+            application_id=payload.application_id.strip(),
+            rule_id=payload.rule_id.strip(),
+            phone_number_e164=payload.phone_number_e164.strip(),
+            webhook_secret="a" * 32,
+            operator_transfer_e164=payload.operator_transfer_e164.strip(),
+            voice_id=(payload.voice_id or "default").strip(),
+            language=(payload.language or "ru-RU").strip(),
+            record_calls=bool(payload.record_calls),
+            disclaimer_played=bool(payload.disclaimer_played),
+        )
+    except VoximplantApiError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    return {
+        "ok": True,
+        "provider": TELEPHONY_CHANNEL_PROVIDER,
+        "phone_number_e164": creds.phone_number_e164,
+        "message": "Учётная запись Voximplant доступна",
+    }
+
+
 @router.post("/channels/by_max_userbot")
 async def add_agent_max_userbot_channel(
     payload: AddMaxUserbotChannel,
@@ -5158,6 +5377,30 @@ async def toggle_status(
                 internal=internal,
             )
             new_status = not agent.is_active
+            if new_status:
+                from ..agent_template_pricing import (
+                    build_agent_billing_state,
+                    get_agent_template_pricing,
+                    is_activation_paid,
+                )
+
+                pricing = get_agent_template_pricing(agent.template_type)
+                if pricing and pricing.setup_rub_min <= 0 and not is_activation_paid(agent):
+                    await agent_dao.update(
+                        agent,
+                        {"activation_paid_at": datetime.now(timezone.utc).replace(tzinfo=None)},
+                    )
+                    agent = await agent_dao.find_one_by_filter(id=agent.id)
+                if not is_activation_paid(agent):
+                    billing = build_agent_billing_state(agent)
+                    raise HTTPException(
+                        status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                        detail={
+                            "message": "Для активации агента требуется оплата минимального взноса за запуск",
+                            "billing": billing,
+                            "payment_kind": "agent_activation",
+                        },
+                    )
             await agent_dao.update(agent, {"is_active": new_status})
 
             telegram_channel = await _get_telegram_bot_channel_for_agent(session, agent.id)
@@ -5730,6 +5973,48 @@ async def read_analytics_crm_actions(
                         {"tool_status": row["tool_status"] or "unknown", "count": int(row["count"] or 0)}
                         for row in by_status_rows
                     ],
+                },
+                status_code=status.HTTP_200_OK,
+            )
+
+
+@router.get("/analytics/telephony/calls")
+async def read_analytics_telephony_calls(
+    agent_id: int | None = Query(default=None),
+    bot_id: int | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    include_turns: bool = Query(default=True),
+    current_user=Depends(get_current_user_optional),
+    internal: bool = Depends(is_internal_request),
+):
+    _assert_access(current_user, internal)
+    if agent_id is None and bot_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Query parameter 'agent_id' or 'bot_id' is required",
+        )
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=agent_id,
+                bot_id=bot_id,
+                session=session,
+                current_user=current_user,
+                internal=internal,
+            )
+            calls = await list_agent_telephony_calls(
+                session,
+                agent_id=int(agent.id),
+                limit=limit,
+                include_turns=include_turns,
+            )
+            return JSONResponse(
+                content={
+                    "agent_id": agent.id,
+                    "bot_id": agent.bot_id,
+                    "calls": calls,
                 },
                 status_code=status.HTTP_200_OK,
             )
@@ -6680,6 +6965,8 @@ async def read_analytics_chats(
                 "max_bot",
                 "max_userbot",
                 "whatsapp_userbot",
+                "whatsapp_business_api",
+                "phone",
                 "external_api",
             ]
 

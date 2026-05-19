@@ -407,6 +407,15 @@ const Main = () => {
   };
 
   const handlePricing = () => navigate(NAVIGATION_ROUTES.PRICING);
+
+  const handleTurnkey = () => {
+    const turnkeySection = document.getElementById('turnkey');
+    if (turnkeySection) {
+      turnkeySection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+    navigate(NAVIGATION_ROUTES.PRICING);
+  };
   const handleNextTestimonial = () =>
     setActiveTestimonialIndex((prev) => (prev + 1) % TESTIMONIALS.length);
   const handlePrevTestimonial = () =>
@@ -472,8 +481,8 @@ const Main = () => {
               <button type="button" className="btn btn-black" onClick={handleCreateAgent}>
                 Создать агента
               </button>
-              <button type="button" className="btn btn-outline hero-actions-secondary" onClick={handlePricing}>
-                Тарифы
+              <button type="button" className="btn btn-outline hero-actions-secondary" onClick={handleTurnkey}>
+                Агент под ключ
               </button>
             </div>
           </div>
@@ -654,7 +663,7 @@ const Main = () => {
           </ol>
         </section>
 
-        <section className="turnkey-section reveal-on-scroll reveal-from-bottom" aria-labelledby="turnkey-heading">
+        <section id="turnkey" className="turnkey-section reveal-on-scroll reveal-from-bottom" aria-labelledby="turnkey-heading">
           <h2 id="turnkey-heading" className="section-title reveal-on-scroll reveal-from-bottom">
             Нужен сложный ИИ-агент под ключ?
           </h2>
@@ -743,7 +752,7 @@ const Main = () => {
             <h2 id="cta-heading">Начните с одного агента</h2>
             <p>
               Соберите прототип за несколько минут: роль и базу знаний всегда можно уточнить позже. Если удобнее сначала
-              сравнить условия — загляните в раздел с тарифами.
+              сравнить цены на шаблоны — загляните в раздел с тарифами.
             </p>
             <div className="cta-band-actions">
               <button type="button" className="btn btn-black" onClick={handleCreateAgent}>

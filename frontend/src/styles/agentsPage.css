@@ -307,6 +307,43 @@
   box-shadow: var(--shadow-sm);
 }
 
+.agent-telephony-badge {
+  margin: 4px 0 8px;
+  font-size: 14px;
+  color: #0f766e;
+  font-weight: 600;
+}
+
+.telephony-webhook-row {
+  margin-top: 12px;
+}
+
+.telephony-webhook-row label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 14px;
+}
+
+.telephony-channel-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  margin: 8px 0;
+}
+
+.telephony-channel-block {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid #eee;
+}
+
+.telephony-channel-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+
 .wa-qr-hint {
   margin: 0;
   text-align: center;

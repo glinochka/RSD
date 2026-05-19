@@ -1,4 +1,5 @@
 from datetime import date, datetime, timedelta, timezone
+from typing import Any
 from logging import getLogger
 import asyncio
 from decimal import Decimal
@@ -13,7 +14,20 @@ from yookassa.domain.notification.webhook_notification import WebhookNotificatio
 from yookassa.domain.notification.webhook_notification_types import WebhookNotificationEventType
 from yookassa.domain.exceptions import NotFoundError
 from ..alembic.database import async_session_maker
+from ..agent_template_pricing import (
+    PAYMENT_KIND_AGENT_ACTIVATION,
+    PAYMENT_KIND_AGENT_MAINTENANCE,
+    PAYMENT_KIND_SUBSCRIPTION,
+    agent_payment_plan_name,
+    build_agent_billing_state,
+    get_agent_template_pricing,
+    is_activation_paid,
+    is_maintenance_grace_active,
+    list_public_agent_template_pricing,
+    parse_agent_payment_plan_name,
+)
 from ..alembic.models import WebsitePaymentTransaction
+from ..router_agents.dao import AgentDAO
 from ..config import settings
 from ..router_users.dao import UserDAO
 from ..subscription_plans import (
@@ -24,6 +38,7 @@ from ..utils.internal_auth import verify_internal_key
 from ..utils.JWT import get_user_from_access_token
 from ..utils.rate_limit import rate_limit
 from .schemas import (
+    CreateAgentBillingPayment,
     CreateTurnkeyAgentRequest,
     CreateYooKassaPayment,
     ProcessTelegramPayment,
@@ -109,14 +124,62 @@ def _normalize_promo_code(value: str | None) -> str | None:
     return cleaned or None
 
 
+async def _apply_agent_billing_payment(
+    agent_dao: AgentDAO,
+    tx: WebsitePaymentTransaction,
+) -> None:
+    parsed = parse_agent_payment_plan_name(tx.plan_name)
+    if not parsed or not tx.agent_id:
+        logger.error("Website payment %s: invalid agent billing payload", tx.yookassa_payment_id)
+        return
+    payment_kind, template_type = parsed
+    agent = await agent_dao.find_one_by_filter(id=tx.agent_id, user_id=tx.user_id)
+    if not agent:
+        logger.error(
+            "Website payment %s: agent_id=%s not found for user_id=%s",
+            tx.yookassa_payment_id,
+            tx.agent_id,
+            tx.user_id,
+        )
+        return
+    if (agent.template_type or "qa").strip().lower() != template_type:
+        logger.error(
+            "Website payment %s: template mismatch agent=%s payment=%s",
+            tx.yookassa_payment_id,
+            agent.template_type,
+            template_type,
+        )
+        return
+
+    now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+    if payment_kind == PAYMENT_KIND_AGENT_ACTIVATION:
+        await agent_dao.update(agent, {"activation_paid_at": now_naive})
+        return
+    if payment_kind == PAYMENT_KIND_AGENT_MAINTENANCE:
+        base = date.today()
+        current_until = getattr(agent, "maintenance_paid_until", None)
+        if isinstance(current_until, date) and current_until > base:
+            base = current_until
+        new_until = base + timedelta(days=30)
+        await agent_dao.update(agent, {"maintenance_paid_until": new_until})
+
+
 async def _apply_yookassa_payment_to_subscription(
     user_dao: UserDAO,
+    agent_dao: AgentDAO,
     tx: WebsitePaymentTransaction,
     payment_status: str,
 ) -> None:
-    """Update stored status and extend subscription once when payment succeeds."""
+    """Update stored status and extend subscription or agent billing once when payment succeeds."""
     tx.status = payment_status
     if payment_status != "succeeded" or tx.is_processed:
+        return
+
+    payment_kind = (getattr(tx, "payment_kind", None) or PAYMENT_KIND_SUBSCRIPTION).strip()
+    if payment_kind in (PAYMENT_KIND_AGENT_ACTIVATION, PAYMENT_KIND_AGENT_MAINTENANCE):
+        await _apply_agent_billing_payment(agent_dao, tx)
+        tx.is_processed = True
+        tx.paid_at = datetime.now(timezone.utc).replace(tzinfo=None)
         return
 
     user = await user_dao.find_one_by_filter(id=tx.user_id)
@@ -155,6 +218,160 @@ async def get_subscription_plans():
     return JSONResponse(
         content={"plans": get_all_subscription_plans()},
         status_code=status.HTTP_200_OK,
+    )
+
+
+@router.get("/agent-templates")
+async def get_agent_template_pricing():
+    return JSONResponse(
+        content={
+            "templates": list_public_agent_template_pricing(),
+            "policy_notes": [
+                "Цены «от» — минимальный взнос за запуск; сложные интеграции с CRM/ERP и ручная настройка оцениваются отдельно.",
+                "Первый месяц после создания агента ежемесячное обслуживание бесплатно.",
+                "Далее обслуживание — подписка на обновления и работу серверной инфраструктуры (от 3 000 ₽/мес).",
+                "При первой активации списывается минимальная стоимость запуска по выбранному шаблону.",
+                "Токены LLM на текущем этапе включены — расходы на модели покрывает платформа.",
+            ],
+        },
+        status_code=status.HTTP_200_OK,
+    )
+
+
+def _agent_billing_amount_kopecks(*, payment_kind: str, template_type: str) -> tuple[int, str]:
+    pricing = get_agent_template_pricing(template_type)
+    if not pricing:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown agent template")
+    if payment_kind == PAYMENT_KIND_AGENT_ACTIVATION:
+        if pricing.setup_rub_min <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Activation payment is not required for this template",
+            )
+        return pricing.setup_rub_min * 100, (
+            f"Запуск агента «{pricing.title}» (минимальная стоимость)"
+        )
+    if payment_kind == PAYMENT_KIND_AGENT_MAINTENANCE:
+        if pricing.monthly_maintenance_rub_min <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Monthly maintenance is not billed for this template",
+            )
+        return pricing.monthly_maintenance_rub_min * 100, (
+            f"Ежемесячное обслуживание агента «{pricing.title}»"
+        )
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid payment kind")
+
+
+@router.post("/yookassa/agent-billing/create")
+async def create_yookassa_agent_billing_payment(
+    payload: CreateAgentBillingPayment,
+    current_user=Depends(get_current_user_required),
+):
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent = await agent_dao.find_one_by_filter(id=payload.agent_id, user_id=current_user.id)
+            if not agent:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+
+            template_type = (agent.template_type or "qa").strip().lower()
+            if payload.payment_kind == PAYMENT_KIND_AGENT_ACTIVATION and is_activation_paid(agent):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Activation payment already completed",
+                )
+            if payload.payment_kind == PAYMENT_KIND_AGENT_MAINTENANCE and is_maintenance_grace_active(agent):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Первый месяц обслуживания после создания агента уже включён бесплатно",
+                )
+
+    amount_kopecks, description = _agent_billing_amount_kopecks(
+        payment_kind=payload.payment_kind,
+        template_type=template_type,
+    )
+    plan_name = agent_payment_plan_name(
+        payment_kind=payload.payment_kind,
+        template_type=template_type,
+    )
+
+    return_url = (payload.return_url or settings.YOOKASSA_RETURN_URL or "").strip()
+    if not return_url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="return_url is required (or set YOOKASSA_RETURN_URL)",
+        )
+
+    _configure_yookassa()
+    amount_rub = f"{(Decimal(amount_kopecks) / Decimal('100')):.2f}"
+    idempotence_key = str(uuid4())
+
+    try:
+        payment = await asyncio.to_thread(
+            Payment.create,
+            {
+                "amount": {"value": amount_rub, "currency": "RUB"},
+                "capture": True,
+                "confirmation": {"type": "redirect", "return_url": return_url},
+                "description": description,
+                "metadata": {
+                    "user_id": str(current_user.id),
+                    "agent_id": str(payload.agent_id),
+                    "payment_kind": payload.payment_kind,
+                    "template_type": template_type,
+                },
+            },
+            idempotence_key,
+        )
+    except Exception as e:
+        logger.exception("YooKassa agent billing payment creation failed")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"YooKassa payment creation failed: {e}",
+        )
+
+    confirmation_url = _resolve_confirmation_url(payment)
+    payment_id = str(getattr(payment, "id", ""))
+    payment_status = str(getattr(payment, "status", "pending"))
+    if not payment_id or not confirmation_url:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="YooKassa returned invalid payment payload",
+        )
+
+    async with async_session_maker() as session:
+        website_tx_dao = WebsitePaymentTransactionDAO(session)
+        async with session.begin():
+            await website_tx_dao.add(
+                {
+                    "user_id": current_user.id,
+                    "agent_id": payload.agent_id,
+                    "payment_kind": payload.payment_kind,
+                    "plan_name": plan_name,
+                    "currency": "RUB",
+                    "total_amount": amount_kopecks,
+                    "original_total_amount": amount_kopecks,
+                    "discount_percent": 0,
+                    "duration_months": 1,
+                    "promo_code": None,
+                    "yookassa_payment_id": payment_id,
+                    "status": payment_status,
+                }
+            )
+
+    return JSONResponse(
+        content={
+            "payment_id": payment_id,
+            "status": payment_status,
+            "confirmation_url": confirmation_url,
+            "plan_name": plan_name,
+            "payment_kind": payload.payment_kind,
+            "agent_id": payload.agent_id,
+            "amount_kopecks": amount_kopecks,
+            "template_type": template_type,
+        },
+        status_code=status.HTTP_201_CREATED,
     )
 
 
@@ -462,6 +679,7 @@ async def get_yookassa_payment_status(
 
     async with async_session_maker() as session:
         user_dao = UserDAO(session)
+        agent_dao = AgentDAO(session)
         website_tx_dao = WebsitePaymentTransactionDAO(session)
         async with session.begin():
             tx = await website_tx_dao.find_for_update_by_payment_id(
@@ -474,9 +692,14 @@ async def get_yookassa_payment_status(
                     detail="Payment not found",
                 )
 
-            await _apply_yookassa_payment_to_subscription(user_dao, tx, payment_status)
+            await _apply_yookassa_payment_to_subscription(user_dao, agent_dao, tx, payment_status)
 
             user = await user_dao.find_one_by_filter(id=current_user.id)
+            agent_billing: dict[str, Any] | None = None
+            if tx.agent_id:
+                agent = await agent_dao.find_one_by_filter(id=tx.agent_id, user_id=current_user.id)
+                if agent:
+                    agent_billing = build_agent_billing_state(agent)
             return YooKassaPaymentStatusResponse(
                 payment_id=payment_id,
                 status=payment_status,
@@ -485,6 +708,9 @@ async def get_yookassa_payment_status(
                 subscription_end_date=user.subscription_end_date.isoformat()
                 if user and user.subscription_end_date
                 else None,
+                agent_id=tx.agent_id,
+                payment_kind=getattr(tx, "payment_kind", None),
+                agent_billing=agent_billing,
             )
 
 
@@ -538,6 +764,7 @@ async def yookassa_webhook(request: Request):
 
     async with async_session_maker() as session:
         user_dao = UserDAO(session)
+        agent_dao = AgentDAO(session)
         website_tx_dao = WebsitePaymentTransactionDAO(session)
         async with session.begin():
             tx = await website_tx_dao.find_for_update_by_payment_id(
@@ -546,7 +773,7 @@ async def yookassa_webhook(request: Request):
             if not tx:
                 logger.info("YooKassa webhook: no local website tx for payment_id=%s", payment_id)
             else:
-                await _apply_yookassa_payment_to_subscription(user_dao, tx, verified_status)
+                await _apply_yookassa_payment_to_subscription(user_dao, agent_dao, tx, verified_status)
 
     return Response(status_code=status.HTTP_200_OK)
 

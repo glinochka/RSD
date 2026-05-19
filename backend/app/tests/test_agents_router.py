@@ -589,8 +589,8 @@ class TestAgentsCRUD:
         assert metrics_payload["retry_rate_percent"] == 50.0
 
     @pytest.mark.asyncio
-    async def test_create_empty_agent_content_factory_requires_company_fields(self, client: AsyncClient, auth_headers):
-        """content_factory требует обязательные поля company_name/company_activity."""
+    async def test_create_empty_agent_content_factory_blocked_in_development(self, client: AsyncClient, auth_headers):
+        """content_factory недоступен для создания — шаблон в разработке."""
         response = await client.post(
             "/api/agents",
             headers=auth_headers,
@@ -604,11 +604,12 @@ class TestAgentsCRUD:
         )
 
         assert response.status_code == 422, f"Expected 422, got {response.status_code}: {response.text}"
-        assert "template_config.company_name" in response.json()["detail"]
+        detail = response.json()["detail"]
+        assert "разработке" in detail.lower()
 
     @pytest.mark.asyncio
     async def test_create_empty_agent_content_factory_defaults(self, client: AsyncClient, auth_headers):
-        """content_factory сохраняется с дефолтами и продуктовой схемой."""
+        """content_factory с полным конфигом тоже недоступен — шаблон в разработке."""
         response = await client.post(
             "/api/agents",
             headers=auth_headers,
@@ -622,18 +623,8 @@ class TestAgentsCRUD:
             },
         )
 
-        assert response.status_code == 201, f"Expected 201, got {response.status_code}: {response.text}"
-        data = response.json()
-        cfg = data["template_config"] or {}
-        assert data["template_type"] == "content_factory"
-        assert cfg["company_name"] == "Acme AI"
-        assert cfg["company_activity"] == "Автоматизация клиентской поддержки"
-        assert cfg["content_language"] == "ru"
-        assert cfg["daily_posting_enabled"] is True
-        assert cfg["daily_post_time"] == "10:00"
-        assert cfg["timezone"] == "UTC"
-        assert cfg["video_duration_seconds"] == 8
-        assert cfg["kling_model"] == "kling-v1"
+        assert response.status_code == 422, f"Expected 422, got {response.status_code}: {response.text}"
+        assert "разработке" in response.json()["detail"].lower()
 
     @pytest.mark.asyncio
     async def test_update_agent_content_factory_rejects_duration_more_than_8(

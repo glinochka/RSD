@@ -213,6 +213,27 @@ class AddMaxUserbotChannel(AgentLookup):
     make_primary: bool = Field(default=False, description="Сделать канал основным")
 
 
+class TelephonyChannelCredentialsInput(BaseModel):
+    account_id: str = Field(..., min_length=1, max_length=128)
+    api_key: str = Field(..., min_length=8, max_length=512)
+    application_id: str = Field(..., min_length=1, max_length=128)
+    rule_id: str = Field(..., min_length=1, max_length=128)
+    phone_number_e164: str = Field(..., min_length=8, max_length=32)
+    operator_transfer_e164: str = Field(..., min_length=8, max_length=32)
+    voice_id: str = Field(default="default", min_length=1, max_length=64)
+    language: str = Field(default="ru-RU", min_length=2, max_length=16)
+    record_calls: bool = Field(default=True)
+    disclaimer_played: bool = Field(default=True)
+
+
+class AddTelephonyChannel(AgentLookup, TelephonyChannelCredentialsInput):
+    make_primary: bool = Field(default=False, description="Сделать канал основным")
+
+
+class ValidateTelephonyChannel(TelephonyChannelCredentialsInput):
+    pass
+
+
 class DeleteAgentChannel(AgentLookup):
     connection_id: int = Field(..., gt=0, description="Id подключения канала")
 

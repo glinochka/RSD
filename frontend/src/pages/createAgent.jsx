@@ -10,8 +10,11 @@ import { useForm } from '../hooks/useForm';
 import { useNotification } from '../context/useNotification';
 import { useAuth } from '../context/useAuth';
 import agentService from '../services/agentService';
+import { TELEPHONY_PROVIDER, copyTextToClipboard } from '../utils/telephony';
 import { validateFile } from '../utils/validation';
 import { NAVIGATION_ROUTES } from '../config/constants';
+import pricingService from '../services/pricingService';
+import { formatMaintenancePrice, formatSetupPrice } from '../utils/agentTemplatePricing';
 import '../styles/createAgent.css';
 
 const fileIdentity = (file) => `${file.name}::${file.size}::${file.lastModified}`;
@@ -332,42 +335,27 @@ const SALES_DEFAULT_TEMPLATE_CONFIG = {
 };
 
 const TEMPLATE_TYPE_HELP = {
-  qa: 'Агент отвечает на вопросы по подключённой базе знаний (RAG): поиск по документам и выдержки в ответах. Подходит для поддержки и консультаций.',
+  qa: 'Бесплатный пробный шаблон: ответы по базе знаний (RAG) для поддержки и консультаций. Токены LLM включены.',
   crm_admin:
-    'Агент работает как администратор салона или клиники. CRM можно не подключать сразу: запустите локально и подключите интеграцию позже. Функция в статусе BETA.',
+    'Админ салона или клиники: запись, расписание, CRM/ERP. Запуск — от 25 000 ₽; первый месяц обслуживания бесплатно, далее — от 3 000 ₽/мес.',
   sales_manager:
-    'Агент работает как менеджер продаж: через function-calling решает, писать ли лиду, ведет диалог по стадиям (первое касание → выявление боли → ценностное предложение → перевод на ЛПР) и использует портрет клиента + RAG-контекст.',
+    'МОП в мессенджерах: квалификация и диалог по стадиям. Запуск — от 5 000 ₽; первый месяц обслуживания бесплатно, далее — от 3 000 ₽/мес.',
   ai_logist: 'Шаблон находится в разработке.',
-  content_factory:
-    'ИИ контент-завод: по расписанию генерирует сценарии и публикует короткие видео в YouTube. В MVP: без склеек, 1 публикация в день.',
+  content_factory: 'Контент‑завод в разработке — создание временно недоступно.',
+  ai_manager: 'ИИ менеджер в разработке — телефония и входящие звонки скоро на платформе.',
 };
 
 const TEMPLATE_TYPE_SELECT_OPTIONS = [
-  { value: 'qa', label: 'Консультант (Вопрос-Ответ)' },
-  {
-    value: 'crm_admin',
-    label: (
-      <span className="select-option-label-with-badge">
-        Администратор (Интеграция с CRM)
-        <span className="beta-badge">BETA</span>
-      </span>
-    ),
-  },
-  {
-    value: 'sales_manager',
-    label: (
-      <span className="select-option-label-with-badge">
-        Менеджер продаж (Telegram userbot)
-        <span className="beta-badge">BETA</span>
-      </span>
-    ),
-  },
+  { value: 'qa', label: 'Простой ИИ‑консультант (бесплатно)' },
+  { value: 'crm_admin', label: 'Админ' },
+  { value: 'sales_manager', label: 'МОП' },
   {
     value: 'content_factory',
+    disabled: true,
     label: (
       <span className="select-option-label-with-badge">
-        Контент-завод
-        <span className="beta-badge">BETA</span>
+        Контент‑завод
+        <span className="beta-badge">В разработке</span>
       </span>
     ),
   },
@@ -377,6 +365,16 @@ const TEMPLATE_TYPE_SELECT_OPTIONS = [
     label: (
       <span className="select-option-label-with-badge">
         ИИ Логист
+        <span className="beta-badge">В разработке</span>
+      </span>
+    ),
+  },
+  {
+    value: 'ai_manager',
+    disabled: true,
+    label: (
+      <span className="select-option-label-with-badge">
+        ИИ менеджер
         <span className="beta-badge">В разработке</span>
       </span>
     ),
@@ -556,6 +554,7 @@ const CreateAgentContent = () => {
   const [uploadedFiles, setUploadedFiles] = useState([]);
   const [pendingLink, setPendingLink] = useState('');
   const [uploadedLinks, setUploadedLinks] = useState([]);
+  const [templatePricingCatalog, setTemplatePricingCatalog] = useState([]);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [useBotChannel, setUseBotChannel] = useState(true);
   const [useMaxBotChannel, setUseMaxBotChannel] = useState(false);
@@ -563,6 +562,10 @@ const CreateAgentContent = () => {
   const [useMaxUserbotChannel, setUseMaxUserbotChannel] = useState(false);
   const [useWhatsAppUserbotChannel, setUseWhatsAppUserbotChannel] = useState(false);
   const [useWhatsAppBusinessApiChannel, setUseWhatsAppBusinessApiChannel] = useState(false);
+  const [useTelephonyChannel, setUseTelephonyChannel] = useState(false);
+  const [telephonyValidateStatus, setTelephonyValidateStatus] = useState('');
+  const [telephonyWebhookUrl, setTelephonyWebhookUrl] = useState('');
+  const [isValidatingTelephony, setIsValidatingTelephony] = useState(false);
   const [userbotAuthToken, setUserbotAuthToken] = useState('');
   const [isSendingCode, setIsSendingCode] = useState(false);
   const [isVerifyingCode, setIsVerifyingCode] = useState(false);
@@ -616,6 +619,14 @@ const CreateAgentContent = () => {
       whatsapp_access_token: '',
       whatsapp_business_account_id: '',
       whatsapp_verify_token: '',
+      telephony_account_id: '',
+      telephony_api_key: '',
+      telephony_application_id: '',
+      telephony_rule_id: '',
+      telephony_phone_e164: '',
+      telephony_operator_e164: '',
+      telephony_voice_id: 'default',
+      telephony_language: 'ru-RU',
       template_type: 'qa',
       crm_domain_type: 'beauty_salon',
       crm_mode: 'disabled',
@@ -663,6 +674,7 @@ const CreateAgentContent = () => {
         const isMaxUserbotMode = useMaxUserbotChannel;
         const isWhatsAppUserbotMode = useWhatsAppUserbotChannel;
         const isWhatsAppBusinessApiMode = useWhatsAppBusinessApiChannel;
+        const isTelephonyMode = useTelephonyChannel;
 
         if (
           !skipChannelSelection &&
@@ -671,7 +683,8 @@ const CreateAgentContent = () => {
           !isUserbotMode &&
           !isMaxUserbotMode &&
           !isWhatsAppUserbotMode &&
-          !isWhatsAppBusinessApiMode
+          !isWhatsAppBusinessApiMode &&
+          !isTelephonyMode
         ) {
           const message = 'Добавьте хотя бы 1 канал подключения перед созданием агента.';
           showError(message);
@@ -732,6 +745,32 @@ const CreateAgentContent = () => {
         if (!skipChannelSelection && isWhatsAppBusinessApiMode && !values.whatsapp_access_token?.trim()) {
           form.setFieldError('whatsapp_access_token', 'Access Token обязателен');
           return;
+        }
+        if (!skipChannelSelection && isTelephonyMode) {
+          if (!values.telephony_account_id?.trim()) {
+            form.setFieldError('telephony_account_id', 'Account ID обязателен');
+            return;
+          }
+          if (!values.telephony_api_key?.trim()) {
+            form.setFieldError('telephony_api_key', 'API key обязателен');
+            return;
+          }
+          if (!values.telephony_application_id?.trim()) {
+            form.setFieldError('telephony_application_id', 'Application ID обязателен');
+            return;
+          }
+          if (!values.telephony_rule_id?.trim()) {
+            form.setFieldError('telephony_rule_id', 'Rule ID обязателен');
+            return;
+          }
+          if (!values.telephony_phone_e164?.trim()) {
+            form.setFieldError('telephony_phone_e164', 'Номер E.164 обязателен');
+            return;
+          }
+          if (!values.telephony_operator_e164?.trim()) {
+            form.setFieldError('telephony_operator_e164', 'Номер оператора обязателен');
+            return;
+          }
         }
 
         const selectedTemplate = values.template_type?.trim() || 'qa';
@@ -917,7 +956,11 @@ const CreateAgentContent = () => {
               ? 'max_userbot'
             : isWhatsAppUserbotMode
               ? 'whatsapp_userbot'
-              : 'whatsapp_business_api';
+              : isWhatsAppBusinessApiMode
+                ? 'whatsapp_business_api'
+                : isTelephonyMode
+                  ? TELEPHONY_PROVIDER
+                  : 'telegram_bot';
 
         try {
           if (isBotMode) {
@@ -975,6 +1018,24 @@ const CreateAgentContent = () => {
             });
             hasConnectedAtLeastOneChannel = true;
           }
+          if (isTelephonyMode) {
+            const telRes = await agentService.addTelephonyChannel({
+              agent_id: agentId,
+              account_id: values.telephony_account_id.trim(),
+              api_key: values.telephony_api_key.trim(),
+              application_id: values.telephony_application_id.trim(),
+              rule_id: values.telephony_rule_id.trim(),
+              phone_number_e164: values.telephony_phone_e164.trim(),
+              operator_transfer_e164: values.telephony_operator_e164.trim(),
+              voice_id: (values.telephony_voice_id || 'default').trim(),
+              language: (values.telephony_language || 'ru-RU').trim(),
+              make_primary: primaryProvider === TELEPHONY_PROVIDER,
+            });
+            if (telRes?.webhook_url) {
+              setTelephonyWebhookUrl(telRes.webhook_url);
+            }
+            hasConnectedAtLeastOneChannel = true;
+          }
         } catch (channelError) {
           if (!hasConnectedAtLeastOneChannel && Number.isFinite(agentId)) {
             try {
@@ -1014,6 +1075,26 @@ const CreateAgentContent = () => {
   const isSalesManagerTemplate = form.values.template_type === 'sales_manager';
   const isContentFactoryTemplate = form.values.template_type === 'content_factory';
   const isCrmAdminTemplate = form.values.template_type === 'crm_admin';
+  const selectedTemplatePricing = templatePricingCatalog.find(
+    (row) => row.code === form.values.template_type
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    pricingService
+      .getAgentTemplates()
+      .then((data) => {
+        if (!cancelled) {
+          setTemplatePricingCatalog(Array.isArray(data?.templates) ? data.templates : []);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setTemplatePricingCatalog([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const isCrmConnectionEnabled = form.values.crm_mode === 'optional';
 
   const domainConfig = (Array.isArray(domainRegistry) ? domainRegistry : []).find(
@@ -1098,6 +1179,49 @@ const CreateAgentContent = () => {
       }
       return next;
     });
+  };
+
+  const toggleTelephonyChannel = () => {
+    setUseTelephonyChannel((prev) => {
+      const next = !prev;
+      if (!next) {
+        setTelephonyValidateStatus('');
+        setTelephonyWebhookUrl('');
+        form.setFieldValue('telephony_account_id', '');
+        form.setFieldValue('telephony_api_key', '');
+        form.setFieldValue('telephony_application_id', '');
+        form.setFieldValue('telephony_rule_id', '');
+        form.setFieldValue('telephony_phone_e164', '');
+        form.setFieldValue('telephony_operator_e164', '');
+        form.setFieldValue('telephony_voice_id', 'default');
+        form.setFieldValue('telephony_language', 'ru-RU');
+      }
+      return next;
+    });
+  };
+
+  const handleValidateTelephonyOnCreate = async () => {
+    const payload = {
+      account_id: form.values.telephony_account_id?.trim(),
+      api_key: form.values.telephony_api_key?.trim(),
+      application_id: form.values.telephony_application_id?.trim(),
+      rule_id: form.values.telephony_rule_id?.trim(),
+      phone_number_e164: form.values.telephony_phone_e164?.trim(),
+      operator_transfer_e164: form.values.telephony_operator_e164?.trim(),
+      voice_id: (form.values.telephony_voice_id || 'default').trim(),
+      language: (form.values.telephony_language || 'ru-RU').trim(),
+    };
+    setIsValidatingTelephony(true);
+    setTelephonyValidateStatus('');
+    try {
+      const res = await agentService.validateTelephonyChannel(payload);
+      setTelephonyValidateStatus(res?.message || 'Подключение проверено');
+      showSuccess(res?.message || 'Voximplant: учётная запись доступна');
+    } catch (error) {
+      showError(error?.message || 'Ошибка проверки телефонии');
+    } finally {
+      setIsValidatingTelephony(false);
+    }
   };
 
   const toggleWhatsAppUserbotChannel = () => {
@@ -1508,8 +1632,38 @@ const CreateAgentContent = () => {
                 disabled={form.isSubmitting}
               />
               <p className="help-text">
-                {TEMPLATE_TYPE_HELP[form.values.template_type] || TEMPLATE_TYPE_HELP.qa}
+                {selectedTemplatePricing?.description
+                  || TEMPLATE_TYPE_HELP[form.values.template_type]
+                  || TEMPLATE_TYPE_HELP.qa}
               </p>
+              {selectedTemplatePricing ? (
+                <div className="template-pricing-summary" role="note" aria-label="Стоимость шаблона">
+                  <p className="template-pricing-summary__row">
+                    <span>Запуск:</span>
+                    <strong>
+                      {formatSetupPrice(selectedTemplatePricing.setup_rub_min, {
+                        isFree: selectedTemplatePricing.is_free,
+                      })}
+                    </strong>
+                  </p>
+                  {formatMaintenancePrice(selectedTemplatePricing.monthly_maintenance_rub_min) ? (
+                    <>
+                      <p className="template-pricing-summary__row">
+                        <span>Обслуживание:</span>
+                        <strong>
+                          {formatMaintenancePrice(selectedTemplatePricing.monthly_maintenance_rub_min)}
+                        </strong>
+                      </p>
+                      <p className="help-text template-pricing-summary__note">
+                        Первый месяц после создания агента обслуживание бесплатно.
+                      </p>
+                    </>
+                  ) : null}
+                  <p className="help-text template-pricing-summary__note">
+                    При активации оплачивается минимальная стоимость запуска. Токены LLM включены.
+                  </p>
+                </div>
+              ) : null}
             </div>
 
             <div className="form-group">
@@ -1597,6 +1751,132 @@ const CreateAgentContent = () => {
                     <p className="help-text">
                       Для шаблона "Менеджер продаж" активно только подключение Telegram юзербот.
                     </p>
+                  ) : null}
+
+                  {!isContentFactoryTemplate && !isSalesManagerTemplate ? (
+                    <div className="form-group telephony-channel-block">
+                      <label className="channel-primary-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={useTelephonyChannel}
+                          onChange={toggleTelephonyChannel}
+                          disabled={form.isSubmitting}
+                        />
+                        Включить телефонный канал (ИИ-оператор)
+                      </label>
+                      {useTelephonyChannel ? (
+                        <div className="telephony-channel-fields">
+                          <input
+                            type="text"
+                            className="input-main"
+                            name="telephony_account_id"
+                            placeholder="Voximplant Account ID"
+                            value={form.values.telephony_account_id}
+                            onChange={form.handleChange}
+                            disabled={form.isSubmitting}
+                          />
+                          {form.errors.telephony_account_id ? (
+                            <p className="error-text">{form.errors.telephony_account_id}</p>
+                          ) : null}
+                          <input
+                            type="password"
+                            className="input-main"
+                            name="telephony_api_key"
+                            placeholder="Voximplant API Key"
+                            value={form.values.telephony_api_key}
+                            onChange={form.handleChange}
+                            disabled={form.isSubmitting}
+                          />
+                          <input
+                            type="text"
+                            className="input-main"
+                            name="telephony_application_id"
+                            placeholder="Application ID"
+                            value={form.values.telephony_application_id}
+                            onChange={form.handleChange}
+                            disabled={form.isSubmitting}
+                          />
+                          <input
+                            type="text"
+                            className="input-main"
+                            name="telephony_rule_id"
+                            placeholder="Inbound Rule ID"
+                            value={form.values.telephony_rule_id}
+                            onChange={form.handleChange}
+                            disabled={form.isSubmitting}
+                          />
+                          <input
+                            type="text"
+                            className="input-main"
+                            name="telephony_phone_e164"
+                            placeholder="Номер агента E.164 (+79...)"
+                            value={form.values.telephony_phone_e164}
+                            onChange={form.handleChange}
+                            disabled={form.isSubmitting}
+                          />
+                          <input
+                            type="text"
+                            className="input-main"
+                            name="telephony_operator_e164"
+                            placeholder="Номер оператора E.164"
+                            value={form.values.telephony_operator_e164}
+                            onChange={form.handleChange}
+                            disabled={form.isSubmitting}
+                          />
+                          <input
+                            type="text"
+                            className="input-main"
+                            name="telephony_voice_id"
+                            placeholder="Голос TTS (voice_id, например default)"
+                            value={form.values.telephony_voice_id}
+                            onChange={form.handleChange}
+                            disabled={form.isSubmitting}
+                          />
+                          <input
+                            type="text"
+                            className="input-main"
+                            name="telephony_language"
+                            placeholder="Язык (ru-RU)"
+                            value={form.values.telephony_language}
+                            onChange={form.handleChange}
+                            disabled={form.isSubmitting}
+                          />
+                          <button
+                            type="button"
+                            className="btn btn-outline"
+                            onClick={handleValidateTelephonyOnCreate}
+                            disabled={form.isSubmitting || isValidatingTelephony}
+                          >
+                            {isValidatingTelephony ? 'Проверка...' : 'Проверить подключение'}
+                          </button>
+                          {telephonyValidateStatus ? (
+                            <p className="help-text userbot-success">{telephonyValidateStatus}</p>
+                          ) : null}
+                          {telephonyWebhookUrl ? (
+                            <div className="telephony-webhook-row">
+                              <label>Webhook URL</label>
+                              <div className="api-key-row">
+                                <input type="text" className="input-main" readOnly value={telephonyWebhookUrl} />
+                                <button
+                                  type="button"
+                                  className="btn btn-outline"
+                                  onClick={async () => {
+                                    try {
+                                      await copyTextToClipboard(telephonyWebhookUrl);
+                                      showSuccess('Webhook URL скопирован');
+                                    } catch {
+                                      showError('Не удалось скопировать');
+                                    }
+                                  }}
+                                >
+                                  Копировать
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
                   ) : null}
                 </>
               )}

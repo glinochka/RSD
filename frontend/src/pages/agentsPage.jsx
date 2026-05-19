@@ -10,10 +10,17 @@ import Loading from '../components/Loading';
 import AgentsEmptyState from '../components/AgentsEmptyState';
 import { useAsync } from '../hooks/useAsync';
 import agentService from '../services/agentService';
+import pricingService from '../services/pricingService';
+import { formatRubPrice } from '../utils/agentTemplatePricing';
 import { useNotification } from '../context/useNotification';
 import { NAVIGATION_ROUTES } from '../config/constants';
 import { useAuth } from '../context/useAuth';
 import { validateFile } from '../utils/validation';
+import {
+  TELEPHONY_PROVIDER,
+  copyTextToClipboard,
+  findTelephonyChannel,
+} from '../utils/telephony';
 import '../styles/agentsPage.css';
 
 const AGENTS_EMPTY_MESSAGE = 'У вас еще нет агентов, создайте прямо сейчас';
@@ -235,6 +242,7 @@ const channelLabel = (channel) => {
   if (channel.provider === 'max_userbot') return 'MAX userbot';
   if (channel.provider === 'whatsapp_userbot') return 'WhatsApp userbot';
   if (channel.provider === 'whatsapp_business_api') return 'WhatsApp Business API';
+  if (channel.provider === TELEPHONY_PROVIDER) return 'Телефония (ИИ-оператор)';
   return channel.provider || 'Канал';
 };
 const WIDGET_TEMPLATE_TYPES = new Set(['qa', 'crm_admin']);
@@ -545,6 +553,19 @@ const AgentsPageContent = () => {
   const [whatsappAccessToken, setWhatsappAccessToken] = useState('');
   const [whatsappBusinessAccountId, setWhatsappBusinessAccountId] = useState('');
   const [whatsappVerifyToken, setWhatsappVerifyToken] = useState('');
+  const [telephonyAccountId, setTelephonyAccountId] = useState('');
+  const [telephonyApiKey, setTelephonyApiKey] = useState('');
+  const [telephonyApplicationId, setTelephonyApplicationId] = useState('');
+  const [telephonyRuleId, setTelephonyRuleId] = useState('');
+  const [telephonyPhoneE164, setTelephonyPhoneE164] = useState('');
+  const [telephonyOperatorE164, setTelephonyOperatorE164] = useState('');
+  const [telephonyVoiceId, setTelephonyVoiceId] = useState('default');
+  const [telephonyLanguage, setTelephonyLanguage] = useState('ru-RU');
+  const [telephonyRecordCalls, setTelephonyRecordCalls] = useState(true);
+  const [telephonyDisclaimerPlayed, setTelephonyDisclaimerPlayed] = useState(true);
+  const [telephonyValidateStatus, setTelephonyValidateStatus] = useState('');
+  const [telephonyWebhookUrl, setTelephonyWebhookUrl] = useState('');
+  const [isValidatingTelephony, setIsValidatingTelephony] = useState(false);
   const [adminWaitlistEnabled, setAdminWaitlistEnabled] = useState(true);
   const [adminReminderEnabled, setAdminReminderEnabled] = useState(true);
   const [adminReminderOffsets, setAdminReminderOffsets] = useState('24,2');
@@ -655,15 +676,49 @@ const AgentsPageContent = () => {
   };
 
   const handleToggleAgent = async (botId) => {
+    const agentBeforeToggle = (agents || []).find((item) => item.id === botId)
+      || (selectedBotId === botId ? selectedAgent : null);
+    const willActivate = agentBeforeToggle && !agentBeforeToggle.is_active;
+
     try {
       const updatedAgent = await agentService.toggleStatus(botId);
-      showSuccess('Статус агента обновлен');
+      showSuccess(willActivate ? 'Агент активирован' : 'Агент деактивирован');
       await refreshAgents();
       if (selectedBotId === botId) {
         setSelectedAgent((prev) => ({ ...(prev || {}), ...updatedAgent }));
       }
     } catch (error) {
-      showError(error?.message || 'Ошибка при изменении статуса агента');
+      const paymentDetail = error?.data?.detail;
+      const billing = paymentDetail && typeof paymentDetail === 'object' ? paymentDetail.billing : null;
+      const activationRub = Number(billing?.activation_required_rub || 0);
+      if (error?.status === 402 && willActivate && activationRub > 0) {
+        const confirmed = window.confirm(
+          `Для активации требуется оплата запуска от ${formatRubPrice(activationRub)} ₽. Перейти к оплате?`
+        );
+        if (confirmed) {
+          try {
+            const returnUrl = `${window.location.origin}${NAVIGATION_ROUTES.AGENTS}?agent_payment=1`;
+            const payment = await pricingService.createAgentBillingPayment({
+              agent_id: botId,
+              payment_kind: 'agent_activation',
+              return_url: returnUrl,
+            });
+            if (payment?.confirmation_url) {
+              window.location.href = payment.confirmation_url;
+              return;
+            }
+            showError('Сервис оплаты вернул некорректный ответ.');
+          } catch (paymentError) {
+            showError(paymentError?.message || 'Не удалось создать платёж');
+          }
+          return;
+        }
+      }
+      const message =
+        (paymentDetail && typeof paymentDetail === 'object' && paymentDetail.message)
+        || error?.message
+        || 'Ошибка при изменении статуса агента';
+      showError(message);
     }
   };
 
@@ -1211,6 +1266,101 @@ const AgentsPageContent = () => {
     setWhatsappAccessToken('');
     setWhatsappBusinessAccountId('');
     setWhatsappVerifyToken('');
+    setTelephonyAccountId('');
+    setTelephonyApiKey('');
+    setTelephonyApplicationId('');
+    setTelephonyRuleId('');
+    setTelephonyPhoneE164('');
+    setTelephonyOperatorE164('');
+    setTelephonyVoiceId('default');
+    setTelephonyLanguage('ru-RU');
+    setTelephonyRecordCalls(true);
+    setTelephonyDisclaimerPlayed(true);
+    setTelephonyValidateStatus('');
+    setTelephonyWebhookUrl('');
+    setIsValidatingTelephony(false);
+  };
+
+  const buildTelephonyPayload = () => ({
+    account_id: telephonyAccountId.trim(),
+    api_key: telephonyApiKey.trim(),
+    application_id: telephonyApplicationId.trim(),
+    rule_id: telephonyRuleId.trim(),
+    phone_number_e164: telephonyPhoneE164.trim(),
+    operator_transfer_e164: telephonyOperatorE164.trim(),
+    voice_id: telephonyVoiceId.trim() || 'default',
+    language: telephonyLanguage.trim() || 'ru-RU',
+    record_calls: telephonyRecordCalls,
+    disclaimer_played: telephonyDisclaimerPlayed,
+  });
+
+  const handleValidateTelephony = async () => {
+    const payload = buildTelephonyPayload();
+    if (!payload.account_id || !payload.api_key || !payload.application_id || !payload.rule_id) {
+      showError('Заполните Account ID, API key, Application ID и Rule ID');
+      return;
+    }
+    if (!payload.phone_number_e164 || !payload.operator_transfer_e164) {
+      showError('Укажите номера в формате E.164');
+      return;
+    }
+    setIsValidatingTelephony(true);
+    setTelephonyValidateStatus('');
+    try {
+      const res = await agentService.validateTelephonyChannel(payload);
+      setTelephonyValidateStatus(res?.message || 'Подключение проверено');
+      showSuccess(res?.message || 'Voximplant: учётная запись доступна');
+    } catch (error) {
+      setTelephonyValidateStatus('');
+      showError(error?.message || 'Ошибка проверки телефонии');
+    } finally {
+      setIsValidatingTelephony(false);
+    }
+  };
+
+  const handleAddTelephonyChannel = async () => {
+    if (!selectedBotId) return;
+    if (hasTelephonyChannel) {
+      showError('Телефония уже подключена. Удалите текущий канал, чтобы подключить заново.');
+      return;
+    }
+    setIsSavingChannel(true);
+    try {
+      const res = await agentService.addTelephonyChannel({
+        agent_id: selectedBotId,
+        ...buildTelephonyPayload(),
+        make_primary: makePrimaryChannel,
+      });
+      const list = res?.channels || [];
+      setChannels(list);
+      setSelectedAgent((prev) => (prev ? { ...prev, channels: list } : prev));
+      if (res?.webhook_url) {
+        setTelephonyWebhookUrl(res.webhook_url);
+      }
+      showSuccess('Телефонный канал подключён');
+      await loadAgentDetails(selectedBotId);
+    } catch (error) {
+      showError(error?.message || 'Ошибка при подключении телефонии');
+    } finally {
+      setIsSavingChannel(false);
+    }
+  };
+
+  const handleCopyTelephonyWebhook = async () => {
+    const url =
+      telephonyWebhookUrl ||
+      telephonyChannel?.telephony_webhook_url ||
+      '';
+    if (!url) {
+      showError('Webhook URL пока недоступен');
+      return;
+    }
+    try {
+      await copyTextToClipboard(url);
+      showSuccess('Webhook URL скопирован');
+    } catch {
+      showError('Не удалось скопировать URL');
+    }
   };
 
   const refreshChannels = async (botId) => {
@@ -1231,7 +1381,11 @@ const AgentsPageContent = () => {
     setIsChannelsModalOpen(true);
     setIsLoadingChannels(true);
     try {
-      await refreshChannels(selectedBotId);
+      const list = await refreshChannels(selectedBotId);
+      const tel = findTelephonyChannel(list);
+      if (tel?.telephony_webhook_url) {
+        setTelephonyWebhookUrl(tel.telephony_webhook_url);
+      }
     } catch (error) {
       showError(error?.message || 'Не удалось загрузить каналы подключения');
     } finally {
@@ -1247,6 +1401,8 @@ const AgentsPageContent = () => {
   const isSalesManagerTemplate = selectedAgent?.template_type === 'sales_manager';
   const isQATemplate = String(selectedAgent?.template_type || 'qa').trim().toLowerCase() === 'qa';
   const isCrmAdminTemplate = selectedAgent?.template_type === 'crm_admin';
+  const telephonyChannel = useMemo(() => findTelephonyChannel(channels), [channels]);
+  const hasTelephonyChannel = Boolean(telephonyChannel);
 
   useEffect(() => {
     const cfg = getTemplateConfig(selectedAgent);
@@ -1763,6 +1919,11 @@ const AgentsPageContent = () => {
                   <div className="agent-management-header">
                     <h3>{selectedAgentName}</h3>
                     <p>ID: {selectedAgent.id}</p>
+                    {telephonyChannel ? (
+                      <p className="agent-telephony-badge" title={telephonyChannel.external_id}>
+                        📞 Телефония · {telephonyChannel.external_id}
+                      </p>
+                    ) : null}
                     <button
                       type="button"
                       className="btn btn-black analytics-btn"
@@ -2382,13 +2543,21 @@ const AgentsPageContent = () => {
                     onClick={() => setChannelModalTab('whatsapp')}
                     disabled={isSavingChannel || isSalesManagerTemplate}
                   >
-                    <span className="connection-type-card-label connection-type-card-label--stacked-wa-api">
+                      <span className="connection-type-card-label connection-type-card-label--stacked-wa-api">
                       <span className="connection-type-card-label__row">WhatsApp Business</span>
                       <span className="connection-type-card-label__row connection-type-card-label__row--api-beta">
                         API
                         <span className="beta-badge">BETA</span>
                       </span>
                     </span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`connection-type-card ${channelModalTab === 'telephony' ? 'active' : ''} ${isSalesManagerTemplate ? 'connection-type-card--disabled' : ''}`}
+                    onClick={() => setChannelModalTab('telephony')}
+                    disabled={isSavingChannel || isSalesManagerTemplate}
+                  >
+                    📞 Телефония
                   </button>
                 </div>
                 {isSalesManagerTemplate ? (
@@ -2660,6 +2829,134 @@ const AgentsPageContent = () => {
                     </button>
                     {whatsappUserbotMode === 'simple' && isWhatsappUserbotVerified ? (
                       <p className="help-text userbot-success">Сессия успешно инициализирована</p>
+                    ) : null}
+                  </div>
+                ) : channelModalTab === 'telephony' ? (
+                  <div className="agent-management-block">
+                    <h4 className="agent-form-channel-title">Телефония (ИИ-оператор, Voximplant)</h4>
+                    {hasTelephonyChannel ? (
+                      <p className="help-text userbot-success">
+                        Канал подключён: {telephonyChannel.external_id}. Удалите канал в списке выше, чтобы переподключить.
+                      </p>
+                    ) : (
+                      <>
+                        <input
+                          type="text"
+                          className="input-main"
+                          placeholder="Voximplant Account ID"
+                          value={telephonyAccountId}
+                          onChange={(e) => setTelephonyAccountId(e.target.value)}
+                          disabled={isSavingChannel}
+                        />
+                        <input
+                          type="password"
+                          className="input-main"
+                          placeholder="Voximplant API Key"
+                          value={telephonyApiKey}
+                          onChange={(e) => setTelephonyApiKey(e.target.value)}
+                          disabled={isSavingChannel}
+                        />
+                        <input
+                          type="text"
+                          className="input-main"
+                          placeholder="Application ID"
+                          value={telephonyApplicationId}
+                          onChange={(e) => setTelephonyApplicationId(e.target.value)}
+                          disabled={isSavingChannel}
+                        />
+                        <input
+                          type="text"
+                          className="input-main"
+                          placeholder="Inbound Rule ID"
+                          value={telephonyRuleId}
+                          onChange={(e) => setTelephonyRuleId(e.target.value)}
+                          disabled={isSavingChannel}
+                        />
+                        <input
+                          type="text"
+                          className="input-main"
+                          placeholder="Номер агента E.164 (+79...)"
+                          value={telephonyPhoneE164}
+                          onChange={(e) => setTelephonyPhoneE164(e.target.value)}
+                          disabled={isSavingChannel}
+                        />
+                        <input
+                          type="text"
+                          className="input-main"
+                          placeholder="Номер оператора для перевода E.164"
+                          value={telephonyOperatorE164}
+                          onChange={(e) => setTelephonyOperatorE164(e.target.value)}
+                          disabled={isSavingChannel}
+                        />
+                        <div className="telephony-channel-options">
+                          <label className="channel-primary-checkbox">
+                            <input
+                              type="checkbox"
+                              checked={telephonyRecordCalls}
+                              onChange={(e) => setTelephonyRecordCalls(e.target.checked)}
+                              disabled={isSavingChannel}
+                            />
+                            Записывать звонки
+                          </label>
+                          <label className="channel-primary-checkbox">
+                            <input
+                              type="checkbox"
+                              checked={telephonyDisclaimerPlayed}
+                              onChange={(e) => setTelephonyDisclaimerPlayed(e.target.checked)}
+                              disabled={isSavingChannel}
+                            />
+                            IVR о записи в начале
+                          </label>
+                        </div>
+                        <button
+                          type="button"
+                          className="btn btn-outline"
+                          onClick={handleValidateTelephony}
+                          disabled={isSavingChannel || isValidatingTelephony}
+                        >
+                          {isValidatingTelephony ? 'Проверка...' : 'Проверить подключение'}
+                        </button>
+                        {telephonyValidateStatus ? (
+                          <p className="help-text userbot-success">{telephonyValidateStatus}</p>
+                        ) : null}
+                        <label className="channel-primary-checkbox">
+                          <input
+                            type="checkbox"
+                            checked={makePrimaryChannel}
+                            onChange={(e) => setMakePrimaryChannel(e.target.checked)}
+                            disabled={isSavingChannel}
+                          />
+                          Сделать канал основным
+                        </label>
+                        <button
+                          type="button"
+                          className="btn btn-black"
+                          onClick={handleAddTelephonyChannel}
+                          disabled={isSavingChannel}
+                        >
+                          {isSavingChannel ? 'Сохранение...' : 'Подключить телефонию'}
+                        </button>
+                      </>
+                    )}
+                    {(telephonyWebhookUrl || telephonyChannel?.telephony_webhook_url) ? (
+                      <div className="telephony-webhook-row">
+                        <label>Webhook URL (вставьте в кабинет Voximplant)</label>
+                        <div className="api-key-row">
+                          <input
+                            type="text"
+                            className="input-main"
+                            readOnly
+                            value={telephonyWebhookUrl || telephonyChannel?.telephony_webhook_url || ''}
+                          />
+                          <button
+                            type="button"
+                            className="btn btn-outline"
+                            onClick={handleCopyTelephonyWebhook}
+                          >
+                            Копировать
+                          </button>
+                        </div>
+                      </div>
                     ) : null}
                   </div>
                 ) : (

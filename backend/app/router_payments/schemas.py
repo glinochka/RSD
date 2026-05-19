@@ -1,6 +1,9 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
 from pydantic import field_validator
 
+from ..agent_template_pricing import PAYMENT_KIND_AGENT_ACTIVATION, PAYMENT_KIND_AGENT_MAINTENANCE
 from ..subscription_plans import get_subscription_plan_codes
 
 
@@ -48,6 +51,25 @@ class YooKassaPaymentStatusResponse(BaseModel):
     plan_name: str
     subscription_type: str | None = None
     subscription_end_date: str | None = None
+    agent_id: int | None = None
+    payment_kind: str | None = None
+    agent_billing: dict | None = None
+
+
+class CreateAgentBillingPayment(BaseModel):
+    agent_id: int = Field(..., ge=1, description="ID агента")
+    payment_kind: Literal["agent_activation", "agent_maintenance"] = Field(
+        ...,
+        description="Тип платежа: разовый запуск или ежемесячное обслуживание",
+    )
+    return_url: str | None = Field(default=None, description="URL возврата после оплаты в ЮKassa")
+
+    @field_validator("payment_kind")
+    @classmethod
+    def validate_payment_kind(cls, value: str) -> str:
+        if value not in (PAYMENT_KIND_AGENT_ACTIVATION, PAYMENT_KIND_AGENT_MAINTENANCE):
+            raise ValueError("Invalid agent billing payment kind")
+        return value
 
 
 class CreateTurnkeyAgentRequest(BaseModel):

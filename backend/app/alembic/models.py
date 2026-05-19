@@ -18,6 +18,7 @@ from sqlalchemy import (
     CheckConstraint,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import  Mapped, mapped_column, relationship
 
 try: from .database import Base
@@ -134,6 +135,8 @@ class Agent(Base):
     
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=False)
+    activation_paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    maintenance_paid_until: Mapped[date | None] = mapped_column(Date, nullable=True)
     welcome_message: Mapped[str] = mapped_column(Text, nullable=True)
     process_start_with_llm: Mapped[bool] = mapped_column(
         Boolean,
@@ -279,6 +282,55 @@ class AgentChannelConnection(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
 
     agent: Mapped["Agent"] = relationship(back_populates="channel_connections")
+    telephony_calls: Mapped[list["AgentTelephonyCall"]] = relationship(
+        back_populates="connection",
+        cascade="all, delete-orphan",
+    )
+
+
+class AgentTelephonyCall(Base):
+    __tablename__ = "agent_telephony_calls"
+    __table_args__ = (
+        UniqueConstraint("connection_id", "external_call_id", name="uq_agent_telephony_calls_connection_external"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    connection_id: Mapped[int] = mapped_column(
+        ForeignKey("agent_channel_connections.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), index=True, nullable=False)
+    external_call_id: Mapped[str] = mapped_column(String(191), nullable=False)
+    caller_e164: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="ringing", server_default="ringing", index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    duration_sec: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    recording_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+
+    connection: Mapped["AgentChannelConnection"] = relationship(back_populates="telephony_calls")
+    agent: Mapped["Agent"] = relationship()
+    turns: Mapped[list["AgentTelephonyTurn"]] = relationship(
+        back_populates="call",
+        cascade="all, delete-orphan",
+    )
+
+
+class AgentTelephonyTurn(Base):
+    __tablename__ = "agent_telephony_turns"
+    __table_args__ = ({"extend_existing": True},)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    call_id: Mapped[int] = mapped_column(ForeignKey("agent_telephony_calls.id", ondelete="CASCADE"), index=True, nullable=False)
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    transcript: Mapped[str] = mapped_column(Text, nullable=False)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+
+    call: Mapped["AgentTelephonyCall"] = relationship(back_populates="turns")
 
 
 class AgentCrmConnection(Base):
@@ -797,7 +849,18 @@ class WebsitePaymentTransaction(Base):
     __table_args__ = {'extend_existing': True}
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
-    plan_name: Mapped[str] = mapped_column(String(32), nullable=False)
+    plan_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    payment_kind: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="subscription",
+        server_default="subscription",
+    )
+    agent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("agents.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     currency: Mapped[str] = mapped_column(String(10), nullable=False, default="RUB")
     total_amount: Mapped[int] = mapped_column(nullable=False)
     original_total_amount: Mapped[int] = mapped_column(nullable=False)

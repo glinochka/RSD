@@ -2,8 +2,20 @@ import apiClient from './apiClient';
 import { API_ROUTES } from '../config/constants';
 
 export const pricingService = {
+  getAgentTemplates: async () => {
+    const response = await apiClient.get('/api/payments/agent-templates');
+    return response.data;
+  },
   getPlans: async () => {
     const response = await apiClient.get('/api/payments/plans');
+    return response.data;
+  },
+  createAgentBillingPayment: async ({ agent_id, payment_kind, return_url }) => {
+    const response = await apiClient.post('/api/payments/yookassa/agent-billing/create', {
+      agent_id,
+      payment_kind,
+      return_url,
+    });
     return response.data;
   },
   createYooKassaPayment: async ({ plan_name, return_url, promo_code, duration_months }) => {

@@ -111,6 +111,23 @@ export const agentService = {
     return response.data;
   },
 
+  addTelephonyChannel: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_CHANNELS_ADD_TELEPHONY, data);
+    return response.data;
+  },
+
+  validateTelephonyChannel: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_CHANNELS_VALIDATE_TELEPHONY, data);
+    return response.data;
+  },
+
+  getTelephonyCalls: async (agentId, params = {}) => {
+    const response = await apiClient.get(API_ROUTES.AGENTS_ANALYTICS_TELEPHONY_CALLS, {
+      params: { agent_id: agentId, ...params },
+    });
+    return response.data;
+  },
+
   removeChannel: async ({ agent_id, connection_id }) => {
     const response = await apiClient.delete(API_ROUTES.AGENTS_CHANNELS_DELETE, {
       params: { agent_id, connection_id },

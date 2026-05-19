@@ -5,11 +5,13 @@ import Loading from '../components/Loading';
 import agentService from '../services/agentService';
 import { useNotification } from '../context/useNotification';
 import { NAVIGATION_ROUTES } from '../config/constants';
+import { findTelephonyChannel, telephonyStatusLabel } from '../utils/telephony';
 import '../styles/agentDetailedAnalytics.css';
 
 const ANALYTICS_SECTIONS = {
   OVERVIEW: 'overview',
   CHATS: 'chats',
+  TELEPHONY: 'telephony',
   BROADCAST: 'broadcast',
   OPERATIONS: 'operations',
 };
@@ -43,8 +45,8 @@ const formatMinutes = (value) => {
   return `${h} ч ${m} мин`;
 };
 
-const formatDateTime = (value) => {
-  if (!value) return '';
+const formatDateTime = (value, empty = '') => {
+  if (!value) return empty;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat('ru-RU', {
@@ -144,7 +146,17 @@ const channelLabel = (channel) => {
   if (channel === 'whatsapp_userbot') return 'WhatsApp userbot';
   if (channel === 'external_api') return 'External API';
   if (channel === 'whatsapp_business_api') return 'WhatsApp Business API';
+  if (channel === 'phone') return 'Телефония';
   return channel || 'unknown';
+};
+
+const formatCallDuration = (sec) => {
+  if (sec == null || Number.isNaN(Number(sec))) return '—';
+  const total = Math.max(0, Number(sec));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  if (m <= 0) return `${s} с`;
+  return `${m} мин ${s} с`;
 };
 
 const buildOverviewMetrics = (summary, docsCount) => {
@@ -612,6 +624,10 @@ const AgentDetailedAnalyticsPageContent = () => {
   const [selectedDays, setSelectedDays] = useState(30);
   const [isChartLoading, setIsChartLoading] = useState(false);
   const [chatUsers, setChatUsers] = useState([]);
+  const [chatChannelFilter, setChatChannelFilter] = useState('all');
+  const [telephonyCalls, setTelephonyCalls] = useState([]);
+  const [telephonyCallsLoading, setTelephonyCallsLoading] = useState(false);
+  const [selectedCallId, setSelectedCallId] = useState(null);
   const [selectedUserId, setSelectedUserId] = useState(null);
   const [ownerReplyText, setOwnerReplyText] = useState('');
   const [isSendingOwnerReply, setIsSendingOwnerReply] = useState(false);
@@ -861,6 +877,40 @@ const AgentDetailedAnalyticsPageContent = () => {
   }, [botId, selectedDays, showError]);
 
   useEffect(() => {
+    if (selectedSection !== ANALYTICS_SECTIONS.TELEPHONY) return;
+    if (!Number.isFinite(botId) || botId <= 0) return;
+
+    const loadCalls = async () => {
+      setTelephonyCallsLoading(true);
+      try {
+        const data = await agentService.getTelephonyCalls(botId, { limit: 50, include_turns: true });
+        const list = Array.isArray(data?.calls) ? data.calls : [];
+        setTelephonyCalls(list);
+        setSelectedCallId(list[0]?.id ?? null);
+      } catch (error) {
+        setTelephonyCalls([]);
+        showError(error?.message || 'Не удалось загрузить звонки');
+      } finally {
+        setTelephonyCallsLoading(false);
+      }
+    };
+
+    loadCalls();
+  }, [botId, selectedSection, showError]);
+
+  const filteredChatUsers = useMemo(() => {
+    if (chatChannelFilter === 'all') return chatUsers;
+    return chatUsers.filter((user) => user.channel === chatChannelFilter);
+  }, [chatUsers, chatChannelFilter]);
+
+  const selectedCall = useMemo(
+    () => telephonyCalls.find((call) => call.id === selectedCallId) || null,
+    [telephonyCalls, selectedCallId]
+  );
+
+  const telephonyChannel = useMemo(() => findTelephonyChannel(agent?.channels), [agent?.channels]);
+
+  useEffect(() => {
     if (selectedSection !== ANALYTICS_SECTIONS.BROADCAST) return;
     if (!Number.isFinite(botId) || botId <= 0) return;
 
@@ -904,8 +954,8 @@ const AgentDetailedAnalyticsPageContent = () => {
   }, [selectedSection, isCrmAdminTemplate, botId, operationRange.start, operationRange.end, monthRange.start, monthRange.end]);
 
   const selectedUser = useMemo(
-    () => chatUsers.find((user) => user.id === selectedUserId) || null,
-    [chatUsers, selectedUserId]
+    () => filteredChatUsers.find((user) => user.id === selectedUserId) || null,
+    [filteredChatUsers, selectedUserId]
   );
 
   const canSendOwnerToUser = Boolean(
@@ -1628,6 +1678,13 @@ const AgentDetailedAnalyticsPageContent = () => {
           </button>
           <button
             type="button"
+            className={`analytics-section-btn ${selectedSection === ANALYTICS_SECTIONS.TELEPHONY ? 'analytics-section-btn--active' : ''}`}
+            onClick={() => setSelectedSection(ANALYTICS_SECTIONS.TELEPHONY)}
+          >
+            📞 Звонки
+          </button>
+          <button
+            type="button"
             className={`analytics-section-btn ${selectedSection === ANALYTICS_SECTIONS.BROADCAST ? 'analytics-section-btn--active' : ''}`}
             onClick={() => setSelectedSection(ANALYTICS_SECTIONS.BROADCAST)}
           >
@@ -1701,15 +1758,121 @@ const AgentDetailedAnalyticsPageContent = () => {
                 isLoading={isChartLoading}
               />
             </section>
+          ) : selectedSection === ANALYTICS_SECTIONS.TELEPHONY ? (
+            <section className="analytics-telephony">
+              <h3>Телефония</h3>
+              {telephonyChannel ? (
+                <p className="analytics-note">Номер канала: {telephonyChannel.external_id}</p>
+              ) : (
+                <p className="analytics-note">Телефонный канал не подключён.</p>
+              )}
+              {telephonyCallsLoading ? (
+                <p className="analytics-chat-empty">Загрузка звонков...</p>
+              ) : telephonyCalls.length === 0 ? (
+                <p className="analytics-chat-empty">Звонков пока нет</p>
+              ) : (
+                <div className="analytics-telephony-layout">
+                  <aside className="analytics-telephony-calls-list">
+                    {telephonyCalls.map((call) => (
+                      <button
+                        key={call.id}
+                        type="button"
+                        className={`analytics-telephony-call-item ${selectedCallId === call.id ? 'analytics-telephony-call-item--active' : ''}`}
+                        onClick={() => setSelectedCallId(call.id)}
+                      >
+                        <strong>{call.caller_e164_masked}</strong>
+                        <span>{formatDateTime(call.started_at, '—')}</span>
+                        <span>
+                          {telephonyStatusLabel(call.status)} · {formatCallDuration(call.duration_sec)}
+                        </span>
+                      </button>
+                    ))}
+                  </aside>
+                  <div className="analytics-telephony-call-detail">
+                    {selectedCall ? (
+                      <>
+                        <h4>Детали звонка</h4>
+                        <ul className="analytics-telephony-meta">
+                          <li>
+                            <span>Абонент</span>
+                            <strong>{selectedCall.caller_e164_masked}</strong>
+                          </li>
+                          <li>
+                            <span>Статус</span>
+                            <strong>{telephonyStatusLabel(selectedCall.status)}</strong>
+                          </li>
+                          <li>
+                            <span>Начало</span>
+                            <strong>{formatDateTime(selectedCall.started_at, '—')}</strong>
+                          </li>
+                          <li>
+                            <span>Длительность</span>
+                            <strong>{formatCallDuration(selectedCall.duration_sec)}</strong>
+                          </li>
+                        </ul>
+                        {selectedCall.recording_url ? (
+                          <p className="analytics-telephony-recording">
+                            <a href={selectedCall.recording_url} target="_blank" rel="noreferrer">
+                              Прослушать запись (CPaaS)
+                            </a>
+                          </p>
+                        ) : null}
+                        <h5>Реплики</h5>
+                        <div className="analytics-telephony-turns">
+                          {(selectedCall.turns || []).length === 0 ? (
+                            <p className="analytics-chat-empty">Транскриптов пока нет</p>
+                          ) : (
+                            (selectedCall.turns || []).map((turn) => (
+                              <article
+                                key={turn.id}
+                                className={`analytics-telephony-turn analytics-telephony-turn--${turn.role}`}
+                              >
+                                <header>
+                                  <strong>{turn.role}</strong>
+                                  <span>{formatDateTime(turn.created_at, '—')}</span>
+                                </header>
+                                <p>{turn.transcript}</p>
+                              </article>
+                            ))
+                          )}
+                        </div>
+                      </>
+                    ) : (
+                      <p className="analytics-chat-empty">Выберите звонок</p>
+                    )}
+                  </div>
+                </div>
+              )}
+            </section>
           ) : selectedSection === ANALYTICS_SECTIONS.CHATS ? (
             <section className="analytics-chats">
               <h3>Чаты</h3>
+              <div className="analytics-chats-toolbar">
+                <label htmlFor="chat-channel-filter">Канал</label>
+                <select
+                  id="chat-channel-filter"
+                  className="input-main"
+                  value={chatChannelFilter}
+                  onChange={(e) => {
+                    setChatChannelFilter(e.target.value);
+                    setSelectedUserId(null);
+                  }}
+                >
+                  <option value="all">Все</option>
+                  <option value="phone">Телефония</option>
+                  <option value="telegram">Telegram bot</option>
+                  <option value="telegram_userbot">Telegram userbot</option>
+                  <option value="whatsapp_userbot">WhatsApp userbot</option>
+                  <option value="max_bot">MAX bot</option>
+                  <option value="max_userbot">MAX userbot</option>
+                </select>
+              </div>
               <div className="analytics-chat-window">
                 <aside className="analytics-users-list">
-                  {chatUsers.length === 0 ? (
+                  {filteredChatUsers.length === 0 ? (
                     <p className="analytics-chat-empty">Пока нет сообщений от пользователей</p>
                   ) : (
-                    chatUsers.map((user) => (
+                    filteredChatUsers.map((user) => (
                       <button
                         key={user.id}
                         type="button"
