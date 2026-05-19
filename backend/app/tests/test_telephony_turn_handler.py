@@ -21,7 +21,7 @@ async def test_turn_handler_stt_empty_without_transcript():
     agent.is_active = True
 
     with patch(
-        "app.router_telephony.turn_handler._load_call_and_agent",
+        "app.router_telephony.call_loader.load_call_and_agent",
         AsyncMock(return_value=(call, agent)),
     ):
         payload = TelephonyTurnRequest(

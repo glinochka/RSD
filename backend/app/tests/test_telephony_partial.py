@@ -20,7 +20,7 @@ async def test_partial_handler_logs_non_final():
     agent.is_active = True
 
     with patch(
-        "app.router_telephony.partial_handler._load_call_and_agent",
+        "app.router_telephony.call_loader.load_call_and_agent",
         AsyncMock(return_value=(call, agent)),
     ):
         resp = await handle_telephony_partial(

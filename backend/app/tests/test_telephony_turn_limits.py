@@ -23,7 +23,7 @@ async def test_turn_handler_rejects_when_max_turns_reached():
 
     with (
         patch(
-            "app.router_telephony.turn_handler._load_call_and_agent",
+            "app.router_telephony.call_loader.load_call_and_agent",
             AsyncMock(return_value=(call, agent)),
         ),
         patch("app.router_telephony.turn_handler._count_user_turns", AsyncMock(return_value=15)),
@@ -55,7 +55,7 @@ async def test_turn_handler_rejects_when_call_duration_exceeded():
 
     with (
         patch(
-            "app.router_telephony.turn_handler._load_call_and_agent",
+            "app.router_telephony.call_loader.load_call_and_agent",
             AsyncMock(return_value=(call, agent)),
         ),
         patch("app.router_telephony.turn_handler._count_user_turns", AsyncMock(return_value=0)),

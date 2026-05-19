@@ -223,6 +223,19 @@ function splitContactTokens(raw) {
     .filter(Boolean);
 }
 
+function looksLikePhone(value) {
+  const digits = String(value).replace(/\D/g, '');
+  return digits.length >= 10;
+}
+
+function phoneToTelHref(value) {
+  let digits = String(value).replace(/\D/g, '');
+  if (digits.length === 11 && digits.startsWith('8')) {
+    digits = `7${digits.slice(1)}`;
+  }
+  return digits.startsWith('+') ? `tel:${digits}` : `tel:+${digits}`;
+}
+
 function SalesContactTokens({ value }) {
   const parts = splitContactTokens(value);
   if (!parts.length) return <span>—</span>;
@@ -230,11 +243,21 @@ function SalesContactTokens({ value }) {
     <div
       className="management-contact-values management-contact-values-wrap"
     >
-      {parts.map((p, i) => (
-        <span key={i} className="management-contact-value-chip">
-          {p}
-        </span>
-      ))}
+      {parts.map((p, i) =>
+        looksLikePhone(p) ? (
+          <a
+            key={i}
+            href={phoneToTelHref(p)}
+            className="management-contact-value-chip management-contact-value-chip--phone"
+          >
+            {p}
+          </a>
+        ) : (
+          <span key={i} className="management-contact-value-chip">
+            {p}
+          </span>
+        )
+      )}
     </div>
   );
 }
@@ -282,13 +305,15 @@ function SalesContactRow({
   const site = contact.website || '';
   const siteHref = site && !/^https?:\/\//i.test(site) ? `https://${site}` : site;
 
+  const lprPhoneDisplay = lprPhone || '—';
+
   return (
-    <tr>
-      <td>{contact.id}</td>
-      <td className="management-desk-col-org">
+    <tr className="management-desk-contact-row">
+      <td data-label="ID">{contact.id}</td>
+      <td data-label="Название" className="management-desk-col-org">
         <span className="management-desk-readonly">{contact.org_name || '—'}</span>
       </td>
-      <td>
+      <td data-label="ФИО ЛПР">
         {readOnly ? (
           <span className="management-desk-readonly">{lprName || '—'}</span>
         ) : (
@@ -301,9 +326,15 @@ function SalesContactRow({
           />
         )}
       </td>
-      <td className="management-desk-col-lpr">
+      <td data-label="Тел. ЛПР" className="management-desk-col-lpr">
         {readOnly ? (
-          <span className="management-desk-readonly">{lprPhone || '—'}</span>
+          looksLikePhone(lprPhone) ? (
+            <a href={phoneToTelHref(lprPhone)} className="management-desk-phone-link">
+              {lprPhoneDisplay}
+            </a>
+          ) : (
+            <span className="management-desk-readonly">{lprPhoneDisplay}</span>
+          )
         ) : (
           <textarea
             className="management-field management-field-lpr"
@@ -314,20 +345,20 @@ function SalesContactRow({
           />
         )}
       </td>
-      <td>
+      <td data-label="Тел. орг.">
         <SalesContactTokens value={contact.org_phone} />
       </td>
-      <td>
+      <td data-label="Моб.">
         <SalesContactTokens value={contact.org_mobile} />
       </td>
-      <td>
+      <td data-label="Статус">
         {readOnly || statusLocked ? (
           WORKFLOW_STATUS_LABELS[status] || status
         ) : (
           <select
             value={status}
             onChange={(e) => setStatus(e.target.value)}
-            className="management-field management-field-select"
+            className="management-field management-field-select management-field-select--desk"
           >
             {Object.entries(WORKFLOW_STATUS_LABELS).map(([k, lab]) => (
               <option key={k} value={k}>{lab}</option>
@@ -335,12 +366,12 @@ function SalesContactRow({
           </select>
         )}
       </td>
-      <td>
+      <td data-label="Комментарий">
         {readOnly ? (
-          <span style={{ whiteSpace: 'pre-wrap' }}>{comment || '—'}</span>
+          <span className="management-desk-readonly">{comment || '—'}</span>
         ) : (
           <textarea
-            className="management-field management-field-comment"
+            className="management-field management-field-comment management-field-comment--desk"
             rows={3}
             value={comment}
             onChange={(e) => setComment(e.target.value)}
@@ -348,16 +379,16 @@ function SalesContactRow({
           />
         )}
       </td>
-      <td>
+      <td data-label="Email">
         <SalesContactTokens value={contact.email} />
       </td>
-      <td>
+      <td data-label="Сайт">
         {site ? (
           <a
             href={siteHref}
             target="_blank"
             rel="noopener noreferrer"
-            className="btn btn-sm btn-outline"
+            className="btn btn-sm btn-outline management-desk-site-link"
           >
             Перейти
           </a>
@@ -365,9 +396,9 @@ function SalesContactRow({
           <span>—</span>
         )}
       </td>
-      <td>
+      <td data-label="Действия" className="management-desk-actions-cell">
         {!readOnly ? (
-          <div className="management-sales-contact-actions">
+          <div className="management-sales-contact-actions management-sales-contact-actions--desk">
             <button type="button" className="btn btn-sm btn-black" disabled={!!busy} onClick={save}>
               Сохранить
             </button>
@@ -3094,7 +3125,9 @@ const ManagementPortal = () => {
               )}
             </div>
             <div
-              className={`management-table-wrap management-table-wide${salesDeskExcelMode ? ' management-desk-table-excel' : ''}`}
+              className={`management-table-wrap management-table-wide${
+                salesDeskExcelMode ? ' management-desk-table-excel' : ' management-desk-table-wrap'
+              }`}
             >
               <table className="management-table management-desk-table">
                 <thead>
@@ -4238,8 +4271,13 @@ const ManagementPortal = () => {
 
   if (salesToken && !adminToken) {
     const salesExcelActive = salesDeskExcelMode && salesSection === 'desk';
+    const salesIsRop = salesMe?.member?.role === 'rop';
     return (
-      <div className={`management-page${salesExcelActive ? ' management-excel-mode' : ''}`}>
+      <div
+        className={`management-page management-page--sales${
+          salesExcelActive ? ' management-excel-mode' : ''
+        }`}
+      >
         {!salesExcelActive && (
           <header className="management-header">
             <h1>Отдел продаж</h1>
@@ -4278,6 +4316,39 @@ const ManagementPortal = () => {
             {salesSection === 'desk' ? renderSalesStaffDesk() : renderSalesStaffTeam()}
           </section>
         </main>
+        {!salesExcelActive && (
+          <nav className="management-sales-mobile-nav" aria-label="Навигация отдела продаж">
+            {!salesIsRop && (
+              <button
+                type="button"
+                className={`management-sales-mobile-nav-item${
+                  salesSection === 'desk' ? ' active' : ''
+                }`}
+                onClick={() => setSalesSection('desk')}
+              >
+                Рабочий стол
+              </button>
+            )}
+            {salesIsRop && (
+              <button
+                type="button"
+                className={`management-sales-mobile-nav-item${
+                  salesSection === 'team' ? ' active' : ''
+                }`}
+                onClick={() => setSalesSection('team')}
+              >
+                Команда
+              </button>
+            )}
+            <button
+              type="button"
+              className="management-sales-mobile-nav-item management-sales-mobile-nav-item--logout"
+              onClick={handleSalesLogout}
+            >
+              Выйти
+            </button>
+          </nav>
+        )}
       </div>
     );
   }

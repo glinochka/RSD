@@ -16,7 +16,7 @@ from ..telephony.partial_store import (
     should_suggest_backchannel,
 )
 from .schemas import TelephonyPartialRequest, TelephonyPartialResponse
-from .turn_handler import _load_call_and_agent
+from .call_loader import load_call_and_agent
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ async def handle_telephony_partial(
     session: AsyncSession,
     payload: TelephonyPartialRequest,
 ) -> TelephonyPartialResponse:
-    await _load_call_and_agent(
+    await load_call_and_agent(
         session,
         connection_id=payload.connection_id,
         call_db_id=payload.call_db_id,

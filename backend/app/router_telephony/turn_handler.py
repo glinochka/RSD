@@ -28,6 +28,7 @@ from ..telephony.dtmf import dtmf_transcript
 from ..telephony.partial_store import get_partial
 from ..telephony.turn_pool import run_in_telephony_pool
 from ..utils.pii import redact_pii_text
+from .call_loader import load_call_and_agent
 from .partial_handler import resolve_transcript_with_partials
 from .schemas import TelephonyTurnRequest, TelephonyTurnResponse
 
@@ -39,26 +40,6 @@ MSG_CALL_TIME_LIMIT = "Время разговора истекло. До сви
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
-
-
-async def _load_call_and_agent(
-    session: AsyncSession,
-    *,
-    connection_id: int,
-    call_db_id: int,
-) -> tuple[AgentTelephonyCall, Agent]:
-    call = await session.scalar(
-        select(AgentTelephonyCall).where(
-            AgentTelephonyCall.id == call_db_id,
-            AgentTelephonyCall.connection_id == connection_id,
-        )
-    )
-    if call is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Call not found")
-    agent = await session.scalar(select(Agent).where(Agent.id == call.agent_id, Agent.is_active.is_(True)))
-    if agent is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found or inactive")
-    return call, agent
 
 
 async def _count_user_turns(session: AsyncSession, call_db_id: int) -> int:
@@ -189,7 +170,7 @@ def _limit_response(
 
 async def handle_telephony_turn(session: AsyncSession, payload: TelephonyTurnRequest) -> TelephonyTurnResponse:
     started = time.perf_counter()
-    call, agent = await _load_call_and_agent(
+    call, agent = await load_call_and_agent(
         session,
         connection_id=payload.connection_id,
         call_db_id=payload.call_db_id,
