@@ -1755,15 +1755,18 @@ const CreateAgentContent = () => {
 
                   {!isContentFactoryTemplate && !isSalesManagerTemplate ? (
                     <div className="form-group telephony-channel-block">
-                      <label className="channel-primary-checkbox">
-                        <input
-                          type="checkbox"
-                          checked={useTelephonyChannel}
-                          onChange={toggleTelephonyChannel}
-                          disabled={form.isSubmitting}
-                        />
-                        Включить телефонный канал (ИИ-оператор)
-                      </label>
+                      <FeatureToggle
+                        checked={useTelephonyChannel}
+                        onChange={(enabled) => {
+                          if (enabled !== useTelephonyChannel) {
+                            toggleTelephonyChannel();
+                          }
+                        }}
+                        disabled={form.isSubmitting}
+                        title="Включить телефонный канал (ИИ-оператор)"
+                        description="Входящие звонки через Voximplant с голосовым ИИ-оператором."
+                        helpText="Укажите учётные данные Voximplant и номер в формате E.164. После создания агента используйте Webhook URL в настройках правила входящих вызовов."
+                      />
                       {useTelephonyChannel ? (
                         <div className="telephony-channel-fields">
                           <input
@@ -1910,7 +1913,7 @@ const CreateAgentContent = () => {
                 />
 
                 <div className="admin-template-onboarding-block">
-                  <h4 className="admin-template-onboarding-title">Дополнительные фичи (Stage 8)</h4>
+                  <h4 className="admin-template-onboarding-title">Дополнительные фичи</h4>
                   <FeatureToggle
                     checked={Boolean(form.values.waitlist_enabled)}
                     onChange={(enabled) => form.setFieldValue('waitlist_enabled', enabled)}
@@ -1925,18 +1928,20 @@ const CreateAgentContent = () => {
                     title="Включить напоминания о визите"
                     helpText="При включении отправляются напоминания клиенту по расписанию, заданному в offsets."
                   />
-                  <label htmlFor="reminder_offsets_hours" className="mt-input">
-                    Reminder offsets (часы через запятую):
-                  </label>
-                  <input
-                    id="reminder_offsets_hours"
-                    name="reminder_offsets_hours"
-                    className="input-main"
-                    value={form.values.reminder_offsets_hours}
-                    onChange={form.handleChange}
-                    disabled={form.isSubmitting}
-                    placeholder="24,2"
-                  />
+                  <div className="admin-template-field">
+                    <label htmlFor="reminder_offsets_hours">
+                      Напоминания за (часы до визита, через запятую):
+                    </label>
+                    <input
+                      id="reminder_offsets_hours"
+                      name="reminder_offsets_hours"
+                      className="input-main"
+                      value={form.values.reminder_offsets_hours}
+                      onChange={form.handleChange}
+                      disabled={form.isSubmitting}
+                      placeholder="24,2"
+                    />
+                  </div>
                   <FeatureToggle
                     checked={Boolean(form.values.manual_confirmation_enabled)}
                     onChange={(enabled) => form.setFieldValue('manual_confirmation_enabled', enabled)}

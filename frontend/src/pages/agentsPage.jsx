@@ -2088,7 +2088,7 @@ const AgentsPageContent = () => {
                   <div className="agent-management-block">
                     {isCrmAdminTemplate ? (
                       <>
-                        <h4 className="agent-form-channel-title">Настройки Администратора (Stage 8)</h4>
+                        <h4 className="agent-form-channel-title">Дополнительные фичи</h4>
                         <FeatureToggle
                           checked={adminWaitlistEnabled}
                           onChange={setAdminWaitlistEnabled}
@@ -2103,17 +2103,19 @@ const AgentsPageContent = () => {
                           title="Включить напоминания о визите"
                           helpText="При включении отправляются напоминания клиенту по расписанию, заданному в offsets."
                         />
-                        <label htmlFor="admin_reminder_offsets_hours" className="mt-input">
-                          Reminder offsets (часы через запятую):
-                        </label>
-                        <input
-                          id="admin_reminder_offsets_hours"
-                          className="input-main"
-                          value={adminReminderOffsets}
-                          onChange={(event) => setAdminReminderOffsets(event.target.value)}
-                          placeholder="24,2"
-                          disabled={isSavingTemplateConfig}
-                        />
+                        <div className="admin-template-field">
+                          <label htmlFor="admin_reminder_offsets_hours">
+                            Напоминания за (часы до визита, через запятую):
+                          </label>
+                          <input
+                            id="admin_reminder_offsets_hours"
+                            className="input-main"
+                            value={adminReminderOffsets}
+                            onChange={(event) => setAdminReminderOffsets(event.target.value)}
+                            placeholder="24,2"
+                            disabled={isSavingTemplateConfig}
+                          />
+                        </div>
                         <FeatureToggle
                           checked={adminManualConfirmationEnabled}
                           onChange={setAdminManualConfirmationEnabled}
@@ -2889,24 +2891,20 @@ const AgentsPageContent = () => {
                           disabled={isSavingChannel}
                         />
                         <div className="telephony-channel-options">
-                          <label className="channel-primary-checkbox">
-                            <input
-                              type="checkbox"
-                              checked={telephonyRecordCalls}
-                              onChange={(e) => setTelephonyRecordCalls(e.target.checked)}
-                              disabled={isSavingChannel}
-                            />
-                            Записывать звонки
-                          </label>
-                          <label className="channel-primary-checkbox">
-                            <input
-                              type="checkbox"
-                              checked={telephonyDisclaimerPlayed}
-                              onChange={(e) => setTelephonyDisclaimerPlayed(e.target.checked)}
-                              disabled={isSavingChannel}
-                            />
-                            IVR о записи в начале
-                          </label>
+                          <FeatureToggle
+                            checked={telephonyRecordCalls}
+                            onChange={setTelephonyRecordCalls}
+                            disabled={isSavingChannel}
+                            title="Записывать звонки"
+                            helpText="Сохраняет аудиозапись разговора для последующего прослушивания в аналитике."
+                          />
+                          <FeatureToggle
+                            checked={telephonyDisclaimerPlayed}
+                            onChange={setTelephonyDisclaimerPlayed}
+                            disabled={isSavingChannel}
+                            title="IVR о записи в начале"
+                            helpText="Проигрывает короткое уведомление о записи разговора в начале звонка."
+                          />
                         </div>
                         <button
                           type="button"
