@@ -1388,7 +1388,7 @@
 .management-desk-table--resizable {
   table-layout: fixed;
   width: 100%;
-  min-width: 1100px;
+  min-width: 1280px;
 }
 
 .management-desk-th-resizable {
@@ -1399,9 +1399,9 @@
 
 .management-desk-th-label {
   display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.3;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .management-desk-col-resizer {
@@ -1421,7 +1421,13 @@
 
 .management-desk-col-phones,
 .management-desk-col-email {
-  min-width: 6.5rem;
+  min-width: 8.5rem;
+}
+
+.management-desk-table td.management-desk-col-phones,
+.management-desk-table td.management-desk-col-lpr,
+.management-desk-table td.management-desk-col-email {
+  overflow: hidden;
 }
 
 .management-contact-values--nowrap {
@@ -1429,6 +1435,11 @@
   overflow-x: auto;
   max-width: 100%;
   -webkit-overflow-scrolling: touch;
+}
+
+.management-desk-table .management-desk-col-phones .management-contact-values--nowrap {
+  flex-wrap: wrap;
+  overflow-x: visible;
 }
 
 .management-contact-values--nowrap .management-contact-value-chip {
@@ -1450,7 +1461,17 @@
 .management-desk-table .management-desk-col-org,
 .management-desk-table .management-desk-col-lpr {
   min-width: 11rem;
-  max-width: 16rem;
+}
+
+.management-desk-autosave-hint {
+  display: block;
+  min-height: 1.25rem;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-light);
+}
+
+.management-desk-autosave-hint--error {
+  color: #b91c1c;
 }
 
 .management-desk-readonly {
@@ -1679,12 +1700,20 @@
   }
 
   /* Desk contacts: card layout instead of horizontal table */
-  .management-desk-table-wrap {
+  .management-page--sales .management-table-wrap.management-desk-table-wrap {
+    width: 100%;
+    max-width: 100%;
     overflow: visible;
   }
 
   .management-desk-table-wrap .management-desk-table {
+    width: 100%;
     min-width: 0;
+    display: block;
+  }
+
+  .management-desk-table-wrap .management-desk-table colgroup {
+    display: none;
   }
 
   .management-desk-table-wrap .management-desk-table thead {
@@ -1699,6 +1728,9 @@
 
   .management-desk-table-wrap .management-desk-contact-row {
     display: block;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-lg);
     padding: var(--spacing-base);
@@ -1756,10 +1788,17 @@
   .management-desk-table-wrap .management-sales-contact-actions--desk {
     flex-direction: row;
     flex-wrap: wrap;
+    align-items: center;
+    gap: var(--spacing-sm);
+  }
+
+  .management-desk-table-wrap .management-desk-autosave-hint {
+    flex: 1 1 100%;
+    min-height: 1.125rem;
   }
 
   .management-desk-table-wrap .management-sales-contact-actions--desk .btn {
-    flex: 1 1 calc(50% - 4px);
+    flex: 1 1 auto;
     min-height: 44px;
     justify-content: center;
   }

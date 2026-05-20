@@ -165,7 +165,6 @@
 
 .price-card .btn {
   width: 100%;
-  white-space: normal;
   line-height: 1.25;
   min-height: 2.75rem;
   padding: var(--spacing-sm) var(--spacing-base);
@@ -173,7 +172,27 @@
   align-items: center;
   justify-content: center;
   text-align: center;
+  white-space: normal;
   hyphens: auto;
+}
+
+/* «Попробовать бесплатно» и длинные подписи — в одну строку на планшете и ПК */
+@media (min-width: 769px) {
+  .price-card .btn {
+    white-space: nowrap;
+    hyphens: none;
+    font-size: var(--font-size-sm);
+    padding-left: var(--spacing-sm);
+    padding-right: var(--spacing-sm);
+  }
+}
+
+@media (min-width: 1240px) {
+  .price-card .btn {
+    font-size: var(--font-size-base);
+    padding-left: var(--spacing-base);
+    padding-right: var(--spacing-base);
+  }
 }
 
 .pricing-modal-overlay {

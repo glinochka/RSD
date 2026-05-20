@@ -79,28 +79,65 @@ def _normalize_trigger_token(value: str) -> str:
     return re.sub(r"[^a-zа-яё0-9]+", "", (value or "").strip().lower(), flags=re.IGNORECASE)
 
 
-def _extract_message_tokens(value: str) -> list[str]:
+_TRIGGER_MESSAGE_MIN_LEN = 3
+_TRIGGER_WORD_MIN_LEN = 2
+
+
+def _extract_message_tokens(value: str, *, allow_short: set[str] | None = None) -> list[str]:
+    allowed_short = allow_short or set()
     parts = re.split(r"[^a-zа-яё0-9]+", (value or "").strip().lower(), flags=re.IGNORECASE)
     normalized: list[str] = []
     for item in parts:
         token = _normalize_trigger_token(item)
-        if token:
+        if len(token) >= _TRIGGER_MESSAGE_MIN_LEN or token in allowed_short:
             normalized.append(token)
     return normalized
 
 
+def _expand_trigger_tokens(trigger_words: list[str]) -> list[str]:
+    """Split multi-word phrases into separate triggers; ignore tokens shorter than min len."""
+    expanded: list[str] = []
+    for raw in trigger_words or []:
+        phrase = str(raw or "").strip().lower()
+        if not phrase:
+            continue
+        for part in re.split(r"[^a-zа-яё0-9]+", phrase, flags=re.IGNORECASE):
+            token = _normalize_trigger_token(part)
+            if len(token) >= _TRIGGER_WORD_MIN_LEN and token not in expanded:
+                expanded.append(token)
+    return expanded or ["купить"]
+
+
+def _trigger_token_matches(token: str, trigger: str) -> bool:
+    """Match message token to trigger: exact, prefix stem, or trigger root inside a longer word."""
+    if len(trigger) < _TRIGGER_WORD_MIN_LEN:
+        return False
+    if token == trigger:
+        return True
+    if len(token) < _TRIGGER_MESSAGE_MIN_LEN and len(token) != len(trigger):
+        return False
+    shorter, longer = (token, trigger) if len(token) <= len(trigger) else (trigger, token)
+    if len(shorter) < _TRIGGER_WORD_MIN_LEN:
+        return False
+    if longer.startswith(shorter):
+        return True
+    # Short triggers (e.g. "ии") must not match inside unrelated words like "индонезии".
+    if len(trigger) < _TRIGGER_MESSAGE_MIN_LEN:
+        return False
+    if trigger in token:
+        return True
+    return False
+
+
 def _is_message_matching_triggers(message_text: str, trigger_words: list[str]) -> bool:
-    tokens = _extract_message_tokens(message_text)
-    normalized_triggers = [_normalize_trigger_token(item) for item in (trigger_words or [])]
-    normalized_triggers = [item for item in normalized_triggers if item]
-    if not normalized_triggers:
-        normalized_triggers = ["купить"]
+    normalized_triggers = _expand_trigger_tokens(trigger_words)
+    short_triggers = {item for item in normalized_triggers if len(item) < _TRIGGER_MESSAGE_MIN_LEN}
+    tokens = _extract_message_tokens(message_text, allow_short=short_triggers)
     if not tokens:
         return False
     for token in tokens:
         for trigger in normalized_triggers:
-            # Non-strict matching in both directions ("купи" <-> "купить")
-            if token in trigger or trigger in token:
+            if _trigger_token_matches(token, trigger):
                 return True
     return False
 

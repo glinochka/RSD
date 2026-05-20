@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
+﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import adminService from '../services/adminService';
 import salesService from '../services/salesService';
 import { ENV_CONFIG } from '../config/environment';
@@ -256,22 +256,23 @@ function messengerOpenHref(kind, raw) {
 
 const DESK_TABLE_COLUMNS = [
   { id: 'id', label: 'ID', defaultWidth: 52, minWidth: 44 },
-  { id: 'org_name', label: 'Название', defaultWidth: 140, minWidth: 96 },
-  { id: 'lpr_name', label: 'ФИО ЛПР', defaultWidth: 160, minWidth: 120 },
-  { id: 'lpr_phone', label: 'Тел. ЛПР', defaultWidth: 120, minWidth: 100 },
-  { id: 'org_phone', label: 'Тел. орг.', defaultWidth: 130, minWidth: 108 },
-  { id: 'org_mobile', label: 'Моб.', defaultWidth: 120, minWidth: 100 },
-  { id: 'whatsapp', label: 'WhatsApp', defaultWidth: 108, minWidth: 88 },
-  { id: 'telegram', label: 'Telegram', defaultWidth: 100, minWidth: 88 },
-  { id: 'messenger_max', label: 'Макс', defaultWidth: 88, minWidth: 72 },
-  { id: 'workflow_status', label: 'Статус', defaultWidth: 120, minWidth: 100 },
-  { id: 'comment', label: 'Комментарий', defaultWidth: 160, minWidth: 120 },
-  { id: 'email', label: 'Email', defaultWidth: 140, minWidth: 108 },
-  { id: 'website', label: 'Сайт', defaultWidth: 88, minWidth: 72 },
-  { id: 'actions', label: '', defaultWidth: 120, minWidth: 100 },
+  { id: 'org_name', label: 'Название', defaultWidth: 160, minWidth: 110 },
+  { id: 'lpr_name', label: 'ФИО ЛПР', defaultWidth: 170, minWidth: 130 },
+  { id: 'lpr_phone', label: 'Телефон ЛПР', defaultWidth: 158, minWidth: 132 },
+  { id: 'org_phone', label: 'Телефон организации', defaultWidth: 188, minWidth: 158 },
+  { id: 'org_mobile', label: 'Мобильный', defaultWidth: 148, minWidth: 118 },
+  { id: 'whatsapp', label: 'WhatsApp', defaultWidth: 112, minWidth: 92 },
+  { id: 'telegram', label: 'Telegram', defaultWidth: 108, minWidth: 92 },
+  { id: 'messenger_max', label: 'Макс', defaultWidth: 92, minWidth: 76 },
+  { id: 'workflow_status', label: 'Статус', defaultWidth: 132, minWidth: 108 },
+  { id: 'comment', label: 'Комментарий', defaultWidth: 180, minWidth: 140 },
+  { id: 'email', label: 'Email', defaultWidth: 150, minWidth: 118 },
+  { id: 'website', label: 'Сайт', defaultWidth: 92, minWidth: 76 },
+  { id: 'actions', label: '', defaultWidth: 108, minWidth: 88 },
 ];
 
-const DESK_COLUMN_WIDTHS_KEY = 'rsd_sales_desk_column_widths_v1';
+const DESK_COLUMN_WIDTHS_KEY = 'rsd_sales_desk_column_widths_v2';
+const DESK_AUTOSAVE_MS = 800;
 
 function useDeskColumnWidths() {
   const [widths, setWidths] = useState(() => {
@@ -355,6 +356,26 @@ function SalesContactTokens({ value, nowrap = false }) {
   );
 }
 
+function buildSalesContactSaveBody({ lprName, lprPhone, comment, status, statusLocked }) {
+  const body = {
+    lpr_name: lprName,
+    lpr_phone: lprPhone,
+    comment,
+  };
+  if (!statusLocked) {
+    body.workflow_status = status;
+  }
+  return body;
+}
+
+function salesContactRowIsDirty(contact, { lprName, lprPhone, comment, status, statusLocked }) {
+  if ((lprName || '') !== (contact.lpr_name || '')) return true;
+  if ((lprPhone || '') !== (contact.lpr_phone || '')) return true;
+  if ((comment || '') !== (contact.comment || '')) return true;
+  if (!statusLocked && (status || 'new') !== (contact.workflow_status || 'new')) return true;
+  return false;
+}
+
 function SalesContactRow({
   contact,
   busy,
@@ -368,12 +389,16 @@ function SalesContactRow({
   const [lprPhone, setLprPhone] = useState(contact.lpr_phone || '');
   const [comment, setComment] = useState(contact.comment || '');
   const [status, setStatus] = useState(contact.workflow_status || 'new');
+  const [autosaveState, setAutosaveState] = useState('idle');
+  const autosaveTimerRef = useRef(null);
+  const autosaveRequestRef = useRef(0);
 
   useEffect(() => {
     setLprName(contact.lpr_name || '');
     setLprPhone(contact.lpr_phone || '');
     setComment(contact.comment || '');
     setStatus(contact.workflow_status || 'new');
+    setAutosaveState('idle');
   }, [
     contact.id,
     contact.lpr_name,
@@ -383,17 +408,54 @@ function SalesContactRow({
     contact.updated_at,
   ]);
 
-  const save = () => {
-    const body = {
-      lpr_name: lprName,
-      lpr_phone: lprPhone,
-      comment,
-    };
-    if (!statusLocked) {
-      body.workflow_status = status;
+  useEffect(() => {
+    if (readOnly) return undefined;
+    if (autosaveTimerRef.current) {
+      clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
     }
-    onSaveRow(contact.id, body);
-  };
+    const rowState = { lprName, lprPhone, comment, status, statusLocked };
+    if (!salesContactRowIsDirty(contact, rowState)) {
+      setAutosaveState('idle');
+      return undefined;
+    }
+    setAutosaveState('pending');
+    autosaveTimerRef.current = setTimeout(() => {
+      const requestId = autosaveRequestRef.current + 1;
+      autosaveRequestRef.current = requestId;
+      const body = buildSalesContactSaveBody(rowState);
+      setAutosaveState('saving');
+      Promise.resolve(onSaveRow(contact.id, body))
+        .then(() => {
+          if (autosaveRequestRef.current !== requestId) return;
+          setAutosaveState('saved');
+        })
+        .catch(() => {
+          if (autosaveRequestRef.current !== requestId) return;
+          setAutosaveState('error');
+        });
+    }, DESK_AUTOSAVE_MS);
+    return () => {
+      if (autosaveTimerRef.current) {
+        clearTimeout(autosaveTimerRef.current);
+        autosaveTimerRef.current = null;
+      }
+    };
+  }, [
+    contact.id,
+    contact.lpr_name,
+    contact.lpr_phone,
+    contact.comment,
+    contact.workflow_status,
+    contact.updated_at,
+    lprName,
+    lprPhone,
+    comment,
+    status,
+    readOnly,
+    statusLocked,
+    onSaveRow,
+  ]);
 
   const site = contact.website || '';
   const siteHref = site && !/^https?:\/\//i.test(site) ? `https://${site}` : site;
@@ -419,7 +481,7 @@ function SalesContactRow({
           />
         )}
       </td>
-      <td data-label="Тел. ЛПР" className="management-desk-col-lpr">
+      <td data-label="Телефон ЛПР" className="management-desk-col-lpr">
         {readOnly ? (
           looksLikePhone(lprPhone) ? (
             <a href={phoneToTelHref(lprPhone)} className="management-desk-phone-link">
@@ -438,10 +500,10 @@ function SalesContactRow({
           />
         )}
       </td>
-      <td data-label="Тел. орг." className="management-desk-col-phones">
+      <td data-label="Телефон организации" className="management-desk-col-phones">
         <SalesContactTokens value={contact.org_phone} nowrap />
       </td>
-      <td data-label="Моб." className="management-desk-col-phones">
+      <td data-label="Мобильный" className="management-desk-col-phones">
         <SalesContactTokens value={contact.org_mobile} nowrap />
       </td>
       <td data-label="WhatsApp">
@@ -501,14 +563,25 @@ function SalesContactRow({
       <td data-label="Действия" className="management-desk-actions-cell">
         {!readOnly ? (
           <div className="management-sales-contact-actions management-sales-contact-actions--desk">
-            <button type="button" className="btn btn-sm btn-black" disabled={!!busy} onClick={save}>
-              Сохранить
-            </button>
+            <span
+              className={`management-desk-autosave-hint${
+                autosaveState === 'error' ? ' management-desk-autosave-hint--error' : ''
+              }`}
+              aria-live="polite"
+            >
+              {autosaveState === 'pending' || autosaveState === 'saving'
+                ? 'Сохранение…'
+                : autosaveState === 'saved'
+                  ? 'Сохранено'
+                  : autosaveState === 'error'
+                    ? 'Не удалось сохранить'
+                    : ''}
+            </span>
             {!hideInvoice && (
               <button
                 type="button"
                 className="btn btn-sm btn-outline"
-                disabled={!!busy}
+                disabled={!!busy || autosaveState === 'saving'}
                 onClick={() => onInvoice(contact)}
               >
                 Чек
@@ -2785,15 +2858,28 @@ const ManagementPortal = () => {
     }
   };
 
-  const handleSalesSaveContact = async (contactId, body) => {
+  const handleSalesSaveContact = useCallback(async (contactId, body) => {
     if (!salesToken) return;
     try {
       setSalesTeamBusy(`save-contact-${contactId}`);
       setSalesDeskError('');
       await salesService.patchContact(salesToken, contactId, body);
-      const me = await salesService.getMe(salesToken, { funnelPeriod: salesDeskFunnelPeriod });
-      setSalesMe(me);
-      await loadSalesDeskContacts(salesToken, me, { page: salesContacts.page });
+      setSalesContacts((prev) => ({
+        ...prev,
+        items: prev.items.map((c) =>
+          c.id === contactId
+            ? {
+                ...c,
+                ...body,
+                updated_at: new Date().toISOString(),
+              }
+            : c
+        ),
+      }));
+      if ('workflow_status' in body) {
+        const me = await salesService.getMe(salesToken, { funnelPeriod: salesDeskFunnelPeriod });
+        setSalesMe(me);
+      }
     } catch (err) {
       setSalesDeskError(formatError(err));
       if (isUnauthorizedError(err)) {
@@ -2801,10 +2887,11 @@ const ManagementPortal = () => {
         setSalesToken('');
         setSalesMe(null);
       }
+      throw err;
     } finally {
       setSalesTeamBusy(null);
     }
-  };
+  }, [salesToken, salesDeskFunnelPeriod]);
 
   const handleSalesRequestMore = async () => {
     if (!salesToken) return;

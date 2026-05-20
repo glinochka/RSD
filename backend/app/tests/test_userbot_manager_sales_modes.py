@@ -73,3 +73,35 @@ def test_trigger_matching_non_strict_stem_like_behavior() -> None:
 def test_trigger_matching_fallback_for_existing_agents() -> None:
     assert _is_message_matching_triggers("Хочу купить товар", []) is True
     assert _is_message_matching_triggers("Просто болтаем", []) is False
+
+
+def test_trigger_matching_ignores_short_stopword_tokens() -> None:
+    triggers = ["купить", "ии автоматизация бизнес"]
+    assert _is_message_matching_triggers("Перенсти парты и стулья в подсобку 5500р", triggers) is False
+    assert (
+        _is_message_matching_triggers(
+            "Если хочешь расти, нужна честная критика, а не поглаживание))",
+            triggers,
+        )
+        is False
+    )
+    assert (
+        _is_message_matching_triggers(
+            "Всем привет , ищу компании в Европе , Дубае , Турции , Индонезии "
+            "с подключенной системой платежей western union",
+            triggers,
+        )
+        is False
+    )
+    assert (
+        _is_message_matching_triggers(
+            "Оскар, с днём рождения! Процветания во всём! Вы - мой Герой!",
+            triggers,
+        )
+        is False
+    )
+
+
+def test_trigger_matching_multi_word_phrase_split() -> None:
+    assert _is_message_matching_triggers("Нужна автоматизация бизнес-процессов", ["ии автоматизация бизнес"]) is True
+    assert _is_message_matching_triggers("Интересуюсь ИИ для склада", ["ии автоматизация бизнес"]) is True
