@@ -1383,12 +1383,37 @@
 .management-desk-table td {
   white-space: normal;
   vertical-align: top;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
 .management-desk-table--resizable {
   table-layout: fixed;
   width: 100%;
   min-width: 1280px;
+}
+
+.management-desk-table--resizable td > * {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.management-desk-table td .management-field,
+.management-desk-table td .management-field-lpr,
+.management-desk-table td .management-field-comment,
+.management-desk-table td .management-field-select {
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+  field-sizing: normal;
+}
+
+.management-desk-table td .management-field-lpr {
+  resize: none;
+}
+
+.management-desk-table td .management-field-comment {
+  resize: vertical;
 }
 
 .management-desk-th-resizable {
@@ -1419,17 +1444,6 @@
   background: rgba(102, 126, 234, 0.2);
 }
 
-.management-desk-col-phones,
-.management-desk-col-email {
-  min-width: 8.5rem;
-}
-
-.management-desk-table td.management-desk-col-phones,
-.management-desk-table td.management-desk-col-lpr,
-.management-desk-table td.management-desk-col-email {
-  overflow: hidden;
-}
-
 .management-contact-values--nowrap {
   flex-wrap: nowrap;
   overflow-x: auto;
@@ -1437,16 +1451,24 @@
   -webkit-overflow-scrolling: touch;
 }
 
-.management-desk-table .management-desk-col-phones .management-contact-values--nowrap {
-  flex-wrap: wrap;
-  overflow-x: visible;
-}
-
 .management-contact-values--nowrap .management-contact-value-chip {
   white-space: nowrap;
   overflow-wrap: normal;
   word-break: normal;
   flex-shrink: 0;
+}
+
+.management-desk-table .management-contact-values {
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
+.management-desk-table .management-contact-value-chip {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  flex-shrink: 1;
 }
 
 .management-messenger-btn {
@@ -1458,16 +1480,19 @@
   justify-content: center;
 }
 
-.management-desk-table .management-desk-col-org,
-.management-desk-table .management-desk-col-lpr {
-  min-width: 11rem;
+.management-desk-actions-cell .management-sales-contact-actions--desk {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
 .management-desk-autosave-hint {
-  display: block;
-  min-height: 1.25rem;
   font-size: var(--font-size-xs);
   color: var(--color-text-light);
+  line-height: 1.3;
+  white-space: nowrap;
 }
 
 .management-desk-autosave-hint--error {
@@ -1532,6 +1557,12 @@
 
 .management-desk-table-excel .management-desk-table {
   min-width: 1400px;
+}
+
+@media (min-width: 769px) {
+  .management-desk-table--resizable td {
+    max-width: 0;
+  }
 }
 
 @media (min-width: 1024px) {
@@ -1794,7 +1825,6 @@
 
   .management-desk-table-wrap .management-desk-autosave-hint {
     flex: 1 1 100%;
-    min-height: 1.125rem;
   }
 
   .management-desk-table-wrap .management-sales-contact-actions--desk .btn {

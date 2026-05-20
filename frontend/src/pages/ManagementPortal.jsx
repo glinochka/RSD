@@ -274,16 +274,25 @@ const DESK_TABLE_COLUMNS = [
 const DESK_COLUMN_WIDTHS_KEY = 'rsd_sales_desk_column_widths_v2';
 const DESK_AUTOSAVE_MS = 800;
 
+function clampDeskColumnWidths(rawWidths) {
+  const defaults = Object.fromEntries(DESK_TABLE_COLUMNS.map((c) => [c.id, c.defaultWidth]));
+  const next = { ...defaults };
+  for (const col of DESK_TABLE_COLUMNS) {
+    const saved = Number(rawWidths?.[col.id]);
+    const width = Number.isFinite(saved) ? saved : defaults[col.id];
+    next[col.id] = Math.max(col.minWidth, width);
+  }
+  return next;
+}
+
 function useDeskColumnWidths() {
   const [widths, setWidths] = useState(() => {
-    const defaults = Object.fromEntries(DESK_TABLE_COLUMNS.map((c) => [c.id, c.defaultWidth]));
     try {
       const raw = localStorage.getItem(DESK_COLUMN_WIDTHS_KEY);
-      if (!raw) return defaults;
-      const parsed = JSON.parse(raw);
-      return { ...defaults, ...parsed };
+      if (!raw) return clampDeskColumnWidths({});
+      return clampDeskColumnWidths(JSON.parse(raw));
     } catch {
-      return defaults;
+      return clampDeskColumnWidths({});
     }
   });
 
@@ -501,10 +510,10 @@ function SalesContactRow({
         )}
       </td>
       <td data-label="Телефон организации" className="management-desk-col-phones">
-        <SalesContactTokens value={contact.org_phone} nowrap />
+        <SalesContactTokens value={contact.org_phone} />
       </td>
       <td data-label="Мобильный" className="management-desk-col-phones">
-        <SalesContactTokens value={contact.org_mobile} nowrap />
+        <SalesContactTokens value={contact.org_mobile} />
       </td>
       <td data-label="WhatsApp">
         <SalesMessengerCell kind="whatsapp" value={contact.whatsapp} label="WhatsApp" />
@@ -544,7 +553,7 @@ function SalesContactRow({
         )}
       </td>
       <td data-label="Email" className="management-desk-col-email">
-        <SalesContactTokens value={contact.email} nowrap />
+        <SalesContactTokens value={contact.email} />
       </td>
       <td data-label="Сайт">
         {site ? (
@@ -563,20 +572,6 @@ function SalesContactRow({
       <td data-label="Действия" className="management-desk-actions-cell">
         {!readOnly ? (
           <div className="management-sales-contact-actions management-sales-contact-actions--desk">
-            <span
-              className={`management-desk-autosave-hint${
-                autosaveState === 'error' ? ' management-desk-autosave-hint--error' : ''
-              }`}
-              aria-live="polite"
-            >
-              {autosaveState === 'pending' || autosaveState === 'saving'
-                ? 'Сохранение…'
-                : autosaveState === 'saved'
-                  ? 'Сохранено'
-                  : autosaveState === 'error'
-                    ? 'Не удалось сохранить'
-                    : ''}
-            </span>
             {!hideInvoice && (
               <button
                 type="button"
@@ -586,6 +581,20 @@ function SalesContactRow({
               >
                 Чек
               </button>
+            )}
+            {autosaveState !== 'idle' && (
+              <span
+                className={`management-desk-autosave-hint${
+                  autosaveState === 'error' ? ' management-desk-autosave-hint--error' : ''
+                }`}
+                aria-live="polite"
+              >
+                {autosaveState === 'pending' || autosaveState === 'saving'
+                  ? 'Сохранение…'
+                  : autosaveState === 'saved'
+                    ? 'Сохранено'
+                    : 'Не удалось сохранить'}
+              </span>
             )}
           </div>
         ) : (
