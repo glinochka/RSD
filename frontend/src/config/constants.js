@@ -106,6 +106,7 @@ export const API_ROUTES = {
   ADMIN_LOGIN: '/api/admin/login',
   ADMIN_STATS: '/api/admin/stats',
   ADMIN_USERS: '/api/admin/users',
+  ADMIN_CREATE_USER: '/api/admin/users',
   ADMIN_AGENTS: '/api/admin/agents',
   ADMIN_CHATS: '/api/admin/chats',
   ADMIN_TURNKEY_REQUESTS: '/api/admin/turnkey-requests',

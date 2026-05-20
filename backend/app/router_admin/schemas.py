@@ -24,6 +24,12 @@ class AdminSubscriptionPlansUpdateRequest(BaseModel):
     plans: list[SubscriptionPlanUpdate] = Field(..., min_length=1)
 
 
+class AdminCreateUserRequest(BaseModel):
+    email: str = Field(..., min_length=5, max_length=255)
+    password: str = Field(..., min_length=6, max_length=30)
+    telegram_id: int | None = Field(default=None, description="Необязательный Telegram ID")
+
+
 class AdminGiftSubscriptionRequest(BaseModel):
     plan_code: Literal["Free", "Advanced", "Pro"] = Field(
         ..., description="Subscription plan to gift"

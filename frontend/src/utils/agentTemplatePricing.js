@@ -12,9 +12,9 @@ export const formatMaintenancePrice = (monthlyRubMin) => {
 
 export const getTemplateLabel = (code) => {
   const labels = {
-    qa: 'Простой ИИ‑консультант',
-    crm_admin: 'ИИ‑администратор',
-    sales_manager: 'Менеджер отдела продаж',
+    qa: 'ИИ консультант',
+    crm_admin: 'ИИ оператор',
+    sales_manager: 'ИИ МОП',
     content_factory: 'Контент‑завод',
     ai_logist: 'ИИ Логист',
     ai_manager: 'ИИ менеджер',

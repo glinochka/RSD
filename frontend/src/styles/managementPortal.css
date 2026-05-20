@@ -1385,6 +1385,68 @@
   vertical-align: top;
 }
 
+.management-desk-table--resizable {
+  table-layout: fixed;
+  width: 100%;
+  min-width: 1100px;
+}
+
+.management-desk-th-resizable {
+  position: relative;
+  padding-right: 10px;
+  overflow: hidden;
+}
+
+.management-desk-th-label {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.management-desk-col-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  user-select: none;
+  touch-action: none;
+}
+
+.management-desk-col-resizer:hover {
+  background: rgba(102, 126, 234, 0.2);
+}
+
+.management-desk-col-phones,
+.management-desk-col-email {
+  min-width: 6.5rem;
+}
+
+.management-contact-values--nowrap {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  max-width: 100%;
+  -webkit-overflow-scrolling: touch;
+}
+
+.management-contact-values--nowrap .management-contact-value-chip {
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
+  flex-shrink: 0;
+}
+
+.management-messenger-btn {
+  white-space: nowrap;
+  padding: 4px 10px;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .management-desk-table .management-desk-col-org,
 .management-desk-table .management-desk-col-lpr {
   min-width: 11rem;
@@ -1448,7 +1510,24 @@
 }
 
 .management-desk-table-excel .management-desk-table {
-  min-width: 1200px;
+  min-width: 1400px;
+}
+
+@media (min-width: 1024px) {
+  .management-desk-table-wrap:not(.management-desk-table-excel) {
+    overflow-x: auto;
+  }
+}
+
+@media (max-width: 1023px) {
+  .management-desk-col-resizer {
+    display: none;
+  }
+
+  .management-desk-table--resizable {
+    table-layout: auto;
+    min-width: 0;
+  }
 }
 
 @media (max-width: 640px) {
@@ -1463,5 +1542,263 @@
 
   .management-desk-excel-toggle {
     align-self: flex-start;
+  }
+}
+
+/* --- Sales portal: mobile --- */
+.management-contact-value-chip--phone {
+  color: var(--color-primary-dark, #4338ca);
+  text-decoration: none;
+}
+
+.management-contact-value-chip--phone:hover {
+  text-decoration: underline;
+}
+
+.management-desk-phone-link {
+  color: var(--color-primary-dark, #4338ca);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  text-decoration: none;
+  word-break: break-word;
+}
+
+.management-desk-phone-link:hover {
+  text-decoration: underline;
+}
+
+.management-field-select--desk,
+.management-field-comment--desk {
+  max-width: none;
+  width: 100%;
+}
+
+.management-sales-mobile-nav {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .management-page--sales {
+    padding: var(--spacing-sm) var(--spacing-sm) calc(5.5rem + env(safe-area-inset-bottom, 0px));
+  }
+
+  .management-page--sales .management-header {
+    margin-bottom: var(--spacing-sm);
+  }
+
+  .management-page--sales .management-header h1 {
+    font-size: var(--font-size-xl);
+  }
+
+  .management-page--sales .management-sidebar {
+    display: none;
+  }
+
+  .management-page--sales .management-dashboard {
+    gap: 0;
+  }
+
+  .management-page--sales .management-content {
+    padding: var(--spacing-base);
+    border-radius: var(--radius-md);
+  }
+
+  .management-page--sales .management-stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--spacing-sm);
+  }
+
+  .management-page--sales .management-stat-card {
+    padding: var(--spacing-sm);
+  }
+
+  .management-page--sales .management-stat-card strong {
+    font-size: var(--font-size-lg);
+  }
+
+  .management-page--sales .management-sales-funnel {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .management-page--sales .management-sales-funnel-card {
+    min-width: 0;
+    padding: var(--spacing-sm) var(--spacing-base);
+  }
+
+  .management-page--sales .management-sales-contacts-tabs .btn {
+    flex: 1 1 auto;
+    min-height: 44px;
+  }
+
+  .management-page--sales .management-sales-contacts-tabs-hint {
+    order: 3;
+  }
+
+  .management-page--sales .management-form-actions .btn,
+  .management-page--sales .management-pagination .btn {
+    min-height: 44px;
+  }
+
+  .management-sales-mobile-nav {
+    display: flex;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1000;
+    gap: var(--spacing-xs);
+    padding: var(--spacing-xs) var(--spacing-sm) calc(var(--spacing-xs) + env(safe-area-inset-bottom, 0px));
+    background: var(--color-bg);
+    border-top: 1px solid var(--color-border);
+    box-shadow: 0 -4px 16px rgba(15, 23, 42, 0.08);
+  }
+
+  .management-sales-mobile-nav-item {
+    flex: 1 1 0;
+    min-height: 48px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-base);
+    background: var(--color-bg);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
+    color: var(--color-text);
+    cursor: pointer;
+  }
+
+  .management-sales-mobile-nav-item.active {
+    background: rgba(102, 126, 234, 0.12);
+    border-color: var(--color-primary);
+    color: var(--color-primary-dark);
+  }
+
+  .management-sales-mobile-nav-item--logout {
+    flex: 0 0 auto;
+    min-width: 5.5rem;
+    color: var(--color-text-light);
+  }
+
+  /* Desk contacts: card layout instead of horizontal table */
+  .management-desk-table-wrap {
+    overflow: visible;
+  }
+
+  .management-desk-table-wrap .management-desk-table {
+    min-width: 0;
+  }
+
+  .management-desk-table-wrap .management-desk-table thead {
+    display: none;
+  }
+
+  .management-desk-table-wrap .management-desk-table tbody {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-base);
+  }
+
+  .management-desk-table-wrap .management-desk-contact-row {
+    display: block;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-base);
+    background: var(--color-bg);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .management-desk-table-wrap .management-desk-contact-row td {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    padding: var(--spacing-sm) 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+    white-space: normal;
+  }
+
+  .management-desk-table-wrap .management-desk-contact-row td:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+  }
+
+  .management-desk-table-wrap .management-desk-contact-row td::before {
+    content: attr(data-label);
+    font-size: 11px;
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--color-text-light);
+  }
+
+  .management-desk-table-wrap .management-desk-contact-row td[data-label='ID'] {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: 0;
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .management-desk-table-wrap .management-desk-contact-row td[colspan] {
+    display: block;
+  }
+
+  .management-desk-table-wrap .management-desk-contact-row td[colspan]::before {
+    display: none;
+  }
+
+  .management-desk-table-wrap .management-field,
+  .management-desk-table-wrap .management-field-select,
+  .management-desk-table-wrap .management-field-comment,
+  .management-desk-table-wrap .management-field-lpr {
+    font-size: 16px; /* prevents iOS zoom on focus */
+  }
+
+  .management-desk-table-wrap .management-sales-contact-actions--desk {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .management-desk-table-wrap .management-sales-contact-actions--desk .btn {
+    flex: 1 1 calc(50% - 4px);
+    min-height: 44px;
+    justify-content: center;
+  }
+
+  .management-desk-table-wrap .management-desk-site-link {
+    width: 100%;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .management-desk-table-wrap .management-messenger-btn {
+    width: 100%;
+    min-height: 44px;
+    font-size: var(--font-size-sm);
+  }
+
+  .management-desk-table-wrap .management-contact-value-chip,
+  .management-desk-table-wrap .management-contact-value-chip--phone {
+    font-size: var(--font-size-sm);
+    padding: 6px 10px;
+  }
+}
+
+@media (max-width: 480px) {
+  .management-page--sales .management-stats-grid,
+  .management-page--sales .management-sales-funnel {
+    grid-template-columns: 1fr;
+  }
+
+  .management-page--sales .management-sales-funnel-period-btn {
+    flex: 1 1 calc(50% - 4px);
+    min-height: 40px;
+    text-align: center;
+  }
+
+  .management-sales-mobile-nav-item--logout {
+    min-width: 4.75rem;
+    font-size: var(--font-size-xs);
   }
 }

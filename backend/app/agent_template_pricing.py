@@ -10,9 +10,9 @@ MAINTENANCE_GRACE_DAYS = 30
 PRICING_PAGE_TEMPLATE_CODES: tuple[str, ...] = ("qa", "crm_admin", "sales_manager")
 
 PRICING_CARD_TITLES: dict[str, str] = {
-    "qa": "Простой ИИ‑консультант",
-    "crm_admin": "Админ",
-    "sales_manager": "МОП",
+    "qa": "ИИ консультант",
+    "crm_admin": "ИИ оператор",
+    "sales_manager": "ИИ МОП",
 }
 
 
@@ -39,7 +39,7 @@ class AgentTemplatePricing:
 AGENT_TEMPLATE_PRICING: dict[str, AgentTemplatePricing] = {
     "qa": AgentTemplatePricing(
         code="qa",
-        title="Простой ИИ‑консультант",
+        title="ИИ консультант",
         setup_rub_min=0,
         monthly_maintenance_rub_min=0,
         is_free=True,
@@ -52,7 +52,7 @@ AGENT_TEMPLATE_PRICING: dict[str, AgentTemplatePricing] = {
     ),
     "crm_admin": AgentTemplatePricing(
         code="crm_admin",
-        title="ИИ‑администратор",
+        title="ИИ оператор",
         setup_rub_min=25_000,
         monthly_maintenance_rub_min=3_000,
         is_free=False,
@@ -65,7 +65,7 @@ AGENT_TEMPLATE_PRICING: dict[str, AgentTemplatePricing] = {
     ),
     "sales_manager": AgentTemplatePricing(
         code="sales_manager",
-        title="Менеджер отдела продаж",
+        title="ИИ МОП",
         setup_rub_min=5_000,
         monthly_maintenance_rub_min=3_000,
         is_free=False,

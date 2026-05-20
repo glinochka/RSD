@@ -226,18 +226,22 @@ async def admin_sales_excel_upload(
         raise HTTPException(status_code=400, detail="Пустой файл")
     async with async_session_maker() as session:
         try:
-            imported, skipped = await import_contacts_from_excel(session, file_bytes=raw)
+            imported, updated, unchanged = await import_contacts_from_excel(session, file_bytes=raw)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         pool_size = await pool_contacts_count(session)
     msg = f"В общую базу добавлено: {imported}. Свободно в пуле: {pool_size}"
-    if skipped:
-        msg += f". Пропущено дублей: {skipped}"
+    if updated:
+        msg += f". Обновлено существующих: {updated}"
+    if unchanged:
+        msg += f". Без изменений: {unchanged}"
     return JSONResponse(
         status_code=status.HTTP_201_CREATED,
         content={
             "imported": imported,
-            "skipped_duplicates": skipped,
+            "updated": updated,
+            "unchanged": unchanged,
+            "skipped_duplicates": unchanged,
             "crm_pool_available": pool_size,
             "message": msg,
         },

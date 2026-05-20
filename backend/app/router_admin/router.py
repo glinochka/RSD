@@ -16,8 +16,10 @@ import jwt
 from jwt.exceptions import InvalidTokenError
 from passlib.exc import UnknownHashError
 from sqlalchemy import and_, func, or_, select, tuple_
+from sqlalchemy.exc import IntegrityError
 
 from .schemas import (
+    AdminCreateUserRequest,
     AdminEmailBroadcastRequest,
     AdminEmailTargetedPreviewRequest,
     AdminGiftSubscriptionRequest,
@@ -39,6 +41,7 @@ from ..router_documents.dao import DocumentDAO
 from ..router_payments.dao import PaymentTransactionDAO, PromoCodeDAO, TurnkeyAgentRequestDAO
 from ..router_payments.router import _calculate_new_end_date
 from ..router_users.dao import UserDAO, UserErrorReportDAO
+from ..router_users.router import _build_unique_username, _validate_email_or_422
 from ..subscription_plans import (
     get_all_subscription_plans,
     get_subscription_plan,
@@ -47,7 +50,7 @@ from ..subscription_plans import (
 from ..utils.email_list_parse import parse_emails_from_raw_text
 from ..utils.JWT import create_access_token
 from ..utils.rate_limit import rate_limit
-from ..utils.security import verify_password
+from ..utils.security import get_password_hash, verify_password
 
 logger = getLogger(__name__)
 
@@ -388,6 +391,8 @@ async def admin_users(
         {
             "id": user.id,
             "name": user.name,
+            "email": user.email,
+            "email_verified": user.email_verified,
             "telegram_id": user.telegram_id,
             "subscription_type": user.subscription_type,
             "subscription_end_date": (
@@ -409,6 +414,101 @@ async def admin_users(
             },
         },
         status_code=status.HTTP_200_OK,
+    )
+
+
+def _serialize_admin_user(user) -> dict:
+    return {
+        "id": user.id,
+        "name": user.name,
+        "email": user.email,
+        "email_verified": user.email_verified,
+        "telegram_id": user.telegram_id,
+        "subscription_type": user.subscription_type,
+        "subscription_end_date": (
+            user.subscription_end_date.isoformat() if user.subscription_end_date else None
+        ),
+        "is_banned": user.is_banned,
+        "registered": user.registered.isoformat() if user.registered else None,
+    }
+
+
+@router.post("/users")
+async def admin_create_user(
+    payload: AdminCreateUserRequest,
+    _admin=Depends(get_current_admin),
+):
+    normalized_email = _validate_email_or_422(payload.email)
+    password_hash = get_password_hash(payload.password)
+    verified_fields = {
+        "password": password_hash,
+        "email_verified": True,
+        "email_verification_code_hash": None,
+        "email_verification_expires_at": None,
+        "email_verification_attempts_left": 0,
+        "email_verification_last_sent_at": None,
+    }
+
+    async with async_session_maker() as session:
+        user_dao = UserDAO(session)
+        async with session.begin():
+            existing_user = await user_dao.find_one_by_filter(email=normalized_email)
+
+            if payload.telegram_id is not None:
+                telegram_owner = await user_dao.find_one_by_filter(telegram_id=payload.telegram_id)
+                if telegram_owner and (
+                    not existing_user or telegram_owner.id != existing_user.id
+                ):
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Telegram ID уже привязан к другому аккаунту",
+                    )
+
+            if existing_user:
+                if existing_user.email_verified:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Email уже используется",
+                    )
+                await user_dao.update(
+                    existing_user,
+                    {
+                        **verified_fields,
+                        "telegram_id": payload.telegram_id,
+                    },
+                )
+                await session.refresh(existing_user)
+                logger.info(
+                    "Admin activated unverified user id=%d email=%s",
+                    existing_user.id,
+                    normalized_email,
+                )
+                return JSONResponse(
+                    content={"item": _serialize_admin_user(existing_user), "created": False},
+                    status_code=status.HTTP_200_OK,
+                )
+
+            generated_name = await _build_unique_username(user_dao, normalized_email)
+            try:
+                user = await user_dao.add(
+                    {
+                        "name": generated_name,
+                        "email": normalized_email,
+                        **verified_fields,
+                        "telegram_id": payload.telegram_id,
+                    }
+                )
+                await session.flush()
+            except IntegrityError:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Email уже используется",
+                )
+
+    logger.info("Admin created user id=%d email=%s", user.id, normalized_email)
+    return JSONResponse(
+        content={"item": _serialize_admin_user(user), "created": True},
+        status_code=status.HTTP_201_CREATED,
     )
 
 

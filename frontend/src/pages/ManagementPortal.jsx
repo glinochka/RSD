@@ -236,12 +236,105 @@ function phoneToTelHref(value) {
   return digits.startsWith('+') ? `tel:${digits}` : `tel:+${digits}`;
 }
 
-function SalesContactTokens({ value }) {
+function messengerOpenHref(kind, raw) {
+  const value = String(raw || '').trim();
+  if (!value) return null;
+  if (/^https?:\/\//i.test(value)) return value;
+  if (kind === 'whatsapp') {
+    const digits = value.replace(/\D/g, '');
+    return digits.length >= 10 ? `https://wa.me/${digits}` : null;
+  }
+  if (kind === 'telegram') {
+    const handle = value.replace(/^@/, '').replace(/^t\.me\//i, '');
+    return handle ? `https://t.me/${handle}` : null;
+  }
+  if (kind === 'max' && /^https?:\/\//i.test(value)) {
+    return value;
+  }
+  return null;
+}
+
+const DESK_TABLE_COLUMNS = [
+  { id: 'id', label: 'ID', defaultWidth: 52, minWidth: 44 },
+  { id: 'org_name', label: 'Название', defaultWidth: 140, minWidth: 96 },
+  { id: 'lpr_name', label: 'ФИО ЛПР', defaultWidth: 160, minWidth: 120 },
+  { id: 'lpr_phone', label: 'Тел. ЛПР', defaultWidth: 120, minWidth: 100 },
+  { id: 'org_phone', label: 'Тел. орг.', defaultWidth: 130, minWidth: 108 },
+  { id: 'org_mobile', label: 'Моб.', defaultWidth: 120, minWidth: 100 },
+  { id: 'whatsapp', label: 'WhatsApp', defaultWidth: 108, minWidth: 88 },
+  { id: 'telegram', label: 'Telegram', defaultWidth: 100, minWidth: 88 },
+  { id: 'messenger_max', label: 'Макс', defaultWidth: 88, minWidth: 72 },
+  { id: 'workflow_status', label: 'Статус', defaultWidth: 120, minWidth: 100 },
+  { id: 'comment', label: 'Комментарий', defaultWidth: 160, minWidth: 120 },
+  { id: 'email', label: 'Email', defaultWidth: 140, minWidth: 108 },
+  { id: 'website', label: 'Сайт', defaultWidth: 88, minWidth: 72 },
+  { id: 'actions', label: '', defaultWidth: 120, minWidth: 100 },
+];
+
+const DESK_COLUMN_WIDTHS_KEY = 'rsd_sales_desk_column_widths_v1';
+
+function useDeskColumnWidths() {
+  const [widths, setWidths] = useState(() => {
+    const defaults = Object.fromEntries(DESK_TABLE_COLUMNS.map((c) => [c.id, c.defaultWidth]));
+    try {
+      const raw = localStorage.getItem(DESK_COLUMN_WIDTHS_KEY);
+      if (!raw) return defaults;
+      const parsed = JSON.parse(raw);
+      return { ...defaults, ...parsed };
+    } catch {
+      return defaults;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(DESK_COLUMN_WIDTHS_KEY, JSON.stringify(widths));
+    } catch {
+      /* ignore quota */
+    }
+  }, [widths]);
+
+  const startResize = (columnId, startX, startWidth) => {
+    const col = DESK_TABLE_COLUMNS.find((c) => c.id === columnId);
+    const minW = col?.minWidth ?? 48;
+    const onMove = (ev) => {
+      const next = Math.max(minW, startWidth + (ev.clientX - startX));
+      setWidths((prev) => ({ ...prev, [columnId]: next }));
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
+  return { widths, startResize };
+}
+
+function SalesMessengerCell({ kind, value, label }) {
+  const href = messengerOpenHref(kind, value);
+  if (!href) return <span>—</span>;
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="btn btn-sm btn-outline management-messenger-btn"
+    >
+      {label}
+    </a>
+  );
+}
+
+function SalesContactTokens({ value, nowrap = false }) {
   const parts = splitContactTokens(value);
   if (!parts.length) return <span>—</span>;
   return (
     <div
-      className="management-contact-values management-contact-values-wrap"
+      className={`management-contact-values management-contact-values-wrap${
+        nowrap ? ' management-contact-values--nowrap' : ''
+      }`}
     >
       {parts.map((p, i) =>
         looksLikePhone(p) ? (
@@ -345,11 +438,20 @@ function SalesContactRow({
           />
         )}
       </td>
-      <td data-label="Тел. орг.">
-        <SalesContactTokens value={contact.org_phone} />
+      <td data-label="Тел. орг." className="management-desk-col-phones">
+        <SalesContactTokens value={contact.org_phone} nowrap />
       </td>
-      <td data-label="Моб.">
-        <SalesContactTokens value={contact.org_mobile} />
+      <td data-label="Моб." className="management-desk-col-phones">
+        <SalesContactTokens value={contact.org_mobile} nowrap />
+      </td>
+      <td data-label="WhatsApp">
+        <SalesMessengerCell kind="whatsapp" value={contact.whatsapp} label="WhatsApp" />
+      </td>
+      <td data-label="Telegram">
+        <SalesMessengerCell kind="telegram" value={contact.telegram} label="Telegram" />
+      </td>
+      <td data-label="Макс">
+        <SalesMessengerCell kind="max" value={contact.messenger_max} label="Макс" />
       </td>
       <td data-label="Статус">
         {readOnly || statusLocked ? (
@@ -379,8 +481,8 @@ function SalesContactRow({
           />
         )}
       </td>
-      <td data-label="Email">
-        <SalesContactTokens value={contact.email} />
+      <td data-label="Email" className="management-desk-col-email">
+        <SalesContactTokens value={contact.email} nowrap />
       </td>
       <td data-label="Сайт">
         {site ? (
@@ -495,6 +597,7 @@ const ManagementPortal = () => {
   const [salesDeskLoading, setSalesDeskLoading] = useState(false);
   const [salesDeskError, setSalesDeskError] = useState('');
   const [salesDeskExcelMode, setSalesDeskExcelMode] = useState(false);
+  const { widths: deskColumnWidths, startResize: startDeskColumnResize } = useDeskColumnWidths();
 
   const [salesDeptMembers, setSalesDeptMembers] = useState([]);
   const [salesDeptFunnel, setSalesDeptFunnel] = useState(null);
@@ -583,6 +686,7 @@ const ManagementPortal = () => {
   const [isLoadingPromoCodes, setIsLoadingPromoCodes] = useState(false);
   const [promoCodes, setPromoCodes] = useState([]);
   const [promoCodeDraft, setPromoCodeDraft] = useState({ code: '', discountPercent: 0 });
+  const [createUserDraft, setCreateUserDraft] = useState({ email: '', password: '', telegramId: '' });
   const [actionInProgress, setActionInProgress] = useState(null);
   const [giftModal, setGiftModal] = useState({ open: false, user: null, planCode: 'Advanced' });
   const [broadcastDraft, setBroadcastDraft] = useState({ subject: '', body: '' });
@@ -1329,6 +1433,47 @@ const ManagementPortal = () => {
     }
   };
 
+  const handleCreateUser = async (event) => {
+    event.preventDefault();
+    const email = createUserDraft.email.trim();
+    const password = createUserDraft.password;
+    const telegramIdRaw = createUserDraft.telegramId.trim();
+    if (!email) {
+      setError('Введите email');
+      return;
+    }
+    if (password.length < 6) {
+      setError('Пароль должен быть не короче 6 символов');
+      return;
+    }
+    let telegram_id = null;
+    if (telegramIdRaw) {
+      telegram_id = Number(telegramIdRaw);
+      if (!Number.isInteger(telegram_id) || telegram_id <= 0) {
+        setError('Telegram ID должен быть положительным числом');
+        return;
+      }
+    }
+
+    try {
+      setActionInProgress('user-create');
+      setError('');
+      const result = await adminService.createUser(adminToken, {
+        email,
+        password,
+        telegram_id,
+      });
+      const createdLabel = result?.created ? 'создан' : 'активирован';
+      setCreateUserDraft({ email: '', password: '', telegramId: '' });
+      await refreshUsers();
+      window.alert(`Аккаунт ${createdLabel}: ${result?.item?.email || email}`);
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setActionInProgress(null);
+    }
+  };
+
   const handleGiftSubscription = async () => {
     const { user, planCode } = giftModal;
     if (!user || !planCode) return;
@@ -1651,13 +1796,62 @@ const ManagementPortal = () => {
         <div className="management-inline-controls">
           <input
             type="text"
-            placeholder="Поиск по имени или Telegram ID"
+            placeholder="Поиск по имени, email или Telegram ID"
             value={usersState.search}
             onChange={(e) => setUsersState((prev) => ({ ...prev, page: 1, search: e.target.value }))}
           />
         </div>
       </div>
       {error && <div className="management-error">{error}</div>}
+
+      <form className="management-promo-form" onSubmit={handleCreateUser}>
+        <h3 className="management-section-title">Создать аккаунт</h3>
+        <p className="management-modal-hint">
+          Email сразу считается подтверждённым — пользователь может войти с указанным паролем.
+        </p>
+        <div className="management-form-row">
+          <label htmlFor="admin-create-user-email">Email</label>
+          <input
+            id="admin-create-user-email"
+            type="email"
+            placeholder="user@example.com"
+            value={createUserDraft.email}
+            maxLength={255}
+            onChange={(e) => setCreateUserDraft((prev) => ({ ...prev, email: e.target.value }))}
+          />
+        </div>
+        <div className="management-form-row">
+          <label htmlFor="admin-create-user-password">Пароль</label>
+          <input
+            id="admin-create-user-password"
+            type="password"
+            placeholder="Минимум 6 символов"
+            value={createUserDraft.password}
+            minLength={6}
+            maxLength={30}
+            onChange={(e) => setCreateUserDraft((prev) => ({ ...prev, password: e.target.value }))}
+          />
+        </div>
+        <div className="management-form-row">
+          <label htmlFor="admin-create-user-telegram">Telegram ID (необязательно)</label>
+          <input
+            id="admin-create-user-telegram"
+            type="text"
+            inputMode="numeric"
+            placeholder="123456789"
+            value={createUserDraft.telegramId}
+            onChange={(e) => setCreateUserDraft((prev) => ({ ...prev, telegramId: e.target.value }))}
+          />
+        </div>
+        <button
+          type="submit"
+          className="btn btn-black"
+          disabled={actionInProgress === 'user-create'}
+        >
+          {actionInProgress === 'user-create' ? 'Создание...' : 'Создать аккаунт'}
+        </button>
+      </form>
+
       {isLoadingTable ? <p>Загрузка пользователей...</p> : (
         <>
           <div className="management-table-wrap">
@@ -1666,6 +1860,7 @@ const ManagementPortal = () => {
                 <tr>
                   <th>ID</th>
                   <th>Имя</th>
+                  <th>Email</th>
                   <th>Telegram ID</th>
                   <th>Тариф</th>
                   <th>Подписка до</th>
@@ -1678,6 +1873,18 @@ const ManagementPortal = () => {
                   <tr key={user.id} className={user.is_banned ? 'management-row-banned' : ''}>
                     <td>{user.id}</td>
                     <td>{user.name}</td>
+                    <td>
+                      {user.email ? (
+                        <>
+                          {user.email}
+                          {!user.email_verified ? (
+                            <span className="management-badge management-badge-banned">не подтв.</span>
+                          ) : null}
+                        </>
+                      ) : (
+                        '-'
+                      )}
+                    </td>
                     <td>{user.telegram_id ?? '-'}</td>
                     <td>{user.subscription_type}</td>
                     <td>
@@ -1711,7 +1918,7 @@ const ManagementPortal = () => {
                   </tr>
                 ))}
                 {usersState.items.length === 0 && (
-                  <tr><td colSpan={7}>Ничего не найдено</td></tr>
+                  <tr><td colSpan={8}>Ничего не найдено</td></tr>
                 )}
               </tbody>
             </table>
@@ -2729,8 +2936,8 @@ const ManagementPortal = () => {
       <div className="management-content-head management-content-head--stack">
         <h2>Отдел продаж</h2>
         <p className="management-cell-muted">
-          Общая локальная CRM: Excel и ручные контакты попадают в пул (дубликаты по телефону или названию
-          пропускаются). МОП/стажёр получает до дневной нормы активных контактов, затем — вторую выдачу
+          Общая локальная CRM: Excel и ручные контакты попадают в пул; при повторной загрузке данные
+          существующих контактов обновляются (статус и комментарий не меняются). МОП/стажёр получает до дневной нормы активных контактов, затем — вторую выдачу
           той же нормы после проставления статусов (не более 2 выдач в день). Новый день (Europe/Moscow):
           отработанные уходят в архив, рабочий стол дозаполняется до нормы.
         </p>
@@ -3129,20 +3336,31 @@ const ManagementPortal = () => {
                 salesDeskExcelMode ? ' management-desk-table-excel' : ' management-desk-table-wrap'
               }`}
             >
-              <table className="management-table management-desk-table">
+              <table className="management-table management-desk-table management-desk-table--resizable">
+                <colgroup>
+                  {DESK_TABLE_COLUMNS.map((col) => (
+                    <col key={col.id} style={{ width: `${deskColumnWidths[col.id]}px` }} />
+                  ))}
+                </colgroup>
                 <thead>
                   <tr>
-                    <th>ID</th>
-                    <th>Название</th>
-                    <th>ФИО ЛПР</th>
-                    <th>Тел. ЛПР</th>
-                    <th>Тел. орг.</th>
-                    <th>Моб.</th>
-                    <th>Статус</th>
-                    <th>Комментарий</th>
-                    <th>Email</th>
-                    <th>Сайт</th>
-                    <th />
+                    {DESK_TABLE_COLUMNS.map((col) => (
+                      <th key={col.id} scope="col" className="management-desk-th-resizable">
+                        <span className="management-desk-th-label">{col.label}</span>
+                        {col.id !== 'actions' && (
+                          <span
+                            className="management-desk-col-resizer"
+                            role="separator"
+                            aria-orientation="vertical"
+                            aria-label={`Изменить ширину: ${col.label || col.id}`}
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              startDeskColumnResize(col.id, e.clientX, deskColumnWidths[col.id]);
+                            }}
+                          />
+                        )}
+                      </th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
@@ -3159,7 +3377,7 @@ const ManagementPortal = () => {
                   ))}
                   {salesContacts.items.length === 0 && (
                     <tr>
-                      <td colSpan={11}>
+                      <td colSpan={DESK_TABLE_COLUMNS.length}>
                         {salesContactsScope === 'archive'
                           ? 'Архив пуст.'
                           : 'Контактов нет — РОП/админ загрузит Excel или добавит вручную.'}

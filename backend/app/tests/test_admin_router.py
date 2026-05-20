@@ -216,6 +216,118 @@ class TestAdminUsers:
         assert response.status_code == 401
 
 
+class TestAdminCreateUser:
+    """Tests for POST /api/admin/users endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_create_user_success(self, client, test_session):
+        from app.utils.JWT import create_access_token
+
+        admin_token = create_access_token({"admin_web": True})
+        client.headers["Authorization"] = f"Bearer {admin_token}"
+
+        response = await client.post(
+            "/api/admin/users",
+            json={
+                "email": "admin-created@example.com",
+                "password": "secret12",
+            },
+        )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["created"] is True
+        assert data["item"]["email"] == "admin-created@example.com"
+        assert data["item"]["email_verified"] is True
+
+    @pytest.mark.asyncio
+    async def test_create_user_can_login_without_verification(self, client, test_session):
+        from app.utils.JWT import create_access_token
+
+        admin_token = create_access_token({"admin_web": True})
+        client.headers["Authorization"] = f"Bearer {admin_token}"
+
+        email = "login-ready@example.com"
+        password = "secret12"
+        create_response = await client.post(
+            "/api/admin/users",
+            json={"email": email, "password": password},
+        )
+        assert create_response.status_code == 201
+
+        client.headers.pop("Authorization", None)
+        login_response = await client.post(
+            "/api/users/login",
+            json={"name": email, "password": password},
+        )
+        assert login_response.status_code == 200
+        assert "access_token" in login_response.json()
+
+    @pytest.mark.asyncio
+    async def test_create_user_duplicate_verified_email(self, client, test_session):
+        from app.utils.JWT import create_access_token
+        from app.utils.security import get_password_hash
+        from app.router_users.dao import UserDAO
+
+        admin_token = create_access_token({"admin_web": True})
+        client.headers["Authorization"] = f"Bearer {admin_token}"
+
+        user_dao = UserDAO(test_session)
+        async with test_session.begin():
+            await user_dao.add({
+                "name": "verifiedDup",
+                "email": "verified-dup@example.com",
+                "email_verified": True,
+                "password": get_password_hash("password123"),
+            })
+            await test_session.commit()
+
+        response = await client.post(
+            "/api/admin/users",
+            json={"email": "verified-dup@example.com", "password": "secret12"},
+        )
+
+        assert response.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_create_user_activates_unverified_email(self, client, test_session):
+        from app.utils.JWT import create_access_token
+        from app.utils.security import get_password_hash
+        from app.router_users.dao import UserDAO
+
+        admin_token = create_access_token({"admin_web": True})
+        client.headers["Authorization"] = f"Bearer {admin_token}"
+
+        user_dao = UserDAO(test_session)
+        async with test_session.begin():
+            await user_dao.add({
+                "name": "pendingUser",
+                "email": "pending@example.com",
+                "email_verified": False,
+                "password": get_password_hash("oldpass1"),
+            })
+            await test_session.commit()
+
+        response = await client.post(
+            "/api/admin/users",
+            json={"email": "pending@example.com", "password": "newpass1"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["created"] is False
+        assert data["item"]["email_verified"] is True
+
+    @pytest.mark.asyncio
+    async def test_create_user_unauthorized(self, client):
+        response = await client.post(
+            "/api/admin/users",
+            json={"email": "noauth@example.com", "password": "secret12"},
+        )
+
+        assert response.status_code == 401
+
+
 class TestAdminAgents:
     """Tests for GET /api/admin/agents endpoint."""
 

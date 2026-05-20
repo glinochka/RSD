@@ -21,3 +21,14 @@ def test_parse_yamap_phones_fit_db_columns() -> None:
             value = row.get(key)
             if value:
                 assert len(value) <= PHONE_FIELD_MAX_LEN, key
+
+
+def test_parse_yamap_messenger_columns() -> None:
+    if not _YAMAP_XLSX.is_file():
+        return
+    rows = parse_sales_excel(_YAMAP_XLSX.read_bytes())
+    assert len(rows) > 0
+    with_messengers = [
+        r for r in rows if r.get("whatsapp") or r.get("telegram")
+    ]
+    assert with_messengers, "expected whatsapp/telegram in yamap fixture"

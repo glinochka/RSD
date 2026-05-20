@@ -73,6 +73,12 @@ def _extend_mapping(headers: list[str], base: dict[str, int]) -> dict[str, int]:
             m.setdefault("website", i)
         elif ni in ("email", "e-mail", "e_mail", "почта"):
             m.setdefault("email", i)
+        elif ni == "whatsapp" or "whatsapp" in ni:
+            m.setdefault("whatsapp", i)
+        elif ni == "telegram" or "телеграм" in ni:
+            m.setdefault("telegram", i)
+        elif ni == "макс" or (ni.startswith("макс") and "максим" not in ni):
+            m.setdefault("messenger_max", i)
     return m
 
 
@@ -97,6 +103,12 @@ def _fuzzy_mapping(headers: list[str]) -> dict[str, int]:
             m.setdefault("website", i)
         elif ni in ("email", "e-mail", "e_mail", "почта"):
             m.setdefault("email", i)
+        elif ni == "whatsapp" or "whatsapp" in ni:
+            m.setdefault("whatsapp", i)
+        elif ni == "telegram" or "телеграм" in ni:
+            m.setdefault("telegram", i)
+        elif ni == "макс" or (ni.startswith("макс") and "максим" not in ni):
+            m.setdefault("messenger_max", i)
     return _extend_mapping(headers, m)
 
 
@@ -156,6 +168,9 @@ def parse_sales_excel(file_bytes: bytes) -> list[dict[str, Any]]:
                     "import_status": _opt_str(picked.get("import_status")),
                     "email": _opt_str(picked.get("email")),
                     "website": _opt_str(picked.get("website")),
+                    "whatsapp": _opt_str(picked.get("whatsapp")),
+                    "telegram": _opt_str(picked.get("telegram")),
+                    "messenger_max": _opt_str(picked.get("messenger_max")),
                     "extras": extras,
                 }
             )

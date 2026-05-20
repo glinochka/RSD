@@ -104,7 +104,7 @@
 
 .hero-actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: var(--spacing-base);
 }
@@ -834,6 +834,16 @@
     padding: 0 0 var(--spacing-2xl);
   }
 
+  .hero-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .hero-actions .btn {
+    width: 100%;
+    flex: none;
+  }
+
   .hero-content h1 {
     font-size: var(--font-size-4xl);
   }
@@ -922,17 +932,6 @@
 
   .description {
     font-size: var(--font-size-base);
-  }
-
-  .hero-actions {
-    flex-wrap: nowrap;
-  }
-
-  .hero-actions .btn {
-    flex: 1 1 0;
-    min-width: 0;
-    padding: var(--spacing-sm) var(--spacing-base);
-    font-size: 0.9rem;
   }
 
   .testimonial-controls {

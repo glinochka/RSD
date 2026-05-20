@@ -39,6 +39,23 @@ const adminService = {
     return response.data;
   },
 
+  async createUser(token, { email, password, telegram_id }) {
+    const response = await adminClient.post(
+      API_ROUTES.ADMIN_CREATE_USER,
+      {
+        email,
+        password,
+        telegram_id: telegram_id ?? null,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+    return response.data;
+  },
+
   async getAgents(token, { page = 1, pageSize = 10, search = '' } = {}) {
     const response = await adminClient.get(API_ROUTES.ADMIN_AGENTS, {
       headers: {

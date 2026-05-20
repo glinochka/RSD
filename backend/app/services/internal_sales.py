@@ -174,6 +174,140 @@ async def dedup_key_exists_in_active_crm(session: AsyncSession, dedup_key: str |
     return found is not None
 
 
+IMPORTABLE_CONTACT_FIELDS: tuple[str, ...] = (
+    "org_name",
+    "lpr_name",
+    "lpr_phone",
+    "org_phone",
+    "org_mobile",
+    "import_status",
+    "email",
+    "website",
+    "whatsapp",
+    "telegram",
+    "messenger_max",
+)
+
+
+def _norm_import_value(value: object | None) -> str | None:
+    if value is None:
+        return None
+    s = str(value).strip()
+    return s or None
+
+
+async def find_contact_by_dedup_key(
+    session: AsyncSession,
+    dedup_key: str | None,
+) -> SalesOutboundContact | None:
+    """Найти существующий контакт по dedup_key (активные приоритетнее архива)."""
+    if not dedup_key:
+        return None
+    rows = (
+        await session.scalars(
+            select(SalesOutboundContact)
+            .where(SalesOutboundContact.dedup_key == dedup_key)
+            .order_by(SalesOutboundContact.archived_at.asc().nulls_first(), SalesOutboundContact.id.desc())
+            .limit(1)
+        )
+    ).all()
+    return rows[0] if rows else None
+
+
+def _apply_import_fields(
+    row: SalesOutboundContact,
+    *,
+    data: dict[str, Any],
+    now: datetime,
+) -> bool:
+    """Обновить поля из выгрузки. comment и workflow_status не трогаем."""
+    changed = False
+    for key in IMPORTABLE_CONTACT_FIELDS:
+        if key not in data:
+            continue
+        new_val = data.get(key)
+        if key == "org_name":
+            new_val = (str(new_val or "").strip())[:512]
+            if not new_val:
+                continue
+        else:
+            new_val = _norm_import_value(new_val)
+        old_val = getattr(row, key, None)
+        if key == "org_name":
+            old_cmp = (old_val or "").strip()
+            new_cmp = new_val
+        else:
+            old_cmp = _norm_import_value(old_val)
+            new_cmp = new_val
+        if old_cmp != new_cmp:
+            setattr(row, key, new_val)
+            changed = True
+    extra_json = data.get("extra_json")
+    if extra_json and extra_json != row.extra_json:
+        row.extra_json = extra_json
+        changed = True
+    if changed:
+        new_dedup = build_contact_dedup_key(
+            org_name=row.org_name,
+            lpr_phone=row.lpr_phone,
+            org_phone=row.org_phone,
+            org_mobile=row.org_mobile,
+        )
+        if new_dedup:
+            row.dedup_key = new_dedup
+        row.updated_at = now
+    return changed
+
+
+async def upsert_contact_from_import(
+    session: AsyncSession,
+    *,
+    data: dict[str, Any],
+    now: datetime | None = None,
+) -> str:
+    """
+    Добавить контакт в пул или обновить существующий по dedup_key.
+    Возвращает: created | updated | unchanged.
+    """
+    ts = now or utc_now_naive()
+    org_name = (str(data.get("org_name") or "").strip())[:512]
+    if not org_name:
+        return "unchanged"
+    dedup = build_contact_dedup_key(
+        org_name=org_name,
+        lpr_phone=data.get("lpr_phone"),
+        org_phone=data.get("org_phone"),
+        org_mobile=data.get("org_mobile"),
+    )
+    existing = await find_contact_by_dedup_key(session, dedup)
+    payload = {**data, "org_name": org_name}
+    if existing:
+        if _apply_import_fields(existing, data=payload, now=ts):
+            return "updated"
+        return "unchanged"
+    row = SalesOutboundContact(
+        assignee_id=None,
+        workflow_status="new",
+        org_name=org_name,
+        lpr_name=_norm_import_value(payload.get("lpr_name")),
+        lpr_phone=_norm_import_value(payload.get("lpr_phone")),
+        org_phone=_norm_import_value(payload.get("org_phone")),
+        org_mobile=_norm_import_value(payload.get("org_mobile")),
+        import_status=_norm_import_value(payload.get("import_status")),
+        email=_norm_import_value(payload.get("email")),
+        website=_norm_import_value(payload.get("website")),
+        whatsapp=_norm_import_value(payload.get("whatsapp")),
+        telegram=_norm_import_value(payload.get("telegram")),
+        messenger_max=_norm_import_value(payload.get("messenger_max")),
+        extra_json=payload.get("extra_json"),
+        dedup_key=dedup,
+        created_at=ts,
+        updated_at=ts,
+    )
+    session.add(row)
+    return "created"
+
+
 async def allocate_from_pool(
     session: AsyncSession,
     *,
@@ -564,6 +698,9 @@ def contact_to_api_dict(r: SalesOutboundContact) -> dict[str, Any]:
         "comment": r.comment,
         "email": r.email,
         "website": r.website,
+        "whatsapp": r.whatsapp,
+        "telegram": r.telegram,
+        "messenger_max": r.messenger_max,
         "assigned_at": r.assigned_at.isoformat() if r.assigned_at else None,
         "archived_at": r.archived_at.isoformat() if r.archived_at else None,
         "called_at": r.called_at.isoformat() if r.called_at else None,
@@ -622,7 +759,7 @@ async def import_contacts_from_excel(
     session: AsyncSession,
     *,
     file_bytes: bytes,
-) -> tuple[int, int]:
+) -> tuple[int, int, int]:
     from .sales_excel_import import extras_to_json, parse_sales_excel
 
     try:
@@ -630,26 +767,34 @@ async def import_contacts_from_excel(
     except Exception as e:
         raise ValueError(f"Не удалось разобрать файл Excel: {e}") from e
     imported = 0
-    skipped = 0
+    updated = 0
+    unchanged = 0
     for r in rows:
-        _, dup = await add_contact_to_pool(
+        action = await upsert_contact_from_import(
             session,
-            org_name=r["org_name"],
-            lpr_name=r.get("lpr_name"),
-            lpr_phone=r.get("lpr_phone"),
-            org_phone=r.get("org_phone"),
-            org_mobile=r.get("org_mobile"),
-            import_status=r.get("import_status"),
-            email=r.get("email"),
-            website=r.get("website"),
-            extra_json=extras_to_json(r.get("extras") or {}),
+            data={
+                "org_name": r["org_name"],
+                "lpr_name": r.get("lpr_name"),
+                "lpr_phone": r.get("lpr_phone"),
+                "org_phone": r.get("org_phone"),
+                "org_mobile": r.get("org_mobile"),
+                "import_status": r.get("import_status"),
+                "email": r.get("email"),
+                "website": r.get("website"),
+                "whatsapp": r.get("whatsapp"),
+                "telegram": r.get("telegram"),
+                "messenger_max": r.get("messenger_max"),
+                "extra_json": extras_to_json(r.get("extras") or {}),
+            },
         )
-        if dup:
-            skipped += 1
-        else:
+        if action == "created":
             imported += 1
+        elif action == "updated":
+            updated += 1
+        else:
+            unchanged += 1
     await session.commit()
-    return imported, skipped
+    return imported, updated, unchanged
 
 
 async def apply_sales_team_member_update(

@@ -87,9 +87,11 @@ def test_public_catalog_only_pricing_page_templates():
     assert codes == ["qa", "crm_admin", "sales_manager"]
     assert "content_factory" not in codes
     admin = next(row for row in list_public_agent_template_pricing() if row["code"] == "crm_admin")
-    assert admin["card_title"] == "Админ"
+    assert admin["card_title"] == "ИИ оператор"
     mop = next(row for row in list_public_agent_template_pricing() if row["code"] == "sales_manager")
-    assert mop["card_title"] == "МОП"
+    assert mop["card_title"] == "ИИ МОП"
+    qa = next(row for row in list_public_agent_template_pricing() if row["code"] == "qa")
+    assert qa["card_title"] == "ИИ консультант"
 
 
 def test_maintenance_grace_first_month_free():

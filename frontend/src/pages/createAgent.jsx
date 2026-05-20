@@ -346,9 +346,9 @@ const TEMPLATE_TYPE_HELP = {
 };
 
 const TEMPLATE_TYPE_SELECT_OPTIONS = [
-  { value: 'qa', label: 'Простой ИИ‑консультант (бесплатно)' },
-  { value: 'crm_admin', label: 'Админ' },
-  { value: 'sales_manager', label: 'МОП' },
+  { value: 'qa', label: 'ИИ консультант (бесплатно)' },
+  { value: 'crm_admin', label: 'ИИ оператор' },
+  { value: 'sales_manager', label: 'ИИ МОП' },
   {
     value: 'content_factory',
     disabled: true,
