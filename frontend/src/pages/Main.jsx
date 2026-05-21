@@ -62,6 +62,77 @@ const TESTIMONIALS = [
   },
 ];
 
+const CASE_STUDIES = [
+  {
+    id: 'case-beauty',
+    title: 'Сеть салонов красоты: единая линия записи в Telegram',
+    client: 'Be love',
+    segment: 'Сеть салонов красоты · 7 филиалов',
+    duration: 'Пилот — 3 дня, полный запуск — 8 дней',
+    challenge:
+      'Администраторы в разных филиалах отвечали на одни и те же вопросы о ценах, мастерах и свободных слотах. В пиковые часы очередь в чате доходила до 40–50 минут, а часть обращений терялась из‑за переключения между мессенджерами.',
+    solution:
+      'Собрали агента на базе прайса, расписания мастеров и регламента записи. Настроили сценарии: подбор услуги, уточнение филиала, предложение ближайших слотов и передача сложных кейсов (перенос, жалоба) живому администратору с готовой сводкой диалога.',
+    results: [
+      'До 72% входящих в Telegram закрывается без участия администратора.',
+      'Среднее время первого ответа сократилось с 38 до 5 минут.',
+      'Загрузка администраторов в вечерние смены снизилась на 42%.',
+    ],
+    highlight: { value: '−87%', label: 'время первого ответа' },
+  },
+  {
+    id: 'case-logistics',
+    title: 'Логистика: статусы отправлений и SLA для партнёров',
+    client: 'Феникс Логистик',
+    segment: 'B2B-доставка · 120+ корпоративных клиентов',
+    duration: 'Запуск пилота — 2 рабочих дня',
+    challenge:
+      'Менеджеры по работе с партнёрами тратили до 4 часов в день на однотипные запросы: где груз, почему задержка, как оформить возврат. Ответы разъезжались по шаблонам в личных чатах, из‑за чего SLA по критичным обращениям «плавал».',
+    solution:
+      'Подключили агента к базе статусов и внутренним инструкциям по эскалации. Агент уточняет номер накладной, возвращает актуальный статус из регламента и при отклонении от нормы создаёт структурированную заявку менеджеру с контекстом переписки.',
+    results: [
+      'До 63% обращений партнёров решаются без эскалации на менеджера.',
+      'Доля просрочек по SLA на первой линии снизилась на 38% уже в первые две недели.',
+      'Команда из 6 менеджеров высвободила до 18 часов в неделю на онбординг новых клиентов.',
+    ],
+    highlight: { value: '−38%', label: 'просрочки по SLA' },
+  },
+  {
+    id: 'case-education',
+    title: 'Подготовка к ЕГЭ: поддержка учеников и кураторов 24/7',
+    client: 'ЕГЭЛЕНД',
+    segment: 'Онлайн-школа · 3 200 активных учеников',
+    duration: 'От прототипа до продакшена — 5 дней',
+    challenge:
+      'Поддержка не успевала закрывать повторяющиеся вопросы о доступах, дедлайнах и материалах курса. Ночные и выходные обращения копились до понедельника, а кураторы отвлекались от проверки домашних заданий.',
+    solution:
+      'Загрузили базу курсов, FAQ и регламенты кураторов. Агент отвечает по материалам уроков, подсказывает шаги восстановления доступа и маршрутизирует нестандартные запросы (возврат, смена тарифа) в отдельный поток с тегами для команды.',
+    results: [
+      'Ночные и выходные обращения закрываются в течение минут, а не «до понедельника».',
+      'До 76% типовых вопросов учеников обрабатываются без участия куратора.',
+      'Команда из 8 кураторов экономит до 14 часов в неделю на рутинных ответах.',
+    ],
+    highlight: { value: '76%', label: 'вопросов без куратора' },
+  },
+  {
+    id: 'case-saas',
+    title: 'B2B SaaS: квалификация лидов и подготовка к демо',
+    client: 'TechNova',
+    segment: 'B2B SaaS · отдел продаж 14 менеджеров',
+    duration: 'Настройка и A/B — 7 дней',
+    challenge:
+      'Входящие заявки с сайта и мессенджеров приходили с неполным контекстом: менеджеры тратили 15–20 минут на уточнение размера команды, сценария использования и сроков внедрения. Часть «тёплых» лидов остывала до первого звонка.',
+    solution:
+      'Настроили агента с ветками квалификации по ICP, сбором обязательных полей и правилами передачи в CRM. Перед передачей менеджеру агент формирует карточку лида: сегмент, боль, бюджетный ориентир и удобное время для демо.',
+    results: [
+      'Среднее время подготовки лида к звонку сократилось с 18 до 4 минут.',
+      'Конверсия из первого контакта в назначенное демо выросла на 31% за месяц пилота.',
+      'В 2,5 раза больше диалогов передаётся менеджеру с полным контекстом и готовой карточкой.',
+    ],
+    highlight: { value: '+31%', label: 'конверсия в демо' },
+  },
+];
+
 const IMPACT_METRICS = [
   {
     id: 'requests',
@@ -272,6 +343,7 @@ const Main = () => {
   const { isAuthenticated } = useAuth();
   const { showError, showSuccess } = useNotification();
   const [activeTestimonialIndex, setActiveTestimonialIndex] = useState(0);
+  const [activeCaseIndex, setActiveCaseIndex] = useState(0);
   const [activeScenarioId, setActiveScenarioId] = useState(BUSINESS_SCENARIOS[0].id);
   const [openFaqId, setOpenFaqId] = useState(null);
   const [isSubmittingTurnkeyRequest, setIsSubmittingTurnkeyRequest] = useState(false);
@@ -420,6 +492,9 @@ const Main = () => {
     setActiveTestimonialIndex((prev) => (prev + 1) % TESTIMONIALS.length);
   const handlePrevTestimonial = () =>
     setActiveTestimonialIndex((prev) => (prev - 1 + TESTIMONIALS.length) % TESTIMONIALS.length);
+  const handleNextCase = () => setActiveCaseIndex((prev) => (prev + 1) % CASE_STUDIES.length);
+  const handlePrevCase = () =>
+    setActiveCaseIndex((prev) => (prev - 1 + CASE_STUDIES.length) % CASE_STUDIES.length);
   const handleSubmitTurnkeyRequest = async (event) => {
     event.preventDefault();
     if (isSubmittingTurnkeyRequest) return;
@@ -460,6 +535,7 @@ const Main = () => {
   };
 
   const activeTestimonial = TESTIMONIALS[activeTestimonialIndex];
+  const activeCase = CASE_STUDIES[activeCaseIndex];
   const activeScenario = BUSINESS_SCENARIOS.find((scenario) => scenario.id === activeScenarioId) ?? BUSINESS_SCENARIOS[0];
 
   return (
@@ -488,6 +564,78 @@ const Main = () => {
           </div>
           <div className="hero-media reveal-on-scroll reveal-from-right">
             <AgentChatShowcase tone="light" variant="main" />
+          </div>
+        </section>
+
+        <section className="cases-section reveal-on-scroll reveal-from-bottom" aria-labelledby="cases-heading">
+          <h2 id="cases-heading" className="section-title reveal-on-scroll reveal-from-bottom">
+            Наши кейсы
+          </h2>
+          <p className="section-lead section-lead-tight reveal-on-scroll reveal-from-bottom reveal-delay-1">
+            Разбор реальных внедрений: задача, решение на RSD и измеримый результат. Листайте карусель, чтобы увидеть
+            разные отрасли и сценарии.
+          </p>
+          <div className="case-carousel reveal-on-scroll reveal-from-bottom reveal-delay-1" aria-live="polite">
+            <article
+              className="case-card"
+              aria-label={`Кейс: ${activeCase.client}, ${activeCase.title}`}
+            >
+              <div key={activeCase.id} className="case-card-body">
+                <header className="case-card-header">
+                  <div className="case-card-header-main">
+                    <p className="case-client">{activeCase.client}</p>
+                    <p className="case-segment">{activeCase.segment}</p>
+                    <h3 className="case-title">{activeCase.title}</h3>
+                  </div>
+                  <div className="case-highlight" aria-label={`Ключевой результат: ${activeCase.highlight.label}`}>
+                    <p className="case-highlight-value">{activeCase.highlight.value}</p>
+                    <p className="case-highlight-label">{activeCase.highlight.label}</p>
+                  </div>
+                </header>
+                <p className="case-duration">
+                  <strong>Срок внедрения:</strong> {activeCase.duration}
+                </p>
+                <div className="case-details">
+                  <div className="case-detail-block">
+                    <h4>Задача</h4>
+                    <p>{activeCase.challenge}</p>
+                  </div>
+                  <div className="case-detail-block">
+                    <h4>Решение</h4>
+                    <p>{activeCase.solution}</p>
+                  </div>
+                  <div className="case-detail-block case-detail-block--results">
+                    <h4>Результат</h4>
+                    <ul className="case-results-list">
+                      {activeCase.results.map((result) => (
+                        <li key={result}>{result}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </article>
+            <div className="case-controls">
+              <button type="button" className="btn btn-outline case-nav-btn" onClick={handlePrevCase}>
+                Назад
+              </button>
+              <div className="case-dots" role="tablist" aria-label="Кейсы">
+                {CASE_STUDIES.map((item, index) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={`case-dot ${index === activeCaseIndex ? 'is-active' : ''}`}
+                    onClick={() => setActiveCaseIndex(index)}
+                    aria-label={`Показать кейс ${index + 1}: ${item.client}`}
+                    aria-selected={index === activeCaseIndex}
+                    role="tab"
+                  />
+                ))}
+              </div>
+              <button type="button" className="btn btn-outline case-nav-btn" onClick={handleNextCase}>
+                Далее
+              </button>
+            </div>
           </div>
         </section>
 
