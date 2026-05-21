@@ -228,22 +228,41 @@ function looksLikePhone(value) {
   return digits.length >= 10;
 }
 
-function phoneToTelHref(value) {
-  let digits = String(value).replace(/\D/g, '');
+function normalizeWhatsAppDigits(raw) {
+  let digits = String(raw || '').replace(/\D/g, '');
+  if (!digits) return '';
+  // wa.me/1793… — лишняя «1» перед российским кодом «7» (часто из «+7» → «1»+«7…»)
+  if (digits.length >= 12 && digits.startsWith('17')) {
+    digits = digits.slice(1);
+  }
   if (digits.length === 11 && digits.startsWith('8')) {
     digits = `7${digits.slice(1)}`;
+  } else if (digits.length === 10 && digits.startsWith('9')) {
+    digits = `7${digits}`;
   }
-  return digits.startsWith('+') ? `tel:${digits}` : `tel:+${digits}`;
+  return digits;
+}
+
+function phoneToTelHref(value) {
+  const digits = normalizeWhatsAppDigits(value);
+  if (digits.length < 10) {
+    return `tel:+${String(value).replace(/\D/g, '')}`;
+  }
+  return `tel:+${digits}`;
 }
 
 function messengerOpenHref(kind, raw) {
   const value = String(raw || '').trim();
   if (!value) return null;
-  if (/^https?:\/\//i.test(value)) return value;
   if (kind === 'whatsapp') {
-    const digits = value.replace(/\D/g, '');
-    return digits.length >= 10 ? `https://wa.me/${digits}` : null;
+    const waMeMatch = value.match(/^https?:\/\/(?:www\.)?wa\.me\/([^/?#]+)/i);
+    if (waMeMatch || !/^https?:\/\//i.test(value)) {
+      const digits = normalizeWhatsAppDigits(waMeMatch ? waMeMatch[1] : value);
+      return digits.length >= 10 ? `https://wa.me/${digits}` : null;
+    }
+    return value;
   }
+  if (/^https?:\/\//i.test(value)) return value;
   if (kind === 'telegram') {
     const handle = value.replace(/^@/, '').replace(/^t\.me\//i, '');
     return handle ? `https://t.me/${handle}` : null;

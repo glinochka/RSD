@@ -477,6 +477,48 @@ async def _send_registration_email_code(email: str, code: str) -> None:
         )
 
 
+async def _complete_registration_without_email_verification(normalized_email: str) -> JSONResponse:
+    """Finish registration when MailoPost cannot deliver the verification code."""
+    async with async_session_maker() as session:
+        user_dao = UserDAO(session)
+        async with session.begin():
+            user = await user_dao.find_one_by_filter(email=normalized_email)
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Пользователь не найден",
+                )
+            if not user.email_verified:
+                await user_dao.update(
+                    user,
+                    {
+                        "email_verified": True,
+                        "email_verification_code_hash": None,
+                        "email_verification_expires_at": None,
+                        "email_verification_attempts_left": 0,
+                        "email_verification_last_sent_at": None,
+                    },
+                )
+            access_token, refresh_token = await _issue_user_tokens(session, user.id)
+
+    await _send_welcome_email(normalized_email)
+    logger.info(
+        "Registration completed without email verification code for %s",
+        normalized_email,
+    )
+    return JSONResponse(
+        content={
+            "status": "registered",
+            "detail": "Регистрация завершена. Подтверждение email временно недоступно.",
+            "email": normalized_email,
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": "bearer",
+        },
+        status_code=status.HTTP_201_CREATED,
+    )
+
+
 async def _send_password_reset_email_code(email: str, code: str) -> None:
     api_token = settings.MAILOPOST_API_TOKEN.strip()
     from_email = settings.MAILOPOST_FROM_EMAIL.strip()
@@ -814,15 +856,15 @@ async def user_registration(new_user: NewUser):
     try:
         await _send_registration_email_code(normalized_email, verification_code)
     except HTTPException as exc:
-        # If sending failed due to transport/provider error, unlock immediate resend.
-        if exc.status_code == status.HTTP_502_BAD_GATEWAY:
-            async with async_session_maker() as session:
-                user_dao = UserDAO(session)
-                async with session.begin():
-                    user = await user_dao.find_one_by_filter(email=normalized_email)
-                    if user and not user.email_verified:
-                        await user_dao.update(user, {"email_verification_last_sent_at": None})
-        raise
+        logger.warning(
+            "Registration verification email failed (status=%s): %s",
+            exc.status_code,
+            exc.detail,
+        )
+        return await _complete_registration_without_email_verification(normalized_email)
+    except httpx.HTTPError as exc:
+        logger.error("Registration verification email transport error: %s", exc)
+        return await _complete_registration_without_email_verification(normalized_email)
 
     logger.info("Код подтверждения регистрации отправлен на email %s", normalized_email)
 

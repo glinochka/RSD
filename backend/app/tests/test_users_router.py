@@ -133,6 +133,36 @@ class TestUserRegistration:
         assert response.status_code == 422
 
     @pytest.mark.asyncio
+    async def test_registration_mailopost_failure_completes_without_code(self, client, sample_user_data, test_session):
+        """When MailoPost fails, registration finishes with tokens and verified email."""
+        from fastapi import HTTPException
+        from fastapi import status as http_status
+
+        send_mock = AsyncMock(
+            side_effect=HTTPException(
+                status_code=http_status.HTTP_502_BAD_GATEWAY,
+                detail="Не удалось отправить код подтверждения на email",
+            )
+        )
+        with patch("app.router_users.router._send_registration_email_code", new=send_mock):
+            response = await client.post("/api/users/registration", json=sample_user_data)
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["status"] == "registered"
+        assert "access_token" in data
+        assert "refresh_token" in data
+
+        async with test_session.begin():
+            result = await test_session.execute(
+                select(User).where(User.email == sample_user_data["email"])
+            )
+            user = result.scalar_one_or_none()
+            assert user is not None
+            assert user.email_verified is True
+            assert user.email_verification_code_hash is None
+
+    @pytest.mark.asyncio
     async def test_registration_verify_success(self, client, sample_user_data):
         """Test successful email verification after registration."""
         with patch("app.router_users.router._generate_email_code", return_value="123456"), \
@@ -240,6 +270,37 @@ class TestPasswordReset:
         )
         assert login_resp.status_code == 200
         assert "access_token" in login_resp.json()
+
+    @pytest.mark.asyncio
+    async def test_password_reset_mailopost_failure_still_requires_code(self, client, test_session):
+        """Password reset must fail when MailoPost cannot send the code."""
+        from app.utils.security import get_password_hash
+        from app.router_users.dao import UserDAO
+        from fastapi import HTTPException
+        from fastapi import status as http_status
+
+        user_dao = UserDAO(test_session)
+        email = "restore-fail@example.com"
+        async with test_session.begin():
+            await user_dao.add({
+                "name": "restore_fail_user",
+                "email": email,
+                "email_verified": True,
+                "password": get_password_hash("oldpassword123"),
+            })
+
+        send_mock = AsyncMock(
+            side_effect=HTTPException(
+                status_code=http_status.HTTP_502_BAD_GATEWAY,
+                detail="Не удалось отправить код восстановления на email",
+            )
+        )
+        with patch("app.router_users.router._send_password_reset_email_code", new=send_mock):
+            response = await client.post(
+                "/api/users/password-reset/request",
+                json={"email": email},
+            )
+        assert response.status_code == 502
 
 
 class TestUserLogin:

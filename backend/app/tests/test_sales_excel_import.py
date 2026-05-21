@@ -1,9 +1,21 @@
 from pathlib import Path
 
-from app.services.sales_excel_import import PHONE_FIELD_MAX_LEN, _fit_phone, parse_sales_excel
+from app.services.sales_excel_import import (
+    PHONE_FIELD_MAX_LEN,
+    _fit_phone,
+    _normalize_whatsapp_import_value,
+    parse_sales_excel,
+)
 
 _ROOT = Path(__file__).resolve().parents[3]
 _YAMAP_XLSX = _ROOT / "yamap_with_lpr_prioritized.xlsx"
+
+
+def test_normalize_whatsapp_import_value_fixes_erroneous_leading_one() -> None:
+    assert _normalize_whatsapp_import_value("https://wa.me/179395030304") == "https://wa.me/79395030304"
+    assert _normalize_whatsapp_import_value("+7 939 503-03-04") == "https://wa.me/79395030304"
+    assert _normalize_whatsapp_import_value("8 (939) 503-03-04") == "https://wa.me/79395030304"
+    assert _normalize_whatsapp_import_value("9395030304") == "https://wa.me/79395030304"
 
 
 def test_fit_phone_truncates_beyond_limit() -> None:
@@ -32,3 +44,6 @@ def test_parse_yamap_messenger_columns() -> None:
         r for r in rows if r.get("whatsapp") or r.get("telegram")
     ]
     assert with_messengers, "expected whatsapp/telegram in yamap fixture"
+    sample = next(r["whatsapp"] for r in rows if r.get("whatsapp"))
+    assert sample.startswith("https://wa.me/7"), sample
+    assert "/17" not in sample.split("wa.me/", 1)[-1][:3]

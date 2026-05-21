@@ -241,7 +241,13 @@ const Auth = () => {
           navigate(NAVIGATION_ROUTES.AGENTS);
         } else {
           if (!isAwaitingEmailCode) {
-            await register(values.email, values.password);
+            const registerResult = await register(values.email, values.password);
+            if (registerResult?.token) {
+              reachYandexGoal(YM_GOALS.REGISTRATION_SUCCESS);
+              showSuccess('Регистрация успешна!', 3000);
+              navigate(NAVIGATION_ROUTES.AGENTS);
+              return;
+            }
             setIsAwaitingEmailCode(true);
             setResendCooldownUntil(
               Date.now() + VALIDATION.EMAIL_RESEND_COOLDOWN_SECONDS * 1000
@@ -262,10 +268,16 @@ const Auth = () => {
 
           if (looksLikeEmail) {
             try {
-              await register(loginValue, values.password);
+              const registerResult = await register(loginValue, values.password);
               setIsLogin(false);
-              setIsAwaitingEmailCode(true);
               form.setFieldValue('email', loginValue);
+              if (registerResult?.token) {
+                reachYandexGoal(YM_GOALS.REGISTRATION_SUCCESS);
+                showSuccess('Аккаунт создан. Регистрация успешна!', 5000);
+                navigate(NAVIGATION_ROUTES.AGENTS);
+                return;
+              }
+              setIsAwaitingEmailCode(true);
               setResendCooldownUntil(
                 Date.now() + VALIDATION.EMAIL_RESEND_COOLDOWN_SECONDS * 1000
               );

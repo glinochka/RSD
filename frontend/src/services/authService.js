@@ -85,7 +85,15 @@ export const authService = {
       email: email.trim(),
       password,
     });
-    return response.data;
+    const data = response.data;
+    if (data?.access_token) {
+      return {
+        ...normalizeAuthResponse(data, email.trim()),
+        status: data.status ?? 'registered',
+        detail: data.detail,
+      };
+    }
+    return data;
   },
 
   resendRegistrationCode: async (email) => {

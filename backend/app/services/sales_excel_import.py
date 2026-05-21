@@ -40,6 +40,25 @@ def _fit_phone(value: str | None, *, max_len: int = PHONE_FIELD_MAX_LEN) -> str 
     return value[:max_len]
 
 
+def _normalize_whatsapp_import_value(value: str | None) -> str | None:
+    """Исправляет wa.me/17… (лишняя 1 перед RU +7) и приводит номер к https://wa.me/<digits>."""
+    s = (value or "").strip()
+    if not s:
+        return None
+    m = re.match(r"^https?://(?:www\.)?wa\.me/([^/?#]+)", s, re.I)
+    phone_raw = m.group(1) if m else s
+    digits = re.sub(r"\D", "", phone_raw)
+    if len(digits) < 10:
+        return s
+    if len(digits) >= 12 and digits.startswith("17"):
+        digits = digits[1:]
+    if len(digits) == 11 and digits.startswith("8"):
+        digits = "7" + digits[1:]
+    elif len(digits) == 10 and digits.startswith("9"):
+        digits = "7" + digits
+    return f"https://wa.me/{digits}"
+
+
 def _layout_by_position(headers: list[str]) -> dict[str, int] | None:
     """Стандартный порядок колонок из выгрузки (Название, ФИО ЛПР, Телефон, ...)."""
     n = [_norm_header(h) for h in headers]
@@ -168,7 +187,7 @@ def parse_sales_excel(file_bytes: bytes) -> list[dict[str, Any]]:
                     "import_status": _opt_str(picked.get("import_status")),
                     "email": _opt_str(picked.get("email")),
                     "website": _opt_str(picked.get("website")),
-                    "whatsapp": _opt_str(picked.get("whatsapp")),
+                    "whatsapp": _normalize_whatsapp_import_value(_opt_str(picked.get("whatsapp"))),
                     "telegram": _opt_str(picked.get("telegram")),
                     "messenger_max": _opt_str(picked.get("messenger_max")),
                     "extras": extras,

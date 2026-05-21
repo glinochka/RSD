@@ -55,9 +55,14 @@ export const AuthProvider = ({ children }) => {
   const register = useCallback(
     async (email, password) => {
       const response = await authService.register(email, password);
+      if (response.token) {
+        setToken(response.token);
+        setRefreshToken(response.refreshToken);
+        setUser(response.user);
+      }
       return response;
     },
-    []
+    [setRefreshToken, setToken, setUser]
   );
 
   const verifyRegistrationCode = useCallback(
