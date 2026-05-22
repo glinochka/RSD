@@ -15,6 +15,7 @@ import {
   POLICY_NOTES,
   SPECIAL_CONDITIONS,
 } from '../utils/agentTemplatePricing';
+import DemoBadge from '../components/DemoBadge';
 import { reachYandexGoal, YM_GOALS } from '../utils/yandexMetrika';
 import '../styles/priceList.css';
 
@@ -416,7 +417,15 @@ const PriceList = () => {
           <div className="pricing-grid pricing-grid--coming-soon">
             {COMING_SOON_TEMPLATES.map((template) => (
               <div key={template.id} className="price-card price-card--coming-soon">
-                <span className="price-soon-badge">Скоро</span>
+                <span className="price-soon-badge">
+                  {template.id === 'ai_manager' ? (
+                    <>
+                      Скоро <DemoBadge />
+                    </>
+                  ) : (
+                    'Скоро'
+                  )}
+                </span>
                 <h2 className="price-title">{template.name}</h2>
                 <div className="price-value">
                   <span className="price-soon-label">В разработке</span>

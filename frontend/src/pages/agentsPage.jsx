@@ -17,6 +17,7 @@ import { NAVIGATION_ROUTES } from '../config/constants';
 import { useAuth } from '../context/useAuth';
 import { validateFile } from '../utils/validation';
 import TelephonyVoicePreview from '../components/TelephonyVoicePreview';
+import DemoBadge, { TitleWithDemoBadge } from '../components/DemoBadge';
 import {
   TELEPHONY_PROVIDER,
   copyTextToClipboard,
@@ -1925,8 +1926,12 @@ const AgentsPageContent = () => {
                     <h3>{selectedAgentName}</h3>
                     <p>ID: {selectedAgent.id}</p>
                     {telephonyChannel ? (
-                      <p className="agent-telephony-badge" title={telephonyChannel.external_id}>
+                      <p
+                        className="agent-telephony-badge title-with-demo-badge"
+                        title={telephonyChannel.external_id}
+                      >
                         📞 Телефония · {telephonyChannel.external_id}
+                        <DemoBadge />
                       </p>
                     ) : null}
                     <button
@@ -1940,7 +1945,9 @@ const AgentsPageContent = () => {
 
                   {isTelephonyVoicePreviewTemplate ? (
                     <div className="agent-management-block">
-                      <h4 className="agent-form-channel-title">Голосовой тест (в браузере)</h4>
+                      <TitleWithDemoBadge as="h4" className="agent-form-channel-title">
+                        Голосовой тест (в браузере)
+                      </TitleWithDemoBadge>
                       <TelephonyVoicePreview
                         agentId={selectedAgent.id}
                         hasTelephonyChannel={hasTelephonyChannel}
@@ -1998,6 +2005,7 @@ const AgentsPageContent = () => {
                             <div className="doc-meta">
                               <span className="doc-name">
                                 {channelLabel(channel)} · {channel.external_id}
+                                {channel.provider === TELEPHONY_PROVIDER ? <DemoBadge /> : null}
                               </span>
                               <span className={`doc-status ${channel.is_primary ? 'doc-status--ready' : ''}`}>
                                 {channel.is_primary ? 'основной' : 'дополнительный'}
@@ -2497,6 +2505,7 @@ const AgentsPageContent = () => {
                         <div className="doc-meta">
                           <span className="doc-name">
                             {channelLabel(channel)} · {channel.external_id}
+                            {channel.provider === TELEPHONY_PROVIDER ? <DemoBadge /> : null}
                           </span>
                           <span className={`doc-status ${channel.is_primary ? 'doc-status--ready' : ''}`}>
                             {channel.is_primary ? 'основной' : 'дополнительный'}
@@ -2572,11 +2581,14 @@ const AgentsPageContent = () => {
                   </button>
                   <button
                     type="button"
-                    className={`connection-type-card ${channelModalTab === 'telephony' ? 'active' : ''} ${isSalesManagerTemplate ? 'connection-type-card--disabled' : ''}`}
+                    className={`connection-type-card connection-type-card--with-beta ${channelModalTab === 'telephony' ? 'active' : ''} ${isSalesManagerTemplate ? 'connection-type-card--disabled' : ''}`}
                     onClick={() => setChannelModalTab('telephony')}
                     disabled={isSavingChannel || isSalesManagerTemplate}
                   >
-                    📞 Телефония
+                    <span className="connection-type-card-label connection-type-card-label--with-demo">
+                      📞 Телефония
+                      <DemoBadge />
+                    </span>
                   </button>
                 </div>
                 {isSalesManagerTemplate ? (
@@ -2852,7 +2864,9 @@ const AgentsPageContent = () => {
                   </div>
                 ) : channelModalTab === 'telephony' ? (
                   <div className="agent-management-block">
-                    <h4 className="agent-form-channel-title">Телефония (ИИ-оператор, Voximplant)</h4>
+                    <TitleWithDemoBadge as="h4" className="agent-form-channel-title">
+                      Телефония (ИИ-оператор, Voximplant)
+                    </TitleWithDemoBadge>
                     {hasTelephonyChannel ? (
                       <p className="help-text userbot-success">
                         Канал подключён: {telephonyChannel.external_id}. Удалите канал в списке выше, чтобы переподключить.

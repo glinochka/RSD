@@ -6,6 +6,7 @@ import agentService from '../services/agentService';
 import { useNotification } from '../context/useNotification';
 import { NAVIGATION_ROUTES } from '../config/constants';
 import { findTelephonyChannel, telephonyCallTitle, telephonyStatusLabel } from '../utils/telephony';
+import DemoBadge, { TitleWithDemoBadge } from '../components/DemoBadge';
 import '../styles/agentDetailedAnalytics.css';
 
 const ANALYTICS_SECTIONS = {
@@ -1681,7 +1682,7 @@ const AgentDetailedAnalyticsPageContent = () => {
             className={`analytics-section-btn ${selectedSection === ANALYTICS_SECTIONS.TELEPHONY ? 'analytics-section-btn--active' : ''}`}
             onClick={() => setSelectedSection(ANALYTICS_SECTIONS.TELEPHONY)}
           >
-            📞 Звонки
+            📞 Звонки <DemoBadge />
           </button>
           <button
             type="button"
@@ -1760,7 +1761,7 @@ const AgentDetailedAnalyticsPageContent = () => {
             </section>
           ) : selectedSection === ANALYTICS_SECTIONS.TELEPHONY ? (
             <section className="analytics-telephony">
-              <h3>Телефония</h3>
+              <TitleWithDemoBadge as="h3">Телефония</TitleWithDemoBadge>
               {telephonyChannel ? (
                 <p className="analytics-note">Номер канала: {telephonyChannel.external_id}</p>
               ) : (

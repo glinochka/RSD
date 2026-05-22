@@ -15,6 +15,7 @@ import { validateFile } from '../utils/validation';
 import { NAVIGATION_ROUTES } from '../config/constants';
 import pricingService from '../services/pricingService';
 import { formatMaintenancePrice, formatSetupPrice } from '../utils/agentTemplatePricing';
+import DemoBadge, { TitleWithDemoBadge } from '../components/DemoBadge';
 import '../styles/createAgent.css';
 
 const fileIdentity = (file) => `${file.name}::${file.size}::${file.lastModified}`;
@@ -375,7 +376,7 @@ const TEMPLATE_TYPE_SELECT_OPTIONS = [
     label: (
       <span className="select-option-label-with-badge">
         ИИ менеджер
-        <span className="beta-badge">В разработке</span>
+        <DemoBadge />
       </span>
     ),
   },
@@ -472,7 +473,8 @@ const CustomSelect = ({
   );
 };
 
-const FeatureToggle = ({ checked, onChange, disabled, title, description, helpText }) => {
+const FeatureToggle = ({ checked, onChange, disabled, title, accessibilityTitle, description, helpText }) => {
+  const titleForAria = accessibilityTitle || (typeof title === 'string' ? title : '');
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const toggleRef = useRef(null);
 
@@ -517,7 +519,7 @@ const FeatureToggle = ({ checked, onChange, disabled, title, description, helpTe
         }}
         disabled={disabled}
         aria-pressed={checked}
-        title={title}
+        title={titleForAria || undefined}
       >
         <span className="feature-toggle__content">
           <span className="feature-toggle__title">{title}</span>
@@ -530,7 +532,7 @@ const FeatureToggle = ({ checked, onChange, disabled, title, description, helpTe
       <button
         type="button"
         className="feature-toggle__help"
-        aria-label={`Справка: ${title}`}
+        aria-label={titleForAria ? `Справка: ${titleForAria}` : 'Справка'}
         onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -1763,7 +1765,12 @@ const CreateAgentContent = () => {
                           }
                         }}
                         disabled={form.isSubmitting}
-                        title="Включить телефонный канал (ИИ-оператор)"
+                        title={
+                          <TitleWithDemoBadge>
+                            Включить телефонный канал (ИИ-оператор)
+                          </TitleWithDemoBadge>
+                        }
+                        accessibilityTitle="Включить телефонный канал (ИИ-оператор)"
                         description="Входящие звонки через Voximplant с голосовым ИИ-оператором."
                         helpText="Укажите учётные данные Voximplant и номер в формате E.164. После создания агента используйте Webhook URL в настройках правила входящих вызовов."
                       />
