@@ -276,19 +276,35 @@ async def _transcribe_preview_audio(
         ) from exc
     if not audio_bytes:
         return ""
-    stt_timeout = min(
-        float(settings.VOICE_TRANSCRIPTION_TIMEOUT_SECONDS),
-        float(settings.TELEPHONY_MAX_TURN_SECONDS),
-    )
+    # Не ограничивать STT TELEPHONY_MAX_TURN_SECONDS (30): на CPU первая загрузка модели дольше 30 с.
+    stt_timeout = min(90.0, float(settings.VOICE_TRANSCRIPTION_TIMEOUT_SECONDS))
+    mime = (mime_type or "audio/webm").strip()
     try:
-        return (
+        text = (
             await asyncio.wait_for(
-                transcribe_voice_bytes(audio_bytes, mime_type=(mime_type or "audio/webm").strip()),
+                transcribe_voice_bytes(
+                    audio_bytes,
+                    mime_type=mime,
+                    # Short mobile webm: Silero VAD often drops the whole clip (see logs).
+                    vad_filter=False,
+                ),
                 timeout=stt_timeout,
             )
         ).strip()
+        if not text:
+            logger.warning(
+                "telephony preview STT empty transcript bytes=%s mime=%s",
+                len(audio_bytes),
+                mime,
+            )
+        return text
     except TimeoutError:
-        logger.warning("telephony preview STT timed out after %.1fs", stt_timeout)
+        logger.warning(
+            "telephony preview STT timed out after %.1fs bytes=%s mime=%s",
+            stt_timeout,
+            len(audio_bytes),
+            mime,
+        )
         return ""
 
 

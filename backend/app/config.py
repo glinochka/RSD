@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     FASTER_WHISPER_COMPUTE_TYPE: str = "int8"
     # Empty = auto-detect language; e.g. "ru" for Russian-only short voice notes.
     FASTER_WHISPER_LANGUAGE: str = ""
+    # Silero VAD often strips short/quiet mobile webm clips; preview disables VAD separately.
+    FASTER_WHISPER_VAD_FILTER: bool = True
     # STT resource limits (abuse + DoS guardrails).
     VOICE_MAX_BYTES: int = 10 * 1024 * 1024
     VOICE_TRANSCRIPTION_TIMEOUT_SECONDS: float = 120.0

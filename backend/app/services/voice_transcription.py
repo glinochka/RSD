@@ -79,26 +79,53 @@ def _extension_for_mime(mime_type: str) -> str:
     return ".ogg"
 
 
-def _transcribe_faster_whisper_file(path: str) -> str:
+def _transcribe_faster_whisper_file(path: str, *, vad_filter: bool | None = None) -> str:
     model = _get_whisper_model()
     lang = (settings.FASTER_WHISPER_LANGUAGE or "").strip() or None
-    segments, _info = model.transcribe(
+    use_vad = (
+        bool(settings.FASTER_WHISPER_VAD_FILTER)
+        if vad_filter is None
+        else bool(vad_filter)
+    )
+    segments, info = model.transcribe(
         path,
         language=lang,
-        vad_filter=True,
+        vad_filter=use_vad,
+        beam_size=1,
+        condition_on_previous_text=False,
     )
     parts = [s.text for s in segments]
-    return "".join(parts).strip()
+    text = "".join(parts).strip()
+    if not text and use_vad:
+        duration = getattr(info, "duration", None)
+        logger.info(
+            "faster-whisper empty with vad_filter=True (duration=%s), retrying without VAD",
+            duration,
+        )
+        segments, _info = model.transcribe(
+            path,
+            language=lang,
+            vad_filter=False,
+            beam_size=1,
+            condition_on_previous_text=False,
+        )
+        text = "".join(s.text for s in segments).strip()
+    return text
 
 
-def _transcribe_faster_whisper_sync(audio_bytes: bytes, mime_type: str) -> str:
+def _transcribe_faster_whisper_sync(
+    audio_bytes: bytes,
+    mime_type: str,
+    *,
+    vad_filter: bool | None = None,
+) -> str:
     ext = _extension_for_mime(mime_type)
     path: str | None = None
     try:
         with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
             tmp.write(audio_bytes)
             path = tmp.name
-        return _transcribe_faster_whisper_file(path)
+        return _transcribe_faster_whisper_file(path, vad_filter=vad_filter)
     except Exception:
         logger.exception("faster-whisper transcription failed")
         return ""
@@ -127,7 +154,12 @@ async def _transcribe_openai_api(audio_bytes: bytes, mime_type: str) -> str:
     return (getattr(result, "text", None) or "").strip()
 
 
-async def transcribe_voice_bytes(audio_bytes: bytes, *, mime_type: str = "audio/ogg") -> str:
+async def transcribe_voice_bytes(
+    audio_bytes: bytes,
+    *,
+    mime_type: str = "audio/ogg",
+    vad_filter: bool | None = None,
+) -> str:
     """
     Transcribe voice audio: faster-whisper and/or OpenAI, depending on VOICE_STT_BACKEND.
     """
@@ -156,11 +188,21 @@ async def transcribe_voice_bytes(audio_bytes: bytes, *, mime_type: str = "audio/
                 if not faster_whisper_runtime_available():
                     logger.warning("VOICE_STT_BACKEND=faster_whisper but faster-whisper is not installed")
                     return ""
-                return await asyncio.to_thread(_transcribe_faster_whisper_sync, audio_bytes, mime_type)
+                return await asyncio.to_thread(
+                    _transcribe_faster_whisper_sync,
+                    audio_bytes,
+                    mime_type,
+                    vad_filter=vad_filter,
+                )
 
             # auto: prefer local, then OpenAI
             if faster_whisper_runtime_available():
-                text = await asyncio.to_thread(_transcribe_faster_whisper_sync, audio_bytes, mime_type)
+                text = await asyncio.to_thread(
+                    _transcribe_faster_whisper_sync,
+                    audio_bytes,
+                    mime_type,
+                    vad_filter=vad_filter,
+                )
                 if text:
                     return text
                 if openai_key:

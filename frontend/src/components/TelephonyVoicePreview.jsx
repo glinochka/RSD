@@ -388,7 +388,7 @@ function TelephonyVoicePreview({ agentId, hasTelephonyChannel, showError, showSu
             onChange={(e) => setUseBrowserStt(e.target.checked)}
             disabled={isBusy || phase === 'processing'}
           />
-          Распознавание в браузере (быстрее, без отправки аудио на сервер)
+          Распознавание в браузере (на телефоне часто надёжнее отправки аудио на сервер)
         </label>
       )}
 
