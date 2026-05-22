@@ -34,11 +34,38 @@ export function createSpeechRecognition({ lang = 'ru-RU', onResult, onError }) {
 }
 
 let activeUtterance = null;
+let voicesReady = false;
+
+function ensureSpeechVoicesLoaded() {
+  if (typeof window === 'undefined' || !window.speechSynthesis) return;
+  const voices = window.speechSynthesis.getVoices();
+  if (voices.length > 0) {
+    voicesReady = true;
+    return;
+  }
+  if (voicesReady) return;
+  const onVoices = () => {
+    voicesReady = true;
+    window.speechSynthesis.removeEventListener('voiceschanged', onVoices);
+  };
+  window.speechSynthesis.addEventListener('voiceschanged', onVoices);
+  // Chrome on Android often needs a nudge before voices appear.
+  try {
+    window.speechSynthesis.getVoices();
+  } catch {
+    /* ignore */
+  }
+}
 
 export function stopSpeaking() {
   if (typeof window === 'undefined' || !window.speechSynthesis) return;
   window.speechSynthesis.cancel();
   activeUtterance = null;
+}
+
+function speechTimeoutMs(text) {
+  const words = String(text || '').trim().split(/\s+/).filter(Boolean).length;
+  return Math.min(30_000, Math.max(4_000, words * 450 + 2_000));
 }
 
 export function speakPlainText(text, { lang = 'ru-RU', rate = 0.95 } = {}) {
@@ -48,6 +75,17 @@ export function speakPlainText(text, { lang = 'ru-RU', rate = 0.95 } = {}) {
       resolve();
       return;
     }
+    ensureSpeechVoicesLoaded();
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      activeUtterance = null;
+      resolve();
+    };
+    const timeoutMs = speechTimeoutMs(plain);
+    const timer = window.setTimeout(finish, timeoutMs);
+
     stopSpeaking();
     const utterance = new SpeechSynthesisUtterance(plain);
     utterance.lang = lang;
@@ -56,15 +94,34 @@ export function speakPlainText(text, { lang = 'ru-RU', rate = 0.95 } = {}) {
     const ruVoice = voices.find((v) => (v.lang || '').toLowerCase().startsWith('ru'));
     if (ruVoice) utterance.voice = ruVoice;
     utterance.onend = () => {
-      activeUtterance = null;
-      resolve();
+      window.clearTimeout(timer);
+      finish();
     };
     utterance.onerror = () => {
-      activeUtterance = null;
-      resolve();
+      window.clearTimeout(timer);
+      finish();
     };
     activeUtterance = utterance;
-    window.speechSynthesis.speak(utterance);
+    try {
+      window.speechSynthesis.speak(utterance);
+      // Some mobile browsers (incl. Android WebView) never fire onend; polling fallback.
+      const startedAt = Date.now();
+      const poll = window.setInterval(() => {
+        if (settled) {
+          window.clearInterval(poll);
+          return;
+        }
+        const synth = window.speechSynthesis;
+        if (!synth.speaking && !synth.pending && Date.now() - startedAt > 400) {
+          window.clearInterval(poll);
+          window.clearTimeout(timer);
+          finish();
+        }
+      }, 250);
+    } catch {
+      window.clearTimeout(timer);
+      finish();
+    }
   });
 }
 

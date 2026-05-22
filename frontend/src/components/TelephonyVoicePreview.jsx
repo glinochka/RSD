@@ -35,8 +35,10 @@ function TelephonyVoicePreview({ agentId, hasTelephonyChannel, showError, showSu
   const [lastAgentText, setLastAgentText] = useState('');
   const [useBrowserStt, setUseBrowserStt] = useState(speechRecognitionSupported());
   const [isRecording, setIsRecording] = useState(false);
+  const [isBusy, setIsBusy] = useState(false);
 
   const mediaRecorderRef = useRef(null);
+  const phaseRef = useRef(phase);
   const recordChunksRef = useRef([]);
   const recognitionRef = useRef(null);
   const streamRef = useRef(null);
@@ -44,7 +46,12 @@ function TelephonyVoicePreview({ agentId, hasTelephonyChannel, showError, showSu
 
   const setBusy = (value) => {
     busyRef.current = value;
+    setIsBusy(Boolean(value));
   };
+
+  useEffect(() => {
+    phaseRef.current = phase;
+  }, [phase]);
 
   const sessionActive = Boolean(callDbId || previewSessionId);
 
@@ -200,11 +207,11 @@ function TelephonyVoicePreview({ agentId, hasTelephonyChannel, showError, showSu
       setPreviewMode(data.mode || (data.call_db_id ? 'telephony_pipeline' : 'voice_logic'));
       if (data.dialog_state) setDialogState(data.dialog_state);
       if (Array.isArray(data.turn_history)) setTurnHistory(data.turn_history);
-      setPhase('speaking');
       const welcome = data.welcome_plain || data.welcome_text || '';
       setLastAgentText(stripSsml(welcome));
-      await speakPlainText(welcome);
+      // Do not block the mic button on welcome TTS (Android often never fires onend).
       setPhase('listening');
+      void speakPlainText(welcome);
       const hint = hasTelephonyChannel
         ? 'Тестовый звонок начат (полный телефонный контур).'
         : 'Тест без телефонии: та же логика ответов, озвучка в браузере.';
@@ -243,6 +250,7 @@ function TelephonyVoicePreview({ agentId, hasTelephonyChannel, showError, showSu
 
   const startMicRecording = async () => {
     if (!sessionActive || busyRef.current || isRecording) return;
+    stopSpeaking();
     if (useBrowserStt && speechRecognitionSupported()) {
       setPhase('listening');
       setIsRecording(true);
@@ -286,8 +294,18 @@ function TelephonyVoicePreview({ agentId, hasTelephonyChannel, showError, showSu
     }
   };
 
+  const canUsePushToTalk = () => {
+    const p = phaseRef.current;
+    return sessionActive && !busyRef.current && (p === 'listening' || p === 'speaking');
+  };
+
   const handlePushToTalkDown = () => {
-    if (phase === 'listening' && !busyRef.current) startMicRecording();
+    if (!canUsePushToTalk() || isRecording) return;
+    if (phaseRef.current === 'speaking') {
+      stopSpeaking();
+      setPhase('listening');
+    }
+    startMicRecording();
   };
 
   const handlePushToTalkUp = () => {
@@ -345,7 +363,7 @@ function TelephonyVoicePreview({ agentId, hasTelephonyChannel, showError, showSu
 
       <div className="telephony-voice-preview-actions">
         {!sessionActive ? (
-          <button type="button" className="btn btn-black" onClick={startSession} disabled={busyRef.current}>
+          <button type="button" className="btn btn-black" onClick={startSession} disabled={isBusy}>
             Начать тестовый звонок
           </button>
         ) : (
@@ -353,18 +371,20 @@ function TelephonyVoicePreview({ agentId, hasTelephonyChannel, showError, showSu
             <button
               type="button"
               className={`btn btn-black telephony-voice-preview-ptt ${isRecording ? 'telephony-voice-preview-ptt--active' : ''}`}
-              disabled={phase === 'processing' || phase === 'speaking' || phase === 'starting'}
-              onMouseDown={handlePushToTalkDown}
-              onMouseUp={handlePushToTalkUp}
-              onMouseLeave={handlePushToTalkUp}
-              onTouchStart={(e) => {
+              disabled={phase === 'processing' || phase === 'starting' || isBusy}
+              onPointerDown={(e) => {
+                if (e.pointerType === 'mouse' && e.button !== 0) return;
                 e.preventDefault();
                 handlePushToTalkDown();
               }}
-              onTouchEnd={(e) => {
+              onPointerUp={(e) => {
                 e.preventDefault();
                 handlePushToTalkUp();
               }}
+              onPointerCancel={handlePushToTalkUp}
+              onMouseDown={handlePushToTalkDown}
+              onMouseUp={handlePushToTalkUp}
+              onMouseLeave={handlePushToTalkUp}
             >
               {isRecording ? 'Отпустите, чтобы отправить' : 'Удерживайте и говорите'}
             </button>
@@ -390,12 +410,12 @@ function TelephonyVoicePreview({ agentId, hasTelephonyChannel, showError, showSu
             placeholder="Или введите фразу текстом…"
             value={transcriptInput}
             onChange={(e) => setTranscriptInput(e.target.value)}
-            disabled={phase === 'processing' || phase === 'speaking'}
+            disabled={phase === 'processing' || isBusy}
           />
           <button
             type="submit"
             className="btn btn-outline"
-            disabled={!transcriptInput.trim() || phase === 'processing' || phase === 'speaking'}
+            disabled={!transcriptInput.trim() || phase === 'processing' || isBusy}
           >
             Сказать текстом
           </button>
