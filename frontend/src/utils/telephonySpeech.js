@@ -15,25 +15,279 @@ export function speechRecognitionSupported() {
   return Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
 }
 
-export function createSpeechRecognition({ lang = 'ru-RU', onResult, onError }) {
+export function createSpeechRecognition({
+  lang = 'ru-RU',
+  onResult,
+  onError,
+  continuous = false,
+  interimResults = false,
+  onSpeechStart,
+} = {}) {
   const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!Ctor) return null;
   const rec = new Ctor();
   rec.lang = lang;
-  rec.interimResults = false;
+  rec.interimResults = interimResults;
   rec.maxAlternatives = 1;
-  rec.continuous = false;
+  rec.continuous = continuous;
   rec.onresult = (event) => {
-    const chunk = event.results?.[0]?.[0]?.transcript;
-    if (chunk && onResult) onResult(String(chunk).trim());
+    if (!onResult || !event.results?.length) return;
+    for (let i = event.resultIndex; i < event.results.length; i += 1) {
+      const result = event.results[i];
+      const chunk = result?.[0]?.transcript;
+      if (!chunk) continue;
+      onResult(String(chunk).trim(), { isFinal: Boolean(result.isFinal), index: i });
+    }
   };
   rec.onerror = (event) => {
     if (onError) onError(event?.error || 'speech_error');
   };
+  if (onSpeechStart) {
+    rec.onspeechstart = onSpeechStart;
+  }
   return rec;
 }
 
+/** Endpoint silence aligned with telephony_bridge (400–700 ms). */
+const ENDPOINT_SILENCE_MS = 650;
+const MIN_SPEECH_MS = 450;
+const MAX_UTTERANCE_MS = 30_000;
+const SPEECH_RMS_THRESHOLD = 0.015;
+const SPEECH_ONSET_MS = 120;
+
+function readAnalyserRms(analyser) {
+  const data = new Uint8Array(analyser.fftSize);
+  analyser.getByteTimeDomainData(data);
+  let sum = 0;
+  for (let i = 0; i < data.length; i += 1) {
+    const sample = (data[i] - 128) / 128;
+    sum += sample * sample;
+  }
+  return Math.sqrt(sum / data.length);
+}
+
+/**
+ * Continuous mic listener: detects end-of-utterance by silence (like Voximplant record + endpointing).
+ */
+export function createVoiceActivityListener({
+  onUtterance,
+  onError,
+  onSpeechStart,
+  silenceMs = ENDPOINT_SILENCE_MS,
+  minSpeechMs = MIN_SPEECH_MS,
+  maxUtteranceMs = MAX_UTTERANCE_MS,
+  rmsThreshold = SPEECH_RMS_THRESHOLD,
+} = {}) {
+  let stream = null;
+  let audioContext = null;
+  let analyser = null;
+  let sourceNode = null;
+  let capture = null;
+  let rafId = 0;
+  let active = false;
+  let phase = 'idle';
+  let loudSince = 0;
+  let speechStartedAt = 0;
+  let lastLoudAt = 0;
+  let finalizing = false;
+
+  const resetCapture = () => {
+    capture = null;
+    phase = 'idle';
+    loudSince = 0;
+    speechStartedAt = 0;
+    lastLoudAt = 0;
+  };
+
+  const stopTracks = () => {
+    if (stream) {
+      stream.getTracks().forEach((t) => t.stop());
+      stream = null;
+    }
+    if (sourceNode) {
+      try {
+        sourceNode.disconnect();
+      } catch {
+        /* ignore */
+      }
+      sourceNode = null;
+    }
+    if (audioContext) {
+      audioContext.close().catch(() => {});
+      audioContext = null;
+    }
+    analyser = null;
+  };
+
+  const finalizeUtterance = async () => {
+    if (finalizing || !capture) return;
+    finalizing = true;
+    const currentCapture = capture;
+    resetCapture();
+    let blob;
+    try {
+      blob = await currentCapture.stop();
+    } catch {
+      blob = new Blob([], { type: currentCapture.mimeType });
+    }
+    finalizing = false;
+    if (blob.size >= 200 && onUtterance) {
+      await onUtterance(blob, currentCapture.mimeType);
+    }
+  };
+
+  const tick = () => {
+    if (!active || !analyser || finalizing) {
+      if (active) rafId = window.requestAnimationFrame(tick);
+      return;
+    }
+    const now = Date.now();
+    const rms = readAnalyserRms(analyser);
+    const loud = rms >= rmsThreshold;
+
+    if (phase === 'idle') {
+      if (loud) {
+        if (!loudSince) loudSince = now;
+        if (now - loudSince >= SPEECH_ONSET_MS) {
+          phase = 'recording';
+          speechStartedAt = now;
+          lastLoudAt = now;
+          loudSince = 0;
+          if (onSpeechStart) onSpeechStart();
+          if (!capture && stream) {
+            capture = createMediaRecorder(stream, { onError });
+            if (capture) capture.start();
+          }
+        }
+      } else {
+        loudSince = 0;
+      }
+    } else if (phase === 'recording') {
+      if (loud) {
+        lastLoudAt = now;
+      } else if (now - lastLoudAt >= silenceMs) {
+        const spokeMs = lastLoudAt - speechStartedAt;
+        if (spokeMs >= minSpeechMs) {
+          void finalizeUtterance();
+        } else {
+          const discardCapture = capture;
+          resetCapture();
+          if (discardCapture) {
+            void discardCapture.stop().catch(() => {});
+          }
+        }
+        return;
+      }
+      if (now - speechStartedAt >= maxUtteranceMs) {
+        void finalizeUtterance();
+      }
+    }
+    rafId = window.requestAnimationFrame(tick);
+  };
+
+  return {
+    isActive: () => active,
+    async start() {
+      if (active) return;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (err) {
+        if (onError) onError(err);
+        return;
+      }
+      audioContext = new AudioContext();
+      sourceNode = audioContext.createMediaStreamSource(stream);
+      analyser = audioContext.createAnalyser();
+      analyser.fftSize = 2048;
+      sourceNode.connect(analyser);
+      active = true;
+      resetCapture();
+      rafId = window.requestAnimationFrame(tick);
+    },
+    stop() {
+      active = false;
+      if (rafId) {
+        window.cancelAnimationFrame(rafId);
+        rafId = 0;
+      }
+      resetCapture();
+      stopTracks();
+    },
+  };
+}
+
+/**
+ * Hands-free STT via Web Speech API (continuous), when supported in the browser.
+ */
+export function createContinuousSpeechListener({ onUtterance, onError, onSpeechStart } = {}) {
+  let rec = null;
+  let active = false;
+  let restarting = false;
+
+  const stop = () => {
+    active = false;
+    restarting = false;
+    if (rec) {
+      try {
+        rec.stop();
+      } catch {
+        /* ignore */
+      }
+      rec = null;
+    }
+  };
+
+  const startRecognition = () => {
+    if (!active) return;
+    rec = createSpeechRecognition({
+      continuous: true,
+      interimResults: true,
+      onSpeechStart,
+      onResult: (text, meta) => {
+        if (!meta?.isFinal || !text) return;
+        stop();
+        if (onUtterance) void onUtterance(text);
+      },
+      onError: (code) => {
+        if (code === 'aborted' || !active) return;
+        if (code === 'no-speech' && active && !restarting) {
+          restarting = true;
+          window.setTimeout(() => {
+            restarting = false;
+            startRecognition();
+          }, 300);
+          return;
+        }
+        stop();
+        if (onError) onError(code);
+      },
+    });
+    if (!rec) {
+      stop();
+      if (onError) onError('unsupported');
+      return;
+    }
+    try {
+      rec.start();
+    } catch (err) {
+      stop();
+      if (onError) onError(err);
+    }
+  };
+
+  return {
+    isActive: () => active,
+    start() {
+      if (active) return;
+      active = true;
+      startRecognition();
+    },
+    stop,
+  };
+}
+
 let activeUtterance = null;
+let activeAudio = null;
 let voicesReady = false;
 
 function ensureSpeechVoicesLoaded() {
@@ -58,9 +312,84 @@ function ensureSpeechVoicesLoaded() {
 }
 
 export function stopSpeaking() {
+  if (activeAudio) {
+    try {
+      activeAudio.pause();
+      activeAudio.src = '';
+    } catch {
+      /* ignore */
+    }
+    activeAudio = null;
+  }
   if (typeof window === 'undefined' || !window.speechSynthesis) return;
   window.speechSynthesis.cancel();
   activeUtterance = null;
+}
+
+function playAudioBlob(blob) {
+  return new Promise((resolve) => {
+    if (!blob?.size || typeof window === 'undefined') {
+      resolve();
+      return;
+    }
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (activeAudio?.src) {
+        try {
+          URL.revokeObjectURL(activeAudio.src);
+        } catch {
+          /* ignore */
+        }
+      }
+      activeAudio = null;
+      resolve();
+    };
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    activeAudio = audio;
+    const timer = window.setTimeout(finish, 90_000);
+    const done = () => {
+      window.clearTimeout(timer);
+      finish();
+    };
+    audio.onended = done;
+    audio.onerror = done;
+    audio.play().catch(done);
+  });
+}
+
+export async function playAudioBase64(base64, mimeType = 'audio/ogg') {
+  if (!base64) return;
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  const blob = new Blob([bytes], { type: mimeType || 'audio/ogg' });
+  stopSpeaking();
+  await playAudioBlob(blob);
+}
+
+/**
+ * Озвучка реплики оператора: внешний TTS (Yandex/OpenAI) или fallback на браузер.
+ */
+export async function speakAgentLine(text, { agentId, useExternalTts, speakApi }) {
+  const plain = stripSsml(text);
+  if (!plain) return;
+  if (useExternalTts && agentId && speakApi) {
+    try {
+      const data = await speakApi({ agent_id: agentId, text: plain });
+      if (data?.audio_base64) {
+        await playAudioBase64(data.audio_base64, data.mime_type);
+        return;
+      }
+    } catch {
+      /* fallback to browser TTS */
+    }
+  }
+  await speakPlainText(plain);
 }
 
 function speechTimeoutMs(text) {
@@ -68,7 +397,7 @@ function speechTimeoutMs(text) {
   return Math.min(30_000, Math.max(4_000, words * 450 + 2_000));
 }
 
-export function speakPlainText(text, { lang = 'ru-RU', rate = 1.02, pitch = 1.05 } = {}) {
+export function speakPlainText(text, { lang = 'ru-RU', rate = 0.96, pitch = 1.0 } = {}) {
   return new Promise((resolve) => {
     const plain = stripSsml(text);
     if (!plain || typeof window === 'undefined' || !window.speechSynthesis) {

@@ -143,6 +143,13 @@ export const agentService = {
     return response.data;
   },
 
+  telephonyPreviewSpeak: async (data, options = {}) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_TELEPHONY_PREVIEW_SPEAK, data, {
+      timeout: options.timeout ?? TELEPHONY_PREVIEW_TIMEOUT_MS,
+    });
+    return response.data;
+  },
+
   endTelephonyPreview: async (data, options = {}) => {
     const response = await apiClient.post(API_ROUTES.AGENTS_TELEPHONY_PREVIEW_END, data, {
       timeout: options.timeout ?? TELEPHONY_PREVIEW_TIMEOUT_MS,

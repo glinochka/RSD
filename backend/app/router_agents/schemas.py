@@ -729,3 +729,7 @@ class TelephonyPreviewEndPayload(AgentLookup):
             raise ValueError("Either call_db_id or preview_session_id is required")
         return self
 
+
+class TelephonyPreviewSpeakPayload(AgentLookup):
+    text: str = Field(..., min_length=1, max_length=4000)
+

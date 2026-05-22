@@ -804,13 +804,16 @@ class TemplateRuntimeService:
         tool_events: list[dict[str, Any]] = []
         max_iterations = 15
 
+        is_phone_channel = (source_channel or "").strip().lower() == "phone"
+        llm_temperature = 0.38 if is_phone_channel else 0.2
+
         for iteration in range(max_iterations):
             completion = await ai_client.chat.completions.create(
                 model="deepseek-chat",
                 messages=messages,
                 tools=llm_tools,
                 tool_choice="auto",
-                temperature=0.2,
+                temperature=llm_temperature,
             )
             message = completion.choices[0].message
             tool_calls: list[Any] = list(message.tool_calls or [])
@@ -1156,11 +1159,14 @@ class TemplateRuntimeService:
             ).strip()
         if portrait_block:
             effective_prompt = f"{effective_prompt}\n\n{portrait_block}" if effective_prompt else portrait_block
+        is_phone = bool((runtime_context or {}).get("phone_channel"))
+        llm_temperature = 0.48 if is_phone else 0.3
         answer = await generate_answer_with_context(
             user_message,
             context_list,
             effective_prompt,
             chat_model=chat_model,
+            temperature=llm_temperature,
         )
         requires_owner_handoff = False
         owner_handoff_reason: str | None = None

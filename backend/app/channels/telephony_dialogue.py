@@ -35,13 +35,13 @@ from ..utils.pii import redact_pii_text
 logger = logging.getLogger(__name__)
 
 PHONE_CHANNEL = "phone"
-MSG_STT_EMPTY = "Не расслышал, повторите, пожалуйста."
-MSG_SERVICE_UNAVAILABLE = "Сервис временно недоступен. Сейчас соединю с оператором."
-MSG_LLM_ERROR = "Извините, техническая ошибка. Сейчас соединю с оператором."
-MSG_LLM_FILLER = "Секунду, думаю над ответом."
-MSG_CRM_FILLER = "Секунду, смотрю в расписании…"
-MSG_RAG_FILLER = "Да, сейчас уточню, подождите пожалуйста."
-_OPENING_ACKS = ("Угу.", "Так.", "Эм…", "Понял.", "Да-да.")
+MSG_STT_EMPTY = "Простите, плохо слышно. Повторите, пожалуйста."
+MSG_SERVICE_UNAVAILABLE = "Сейчас не получается — переключу на коллегу."
+MSG_LLM_ERROR = "Секунду, что-то сбилось — соединю с оператором."
+MSG_LLM_FILLER = "Секунду, сейчас посмотрю."
+MSG_CRM_FILLER = "Секунду, гляну в расписании."
+MSG_RAG_FILLER = "Сейчас уточню по базе, минутку."
+_OPENING_ACKS = ("Хорошо,", "Понял,", "Сейчас,", "Да,", "Окей,")
 
 
 @dataclass
@@ -115,9 +115,11 @@ def _crm_tools_slow(tool_events: list[dict[str, Any]]) -> bool:
 def _prepend_opening_ack(chunks: list[str], *, call_id: int) -> list[str]:
     if not chunks:
         return chunks
-    ack = _OPENING_ACKS[int(call_id) % len(_OPENING_ACKS)]
     first = (chunks[0] or "").strip()
-    prefix = ack.lower().rstrip(".…")
+    if len(first) < 48:
+        return chunks
+    ack = _OPENING_ACKS[int(call_id) % len(_OPENING_ACKS)]
+    prefix = ack.lower().rstrip(",.…")
     if first.lower().startswith(prefix):
         return chunks
     out = list(chunks)

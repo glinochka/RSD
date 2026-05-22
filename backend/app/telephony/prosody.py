@@ -79,6 +79,14 @@ def format_spoken_numbers(text: str) -> str:
     return out
 
 
+def _insert_phrase_breaks(text: str) -> str:
+    """Light pauses after sentence boundaries for less rushed TTS."""
+    parts = re.split(r"(?<=[.!?…])\s+", text.strip())
+    if len(parts) <= 1:
+        return text
+    return '<break time="280ms"/> '.join(p.strip() for p in parts if p.strip())
+
+
 def wrap_ssml_prosody(text: str, *, voice_tone: str = "neutral-friendly") -> str:
     """Wrap plain text in minimal SSML for pauses and calm delivery."""
     body = format_spoken_numbers(text)
@@ -88,8 +96,9 @@ def wrap_ssml_prosody(text: str, *, voice_tone: str = "neutral-friendly") -> str
         return body
     rate = "medium"
     if voice_tone == "neutral-friendly":
-        rate = "95%"
+        rate = "100%"
+    spoken = _insert_phrase_breaks(body)
     return (
         f'<speak><prosody rate="{rate}" pitch="medium">'
-        f"{body}</prosody></speak>"
+        f"{spoken}</prosody></speak>"
     )

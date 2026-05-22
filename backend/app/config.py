@@ -124,6 +124,7 @@ class Settings(BaseSettings):
     TELEPHONY_MAX_TURNS: int = 15
     TELEPHONY_TTS_PROVIDER: Literal["voximplant", "yandex", "openai"] = "voximplant"
     YANDEX_SPEECHKIT_API_KEY: str = ""
+    TELEPHONY_TTS_TIMEOUT_SECONDS: float = 20.0
     TELEPHONY_WEBHOOK_BASE_URL: str = ""
     TELEPHONY_WEBHOOK_SIGNATURE_TTL_SECONDS: int = 300
     TELEPHONY_WEBHOOK_RATE_LIMIT_PER_CONNECTION: int = 120

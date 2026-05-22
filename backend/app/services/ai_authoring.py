@@ -91,6 +91,7 @@ async def generate_answer_with_context(
     system_prompt: str,
     *,
     chat_model: str | None = None,
+    temperature: float = 0.3,
 ) -> str:
     if not context_list:
         context_text = "Информации в базе знаний не найдено."
@@ -114,6 +115,6 @@ async def generate_answer_with_context(
             {"role": "system", "content": base_system},
             {"role": "user", "content": user_prompt},
         ],
-        temperature=0.3,
+        temperature=max(0.0, min(1.0, float(temperature))),
     )
     return _polish_answer(response.choices[0].message.content)

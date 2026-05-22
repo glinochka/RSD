@@ -20,8 +20,9 @@
 | `TELEPHONY_MAX_TURN_SECONDS` | нет | `30` | Макс. длина записи реплики |
 | `TELEPHONY_MAX_CALL_MINUTES` | нет | `15` | Макс. длительность звонка |
 | `TELEPHONY_MAX_TURNS` | нет | `15` | Макс. ходов диалога |
-| `TELEPHONY_TTS_PROVIDER` | нет | `voximplant` | Зарезервировано (`voximplant` \| `yandex` \| `openai`) |
-| `YANDEX_SPEECHKIT_API_KEY` | при yandex TTS | — | SpeechKit (пока TTS на bridge — Voximplant) |
+| `TELEPHONY_TTS_PROVIDER` | нет | `voximplant` | Боевой звонок: Voximplant; тест в браузере: `yandex`/`openai` или fallback на них при `voximplant` |
+| `YANDEX_SPEECHKIT_API_KEY` | при yandex / preview | — | Yandex SpeechKit для `/telephony/preview/speak` |
+| `TELEPHONY_TTS_TIMEOUT_SECONDS` | нет | `20` | Таймаут синтеза речи для preview |
 | `TELEPHONY_WEBHOOK_SIGNATURE_TTL_SECONDS` | нет | `300` | Окно timestamp webhook |
 | `TELEPHONY_WEBHOOK_RATE_LIMIT_PER_CONNECTION` | нет | `120` | Rate limit / connection / окно |
 | `TELEPHONY_WEBHOOK_RATE_LIMIT_PER_IP` | нет | `240` | Rate limit / IP / окно |

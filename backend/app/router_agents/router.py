@@ -90,6 +90,7 @@ from .telephony_preview import (
     end_telephony_preview_session,
     run_telephony_preview_turn,
     start_telephony_preview_session,
+    synthesize_preview_speech_for_agent,
 )
 
 logger = getLogger(__name__)
@@ -6145,6 +6146,36 @@ async def telephony_preview_turn(
                 audio_base64=payload.audio_base64,
                 audio_mime_type=payload.audio_mime_type,
             )
+            return JSONResponse(
+                content={"agent_id": agent.id, **data},
+                status_code=status.HTTP_200_OK,
+            )
+
+
+@router.post("/telephony/preview/speak")
+async def telephony_preview_speak(
+    payload: TelephonyPreviewSpeakPayload,
+    current_user=Depends(get_current_user_required),
+    _rate_limited=_TELEPHONY_PREVIEW_RATE,
+):
+    text = (payload.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Укажите text")
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
+                current_user=current_user,
+                internal=False,
+            )
+            if not agent.is_active:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Agent is disabled")
+            data = await synthesize_preview_speech_for_agent(session, agent=agent, text=text)
             return JSONResponse(
                 content={"agent_id": agent.id, **data},
                 status_code=status.HTTP_200_OK,

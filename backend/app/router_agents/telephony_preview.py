@@ -26,7 +26,14 @@ from ..channels.telephony_dialogue import (
 from ..config import settings
 from ..services.telephony_orchestrator import DialogState, load_dialog_state, persist_dialog_state
 from ..services.voice_transcription import is_voice_stt_configured, transcribe_voice_bytes
-from ..telephony.credentials import TELEPHONY_CHANNEL_PROVIDER
+from ..utils.crypto import decrypt_token
+from ..telephony.credentials import TELEPHONY_CHANNEL_PROVIDER, parse_telephony_credentials
+from ..telephony.tts_service import (
+    is_preview_tts_configured,
+    map_voice_for_provider,
+    resolve_preview_tts_provider,
+    synthesize_preview_speech,
+)
 from ..telephony.turn_pool import run_in_telephony_pool
 
 logger = logging.getLogger(__name__)
@@ -130,6 +137,66 @@ def _append_history(
     history = [dict(item) for item in (turn_history or []) if isinstance(item, dict)]
     history.append({"role": role, "text": text.strip()})
     return history[-_MAX_STATELESS_HISTORY_TURNS:]
+
+
+async def _resolve_agent_voice_id(session: AsyncSession, agent_id: int) -> str:
+    connection = await _load_telephony_connection(session, agent_id)
+    if connection is None or not connection.encrypted_credentials:
+        return "default"
+    try:
+        creds = parse_telephony_credentials(decrypt_token(connection.encrypted_credentials))
+        return (creds.voice_id or "default").strip() or "default"
+    except Exception:
+        logger.warning("preview: could not read telephony voice_id agent_id=%s", agent_id)
+        return "default"
+
+
+def _preview_tts_meta(voice_id: str) -> dict[str, Any]:
+    provider = resolve_preview_tts_provider()
+    mapped = map_voice_for_provider(provider, voice_id) if provider else None
+    return {
+        "available": is_preview_tts_configured(),
+        "provider": provider,
+        "voice_id": mapped,
+    }
+
+
+async def synthesize_preview_speech_for_agent(
+    session: AsyncSession,
+    *,
+    agent: Agent,
+    text: str,
+) -> dict[str, Any]:
+    if not is_preview_tts_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Внешний TTS не настроен. Укажите YANDEX_SPEECHKIT_API_KEY или OPENAI_API_KEY "
+                "и TELEPHONY_TTS_PROVIDER=yandex|openai (для preview при voximplant используется fallback на Yandex/OpenAI)."
+            ),
+        )
+    voice_id = await _resolve_agent_voice_id(session, int(agent.id))
+    try:
+        audio_bytes, mime_type, provider = await synthesize_preview_speech(
+            text,
+            voice_id=voice_id,
+        )
+    except ValueError as exc:
+        if str(exc) == "empty_text":
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Пустой текст") from exc
+        raise
+    except Exception as exc:
+        logger.exception("preview tts failed agent_id=%s", agent.id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Не удалось синтезировать речь. Проверьте ключ SpeechKit/OpenAI.",
+        ) from exc
+    return {
+        "audio_base64": base64.b64encode(audio_bytes).decode("ascii"),
+        "mime_type": mime_type,
+        "provider": provider,
+        "voice_id": map_voice_for_provider(provider, voice_id),
+    }
 
 
 async def _load_telephony_connection(session: AsyncSession, agent_id: int) -> AgentChannelConnection | None:
@@ -325,6 +392,9 @@ async def start_telephony_preview_session(
     welcome = (agent.welcome_message or "").strip() or _DEFAULT_WELCOME
     welcome_plain = strip_ssml_for_browser(welcome) or welcome
 
+    voice_id = await _resolve_agent_voice_id(session, int(agent.id))
+    tts_meta = _preview_tts_meta(voice_id)
+
     connection = await _load_telephony_connection(session, int(agent.id))
     if connection is not None:
         call = await _create_preview_call(session, connection=connection, owner_user_id=owner_user_id)
@@ -335,6 +405,7 @@ async def start_telephony_preview_session(
             "welcome_plain": welcome_plain,
             "mode": "telephony_pipeline",
             "requires_telephony_channel": False,
+            "tts": tts_meta,
         }
 
     return {
@@ -346,6 +417,7 @@ async def start_telephony_preview_session(
         "requires_telephony_channel": False,
         "turn_history": [],
         "dialog_state": DialogState.GREET.value,
+        "tts": tts_meta,
     }
 
 

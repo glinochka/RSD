@@ -32,6 +32,28 @@
   font-size: 0.95rem;
 }
 
+.telephony-voice-preview-status--live::before {
+  content: '';
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  margin-right: 0.45rem;
+  border-radius: 50%;
+  background: #16a34a;
+  vertical-align: middle;
+  animation: telephony-preview-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes telephony-preview-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
 .telephony-voice-preview-transcript {
   font-size: 0.875rem;
   line-height: 1.4;
@@ -52,10 +74,6 @@
   flex-wrap: wrap;
   gap: 0.5rem;
   align-items: center;
-}
-
-.telephony-voice-preview-ptt--active {
-  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.15);
 }
 
 .telephony-voice-preview-stt-toggle {
