@@ -86,6 +86,11 @@ from .telephony_channel import (
     validate_telephony_credentials_input,
 )
 from .telephony_analytics import list_agent_telephony_calls
+from .telephony_preview import (
+    end_telephony_preview_session,
+    run_telephony_preview_turn,
+    start_telephony_preview_session,
+)
 
 logger = getLogger(__name__)
 router = APIRouter(prefix="/api/agents")
@@ -6016,6 +6021,113 @@ async def read_analytics_telephony_calls(
                     "bot_id": agent.bot_id,
                     "calls": calls,
                 },
+                status_code=status.HTTP_200_OK,
+            )
+
+
+_TELEPHONY_PREVIEW_RATE = Depends(
+    rate_limit(max_requests=30, window_seconds=60, scope="agents_telephony_preview")
+)
+
+
+@router.post("/telephony/preview/start")
+async def telephony_preview_start(
+    payload: TelephonyPreviewStartPayload,
+    current_user=Depends(get_current_user_required),
+    _rate_limited=_TELEPHONY_PREVIEW_RATE,
+):
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
+                current_user=current_user,
+                internal=False,
+            )
+            if not agent.is_active:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Agent is disabled")
+            data = await start_telephony_preview_session(
+                session,
+                agent=agent,
+                owner_user_id=int(current_user.id),
+            )
+            return JSONResponse(
+                content={"agent_id": agent.id, "bot_id": agent.bot_id, **data},
+                status_code=status.HTTP_200_OK,
+            )
+
+
+@router.post("/telephony/preview/turn")
+async def telephony_preview_turn(
+    payload: TelephonyPreviewTurnPayload,
+    current_user=Depends(get_current_user_required),
+    _rate_limited=_TELEPHONY_PREVIEW_RATE,
+):
+    transcript = (payload.user_transcript or "").strip()
+    if not transcript and not (payload.audio_base64 or "").strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Укажите user_transcript или audio_base64",
+        )
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
+                current_user=current_user,
+                internal=False,
+            )
+            if not agent.is_active:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Agent is disabled")
+            data = await run_telephony_preview_turn(
+                session,
+                agent=agent,
+                owner_user_id=int(current_user.id),
+                call_db_id=int(payload.call_db_id),
+                user_transcript=payload.user_transcript,
+                audio_base64=payload.audio_base64,
+                audio_mime_type=payload.audio_mime_type,
+            )
+            return JSONResponse(
+                content={"agent_id": agent.id, "call_db_id": int(payload.call_db_id), **data},
+                status_code=status.HTTP_200_OK,
+            )
+
+
+@router.post("/telephony/preview/end")
+async def telephony_preview_end(
+    payload: TelephonyPreviewEndPayload,
+    current_user=Depends(get_current_user_required),
+    _rate_limited=_TELEPHONY_PREVIEW_RATE,
+):
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
+                current_user=current_user,
+                internal=False,
+            )
+            data = await end_telephony_preview_session(
+                session,
+                agent=agent,
+                owner_user_id=int(current_user.id),
+                call_db_id=int(payload.call_db_id),
+            )
+            return JSONResponse(
+                content={"agent_id": agent.id, **data},
                 status_code=status.HTTP_200_OK,
             )
 

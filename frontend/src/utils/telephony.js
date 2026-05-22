@@ -13,6 +13,11 @@ export function findTelephonyChannel(channels) {
   return list.find((c) => c?.provider === TELEPHONY_PROVIDER) || null;
 }
 
+export function isWebPreviewCall(call) {
+  const id = String(call?.external_call_id || '');
+  return id.startsWith('web-preview:');
+}
+
 export function telephonyStatusLabel(status) {
   const map = {
     ringing: 'Звонит',
@@ -22,6 +27,11 @@ export function telephonyStatusLabel(status) {
     transferred: 'Переведён',
   };
   return map[status] || status || '—';
+}
+
+export function telephonyCallTitle(call) {
+  if (isWebPreviewCall(call)) return 'Тест в браузере';
+  return call?.caller_e164_masked || 'Звонок';
 }
 
 export async function copyTextToClipboard(text) {

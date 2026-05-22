@@ -693,3 +693,18 @@ class AdminTemplateRemindersRunPayload(AgentLookup):
     now_iso: Optional[str] = Field(default=None, min_length=16, max_length=40)
     channel: Optional[str] = Field(default=None, max_length=32)
 
+
+class TelephonyPreviewStartPayload(AgentLookup):
+    pass
+
+
+class TelephonyPreviewTurnPayload(AgentLookup):
+    call_db_id: int = Field(..., gt=0, description="ID сессии предпросмотра")
+    user_transcript: Optional[str] = Field(default=None, max_length=8000)
+    audio_base64: Optional[str] = Field(default=None, description="Аудио реплики (base64)")
+    audio_mime_type: Optional[str] = Field(default="audio/webm", max_length=64)
+
+
+class TelephonyPreviewEndPayload(AgentLookup):
+    call_db_id: int = Field(..., gt=0)
+

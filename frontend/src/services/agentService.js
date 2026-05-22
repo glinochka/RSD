@@ -8,6 +8,7 @@ import { API_ROUTES } from '../config/constants';
 
 /** Telethon + SOCKS can exceed default API timeout (30s); avoid axios abort → nginx 499. */
 const USERBOT_TELETHON_TIMEOUT_MS = 120_000;
+const TELEPHONY_PREVIEW_TIMEOUT_MS = 120_000;
 
 export const agentService = {
   /**
@@ -124,6 +125,27 @@ export const agentService = {
   getTelephonyCalls: async (agentId, params = {}) => {
     const response = await apiClient.get(API_ROUTES.AGENTS_ANALYTICS_TELEPHONY_CALLS, {
       params: { agent_id: agentId, ...params },
+    });
+    return response.data;
+  },
+
+  startTelephonyPreview: async (data, options = {}) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_TELEPHONY_PREVIEW_START, data, {
+      timeout: options.timeout ?? TELEPHONY_PREVIEW_TIMEOUT_MS,
+    });
+    return response.data;
+  },
+
+  telephonyPreviewTurn: async (data, options = {}) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_TELEPHONY_PREVIEW_TURN, data, {
+      timeout: options.timeout ?? TELEPHONY_PREVIEW_TIMEOUT_MS,
+    });
+    return response.data;
+  },
+
+  endTelephonyPreview: async (data, options = {}) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_TELEPHONY_PREVIEW_END, data, {
+      timeout: options.timeout ?? TELEPHONY_PREVIEW_TIMEOUT_MS,
     });
     return response.data;
   },

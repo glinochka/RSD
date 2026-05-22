@@ -5,7 +5,7 @@ import Loading from '../components/Loading';
 import agentService from '../services/agentService';
 import { useNotification } from '../context/useNotification';
 import { NAVIGATION_ROUTES } from '../config/constants';
-import { findTelephonyChannel, telephonyStatusLabel } from '../utils/telephony';
+import { findTelephonyChannel, telephonyCallTitle, telephonyStatusLabel } from '../utils/telephony';
 import '../styles/agentDetailedAnalytics.css';
 
 const ANALYTICS_SECTIONS = {
@@ -1780,7 +1780,7 @@ const AgentDetailedAnalyticsPageContent = () => {
                         className={`analytics-telephony-call-item ${selectedCallId === call.id ? 'analytics-telephony-call-item--active' : ''}`}
                         onClick={() => setSelectedCallId(call.id)}
                       >
-                        <strong>{call.caller_e164_masked}</strong>
+                        <strong>{telephonyCallTitle(call)}</strong>
                         <span>{formatDateTime(call.started_at, '—')}</span>
                         <span>
                           {telephonyStatusLabel(call.status)} · {formatCallDuration(call.duration_sec)}
@@ -1795,7 +1795,7 @@ const AgentDetailedAnalyticsPageContent = () => {
                         <ul className="analytics-telephony-meta">
                           <li>
                             <span>Абонент</span>
-                            <strong>{selectedCall.caller_e164_masked}</strong>
+                            <strong>{telephonyCallTitle(selectedCall)}</strong>
                           </li>
                           <li>
                             <span>Статус</span>

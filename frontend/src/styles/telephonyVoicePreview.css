@@ -1,0 +1,72 @@
+.telephony-voice-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.telephony-voice-preview--muted {
+  background: transparent;
+  border-style: dashed;
+}
+
+.telephony-voice-preview-hint {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  color: rgba(0, 0, 0, 0.65);
+}
+
+.telephony-voice-preview-status {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.telephony-voice-preview-transcript {
+  font-size: 0.875rem;
+  line-height: 1.4;
+  color: rgba(0, 0, 0, 0.8);
+}
+
+.telephony-voice-preview-transcript p {
+  margin: 0.35rem 0;
+}
+
+.telephony-voice-preview-transcript span {
+  font-weight: 600;
+  margin-right: 0.35rem;
+}
+
+.telephony-voice-preview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.telephony-voice-preview-ptt--active {
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.15);
+}
+
+.telephony-voice-preview-stt-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.telephony-voice-preview-text-fallback {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.telephony-voice-preview-text-fallback .input-main {
+  flex: 1 1 12rem;
+  min-width: 0;
+}

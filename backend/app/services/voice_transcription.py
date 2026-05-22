@@ -74,6 +74,8 @@ def _extension_for_mime(mime_type: str) -> str:
         return ".m4a"
     if "ogg" in lower_mime or "opus" in lower_mime:
         return ".ogg"
+    if "webm" in lower_mime:
+        return ".webm"
     return ".ogg"
 
 
