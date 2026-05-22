@@ -137,6 +137,12 @@ async def _run_dialogue_with_timeout(
             timeout=llm_timeout,
         )
     except TimeoutError:
+        logger.warning(
+            "telephony LLM timeout after %.1fs call_db_id=%s agent_id=%s",
+            llm_timeout,
+            call.id,
+            agent.id,
+        )
         retry_timeout = max(1.0, float(settings.TELEPHONY_LLM_RETRY_TIMEOUT_SECONDS))
         try:
             return await asyncio.wait_for(
@@ -144,11 +150,17 @@ async def _run_dialogue_with_timeout(
                 timeout=retry_timeout,
             )
         except TimeoutError:
+            logger.warning(
+                "telephony LLM retry timeout after %.1fs call_db_id=%s",
+                retry_timeout,
+                call.id,
+            )
             return llm_timeout_result(retry=False)
     except Exception:
         logger.exception(
-            "telephony dialogue failed call_db_id=%s",
+            "telephony dialogue failed call_db_id=%s agent_id=%s",
             call.id,
+            agent.id,
         )
         return llm_error_result()
 

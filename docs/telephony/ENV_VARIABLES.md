@@ -27,8 +27,9 @@
 | `TELEPHONY_WEBHOOK_RATE_LIMIT_PER_IP` | нет | `240` | Rate limit / IP / окно |
 | `TELEPHONY_WEBHOOK_RATE_WINDOW_SECONDS` | нет | `60` | Окно rate limit (сек) |
 | `TELEPHONY_TURNS_RETENTION_DAYS` | нет | `90` | Retention `agent_telephony_turns` |
-| `TELEPHONY_LLM_TIMEOUT_SECONDS` | нет | `8` | Таймаут LLM на ход |
-| `TELEPHONY_LLM_RETRY_TIMEOUT_SECONDS` | нет | `3` | Повтор после таймаута |
+| `TELEPHONY_LLM_TIMEOUT_SECONDS` | нет | `25` | Таймаут LLM на ход (crm_admin + Qdrant) |
+| `TELEPHONY_LLM_RETRY_TIMEOUT_SECONDS` | нет | `15` | Повтор после таймаута |
+| `TELEPHONY_PREVIEW_LLM_TIMEOUT_SECONDS` | нет | `60` | Таймаут LLM для теста в браузере |
 | `TELEPHONY_TURN_LATENCY_ALERT_P95_MS` | нет | `10000` | Алерт в `/metrics` |
 | `TELEPHONY_STREAMING_ENABLED` | нет | `true` | Разбивка ответа на предложения для раннего TTS (runtime — всегда `template_runtime`) |
 | `TELEPHONY_ENDPOINT_SILENCE_MS` | нет | `600` | Endpointing (bridge) |

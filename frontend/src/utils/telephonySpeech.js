@@ -143,3 +143,59 @@ export function pickRecorderMimeType() {
   const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
   return candidates.find((t) => MediaRecorder.isTypeSupported(t)) || '';
 }
+
+const RECORDER_TIMESLICE_MS = 250;
+
+/**
+ * Collect audio chunks reliably on Android (requires timeslice + requestData before stop).
+ */
+export function createMediaRecorder(stream, { onError } = {}) {
+  const mime = pickRecorderMimeType();
+  let recorder;
+  try {
+    recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+  } catch (err) {
+    if (onError) onError(err);
+    return null;
+  }
+  const chunks = [];
+  recorder.addEventListener('dataavailable', (e) => {
+    if (e.data && e.data.size > 0) chunks.push(e.data);
+  });
+  recorder.addEventListener('error', () => {
+    if (onError) onError(new Error('MediaRecorder error'));
+  });
+
+  const start = () => {
+    chunks.length = 0;
+    recorder.start(RECORDER_TIMESLICE_MS);
+  };
+
+  const stop = () =>
+    new Promise((resolve) => {
+      if (recorder.state === 'inactive') {
+        resolve(new Blob(chunks, { type: recorder.mimeType || mime || 'audio/webm' }));
+        return;
+      }
+      const finalize = () => {
+        resolve(new Blob(chunks, { type: recorder.mimeType || mime || 'audio/webm' }));
+      };
+      recorder.addEventListener('stop', finalize, { once: true });
+      try {
+        if (recorder.state === 'recording' && typeof recorder.requestData === 'function') {
+          recorder.requestData();
+        }
+      } catch {
+        /* ignore */
+      }
+      recorder.stop();
+    });
+
+  return {
+    recorder,
+    mimeType: recorder.mimeType || mime || 'audio/webm',
+    start,
+    stop,
+    isRecording: () => recorder.state === 'recording',
+  };
+}

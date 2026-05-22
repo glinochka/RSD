@@ -7,7 +7,7 @@ from logging import getLogger
 from urllib.parse import quote
 from urllib.request import Request as UrlRequest, urlopen
 from urllib.error import HTTPError, URLError
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from collections import defaultdict
 from typing import Any
 
@@ -1348,6 +1348,9 @@ def _serialize_agent(agent, *, include_external_api_key: bool = False, include_e
     from ..agent_template_pricing import build_agent_billing_state
 
     data = convert_to_dict(agent)
+    for key, value in list(data.items()):
+        if isinstance(value, (date, datetime)):
+            data[key] = _safe_iso(value)
     data.pop("registered", None)
     data.pop("encrypted_external_api_key", None)
     data.pop("external_api_key_hash", None)

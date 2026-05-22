@@ -2,8 +2,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { agentService } from '../services/agentService';
 import {
   blobToBase64,
+  createMediaRecorder,
   createSpeechRecognition,
-  pickRecorderMimeType,
   speakPlainText,
   speechRecognitionSupported,
   stopSpeaking,
@@ -37,12 +37,15 @@ function TelephonyVoicePreview({ agentId, hasTelephonyChannel, showError, showSu
   const [isRecording, setIsRecording] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
 
-  const mediaRecorderRef = useRef(null);
+  const mediaCaptureRef = useRef(null);
   const phaseRef = useRef(phase);
-  const recordChunksRef = useRef([]);
   const recognitionRef = useRef(null);
   const streamRef = useRef(null);
   const busyRef = useRef(false);
+  const pttPointerDownRef = useRef(false);
+  const micStartingRef = useRef(false);
+  const stopAfterMicStartRef = useRef(false);
+  const recordStartedAtRef = useRef(0);
 
   const setBusy = (value) => {
     busyRef.current = value;
@@ -64,15 +67,9 @@ function TelephonyVoicePreview({ agentId, hasTelephonyChannel, showError, showSu
   }, []);
 
   const cleanupMic = useCallback(() => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      try {
-        mediaRecorderRef.current.stop();
-      } catch {
-        /* ignore */
-      }
-    }
-    mediaRecorderRef.current = null;
-    recordChunksRef.current = [];
+    mediaCaptureRef.current = null;
+    micStartingRef.current = false;
+    stopAfterMicStartRef.current = false;
     if (recognitionRef.current) {
       try {
         recognitionRef.current.stop();
@@ -226,21 +223,38 @@ function TelephonyVoicePreview({ agentId, hasTelephonyChannel, showError, showSu
   };
 
   const stopRecordingAndSend = async () => {
-    const recorder = mediaRecorderRef.current;
-    if (!recorder || recorder.state === 'inactive') {
+    if (micStartingRef.current) {
+      stopAfterMicStartRef.current = true;
+      return;
+    }
+    const capture = mediaCaptureRef.current;
+    if (!capture) {
       setIsRecording(false);
       return;
     }
-    const mime = recorder.mimeType || pickRecorderMimeType() || 'audio/webm';
-    await new Promise((resolve) => {
-      recorder.onstop = resolve;
-      recorder.stop();
-    });
+    const holdMs = Date.now() - recordStartedAtRef.current;
+    if (holdMs < 350) {
+      await new Promise((r) => {
+        setTimeout(r, 350 - holdMs);
+      });
+    }
+    let blob;
+    try {
+      blob = await capture.stop();
+    } catch {
+      blob = new Blob([], { type: capture.mimeType });
+    }
+    const mime = capture.mimeType;
     cleanupMic();
-    const blob = new Blob(recordChunksRef.current, { type: mime });
-    recordChunksRef.current = [];
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+    setIsRecording(false);
     if (!blob.size) {
-      showError?.('Запись пустая. Повторите фразу.');
+      showError?.(
+        'Запись пустая. Удерживайте кнопку чуть дольше или включите «Распознавание в браузере» / введите фразу текстом.'
+      );
       setPhase(sessionActive ? 'listening' : 'idle');
       return;
     }
@@ -254,43 +268,78 @@ function TelephonyVoicePreview({ agentId, hasTelephonyChannel, showError, showSu
     if (useBrowserStt && speechRecognitionSupported()) {
       setPhase('listening');
       setIsRecording(true);
+      recordStartedAtRef.current = Date.now();
       const rec = createSpeechRecognition({
         onResult: async (text) => {
           cleanupMic();
-          if (text) await sendTurn({ userTranscript: text });
+          setIsRecording(false);
+          if (text) {
+            await sendTurn({ userTranscript: text });
+          } else {
+            showError?.('Речь не распознана. Повторите или введите фразу текстом.');
+            setPhase('listening');
+          }
         },
         onError: (code) => {
           cleanupMic();
+          setIsRecording(false);
           if (code !== 'aborted') {
-            showError?.('Не удалось распознать речь в браузере. Отключите «Микрофон браузера» или разрешите доступ.');
+            showError?.('Не удалось распознать речь в браузере. Снимите галочку «Распознавание в браузере» для записи аудио.');
           }
           setPhase('listening');
         },
       });
       if (!rec) {
         showError?.('Распознавание речи в браузере недоступно');
+        setIsRecording(false);
         return;
       }
       recognitionRef.current = rec;
-      rec.start();
+      try {
+        rec.start();
+      } catch {
+        cleanupMic();
+        setIsRecording(false);
+        showError?.('Не удалось запустить распознавание в браузере');
+      }
       return;
     }
 
+    micStartingRef.current = true;
+    stopAfterMicStartRef.current = false;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (stopAfterMicStartRef.current) {
+        stream.getTracks().forEach((t) => t.stop());
+        micStartingRef.current = false;
+        stopAfterMicStartRef.current = false;
+        setIsRecording(false);
+        return;
+      }
       streamRef.current = stream;
-      const mime = pickRecorderMimeType();
-      const recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
-      recordChunksRef.current = [];
-      recorder.ondataavailable = (e) => {
-        if (e.data?.size) recordChunksRef.current.push(e.data);
-      };
-      mediaRecorderRef.current = recorder;
-      recorder.start();
+      const capture = createMediaRecorder(stream, {
+        onError: () => showError?.('Ошибка записи звука'),
+      });
+      if (!capture) {
+        showError?.('Запись звука не поддерживается в этом браузере');
+        stream.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+        micStartingRef.current = false;
+        return;
+      }
+      mediaCaptureRef.current = capture;
+      capture.start();
+      recordStartedAtRef.current = Date.now();
       setIsRecording(true);
       setPhase('listening');
+      if (stopAfterMicStartRef.current) {
+        await stopRecordingAndSend();
+      }
     } catch {
       showError?.('Нет доступа к микрофону. Разрешите микрофон в браузере или введите фразу текстом.');
+      setIsRecording(false);
+    } finally {
+      micStartingRef.current = false;
     }
   };
 
@@ -314,10 +363,28 @@ function TelephonyVoicePreview({ agentId, hasTelephonyChannel, showError, showSu
         recognitionRef.current.stop();
       } catch {
         cleanupMic();
+        setIsRecording(false);
       }
       return;
     }
-    if (isRecording) stopRecordingAndSend();
+    if (isRecording || micStartingRef.current || mediaCaptureRef.current) {
+      void stopRecordingAndSend();
+    }
+  };
+
+  const handlePttPointerDown = (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    e.preventDefault();
+    if (pttPointerDownRef.current) return;
+    pttPointerDownRef.current = true;
+    handlePushToTalkDown();
+  };
+
+  const handlePttPointerUp = (e) => {
+    e.preventDefault();
+    if (!pttPointerDownRef.current) return;
+    pttPointerDownRef.current = false;
+    handlePushToTalkUp();
   };
 
   const handleTextSubmit = async (e) => {
@@ -372,19 +439,10 @@ function TelephonyVoicePreview({ agentId, hasTelephonyChannel, showError, showSu
               type="button"
               className={`btn btn-black telephony-voice-preview-ptt ${isRecording ? 'telephony-voice-preview-ptt--active' : ''}`}
               disabled={phase === 'processing' || phase === 'starting' || isBusy}
-              onPointerDown={(e) => {
-                if (e.pointerType === 'mouse' && e.button !== 0) return;
-                e.preventDefault();
-                handlePushToTalkDown();
-              }}
-              onPointerUp={(e) => {
-                e.preventDefault();
-                handlePushToTalkUp();
-              }}
-              onPointerCancel={handlePushToTalkUp}
-              onMouseDown={handlePushToTalkDown}
-              onMouseUp={handlePushToTalkUp}
-              onMouseLeave={handlePushToTalkUp}
+              style={{ touchAction: 'none' }}
+              onPointerDown={handlePttPointerDown}
+              onPointerUp={handlePttPointerUp}
+              onPointerCancel={handlePttPointerUp}
             >
               {isRecording ? 'Отпустите, чтобы отправить' : 'Удерживайте и говорите'}
             </button>

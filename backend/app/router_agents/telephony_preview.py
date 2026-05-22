@@ -234,7 +234,13 @@ async def _run_preview_dialogue(
     persist_turns: bool,
     compressed_history_override: str | None,
 ) -> PhoneTurnResult:
-    llm_timeout = max(1.0, float(settings.TELEPHONY_LLM_TIMEOUT_SECONDS))
+    llm_timeout = max(
+        1.0,
+        float(
+            getattr(settings, "TELEPHONY_PREVIEW_LLM_TIMEOUT_SECONDS", None)
+            or settings.TELEPHONY_LLM_TIMEOUT_SECONDS
+        ),
+    )
 
     async def _run() -> PhoneTurnResult:
         return await process_phone_turn(
@@ -254,6 +260,12 @@ async def _run_preview_dialogue(
             timeout=llm_timeout,
         )
     except TimeoutError:
+        logger.warning(
+            "telephony preview LLM timeout after %.1fs agent_id=%s transcript_len=%s",
+            llm_timeout,
+            agent.id,
+            len(transcript),
+        )
         retry_timeout = max(1.0, float(settings.TELEPHONY_LLM_RETRY_TIMEOUT_SECONDS))
         try:
             return await asyncio.wait_for(
@@ -261,9 +273,18 @@ async def _run_preview_dialogue(
                 timeout=retry_timeout,
             )
         except TimeoutError:
+            logger.warning(
+                "telephony preview LLM retry timeout after %.1fs agent_id=%s",
+                retry_timeout,
+                agent.id,
+            )
             return llm_timeout_result(retry=False)
     except Exception:
-        logger.exception("telephony preview dialogue failed call_id=%s", getattr(call, "id", None))
+        logger.exception(
+            "telephony preview dialogue failed call_id=%s agent_id=%s",
+            getattr(call, "id", None),
+            agent.id,
+        )
         return llm_error_result()
 
 
