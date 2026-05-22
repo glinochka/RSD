@@ -118,6 +118,7 @@ export const API_ROUTES = {
   ADMIN_BAN_USER: (userId) => `/api/admin/users/${userId}/ban`,
   ADMIN_UNBAN_USER: (userId) => `/api/admin/users/${userId}/unban`,
   ADMIN_GIFT_SUBSCRIPTION: (userId) => `/api/admin/users/${userId}/gift-subscription`,
+  ADMIN_FREE_AGENT_ACTIVATION: (userId) => `/api/admin/users/${userId}/free-agent-activation`,
   ADMIN_DELETE_PROMO_CODE: (promoCodeId) => `/api/admin/promo-codes/${promoCodeId}`,
   ADMIN_ERROR_REPORTS: '/api/admin/error-reports',
   ADMIN_EMAIL_BROADCAST: '/api/admin/email-broadcast',

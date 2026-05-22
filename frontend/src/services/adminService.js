@@ -208,6 +208,15 @@ const adminService = {
     return response.data;
   },
 
+  async setFreeAgentActivation(token, userId, enabled) {
+    const response = await adminClient.post(
+      API_ROUTES.ADMIN_FREE_AGENT_ACTIVATION(userId),
+      { enabled },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data;
+  },
+
   async sendEmailBroadcast(token, { subject, body, interval_seconds }) {
     const response = await adminClient.post(
       API_ROUTES.ADMIN_EMAIL_BROADCAST,

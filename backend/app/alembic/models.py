@@ -59,6 +59,12 @@ class User(Base):
     telegram_id: Mapped[int | None] = mapped_column(BigInteger, unique=True, index=True, nullable=True)
     
     is_banned: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    free_agent_activation: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        server_default="false",
+        nullable=False,
+    )
 
     registered: Mapped[date] = mapped_column(default=datetime.now(timezone.utc))
 

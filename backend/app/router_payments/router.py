@@ -25,6 +25,7 @@ from ..agent_template_pricing import (
     is_maintenance_grace_active,
     list_public_agent_template_pricing,
     parse_agent_payment_plan_name,
+    user_has_free_agent_activation,
 )
 from ..alembic.models import WebsitePaymentTransaction
 from ..router_agents.dao import AgentDAO
@@ -276,11 +277,17 @@ async def create_yookassa_agent_billing_payment(
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
 
             template_type = (agent.template_type or "qa").strip().lower()
-            if payload.payment_kind == PAYMENT_KIND_AGENT_ACTIVATION and is_activation_paid(agent):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Activation payment already completed",
-                )
+            if payload.payment_kind == PAYMENT_KIND_AGENT_ACTIVATION:
+                if user_has_free_agent_activation(current_user):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Оплата активации не требуется для этого аккаунта",
+                    )
+                if is_activation_paid(agent, user=current_user):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Activation payment already completed",
+                    )
             if payload.payment_kind == PAYMENT_KIND_AGENT_MAINTENANCE and is_maintenance_grace_active(agent):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -699,7 +706,7 @@ async def get_yookassa_payment_status(
             if tx.agent_id:
                 agent = await agent_dao.find_one_by_filter(id=tx.agent_id, user_id=current_user.id)
                 if agent:
-                    agent_billing = build_agent_billing_state(agent)
+                    agent_billing = build_agent_billing_state(agent, user=user)
             return YooKassaPaymentStatusResponse(
                 payment_id=payment_id,
                 status=payment_status,

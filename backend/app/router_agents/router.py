@@ -610,17 +610,18 @@ def _summarize_tool_event_for_log(event: dict) -> str:
     return " ".join(parts)
 
 
-def _initial_agent_billing_fields(template_type: str) -> dict[str, object]:
+def _initial_agent_billing_fields(template_type: str, *, user=None) -> dict[str, object]:
     from ..agent_template_pricing import (
         get_agent_template_pricing,
         initial_maintenance_paid_until_for_template,
+        user_has_free_agent_activation,
     )
 
     pricing = get_agent_template_pricing(template_type)
     if not pricing:
         return {}
     fields: dict[str, object] = {}
-    if pricing.setup_rub_min <= 0:
+    if pricing.setup_rub_min <= 0 or user_has_free_agent_activation(user):
         fields["activation_paid_at"] = datetime.now(timezone.utc).replace(tzinfo=None)
     grace_until = initial_maintenance_paid_until_for_template(template_type)
     if grace_until is not None:
@@ -1344,7 +1345,13 @@ async def _regenerate_external_api_key(agent, agent_dao: AgentDAO) -> str:
     return raw_key
 
 
-def _serialize_agent(agent, *, include_external_api_key: bool = False, include_encrypted_token: bool = False) -> dict:
+def _serialize_agent(
+    agent,
+    *,
+    user=None,
+    include_external_api_key: bool = False,
+    include_encrypted_token: bool = False,
+) -> dict:
     from ..agent_template_pricing import build_agent_billing_state
 
     data = convert_to_dict(agent)
@@ -1376,7 +1383,8 @@ def _serialize_agent(agent, *, include_external_api_key: bool = False, include_e
             data["external_api_key"] = decrypt_token(agent.encrypted_external_api_key)
         else:
             data["external_api_key"] = None
-    data["billing"] = build_agent_billing_state(agent)
+    owner = user if user is not None else getattr(agent, "user", None)
+    data["billing"] = build_agent_billing_state(agent, user=owner)
     return data
 
 
@@ -3674,6 +3682,7 @@ async def read_agent(
             http_integrations = await _list_agent_http_integrations(session, found_agent.id)
             payload = _serialize_agent(
                 found_agent,
+                user=current_user,
                 include_external_api_key=True,
                 include_encrypted_token=internal,
             )
@@ -3711,7 +3720,10 @@ async def read_all_agents(
             if not user:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
             return JSONResponse(
-                content=[_serialize_agent(agent, include_encrypted_token=internal) for agent in (user.agents or [])],
+                content=[
+                    _serialize_agent(agent, user=user, include_encrypted_token=internal)
+                    for agent in (user.agents or [])
+                ],
                 status_code=status.HTTP_200_OK,
             )
 
@@ -3743,7 +3755,7 @@ async def create_empty_agent(
                     "bot_username": None,
                     "system_prompt": payload.system_prompt.strip(),
                     "is_active": False,
-                    **_initial_agent_billing_fields(template_type),
+                    **_initial_agent_billing_fields(template_type, user=current_user),
                 }
             )
             await session.flush()
@@ -3755,7 +3767,7 @@ async def create_empty_agent(
                     template_config_json=template_config,
                 )
             return JSONResponse(
-                content=_serialize_agent(created_agent, include_external_api_key=True),
+                content=_serialize_agent(created_agent, user=current_user, include_external_api_key=True),
                 status_code=status.HTTP_201_CREATED,
             )
 
@@ -5385,22 +5397,36 @@ async def toggle_status(
                 internal=internal,
             )
             new_status = not agent.is_active
+            billing_user = current_user
+            if billing_user is None or getattr(billing_user, "id", None) != agent.user_id:
+                from ..router_users.dao import UserDAO
+
+                user_dao = UserDAO(session)
+                billing_user = await user_dao.find_one_by_filter(id=agent.user_id)
             if new_status:
                 from ..agent_template_pricing import (
                     build_agent_billing_state,
                     get_agent_template_pricing,
                     is_activation_paid,
+                    user_has_free_agent_activation,
                 )
 
                 pricing = get_agent_template_pricing(agent.template_type)
-                if pricing and pricing.setup_rub_min <= 0 and not is_activation_paid(agent):
+                if (
+                    pricing
+                    and (
+                        pricing.setup_rub_min <= 0
+                        or user_has_free_agent_activation(billing_user)
+                    )
+                    and not is_activation_paid(agent, user=billing_user)
+                ):
                     await agent_dao.update(
                         agent,
                         {"activation_paid_at": datetime.now(timezone.utc).replace(tzinfo=None)},
                     )
                     agent = await agent_dao.find_one_by_filter(id=agent.id)
-                if not is_activation_paid(agent):
-                    billing = build_agent_billing_state(agent)
+                if not is_activation_paid(agent, user=billing_user):
+                    billing = build_agent_billing_state(agent, user=billing_user)
                     raise HTTPException(
                         status_code=status.HTTP_402_PAYMENT_REQUIRED,
                         detail={
@@ -5428,7 +5454,12 @@ async def toggle_status(
                         raise
 
             channels = await _list_agent_channels(session, agent.id)
-            payload = _serialize_agent(agent, include_external_api_key=True, include_encrypted_token=internal)
+            payload = _serialize_agent(
+                agent,
+                user=billing_user,
+                include_external_api_key=True,
+                include_encrypted_token=internal,
+            )
             payload["channels"] = [_serialize_channel_connection(item) for item in channels]
             return JSONResponse(
                 content=payload,

@@ -194,7 +194,13 @@ def requires_activation_payment(template_type: str | None) -> bool:
     return pricing.setup_rub_min > 0
 
 
-def is_activation_paid(agent) -> bool:
+def user_has_free_agent_activation(user) -> bool:
+    return bool(user and getattr(user, "free_agent_activation", False))
+
+
+def is_activation_paid(agent, *, user=None) -> bool:
+    if user_has_free_agent_activation(user):
+        return True
     pricing = get_agent_template_pricing(getattr(agent, "template_type", None))
     if not pricing or pricing.setup_rub_min <= 0:
         return True
@@ -217,10 +223,11 @@ def is_maintenance_current(agent, *, today: date | None = None) -> bool:
     return paid_until >= ref
 
 
-def build_agent_billing_state(agent) -> dict[str, Any]:
+def build_agent_billing_state(agent, *, user=None) -> dict[str, Any]:
     template_type = (getattr(agent, "template_type", None) or "qa").strip().lower()
     pricing = get_agent_template_pricing(template_type) or AGENT_TEMPLATE_PRICING["qa"]
-    activation_paid = is_activation_paid(agent)
+    activation_exempt = user_has_free_agent_activation(user)
+    activation_paid = is_activation_paid(agent, user=user)
     maintenance_current = is_maintenance_current(agent)
     grace_until = maintenance_grace_until(agent)
     grace_active = is_maintenance_grace_active(agent)
@@ -229,6 +236,7 @@ def build_agent_billing_state(agent) -> dict[str, Any]:
         "setup_rub_min": pricing.setup_rub_min,
         "monthly_maintenance_rub_min": pricing.monthly_maintenance_rub_min,
         "is_free": pricing.is_free,
+        "activation_exempt": activation_exempt,
         "activation_paid": activation_paid,
         "maintenance_current": maintenance_current,
         "maintenance_grace_active": grace_active,

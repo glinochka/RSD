@@ -8,12 +8,19 @@ from app.agent_template_pricing import (
     build_agent_billing_state,
     get_agent_template_pricing,
     initial_maintenance_paid_until_for_template,
+    is_activation_paid,
     is_maintenance_grace_active,
     list_public_agent_template_pricing,
     parse_agent_payment_plan_name,
     agent_payment_plan_name,
     PAYMENT_KIND_AGENT_ACTIVATION,
+    user_has_free_agent_activation,
 )
+
+
+class _FakeUser:
+    def __init__(self, *, free_agent_activation: bool = False):
+        self.free_agent_activation = free_agent_activation
 
 
 class _FakeAgent:
@@ -71,6 +78,18 @@ def test_activation_billing_state_unpaid():
     billing = build_agent_billing_state(agent)
     assert billing["can_activate"] is False
     assert billing["activation_required_rub"] == 25_000
+    assert billing["activation_exempt"] is False
+
+
+def test_free_agent_activation_exempt_user():
+    user = _FakeUser(free_agent_activation=True)
+    agent = _FakeAgent(template_type="crm_admin")
+    assert user_has_free_agent_activation(user) is True
+    assert is_activation_paid(agent, user=user) is True
+    billing = build_agent_billing_state(agent, user=user)
+    assert billing["activation_exempt"] is True
+    assert billing["can_activate"] is True
+    assert billing["activation_required_rub"] == 0
 
 
 def test_agent_payment_plan_roundtrip():

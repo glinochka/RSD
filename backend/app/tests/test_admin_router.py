@@ -594,3 +594,87 @@ class TestAdminGiftSubscription:
         )
 
         assert response.status_code == 404
+
+
+class TestAdminFreeAgentActivation:
+    """Tests for POST /api/admin/users/{user_id}/free-agent-activation endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_enable_free_agent_activation(self, client, test_session):
+        from app.utils.JWT import create_access_token
+        from app.utils.security import get_password_hash
+        from app.router_users.dao import UserDAO
+        from sqlalchemy import select
+        from app.alembic.models import User
+
+        admin_token = create_access_token({"admin_web": True})
+        client.headers["Authorization"] = f"Bearer {admin_token}"
+
+        user_dao = UserDAO(test_session)
+        async with test_session.begin():
+            user = await user_dao.add({
+                "name": "freeActivationUser",
+                "password": get_password_hash("password123"),
+                "free_agent_activation": False,
+            })
+            await test_session.commit()
+
+        response = await client.post(
+            f"/api/admin/users/{user.id}/free-agent-activation",
+            json={"enabled": True},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["free_agent_activation"] is True
+
+        async with test_session.begin():
+            result = await test_session.execute(select(User).where(User.id == user.id))
+            updated = result.scalar_one_or_none()
+            assert updated.free_agent_activation is True
+
+    @pytest.mark.asyncio
+    async def test_disable_free_agent_activation(self, client, test_session):
+        from app.utils.JWT import create_access_token
+        from app.utils.security import get_password_hash
+        from app.router_users.dao import UserDAO
+        from sqlalchemy import select
+        from app.alembic.models import User
+
+        admin_token = create_access_token({"admin_web": True})
+        client.headers["Authorization"] = f"Bearer {admin_token}"
+
+        user_dao = UserDAO(test_session)
+        async with test_session.begin():
+            user = await user_dao.add({
+                "name": "paidActivationUser",
+                "password": get_password_hash("password123"),
+                "free_agent_activation": True,
+            })
+            await test_session.commit()
+
+        response = await client.post(
+            f"/api/admin/users/{user.id}/free-agent-activation",
+            json={"enabled": False},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["free_agent_activation"] is False
+
+        async with test_session.begin():
+            result = await test_session.execute(select(User).where(User.id == user.id))
+            updated = result.scalar_one_or_none()
+            assert updated.free_agent_activation is False
+
+    @pytest.mark.asyncio
+    async def test_free_agent_activation_user_not_found(self, client):
+        from app.utils.JWT import create_access_token
+
+        admin_token = create_access_token({"admin_web": True})
+        client.headers["Authorization"] = f"Bearer {admin_token}"
+
+        response = await client.post(
+            "/api/admin/users/999999/free-agent-activation",
+            json={"enabled": True},
+        )
+
+        assert response.status_code == 404

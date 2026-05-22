@@ -1575,6 +1575,25 @@ const ManagementPortal = () => {
     }
   };
 
+  const handleToggleFreeAgentActivation = async (user) => {
+    const next = !user.free_agent_activation;
+    const confirmMsg = next
+      ? `Включить бесплатную активацию агентов для «${user.name}»? Оплата запуска не потребуется.`
+      : `Отключить бесплатную активацию для «${user.name}»?`;
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      setActionInProgress(user.id);
+      setError('');
+      await adminService.setFreeAgentActivation(adminToken, user.id, next);
+      await refreshUsers();
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setActionInProgress(null);
+    }
+  };
+
   const handleGiftSubscription = async () => {
     const { user, planCode } = giftModal;
     if (!user || !planCode) return;
@@ -1966,6 +1985,7 @@ const ManagementPortal = () => {
                   <th>Тариф</th>
                   <th>Подписка до</th>
                   <th>Статус</th>
+                  <th>Активация</th>
                   <th>Действия</th>
                 </tr>
               </thead>
@@ -1998,6 +2018,13 @@ const ManagementPortal = () => {
                         ? <span className="management-badge management-badge-banned">Заблокирован</span>
                         : <span className="management-badge management-badge-active">Активен</span>}
                     </td>
+                    <td>
+                      {user.free_agent_activation ? (
+                        <span className="management-badge management-badge-success">Бесплатно</span>
+                      ) : (
+                        <span className="management-badge management-badge-muted">По тарифу</span>
+                      )}
+                    </td>
                     <td className="management-actions-cell">
                       <button
                         type="button"
@@ -2015,11 +2042,20 @@ const ManagementPortal = () => {
                       >
                         Подарить
                       </button>
+                      <button
+                        type="button"
+                        className={`btn btn-sm ${user.free_agent_activation ? 'btn-outline' : 'btn-black'}`}
+                        disabled={actionInProgress === user.id || user.is_banned}
+                        onClick={() => handleToggleFreeAgentActivation(user)}
+                        title="Бесплатная активация агентов без оплаты запуска"
+                      >
+                        {user.free_agent_activation ? 'Платная активация' : 'Бесплатная активация'}
+                      </button>
                     </td>
                   </tr>
                 ))}
                 {usersState.items.length === 0 && (
-                  <tr><td colSpan={8}>Ничего не найдено</td></tr>
+                  <tr><td colSpan={9}>Ничего не найдено</td></tr>
                 )}
               </tbody>
             </table>

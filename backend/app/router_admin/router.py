@@ -22,6 +22,7 @@ from .schemas import (
     AdminCreateUserRequest,
     AdminEmailBroadcastRequest,
     AdminEmailTargetedPreviewRequest,
+    AdminFreeAgentActivationRequest,
     AdminGiftSubscriptionRequest,
     AdminLoginRequest,
     AdminPromoCodeCreateRequest,
@@ -399,6 +400,7 @@ async def admin_users(
                 user.subscription_end_date.isoformat() if user.subscription_end_date else None
             ),
             "is_banned": user.is_banned,
+            "free_agent_activation": user.free_agent_activation,
             "registered": user.registered.isoformat() if user.registered else None,
         }
         for user in users
@@ -429,6 +431,7 @@ def _serialize_admin_user(user) -> dict:
             user.subscription_end_date.isoformat() if user.subscription_end_date else None
         ),
         "is_banned": user.is_banned,
+        "free_agent_activation": user.free_agent_activation,
         "registered": user.registered.isoformat() if user.registered else None,
     }
 
@@ -994,6 +997,31 @@ async def admin_unban_user(
 
     logger.info("User %s (id=%d) unbanned by admin", user.name, user_id)
     return JSONResponse(content={"detail": "User unbanned"}, status_code=status.HTTP_200_OK)
+
+
+@router.post("/users/{user_id}/free-agent-activation")
+async def admin_set_free_agent_activation(
+    payload: AdminFreeAgentActivationRequest,
+    user_id: int = Path(...),
+    _admin=Depends(get_current_admin),
+):
+    async with async_session_maker() as session:
+        user_dao = UserDAO(session)
+        async with session.begin():
+            user = await user_dao.find_one_by_filter(id=user_id)
+            if not user:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+            await user_dao.update(user, {"free_agent_activation": payload.enabled})
+
+    logger.info(
+        "Admin set free_agent_activation=%s for user id=%d",
+        payload.enabled,
+        user_id,
+    )
+    return JSONResponse(
+        content={"free_agent_activation": payload.enabled},
+        status_code=status.HTTP_200_OK,
+    )
 
 
 @router.post("/users/{user_id}/gift-subscription")

@@ -36,6 +36,10 @@ class AdminGiftSubscriptionRequest(BaseModel):
     )
 
 
+class AdminFreeAgentActivationRequest(BaseModel):
+    enabled: bool = Field(..., description="Бесплатная активация агентов для аккаунта")
+
+
 class AdminPromoCodeCreateRequest(BaseModel):
     code: str = Field(..., min_length=1, max_length=64)
     discount_percent: int = Field(..., ge=0, le=100)
