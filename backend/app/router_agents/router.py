@@ -1345,6 +1345,14 @@ async def _regenerate_external_api_key(agent, agent_dao: AgentDAO) -> str:
     return raw_key
 
 
+async def _resolve_billing_user(session, agent, current_user=None):
+    billing_user = current_user
+    if billing_user is None or getattr(billing_user, "id", None) != agent.user_id:
+        user_dao = UserDAO(session)
+        billing_user = await user_dao.find_one_by_filter(id=agent.user_id)
+    return billing_user
+
+
 def _serialize_agent(
     agent,
     *,
@@ -1383,8 +1391,7 @@ def _serialize_agent(
             data["external_api_key"] = decrypt_token(agent.encrypted_external_api_key)
         else:
             data["external_api_key"] = None
-    owner = user if user is not None else getattr(agent, "user", None)
-    data["billing"] = build_agent_billing_state(agent, user=owner)
+    data["billing"] = build_agent_billing_state(agent, user=user)
     return data
 
 
@@ -3680,9 +3687,10 @@ async def read_agent(
             channels = await _list_agent_channels(session, found_agent.id)
             crm_connections = await _list_agent_crm_connections(session, found_agent.id)
             http_integrations = await _list_agent_http_integrations(session, found_agent.id)
+            billing_user = await _resolve_billing_user(session, found_agent, current_user)
             payload = _serialize_agent(
                 found_agent,
-                user=current_user,
+                user=billing_user,
                 include_external_api_key=True,
                 include_encrypted_token=internal,
             )
@@ -5397,12 +5405,7 @@ async def toggle_status(
                 internal=internal,
             )
             new_status = not agent.is_active
-            billing_user = current_user
-            if billing_user is None or getattr(billing_user, "id", None) != agent.user_id:
-                from ..router_users.dao import UserDAO
-
-                user_dao = UserDAO(session)
-                billing_user = await user_dao.find_one_by_filter(id=agent.user_id)
+            billing_user = await _resolve_billing_user(session, agent, current_user)
             if new_status:
                 from ..agent_template_pricing import (
                     build_agent_billing_state,
@@ -5590,8 +5593,14 @@ async def regenerate_external_api_key(
                 internal=internal,
             )
             await _regenerate_external_api_key(agent, agent_dao)
+            billing_user = await _resolve_billing_user(session, agent, current_user)
             return JSONResponse(
-                content=_serialize_agent(agent, include_external_api_key=True, include_encrypted_token=internal),
+                content=_serialize_agent(
+                    agent,
+                    user=billing_user,
+                    include_external_api_key=True,
+                    include_encrypted_token=internal,
+                ),
                 status_code=status.HTTP_200_OK,
             )
 
