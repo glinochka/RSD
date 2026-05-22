@@ -249,7 +249,7 @@ async def _run_preview_dialogue(
             agent=agent,
             user_transcript=transcript,
             caller_e164=call.caller_e164,
-            use_streaming=False,
+            use_streaming=settings.TELEPHONY_STREAMING_ENABLED,
             persist_turns=persist_turns,
             compressed_history_override=compressed_history_override,
         )

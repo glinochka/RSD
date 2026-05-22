@@ -3,7 +3,7 @@ import type { BridgeAction } from '../providers/types';
 import type { CallSession } from '../session/call_session';
 import { voximplantTtsAdapter } from '../tts/adapter';
 
-const ACK_PHRASES = ['Угу.', 'Понял.', 'Да-да.'];
+const ACK_PHRASES = ['Угу.', 'Эм…', 'Так.', 'Понял.', 'Да-да.'];
 
 export function maybeBackchannelAction(session: CallSession): BridgeAction | null {
   if (session.state !== 'LISTENING' || session.backchannelPlayed) {

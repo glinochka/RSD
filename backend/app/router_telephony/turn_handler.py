@@ -60,18 +60,42 @@ def _call_duration_exceeded(call: AgentTelephonyCall) -> bool:
     return elapsed.total_seconds() >= max_minutes * 60
 
 
-async def _fetch_recording_bytes(recording_url: str) -> bytes:
+def _guess_mime_from_recording_url(recording_url: str) -> str:
+    path = recording_url.lower().split("?", 1)[0]
+    if path.endswith(".mp3"):
+        return "audio/mpeg"
+    if path.endswith(".wav"):
+        return "audio/wav"
+    if path.endswith(".m4a") or path.endswith(".mp4"):
+        return "audio/mp4"
+    if path.endswith(".webm"):
+        return "audio/webm"
+    return "audio/ogg"
+
+
+def _normalize_audio_mime(content_type: str | None, *, recording_url: str | None = None) -> str:
+    raw = (content_type or "").split(";", 1)[0].strip().lower()
+    if raw.startswith("audio/"):
+        return raw
+    if recording_url:
+        return _guess_mime_from_recording_url(recording_url)
+    return "audio/ogg"
+
+
+async def _fetch_recording_bytes(recording_url: str) -> tuple[bytes, str]:
     timeout = httpx.Timeout(
         max(5.0, min(float(settings.TELEPHONY_MAX_TURN_SECONDS), 30.0)),
     )
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
         response = await client.get(recording_url.strip())
         response.raise_for_status()
-        return response.content
+        mime = _normalize_audio_mime(response.headers.get("content-type"), recording_url=recording_url)
+        return response.content, mime
 
 
 async def _transcribe_audio(audio_base64: str | None, *, recording_url: str | None = None) -> str:
     audio_bytes: bytes | None = None
+    mime_type = "audio/ogg"
     if audio_base64:
         try:
             audio_bytes = base64.b64decode(audio_base64, validate=True)
@@ -79,7 +103,7 @@ async def _transcribe_audio(audio_base64: str | None, *, recording_url: str | No
             audio_bytes = None
     elif recording_url:
         try:
-            audio_bytes = await _fetch_recording_bytes(recording_url)
+            audio_bytes, mime_type = await _fetch_recording_bytes(recording_url)
         except Exception:
             logger.warning(
                 "telephony recording fetch failed url=%s",
@@ -88,9 +112,15 @@ async def _transcribe_audio(audio_base64: str | None, *, recording_url: str | No
             audio_bytes = None
 
     if not audio_bytes:
+        if recording_url or audio_base64:
+            logger.warning(
+                "telephony STT skipped: empty audio (has_url=%s has_b64=%s)",
+                bool(recording_url),
+                bool(audio_base64),
+            )
         return ""
     if not is_voice_stt_configured():
-        logger.warning("telephony STT not configured")
+        logger.warning("telephony STT not configured (VOICE_STT_BACKEND / OPENAI_API_KEY)")
         return ""
     stt_timeout = min(
         float(settings.VOICE_TRANSCRIPTION_TIMEOUT_SECONDS),
@@ -98,7 +128,7 @@ async def _transcribe_audio(audio_base64: str | None, *, recording_url: str | No
     )
     try:
         return await asyncio.wait_for(
-            transcribe_voice_bytes(audio_bytes, mime_type="audio/ogg"),
+            transcribe_voice_bytes(audio_bytes, mime_type=mime_type),
             timeout=stt_timeout,
         )
     except TimeoutError:

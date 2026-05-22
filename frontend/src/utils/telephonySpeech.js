@@ -68,7 +68,7 @@ function speechTimeoutMs(text) {
   return Math.min(30_000, Math.max(4_000, words * 450 + 2_000));
 }
 
-export function speakPlainText(text, { lang = 'ru-RU', rate = 0.95 } = {}) {
+export function speakPlainText(text, { lang = 'ru-RU', rate = 1.02, pitch = 1.05 } = {}) {
   return new Promise((resolve) => {
     const plain = stripSsml(text);
     if (!plain || typeof window === 'undefined' || !window.speechSynthesis) {
@@ -90,6 +90,9 @@ export function speakPlainText(text, { lang = 'ru-RU', rate = 0.95 } = {}) {
     const utterance = new SpeechSynthesisUtterance(plain);
     utterance.lang = lang;
     utterance.rate = rate;
+    if (typeof pitch === 'number' && pitch > 0) {
+      utterance.pitch = pitch;
+    }
     const voices = window.speechSynthesis.getVoices() || [];
     const ruVoice = voices.find((v) => (v.lang || '').toLowerCase().startsWith('ru'));
     if (ruVoice) utterance.voice = ruVoice;

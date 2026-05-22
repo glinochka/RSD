@@ -40,6 +40,8 @@ MSG_SERVICE_UNAVAILABLE = "Сервис временно недоступен. �
 MSG_LLM_ERROR = "Извините, техническая ошибка. Сейчас соединю с оператором."
 MSG_LLM_FILLER = "Секунду, думаю над ответом."
 MSG_CRM_FILLER = "Секунду, смотрю в расписании…"
+MSG_RAG_FILLER = "Да, сейчас уточню, подождите пожалуйста."
+_OPENING_ACKS = ("Угу.", "Так.", "Эм…", "Понял.", "Да-да.")
 
 
 @dataclass
@@ -108,6 +110,27 @@ def _crm_tools_slow(tool_events: list[dict[str, Any]]) -> bool:
         if latency >= threshold and event.get("crm_provider"):
             return True
     return False
+
+
+def _prepend_opening_ack(chunks: list[str], *, call_id: int) -> list[str]:
+    if not chunks:
+        return chunks
+    ack = _OPENING_ACKS[int(call_id) % len(_OPENING_ACKS)]
+    first = (chunks[0] or "").strip()
+    prefix = ack.lower().rstrip(".…")
+    if first.lower().startswith(prefix):
+        return chunks
+    out = list(chunks)
+    out[0] = f"{ack} {first}"
+    return out
+
+
+def _filler_for_turn(*, used_rag: bool, crm_slow: bool) -> tuple[str | None, bool]:
+    if crm_slow:
+        return MSG_CRM_FILLER, True
+    if used_rag:
+        return MSG_RAG_FILLER, True
+    return None, False
 
 
 def _apply_prosody_to_chunks(chunks: list[str], *, use_ssml: bool) -> list[str]:
@@ -242,6 +265,7 @@ async def process_phone_turn(
     normalized_template = str(agent.template_type or "qa").strip().lower()
     reply_chunks: list[str] = []
     play_filler = False
+    filler_text: str | None = None
     chat_portrait = await _resolve_chat_portrait(
         session,
         agent_id=agent.id,
@@ -264,7 +288,11 @@ async def process_phone_turn(
             runtime_context=merged_ctx,
         )
         answer = (execution.answer or "").strip()
-        play_filler = _crm_tools_slow(list(execution.tool_events or []))
+        crm_slow = _crm_tools_slow(list(execution.tool_events or []))
+        filler_text, play_filler = _filler_for_turn(
+            used_rag=bool(execution.sources),
+            crm_slow=crm_slow,
+        )
         if streaming_on and answer:
             reply_chunks = split_sentences(answer)
         requires_owner_handoff = bool(execution.requires_owner_handoff)
@@ -276,6 +304,7 @@ async def process_phone_turn(
 
     use_ssml = settings.TELEPHONY_SSML_ENABLED
     reply_chunks = _apply_prosody_to_chunks(reply_chunks, use_ssml=use_ssml)
+    reply_chunks = _prepend_opening_ack(reply_chunks, call_id=int(call.id))
     if answer and not reply_chunks:
         answer = wrap_ssml_prosody(format_spoken_numbers(answer)) if use_ssml else format_spoken_numbers(answer)
 
@@ -284,8 +313,8 @@ async def process_phone_turn(
         keyword_transfer = True
     if orch.state == DialogState.CLOSE and not detect_hangup_intent(answer):
         actions.append({"type": "hangup", "reason": "dialog_close"})
-    if play_filler:
-        actions.append({"type": "play_filler", "text": MSG_CRM_FILLER})
+    if play_filler and filler_text:
+        actions.append({"type": "play_filler", "text": filler_text})
 
     requires_transfer = requires_owner_handoff or keyword_transfer
 

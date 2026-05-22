@@ -33,7 +33,14 @@ function TelephonyVoicePreview({ agentId, hasTelephonyChannel, showError, showSu
   const [transcriptInput, setTranscriptInput] = useState('');
   const [lastUserText, setLastUserText] = useState('');
   const [lastAgentText, setLastAgentText] = useState('');
-  const [useBrowserStt, setUseBrowserStt] = useState(speechRecognitionSupported());
+  const [useBrowserStt, setUseBrowserStt] = useState(() => {
+    if (!speechRecognitionSupported()) return false;
+    // На Android Web Speech часто не отдаёт текст; надёжнее MediaRecorder + серверный STT.
+    if (typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent || '')) {
+      return false;
+    }
+    return true;
+  });
   const [isRecording, setIsRecording] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
 
@@ -121,9 +128,18 @@ function TelephonyVoicePreview({ agentId, hasTelephonyChannel, showError, showSu
 
   const playAgentReply = useCallback(
     async (data) => {
+      const fillerLines = (Array.isArray(data?.actions) ? data.actions : [])
+        .filter((a) => a?.type === 'play_filler' && a?.text)
+        .map((a) => stripSsml(String(a.text)));
       const chunks = Array.isArray(data?.reply_chunks_plain) ? data.reply_chunks_plain : [];
       const lines = chunks.length ? chunks : [data?.reply_plain || data?.reply_text || ''];
       setPhase('speaking');
+      for (const line of fillerLines) {
+        if (!line) continue;
+        setLastAgentText(line);
+        // eslint-disable-next-line no-await-in-loop
+        await speakPlainText(line);
+      }
       for (const line of lines) {
         const plain = stripSsml(line);
         if (!plain) continue;
