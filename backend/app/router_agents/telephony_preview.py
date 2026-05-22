@@ -158,7 +158,18 @@ def _preview_tts_meta(voice_id: str) -> dict[str, Any]:
         "available": is_preview_tts_configured(),
         "provider": provider,
         "voice_id": mapped,
+        "api": "speech/v1/tts:synthesize",
     }
+
+
+def get_preview_tts_status(*, voice_id: str = "default") -> dict[str, Any]:
+    """Публичная сводка для UI: настроен ли внешний TTS на backend."""
+    return _preview_tts_meta(voice_id)
+
+
+async def preview_tts_status_for_agent(session: AsyncSession, *, agent: Agent) -> dict[str, Any]:
+    voice_id = await _resolve_agent_voice_id(session, int(agent.id))
+    return {"agent_id": int(agent.id), **get_preview_tts_status(voice_id=voice_id)}
 
 
 async def synthesize_preview_speech_for_agent(
@@ -176,6 +187,7 @@ async def synthesize_preview_speech_for_agent(
             ),
         )
     voice_id = await _resolve_agent_voice_id(session, int(agent.id))
+    logger.info("preview tts speak agent_id=%s text_len=%s", agent.id, len(text))
     try:
         audio_bytes, mime_type, provider = await synthesize_preview_speech(
             text,

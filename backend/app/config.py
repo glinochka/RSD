@@ -126,6 +126,8 @@ class Settings(BaseSettings):
     TELEPHONY_MAX_TURNS: int = 15
     TELEPHONY_TTS_PROVIDER: Literal["voximplant", "yandex", "openai"] = "voximplant"
     YANDEX_SPEECHKIT_API_KEY: str = ""
+    # Опционально: каталог Yandex Cloud (x-folder-id) для учёта в консоли.
+    YANDEX_SPEECHKIT_FOLDER_ID: str = ""
     TELEPHONY_TTS_TIMEOUT_SECONDS: float = 20.0
     TELEPHONY_WEBHOOK_BASE_URL: str = ""
     TELEPHONY_WEBHOOK_SIGNATURE_TTL_SECONDS: int = 300

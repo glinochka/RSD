@@ -118,13 +118,13 @@ async def synthesize_preview_speech(
     mapped_voice = map_voice_for_provider(provider, voice_id)
 
     if provider == "yandex":
-        audio = await _synthesize_yandex(
+        audio, mime = await _synthesize_yandex(
             plain,
             voice=mapped_voice,
             lang=(language or "ru-RU").strip() or "ru-RU",
             timeout=timeout,
         )
-        return audio, "audio/ogg", "yandex"
+        return audio, mime, "yandex"
 
     audio = await _synthesize_openai(plain, voice=mapped_voice, timeout=timeout)
     return audio, "audio/mpeg", "openai"
@@ -136,20 +136,25 @@ async def _synthesize_yandex(
     voice: str,
     lang: str,
     timeout: float,
-) -> bytes:
+) -> tuple[bytes, str]:
     api_key = (settings.YANDEX_SPEECHKIT_API_KEY or "").strip()
     if not api_key:
         raise RuntimeError("yandex_speechkit_key_missing")
 
+    folder_id = (settings.YANDEX_SPEECHKIT_FOLDER_ID or "").strip()
+    # mp3 — лучше воспроизводится в мобильных браузерах, чем oggopus.
     data = {
         "text": text,
         "lang": lang,
         "voice": voice,
-        "format": "oggopus",
+        "format": "mp3",
         "speed": "1.0",
-        "emotion": "good",
     }
+    if voice in {"alena", "jane", "omazh", "dasha", "marina"}:
+        data["emotion"] = "good"
     headers = {"Authorization": f"Api-Key {api_key}"}
+    if folder_id:
+        headers["x-folder-id"] = folder_id
 
     async with httpx.AsyncClient(timeout=timeout) as client:
         response = await client.post(_YANDEX_TTS_URL, data=data, headers=headers)
@@ -158,7 +163,14 @@ async def _synthesize_yandex(
         response.raise_for_status()
     if not response.content:
         raise RuntimeError("yandex_tts_empty_response")
-    return response.content
+    logger.info(
+        "yandex tts ok voice=%s chars=%s bytes=%s folder=%s",
+        voice,
+        len(text),
+        len(response.content),
+        folder_id or "-",
+    )
+    return response.content, "audio/mpeg"
 
 
 async def _synthesize_openai(text: str, *, voice: str, timeout: float) -> bytes:

@@ -88,6 +88,7 @@ from .telephony_channel import (
 from .telephony_analytics import list_agent_telephony_calls
 from .telephony_preview import (
     end_telephony_preview_session,
+    preview_tts_status_for_agent,
     run_telephony_preview_turn,
     start_telephony_preview_session,
     synthesize_preview_speech_for_agent,
@@ -6072,6 +6073,27 @@ async def read_analytics_telephony_calls(
 _TELEPHONY_PREVIEW_RATE = Depends(
     rate_limit(max_requests=30, window_seconds=60, scope="agents_telephony_preview")
 )
+
+
+@router.get("/telephony/preview/tts-status")
+async def telephony_preview_tts_status(
+    agent_id: int = Query(..., gt=0),
+    current_user=Depends(get_current_user_required),
+    _rate_limited=_TELEPHONY_PREVIEW_RATE,
+):
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=agent_id,
+                bot_id=None,
+                session=session,
+                current_user=current_user,
+                internal=False,
+            )
+            data = await preview_tts_status_for_agent(session, agent=agent)
+            return JSONResponse(content=data, status_code=status.HTTP_200_OK)
 
 
 @router.post("/telephony/preview/start")

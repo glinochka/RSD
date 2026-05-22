@@ -375,21 +375,31 @@ export async function playAudioBase64(base64, mimeType = 'audio/ogg') {
 /**
  * Озвучка реплики оператора: внешний TTS (Yandex/OpenAI) или fallback на браузер.
  */
-export async function speakAgentLine(text, { agentId, useExternalTts, speakApi }) {
+export async function speakAgentLine(
+  text,
+  { agentId, useExternalTts = true, speakApi, onExternalTtsError } = {}
+) {
   const plain = stripSsml(text);
-  if (!plain) return;
+  if (!plain) return { provider: 'none' };
+
   if (useExternalTts && agentId && speakApi) {
     try {
       const data = await speakApi({ agent_id: agentId, text: plain });
       if (data?.audio_base64) {
-        await playAudioBase64(data.audio_base64, data.mime_type);
-        return;
+        await playAudioBase64(data.audio_base64, data.mime_type || 'audio/mpeg');
+        return { provider: data.provider || 'external' };
       }
-    } catch {
-      /* fallback to browser TTS */
+      throw new Error('Пустой ответ TTS с сервера');
+    } catch (error) {
+      if (onExternalTtsError) {
+        onExternalTtsError(error);
+      }
+      console.warn('External TTS failed, falling back to browser speechSynthesis', error);
     }
   }
+
   await speakPlainText(plain);
+  return { provider: 'browser' };
 }
 
 function speechTimeoutMs(text) {

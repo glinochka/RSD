@@ -129,6 +129,13 @@ export const agentService = {
     return response.data;
   },
 
+  getTelephonyPreviewTtsStatus: async (agentId) => {
+    const response = await apiClient.get(API_ROUTES.AGENTS_TELEPHONY_PREVIEW_TTS_STATUS, {
+      params: { agent_id: agentId },
+    });
+    return response.data;
+  },
+
   startTelephonyPreview: async (data, options = {}) => {
     const response = await apiClient.post(API_ROUTES.AGENTS_TELEPHONY_PREVIEW_START, data, {
       timeout: options.timeout ?? TELEPHONY_PREVIEW_TIMEOUT_MS,

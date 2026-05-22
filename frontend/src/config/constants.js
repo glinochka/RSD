@@ -57,6 +57,7 @@ export const API_ROUTES = {
   AGENTS_CHANNELS_DELETE: '/api/agents/channels',
   AGENTS_ANALYTICS_TELEPHONY_CALLS: '/api/agents/analytics/telephony/calls',
   AGENTS_TELEPHONY_PREVIEW_START: '/api/agents/telephony/preview/start',
+  AGENTS_TELEPHONY_PREVIEW_TTS_STATUS: '/api/agents/telephony/preview/tts-status',
   AGENTS_TELEPHONY_PREVIEW_TURN: '/api/agents/telephony/preview/turn',
   AGENTS_TELEPHONY_PREVIEW_SPEAK: '/api/agents/telephony/preview/speak',
   AGENTS_TELEPHONY_PREVIEW_END: '/api/agents/telephony/preview/end',

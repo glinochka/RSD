@@ -43,6 +43,8 @@ function TelephonyVoicePreview({ agentId, hasTelephonyChannel, showError, showSu
   const [micActive, setMicActive] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
   const [externalTts, setExternalTts] = useState({ available: false, provider: null, voiceId: null });
+  const [lastTtsProvider, setLastTtsProvider] = useState(null);
+  const ttsFallbackWarnedRef = useRef(false);
 
   const autoListenerRef = useRef(null);
   const phaseRef = useRef(phase);
@@ -100,16 +102,53 @@ function TelephonyVoicePreview({ agentId, hasTelephonyChannel, showError, showSu
     setBusy(false);
   }, [agentId, callDbId, previewSessionId, resetSession, stopAutoListener]);
 
+  const handleExternalTtsError = useCallback(
+    (error) => {
+      if (ttsFallbackWarnedRef.current) return;
+      ttsFallbackWarnedRef.current = true;
+      const msg = error?.response?.data?.detail || error?.message || 'внешний TTS недоступен';
+      showError?.(
+        `Yandex SpeechKit не ответил (${msg}). Используется голос браузера. Проверьте ключ на сервере и перезапустите backend.`
+      );
+    },
+    [showError]
+  );
+
   const speakLine = useCallback(
     async (text) => {
-      await speakAgentLine(text, {
+      const result = await speakAgentLine(text, {
         agentId,
-        useExternalTts: externalTts.available,
+        useExternalTts: true,
         speakApi: agentService.telephonyPreviewSpeak,
+        onExternalTtsError: handleExternalTtsError,
       });
+      if (result?.provider) setLastTtsProvider(result.provider);
     },
-    [agentId, externalTts.available]
+    [agentId, handleExternalTtsError]
   );
+
+  useEffect(() => {
+    if (!agentId) return;
+    let cancelled = false;
+    agentService
+      .getTelephonyPreviewTtsStatus(agentId)
+      .then((data) => {
+        if (cancelled) return;
+        setExternalTts({
+          available: Boolean(data?.available),
+          provider: data?.provider || null,
+          voiceId: data?.voice_id || null,
+        });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setExternalTts({ available: false, provider: null, voiceId: null });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [agentId]);
 
   const applyTurnMeta = useCallback((data) => {
     if (data?.dialog_state) setDialogState(data.dialog_state);
@@ -271,6 +310,8 @@ function TelephonyVoicePreview({ agentId, hasTelephonyChannel, showError, showSu
     if (busyRef.current) return;
     setBusy(true);
     setPhase('starting');
+    ttsFallbackWarnedRef.current = false;
+    setLastTtsProvider(null);
     stopSpeaking();
     stopAutoListener();
     resetSession();
@@ -300,11 +341,13 @@ function TelephonyVoicePreview({ agentId, hasTelephonyChannel, showError, showSu
       setPhase('speaking');
       autoListenEnabledRef.current = false;
       if (welcomePlain) {
-        await speakAgentLine(welcomePlain, {
+        const welcomeResult = await speakAgentLine(welcomePlain, {
           agentId,
-          useExternalTts: ttsMeta.available,
+          useExternalTts: true,
           speakApi: agentService.telephonyPreviewSpeak,
+          onExternalTtsError: handleExternalTtsError,
         });
+        if (welcomeResult?.provider) setLastTtsProvider(welcomeResult.provider);
       }
       autoListenEnabledRef.current = true;
       setPhase('listening');
@@ -331,8 +374,8 @@ function TelephonyVoicePreview({ agentId, hasTelephonyChannel, showError, showSu
 
   const statusKey = phase;
   const ttsNote = externalTts.available
-    ? `Озвучка: ${externalTts.provider === 'yandex' ? 'Yandex SpeechKit' : externalTts.provider === 'openai' ? 'OpenAI TTS' : 'внешний TTS'}${externalTts.voiceId ? ` (${externalTts.voiceId})` : ''}.`
-    : 'Озвучка: браузер (для SpeechKit добавьте YANDEX_SPEECHKIT_API_KEY на сервере).';
+    ? `Озвучка на сервере: ${externalTts.provider === 'yandex' ? 'Yandex SpeechKit' : externalTts.provider === 'openai' ? 'OpenAI TTS' : 'внешний TTS'}${externalTts.voiceId ? `, голос ${externalTts.voiceId}` : ''}${lastTtsProvider === 'browser' ? ' (сейчас fallback: браузер)' : ''}.`
+    : 'Озвучка: только браузер — на сервере нет YANDEX_SPEECHKIT_API_KEY или не перезапущен backend.';
   const modeNote = hasTelephonyChannel
     ? 'Подключена телефония — тест ближе к боевому звонку (история в аналитике).'
     : 'Телефония не подключена — тестируется логика голосового оператора без Voximplant.';
