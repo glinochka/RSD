@@ -161,6 +161,8 @@ async def process_phone_turn(
     use_streaming: bool | None = None,
     barged_in: bool = False,
     interrupted_agent_text: str | None = None,
+    persist_turns: bool = True,
+    compressed_history_override: str | None = None,
 ) -> PhoneTurnResult:
     base_ctx = dict(runtime_context or {})
     transcript = (user_transcript or "").strip()
@@ -211,9 +213,13 @@ async def process_phone_turn(
         message_text=transcript,
         caller_e164=caller_e164,
     )
-    await _persist_turn(session, call_db_id=int(call.id), role="user", transcript=transcript, latency_ms=None)
+    if persist_turns:
+        await _persist_turn(session, call_db_id=int(call.id), role="user", transcript=transcript, latency_ms=None)
 
-    compressed = await build_compressed_turn_context(session, int(call.id))
+    if compressed_history_override is not None:
+        compressed = compressed_history_override
+    else:
+        compressed = await build_compressed_turn_context(session, int(call.id))
     orch = decide_orchestrator(
         call,
         transcript=transcript,
@@ -292,13 +298,14 @@ async def process_phone_turn(
             message_text=answer or "До свидания!",
             caller_e164=caller_e164,
         )
-        await _persist_turn(
-            session,
-            call_db_id=int(call.id),
-            role="agent",
-            transcript=answer or "До свидания!",
-            latency_ms=None,
-        )
+        if persist_turns:
+            await _persist_turn(
+                session,
+                call_db_id=int(call.id),
+                role="agent",
+                transcript=answer or "До свидания!",
+                latency_ms=None,
+            )
         return PhoneTurnResult(
             reply_text=answer or "До свидания! Хорошего дня.",
             actions=[{"type": "hangup", "reason": "agent_goodbye"}],
@@ -335,7 +342,8 @@ async def process_phone_turn(
         message_text=answer,
         caller_e164=caller_e164,
     )
-    await _persist_turn(session, call_db_id=int(call.id), role="agent", transcript=answer, latency_ms=None)
+    if persist_turns:
+        await _persist_turn(session, call_db_id=int(call.id), role="agent", transcript=answer, latency_ms=None)
 
     logger.info(
         "telephony turn agent_id=%s call_db_id=%s transcript_len=%s",

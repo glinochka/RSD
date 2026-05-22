@@ -26,6 +26,10 @@ const STATUS_LABEL = {
 function TelephonyVoicePreview({ agentId, hasTelephonyChannel, showError, showSuccess }) {
   const [phase, setPhase] = useState('idle');
   const [callDbId, setCallDbId] = useState(null);
+  const [previewSessionId, setPreviewSessionId] = useState(null);
+  const [previewMode, setPreviewMode] = useState(null);
+  const [dialogState, setDialogState] = useState(null);
+  const [turnHistory, setTurnHistory] = useState([]);
   const [transcriptInput, setTranscriptInput] = useState('');
   const [lastUserText, setLastUserText] = useState('');
   const [lastAgentText, setLastAgentText] = useState('');
@@ -41,6 +45,16 @@ function TelephonyVoicePreview({ agentId, hasTelephonyChannel, showError, showSu
   const setBusy = (value) => {
     busyRef.current = value;
   };
+
+  const sessionActive = Boolean(callDbId || previewSessionId);
+
+  const resetSession = useCallback(() => {
+    setCallDbId(null);
+    setPreviewSessionId(null);
+    setPreviewMode(null);
+    setDialogState(null);
+    setTurnHistory([]);
+  }, []);
 
   const cleanupMic = useCallback(() => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
@@ -73,59 +87,80 @@ function TelephonyVoicePreview({ agentId, hasTelephonyChannel, showError, showSu
   }, [cleanupMic]);
 
   const endSession = useCallback(async () => {
-    if (callDbId) {
+    const body = { agent_id: agentId };
+    if (callDbId) body.call_db_id = callDbId;
+    else if (previewSessionId) body.preview_session_id = previewSessionId;
+    if (callDbId || previewSessionId) {
       try {
-        await agentService.endTelephonyPreview({ agent_id: agentId, call_db_id: callDbId });
+        await agentService.endTelephonyPreview(body);
       } catch {
         /* best effort */
       }
     }
-    setCallDbId(null);
+    resetSession();
     setPhase('idle');
     cleanupMic();
     stopSpeaking();
     setBusy(false);
-  }, [agentId, callDbId, cleanupMic]);
+  }, [agentId, callDbId, cleanupMic, previewSessionId, resetSession]);
 
-  const playAgentReply = useCallback(async (data) => {
-    const chunks = Array.isArray(data?.reply_chunks_plain) ? data.reply_chunks_plain : [];
-    const lines = chunks.length ? chunks : [data?.reply_plain || data?.reply_text || ''];
-    setPhase('speaking');
-    for (const line of lines) {
-      const plain = stripSsml(line);
-      if (!plain) continue;
-      setLastAgentText(plain);
-      // eslint-disable-next-line no-await-in-loop
-      await speakPlainText(plain);
-    }
-    if (data?.ended) {
-      setPhase('ended');
-      setCallDbId(null);
-    } else {
-      setPhase('listening');
+  const applyTurnMeta = useCallback((data) => {
+    if (data?.dialog_state) setDialogState(data.dialog_state);
+    if (Array.isArray(data?.turn_history)) setTurnHistory(data.turn_history);
+    if (data?.preview_session_id) setPreviewSessionId(data.preview_session_id);
+    if (data?.mode) setPreviewMode(data.mode);
+    if (data?.call_db_id) setCallDbId(data.call_db_id);
+    else if (data?.ended && data?.mode === 'voice_logic') {
+      setPreviewSessionId(null);
     }
   }, []);
 
+  const playAgentReply = useCallback(
+    async (data) => {
+      const chunks = Array.isArray(data?.reply_chunks_plain) ? data.reply_chunks_plain : [];
+      const lines = chunks.length ? chunks : [data?.reply_plain || data?.reply_text || ''];
+      setPhase('speaking');
+      for (const line of lines) {
+        const plain = stripSsml(line);
+        if (!plain) continue;
+        setLastAgentText(plain);
+        // eslint-disable-next-line no-await-in-loop
+        await speakPlainText(plain);
+      }
+      applyTurnMeta(data);
+      if (data?.ended) {
+        setPhase('ended');
+        resetSession();
+      } else {
+        setPhase('listening');
+      }
+    },
+    [applyTurnMeta, resetSession]
+  );
+
   const sendTurn = useCallback(
     async ({ userTranscript, audioBase64, audioMimeType }) => {
-      if (!callDbId || busyRef.current) return;
+      if (!sessionActive || busyRef.current) return;
       setBusy(true);
       setPhase('processing');
       try {
-        const data = await agentService.telephonyPreviewTurn(
-          {
-            agent_id: agentId,
-            call_db_id: callDbId,
-            user_transcript: userTranscript || undefined,
-            audio_base64: audioBase64 || undefined,
-            audio_mime_type: audioMimeType || undefined,
-          },
-          { timeout: PREVIEW_TIMEOUT_MS }
-        );
+        const payload = {
+          agent_id: agentId,
+          user_transcript: userTranscript || undefined,
+          audio_base64: audioBase64 || undefined,
+          audio_mime_type: audioMimeType || undefined,
+        };
+        if (callDbId) payload.call_db_id = callDbId;
+        else {
+          payload.preview_session_id = previewSessionId;
+          if (dialogState) payload.dialog_state = dialogState;
+          if (turnHistory.length) payload.turn_history = turnHistory;
+        }
+        const data = await agentService.telephonyPreviewTurn(payload, { timeout: PREVIEW_TIMEOUT_MS });
         if (userTranscript) setLastUserText(userTranscript);
         await playAgentReply(data);
         if (data?.ended) {
-          showSuccess?.('Тестовый звонок завершён (как при реальном разговоре)');
+          showSuccess?.('Тестовый разговор завершён');
         }
       } catch (error) {
         setPhase('error');
@@ -134,7 +169,17 @@ function TelephonyVoicePreview({ agentId, hasTelephonyChannel, showError, showSu
         setBusy(false);
       }
     },
-    [agentId, callDbId, playAgentReply, showError, showSuccess]
+    [
+      agentId,
+      callDbId,
+      dialogState,
+      playAgentReply,
+      previewSessionId,
+      sessionActive,
+      showError,
+      showSuccess,
+      turnHistory,
+    ]
   );
 
   const startSession = async () => {
@@ -142,6 +187,7 @@ function TelephonyVoicePreview({ agentId, hasTelephonyChannel, showError, showSu
     setBusy(true);
     setPhase('starting');
     stopSpeaking();
+    resetSession();
     setLastUserText('');
     setLastAgentText('');
     try {
@@ -149,17 +195,24 @@ function TelephonyVoicePreview({ agentId, hasTelephonyChannel, showError, showSu
         { agent_id: agentId },
         { timeout: PREVIEW_TIMEOUT_MS }
       );
-      setCallDbId(data.call_db_id);
+      if (data.call_db_id) setCallDbId(data.call_db_id);
+      if (data.preview_session_id) setPreviewSessionId(data.preview_session_id);
+      setPreviewMode(data.mode || (data.call_db_id ? 'telephony_pipeline' : 'voice_logic'));
+      if (data.dialog_state) setDialogState(data.dialog_state);
+      if (Array.isArray(data.turn_history)) setTurnHistory(data.turn_history);
       setPhase('speaking');
       const welcome = data.welcome_plain || data.welcome_text || '';
       setLastAgentText(stripSsml(welcome));
       await speakPlainText(welcome);
       setPhase('listening');
-      showSuccess?.('Тестовый звонок начат. Говорите в микрофон или введите фразу текстом.');
+      const hint = hasTelephonyChannel
+        ? 'Тестовый звонок начат (полный телефонный контур).'
+        : 'Тест без телефонии: та же логика ответов, озвучка в браузере.';
+      showSuccess?.(hint);
     } catch (error) {
       setPhase('error');
       showError?.(error?.message || 'Не удалось начать тестовый звонок');
-      setCallDbId(null);
+      resetSession();
     } finally {
       setBusy(false);
     }
@@ -181,7 +234,7 @@ function TelephonyVoicePreview({ agentId, hasTelephonyChannel, showError, showSu
     recordChunksRef.current = [];
     if (!blob.size) {
       showError?.('Запись пустая. Повторите фразу.');
-      setPhase(callDbId ? 'listening' : 'idle');
+      setPhase(sessionActive ? 'listening' : 'idle');
       return;
     }
     const audioBase64 = await blobToBase64(blob);
@@ -189,7 +242,7 @@ function TelephonyVoicePreview({ agentId, hasTelephonyChannel, showError, showSu
   };
 
   const startMicRecording = async () => {
-    if (!callDbId || busyRef.current || isRecording) return;
+    if (!sessionActive || busyRef.current || isRecording) return;
     if (useBrowserStt && speechRecognitionSupported()) {
       setPhase('listening');
       setIsRecording(true);
@@ -252,31 +305,25 @@ function TelephonyVoicePreview({ agentId, hasTelephonyChannel, showError, showSu
   const handleTextSubmit = async (e) => {
     e.preventDefault();
     const text = transcriptInput.trim();
-    if (!text || !callDbId) return;
+    if (!text || !sessionActive) return;
     setTranscriptInput('');
     await sendTurn({ userTranscript: text });
   };
 
-  const active = Boolean(callDbId);
   const statusKey = phase === 'listening' && isRecording ? 'listening' : phase;
-
-  if (!hasTelephonyChannel) {
-    return (
-      <div className="telephony-voice-preview telephony-voice-preview--muted">
-        <p className="telephony-voice-preview-hint">
-          Подключите канал «Телефония», чтобы протестировать голосового ИИ-оператора прямо в браузере (без звонка на
-          номер).
-        </p>
-      </div>
-    );
-  }
+  const modeNote = hasTelephonyChannel
+    ? 'Подключена телефония — тест ближе к боевому звонку (история в аналитике).'
+    : 'Телефония не подключена — тестируется логика голосового оператора без Voximplant.';
 
   return (
     <div className="telephony-voice-preview">
       <p className="telephony-voice-preview-hint">
-        Имитация телефонного разговора: ваш голос → тот же ИИ и база знаний, что на линии → ответ озвучивается в
-        браузере. Это не PSTN-звонок; задержки и голос CPaaS могут отличаться.
+        Голосовой тест в браузере: микрофон → ИИ (канал phone) → ответ озвучивается здесь же. Без звонка на номер.{' '}
+        {modeNote}
       </p>
+      {previewMode === 'voice_logic' && sessionActive ? (
+        <p className="telephony-voice-preview-mode-badge">Режим: без телефонии</p>
+      ) : null}
       <div className="telephony-voice-preview-status" aria-live="polite">
         {STATUS_LABEL[statusKey] || phase}
       </div>
@@ -297,7 +344,7 @@ function TelephonyVoicePreview({ agentId, hasTelephonyChannel, showError, showSu
       )}
 
       <div className="telephony-voice-preview-actions">
-        {!active ? (
+        {!sessionActive ? (
           <button type="button" className="btn btn-black" onClick={startSession} disabled={busyRef.current}>
             Начать тестовый звонок
           </button>
@@ -328,18 +375,14 @@ function TelephonyVoicePreview({ agentId, hasTelephonyChannel, showError, showSu
         )}
       </div>
 
-      {active && speechRecognitionSupported() && (
+      {sessionActive && speechRecognitionSupported() && (
         <label className="telephony-voice-preview-stt-toggle">
-          <input
-            type="checkbox"
-            checked={useBrowserStt}
-            onChange={(e) => setUseBrowserStt(e.target.checked)}
-          />
+          <input type="checkbox" checked={useBrowserStt} onChange={(e) => setUseBrowserStt(e.target.checked)} />
           Распознавание в браузере (быстрее, без отправки аудио на сервер)
         </label>
       )}
 
-      {active && (
+      {sessionActive && (
         <form className="telephony-voice-preview-text-fallback" onSubmit={handleTextSubmit}>
           <input
             type="text"

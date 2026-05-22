@@ -20,6 +20,13 @@
   color: rgba(0, 0, 0, 0.65);
 }
 
+.telephony-voice-preview-mode-badge {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: rgba(0, 0, 0, 0.55);
+}
+
 .telephony-voice-preview-status {
   font-weight: 600;
   font-size: 0.95rem;

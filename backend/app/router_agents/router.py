@@ -6087,17 +6087,23 @@ async def telephony_preview_turn(
             )
             if not agent.is_active:
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Agent is disabled")
+            history = None
+            if payload.turn_history:
+                history = [item.model_dump() for item in payload.turn_history]
             data = await run_telephony_preview_turn(
                 session,
                 agent=agent,
                 owner_user_id=int(current_user.id),
-                call_db_id=int(payload.call_db_id),
+                call_db_id=int(payload.call_db_id) if payload.call_db_id is not None else None,
+                preview_session_id=(payload.preview_session_id or "").strip() or None,
+                dialog_state=(payload.dialog_state or "").strip() or None,
+                turn_history=history,
                 user_transcript=payload.user_transcript,
                 audio_base64=payload.audio_base64,
                 audio_mime_type=payload.audio_mime_type,
             )
             return JSONResponse(
-                content={"agent_id": agent.id, "call_db_id": int(payload.call_db_id), **data},
+                content={"agent_id": agent.id, **data},
                 status_code=status.HTTP_200_OK,
             )
 
@@ -6124,7 +6130,8 @@ async def telephony_preview_end(
                 session,
                 agent=agent,
                 owner_user_id=int(current_user.id),
-                call_db_id=int(payload.call_db_id),
+                call_db_id=int(payload.call_db_id) if payload.call_db_id is not None else None,
+                preview_session_id=(payload.preview_session_id or "").strip() or None,
             )
             return JSONResponse(
                 content={"agent_id": agent.id, **data},
