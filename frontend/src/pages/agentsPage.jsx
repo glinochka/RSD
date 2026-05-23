@@ -566,6 +566,8 @@ const AgentsPageContent = () => {
   const [telephonyLanguage, setTelephonyLanguage] = useState('ru-RU');
   const [telephonyRecordCalls, setTelephonyRecordCalls] = useState(true);
   const [telephonyDisclaimerPlayed, setTelephonyDisclaimerPlayed] = useState(true);
+  const [telephonyRoutingExtension, setTelephonyRoutingExtension] = useState('');
+  const [telephonyInboundNumbers, setTelephonyInboundNumbers] = useState('');
   const [telephonyValidateStatus, setTelephonyValidateStatus] = useState('');
   const [telephonyWebhookUrl, setTelephonyWebhookUrl] = useState('');
   const [isValidatingTelephony, setIsValidatingTelephony] = useState(false);
@@ -1279,6 +1281,8 @@ const AgentsPageContent = () => {
     setTelephonyLanguage('ru-RU');
     setTelephonyRecordCalls(true);
     setTelephonyDisclaimerPlayed(true);
+    setTelephonyRoutingExtension('');
+    setTelephonyInboundNumbers('');
     setTelephonyValidateStatus('');
     setTelephonyWebhookUrl('');
     setIsValidatingTelephony(false);
@@ -1295,6 +1299,11 @@ const AgentsPageContent = () => {
     language: telephonyLanguage.trim() || 'ru-RU',
     record_calls: telephonyRecordCalls,
     disclaimer_played: telephonyDisclaimerPlayed,
+    routing_extension: telephonyRoutingExtension.trim() || null,
+    inbound_numbers: telephonyInboundNumbers
+      .split(/[\n,;]+/)
+      .map((s) => s.trim())
+      .filter(Boolean),
   });
 
   const handleValidateTelephony = async () => {
@@ -1349,6 +1358,31 @@ const AgentsPageContent = () => {
     }
   };
 
+  const handleUpdateTelephonyRouting = async () => {
+    if (!selectedBotId) return;
+    setIsSavingChannel(true);
+    try {
+      const res = await agentService.updateTelephonyRouting({
+        agent_id: selectedBotId,
+        routing_extension: telephonyRoutingExtension.trim() || null,
+        inbound_numbers: telephonyInboundNumbers
+          .split(/[\n,;]+/)
+          .map((s) => s.trim())
+          .filter(Boolean),
+      });
+      const list = res?.channels || [];
+      if (list.length) {
+        setChannels(list);
+        setSelectedAgent((prev) => (prev ? { ...prev, channels: list } : prev));
+      }
+      showSuccess('Маршрутизация телефонии обновлена');
+    } catch (error) {
+      showError(error?.message || 'Не удалось обновить маршрутизацию');
+    } finally {
+      setIsSavingChannel(false);
+    }
+  };
+
   const handleCopyTelephonyWebhook = async () => {
     const url =
       telephonyWebhookUrl ||
@@ -1388,6 +1422,11 @@ const AgentsPageContent = () => {
       const tel = findTelephonyChannel(list);
       if (tel?.telephony_webhook_url) {
         setTelephonyWebhookUrl(tel.telephony_webhook_url);
+      }
+      const routing = tel?.telephony_routing;
+      if (routing) {
+        setTelephonyRoutingExtension(routing.routing_extension || '');
+        setTelephonyInboundNumbers((routing.inbound_numbers || []).join('\n'));
       }
     } catch (error) {
       showError(error?.message || 'Не удалось загрузить каналы подключения');
@@ -2868,9 +2907,41 @@ const AgentsPageContent = () => {
                       Телефония (ИИ-оператор, Voximplant)
                     </TitleWithDemoBadge>
                     {hasTelephonyChannel ? (
-                      <p className="help-text userbot-success">
-                        Канал подключён: {telephonyChannel.external_id}. Удалите канал в списке выше, чтобы переподключить.
-                      </p>
+                      <>
+                        <p className="help-text userbot-success">
+                          Канал подключён: {telephonyChannel.external_id}. Удалите канал в списке выше, чтобы переподключить.
+                        </p>
+                        <input
+                          type="text"
+                          className="input-main"
+                          placeholder="Добавочный (4 цифры) для общего номера"
+                          value={telephonyRoutingExtension}
+                          onChange={(e) =>
+                            setTelephonyRoutingExtension(e.target.value.replace(/\D/g, '').slice(0, 4))
+                          }
+                          disabled={isSavingChannel}
+                          maxLength={4}
+                        />
+                        <textarea
+                          className="input-main"
+                          placeholder="Выделенные DID (E.164), по одному на строку"
+                          value={telephonyInboundNumbers}
+                          onChange={(e) => setTelephonyInboundNumbers(e.target.value)}
+                          disabled={isSavingChannel}
+                          rows={3}
+                        />
+                        <p className="help-text">
+                          Общий номер: укажите добавочный. Выделенный DID: список номеров — звонок без DTMF.
+                        </p>
+                        <button
+                          type="button"
+                          className="btn btn-outline"
+                          onClick={handleUpdateTelephonyRouting}
+                          disabled={isSavingChannel}
+                        >
+                          {isSavingChannel ? 'Сохранение...' : 'Сохранить маршрутизацию'}
+                        </button>
+                      </>
                     ) : (
                       <>
                         <input
@@ -2920,6 +2991,25 @@ const AgentsPageContent = () => {
                           value={telephonyOperatorE164}
                           onChange={(e) => setTelephonyOperatorE164(e.target.value)}
                           disabled={isSavingChannel}
+                        />
+                        <input
+                          type="text"
+                          className="input-main"
+                          placeholder="Добавочный (4 цифры), если общий входящий номер"
+                          value={telephonyRoutingExtension}
+                          onChange={(e) =>
+                            setTelephonyRoutingExtension(e.target.value.replace(/\D/g, '').slice(0, 4))
+                          }
+                          disabled={isSavingChannel}
+                          maxLength={4}
+                        />
+                        <textarea
+                          className="input-main"
+                          placeholder="Доп. выделенные DID (E.164), по одному на строку"
+                          value={telephonyInboundNumbers}
+                          onChange={(e) => setTelephonyInboundNumbers(e.target.value)}
+                          disabled={isSavingChannel}
+                          rows={3}
                         />
                         <div className="telephony-channel-options">
                           <FeatureToggle

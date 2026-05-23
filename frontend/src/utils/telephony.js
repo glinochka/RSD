@@ -14,6 +14,7 @@ export function findTelephonyChannel(channels) {
 }
 
 export function isWebPreviewCall(call) {
+  if (call?.metadata?.source === 'browser_preview') return true;
   const id = String(call?.external_call_id || '');
   return id.startsWith('web-preview:');
 }

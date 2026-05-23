@@ -627,6 +627,8 @@ const CreateAgentContent = () => {
       telephony_rule_id: '',
       telephony_phone_e164: '',
       telephony_operator_e164: '',
+      telephony_routing_extension: '',
+      telephony_inbound_numbers: '',
       telephony_voice_id: 'default',
       telephony_language: 'ru-RU',
       template_type: 'qa',
@@ -1031,6 +1033,11 @@ const CreateAgentContent = () => {
               operator_transfer_e164: values.telephony_operator_e164.trim(),
               voice_id: (values.telephony_voice_id || 'default').trim(),
               language: (values.telephony_language || 'ru-RU').trim(),
+              routing_extension: values.telephony_routing_extension?.trim() || null,
+              inbound_numbers: (values.telephony_inbound_numbers || '')
+                .split(/[\n,;]+/)
+                .map((s) => s.trim())
+                .filter(Boolean),
               make_primary: primaryProvider === TELEPHONY_PROVIDER,
             });
             if (telRes?.webhook_url) {
@@ -1195,6 +1202,8 @@ const CreateAgentContent = () => {
         form.setFieldValue('telephony_rule_id', '');
         form.setFieldValue('telephony_phone_e164', '');
         form.setFieldValue('telephony_operator_e164', '');
+        form.setFieldValue('telephony_routing_extension', '');
+        form.setFieldValue('telephony_inbound_numbers', '');
         form.setFieldValue('telephony_voice_id', 'default');
         form.setFieldValue('telephony_language', 'ru-RU');
       }
@@ -1212,6 +1221,11 @@ const CreateAgentContent = () => {
       operator_transfer_e164: form.values.telephony_operator_e164?.trim(),
       voice_id: (form.values.telephony_voice_id || 'default').trim(),
       language: (form.values.telephony_language || 'ru-RU').trim(),
+      routing_extension: form.values.telephony_routing_extension?.trim() || null,
+      inbound_numbers: (form.values.telephony_inbound_numbers || '')
+        .split(/[\n,;]+/)
+        .map((s) => s.trim())
+        .filter(Boolean),
     };
     setIsValidatingTelephony(true);
     setTelephonyValidateStatus('');
@@ -1832,6 +1846,30 @@ const CreateAgentContent = () => {
                             value={form.values.telephony_operator_e164}
                             onChange={form.handleChange}
                             disabled={form.isSubmitting}
+                          />
+                          <input
+                            type="text"
+                            className="input-main"
+                            name="telephony_routing_extension"
+                            placeholder="Добавочный 4 цифры (общий номер)"
+                            value={form.values.telephony_routing_extension}
+                            onChange={(e) =>
+                              form.setFieldValue(
+                                'telephony_routing_extension',
+                                e.target.value.replace(/\D/g, '').slice(0, 4),
+                              )
+                            }
+                            disabled={form.isSubmitting}
+                            maxLength={4}
+                          />
+                          <textarea
+                            className="input-main"
+                            name="telephony_inbound_numbers"
+                            placeholder="Выделенные DID (E.164), по одному на строку"
+                            value={form.values.telephony_inbound_numbers}
+                            onChange={form.handleChange}
+                            disabled={form.isSubmitting}
+                            rows={3}
                           />
                           <input
                             type="text"

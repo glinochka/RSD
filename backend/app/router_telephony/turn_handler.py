@@ -10,6 +10,11 @@ from datetime import datetime, timezone
 
 import httpx
 from fastapi import HTTPException, status
+
+PREVIEW_TURN_DETAIL = (
+    "HTTP /internal/telephony/turn is preview-only. "
+    "PSTN uses telephony_media_gateway + orchestrator."
+)
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,17 +30,26 @@ from ..services.voice_transcription import is_voice_stt_configured, transcribe_v
 from ..telephony import metrics as telephony_metrics
 from ..telephony.logging import redact_telephony_log_message
 from ..telephony.dtmf import dtmf_transcript
-from ..telephony.partial_store import get_partial
 from ..telephony.turn_pool import run_in_telephony_pool
 from ..utils.pii import redact_pii_text
 from .call_loader import load_call_and_agent
-from .partial_handler import resolve_transcript_with_partials
 from .schemas import TelephonyTurnRequest, TelephonyTurnResponse
 
 logger = logging.getLogger(__name__)
 
 MSG_MAX_TURNS = "Мы обсудили основные вопросы. До свидания!"
 MSG_CALL_TIME_LIMIT = "Время разговора истекло. До свидания!"
+
+
+def _preview_turn_allowed(caller_e164: str) -> bool:
+    """Internal /turn — только browser preview (не PSTN media path)."""
+    caller = (caller_e164 or "").strip().lower()
+    return caller.startswith("preview:") or caller.startswith("web-preview:")
+
+
+def _batch_stt_allowed(caller_e164: str) -> bool:
+    """Batch STT (voice_transcription / recording_url) — только browser preview."""
+    return _preview_turn_allowed(caller_e164)
 
 
 def _utc_now() -> datetime:
@@ -211,6 +225,11 @@ def _limit_response(
 
 
 async def handle_telephony_turn(session: AsyncSession, payload: TelephonyTurnRequest) -> TelephonyTurnResponse:
+    if not _preview_turn_allowed(payload.caller_e164):
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail=PREVIEW_TURN_DETAIL,
+        )
     started = time.perf_counter()
     call, agent = await load_call_and_agent(
         session,
@@ -238,22 +257,29 @@ async def handle_telephony_turn(session: AsyncSession, payload: TelephonyTurnReq
             latency_ms=latency_ms(),
         )
 
-    partial_snap = get_partial(int(call.id))
-    partial_stt_count = partial_snap.partial_count if partial_snap else 0
-
     transcript = (payload.user_transcript or "").strip()
     if payload.dtmf_digit:
         dtmf_text = dtmf_transcript(payload.dtmf_digit)
         if dtmf_text:
             transcript = dtmf_text
-    transcript = resolve_transcript_with_partials(int(call.id), transcript)
     if not transcript:
-        transcript = (
-            await _transcribe_audio(
-                payload.audio_base64,
-                recording_url=payload.recording_url,
+        if payload.recording_url and not _batch_stt_allowed(payload.caller_e164):
+            logger.warning(
+                "telephony recording_url ignored for PSTN (use media gateway streaming STT) call_db_id=%s",
+                payload.call_db_id,
             )
-        ).strip()
+        elif payload.audio_base64 and not _batch_stt_allowed(payload.caller_e164):
+            logger.warning(
+                "telephony audio_base64 batch STT ignored for PSTN call_db_id=%s",
+                payload.call_db_id,
+            )
+        elif _batch_stt_allowed(payload.caller_e164):
+            transcript = (
+                await _transcribe_audio(
+                    payload.audio_base64,
+                    recording_url=payload.recording_url,
+                )
+            ).strip()
 
     use_streaming = payload.streaming
     if use_streaming is None:
@@ -315,23 +341,12 @@ async def handle_telephony_turn(session: AsyncSession, payload: TelephonyTurnReq
     elif any(action.get("type") == "hangup" for action in result.actions):
         stage = "hangup"
 
-    if partial_stt_count > 0:
-        session.add(
-            AgentTelephonyTurn(
-                call_id=int(call.id),
-                role="debug",
-                transcript=redact_pii_text(f"partial_stt_count={partial_stt_count}"),
-                latency_ms=ms,
-            )
-        )
-
     logger.info(
-        "telephony turn ok connection_id=%s call_db_id=%s stage=%s latency_ms=%s partial_stt=%s msg=%s",
+        "telephony turn ok connection_id=%s call_db_id=%s stage=%s latency_ms=%s msg=%s",
         payload.connection_id,
         payload.call_db_id,
         stage,
         ms,
-        partial_stt_count,
         redact_telephony_log_message(result.reply_text[:120]),
     )
 
@@ -346,7 +361,6 @@ async def handle_telephony_turn(session: AsyncSession, payload: TelephonyTurnReq
         stage=stage,
         latency_ms=ms,
         play_filler=bool(result.play_filler),
-        partial_stt_count=partial_stt_count or None,
         dialog_state=result.dialog_state or None,
         use_ssml=bool(result.use_ssml),
     )

@@ -339,6 +339,26 @@ class AgentTelephonyTurn(Base):
     call: Mapped["AgentTelephonyCall"] = relationship(back_populates="turns")
 
 
+class TelephonySipRoute(Base):
+    """SIP trunk header mapping (variant 7C): From/To → connection_id."""
+
+    __tablename__ = "telephony_sip_routes"
+    __table_args__ = ({"extend_existing": True},)
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    connection_id: Mapped[int] = mapped_column(
+        ForeignKey("agent_channel_connections.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    match_from: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    match_to: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    connection: Mapped["AgentChannelConnection"] = relationship()
+
+
 class AgentCrmConnection(Base):
     __tablename__ = "agent_crm_connections"
     __table_args__ = (

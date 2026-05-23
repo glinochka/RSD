@@ -7,5 +7,5 @@ export function shouldPlayRecordingDisclaimer(params: {
   recordCalls: boolean;
   disclaimerPlayed: boolean;
 }): boolean {
-  return params.recordCalls && params.disclaimerPlayed;
+  return params.recordCalls && !params.disclaimerPlayed;
 }

@@ -1,18 +1,8 @@
 import express, { NextFunction, Request, Response } from 'express';
 
-import { fetchWebhookAuth, telephonyCallEvent, telephonyResolve } from './backend_client';
-import {
-  buildListenAfterGreetingActions,
-  transferOperatorAction,
-} from './dialog/actions';
-import { handlePartialTranscript } from './dialog/partial_transcript';
-import { handleDtmfDigit } from './dialog/dtmf';
-import { handleUserRecordingTurn } from './dialog/recording_turn';
-import {
-  backendUnavailableActions,
-  cpaasTimeoutActions,
-  isBackendUnavailableError,
-} from './resilience';
+import { fetchWebhookAuth } from './backend_client';
+import { handleSignalWebhook, isSignalEvent } from './control_webhook';
+import { backendUnavailableControlHints, isBackendUnavailableError } from './resilience';
 import { checkRateLimit } from './security/rate_limit';
 import { verifyWebhookSignature } from './security/verify_signature';
 import { CallSession, initialStateForEvent } from './session/call_session';
@@ -28,6 +18,12 @@ const secretCache = new Map<number, { secret: string; expiresAt: number }>();
 const dedupKeys = new Map<string, number>();
 const DEDUP_MAX = 5000;
 const DEDUP_TTL_MS = 24 * 60 * 60 * 1000;
+
+const LEGACY_EVENTS = new Set([
+  'call.recording_ready',
+  'call.partial_transcript',
+  'dtmf',
+]);
 
 app.use(
   express.json({
@@ -122,7 +118,11 @@ function callerFromPayload(payload: Record<string, unknown>): string {
 }
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'telephony_bridge' });
+  res.json({
+    ok: true,
+    service: 'telephony_bridge',
+    control_only: true,
+  });
 });
 
 app.get('/metrics', requireBridgeApiKey, (_req, res) => {
@@ -161,12 +161,26 @@ app.post('/webhook/voximplant/:connectionId', async (req, res) => {
     return;
   }
 
+  if (LEGACY_EVENTS.has(envelope.event)) {
+    res.status(410).json({
+      ok: false,
+      detail: 'Legacy PSTN media path removed; use telephony_media_gateway + orchestrator',
+      event: envelope.event,
+    });
+    return;
+  }
+
+  if (!isSignalEvent(envelope.event)) {
+    res.status(400).json({ ok: false, detail: `Unsupported event: ${envelope.event}` });
+    return;
+  }
+
   let secret: string;
   try {
     secret = await getWebhookSecret(connectionId);
   } catch (err) {
     if (isBackendUnavailableError(err)) {
-      res.status(200).json({ ok: true, actions: backendUnavailableActions(), degraded: true });
+      res.status(200).json({ ok: true, actions: [], ...backendUnavailableControlHints() });
       return;
     }
     res.status(404).json({ ok: false, detail: String(err) });
@@ -196,182 +210,53 @@ app.post('/webhook/voximplant/:connectionId', async (req, res) => {
     (await sessionStore.get(envelope.call_id, connectionId, callerE164)) ||
     new CallSession(envelope.call_id, connectionId, callerE164);
 
-  if (envelope.event === 'call.partial_transcript') {
-    let partialActions: Array<Record<string, unknown>> = [];
-    try {
-      partialActions = await handlePartialTranscript(session, envelope, callerE164);
-      await sessionStore.set(session);
-    } catch (err) {
-      console.error('partial transcript failed', err instanceof Error ? err.message : err);
-    }
-    res.status(200).json({ ok: true, actions: partialActions, partial: true });
-    return;
-  }
-
   try {
     session.transition(initialStateForEvent(envelope.event));
   } catch {
     // Non-fatal state mismatch
   }
-  await sessionStore.set(session);
 
-  let hangupStatus: string | undefined;
-  if (envelope.event === 'call.hangup') {
-    const reason = String(envelope.payload.reason || 'completed').toLowerCase();
-    if (reason === 'transferred') {
-      hangupStatus = 'transferred';
-    } else if (reason === 'failed' || reason === 'timeout' || reason === 'no_answer') {
-      hangupStatus = 'failed';
-    } else {
-      hangupStatus = 'completed';
-    }
-  }
-
-  const statusMap: Record<string, string | undefined> = {
-    'call.inbound': 'ringing',
-    'call.answered': 'active',
-    'call.recording_ready': 'active',
-    'call.hangup': hangupStatus,
-  };
-
-  let callEvent: { call_db_id: number; status: string; created: boolean } | null = null;
   try {
-    if (envelope.event === 'call.inbound') {
-      recordCallStarted();
-    }
-    callEvent = await telephonyCallEvent({
-      connection_id: connectionId,
-      external_call_id: envelope.call_id,
-      caller_e164: callerE164,
-      event: envelope.event,
-      status: statusMap[envelope.event],
-      recording_url: envelope.payload.recording_url ? String(envelope.payload.recording_url) : undefined,
-      duration_sec:
-        envelope.payload.duration_sec !== undefined
-          ? Number(envelope.payload.duration_sec)
-          : undefined,
-      metadata: {
-        event_id: envelope.event_id,
-        emitted_at: envelope.emitted_at,
-        bridge_state: session.state,
-        dtmf: envelope.event === 'dtmf' ? envelope.payload.digit : undefined,
-        leg: envelope.event === 'call.recording_ready' ? envelope.payload.leg : undefined,
-        turn_index: envelope.payload.turn_index,
+    const result = await handleSignalWebhook({
+      envelope,
+      session,
+      callerE164,
+      connectionId,
+      onInbound: () => recordCallStarted(),
+      onHangup: (status) => {
+        recordCallCompleted(status === 'transferred');
+        session.transition('END');
       },
     });
-    session.callDbId = callEvent.call_db_id;
-    await sessionStore.set(session);
+    if (envelope.event === 'call.hangup') {
+      await sessionStore.delete(envelope.call_id, connectionId);
+    } else {
+      await sessionStore.set(session);
+    }
+      res.status(200).json({
+        ok: true,
+        actions: result.actions,
+        call_db_id: result.callEvent?.call_db_id,
+        control_only: true,
+        operator_transfer_e164: session.resolved?.operator_transfer_e164,
+        record_calls: Boolean(session.resolved?.record_calls),
+        disclaimer_played: Boolean(session.resolved?.disclaimer_played),
+        ...(result.degraded
+          ? { degraded: true, transfer_e164: result.transfer_e164 || 'operator' }
+          : {}),
+      });
   } catch (err) {
-    console.error('call-event failed', err instanceof Error ? err.message : err);
+    console.error('control webhook failed', err instanceof Error ? err.message : err);
     if (isBackendUnavailableError(err)) {
-      res.status(200).json({ ok: true, actions: backendUnavailableActions(), degraded: true });
+      res.status(200).json({
+        ok: true,
+        actions: [],
+        ...backendUnavailableControlHints(session.resolved?.operator_transfer_e164),
+      });
       return;
     }
     res.status(502).json({ ok: false, detail: 'Backend call-event failed' });
-    return;
   }
-
-  if (envelope.event === 'call.inbound' || envelope.event === 'call.answered') {
-    try {
-      const resolved = await telephonyResolve({
-        connection_id: connectionId,
-        caller_e164: callerE164,
-        call_id: envelope.call_id,
-      });
-      session.resolved = {
-        welcome_message: resolved.welcome_message as string | null | undefined,
-        voice_id: resolved.voice_id as string | undefined,
-        record_calls: Boolean(resolved.record_calls),
-        disclaimer_played: Boolean(resolved.disclaimer_played),
-        operator_transfer_e164: resolved.operator_transfer_e164 as string | undefined,
-      };
-      await sessionStore.set(session);
-    } catch (err) {
-      console.error('resolve failed', err instanceof Error ? err.message : err);
-      if (isBackendUnavailableError(err) && envelope.event === 'call.answered') {
-        res.status(200).json({ ok: true, actions: backendUnavailableActions(), degraded: true });
-        return;
-      }
-    }
-  }
-
-  if (envelope.event === 'call.answered') {
-    session.markAnswered();
-    await sessionStore.set(session);
-  }
-
-  if (envelope.event === 'call.hangup') {
-    recordCallCompleted(hangupStatus === 'transferred');
-    session.transition('END');
-    await sessionStore.delete(envelope.call_id, connectionId);
-  }
-
-  const actions: Array<Record<string, unknown>> = [];
-
-  if (envelope.event === 'call.inbound') {
-    actions.push({ type: 'answer' });
-  }
-
-  if (envelope.event === 'call.answered') {
-    actions.push(...buildListenAfterGreetingActions(session));
-    try {
-      session.transition('LISTENING');
-    } catch {
-      // ignore
-    }
-    await sessionStore.set(session);
-  }
-
-  if (envelope.event === 'call.recording_ready') {
-    try {
-      session.transition('PROCESSING');
-    } catch {
-      // ignore
-    }
-    try {
-      const turnActions = await handleUserRecordingTurn(session, envelope, callerE164);
-      actions.push(...turnActions);
-      if (turnActions.some((a) => a.type === 'play_tts')) {
-        try {
-          session.transition('SPEAKING');
-        } catch {
-          // ignore
-        }
-      }
-      await sessionStore.set(session);
-    } catch (err) {
-      console.error('recording turn failed', err instanceof Error ? err.message : err);
-      if (isBackendUnavailableError(err)) {
-        actions.push(...backendUnavailableActions());
-      } else {
-        res.status(502).json({ ok: false, detail: 'Turn processing failed' });
-        return;
-      }
-    }
-  }
-
-  if (envelope.event === 'dtmf') {
-    try {
-      const dtmfActions = await handleDtmfDigit(
-        session,
-        String(envelope.payload.digit || ''),
-        callerE164,
-      );
-      actions.push(...dtmfActions);
-      await sessionStore.set(session);
-    } catch (err) {
-      console.error('dtmf failed', err instanceof Error ? err.message : err);
-      if (String(envelope.payload.digit || '') === '0') {
-        actions.push(transferOperatorAction(session));
-      }
-    }
-  }
-
-  if (String(envelope.payload.provider_timeout || '') === 'true') {
-    actions.push(...cpaasTimeoutActions());
-  }
-
-  res.status(200).json({ ok: true, actions, call_db_id: callEvent?.call_db_id });
 });
 
 app.get('/internal/sessions', requireBridgeApiKey, (_req, res) => {
@@ -379,5 +264,5 @@ app.get('/internal/sessions', requireBridgeApiKey, (_req, res) => {
 });
 
 app.listen(config.port, () => {
-  console.log(`telephony_bridge listening on ${config.port}`);
+  console.log(`telephony_bridge listening on ${config.port} (control-only)`);
 });

@@ -16,7 +16,7 @@ from ..config import settings
 
 from ..telephony.internal_auth import is_telephony_internal_request, require_telephony_internal
 
-from ..telephony.metrics import snapshot as metrics_snapshot
+from ..telephony.metrics import prometheus_lines, snapshot as metrics_snapshot
 
 from ..telephony.retention import purge_old_telephony_turns
 
@@ -28,6 +28,8 @@ from .schemas import (
     TelephonyMetricsResponse,
     TelephonyPartialRequest,
     TelephonyPartialResponse,
+    TelephonyResolveInboundRequest,
+    TelephonyResolveInboundResponse,
     TelephonyResolveRequest,
     TelephonyResolveResponse,
     TelephonyRetentionPurgeResponse,
@@ -38,8 +40,12 @@ from .schemas import (
 )
 
 from .cancel_handler import handle_telephony_cancel
-from .partial_handler import handle_telephony_partial
-from .service import get_webhook_auth, resolve_telephony_channel, upsert_call_event
+from .service import (
+    get_webhook_auth,
+    resolve_inbound_connection,
+    resolve_telephony_channel,
+    upsert_call_event,
+)
 from .turn_handler import handle_telephony_turn
 
 
@@ -100,6 +106,23 @@ async def telephony_webhook_auth(
 
 
 
+@router.post("/resolve-inbound", response_model=TelephonyResolveInboundResponse)
+async def telephony_resolve_inbound(
+    request: Request,
+    payload: TelephonyResolveInboundRequest,
+    internal: bool = Depends(is_telephony_internal_request),
+):
+    _assert_telephony_enabled()
+    await require_telephony_internal(request, internal)
+    connection_id, routed_by = await resolve_inbound_connection(
+        connection_id=payload.connection_id,
+        called_e164=payload.called_e164,
+        sip_from=payload.sip_from,
+        sip_to=payload.sip_to,
+    )
+    return TelephonyResolveInboundResponse(connection_id=connection_id, routed_by=routed_by)  # type: ignore[arg-type]
+
+
 @router.post("/resolve", response_model=TelephonyResolveResponse)
 
 async def telephony_resolve(
@@ -122,14 +145,18 @@ async def telephony_resolve(
 
         async with session.begin():
 
-            data = await resolve_telephony_channel(
-
-                session,
-
+            resolved_id, _ = await resolve_inbound_connection(
                 connection_id=payload.connection_id,
-
+                called_e164=payload.called_e164,
+                sip_from=None,
+                sip_to=None,
+            )
+            data = await resolve_telephony_channel(
+                session,
+                connection_id=resolved_id,
                 caller_e164=payload.caller_e164,
-
+                called_e164=payload.called_e164,
+                routed_agent_id=payload.routed_agent_id,
             )
 
     return TelephonyResolveResponse(**data)
@@ -179,7 +206,8 @@ async def telephony_call_event(
                 duration_sec=payload.duration_sec,
 
                 metadata=payload.metadata,
-
+                called_e164=payload.called_e164,
+                routed_agent_id=payload.routed_agent_id,
             )
 
     return TelephonyCallEventResponse(call_db_id=int(call.id), status=str(call.status), created=created)
@@ -210,14 +238,17 @@ async def telephony_partial(
 ):
     _assert_telephony_enabled()
     await require_telephony_internal(request, internal)
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="Partial STT webhook removed; use telephony_media_gateway streaming STT",
+    )
 
-    async with async_session_maker() as session:
-        async with session.begin():
-            return await handle_telephony_partial(session, payload)
 
-
-@router.post("/turn", response_model=TelephonyTurnResponse)
-
+@router.post(
+    "/turn",
+    response_model=TelephonyTurnResponse,
+    summary="Preview-only turn shim (PSTN uses media gateway)",
+)
 async def telephony_turn(
 
     request: Request,
@@ -258,9 +289,28 @@ async def telephony_metrics(
 
     await require_telephony_internal(request, internal)
 
-    data = metrics_snapshot(alert_p95_ms=int(settings.TELEPHONY_TURN_LATENCY_ALERT_P95_MS))
+    data = metrics_snapshot(
+        alert_p95_ms=int(settings.TELEPHONY_TURN_LATENCY_ALERT_P95_MS),
+        alert_e2r_p90_ms=int(settings.TELEPHONY_E2R_ALERT_P90_MS),
+    )
 
     return TelephonyMetricsResponse(**data)
+
+
+@router.get("/metrics/prometheus")
+async def telephony_metrics_prometheus(
+    request: Request,
+    internal: bool = Depends(is_telephony_internal_request),
+):
+    _assert_telephony_enabled()
+    await require_telephony_internal(request, internal)
+    from fastapi.responses import PlainTextResponse
+
+    body = prometheus_lines(
+        alert_p95_ms=int(settings.TELEPHONY_TURN_LATENCY_ALERT_P95_MS),
+        alert_e2r_p90_ms=int(settings.TELEPHONY_E2R_ALERT_P90_MS),
+    )
+    return PlainTextResponse(body, media_type="text/plain; version=0.0.4; charset=utf-8")
 
 
 

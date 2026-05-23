@@ -51,10 +51,21 @@ export async function fetchWebhookAuth(connectionId: number): Promise<{
   return postJson('/api/internal/telephony/webhook-auth', { connection_id: connectionId });
 }
 
+export async function telephonyResolveInbound(params: {
+  connection_id: number;
+  called_e164?: string;
+  sip_from?: string;
+  sip_to?: string;
+}): Promise<{ connection_id: number; routed_by: 'did' | 'sip' | 'webhook' }> {
+  return postJson('/api/internal/telephony/resolve-inbound', params);
+}
+
 export async function telephonyResolve(params: {
   connection_id: number;
   caller_e164: string;
+  called_e164?: string;
   call_id?: string;
+  routed_agent_id?: number;
 }): Promise<Record<string, unknown>> {
   return postJson('/api/internal/telephony/resolve', params);
 }
@@ -65,50 +76,6 @@ export async function telephonyCallEvent(params: Record<string, unknown>): Promi
   created: boolean;
 }> {
   return postJson('/api/internal/telephony/call-event', params);
-}
-
-export async function telephonyPartial(params: {
-  connection_id: number;
-  call_db_id: number;
-  caller_e164: string;
-  transcript: string;
-  is_final: boolean;
-  confidence?: number;
-  turn_index?: number;
-}): Promise<{
-  accepted: boolean;
-  transcript: string;
-  partial_count: number;
-  is_final: boolean;
-  suggest_backchannel?: boolean;
-}> {
-  return postJson('/api/internal/telephony/partial', params);
-}
-
-export async function telephonyTurn(params: {
-  connection_id: number;
-  call_db_id: number;
-  caller_e164: string;
-  user_transcript?: string;
-  audio_base64?: string;
-  recording_url?: string;
-  turn_index?: number;
-  streaming?: boolean;
-  barged_in?: boolean;
-  interrupted_agent_text?: string;
-  dtmf_digit?: string;
-}): Promise<{
-  reply_text: string;
-  reply_chunks?: string[];
-  actions: Array<Record<string, unknown>>;
-  stage: string;
-  latency_ms?: number;
-  play_filler?: boolean;
-  partial_stt_count?: number;
-  dialog_state?: string;
-  use_ssml?: boolean;
-}> {
-  return postJson('/api/internal/telephony/turn', params);
 }
 
 export async function telephonyCancel(params: {

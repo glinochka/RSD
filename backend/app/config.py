@@ -140,8 +140,15 @@ class Settings(BaseSettings):
     TELEPHONY_LLM_RETRY_TIMEOUT_SECONDS: float = 15.0
     TELEPHONY_PREVIEW_LLM_TIMEOUT_SECONDS: float = 60.0
     TELEPHONY_TURN_LATENCY_ALERT_P95_MS: int = 10000
+    TELEPHONY_E2R_ALERT_P90_MS: int = 850
     # Stage 5: latency / streaming pipeline
     TELEPHONY_STREAMING_ENABLED: bool = True
+    TELEPHONY_SYNTAGMA_MIN_CHARS: int = 12
+    TELEPHONY_LLM_MODE: Literal["chat", "groq"] = "chat"
+    TELEPHONY_GROQ_MODEL: str = "llama-3.1-8b-instant"
+    GROQ_API_KEY: str = ""
+    TELEPHONY_STREAM_TTS_PROVIDER: Literal["yandex", "elevenlabs", "voximplant", "openai"] = "yandex"
+    ELEVENLABS_API_KEY: str = ""
     TELEPHONY_ENDPOINT_SILENCE_MS: int = 600
     TELEPHONY_CRM_FILLER_THRESHOLD_MS: int = 1500
     TELEPHONY_DEDICATED_POOL_ENABLED: bool = True
@@ -152,6 +159,10 @@ class Settings(BaseSettings):
     TELEPHONY_BACKCHANNEL_MIN_MS: int = 5000
     TELEPHONY_SSML_ENABLED: bool = True
     REDIS_URL: str = ""
+    # Stage 4: stateful dialog orchestrator + Redis hot session
+    TELEPHONY_REDIS_SESSION_TTL_SEC: int = 7200
+    TELEPHONY_DIALOG_MAX_TURNS: int = 16
+    TELEPHONY_ORCHESTRATOR_ENABLED: bool = True
     VOXIMPLANT_API_BASE_URL: str = "https://api.voximplant.com/platform_api"
     TELEPHONY_VOXIMPLANT_API_TIMEOUT_SECONDS: float = 15.0
     CRM_CREDENTIALS_ENCRYPTION_KEY: str = ""

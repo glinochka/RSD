@@ -117,6 +117,11 @@ export const agentService = {
     return response.data;
   },
 
+  updateTelephonyRouting: async (data) => {
+    const response = await api.patch('/agents/channels/telephony/routing', data);
+    return response.data;
+  },
+
   validateTelephonyChannel: async (data) => {
     const response = await apiClient.post(API_ROUTES.AGENTS_CHANNELS_VALIDATE_TELEPHONY, data);
     return response.data;

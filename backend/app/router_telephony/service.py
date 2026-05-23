@@ -16,6 +16,11 @@ from ..telephony import metrics as telephony_metrics
 from ..telephony.constants import TELEPHONY_CALL_STATUSES
 from ..telephony.credentials import TELEPHONY_CHANNEL_PROVIDER, parse_telephony_credentials
 from ..telephony.logging import redact_telephony_log_message
+from ..telephony.routing import (
+    resolve_connection_by_called_number,
+    routing_summary_for_call,
+)
+from ..telephony.session_cache import cache_call_mapping, cache_resolve_payload
 from ..utils.crypto import decrypt_token
 
 logger = logging.getLogger(__name__)
@@ -32,8 +37,6 @@ def _event_to_status(event: str, explicit: str | None) -> str:
         "call.inbound": "ringing",
         "call.answered": "active",
         "call.hangup": "completed",
-        "call.recording_ready": "active",
-        "dtmf": "active",
     }
     return mapping.get(event, "active")
 
@@ -73,14 +76,43 @@ async def get_webhook_auth(session: AsyncSession, connection_id: int) -> dict[st
     }
 
 
+async def resolve_inbound_connection(
+    *,
+    connection_id: int,
+    called_e164: str | None = None,
+    sip_from: str | None = None,
+    sip_to: str | None = None,
+) -> tuple[int, str]:
+    """Map inbound SIP trunk (7C) or DID (B) to connection_id."""
+    from ..telephony.routing import resolve_connection_by_sip_headers
+
+    if sip_from or sip_to:
+        routed = await resolve_connection_by_sip_headers(
+            sip_from=sip_from,
+            sip_to=sip_to,
+            fallback_connection_id=connection_id,
+        )
+        if routed is not None:
+            return routed, "sip"
+    if called_e164:
+        return await resolve_connection_by_called_number(
+            called_e164,
+            fallback_connection_id=connection_id,
+        )
+    return connection_id, "webhook"
+
+
 async def resolve_telephony_channel(
     session: AsyncSession,
     *,
     connection_id: int,
     caller_e164: str,
+    called_e164: str | None = None,
+    routed_agent_id: int | None = None,
 ) -> dict[str, Any]:
     connection = await load_active_telephony_connection(session, connection_id)
-    agent = await session.scalar(select(Agent).where(Agent.id == connection.agent_id, Agent.is_active.is_(True)))
+    target_agent_id = int(routed_agent_id or connection.agent_id)
+    agent = await session.scalar(select(Agent).where(Agent.id == target_agent_id, Agent.is_active.is_(True)))
     if agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found or inactive")
 
@@ -102,9 +134,22 @@ async def resolve_telephony_channel(
         except Exception:
             template_config = None
 
-    return {
+    _, inbound_routed_by = await resolve_inbound_connection(
+        connection_id=connection_id,
+        called_e164=called_e164,
+    )
+    if routed_agent_id:
+        routed_by = "dtmf"
+    elif inbound_routed_by == "sip":
+        routed_by = "sip"
+    elif inbound_routed_by == "did":
+        routed_by = "did"
+    else:
+        routed_by = "webhook"
+    payload = {
         "agent_id": int(agent.id),
         "connection_id": int(connection.id),
+        "routed_by": routed_by,
         "system_prompt": agent.system_prompt or "",
         "welcome_message": agent.welcome_message,
         "template_type": str(agent.template_type or "qa"),
@@ -117,6 +162,13 @@ async def resolve_telephony_channel(
         "phone_number_e164": creds.phone_number_e164,
         "caller_e164": caller_e164.strip(),
     }
+    await cache_resolve_payload(
+        connection_id=int(connection.id),
+        agent_id=int(agent.id),
+        resolved=payload,
+        caller_e164=caller_e164,
+    )
+    return payload
 
 
 async def upsert_call_event(
@@ -130,8 +182,15 @@ async def upsert_call_event(
     recording_url: str | None,
     duration_sec: int | None,
     metadata: dict[str, Any] | None,
+    called_e164: str | None = None,
+    routed_agent_id: int | None = None,
 ) -> tuple[AgentTelephonyCall, bool]:
-    connection = await load_active_telephony_connection(session, connection_id)
+    resolved_connection_id, routed_by = await resolve_inbound_connection(
+        connection_id=connection_id,
+        called_e164=called_e164,
+    )
+    connection = await load_active_telephony_connection(session, resolved_connection_id)
+    target_agent_id = int(routed_agent_id or connection.agent_id)
     now = _utc_now()
     new_status = _event_to_status(event, status_override)
 
@@ -139,7 +198,7 @@ async def upsert_call_event(
 
     existing = await session.scalar(
         select(AgentTelephonyCall).where(
-            AgentTelephonyCall.connection_id == connection_id,
+            AgentTelephonyCall.connection_id == resolved_connection_id,
             AgentTelephonyCall.external_call_id == external_call_id,
         )
     )
@@ -150,19 +209,34 @@ async def upsert_call_event(
 
     if existing is None:
         telephony_metrics.record_call_started()
+        initial_meta = dict(metadata or {})
+        if called_e164:
+            initial_meta["routing"] = routing_summary_for_call(
+                routed_by=routed_by,
+                called_e164=called_e164,
+            )
         call = AgentTelephonyCall(
-            connection_id=connection_id,
-            agent_id=connection.agent_id,
+            connection_id=resolved_connection_id,
+            agent_id=target_agent_id,
             external_call_id=external_call_id,
             caller_e164=caller_e164.strip(),
             status=new_status,
             started_at=now,
-            metadata_=metadata or {},
+            metadata_=initial_meta,
         )
         session.add(call)
         await session.flush()
+        await cache_call_mapping(
+            external_call_id=external_call_id,
+            connection_id=resolved_connection_id,
+            call_db_id=int(call.id),
+            agent_id=target_agent_id,
+            caller_e164=caller_e164,
+        )
         return call, True
 
+    if target_agent_id != int(existing.agent_id):
+        existing.agent_id = target_agent_id
     existing.status = new_status
     if recording_url:
         existing.recording_url = recording_url
@@ -177,6 +251,11 @@ async def upsert_call_event(
     merged_meta = dict(existing.metadata_ or {})
     if metadata:
         merged_meta.update(metadata)
+    if called_e164:
+        merged_meta["routing"] = routing_summary_for_call(
+            routed_by=routed_by,
+            called_e164=called_e164,
+        )
     if event:
         merged_meta["last_event"] = event
     if event_id:

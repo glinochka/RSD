@@ -32,6 +32,38 @@ class TelephonyCredentialsV1(BaseModel):
     language: str = "ru-RU"
     record_calls: bool = True
     disclaimer_played: bool = True
+    routing_extension: str | None = Field(
+        default=None,
+        description="4-digit DTMF extension for shared pool inbound (variant A)",
+    )
+    inbound_numbers: list[str] = Field(
+        default_factory=list,
+        description="Additional dedicated DIDs (variant B)",
+    )
+
+    @field_validator("routing_extension")
+    @classmethod
+    def validate_routing_extension(cls, v: str | None) -> str | None:
+        if v is None or not str(v).strip():
+            return None
+        raw = str(v).strip()
+        if not re.fullmatch(r"\d{4}", raw):
+            raise ValueError("routing_extension must be exactly 4 digits")
+        return raw
+
+    @field_validator("inbound_numbers")
+    @classmethod
+    def validate_inbound_numbers(cls, values: list[str]) -> list[str]:
+        out: list[str] = []
+        for item in values or []:
+            num = str(item).strip()
+            if not num:
+                continue
+            if not _E164_RE.match(num):
+                raise ValueError(f"invalid inbound DID: {num!r}")
+            if num not in out:
+                out.append(num)
+        return out
 
     @field_validator("provider")
     @classmethod

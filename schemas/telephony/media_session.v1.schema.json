@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rsd.local/schemas/telephony/media_session.v1.schema.json",
+  "title": "RSD Telephony Media Session Control Message v1",
+  "type": "object",
+  "required": ["type"],
+  "properties": {
+    "type": {
+      "type": "string",
+      "enum": [
+        "session.start",
+        "session.end",
+        "stt.partial",
+        "stt.final",
+        "agent.audio.start",
+        "agent.audio.chunk",
+        "agent.audio.end",
+        "barge_in",
+        "dtmf",
+        "error"
+      ]
+    },
+    "payload": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "type": { "const": "session.start" } } },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["call_id", "connection_id", "caller_e164", "codec"],
+            "properties": {
+              "call_id": { "type": "string", "minLength": 1 },
+              "connection_id": { "type": "integer", "minimum": 1 },
+              "caller_e164": { "type": "string", "minLength": 1 },
+              "codec": { "type": "string", "enum": ["pcmu", "pcma"] },
+              "called_number": { "type": "string" },
+              "protocol_version": { "type": "string" }
+            },
+            "additionalProperties": true
+          }
+        }
+      }
+    }
+  ]
+}

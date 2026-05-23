@@ -6,10 +6,7 @@ type SessionPayload = {
   callDbId: number | null;
   resolved: CallSession['resolved'];
   disclaimerPlayed: boolean;
-  turnCount: number;
   answeredAtMs: number | null;
-  partialTranscript: string;
-  partialConfidence: number | null;
   callerE164: string;
 };
 
@@ -40,10 +37,7 @@ export class RedisSessionStore implements SessionStore {
       callDbId: session.callDbId,
       resolved: session.resolved,
       disclaimerPlayed: session.disclaimerPlayed,
-      turnCount: session.turnCount,
       answeredAtMs: session.answeredAtMs,
-      partialTranscript: session.partialTranscript,
-      partialConfidence: session.partialConfidence,
       callerE164: session.callerE164,
     };
     return JSON.stringify(payload);
@@ -56,10 +50,7 @@ export class RedisSessionStore implements SessionStore {
     session.callDbId = data.callDbId;
     session.resolved = data.resolved;
     session.disclaimerPlayed = data.disclaimerPlayed;
-    session.turnCount = data.turnCount;
     session.answeredAtMs = data.answeredAtMs;
-    session.partialTranscript = data.partialTranscript || '';
-    session.partialConfidence = data.partialConfidence ?? null;
     return session;
   }
 

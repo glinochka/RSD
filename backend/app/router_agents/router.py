@@ -72,6 +72,12 @@ from ..telephony.credentials import (
     TelephonyCredentialsV1,
     parse_telephony_credentials,
 )
+from ..telephony.routing import (
+    clear_channel_routes,
+    scan_extension_conflict_in_db,
+    sync_channel_routes,
+    telephony_routing_public_fields,
+)
 from ..services.voximplant_client import (
     VoximplantApiError,
     deactivate_voximplant_inbound_rule,
@@ -1410,6 +1416,12 @@ def _serialize_channel_connection(connection: AgentChannelConnection) -> dict:
     }
     if connection.provider == TELEPHONY_CHANNEL_PROVIDER:
         data["telephony_webhook_url"] = build_telephony_webhook_url(int(connection.id))
+        if connection.encrypted_credentials:
+            try:
+                creds = parse_telephony_credentials(decrypt_token(connection.encrypted_credentials))
+                data["telephony_routing"] = telephony_routing_public_fields(creds)
+            except Exception:
+                data["telephony_routing"] = None
     return data
 
 
@@ -2309,6 +2321,7 @@ async def _deactivate_telephony_channel_if_supported(channel: AgentChannelConnec
     except Exception:
         logger.warning("telephony: skip CPaaS deactivation — invalid credentials connection_id=%s", channel.id)
         return
+    await clear_channel_routes(creds, connection_id=int(channel.id))
     await deactivate_voximplant_inbound_rule(
         account_id=creds.account_id,
         api_key=creds.api_key,
@@ -5058,10 +5071,20 @@ async def add_agent_telephony_channel(
             detail="TELEPHONY_WEBHOOK_BASE_URL не настроен на сервере",
         )
     creds = await validate_telephony_credentials_input(payload)
-    external_id = telephony_external_id(creds.phone_number_e164)
+    external_id = telephony_external_id(creds.phone_number_e164, creds.routing_extension)
     encrypted_bundle = build_encrypted_telephony_bundle(creds, encrypt_token)
 
     async with async_session_maker() as session:
+        if creds.routing_extension:
+            conflict = await scan_extension_conflict_in_db(
+                session,
+                creds.routing_extension,
+            )
+            if conflict is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Добавочный {creds.routing_extension} уже занят",
+                )
         agent_dao = AgentDAO(session)
         channel_connection_dao = AgentChannelConnectionDAO(session)
         async with session.begin():
@@ -5110,6 +5133,11 @@ async def add_agent_telephony_channel(
                 }
             )
             await session.flush()
+            await sync_channel_routes(
+                connection_id=int(created_connection.id),
+                agent_id=int(agent.id),
+                creds=creds,
+            )
             if payload.make_primary:
                 await _set_primary_channel(
                     session=session,
@@ -5124,10 +5152,74 @@ async def add_agent_telephony_channel(
                     "agent_id": agent.id,
                     "bot_id": agent.bot_id,
                     "channels": [_serialize_channel_connection(item) for item in channels],
+                    "telephony_routing": telephony_routing_public_fields(creds),
                     **extra,
                 },
                 status_code=status.HTTP_201_CREATED,
             )
+
+
+@router.patch("/channels/telephony/routing")
+async def update_agent_telephony_routing(
+    payload: UpdateTelephonyRouting,
+    current_user=Depends(get_current_user_required),
+):
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
+                current_user=current_user,
+                internal=False,
+            )
+            connection = await session.scalar(
+                select(AgentChannelConnection).where(
+                    AgentChannelConnection.agent_id == agent.id,
+                    AgentChannelConnection.provider == TELEPHONY_CHANNEL_PROVIDER,
+                    AgentChannelConnection.is_active.is_(True),
+                )
+            )
+            if connection is None or not connection.encrypted_credentials:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Телефонный канал не найден",
+                )
+            previous = parse_telephony_credentials(decrypt_token(connection.encrypted_credentials))
+            updated = previous.model_copy(
+                update={
+                    "routing_extension": (payload.routing_extension or "").strip() or None,
+                    "inbound_numbers": list(payload.inbound_numbers or []),
+                }
+            )
+            if updated.routing_extension:
+                conflict = await scan_extension_conflict_in_db(
+                    session,
+                    updated.routing_extension,
+                    exclude_connection_id=int(connection.id),
+                )
+                if conflict is not None:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=f"Добавочный {updated.routing_extension} уже занят",
+                    )
+            connection.encrypted_credentials = encrypt_token(updated.to_encrypted_payload())
+            connection.updated_at = datetime.utcnow()
+            await sync_channel_routes(
+                connection_id=int(connection.id),
+                agent_id=int(agent.id),
+                creds=updated,
+                previous=previous,
+            )
+            channels = await _list_agent_channels(session, agent.id)
+            return {
+                "agent_id": agent.id,
+                "telephony_routing": telephony_routing_public_fields(updated),
+                "channels": [_serialize_channel_connection(item) for item in channels],
+            }
 
 
 @router.post("/channels/telephony/validate")
@@ -5155,6 +5247,8 @@ async def validate_agent_telephony_channel(
             language=(payload.language or "ru-RU").strip(),
             record_calls=bool(payload.record_calls),
             disclaimer_played=bool(payload.disclaimer_played),
+            routing_extension=(payload.routing_extension or "").strip() or None,
+            inbound_numbers=list(payload.inbound_numbers or []),
         )
     except VoximplantApiError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

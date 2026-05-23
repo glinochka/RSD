@@ -1,4 +1,10 @@
-from app.services.telephony_orchestrator import DialogState, decide_orchestrator, load_dialog_state, persist_dialog_state
+from app.services.telephony_orchestrator import (
+    CallDialogContext,
+    DialogState,
+    decide_orchestrator,
+    load_dialog_state,
+    persist_dialog_state,
+)
 
 
 class _FakeCall:
@@ -30,6 +36,15 @@ def test_barge_in_prompt_addon():
     )
     assert "перебил" in decision.prompt_addon.lower()
     assert decision.runtime_context.get("barged_in") is True
+
+
+def test_context_stt_empty_suggests_dtmf():
+    ctx = CallDialogContext()
+    from app.services.telephony_orchestrator import decide_from_context
+
+    decide_from_context(ctx, transcript="", stt_empty=True)
+    decision = decide_from_context(ctx, transcript="", stt_empty=True)
+    assert decision.suggest_dtmf_menu is True
 
 
 def test_stt_empty_suggests_dtmf_after_two_fails():

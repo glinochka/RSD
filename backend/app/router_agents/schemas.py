@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Any, Literal, Optional
 
 
@@ -224,6 +224,48 @@ class TelephonyChannelCredentialsInput(BaseModel):
     language: str = Field(default="ru-RU", min_length=2, max_length=16)
     record_calls: bool = Field(default=True)
     disclaimer_played: bool = Field(default=True)
+    routing_extension: str | None = Field(
+        default=None,
+        min_length=4,
+        max_length=4,
+        pattern=r"^\d{4}$",
+        description="Добавочный номер (4 цифры) для общего входящего номера",
+    )
+    inbound_numbers: list[str] = Field(
+        default_factory=list,
+        max_length=32,
+        description="Дополнительные выделенные DID (E.164), без DTMF",
+    )
+
+    @field_validator("inbound_numbers")
+    @classmethod
+    def _normalize_inbound_numbers(cls, values: list[str]) -> list[str]:
+        out: list[str] = []
+        for item in values or []:
+            num = str(item).strip()
+            if num and num not in out:
+                out.append(num)
+        return out
+
+
+class UpdateTelephonyRouting(AgentLookup):
+    routing_extension: str | None = Field(
+        default=None,
+        min_length=4,
+        max_length=4,
+        pattern=r"^\d{4}$",
+    )
+    inbound_numbers: list[str] = Field(default_factory=list, max_length=32)
+
+    @field_validator("inbound_numbers")
+    @classmethod
+    def _normalize_inbound_numbers_update(cls, values: list[str]) -> list[str]:
+        out: list[str] = []
+        for item in values or []:
+            num = str(item).strip()
+            if num and num not in out:
+                out.append(num)
+        return out
 
 
 class AddTelephonyChannel(AgentLookup, TelephonyChannelCredentialsInput):

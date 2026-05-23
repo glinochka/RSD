@@ -20,6 +20,7 @@ from ..telephony.agent_guards import (
 from ..config import settings
 from ..services.telephony_orchestrator import (
     DialogState,
+    OrchestratorDecision,
     build_compressed_turn_context,
     decide_orchestrator,
     load_dialog_state,
@@ -58,6 +59,7 @@ class PhoneTurnResult:
     play_filler: bool = False
     dialog_state: str = "LISTEN"
     use_ssml: bool = True
+    llm_deferred: bool = False
 
 
 async def _log_analytics(
@@ -188,11 +190,16 @@ async def process_phone_turn(
     interrupted_agent_text: str | None = None,
     persist_turns: bool = True,
     compressed_history_override: str | None = None,
+    orchestrator_decision: OrchestratorDecision | None = None,
+    skip_llm_execution: bool = False,
 ) -> PhoneTurnResult:
     base_ctx = dict(runtime_context or {})
     transcript = (user_transcript or "").strip()
     if not transcript:
-        orch = decide_orchestrator(call, transcript="", stt_empty=True)
+        if orchestrator_decision is not None:
+            orch = orchestrator_decision
+        else:
+            orch = decide_orchestrator(call, transcript="", stt_empty=True)
         if orch.suggest_dtmf_menu:
             return PhoneTurnResult(
                 reply_text=dtmf_menu_prompt(),
@@ -245,13 +252,16 @@ async def process_phone_turn(
         compressed = compressed_history_override
     else:
         compressed = await build_compressed_turn_context(session, int(call.id))
-    orch = decide_orchestrator(
-        call,
-        transcript=transcript,
-        barged_in=barged_in,
-        interrupted_agent_text=interrupted_agent_text,
-        compressed_history=compressed,
-    )
+    if orchestrator_decision is not None:
+        orch = orchestrator_decision
+    else:
+        orch = decide_orchestrator(
+            call,
+            transcript=transcript,
+            barged_in=barged_in,
+            interrupted_agent_text=interrupted_agent_text,
+            compressed_history=compressed,
+        )
     merged_ctx = {**base_ctx, **orch.runtime_context}
 
     if compressed and not _phone_portrait_enabled(template_config):
@@ -263,6 +273,12 @@ async def process_phone_turn(
         (agent.system_prompt or "") + history_block,
         state_addon=orch.prompt_addon,
     )
+    if skip_llm_execution:
+        return PhoneTurnResult(
+            reply_text="",
+            dialog_state=orch.state.value,
+            llm_deferred=True,
+        )
     streaming_on = settings.TELEPHONY_STREAMING_ENABLED if use_streaming is None else bool(use_streaming)
     normalized_template = str(agent.template_type or "qa").strip().lower()
     reply_chunks: list[str] = []

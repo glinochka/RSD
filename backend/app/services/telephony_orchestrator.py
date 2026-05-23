@@ -1,9 +1,9 @@
-"""Dialog state machine for phone turns (stage 6)."""
+"""Dialog state machine for phone turns — event-driven (stage 4)."""
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
@@ -45,6 +45,46 @@ class DialogState(str, Enum):
     HANDOFF = "HANDOFF"
 
 
+class OrchestratorEventType(str, Enum):
+    SESSION_START = "session.start"
+    STT_FINAL = "stt.final"
+    BARGE_IN = "barge_in"
+    DTMF = "dtmf"
+    SESSION_END = "session.end"
+
+
+@dataclass
+class CallDialogContext:
+    """In-RAM dialog state (orchestrator worker affinity slot)."""
+
+    state: DialogState = DialogState.GREET
+    clarify_count: int = 0
+    stt_fail_count: int = 0
+    barged_in: bool = False
+    interrupted_agent_text: str | None = None
+
+    def to_meta(self) -> dict[str, Any]:
+        return {
+            _DIALOG_STATE_KEY: self.state.value,
+            _CLARIFY_COUNT_KEY: self.clarify_count,
+            _STT_FAIL_COUNT_KEY: self.stt_fail_count,
+        }
+
+    @classmethod
+    def from_meta(cls, meta: dict[str, Any] | None) -> CallDialogContext:
+        raw = meta or {}
+        state_raw = str(raw.get(_DIALOG_STATE_KEY) or DialogState.GREET.value).strip().upper()
+        try:
+            state = DialogState(state_raw)
+        except ValueError:
+            state = DialogState.GREET
+        return cls(
+            state=state,
+            clarify_count=int(raw.get(_CLARIFY_COUNT_KEY) or 0),
+            stt_fail_count=int(raw.get(_STT_FAIL_COUNT_KEY) or 0),
+        )
+
+
 @dataclass(frozen=True)
 class OrchestratorDecision:
     state: DialogState
@@ -65,37 +105,41 @@ def _save_metadata(call: AgentTelephonyCall, patch: dict[str, Any]) -> None:
 
 
 def load_dialog_state(call: AgentTelephonyCall) -> DialogState:
-    raw = str(_metadata(call).get(_DIALOG_STATE_KEY) or DialogState.GREET.value).strip().upper()
-    try:
-        return DialogState(raw)
-    except ValueError:
-        return DialogState.GREET
+    return CallDialogContext.from_meta(_metadata(call)).state
 
 
 def persist_dialog_state(call: AgentTelephonyCall, state: DialogState) -> None:
     _save_metadata(call, {_DIALOG_STATE_KEY: state.value})
 
 
+def sync_context_to_call(call: AgentTelephonyCall, ctx: CallDialogContext) -> None:
+    _save_metadata(call, ctx.to_meta())
+
+
 def increment_stt_fail(call: AgentTelephonyCall) -> int:
-    meta = _metadata(call)
-    count = int(meta.get(_STT_FAIL_COUNT_KEY) or 0) + 1
-    _save_metadata(call, {_STT_FAIL_COUNT_KEY: count})
-    return count
+    ctx = CallDialogContext.from_meta(_metadata(call))
+    ctx.stt_fail_count += 1
+    sync_context_to_call(call, ctx)
+    return ctx.stt_fail_count
 
 
 def reset_stt_fail(call: AgentTelephonyCall) -> None:
-    _save_metadata(call, {_STT_FAIL_COUNT_KEY: 0})
+    ctx = CallDialogContext.from_meta(_metadata(call))
+    ctx.stt_fail_count = 0
+    sync_context_to_call(call, ctx)
 
 
 def increment_clarify(call: AgentTelephonyCall) -> int:
-    meta = _metadata(call)
-    count = int(meta.get(_CLARIFY_COUNT_KEY) or 0) + 1
-    _save_metadata(call, {_CLARIFY_COUNT_KEY: count})
-    return count
+    ctx = CallDialogContext.from_meta(_metadata(call))
+    ctx.clarify_count += 1
+    sync_context_to_call(call, ctx)
+    return ctx.clarify_count
 
 
 def reset_clarify(call: AgentTelephonyCall) -> None:
-    _save_metadata(call, {_CLARIFY_COUNT_KEY: 0})
+    ctx = CallDialogContext.from_meta(_metadata(call))
+    ctx.clarify_count = 0
+    sync_context_to_call(call, ctx)
 
 
 async def build_compressed_turn_context(
@@ -175,6 +219,119 @@ _STATE_PROMPTS: dict[DialogState, str] = {
 }
 
 
+def apply_barge_in(
+    ctx: CallDialogContext,
+    *,
+    interrupted_agent_text: str | None = None,
+) -> None:
+    ctx.barged_in = True
+    if interrupted_agent_text:
+        ctx.interrupted_agent_text = interrupted_agent_text.strip()
+
+
+def decide_from_context(
+    ctx: CallDialogContext,
+    *,
+    transcript: str,
+    requires_transfer: bool = False,
+    stt_empty: bool = False,
+    compressed_history: str = "",
+) -> OrchestratorDecision:
+    """Event-driven decision without waiting for full LLM response."""
+    barged_in = ctx.barged_in
+    interrupted = ctx.interrupted_agent_text
+
+    if stt_empty:
+        ctx.stt_fail_count += 1
+        suggest_dtmf = ctx.stt_fail_count >= 2
+        return OrchestratorDecision(
+            state=ctx.state,
+            runtime_context={
+                "dialog_state": ctx.state.value,
+                "stt_fail_count": ctx.stt_fail_count,
+                "suggest_dtmf_menu": suggest_dtmf,
+            },
+            prompt_addon="",
+            suggest_dtmf_menu=suggest_dtmf,
+        )
+
+    ctx.stt_fail_count = 0
+    if _needs_clarify(transcript):
+        ctx.clarify_count += 1
+    else:
+        ctx.clarify_count = 0
+
+    next_state = _next_state(
+        ctx.state,
+        transcript=transcript,
+        barged_in=barged_in,
+        requires_transfer=requires_transfer,
+        clarify_count=ctx.clarify_count,
+    )
+    ctx.state = next_state
+    ctx.barged_in = False
+    ctx.interrupted_agent_text = None
+
+    runtime: dict[str, Any] = {
+        "dialog_state": next_state.value,
+        "phone_channel": True,
+    }
+    if compressed_history:
+        runtime["compressed_call_history"] = compressed_history
+    if barged_in:
+        runtime["barged_in"] = True
+        if interrupted:
+            runtime["interrupted_agent_text"] = interrupted
+
+    prompt_addon = _STATE_PROMPTS.get(next_state, "")
+    if barged_in:
+        prompt_addon = (
+            "Абонент перебил. Начни по-разговорному («да, слышу…», «понял, вы про…») и ответь на новую мысль."
+            + (f" Ты успел сказать: «{interrupted[:200]}»." if interrupted else "")
+        )
+
+    return OrchestratorDecision(
+        state=next_state,
+        runtime_context=runtime,
+        prompt_addon=prompt_addon,
+    )
+
+
+def handle_orchestrator_event(
+    ctx: CallDialogContext,
+    event: OrchestratorEventType,
+    *,
+    transcript: str = "",
+    interrupted_agent_text: str | None = None,
+    requires_transfer: bool = False,
+    compressed_history: str = "",
+) -> OrchestratorDecision | None:
+    """Apply control-plane event; returns decision only when a turn should run."""
+    if event == OrchestratorEventType.SESSION_START:
+        ctx.state = DialogState.GREET
+        ctx.clarify_count = 0
+        ctx.stt_fail_count = 0
+        ctx.barged_in = False
+        ctx.interrupted_agent_text = None
+        return None
+    if event == OrchestratorEventType.BARGE_IN:
+        apply_barge_in(ctx, interrupted_agent_text=interrupted_agent_text)
+        return None
+    if event == OrchestratorEventType.SESSION_END:
+        return None
+    if event == OrchestratorEventType.STT_FINAL:
+        text = (transcript or "").strip()
+        if not text:
+            return decide_from_context(ctx, transcript="", stt_empty=True, compressed_history=compressed_history)
+        return decide_from_context(
+            ctx,
+            transcript=text,
+            requires_transfer=requires_transfer,
+            compressed_history=compressed_history,
+        )
+    return None
+
+
 def decide_orchestrator(
     call: AgentTelephonyCall,
     *,
@@ -185,59 +342,16 @@ def decide_orchestrator(
     stt_empty: bool = False,
     compressed_history: str = "",
 ) -> OrchestratorDecision:
-    current = load_dialog_state(call)
-    clarify_count = int(_metadata(call).get(_CLARIFY_COUNT_KEY) or 0)
-
-    if stt_empty:
-        fail_count = increment_stt_fail(call)
-        suggest_dtmf = fail_count >= 2
-        return OrchestratorDecision(
-            state=current,
-            runtime_context={
-                "dialog_state": current.value,
-                "stt_fail_count": fail_count,
-                "suggest_dtmf_menu": suggest_dtmf,
-            },
-            prompt_addon="",
-            suggest_dtmf_menu=suggest_dtmf,
-        )
-
-    reset_stt_fail(call)
-    if _needs_clarify(transcript):
-        clarify_count = increment_clarify(call)
-    else:
-        reset_clarify(call)
-        clarify_count = 0
-
-    next_state = _next_state(
-        current,
+    """Backward-compatible wrapper over DB metadata (preview / HTTP turn)."""
+    ctx = CallDialogContext.from_meta(_metadata(call))
+    if barged_in:
+        apply_barge_in(ctx, interrupted_agent_text=interrupted_agent_text)
+    decision = decide_from_context(
+        ctx,
         transcript=transcript,
-        barged_in=barged_in,
         requires_transfer=requires_transfer,
-        clarify_count=clarify_count,
+        stt_empty=stt_empty,
+        compressed_history=compressed_history,
     )
-    persist_dialog_state(call, next_state)
-
-    runtime: dict[str, Any] = {
-        "dialog_state": next_state.value,
-        "phone_channel": True,
-    }
-    if compressed_history:
-        runtime["compressed_call_history"] = compressed_history
-    if barged_in:
-        runtime["barged_in"] = True
-        if interrupted_agent_text:
-            runtime["interrupted_agent_text"] = interrupted_agent_text.strip()
-
-    prompt_addon = _STATE_PROMPTS.get(next_state, "")
-    if barged_in:
-        prompt_addon = (
-            "Абонент перебил. Начни по-разговорному («да, слышу…», «понял, вы про…») и ответь на новую мысль."
-            + (f" Ты успел сказать: «{interrupted_agent_text[:200]}»." if interrupted_agent_text else "")
-        )
-
-    return OrchestratorDecision(
-        state=next_state,
-        runtime_context=runtime,
-        prompt_addon=prompt_addon,
-    )
+    sync_context_to_call(call, ctx)
+    return decision

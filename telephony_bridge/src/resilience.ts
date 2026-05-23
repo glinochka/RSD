@@ -3,20 +3,19 @@ export const MSG_BACKEND_UNAVAILABLE =
 
 export const MSG_CPAAS_TIMEOUT = 'Извините, соединение прервано. До свидания.';
 
-import type { BridgeAction } from './providers/types';
+/** Control-only bridge: VoxEngine reads these fields (not legacy `actions`). */
+export type ControlDegradedHints = {
+  degraded: true;
+  transfer_e164: string;
+};
 
-export function backendUnavailableActions(): BridgeAction[] {
-  return [
-    { type: 'play_tts', text: MSG_BACKEND_UNAVAILABLE },
-    { type: 'transfer', e164: 'operator' },
-  ];
-}
-
-export function cpaasTimeoutActions(): BridgeAction[] {
-  return [
-    { type: 'play_tts', text: MSG_CPAAS_TIMEOUT },
-    { type: 'hangup', reason: 'timeout' },
-  ];
+export function backendUnavailableControlHints(
+  operatorE164 = 'operator',
+): ControlDegradedHints {
+  return {
+    degraded: true,
+    transfer_e164: operatorE164.trim() || 'operator',
+  };
 }
 
 export function isBackendUnavailableError(err: unknown): boolean {

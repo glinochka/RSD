@@ -1,4 +1,4 @@
-# Юридический чеклист телефонии (черновик, этап 0)
+# Юридический чеклист телефонии (черновик, этап 0–8)
 
 **Не является юридической консультацией.** Перед пилотом согласовать с юристом компании и политикой обработки ПДн (152-ФЗ).
 
@@ -41,17 +41,47 @@
 
 - [ ] Данные и медиа в РФ / у провайдера с договором, допустимым для клиента.
 - [ ] Если LLM/STT вне РФ — отдельное решение и уведомление в политике.
+- [ ] **Деплой (этап 8):** `telephony_media_gateway`, orchestrator worker и Redis — в **одном регионе** с Voximplant edge РФ (см. [RUNBOOK.md](./RUNBOOK.md#регион-деплоя-этап-8)).
 
-## 6. Журнал compliance для пилота
+## 6. Шифрование сигнализации и медиа (SIP TLS / SRTP)
+
+- [ ] В кабинете Voximplant / SBC включены **SIP TLS** (сигнализация) и **SRTP** (медиа RTP).
+- [ ] Сертификаты TLS на SBC / trunk — от доверенного УЦ, ротация задокументирована.
+- [ ] WebSocket media (`TELEPHONY_MEDIA_WS_URL`) — только **WSS** в production (TLS termination на reverse-proxy в РФ).
+- [ ] Межсервисный трафик gateway ↔ orchestrator ↔ Redis — внутри VPC, без публичного Redis.
+- [ ] В pentest-чеклисте зафиксирован отказ от plain RTP/SIP в prod.
+
+| Контур | Требование prod |
+|--------|-----------------|
+| PSTN ↔ Voximplant | SIP TLS + SRTP |
+| VoxEngine ↔ Media Gateway | WSS (μ-law frames) |
+| Bridge webhook | HTTPS + HMAC |
+| Internal API | HMAC + mTLS (рекомендуется) |
+
+## 7. Retention hot/cold (этап 8)
+
+| Данные | Hot (Redis) | Cold (Postgres) |
+|--------|-------------|-----------------|
+| Диалог последних N реплик | `telephony:dialog:{call_id}` TTL | `agent_telephony_turns` батч на `stt.final` |
+| Промпт / session resolve | `telephony:session:*` TTL | resolve один раз на звонок |
+| Метрики latency | `agent_telephony_calls.metadata_.latency_budget` | история `latency_budget_turns` (до 50) |
+
+- [ ] Cron: `POST /api/internal/telephony/retention/purge` — `TELEPHONY_TURNS_RETENTION_DAYS` (90).
+- [ ] На `session.end` / hangup — purge hot dialog keys в Redis (orchestrator).
+
+## 8. Журнал compliance для пилота
 
 | Пункт | Статус | Комментарий |
 |-------|--------|-------------|
 | IVR disclaimer | Реализовано | Bridge `call.answered` + `record_calls` / `disclaimer_played` |
 | Retention 90 дней | Реализовано | `POST /api/internal/telephony/retention/purge`, `TELEPHONY_TURNS_RETENTION_DAYS` |
+| Hot dialog только Redis | Реализовано | `purge_hot_dialog` на `session.end` |
 | Маскирование caller в UI | Реализовано | Этап 3 |
+| Latency budget / E2R p90 | Реализовано | `metadata.latency_budget`, `/metrics`, Prometheus |
+| SIP TLS + SRTP | Чеклист | Настройка Voximplant/SBC — см. §6 |
 | DPA Voximplant | Не начато | До коммерции |
 
-## 7. Связь с продуктом
+## 9. Связь с продуктом
 
 | Поле credentials | Назначение |
 |------------------|------------|

@@ -1,0 +1,29 @@
+{
+  "name": "rsd-telephony-media-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Media plane for RSD telephony (WS audio, VAD/STT/TTS in later stages)",
+  "scripts": {
+    "start": "tsx src/server.ts",
+    "typecheck": "tsc --noEmit",
+    "test:loopback": "node scripts/test_vox_loopback.mjs",
+    "test:pipeline": "node scripts/test_pipeline.mjs",
+    "test:vad": "node scripts/test_vad_unit.mjs",
+    "download:vad": "node scripts/download_vad_model.mjs"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.12.6",
+    "@grpc/proto-loader": "^0.7.13",
+    "express": "^4.21.2",
+    "ioredis": "^5.4.2",
+    "onnxruntime-node": "^1.20.1",
+    "tsx": "^4.19.3",
+    "ws": "^8.18.1"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.5.13",
+    "typescript": "^5.7.2"
+  }
+}

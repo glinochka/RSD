@@ -1,4 +1,8 @@
-"""Browser voice preview for telephony (ИИ-оператор) — no live PSTN call."""
+"""Browser voice preview for telephony (ИИ-оператор) — no live PSTN call.
+
+Uses ``source: browser_preview`` in API responses and call metadata. Does not call
+``telephony_bridge`` or ``telephony_media_gateway`` (PSTN media is a separate path).
+"""
 
 from __future__ import annotations
 
@@ -34,9 +38,14 @@ from ..telephony.tts_service import (
     resolve_preview_tts_provider,
     synthesize_preview_speech,
 )
+from ..telephony.preview_guard import assert_preview_isolated
 from ..telephony.turn_pool import run_in_telephony_pool
 
 logger = logging.getLogger(__name__)
+
+# Explicit preview channel — does not use telephony_bridge or media gateway.
+BROWSER_PREVIEW_SOURCE = "browser_preview"
+BROWSER_PREVIEW_CHANNEL = "browser_preview"
 
 TELEPHONY_PREVIEW_TEMPLATES = frozenset({"crm_admin", "qa"})
 _PREVIEW_EXTERNAL_PREFIX = "web-preview:"
@@ -71,6 +80,11 @@ def _utc_now() -> datetime:
 
 def _preview_caller_e164(user_id: int) -> str:
     return f"preview:web:{int(user_id)}"
+
+
+def _preview_source_fields() -> dict[str, str]:
+    """API contract: browser preview is isolated from PSTN bridge / media gateway."""
+    return {"source": BROWSER_PREVIEW_SOURCE, "channel": BROWSER_PREVIEW_CHANNEL}
 
 
 def _logic_preview_session_id(owner_user_id: int) -> str:
@@ -235,7 +249,7 @@ async def _create_preview_call(
         caller_e164=_preview_caller_e164(owner_user_id),
         status="active",
         started_at=_utc_now(),
-        metadata_={"preview": True, "source": "web"},
+        metadata_={"preview": True, "source": BROWSER_PREVIEW_SOURCE, "channel": BROWSER_PREVIEW_CHANNEL},
     )
     session.add(call)
     await session.flush()
@@ -434,6 +448,7 @@ async def start_telephony_preview_session(
             "mode": "telephony_pipeline",
             "requires_telephony_channel": False,
             "tts": tts_meta,
+            **_preview_source_fields(),
         }
 
     return {
@@ -446,6 +461,7 @@ async def start_telephony_preview_session(
         "turn_history": [],
         "dialog_state": DialogState.GREET.value,
         "tts": tts_meta,
+        **_preview_source_fields(),
     }
 
 
@@ -462,7 +478,9 @@ async def run_telephony_preview_turn(
     audio_base64: str | None,
     audio_mime_type: str | None,
 ) -> dict:
+    """Browser preview turn — ``channel=browser_preview``; never calls media gateway."""
     _assert_preview_template(agent)
+    assert_preview_isolated()
     started = time.perf_counter()
 
     transcript = (user_transcript or "").strip()
@@ -484,6 +502,7 @@ async def run_telephony_preview_turn(
         if preview_session_id:
             empty["preview_session_id"] = preview_session_id
             empty["turn_history"] = list(turn_history or [])
+        empty.update(_preview_source_fields())
         return empty
 
     if call_db_id is not None:
@@ -511,6 +530,7 @@ async def run_telephony_preview_turn(
                 call.duration_sec = max(0, int(delta.total_seconds()))
             await session.flush()
         payload["call_db_id"] = int(call.id)
+        payload.update(_preview_source_fields())
         return payload
 
     if not preview_session_id:
@@ -545,6 +565,7 @@ async def run_telephony_preview_turn(
             "turn_history": updated_history,
             "dialog_state": load_dialog_state(shim).value,
             "mode": "voice_logic",
+            **_preview_source_fields(),
         },
     )
 
@@ -571,11 +592,22 @@ async def end_telephony_preview_session(
                 delta = call.ended_at - call.started_at
                 call.duration_sec = max(0, int(delta.total_seconds()))
             await session.flush()
-        return {"call_db_id": int(call.id), "status": call.status, "mode": "telephony_pipeline"}
+        return {
+            "call_db_id": int(call.id),
+            "status": call.status,
+            "mode": "telephony_pipeline",
+            **_preview_source_fields(),
+        }
 
     if preview_session_id:
         _validate_logic_preview_session_id(preview_session_id, owner_user_id)
-        return {"call_db_id": None, "preview_session_id": preview_session_id, "status": "completed", "mode": "voice_logic"}
+        return {
+            "call_db_id": None,
+            "preview_session_id": preview_session_id,
+            "status": "completed",
+            "mode": "voice_logic",
+            **_preview_source_fields(),
+        }
 
     raise HTTPException(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

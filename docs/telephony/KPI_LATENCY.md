@@ -1,49 +1,49 @@
-# KPI задержки телефонии (этап 0)
+# KPI задержки телефонии (этап 8 — streaming)
 
-Метрики используются для приёмки MVP (этапы 2–4) и оптимизации (этапы 5–6). Замеры — на тестовом стенде Voximplant + `telephony_bridge` + backend.
+Метрики для приёмки prod PSTN (`telephony_media_gateway` + orchestrator). Preview (`channel=browser_preview`) в бюджет **не входит**.
 
-## Целевые значения
+## Latency budget (целевой p90)
 
-| Метрика | Определение | MVP (допустимо) | Цель (production) |
-|---------|-------------|-----------------|-------------------|
-| **TTFA** (time to first agent audio) | От `call.inbound` / answer до начала первого TTS агента | < 4 с (p95) | < 1.2 с (p95) |
-| **E2R** (end-of-speech → reply start) | От конца реплики абонента (VAD/тишина) до первого байта ответа агента | 3–8 с (p95) | < 1.5 с (p95) |
-| **Barge-in** | Прерывание TTS при речи абонента | Нет | Да (< 200 ms stop) |
-| **Concurrency** | Одновременные активные звонки на одного агента | 1–3 (тест) | N (по тарифу) |
+| Поле | Определение | Target p90 (ms) |
+|------|-------------|-----------------|
+| `sip_ms` | Inbound → первый ответ сигнализации (183/answer) | 1200 |
+| `vad_ms` | Оценка тишины до endpoint (из `vad_speech_ratio` × `stt_final_ms`) | 450 |
+| `stt_final_ms` | Конец реплики абонента → финальный transcript | 400 |
+| `llm_ttft_ms` | `stt.final` → первый токен LLM | 300 |
+| `tts_ttfa_ms` | первый токен → первый байт TTS | 150 |
+| `e2r_ms` | end-of-speech → первый байт ответа агента (wall или сумма) | **600–850** |
+
+Значения пишутся в `agent_telephony_calls.metadata_.latency_budget` и агрегируются в `GET /api/internal/telephony/metrics` (`latency_budget_p90`, `latency_budget_table`).
+
+Prometheus (тот же процесс backend):
+
+```bash
+curl -s -H "X-Internal-..." "$BACKEND/api/internal/telephony/metrics/prometheus"
+```
 
 ## Как измерять
 
-### TTFA
+### E2R (production)
 
 ```
-TTFA_ms = t(first_tts_play_start) - t(call.answered | call.inbound)
+E2R_ms ≈ stt_final_ms + llm_ttft_ms + tts_ttfa_ms
 ```
 
-Логировать в `agent_telephony_calls.metadata` и/или bridge: `latency.ttfa_ms`.
+или wall-clock orchestrator от `stt.final` до первого `agent.audio.chunk` (`e2r_ms` в metadata).
 
-### E2R
+### Регрессия
 
-```
-E2R_ms = t(agent_tts_start) - t(user_speech_end)
-```
+- Набор из **50** коротких фраз (RU), замер p90 `e2r_ms` на стенде в регионе РФ.
+- Критерий этапа 8: **p90 E2R 600–850 ms** при mock/Yandex STT на стенде.
 
-На MVP: `user_speech_end` = момент окончания записи фразы (тишина 1.5–2.5 с). На этапе 5: endpointing по partial STT.
+## Алерты
 
-Логировать по ходам: `agent_telephony_turns.latency_ms` (STT + LLM + TTS).
+| Условие | Env | Действие |
+|---------|-----|----------|
+| `turn_latency_p95 > TELEPHONY_TURN_LATENCY_ALERT_P95_MS` | default 10000 | Warning |
+| `e2r_p90 > TELEPHONY_E2R_ALERT_P90_MS` | default 850 | Warning, разбор STT/LLM/TTS |
+| `stt_empty_rate > 15%` | — | Проверка микрофона / промпт |
 
-### Регрессия (этап 5+)
+## Связь с preview
 
-- Набор из 50 WAV-фраз (короткие/длинные, шум).
-- Поля: `eos_to_first_audio_ms`, `stt_final_ms`, `llm_first_token_ms`, `tts_first_byte_ms`.
-
-## Алерты (этап 4+)
-
-| Условие | Действие |
-|---------|----------|
-| `turn_latency_p95 > 10 s` (MVP) | Warning, разбор STT/LLM |
-| `turn_latency_p95 > 2 s` (post-этап 5) | Alert |
-| `stt_empty_rate > 15%` | Проверка микрофона / промпт «повторите» |
-
-## Связь с продуктом
-
-До этапа 5 позиционировать пилот как **бета по задержке**; baseline замерить после первого E2E на этапе 2 и зафиксировать в `metadata` первых 20 звонков.
+Браузерный preview использует batch STT и не публикует latency budget — см. [SESSION_PROTOCOL.md](./SESSION_PROTOCOL.md).

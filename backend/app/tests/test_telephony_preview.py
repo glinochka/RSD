@@ -1,12 +1,21 @@
 import pytest
 
 from app.router_agents.telephony_preview import (
+    BROWSER_PREVIEW_SOURCE,
     _compress_turn_history,
     _logic_preview_session_id,
+    _preview_source_fields,
     _validate_logic_preview_session_id,
     strip_ssml_for_browser,
 )
 from app.services.telephony_orchestrator import DialogState
+
+
+def test_preview_source_fields():
+    assert _preview_source_fields() == {
+        "source": BROWSER_PREVIEW_SOURCE,
+        "channel": "browser_preview",
+    }
 
 
 def test_strip_ssml_for_browser():
@@ -35,6 +44,12 @@ def test_logic_preview_session_id_rejects_other_user():
     sid = _logic_preview_session_id(1)
     with pytest.raises(Exception):
         _validate_logic_preview_session_id(sid, 2)
+
+
+def test_preview_isolated_from_media_gateway():
+    from app.telephony.preview_guard import assert_preview_isolated
+
+    assert_preview_isolated()
 
 
 def test_shim_dialog_state_default():

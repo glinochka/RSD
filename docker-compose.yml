@@ -76,6 +76,14 @@ services:
             TELEPHONY_LLM_RETRY_TIMEOUT_SECONDS: ${TELEPHONY_LLM_RETRY_TIMEOUT_SECONDS:-15}
             TELEPHONY_PREVIEW_LLM_TIMEOUT_SECONDS: ${TELEPHONY_PREVIEW_LLM_TIMEOUT_SECONDS:-60}
             TELEPHONY_TURN_LATENCY_ALERT_P95_MS: ${TELEPHONY_TURN_LATENCY_ALERT_P95_MS:-10000}
+            TELEPHONY_E2R_ALERT_P90_MS: ${TELEPHONY_E2R_ALERT_P90_MS:-850}
+            TELEPHONY_ORCHESTRATOR_ENABLED: ${TELEPHONY_ORCHESTRATOR_ENABLED:-true}
+            TELEPHONY_STREAMING_ENABLED: ${TELEPHONY_STREAMING_ENABLED:-true}
+            TELEPHONY_STREAM_TTS_PROVIDER: ${TELEPHONY_STREAM_TTS_PROVIDER:-yandex}
+            TELEPHONY_LLM_MODE: ${TELEPHONY_LLM_MODE:-chat}
+            TELEPHONY_SYNTAGMA_MIN_CHARS: ${TELEPHONY_SYNTAGMA_MIN_CHARS:-12}
+            GROQ_API_KEY: ${GROQ_API_KEY:-}
+            ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
             TELEPHONY_MAX_TURNS: ${TELEPHONY_MAX_TURNS:-15}
             TELEPHONY_MAX_CALL_MINUTES: ${TELEPHONY_MAX_CALL_MINUTES:-15}
             TELEPHONY_MAX_TURN_SECONDS: ${TELEPHONY_MAX_TURN_SECONDS:-30}
@@ -200,12 +208,21 @@ services:
             INTERNAL_API_KEY: ${INTERNAL_API_KEY}
             INTERNAL_REQUEST_SIGNING_SECRET: ${INTERNAL_REQUEST_SIGNING_SECRET:-}
             TELEPHONY_STREAMING_ENABLED: ${TELEPHONY_STREAMING_ENABLED:-true}
+            TELEPHONY_STREAM_TTS_PROVIDER: ${TELEPHONY_STREAM_TTS_PROVIDER:-yandex}
+            TELEPHONY_LLM_MODE: ${TELEPHONY_LLM_MODE:-chat}
+            TELEPHONY_SYNTAGMA_MIN_CHARS: ${TELEPHONY_SYNTAGMA_MIN_CHARS:-12}
+            YANDEX_SPEECHKIT_API_KEY: ${YANDEX_SPEECHKIT_API_KEY:-}
+            YANDEX_SPEECHKIT_FOLDER_ID: ${YANDEX_SPEECHKIT_FOLDER_ID:-}
+            ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+            GROQ_API_KEY: ${GROQ_API_KEY:-}
             TELEPHONY_DEDICATED_POOL_ENABLED: ${TELEPHONY_DEDICATED_POOL_ENABLED:-true}
             TELEPHONY_DEDICATED_POOL_SIZE: ${TELEPHONY_DEDICATED_POOL_SIZE:-8}
             TELEPHONY_WORKER_PORT: ${TELEPHONY_WORKER_PORT:-8001}
             TELEPHONY_LLM_TIMEOUT_SECONDS: ${TELEPHONY_LLM_TIMEOUT_SECONDS:-25}
             TELEPHONY_LLM_RETRY_TIMEOUT_SECONDS: ${TELEPHONY_LLM_RETRY_TIMEOUT_SECONDS:-15}
             TELEPHONY_PREVIEW_LLM_TIMEOUT_SECONDS: ${TELEPHONY_PREVIEW_LLM_TIMEOUT_SECONDS:-60}
+            TELEPHONY_TTS_PROVIDER: ${TELEPHONY_TTS_PROVIDER:-yandex}
+            TELEPHONY_TTS_TIMEOUT_SECONDS: ${TELEPHONY_TTS_TIMEOUT_SECONDS:-20}
             TELEPHONY_MAX_TURNS: ${TELEPHONY_MAX_TURNS:-15}
             TELEPHONY_MAX_CALL_MINUTES: ${TELEPHONY_MAX_CALL_MINUTES:-15}
             TELEPHONY_MAX_TURN_SECONDS: ${TELEPHONY_MAX_TURN_SECONDS:-30}
@@ -230,6 +247,8 @@ services:
         build: ./telephony_bridge
         container_name: rsd_telephony_bridge
         restart: unless-stopped
+        env_file:
+            - .env
         environment:
             TELEPHONY_BRIDGE_API_KEY: ${TELEPHONY_BRIDGE_API_KEY:-}
             TELEPHONY_BACKEND_INTERNAL_KEY: ${TELEPHONY_INTERNAL_API_KEY:-${INTERNAL_API_KEY}}
@@ -239,20 +258,10 @@ services:
             TELEPHONY_WEBHOOK_RATE_LIMIT_PER_IP: ${TELEPHONY_WEBHOOK_RATE_LIMIT_PER_IP:-240}
             TELEPHONY_WEBHOOK_RATE_WINDOW_SECONDS: ${TELEPHONY_WEBHOOK_RATE_WINDOW_SECONDS:-60}
             TELEPHONY_BACKEND_REQUEST_TIMEOUT_MS: ${TELEPHONY_BACKEND_REQUEST_TIMEOUT_MS:-15000}
-            TELEPHONY_TURN_LATENCY_ALERT_P95_MS: ${TELEPHONY_TURN_LATENCY_ALERT_P95_MS:-10000}
             TELEPHONY_SESSION_STORE: ${TELEPHONY_SESSION_STORE:-redis}
             REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
             TELEPHONY_BACKEND_URL: ${TELEPHONY_BACKEND_URL:-http://telephony_worker:8001}
-            TELEPHONY_MAX_TURNS: ${TELEPHONY_MAX_TURNS:-15}
-            TELEPHONY_MAX_CALL_MINUTES: ${TELEPHONY_MAX_CALL_MINUTES:-15}
-            TELEPHONY_MAX_TURN_SECONDS: ${TELEPHONY_MAX_TURN_SECONDS:-30}
-            TELEPHONY_ENDPOINT_SILENCE_MS: ${TELEPHONY_ENDPOINT_SILENCE_MS:-600}
-            TELEPHONY_STREAMING_ENABLED: ${TELEPHONY_STREAMING_ENABLED:-true}
-            TELEPHONY_CRM_FILLER_THRESHOLD_MS: ${TELEPHONY_CRM_FILLER_THRESHOLD_MS:-1500}
-            TELEPHONY_RECORD_SILENCE_SEC: ${TELEPHONY_RECORD_SILENCE_SEC:-0}
-            TELEPHONY_BARGE_IN_ENABLED: ${TELEPHONY_BARGE_IN_ENABLED:-true}
-            TELEPHONY_BACKCHANNEL_MIN_MS: ${TELEPHONY_BACKCHANNEL_MIN_MS:-5000}
-            TELEPHONY_SSML_ENABLED: ${TELEPHONY_SSML_ENABLED:-true}
+            TELEPHONY_BRIDGE_CONTROL_ONLY: ${TELEPHONY_BRIDGE_CONTROL_ONLY:-true}
             PORT: "8100"
         ports:
             - "8100:8100"
@@ -263,6 +272,103 @@ services:
                 condition: service_started
         healthcheck:
             test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8100/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+        networks:
+            - rsd_network
+
+    telephony_orchestrator:
+        build: ./backend
+        container_name: rsd_telephony_orchestrator
+        restart: unless-stopped
+        command: >
+            sh -c "python -m app.telephony.orchestrator_main"
+        env_file:
+            - .env
+        environment:
+            DB_HOST: ${DB_HOST}
+            DB_PORT: ${DB_PORT}
+            DB_USER: ${DB_USER}
+            DB_PASSWORD: ${DB_PASSWORD}
+            DB_NAME: ${DB_NAME}
+            TELEPHONY_ENABLED: ${TELEPHONY_ENABLED:-false}
+            TELEPHONY_ORCHESTRATOR_ENABLED: ${TELEPHONY_ORCHESTRATOR_ENABLED:-true}
+            TELEPHONY_STREAMING_ENABLED: ${TELEPHONY_STREAMING_ENABLED:-true}
+            TELEPHONY_DEDICATED_POOL_ENABLED: ${TELEPHONY_DEDICATED_POOL_ENABLED:-true}
+            TELEPHONY_DEDICATED_POOL_SIZE: ${TELEPHONY_DEDICATED_POOL_SIZE:-8}
+            TELEPHONY_LLM_TIMEOUT_SECONDS: ${TELEPHONY_LLM_TIMEOUT_SECONDS:-25}
+            TELEPHONY_LLM_RETRY_TIMEOUT_SECONDS: ${TELEPHONY_LLM_RETRY_TIMEOUT_SECONDS:-15}
+            TELEPHONY_CRM_FILLER_THRESHOLD_MS: ${TELEPHONY_CRM_FILLER_THRESHOLD_MS:-1500}
+            TELEPHONY_SSML_ENABLED: ${TELEPHONY_SSML_ENABLED:-true}
+            TELEPHONY_BARGE_IN_ENABLED: ${TELEPHONY_BARGE_IN_ENABLED:-true}
+            TELEPHONY_E2R_ALERT_P90_MS: ${TELEPHONY_E2R_ALERT_P90_MS:-850}
+            TELEPHONY_MAX_TURNS: ${TELEPHONY_MAX_TURNS:-15}
+            TELEPHONY_REDIS_SESSION_TTL_SEC: ${TELEPHONY_REDIS_SESSION_TTL_SEC:-7200}
+            TELEPHONY_DIALOG_MAX_TURNS: ${TELEPHONY_DIALOG_MAX_TURNS:-16}
+            TELEPHONY_SYNTAGMA_MIN_CHARS: ${TELEPHONY_SYNTAGMA_MIN_CHARS:-12}
+            TELEPHONY_STREAM_TTS_PROVIDER: ${TELEPHONY_STREAM_TTS_PROVIDER:-yandex}
+            TELEPHONY_LLM_MODE: ${TELEPHONY_LLM_MODE:-chat}
+            YANDEX_SPEECHKIT_API_KEY: ${YANDEX_SPEECHKIT_API_KEY:-}
+            YANDEX_SPEECHKIT_FOLDER_ID: ${YANDEX_SPEECHKIT_FOLDER_ID:-}
+            ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+            GROQ_API_KEY: ${GROQ_API_KEY:-}
+            REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+            QDRANT_URL: ${QDRANT_URL}
+            DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+        depends_on:
+            postgres:
+                condition: service_healthy
+            redis:
+                condition: service_healthy
+            qdrant:
+                condition: service_started
+        networks:
+            - rsd_network
+        volumes:
+            - ./backend:/backend
+
+    telephony_media_gateway:
+        build: ./telephony_media_gateway
+        container_name: rsd_telephony_media_gateway
+        restart: unless-stopped
+        env_file:
+            - .env
+        environment:
+            PORT: "8200"
+            NODE_ENV: ${NODE_ENV:-development}
+            REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+            TELEPHONY_ORCH_EVENTS_ENABLED: ${TELEPHONY_ORCH_EVENTS_ENABLED:-true}
+            TELEPHONY_ORCH_EVENTS_CHANNEL: ${TELEPHONY_ORCH_EVENTS_CHANNEL:-telephony:orch:events}
+            TELEPHONY_ORCH_REPLIES_CHANNEL: ${TELEPHONY_ORCH_REPLIES_CHANNEL:-telephony:orch:replies}
+            TELEPHONY_MEDIA_WS_PATH: ${TELEPHONY_MEDIA_WS_PATH:-/ws}
+            TELEPHONY_MEDIA_AUDIO_FRAME_MS: ${TELEPHONY_MEDIA_AUDIO_FRAME_MS:-20}
+            TELEPHONY_MEDIA_LOG_LEVEL: ${TELEPHONY_MEDIA_LOG_LEVEL:-info}
+            TELEPHONY_MEDIA_MAX_CONTROL_BYTES: ${TELEPHONY_MEDIA_MAX_CONTROL_BYTES:-65536}
+            TELEPHONY_MEDIA_LOOPBACK_TRANSPORT: ${TELEPHONY_MEDIA_LOOPBACK_TRANSPORT:-vox}
+            TELEPHONY_MEDIA_LOOPBACK_MODE: ${TELEPHONY_MEDIA_LOOPBACK_MODE:-echo}
+            TELEPHONY_MEDIA_PIPELINE_ENABLED: ${TELEPHONY_MEDIA_PIPELINE_ENABLED:-true}
+            STT_PROVIDER: ${STT_PROVIDER:-yandex}
+            TURN_SILENCE_MS: ${TURN_SILENCE_MS:-400}
+            STT_FINAL_WAIT_MS: ${STT_FINAL_WAIT_MS:-80}
+            VAD_MODEL_PATH: ${VAD_MODEL_PATH:-/app/models/silero_vad.onnx}
+            VAD_SPEECH_THRESHOLD: ${VAD_SPEECH_THRESHOLD:-0.5}
+            VAD_ENERGY_THRESHOLD: ${VAD_ENERGY_THRESHOLD:-0.02}
+            YANDEX_SPEECHKIT_API_KEY: ${YANDEX_SPEECHKIT_API_KEY:-}
+            YANDEX_SPEECHKIT_FOLDER_ID: ${YANDEX_SPEECHKIT_FOLDER_ID:-}
+            DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
+            TELEPHONY_STT_LANGUAGE: ${TELEPHONY_STT_LANGUAGE:-ru-RU}
+            TELEPHONY_BARGE_IN_ENABLED: ${TELEPHONY_BARGE_IN_ENABLED:-true}
+            TELEPHONY_BARGE_IN_SPEECH_FRAMES: ${TELEPHONY_BARGE_IN_SPEECH_FRAMES:-2}
+        ports:
+            - "8200:8200"
+        depends_on:
+            redis:
+                condition: service_healthy
+            telephony_orchestrator:
+                condition: service_started
+        healthcheck:
+            test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8200/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
             interval: 10s
             timeout: 5s
             retries: 5

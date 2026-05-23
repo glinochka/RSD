@@ -1,13 +1,6 @@
 import type { TelephonyProvider, TelephonyWebhookEvent, WebhookEnvelope } from './types';
 
-const EVENTS = new Set<TelephonyWebhookEvent>([
-  'call.inbound',
-  'call.answered',
-  'call.recording_ready',
-  'call.partial_transcript',
-  'call.hangup',
-  'dtmf',
-]);
+const EVENTS = new Set<TelephonyWebhookEvent>(['call.inbound', 'call.answered', 'call.hangup']);
 
 function asObject(body: unknown): Record<string, unknown> {
   if (body && typeof body === 'object' && !Array.isArray(body)) {
@@ -17,16 +10,6 @@ function asObject(body: unknown): Record<string, unknown> {
 }
 
 export const voximplantProvider: TelephonyProvider = {
-  playAudio(text: string, voiceId?: string) {
-    const action = { type: 'play_tts' as const, text: text.trim() };
-    return voiceId ? { ...action, voice_id: voiceId } : action;
-  },
-  transfer(e164: string) {
-    return { type: 'transfer' as const, e164 };
-  },
-  startMediaStream() {
-    return { type: 'record' as const, max_sec: 30, silence_sec: 2 };
-  },
   parseWebhookBody(body: unknown, pathConnectionId: number): WebhookEnvelope {
     const data = asObject(body);
     const schemaVersion = Number(data.schema_version ?? 0);

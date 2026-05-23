@@ -1,75 +1,94 @@
 /**
- * Load smoke test: 3 parallel signed webhook deliveries (inbound + recording turn).
- * Usage: node scripts/load_parallel_calls.mjs
+ * Load smoke test: parallel WS media sessions (stage 9).
+ * Replaces legacy webhook recording_ready → /turn path.
+ *
+ * Usage:
+ *   TELEPHONY_MEDIA_WS_URL=ws://127.0.0.1:8200/ws node scripts/load_parallel_calls.mjs
  */
-import crypto from 'crypto';
+import WebSocket from 'ws';
 
-const BASE = (process.env.TELEPHONY_WEBHOOK_BASE_URL || 'http://127.0.0.1:8100').replace(/\/$/, '');
-const CONNECTION_ID = Number.parseInt(process.env.TELEPHONY_TEST_CONNECTION_ID || '1', 10);
-const SECRET = process.env.TELEPHONY_TEST_WEBHOOK_SECRET || 'test-secret-32-chars-minimum!!';
+const WS_URL = (process.env.TELEPHONY_MEDIA_WS_URL || 'ws://127.0.0.1:8200/ws').replace(/\/$/, '');
+const PARALLEL = Number.parseInt(process.env.TELEPHONY_LOAD_PARALLEL || '3', 10);
+const FRAME_BYTES = 160;
+const FRAME_MS = 20;
 
-function sign(timestamp, connectionId, rawBody) {
-  const prefix = Buffer.from(`v1\n${timestamp}\n${connectionId}\n`, 'utf8');
-  const message = Buffer.concat([prefix, rawBody]);
-  return crypto.createHmac('sha256', SECRET).update(message).digest('hex');
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
 }
 
-async function postWebhook(body) {
-  const rawBody = Buffer.from(JSON.stringify(body), 'utf8');
-  const timestamp = String(Math.floor(Date.now() / 1000));
-  const signature = sign(timestamp, CONNECTION_ID, rawBody);
-  const url = `${BASE}/webhook/voximplant/${CONNECTION_ID}`;
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-RSD-Telephony-Timestamp': timestamp,
-      'X-RSD-Telephony-Signature': signature,
-    },
-    body: rawBody,
-  });
-  const text = await response.text();
-  return { status: response.status, text };
+function noiseUlaw(bytes) {
+  const buf = Buffer.alloc(bytes);
+  for (let i = 0; i < bytes; i += 1) {
+    buf[i] = i % 2 === 0 ? 0x00 : 0xff;
+  }
+  return buf;
 }
 
-async function sendCall(index) {
-  const callId = `load-call-${index}`;
-  const inbound = await postWebhook({
-    schema_version: 1,
-    event_id: `load-inbound-${Date.now()}-${index}`,
-    event: 'call.inbound',
-    emitted_at: new Date().toISOString(),
-    call_id: callId,
-    connection_id: CONNECTION_ID,
-    payload: { caller_e164: `+7900123400${index}` },
+async function runSession(index) {
+  const callId = `load-ws-${Date.now()}-${index}`;
+  const partials = [];
+  const finals = [];
+
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(WS_URL);
+    const timer = setTimeout(() => reject(new Error(`timeout session ${index}`)), 25000);
+
+    ws.on('open', () => {
+      ws.send(
+        JSON.stringify({
+          type: 'session.start',
+          payload: {
+            call_id: callId,
+            connection_id: 1,
+            caller_e164: `+7900123400${index}`,
+            codec: 'pcmu',
+          },
+        }),
+      );
+    });
+
+    ws.on('message', (data, isBinary) => {
+      if (isBinary) return;
+      try {
+        const msg = JSON.parse(String(data));
+        if (msg.type === 'stt.partial') partials.push(msg);
+        if (msg.type === 'stt.final') finals.push(msg);
+        if (msg.type === 'session.start' && msg.payload?.ok) {
+          void pumpAudio();
+        }
+      } catch {
+        // ignore
+      }
+    });
+
+    async function pumpAudio() {
+      for (let i = 0; i < 40; i += 1) {
+        const payload = noiseUlaw(FRAME_BYTES);
+        const frame = Buffer.allocUnsafe(1 + payload.length);
+        frame[0] = 0x01;
+        payload.copy(frame, 1);
+        ws.send(frame);
+        await sleep(FRAME_MS);
+      }
+      await sleep(1200);
+      ws.send(JSON.stringify({ type: 'session.end', payload: { reason: 'load_test' } }));
+      clearTimeout(timer);
+      ws.close();
+      resolve({ index, callId, partials: partials.length, finals: finals.length });
+    }
+
+    ws.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
   });
-  const answered = await postWebhook({
-    schema_version: 1,
-    event_id: `load-answered-${Date.now()}-${index}`,
-    event: 'call.answered',
-    emitted_at: new Date().toISOString(),
-    call_id: callId,
-    connection_id: CONNECTION_ID,
-    payload: { caller_e164: `+7900123400${index}` },
-  });
-  const recording = await postWebhook({
-    schema_version: 1,
-    event_id: `load-recording-${Date.now()}-${index}`,
-    event: 'call.recording_ready',
-    emitted_at: new Date().toISOString(),
-    call_id: callId,
-    connection_id: CONNECTION_ID,
-    payload: {
-      caller_e164: `+7900123400${index}`,
-      leg: 'user_turn',
-      turn_index: 1,
-      user_transcript: 'тестовый вопрос',
-    },
-  });
-  return { index, inbound, answered, recording };
 }
 
-const results = await Promise.all([0, 1, 2].map((i) => sendCall(i)));
-const failed = results.flatMap((r) => [r.inbound, r.answered, r.recording]).filter((r) => r.status >= 500);
-console.log(JSON.stringify({ ok: failed.length === 0, results }, null, 2));
+const results = await Promise.all(
+  Array.from({ length: Math.max(1, PARALLEL) }, (_, i) =>
+    runSession(i).catch((err) => ({ index: i, error: String(err) })),
+  ),
+);
+const failed = results.filter((r) => r.error || (r.finals ?? 0) < 1);
+console.log(JSON.stringify({ ok: failed.length === 0, ws_url: WS_URL, results }, null, 2));
 process.exit(failed.length === 0 ? 0 : 1);

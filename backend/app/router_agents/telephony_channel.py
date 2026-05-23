@@ -41,10 +41,16 @@ async def validate_telephony_credentials_input(payload: TelephonyChannelCredenti
         language=(payload.language or "ru-RU").strip(),
         record_calls=bool(payload.record_calls),
         disclaimer_played=bool(payload.disclaimer_played),
+        routing_extension=(payload.routing_extension or "").strip() or None,
+        inbound_numbers=list(payload.inbound_numbers or []),
     )
 
 
-def telephony_external_id(phone_number_e164: str) -> str:
+def telephony_external_id(phone_number_e164: str, routing_extension: str | None = None) -> str:
+    """Pool agents share one E.164; extension makes external_id unique."""
+    ext = (routing_extension or "").strip()
+    if ext:
+        return f"pool:{ext}"
     return phone_number_e164.strip()
 
 

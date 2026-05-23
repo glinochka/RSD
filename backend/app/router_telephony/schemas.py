@@ -19,12 +19,27 @@ class TelephonyWebhookAuthResponse(BaseModel):
 class TelephonyResolveRequest(BaseModel):
     connection_id: int = Field(..., gt=0)
     caller_e164: str = Field(..., min_length=8, max_length=32)
+    called_e164: str | None = Field(default=None, max_length=32)
     call_id: str | None = Field(default=None, max_length=191)
+    routed_agent_id: int | None = Field(default=None, gt=0)
+
+
+class TelephonyResolveInboundRequest(BaseModel):
+    connection_id: int = Field(..., gt=0)
+    called_e164: str | None = Field(default=None, max_length=32)
+    sip_from: str | None = Field(default=None, max_length=128)
+    sip_to: str | None = Field(default=None, max_length=128)
+
+
+class TelephonyResolveInboundResponse(BaseModel):
+    connection_id: int
+    routed_by: Literal["did", "sip", "webhook"]
 
 
 class TelephonyResolveResponse(BaseModel):
     agent_id: int
     connection_id: int
+    routed_by: str = "default"
     call_id: str | None = None
     system_prompt: str
     welcome_message: str | None
@@ -42,12 +57,12 @@ class TelephonyCallEventRequest(BaseModel):
     connection_id: int = Field(..., gt=0)
     external_call_id: str = Field(..., min_length=1, max_length=191)
     caller_e164: str = Field(..., min_length=8, max_length=32)
+    called_e164: str | None = Field(default=None, max_length=32)
+    routed_agent_id: int | None = Field(default=None, gt=0)
     event: Literal[
         "call.inbound",
         "call.answered",
-        "call.recording_ready",
         "call.hangup",
-        "dtmf",
     ]
     status: Literal["ringing", "active", "completed", "failed", "transferred"] | None = None
     recording_url: str | None = None
@@ -121,6 +136,9 @@ class TelephonyMetricsResponse(BaseModel):
     transfer_rate: float
     stt_empty_rate: float
     turn_samples: int
+    latency_budget_samples: int = 0
+    latency_budget_p90: dict[str, float | None] = Field(default_factory=dict)
+    latency_budget_table: dict[str, dict[str, float | int | None]] = Field(default_factory=dict)
     alerts: list[dict[str, Any]] = Field(default_factory=list)
 
 

@@ -12,8 +12,6 @@ TELEPHONY_WEBHOOK_EVENTS = frozenset(
     {
         "call.inbound",
         "call.answered",
-        "call.recording_ready",
         "call.hangup",
-        "dtmf",
     }
 )

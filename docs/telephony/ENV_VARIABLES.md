@@ -1,86 +1,171 @@
 # Переменные окружения: телефония
 
-Шаблон для копирования: [.env.telephony.example](../../.env.telephony.example).
+Шаблон для копирования в корневой `.env`: [.env.telephony.example](../../.env.telephony.example).
+
+## Архитектура (после рефакторинга)
+
+| Контур | Сервис | Роль |
+|--------|--------|------|
+| Сигнал | `telephony_bridge` | `call.inbound` / `call.answered` / `call.hangup` |
+| Media | `telephony_media_gateway` | WS μ-law, VAD, streaming STT, barge-in |
+| Dialog | `telephony_orchestrator` | LLM stream, синтагмы, stream TTS |
+| Control | `backend` + `telephony_worker` | Credentials, resolve, preview `/turn`, метрики |
+| Hot state | Redis | Session, dialog, `telephony:route:*`, pub/sub |
+
+PSTN **не** использует HTTP `/internal/telephony/turn` (ответ `410`). Preview в браузере — `caller_e164` с префиксом `preview:`.
+
+---
 
 ## Общие секреты
 
 | Переменная | Обязательно | Описание |
 |------------|-------------|----------|
-| `INTERNAL_API_KEY` | да | Fallback для internal API |
-| `INTERNAL_REQUEST_SIGNING_SECRET` | рекомендуется | HMAC bridge/worker → backend; в bridge дублируется как `TELEPHONY_BACKEND_SIGNING_SECRET` |
-| `TELEPHONY_INTERNAL_API_KEY` | при enabled | Ключ bridge → backend; если пусто — `INTERNAL_API_KEY` |
-| `TELEPHONY_BRIDGE_API_KEY` | да (bridge) | Защита bridge |
-
-## Backend (FastAPI + telephony_worker)
-
-| Переменная | Обязательно | По умолчанию | Описание |
-|------------|-------------|--------------|----------|
-| `TELEPHONY_ENABLED` | нет | `false` | Internal API телефонии |
-| `TELEPHONY_WEBHOOK_BASE_URL` | при подключении канала | — | Публичный HTTPS bridge без path (URL в UI) |
-| `TELEPHONY_MAX_TURN_SECONDS` | нет | `30` | Макс. длина записи реплики |
-| `TELEPHONY_MAX_CALL_MINUTES` | нет | `15` | Макс. длительность звонка |
-| `TELEPHONY_MAX_TURNS` | нет | `15` | Макс. ходов диалога |
-| `TELEPHONY_TTS_PROVIDER` | нет | `voximplant` | Боевой звонок: Voximplant; тест в браузере: `yandex`/`openai` или fallback на них при `voximplant` |
-| `YANDEX_SPEECHKIT_API_KEY` | при yandex / preview | — | Yandex SpeechKit для `/telephony/preview/speak` |
-| `TELEPHONY_TTS_TIMEOUT_SECONDS` | нет | `20` | Таймаут синтеза речи для preview |
-| `TELEPHONY_WEBHOOK_SIGNATURE_TTL_SECONDS` | нет | `300` | Окно timestamp webhook |
-| `TELEPHONY_WEBHOOK_RATE_LIMIT_PER_CONNECTION` | нет | `120` | Rate limit / connection / окно |
-| `TELEPHONY_WEBHOOK_RATE_LIMIT_PER_IP` | нет | `240` | Rate limit / IP / окно |
-| `TELEPHONY_WEBHOOK_RATE_WINDOW_SECONDS` | нет | `60` | Окно rate limit (сек) |
-| `TELEPHONY_TURNS_RETENTION_DAYS` | нет | `90` | Retention `agent_telephony_turns` |
-| `TELEPHONY_LLM_TIMEOUT_SECONDS` | нет | `25` | Таймаут LLM на ход (crm_admin + Qdrant) |
-| `TELEPHONY_LLM_RETRY_TIMEOUT_SECONDS` | нет | `15` | Повтор после таймаута |
-| `TELEPHONY_PREVIEW_LLM_TIMEOUT_SECONDS` | нет | `60` | Таймаут LLM для теста в браузере |
-| `TELEPHONY_TURN_LATENCY_ALERT_P95_MS` | нет | `10000` | Алерт в `/metrics` |
-| `TELEPHONY_STREAMING_ENABLED` | нет | `true` | Разбивка ответа на предложения для раннего TTS (runtime — всегда `template_runtime`) |
-| `TELEPHONY_ENDPOINT_SILENCE_MS` | нет | `600` | Endpointing (bridge) |
-| `TELEPHONY_CRM_FILLER_THRESHOLD_MS` | нет | `1500` | Filler при долгих CRM-tools |
-| `TELEPHONY_DEDICATED_POOL_ENABLED` | нет | `true` | Отдельный pool для turn |
-| `TELEPHONY_DEDICATED_POOL_SIZE` | нет | `8` | Размер pool |
-| `TELEPHONY_WORKER_PORT` | нет | `8001` | Порт telephony_worker |
-| `TELEPHONY_SSML_ENABLED` | нет | `true` | SSML/просодия в ответе |
-| `TELEPHONY_BARGE_IN_ENABLED` | нет | `true` | Используется bridge |
-| `TELEPHONY_BACKCHANNEL_MIN_MS` | нет | `5000` | Используется bridge |
-| `REDIS_URL` | при redis sessions | — | Redis |
-| `VOXIMPLANT_API_BASE_URL` | нет | Voximplant API | Валидация канала |
-| `TELEPHONY_VOXIMPLANT_API_TIMEOUT_SECONDS` | нет | `15` | Таймаут Voximplant API |
-| `VOICE_STT_BACKEND` | нет | `auto` | STT для turn |
-| `OPENAI_API_KEY` | при openai STT | — | STT fallback |
-| `DEEPSEEK_API_KEY` | да | — | LLM (template_runtime) |
-| `ENCRYPTION_KEY` | да | — | Шифрование credentials канала |
-
-## telephony_bridge
-
-| Переменная | Обязательно | По умолчанию | Описание |
-|------------|-------------|--------------|----------|
-| `TELEPHONY_BRIDGE_API_KEY` | да | — | Защита bridge |
-| `TELEPHONY_BACKEND_URL` | да | — | Docker: `http://telephony_worker:8001` |
-| `TELEPHONY_BACKEND_INTERNAL_KEY` | да | — | Обычно = `TELEPHONY_INTERNAL_API_KEY` |
-| `TELEPHONY_BACKEND_SIGNING_SECRET` | рекомендуется | — | Обычно = `INTERNAL_REQUEST_SIGNING_SECRET` |
-| `TELEPHONY_SESSION_STORE` | нет | `memory` | `memory` \| `redis` |
-| `REDIS_URL` | при redis | — | Сессии звонков |
-| `PORT` | нет | `8100` | HTTP-порт |
-| `TELEPHONY_RECORD_SILENCE_SEC` | нет | `0` | Тишина для `record` (0 = из `TELEPHONY_ENDPOINT_SILENCE_MS`) |
-| `TELEPHONY_BACKEND_REQUEST_TIMEOUT_MS` | нет | `15000` | Таймаут fetch к backend |
-| `TELEPHONY_MAX_TURNS` | нет | `15` | Лимит ходов в bridge |
-| `TELEPHONY_MAX_CALL_MINUTES` | нет | `15` | Лимит длительности |
-| `TELEPHONY_MAX_TURN_SECONDS` | нет | `30` | Макс. запись реплики |
-| `TELEPHONY_STREAMING_ENABLED` | нет | `true` | Partial / ранний TTS |
-| `TELEPHONY_ENDPOINT_SILENCE_MS` | нет | `600` | Endpointing |
-| `TELEPHONY_CRM_FILLER_THRESHOLD_MS` | нет | `1500` | Порог filler |
-| `TELEPHONY_BARGE_IN_ENABLED` | нет | `true` | Перебивание |
-| `TELEPHONY_BACKCHANNEL_MIN_MS` | нет | `5000` | Backchannel |
-| `TELEPHONY_SSML_ENABLED` | нет | `true` | SSML в TTS |
-| `TELEPHONY_WEBHOOK_SIGNATURE_TTL_SECONDS` | нет | `300` | HMAC webhook |
-| `TELEPHONY_WEBHOOK_RATE_LIMIT_*` | нет | см. backend | Rate limit |
-| `TELEPHONY_TURN_LATENCY_ALERT_P95_MS` | нет | `10000` | Метрики bridge |
-
-## Docker Compose
-
-См. `docker-compose.yml`: сервисы `backend`, `telephony_worker`, `telephony_bridge`, `redis`.
-
-## Генерация секретов
+| `INTERNAL_API_KEY` | да | Fallback internal API |
+| `INTERNAL_REQUEST_SIGNING_SECRET` | рекомендуется | HMAC bridge/worker → backend |
+| `TELEPHONY_INTERNAL_API_KEY` | при `TELEPHONY_ENABLED` | Ключ bridge → backend; если пусто — `INTERNAL_API_KEY` |
+| `TELEPHONY_BRIDGE_API_KEY` | да (bridge) | Защита HTTP bridge |
+| `ENCRYPTION_KEY` | да | Шифрование credentials канала |
 
 ```bash
 openssl rand -hex 32
 ```
+
+---
+
+## Backend + telephony_worker + telephony_orchestrator
+
+| Переменная | По умолчанию | Описание |
+|------------|--------------|----------|
+| `TELEPHONY_ENABLED` | `false` | Internal API телефонии; orchestrator не стартует без `true` |
+| `TELEPHONY_ORCHESTRATOR_ENABLED` | `true` | Процесс `python -m app.telephony.orchestrator_main` |
+| `TELEPHONY_STREAMING_ENABLED` | `true` | Потоковый LLM + TTS (PSTN); при `false` orchestrator выходит |
+| `TELEPHONY_WEBHOOK_BASE_URL` | — | Публичный HTTPS bridge **без path** (UI + VoxEngine) |
+| `TELEPHONY_MAX_TURN_SECONDS` | `30` | Лимит реплики (preview / метаданные) |
+| `TELEPHONY_MAX_CALL_MINUTES` | `15` | Лимит звонка |
+| `TELEPHONY_MAX_TURNS` | `15` | Макс. ходов диалога |
+| `TELEPHONY_TURNS_RETENTION_DAYS` | `90` | Retention `agent_telephony_turns` |
+| `TELEPHONY_WEBHOOK_SIGNATURE_TTL_SECONDS` | `300` | Окно HMAC webhook |
+| `TELEPHONY_WEBHOOK_RATE_LIMIT_PER_CONNECTION` | `120` | Rate limit / connection |
+| `TELEPHONY_WEBHOOK_RATE_LIMIT_PER_IP` | `240` | Rate limit / IP |
+| `TELEPHONY_WEBHOOK_RATE_WINDOW_SECONDS` | `60` | Окно rate limit |
+| `DEEPSEEK_API_KEY` | — | LLM при `TELEPHONY_LLM_MODE=chat` |
+| `TELEPHONY_LLM_MODE` | `chat` | `chat` \| `groq` |
+| `TELEPHONY_GROQ_MODEL` | `llama-3.1-8b-instant` | Модель Groq |
+| `GROQ_API_KEY` | при groq | Groq API |
+| `TELEPHONY_LLM_TIMEOUT_SECONDS` | `25` | Таймаут LLM на ход |
+| `TELEPHONY_LLM_RETRY_TIMEOUT_SECONDS` | `15` | Повтор после таймаута |
+| `TELEPHONY_PREVIEW_LLM_TIMEOUT_SECONDS` | `60` | LLM для preview в браузере |
+| `TELEPHONY_SYNTAGMA_MIN_CHARS` | `12` | Мин. длина синтагмы при нарезке |
+| `TELEPHONY_CRM_FILLER_THRESHOLD_MS` | `1500` | `play_filler` при долгих CRM-tools |
+| `TELEPHONY_SSML_ENABLED` | `true` | SSML в ответе |
+| `TELEPHONY_STREAM_TTS_PROVIDER` | `yandex` | PSTN stream TTS: `yandex` \| `elevenlabs` |
+| `YANDEX_SPEECHKIT_API_KEY` | при yandex | STT (gateway) + stream TTS + preview |
+| `YANDEX_SPEECHKIT_FOLDER_ID` | рекомендуется | Каталог Yandex Cloud |
+| `ELEVENLABS_API_KEY` | при elevenlabs | ElevenLabs Flash stream |
+| `TELEPHONY_TTS_PROVIDER` | `voximplant` | **Только preview** в браузере: `yandex` \| `openai` \| `voximplant` |
+| `TELEPHONY_TTS_TIMEOUT_SECONDS` | `20` | Таймаут TTS preview |
+| `OPENAI_API_KEY` | при openai preview | Preview TTS/STT |
+| `VOICE_STT_BACKEND` | `auto` | Batch STT для preview `/turn` |
+| `REDIS_URL` | — | Обязателен для orchestrator + bridge sessions |
+| `TELEPHONY_REDIS_SESSION_TTL_SEC` | `7200` | TTL session/dialog keys |
+| `TELEPHONY_DIALOG_MAX_TURNS` | `16` | Длина `telephony:dialog:{call_id}` |
+| `TELEPHONY_DEDICATED_POOL_ENABLED` | `true` | Pool telephony_worker |
+| `TELEPHONY_DEDICATED_POOL_SIZE` | `8` | Размер pool |
+| `TELEPHONY_WORKER_PORT` | `8001` | Порт worker |
+| `TELEPHONY_TURN_LATENCY_ALERT_P95_MS` | `10000` | Алерт turn latency |
+| `TELEPHONY_E2R_ALERT_P90_MS` | `850` | Алерт p90 E2R |
+| `VOXIMPLANT_API_BASE_URL` | Voximplant API | Валидация канала в UI |
+| `TELEPHONY_VOXIMPLANT_API_TIMEOUT_SECONDS` | `15` | Таймаут Voximplant API |
+| `QDRANT_URL` | — | KB для LLM (worker/orchestrator) |
+
+Redis-ключи маршрутизации: `telephony:route:dtmf:{ext}`, `telephony:route:did:{e164}` — см. [ROUTING.md](./ROUTING.md).
+
+---
+
+## telephony_bridge (control-only)
+
+| Переменная | По умолчанию | Описание |
+|------------|--------------|----------|
+| `TELEPHONY_BRIDGE_API_KEY` | — | Обязательно |
+| `TELEPHONY_BACKEND_URL` | — | Docker: `http://telephony_worker:8001` |
+| `TELEPHONY_BACKEND_INTERNAL_KEY` | — | = `TELEPHONY_INTERNAL_API_KEY` |
+| `TELEPHONY_BACKEND_SIGNING_SECRET` | — | = `INTERNAL_REQUEST_SIGNING_SECRET` |
+| `TELEPHONY_SESSION_STORE` | `memory` | `redis` рекомендуется в prod |
+| `REDIS_URL` | при redis | Сессии dedup webhook |
+| `TELEPHONY_BACKEND_REQUEST_TIMEOUT_MS` | `15000` | Таймаут к backend |
+| `TELEPHONY_BRIDGE_CONTROL_ONLY` | `true` | `false` — устаревший dual-path |
+| `TELEPHONY_WEBHOOK_SIGNATURE_TTL_SECONDS` | `300` | HMAC |
+| `TELEPHONY_WEBHOOK_RATE_LIMIT_*` | см. backend | Rate limit |
+| `PORT` | `8100` | HTTP |
+
+События `call.recording_ready`, `call.partial_transcript`, `dtmf` (HTTP) → **410**.
+
+---
+
+## telephony_media_gateway
+
+| Переменная | По умолчанию | Описание |
+|------------|--------------|----------|
+| `PORT` | `8200` | HTTP + WebSocket |
+| `NODE_ENV` | `development` | `production` запрещает `STT_PROVIDER=mock` |
+| `TELEPHONY_MEDIA_WS_URL` | — | Публичный `wss://…/ws` для VoxEngine |
+| `TELEPHONY_MEDIA_WS_PATH` | `/ws` | Путь WS |
+| `TELEPHONY_MEDIA_AUDIO_FRAME_MS` | `20` | Кадр μ-law (мс) |
+| `TELEPHONY_MEDIA_LOG_LEVEL` | `info` | `info` \| `silent` |
+| `TELEPHONY_MEDIA_MAX_CONTROL_BYTES` | `65536` | Лимит JSON control |
+| `TELEPHONY_MEDIA_LOOPBACK_TRANSPORT` | `vox` | `vox` \| `binary` \| `both` |
+| `TELEPHONY_MEDIA_LOOPBACK_MODE` | `echo` | `echo` \| `silence` |
+| `TELEPHONY_MEDIA_PIPELINE_ENABLED` | `true` | `false` — только loopback |
+| `STT_PROVIDER` | `yandex` | `yandex` \| `deepgram` \| `mock` (dev) |
+| `TURN_SILENCE_MS` | `400` | Тишина → `stt.final` |
+| `STT_FINAL_WAIT_MS` | `80` | Ожидание final STT после VAD EOU |
+| `STT_PARTIAL_LOG_EVERY` | `5` | Частота логов partial |
+| `VAD_MODEL_PATH` | `./models/silero_vad.onnx` | Silero ONNX; иначе energy VAD |
+| `VAD_SPEECH_THRESHOLD` | `0.5` | Порог Silero |
+| `VAD_ENERGY_THRESHOLD` | `0.02` | Energy fallback |
+| `YANDEX_SPEECHKIT_API_KEY` | при yandex | gRPC STT |
+| `YANDEX_SPEECHKIT_FOLDER_ID` | рекомендуется | |
+| `DEEPGRAM_API_KEY` | при deepgram | |
+| `TELEPHONY_STT_LANGUAGE` | `ru-RU` | |
+| `REDIS_URL` | — | Pub/sub orchestrator |
+| `TELEPHONY_ORCH_EVENTS_ENABLED` | `true` | Публикация событий |
+| `TELEPHONY_ORCH_EVENTS_CHANNEL` | `telephony:orch:events` | gateway → orchestrator |
+| `TELEPHONY_ORCH_REPLIES_CHANNEL` | `telephony:orch:replies` | orchestrator → gateway |
+| `TELEPHONY_BARGE_IN_ENABLED` | `true` | VAD во время `agent.audio.*` |
+| `TELEPHONY_BARGE_IN_SPEECH_FRAMES` | `2` | Кадров речи до `barge_in` |
+
+Модель VAD: `cd telephony_media_gateway && npm run download:vad`.
+
+---
+
+## Voximplant (secrets приложения)
+
+| Secret | Описание |
+|--------|----------|
+| `RSD_WEBHOOK_SECRET` | = `webhook_secret` канала |
+| `RSD_WEBHOOK_BASE_URL` | = `TELEPHONY_WEBHOOK_BASE_URL` |
+| `TELEPHONY_MEDIA_WS_URL` | = публичный `wss://…/ws` |
+
+Сценарий: [voxengine/README.md](../../voxengine/README.md). Протокол: [SESSION_PROTOCOL.md](./SESSION_PROTOCOL.md).
+
+---
+
+## Docker Compose
+
+```bash
+docker compose up -d redis backend telephony_worker telephony_bridge \
+  telephony_orchestrator telephony_media_gateway
+```
+
+Сервисы: `docker-compose.yml` — `telephony_bridge`, `telephony_media_gateway`, `telephony_orchestrator`, `telephony_worker`.
+
+---
+
+## Удалено / не используется
+
+| Переменная | Причина |
+|------------|---------|
+| `TELEPHONY_RECORD_SILENCE_SEC` | Legacy `record` → `/turn` |
+| `TELEPHONY_ENDPOINT_SILENCE_MS` в bridge | Endpointing в gateway (`TURN_SILENCE_MS`) |
+| `TELEPHONY_LLM_MODE=realtime` | Не реализовано; только `chat` \| `groq` |
+| HTTP `call.partial_transcript` | Partial только через gateway |

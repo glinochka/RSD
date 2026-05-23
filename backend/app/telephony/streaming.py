@@ -1,33 +1,105 @@
-"""Streaming LLM tokens → sentence chunks for early TTS (stage 5)."""
+"""Streaming LLM tokens → syntagma chunks for early TTS (stage 5)."""
 
 from __future__ import annotations
 
 import re
 from collections.abc import AsyncIterator
 
-from ..services.ai_authoring import ai_client, _polish_answer
+from openai import AsyncOpenAI
+
+from ..config import settings
+from ..services.ai_authoring import _polish_answer
 
 _SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
+_SYNTAGMA_END = re.compile(r"(?<=[,.\!?…])\s+")
 
 
 def split_sentences(text: str) -> list[str]:
+    return split_syntagmas(text)
+
+
+def split_syntagmas(text: str, *, min_chars: int | None = None) -> list[str]:
+    """Split on punctuation (, . ! ? …) respecting minimum syntagma length."""
     raw = (text or "").strip()
     if not raw:
         return []
-    parts = _SENTENCE_END.split(raw)
-    return [p.strip() for p in parts if p.strip()]
+    min_len = max(1, int(min_chars or settings.TELEPHONY_SYNTAGMA_MIN_CHARS))
+    parts = _SYNTAGMA_END.split(raw)
+    out: list[str] = []
+    buf = ""
+    for part in parts:
+        piece = part.strip()
+        if not piece:
+            continue
+        if buf:
+            buf = f"{buf} {piece}"
+        else:
+            buf = piece
+        if len(buf) >= min_len and _ends_clause(buf):
+            out.append(buf)
+            buf = ""
+    if buf.strip():
+        if out and len(buf) < min_len:
+            out[-1] = f"{out[-1]} {buf}".strip()
+        else:
+            out.append(buf.strip())
+    return out
+
+
+def _ends_clause(text: str) -> bool:
+    return bool(text) and text[-1] in ",.!?…"
 
 
 def extract_complete_sentences(buffer: str) -> tuple[list[str], str]:
-    """Return completed sentences and remaining buffer tail."""
+    """Backward-compatible sentence split."""
+    return extract_complete_syntagmas(buffer)
+
+
+def extract_complete_syntagmas(
+    buffer: str,
+    *,
+    min_chars: int | None = None,
+) -> tuple[list[str], str]:
+    """Return completed syntagmas and remaining buffer tail."""
     if not buffer.strip():
         return [], buffer
-    parts = _SENTENCE_END.split(buffer)
+    min_len = max(1, int(min_chars or settings.TELEPHONY_SYNTAGMA_MIN_CHARS))
+    parts = _SYNTAGMA_END.split(buffer)
     if len(parts) <= 1:
         return [], buffer
-    complete = [p.strip() for p in parts[:-1] if p.strip()]
+    complete: list[str] = []
+    pending = ""
+    for part in parts[:-1]:
+        piece = part.strip()
+        if not piece:
+            continue
+        pending = f"{pending} {piece}".strip() if pending else piece
+        if len(pending) >= min_len and _ends_clause(pending):
+            complete.append(_polish_answer(pending))
+            pending = ""
     tail = parts[-1]
+    if pending:
+        tail = f"{pending} {tail}".strip() if tail.strip() else pending
     return complete, tail
+
+
+def _llm_client() -> AsyncOpenAI:
+    mode = (getattr(settings, "TELEPHONY_LLM_MODE", None) or "chat").strip().lower()
+    if mode == "groq":
+        api_key = (getattr(settings, "GROQ_API_KEY", None) or "").strip()
+        if api_key:
+            return AsyncOpenAI(api_key=api_key, base_url="https://api.groq.com/openai/v1")
+    return AsyncOpenAI(
+        api_key=settings.DEEPSEEK_API_KEY,
+        base_url="https://api.deepseek.com",
+    )
+
+
+def _llm_model(chat_model: str | None = None) -> str:
+    mode = (getattr(settings, "TELEPHONY_LLM_MODE", None) or "chat").strip().lower()
+    if mode == "groq":
+        return (getattr(settings, "TELEPHONY_GROQ_MODEL", None) or "llama-3.1-8b-instant").strip()
+    return (chat_model or "deepseek-chat").strip() or "deepseek-chat"
 
 
 async def stream_answer_sentences(
@@ -36,10 +108,11 @@ async def stream_answer_sentences(
     context_list: list,
     system_prompt: str,
     chat_model: str | None = None,
-    min_chunk_chars: int = 12,
+    min_chunk_chars: int | None = None,
     call_db_id: int | None = None,
+    external_call_id: str | None = None,
 ) -> AsyncIterator[str]:
-    """Stream LLM completion and yield text chunks at sentence boundaries."""
+    """Stream LLM completion and yield text chunks at syntagma boundaries."""
     if not context_list:
         context_text = "Информации в базе знаний не найдено."
     else:
@@ -55,9 +128,11 @@ async def stream_answer_sentences(
         "ЗАПРЕЩЕНО показывать названия переменных/шаблонов и их значения."
     )
     user_prompt = f"КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ:\n{context_text}\n\nВОПРОС ПОЛЬЗОВАТЕЛЯ: {question}"
-    model = (chat_model or "deepseek-chat").strip() or "deepseek-chat"
+    model = _llm_model(chat_model)
+    min_len = max(1, int(min_chunk_chars or settings.TELEPHONY_SYNTAGMA_MIN_CHARS))
 
-    stream = await ai_client.chat.completions.create(
+    client = _llm_client()
+    stream = await client.chat.completions.create(
         model=model,
         messages=[
             {"role": "system", "content": base_system},
@@ -67,24 +142,27 @@ async def stream_answer_sentences(
         stream=True,
     )
 
-    from .stream_cancel import is_cancelled
+    from .stream_cancel import is_cancelled, is_cancelled_call_id
 
     buffer = ""
     async for chunk in stream:
+        if external_call_id and is_cancelled_call_id(external_call_id):
+            break
         if call_db_id is not None and is_cancelled(call_db_id):
             break
         delta = chunk.choices[0].delta.content if chunk.choices else None
         if not delta:
             continue
         buffer += delta
-        complete, buffer = extract_complete_sentences(buffer)
-        for sentence in complete:
-            polished = _polish_answer(sentence)
-            if len(polished) >= min_chunk_chars:
-                yield polished
+        complete, buffer = extract_complete_syntagmas(buffer, min_chars=min_len)
+        for syntagma in complete:
+            if len(syntagma) >= min_len:
+                yield syntagma
 
     tail = _polish_answer(buffer)
-    if tail:
+    if tail and len(tail) >= min_len:
+        yield tail
+    elif tail:
         yield tail
 
 
@@ -95,8 +173,9 @@ async def collect_streamed_answer(
     system_prompt: str,
     chat_model: str | None = None,
     call_db_id: int | None = None,
+    external_call_id: str | None = None,
 ) -> tuple[str, list[str]]:
-    """Collect full answer and sentence chunks from streaming generation."""
+    """Collect full answer and syntagma chunks from streaming generation."""
     chunks: list[str] = []
     async for sentence in stream_answer_sentences(
         question=question,
@@ -104,6 +183,7 @@ async def collect_streamed_answer(
         system_prompt=system_prompt,
         chat_model=chat_model,
         call_db_id=call_db_id,
+        external_call_id=external_call_id,
     ):
         chunks.append(sentence)
     full = " ".join(chunks).strip()

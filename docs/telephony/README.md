@@ -41,6 +41,28 @@
 - Аналитика: вкладка «Звонки», `GET /api/agents/analytics/telephony/calls`.
 - Чаты: фильтр канала `phone`.
 
+## Потоковый рефакторинг (этап 1 — контракты)
+
+| Артефакт | Файл |
+|----------|------|
+| Целевая архитектура + диаграмма | [STREAMING_ARCHITECTURE.md](./STREAMING_ARCHITECTURE.md) |
+| Протокол media WS v1 | [SESSION_PROTOCOL.md](./SESSION_PROTOCOL.md) |
+| DTMF / DID routing (этап 7) | [ROUTING.md](./ROUTING.md) |
+| Скелет Media Gateway | `telephony_media_gateway/` → `:8200`, `GET /health`, `WS /ws` |
+| JSON Schema control messages | [../../schemas/telephony/media_session.v1.schema.json](../../schemas/telephony/media_session.v1.schema.json) |
+| Control-only bridge | `telephony_bridge/README.md` (без record/turn) |
+| Preview (без bridge) | API `source: browser_preview` — `telephony_preview.py` |
+
+План этапов: [TELEPHONY_STREAMING_REFACTOR.md](../../TELEPHONY_STREAMING_REFACTOR.md).
+
+## Потоковый рефакторинг (этап 2 — VoxEngine + gateway audio)
+
+| Артефакт | Путь |
+|----------|------|
+| VoxEngine сценарий | `voxengine/rsd_inbound.js`, [voxengine/README.md](../../voxengine/README.md) |
+| Gateway μ-law + RTF | `telephony_media_gateway` — Vox JSON `event:media` + loopback |
+| Bridge control-only | `TELEPHONY_BRIDGE_CONTROL_ONLY=true` → только `call.inbound` / `call.answered` / `call.hangup` |
+
 ## Следующий шаг
 
-Этап 2: MVP диалог STT → LLM → TTS — см. [TELEPHONY_AI_OPERATOR_PLAN.md](../../TELEPHONY_AI_OPERATOR_PLAN.md).
+Этап 3: VAD + streaming STT. Исторический MVP-план: [TELEPHONY_AI_OPERATOR_PLAN.md](../../TELEPHONY_AI_OPERATOR_PLAN.md).

@@ -85,4 +85,6 @@ def test_json_schema_file_exists_and_matches_required_keys():
     schema = json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
     required = set(schema["required"])
     model_fields = set(TelephonyCredentialsV1.model_fields.keys())
-    assert required == model_fields
+    optional = model_fields - required
+    assert required <= model_fields
+    assert optional >= {"routing_extension", "inbound_numbers"}

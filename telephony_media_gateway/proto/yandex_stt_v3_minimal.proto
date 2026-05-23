@@ -1,0 +1,74 @@
+syntax = "proto3";
+
+package speechkit.stt.v3;
+
+// Minimal subset for Recognizer.RecognizeStreaming (Yandex SpeechKit STT v3).
+
+message RawAudio {
+  enum AudioEncoding {
+    AUDIO_ENCODING_UNSPECIFIED = 0;
+    LINEAR16_PCM = 1;
+  }
+  AudioEncoding audio_encoding = 1;
+  int64 sample_rate_hertz = 2;
+  int64 audio_channel_count = 3;
+}
+
+message AudioFormatOptions {
+  RawAudio raw_audio = 1;
+}
+
+message LanguageRestrictionOptions {
+  enum LanguageRestrictionType {
+    LANGUAGE_RESTRICTION_TYPE_UNSPECIFIED = 0;
+    WHITELIST = 1;
+  }
+  LanguageRestrictionType restriction_type = 1;
+  repeated string language_code = 2;
+}
+
+message RecognitionModelOptions {
+  enum AudioProcessingType {
+    AUDIO_PROCESSING_TYPE_UNSPECIFIED = 0;
+    REAL_TIME = 1;
+  }
+  string model = 1;
+  AudioFormatOptions audio_format = 2;
+  LanguageRestrictionOptions language_restriction = 3;
+  AudioProcessingType audio_processing_type = 5;
+}
+
+message StreamingOptions {
+  RecognitionModelOptions recognition_model = 1;
+}
+
+message AudioChunk {
+  bytes data = 1;
+}
+
+message StreamingRequest {
+  oneof Event {
+    StreamingOptions session_options = 1;
+    AudioChunk chunk = 2;
+  }
+}
+
+message Alternative {
+  string text = 2;
+  double confidence = 5;
+}
+
+message AlternativeUpdate {
+  repeated Alternative alternatives = 1;
+}
+
+message StreamingResponse {
+  oneof Event {
+    AlternativeUpdate partial = 4;
+    AlternativeUpdate final = 5;
+  }
+}
+
+service Recognizer {
+  rpc RecognizeStreaming(stream StreamingRequest) returns (stream StreamingResponse);
+}
