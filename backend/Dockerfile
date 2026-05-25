@@ -11,7 +11,12 @@ RUN apt-get update && apt-get install -y \
 
 COPY requirements.txt .
 
-RUN pip install -r requirements.txt
+# Large wheels (torch, etc.) often exceed pip's default 15s read timeout on slow links.
+ENV PIP_DEFAULT_TIMEOUT=600 \
+    PIP_RETRIES=10 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN pip install --no-cache-dir -r requirements.txt
 
 
 # Принудительно скачиваем модель при сборке (best-effort).
