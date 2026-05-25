@@ -5086,19 +5086,19 @@ async def add_agent_telephony_channel(
     encrypted_bundle = build_encrypted_telephony_bundle(creds, encrypt_token)
 
     async with async_session_maker() as session:
-        if creds.routing_extension:
-            conflict = await scan_extension_conflict_in_db(
-                session,
-                creds.routing_extension,
-            )
-            if conflict is not None:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=f"Добавочный {creds.routing_extension} уже занят",
-                )
         agent_dao = AgentDAO(session)
         channel_connection_dao = AgentChannelConnectionDAO(session)
         async with session.begin():
+            if creds.routing_extension:
+                conflict = await scan_extension_conflict_in_db(
+                    session,
+                    creds.routing_extension,
+                )
+                if conflict is not None:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=f"Добавочный {creds.routing_extension} уже занят",
+                    )
             lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
             agent = await _find_agent_with_access(
                 agent_dao,
