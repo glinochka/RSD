@@ -32,6 +32,23 @@ openssl rand -hex 32
 
 ---
 
+## Platform pool (один номер Voximplant)
+
+Задаются **только в `.env`**, не в UI агента. См. [EXTERNAL_SERVICES.md](./EXTERNAL_SERVICES.md).
+
+| Переменная | По умолчанию | Описание |
+|------------|--------------|----------|
+| `TELEPHONY_SHARED_POOL_E164` | — | Общий входящий DID (E.164) |
+| `TELEPHONY_VOXIMPLANT_ACCOUNT_ID` | — | Account ID (Settings → API) |
+| `TELEPHONY_VOXIMPLANT_API_KEY` | — | API Key Voximplant |
+| `TELEPHONY_VOXIMPLANT_APPLICATION_ID` | — | Application ID сценария |
+| `TELEPHONY_VOXIMPLANT_RULE_ID` | — | ID правила входящих |
+| `TELEPHONY_OPERATOR_TRANSFER_E164` | — | Номер перевода на живого оператора |
+
+Агент в UI: только `routing_extension` (4 цифры). API: `GET /api/agents/channels/telephony/platform`.
+
+---
+
 ## Backend + telephony_worker + telephony_orchestrator
 
 | Переменная | По умолчанию | Описание |

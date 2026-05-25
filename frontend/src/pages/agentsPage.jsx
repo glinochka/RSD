@@ -556,18 +556,12 @@ const AgentsPageContent = () => {
   const [whatsappAccessToken, setWhatsappAccessToken] = useState('');
   const [whatsappBusinessAccountId, setWhatsappBusinessAccountId] = useState('');
   const [whatsappVerifyToken, setWhatsappVerifyToken] = useState('');
-  const [telephonyAccountId, setTelephonyAccountId] = useState('');
-  const [telephonyApiKey, setTelephonyApiKey] = useState('');
-  const [telephonyApplicationId, setTelephonyApplicationId] = useState('');
-  const [telephonyRuleId, setTelephonyRuleId] = useState('');
-  const [telephonyPhoneE164, setTelephonyPhoneE164] = useState('');
-  const [telephonyOperatorE164, setTelephonyOperatorE164] = useState('');
+  const [telephonyPlatform, setTelephonyPlatform] = useState(null);
   const [telephonyVoiceId, setTelephonyVoiceId] = useState('default');
   const [telephonyLanguage, setTelephonyLanguage] = useState('ru-RU');
   const [telephonyRecordCalls, setTelephonyRecordCalls] = useState(true);
   const [telephonyDisclaimerPlayed, setTelephonyDisclaimerPlayed] = useState(true);
   const [telephonyRoutingExtension, setTelephonyRoutingExtension] = useState('');
-  const [telephonyInboundNumbers, setTelephonyInboundNumbers] = useState('');
   const [telephonyValidateStatus, setTelephonyValidateStatus] = useState('');
   const [telephonyWebhookUrl, setTelephonyWebhookUrl] = useState('');
   const [isValidatingTelephony, setIsValidatingTelephony] = useState(false);
@@ -1271,55 +1265,41 @@ const AgentsPageContent = () => {
     setWhatsappAccessToken('');
     setWhatsappBusinessAccountId('');
     setWhatsappVerifyToken('');
-    setTelephonyAccountId('');
-    setTelephonyApiKey('');
-    setTelephonyApplicationId('');
-    setTelephonyRuleId('');
-    setTelephonyPhoneE164('');
-    setTelephonyOperatorE164('');
+    setTelephonyPlatform(null);
     setTelephonyVoiceId('default');
     setTelephonyLanguage('ru-RU');
     setTelephonyRecordCalls(true);
     setTelephonyDisclaimerPlayed(true);
     setTelephonyRoutingExtension('');
-    setTelephonyInboundNumbers('');
     setTelephonyValidateStatus('');
     setTelephonyWebhookUrl('');
     setIsValidatingTelephony(false);
   };
 
   const buildTelephonyPayload = () => ({
-    account_id: telephonyAccountId.trim(),
-    api_key: telephonyApiKey.trim(),
-    application_id: telephonyApplicationId.trim(),
-    rule_id: telephonyRuleId.trim(),
-    phone_number_e164: telephonyPhoneE164.trim(),
-    operator_transfer_e164: telephonyOperatorE164.trim(),
+    routing_extension: telephonyRoutingExtension.trim(),
     voice_id: telephonyVoiceId.trim() || 'default',
     language: telephonyLanguage.trim() || 'ru-RU',
     record_calls: telephonyRecordCalls,
     disclaimer_played: telephonyDisclaimerPlayed,
-    routing_extension: telephonyRoutingExtension.trim() || null,
-    inbound_numbers: telephonyInboundNumbers
-      .split(/[\n,;]+/)
-      .map((s) => s.trim())
-      .filter(Boolean),
   });
 
   const handleValidateTelephony = async () => {
     const payload = buildTelephonyPayload();
-    if (!payload.account_id || !payload.api_key || !payload.application_id || !payload.rule_id) {
-      showError('Заполните Account ID, API key, Application ID и Rule ID');
+    if (!/^\d{4}$/.test(payload.routing_extension)) {
+      showError('Укажите добавочный номер из 4 цифр');
       return;
     }
-    if (!payload.phone_number_e164 || !payload.operator_transfer_e164) {
-      showError('Укажите номера в формате E.164');
+    if (telephonyPlatform && !telephonyPlatform.platform_ready) {
+      showError('Телефония платформы не настроена на сервере (.env)');
       return;
     }
     setIsValidatingTelephony(true);
     setTelephonyValidateStatus('');
     try {
-      const res = await agentService.validateTelephonyChannel(payload);
+      const res = await agentService.validateTelephonyChannel({
+        routing_extension: payload.routing_extension,
+      });
       setTelephonyValidateStatus(res?.message || 'Подключение проверено');
       showSuccess(res?.message || 'Voximplant: учётная запись доступна');
     } catch (error) {
@@ -1334,6 +1314,15 @@ const AgentsPageContent = () => {
     if (!selectedBotId) return;
     if (hasTelephonyChannel) {
       showError('Телефония уже подключена. Удалите текущий канал, чтобы подключить заново.');
+      return;
+    }
+    const payload = buildTelephonyPayload();
+    if (!/^\d{4}$/.test(payload.routing_extension)) {
+      showError('Укажите добавочный номер из 4 цифр');
+      return;
+    }
+    if (telephonyPlatform && !telephonyPlatform.platform_ready) {
+      showError('Телефония платформы не настроена на сервере (.env)');
       return;
     }
     setIsSavingChannel(true);
@@ -1360,15 +1349,16 @@ const AgentsPageContent = () => {
 
   const handleUpdateTelephonyRouting = async () => {
     if (!selectedBotId) return;
+    const ext = telephonyRoutingExtension.trim();
+    if (!/^\d{4}$/.test(ext)) {
+      showError('Добавочный должен состоять из 4 цифр');
+      return;
+    }
     setIsSavingChannel(true);
     try {
       const res = await agentService.updateTelephonyRouting({
         agent_id: selectedBotId,
-        routing_extension: telephonyRoutingExtension.trim() || null,
-        inbound_numbers: telephonyInboundNumbers
-          .split(/[\n,;]+/)
-          .map((s) => s.trim())
-          .filter(Boolean),
+        routing_extension: ext,
       });
       const list = res?.channels || [];
       if (list.length) {
@@ -1418,7 +1408,13 @@ const AgentsPageContent = () => {
     setIsChannelsModalOpen(true);
     setIsLoadingChannels(true);
     try {
-      const list = await refreshChannels(selectedBotId);
+      const [list, platform] = await Promise.all([
+        refreshChannels(selectedBotId),
+        agentService.getTelephonyPlatformConfig().catch(() => null),
+      ]);
+      if (platform) {
+        setTelephonyPlatform(platform);
+      }
       const tel = findTelephonyChannel(list);
       if (tel?.telephony_webhook_url) {
         setTelephonyWebhookUrl(tel.telephony_webhook_url);
@@ -1426,7 +1422,6 @@ const AgentsPageContent = () => {
       const routing = tel?.telephony_routing;
       if (routing) {
         setTelephonyRoutingExtension(routing.routing_extension || '');
-        setTelephonyInboundNumbers((routing.inbound_numbers || []).join('\n'));
       }
     } catch (error) {
       showError(error?.message || 'Не удалось загрузить каналы подключения');
@@ -2906,15 +2901,33 @@ const AgentsPageContent = () => {
                     <TitleWithDemoBadge as="h4" className="agent-form-channel-title">
                       Телефония (ИИ-оператор, Voximplant)
                     </TitleWithDemoBadge>
+                    {telephonyPlatform ? (
+                      <p className="help-text">
+                        {telephonyPlatform.platform_ready ? (
+                          <>
+                            Общий номер: <strong>{telephonyPlatform.shared_pool_e164}</strong>
+                            {telephonyPlatform.dial_hint ? (
+                              <>
+                                {' '}
+                                — набор: <strong>{telephonyPlatform.dial_hint}</strong>
+                              </>
+                            ) : null}
+                          </>
+                        ) : (
+                          <>Телефония на сервере не настроена: {telephonyPlatform.missing_env?.join(', ')}</>
+                        )}
+                      </p>
+                    ) : null}
                     {hasTelephonyChannel ? (
                       <>
                         <p className="help-text userbot-success">
-                          Канал подключён: {telephonyChannel.external_id}. Удалите канал в списке выше, чтобы переподключить.
+                          Канал подключён: добавочный {telephonyChannel.external_id?.replace(/^pool:/, '') || '—'}.
+                          Удалите канал в списке выше, чтобы переподключить.
                         </p>
                         <input
                           type="text"
                           className="input-main"
-                          placeholder="Добавочный (4 цифры) для общего номера"
+                          placeholder="Добавочный (4 цифры)"
                           value={telephonyRoutingExtension}
                           onChange={(e) =>
                             setTelephonyRoutingExtension(e.target.value.replace(/\D/g, '').slice(0, 4))
@@ -2922,16 +2935,8 @@ const AgentsPageContent = () => {
                           disabled={isSavingChannel}
                           maxLength={4}
                         />
-                        <textarea
-                          className="input-main"
-                          placeholder="Выделенные DID (E.164), по одному на строку"
-                          value={telephonyInboundNumbers}
-                          onChange={(e) => setTelephonyInboundNumbers(e.target.value)}
-                          disabled={isSavingChannel}
-                          rows={3}
-                        />
                         <p className="help-text">
-                          Общий номер: укажите добавочный. Выделенный DID: список номеров — звонок без DTMF.
+                          Клиенты звонят на общий номер и вводят добавочный после гудка (или набирают номер,добавочный).
                         </p>
                         <button
                           type="button"
@@ -2939,7 +2944,7 @@ const AgentsPageContent = () => {
                           onClick={handleUpdateTelephonyRouting}
                           disabled={isSavingChannel}
                         >
-                          {isSavingChannel ? 'Сохранение...' : 'Сохранить маршрутизацию'}
+                          {isSavingChannel ? 'Сохранение...' : 'Сохранить добавочный'}
                         </button>
                       </>
                     ) : (
@@ -2947,69 +2952,13 @@ const AgentsPageContent = () => {
                         <input
                           type="text"
                           className="input-main"
-                          placeholder="Voximplant Account ID"
-                          value={telephonyAccountId}
-                          onChange={(e) => setTelephonyAccountId(e.target.value)}
-                          disabled={isSavingChannel}
-                        />
-                        <input
-                          type="password"
-                          className="input-main"
-                          placeholder="Voximplant API Key"
-                          value={telephonyApiKey}
-                          onChange={(e) => setTelephonyApiKey(e.target.value)}
-                          disabled={isSavingChannel}
-                        />
-                        <input
-                          type="text"
-                          className="input-main"
-                          placeholder="Application ID"
-                          value={telephonyApplicationId}
-                          onChange={(e) => setTelephonyApplicationId(e.target.value)}
-                          disabled={isSavingChannel}
-                        />
-                        <input
-                          type="text"
-                          className="input-main"
-                          placeholder="Inbound Rule ID"
-                          value={telephonyRuleId}
-                          onChange={(e) => setTelephonyRuleId(e.target.value)}
-                          disabled={isSavingChannel}
-                        />
-                        <input
-                          type="text"
-                          className="input-main"
-                          placeholder="Номер агента E.164 (+79...)"
-                          value={telephonyPhoneE164}
-                          onChange={(e) => setTelephonyPhoneE164(e.target.value)}
-                          disabled={isSavingChannel}
-                        />
-                        <input
-                          type="text"
-                          className="input-main"
-                          placeholder="Номер оператора для перевода E.164"
-                          value={telephonyOperatorE164}
-                          onChange={(e) => setTelephonyOperatorE164(e.target.value)}
-                          disabled={isSavingChannel}
-                        />
-                        <input
-                          type="text"
-                          className="input-main"
-                          placeholder="Добавочный (4 цифры), если общий входящий номер"
+                          placeholder="Добавочный агента (4 цифры) *"
                           value={telephonyRoutingExtension}
                           onChange={(e) =>
                             setTelephonyRoutingExtension(e.target.value.replace(/\D/g, '').slice(0, 4))
                           }
                           disabled={isSavingChannel}
                           maxLength={4}
-                        />
-                        <textarea
-                          className="input-main"
-                          placeholder="Доп. выделенные DID (E.164), по одному на строку"
-                          value={telephonyInboundNumbers}
-                          onChange={(e) => setTelephonyInboundNumbers(e.target.value)}
-                          disabled={isSavingChannel}
-                          rows={3}
                         />
                         <div className="telephony-channel-options">
                           <FeatureToggle

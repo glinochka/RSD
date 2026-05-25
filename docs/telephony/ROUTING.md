@@ -1,8 +1,14 @@
 # Telephony routing (stage 7)
 
-## Variants
+## Режим по умолчанию (UI)
 
-### A — DTMF extension (shared pool)
+Платформа использует **один DID** (`TELEPHONY_SHARED_POOL_E164` в `.env`). Каждый агент получает **4-значный добавочный** в UI. Собственные номера и Voximplant API keys в интерфейсе **отключены**.
+
+Набор для клиента: `+7XXXXXXXXXX,1234` или звонок на общий номер → DTMF `1234`.
+
+## Variants (технические)
+
+### A — DTMF extension (shared pool) — основной
 
 1. In agent UI set **4-digit extension** (`routing_extension`).
 2. On channel connect, backend writes Redis `telephony:route:dtmf:{ext}` → `agent_id` and `telephony:route:dtmf:owner:{ext}` → `connection_id`.

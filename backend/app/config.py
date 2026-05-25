@@ -163,6 +163,14 @@ class Settings(BaseSettings):
     TELEPHONY_ORCHESTRATOR_ENABLED: bool = True
     VOXIMPLANT_API_BASE_URL: str = "https://api.voximplant.com/platform_api"
     TELEPHONY_VOXIMPLANT_API_TIMEOUT_SECONDS: float = 15.0
+    # Platform pool: один DID Voximplant для всех агентов + DTMF-добавочный на агента.
+    TELEPHONY_SHARED_POOL_E164: str = ""
+    TELEPHONY_VOXIMPLANT_ACCOUNT_ID: str = ""
+    TELEPHONY_VOXIMPLANT_API_KEY: str = ""
+    TELEPHONY_VOXIMPLANT_APPLICATION_ID: str = ""
+    TELEPHONY_VOXIMPLANT_RULE_ID: str = ""
+    TELEPHONY_OPERATOR_TRANSFER_E164: str = ""
+    TELEPHONY_BRIDGE_API_KEY: str = ""
     CRM_CREDENTIALS_ENCRYPTION_KEY: str = ""
     CRM_CREDENTIALS_ENCRYPTION_KEY_PREVIOUS: str = ""
     EMBEDDING_THREADS: int = 1

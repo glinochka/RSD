@@ -214,65 +214,47 @@ class AddMaxUserbotChannel(AgentLookup):
 
 
 class TelephonyChannelCredentialsInput(BaseModel):
-    account_id: str = Field(..., min_length=1, max_length=128)
-    api_key: str = Field(..., min_length=8, max_length=512)
-    application_id: str = Field(..., min_length=1, max_length=128)
-    rule_id: str = Field(..., min_length=1, max_length=128)
-    phone_number_e164: str = Field(..., min_length=8, max_length=32)
-    operator_transfer_e164: str = Field(..., min_length=8, max_length=32)
+    """Per-agent telephony settings (platform Voximplant/DID — только в .env)."""
+
+    routing_extension: str = Field(
+        ...,
+        min_length=4,
+        max_length=4,
+        pattern=r"^\d{4}$",
+        description="Добавочный (4 цифры) после общего входящего номера",
+    )
     voice_id: str = Field(default="default", min_length=1, max_length=64)
     language: str = Field(default="ru-RU", min_length=2, max_length=16)
     record_calls: bool = Field(default=True)
     disclaimer_played: bool = Field(default=True)
-    routing_extension: str | None = Field(
-        default=None,
-        min_length=4,
-        max_length=4,
-        pattern=r"^\d{4}$",
-        description="Добавочный номер (4 цифры) для общего входящего номера",
-    )
-    inbound_numbers: list[str] = Field(
-        default_factory=list,
-        max_length=32,
-        description="Дополнительные выделенные DID (E.164), без DTMF",
-    )
-
-    @field_validator("inbound_numbers")
-    @classmethod
-    def _normalize_inbound_numbers(cls, values: list[str]) -> list[str]:
-        out: list[str] = []
-        for item in values or []:
-            num = str(item).strip()
-            if num and num not in out:
-                out.append(num)
-        return out
 
 
 class UpdateTelephonyRouting(AgentLookup):
+    routing_extension: str = Field(
+        ...,
+        min_length=4,
+        max_length=4,
+        pattern=r"^\d{4}$",
+        description="Новый добавочный (4 цифры)",
+    )
+
+
+class ValidateTelephonyChannelInput(BaseModel):
+    """Опционально проверить занятость добавочного до подключения канала."""
+
     routing_extension: str | None = Field(
         default=None,
         min_length=4,
         max_length=4,
         pattern=r"^\d{4}$",
     )
-    inbound_numbers: list[str] = Field(default_factory=list, max_length=32)
-
-    @field_validator("inbound_numbers")
-    @classmethod
-    def _normalize_inbound_numbers_update(cls, values: list[str]) -> list[str]:
-        out: list[str] = []
-        for item in values or []:
-            num = str(item).strip()
-            if num and num not in out:
-                out.append(num)
-        return out
 
 
 class AddTelephonyChannel(AgentLookup, TelephonyChannelCredentialsInput):
     make_primary: bool = Field(default=False, description="Сделать канал основным")
 
 
-class ValidateTelephonyChannel(TelephonyChannelCredentialsInput):
+class ValidateTelephonyChannel(ValidateTelephonyChannelInput):
     pass
 
 

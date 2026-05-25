@@ -57,8 +57,10 @@ def test_routing_public_fields():
     creds = _creds(routing_extension="5678", inbound_numbers=["+74952222222"])
     public = telephony_routing_public_fields(creds)
     assert public["routing_extension"] == "5678"
-    assert public["inbound_numbers"] == ["+74952222222"]
+    assert public["inbound_numbers"] == []
     assert public["pool_line_e164"] == "+79001234567"
+    assert public["dial_hint"] == "+79001234567,5678"
+    assert public["routing_mode"] == "dtmf_extension"
 
 
 def test_rejects_invalid_extension_in_credentials():

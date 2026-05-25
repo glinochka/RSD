@@ -122,7 +122,12 @@ export const agentService = {
     return response.data;
   },
 
-  validateTelephonyChannel: async (data) => {
+  getTelephonyPlatformConfig: async () => {
+    const response = await apiClient.get(API_ROUTES.AGENTS_CHANNELS_TELEPHONY_PLATFORM);
+    return response.data;
+  },
+
+  validateTelephonyChannel: async (data = {}) => {
     const response = await apiClient.post(API_ROUTES.AGENTS_CHANNELS_VALIDATE_TELEPHONY, data);
     return response.data;
   },

@@ -280,11 +280,17 @@ async def scan_extension_conflict_in_db(
 
 
 def telephony_routing_public_fields(creds: TelephonyCredentialsV1) -> dict[str, Any]:
+    from .platform_config import format_dial_with_extension
+
+    pool = pool_line_e164(creds) or normalize_e164(creds.phone_number_e164)
+    ext = normalize_extension(creds.routing_extension)
     return {
-        "routing_extension": normalize_extension(creds.routing_extension),
-        "inbound_numbers": normalize_inbound_numbers(creds.inbound_numbers),
-        "pool_line_e164": pool_line_e164(creds),
-        "dedicated_dids": dedicated_did_numbers(creds),
+        "routing_extension": ext,
+        "inbound_numbers": [],
+        "pool_line_e164": pool,
+        "dedicated_dids": [],
+        "routing_mode": "dtmf_extension",
+        "dial_hint": format_dial_with_extension(pool or "", ext),
     }
 
 

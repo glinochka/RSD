@@ -84,6 +84,7 @@ from ..services.voximplant_client import (
     validate_voximplant_account,
     validate_voximplant_channel_setup,
 )
+from ..telephony.platform_config import platform_telephony_public_fields, require_platform_telephony_config
 from ..telephony.webhook_urls import build_telephony_webhook_url
 from .telephony_channel import (
     build_encrypted_telephony_bundle,
@@ -5060,6 +5061,15 @@ async def add_agent_whatsapp_userbot_channel(
             )
 
 
+@router.get("/channels/telephony/platform")
+async def get_telephony_platform_config(
+    current_user=Depends(get_current_user_required),
+):
+    """Публичные настройки общего номера (без секретов Voximplant)."""
+    _ = current_user
+    return platform_telephony_public_fields()
+
+
 @router.post("/channels/add-telephony")
 async def add_agent_telephony_channel(
     payload: AddTelephonyChannel,
@@ -5070,6 +5080,7 @@ async def add_agent_telephony_channel(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="TELEPHONY_WEBHOOK_BASE_URL не настроен на сервере",
         )
+    require_platform_telephony_config()
     creds = await validate_telephony_credentials_input(payload)
     external_id = telephony_external_id(creds.phone_number_e164, creds.routing_extension)
     encrypted_bundle = build_encrypted_telephony_bundle(creds, encrypt_token)
@@ -5115,7 +5126,7 @@ async def add_agent_telephony_channel(
             if duplicate_connection:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail="Этот телефонный номер уже подключен к другому агенту",
+                    detail=f"Добавочный {creds.routing_extension} уже занят другим агентом",
                 )
 
             now = datetime.utcnow()
@@ -5153,6 +5164,7 @@ async def add_agent_telephony_channel(
                     "bot_id": agent.bot_id,
                     "channels": [_serialize_channel_connection(item) for item in channels],
                     "telephony_routing": telephony_routing_public_fields(creds),
+                    "telephony_platform": platform_telephony_public_fields(),
                     **extra,
                 },
                 status_code=status.HTTP_201_CREATED,
@@ -5191,8 +5203,8 @@ async def update_agent_telephony_routing(
             previous = parse_telephony_credentials(decrypt_token(connection.encrypted_credentials))
             updated = previous.model_copy(
                 update={
-                    "routing_extension": (payload.routing_extension or "").strip() or None,
-                    "inbound_numbers": list(payload.inbound_numbers or []),
+                    "routing_extension": payload.routing_extension.strip(),
+                    "inbound_numbers": [],
                 }
             )
             if updated.routing_extension:
@@ -5227,41 +5239,41 @@ async def validate_agent_telephony_channel(
     payload: ValidateTelephonyChannel,
     current_user=Depends(get_current_user_required),
 ):
+    _ = current_user
+    if not settings.TELEPHONY_WEBHOOK_BASE_URL.strip():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="TELEPHONY_WEBHOOK_BASE_URL не настроен на сервере",
+        )
+    platform = require_platform_telephony_config()
     try:
         await validate_voximplant_channel_setup(
-            account_id=payload.account_id,
-            api_key=payload.api_key,
-            phone_number_e164=payload.phone_number_e164,
-            application_id=payload.application_id,
-            rule_id=payload.rule_id,
-        )
-        creds = TelephonyCredentialsV1(
-            account_id=payload.account_id.strip(),
-            api_key=payload.api_key.strip(),
-            application_id=payload.application_id.strip(),
-            rule_id=payload.rule_id.strip(),
-            phone_number_e164=payload.phone_number_e164.strip(),
-            webhook_secret="a" * 32,
-            operator_transfer_e164=payload.operator_transfer_e164.strip(),
-            voice_id=(payload.voice_id or "default").strip(),
-            language=(payload.language or "ru-RU").strip(),
-            record_calls=bool(payload.record_calls),
-            disclaimer_played=bool(payload.disclaimer_played),
-            routing_extension=(payload.routing_extension or "").strip() or None,
-            inbound_numbers=list(payload.inbound_numbers or []),
+            account_id=platform.account_id,
+            api_key=platform.api_key,
+            phone_number_e164=platform.shared_pool_e164,
+            application_id=platform.application_id,
+            rule_id=platform.rule_id,
         )
     except VoximplantApiError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
-        ) from exc
+
+    ext = (payload.routing_extension or "").strip()
+    if ext:
+        async with async_session_maker() as session:
+            conflict = await scan_extension_conflict_in_db(session, ext)
+            if conflict is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Добавочный {ext} уже занят",
+                )
+
     return {
         "ok": True,
         "provider": TELEPHONY_CHANNEL_PROVIDER,
-        "phone_number_e164": creds.phone_number_e164,
-        "message": "Учётная запись Voximplant доступна",
+        "phone_number_e164": platform.shared_pool_e164,
+        "routing_extension": ext or None,
+        "message": "Общий номер Voximplant доступен",
+        **platform_telephony_public_fields(),
     }
 
 

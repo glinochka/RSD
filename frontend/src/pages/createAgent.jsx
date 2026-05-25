@@ -565,6 +565,7 @@ const CreateAgentContent = () => {
   const [useWhatsAppUserbotChannel, setUseWhatsAppUserbotChannel] = useState(false);
   const [useWhatsAppBusinessApiChannel, setUseWhatsAppBusinessApiChannel] = useState(false);
   const [useTelephonyChannel, setUseTelephonyChannel] = useState(false);
+  const [telephonyPlatform, setTelephonyPlatform] = useState(null);
   const [telephonyValidateStatus, setTelephonyValidateStatus] = useState('');
   const [telephonyWebhookUrl, setTelephonyWebhookUrl] = useState('');
   const [isValidatingTelephony, setIsValidatingTelephony] = useState(false);
@@ -621,14 +622,7 @@ const CreateAgentContent = () => {
       whatsapp_access_token: '',
       whatsapp_business_account_id: '',
       whatsapp_verify_token: '',
-      telephony_account_id: '',
-      telephony_api_key: '',
-      telephony_application_id: '',
-      telephony_rule_id: '',
-      telephony_phone_e164: '',
-      telephony_operator_e164: '',
       telephony_routing_extension: '',
-      telephony_inbound_numbers: '',
       telephony_voice_id: 'default',
       telephony_language: 'ru-RU',
       template_type: 'qa',
@@ -751,28 +745,13 @@ const CreateAgentContent = () => {
           return;
         }
         if (!skipChannelSelection && isTelephonyMode) {
-          if (!values.telephony_account_id?.trim()) {
-            form.setFieldError('telephony_account_id', 'Account ID обязателен');
+          const ext = String(values.telephony_routing_extension || '').trim();
+          if (!/^\d{4}$/.test(ext)) {
+            form.setFieldError('telephony_routing_extension', 'Укажите добавочный из 4 цифр');
             return;
           }
-          if (!values.telephony_api_key?.trim()) {
-            form.setFieldError('telephony_api_key', 'API key обязателен');
-            return;
-          }
-          if (!values.telephony_application_id?.trim()) {
-            form.setFieldError('telephony_application_id', 'Application ID обязателен');
-            return;
-          }
-          if (!values.telephony_rule_id?.trim()) {
-            form.setFieldError('telephony_rule_id', 'Rule ID обязателен');
-            return;
-          }
-          if (!values.telephony_phone_e164?.trim()) {
-            form.setFieldError('telephony_phone_e164', 'Номер E.164 обязателен');
-            return;
-          }
-          if (!values.telephony_operator_e164?.trim()) {
-            form.setFieldError('telephony_operator_e164', 'Номер оператора обязателен');
+          if (telephonyPlatform && !telephonyPlatform.platform_ready) {
+            showError('Телефония платформы не настроена на сервере (.env)');
             return;
           }
         }
@@ -1025,19 +1004,9 @@ const CreateAgentContent = () => {
           if (isTelephonyMode) {
             const telRes = await agentService.addTelephonyChannel({
               agent_id: agentId,
-              account_id: values.telephony_account_id.trim(),
-              api_key: values.telephony_api_key.trim(),
-              application_id: values.telephony_application_id.trim(),
-              rule_id: values.telephony_rule_id.trim(),
-              phone_number_e164: values.telephony_phone_e164.trim(),
-              operator_transfer_e164: values.telephony_operator_e164.trim(),
+              routing_extension: values.telephony_routing_extension.trim(),
               voice_id: (values.telephony_voice_id || 'default').trim(),
               language: (values.telephony_language || 'ru-RU').trim(),
-              routing_extension: values.telephony_routing_extension?.trim() || null,
-              inbound_numbers: (values.telephony_inbound_numbers || '')
-                .split(/[\n,;]+/)
-                .map((s) => s.trim())
-                .filter(Boolean),
               make_primary: primaryProvider === TELEPHONY_PROVIDER,
             });
             if (telRes?.webhook_url) {
@@ -1196,37 +1165,30 @@ const CreateAgentContent = () => {
       if (!next) {
         setTelephonyValidateStatus('');
         setTelephonyWebhookUrl('');
-        form.setFieldValue('telephony_account_id', '');
-        form.setFieldValue('telephony_api_key', '');
-        form.setFieldValue('telephony_application_id', '');
-        form.setFieldValue('telephony_rule_id', '');
-        form.setFieldValue('telephony_phone_e164', '');
-        form.setFieldValue('telephony_operator_e164', '');
         form.setFieldValue('telephony_routing_extension', '');
-        form.setFieldValue('telephony_inbound_numbers', '');
         form.setFieldValue('telephony_voice_id', 'default');
         form.setFieldValue('telephony_language', 'ru-RU');
+      } else {
+        agentService
+          .getTelephonyPlatformConfig()
+          .then(setTelephonyPlatform)
+          .catch(() => setTelephonyPlatform(null));
       }
       return next;
     });
   };
 
   const handleValidateTelephonyOnCreate = async () => {
-    const payload = {
-      account_id: form.values.telephony_account_id?.trim(),
-      api_key: form.values.telephony_api_key?.trim(),
-      application_id: form.values.telephony_application_id?.trim(),
-      rule_id: form.values.telephony_rule_id?.trim(),
-      phone_number_e164: form.values.telephony_phone_e164?.trim(),
-      operator_transfer_e164: form.values.telephony_operator_e164?.trim(),
-      voice_id: (form.values.telephony_voice_id || 'default').trim(),
-      language: (form.values.telephony_language || 'ru-RU').trim(),
-      routing_extension: form.values.telephony_routing_extension?.trim() || null,
-      inbound_numbers: (form.values.telephony_inbound_numbers || '')
-        .split(/[\n,;]+/)
-        .map((s) => s.trim())
-        .filter(Boolean),
-    };
+    const ext = form.values.telephony_routing_extension?.trim() || '';
+    if (!/^\d{4}$/.test(ext)) {
+      form.setFieldError('telephony_routing_extension', 'Укажите добавочный из 4 цифр');
+      return;
+    }
+    if (telephonyPlatform && !telephonyPlatform.platform_ready) {
+      showError('Телефония платформы не настроена на сервере (.env)');
+      return;
+    }
+    const payload = { routing_extension: ext };
     setIsValidatingTelephony(true);
     setTelephonyValidateStatus('');
     try {
@@ -1786,72 +1748,32 @@ const CreateAgentContent = () => {
                         }
                         accessibilityTitle="Включить телефонный канал (ИИ-оператор)"
                         description="Входящие звонки через Voximplant с голосовым ИИ-оператором."
-                        helpText="Укажите учётные данные Voximplant и номер в формате E.164. После создания агента используйте Webhook URL в настройках правила входящих вызовов."
+                        helpText="Общий номер настраивается на сервере. Укажите уникальный добавочный (4 цифры) для этого агента."
                       />
                       {useTelephonyChannel ? (
                         <div className="telephony-channel-fields">
-                          <input
-                            type="text"
-                            className="input-main"
-                            name="telephony_account_id"
-                            placeholder="Voximplant Account ID"
-                            value={form.values.telephony_account_id}
-                            onChange={form.handleChange}
-                            disabled={form.isSubmitting}
-                          />
-                          {form.errors.telephony_account_id ? (
-                            <p className="error-text">{form.errors.telephony_account_id}</p>
+                          {telephonyPlatform ? (
+                            <p className="help-text">
+                              {telephonyPlatform.platform_ready ? (
+                                <>
+                                  Общий номер: <strong>{telephonyPlatform.shared_pool_e164}</strong>
+                                  {telephonyPlatform.dial_hint ? (
+                                    <>
+                                      {' '}
+                                      — набор: <strong>{telephonyPlatform.dial_hint}</strong>
+                                    </>
+                                  ) : null}
+                                </>
+                              ) : (
+                                <>Сервер: задайте {telephonyPlatform.missing_env?.join(', ')}</>
+                              )}
+                            </p>
                           ) : null}
-                          <input
-                            type="password"
-                            className="input-main"
-                            name="telephony_api_key"
-                            placeholder="Voximplant API Key"
-                            value={form.values.telephony_api_key}
-                            onChange={form.handleChange}
-                            disabled={form.isSubmitting}
-                          />
-                          <input
-                            type="text"
-                            className="input-main"
-                            name="telephony_application_id"
-                            placeholder="Application ID"
-                            value={form.values.telephony_application_id}
-                            onChange={form.handleChange}
-                            disabled={form.isSubmitting}
-                          />
-                          <input
-                            type="text"
-                            className="input-main"
-                            name="telephony_rule_id"
-                            placeholder="Inbound Rule ID"
-                            value={form.values.telephony_rule_id}
-                            onChange={form.handleChange}
-                            disabled={form.isSubmitting}
-                          />
-                          <input
-                            type="text"
-                            className="input-main"
-                            name="telephony_phone_e164"
-                            placeholder="Номер агента E.164 (+79...)"
-                            value={form.values.telephony_phone_e164}
-                            onChange={form.handleChange}
-                            disabled={form.isSubmitting}
-                          />
-                          <input
-                            type="text"
-                            className="input-main"
-                            name="telephony_operator_e164"
-                            placeholder="Номер оператора E.164"
-                            value={form.values.telephony_operator_e164}
-                            onChange={form.handleChange}
-                            disabled={form.isSubmitting}
-                          />
                           <input
                             type="text"
                             className="input-main"
                             name="telephony_routing_extension"
-                            placeholder="Добавочный 4 цифры (общий номер)"
+                            placeholder="Добавочный агента (4 цифры) *"
                             value={form.values.telephony_routing_extension}
                             onChange={(e) =>
                               form.setFieldValue(
@@ -1862,15 +1784,9 @@ const CreateAgentContent = () => {
                             disabled={form.isSubmitting}
                             maxLength={4}
                           />
-                          <textarea
-                            className="input-main"
-                            name="telephony_inbound_numbers"
-                            placeholder="Выделенные DID (E.164), по одному на строку"
-                            value={form.values.telephony_inbound_numbers}
-                            onChange={form.handleChange}
-                            disabled={form.isSubmitting}
-                            rows={3}
-                          />
+                          {form.errors.telephony_routing_extension ? (
+                            <p className="error-text">{form.errors.telephony_routing_extension}</p>
+                          ) : null}
                           <input
                             type="text"
                             className="input-main"

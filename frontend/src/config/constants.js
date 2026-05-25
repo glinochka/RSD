@@ -54,6 +54,7 @@ export const API_ROUTES = {
   AGENTS_CHANNELS_ADD_WHATSAPP_BUSINESS_API: '/api/agents/channels/by_whatsapp_business_api',
   AGENTS_CHANNELS_ADD_TELEPHONY: '/api/agents/channels/add-telephony',
   AGENTS_CHANNELS_VALIDATE_TELEPHONY: '/api/agents/channels/telephony/validate',
+  AGENTS_CHANNELS_TELEPHONY_PLATFORM: '/api/agents/channels/telephony/platform',
   AGENTS_CHANNELS_DELETE: '/api/agents/channels',
   AGENTS_ANALYTICS_TELEPHONY_CALLS: '/api/agents/analytics/telephony/calls',
   AGENTS_TELEPHONY_PREVIEW_START: '/api/agents/telephony/preview/start',
