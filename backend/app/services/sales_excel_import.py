@@ -11,6 +11,9 @@ from openpyxl import load_workbook
 
 _ws_re = re.compile(r"\s+")
 PHONE_FIELD_MAX_LEN = 256
+EMAIL_FIELD_MAX_LEN = 255
+URL_FIELD_MAX_LEN = 512
+NAME_FIELD_MAX_LEN = 256
 
 
 def _norm_header(h: object) -> str:
@@ -38,6 +41,27 @@ def _fit_phone(value: str | None, *, max_len: int = PHONE_FIELD_MAX_LEN) -> str 
     if len(value) <= max_len:
         return value
     return value[:max_len]
+
+
+def _fit_str(value: str | None, *, max_len: int) -> str | None:
+    if not value:
+        return None
+    if len(value) <= max_len:
+        return value
+    return value[:max_len]
+
+
+def _fit_email(value: str | None, *, max_len: int = EMAIL_FIELD_MAX_LEN) -> str | None:
+    """2GIS часто кладёт несколько адресов в одну ячейку — в БД varchar(255), берём первый."""
+    s = (value or "").strip()
+    if not s:
+        return None
+    for part in re.split(r"[,;]\s*", s):
+        candidate = part.strip()
+        if candidate and "@" in candidate:
+            s = candidate
+            break
+    return _fit_str(s, max_len=max_len)
 
 
 def _normalize_whatsapp_import_value(value: str | None) -> str | None:
@@ -177,19 +201,26 @@ def parse_sales_excel(file_bytes: bytes) -> list[dict[str, Any]]:
                     org_name = col0
                 else:
                     continue
+            email_raw = _opt_str(picked.get("email"))
+            email = _fit_email(email_raw)
+            if email_raw and email and email_raw.strip() != email:
+                extras.setdefault("Email (полный из выгрузки)", email_raw)
             out.append(
                 {
                     "org_name": org_name[:512],
-                    "lpr_name": _opt_str(picked.get("lpr_name")),
+                    "lpr_name": _fit_str(_opt_str(picked.get("lpr_name")), max_len=NAME_FIELD_MAX_LEN),
                     "lpr_phone": _fit_phone(_opt_str(picked.get("lpr_phone"))),
                     "org_phone": _fit_phone(_opt_str(picked.get("org_phone"))),
                     "org_mobile": _fit_phone(_opt_str(picked.get("org_mobile"))),
                     "import_status": _opt_str(picked.get("import_status")),
-                    "email": _opt_str(picked.get("email")),
-                    "website": _opt_str(picked.get("website")),
-                    "whatsapp": _normalize_whatsapp_import_value(_opt_str(picked.get("whatsapp"))),
-                    "telegram": _opt_str(picked.get("telegram")),
-                    "messenger_max": _opt_str(picked.get("messenger_max")),
+                    "email": email,
+                    "website": _fit_str(_opt_str(picked.get("website")), max_len=URL_FIELD_MAX_LEN),
+                    "whatsapp": _fit_str(
+                        _normalize_whatsapp_import_value(_opt_str(picked.get("whatsapp"))),
+                        max_len=URL_FIELD_MAX_LEN,
+                    ),
+                    "telegram": _fit_str(_opt_str(picked.get("telegram")), max_len=URL_FIELD_MAX_LEN),
+                    "messenger_max": _fit_str(_opt_str(picked.get("messenger_max")), max_len=URL_FIELD_MAX_LEN),
                     "extras": extras,
                 }
             )

@@ -189,11 +189,15 @@ IMPORTABLE_CONTACT_FIELDS: tuple[str, ...] = (
 )
 
 
-def _norm_import_value(value: object | None) -> str | None:
+def _norm_import_value(value: object | None, *, max_len: int | None = None) -> str | None:
     if value is None:
         return None
     s = str(value).strip()
-    return s or None
+    if not s:
+        return None
+    if max_len is not None and len(s) > max_len:
+        s = s[:max_len]
+    return s
 
 
 async def find_contact_by_dedup_key(
@@ -230,6 +234,8 @@ def _apply_import_fields(
             new_val = (str(new_val or "").strip())[:512]
             if not new_val:
                 continue
+        elif key == "email":
+            new_val = _norm_import_value(new_val, max_len=255)
         else:
             new_val = _norm_import_value(new_val)
         old_val = getattr(row, key, None)
@@ -294,7 +300,7 @@ async def upsert_contact_from_import(
         org_phone=_norm_import_value(payload.get("org_phone")),
         org_mobile=_norm_import_value(payload.get("org_mobile")),
         import_status=_norm_import_value(payload.get("import_status")),
-        email=_norm_import_value(payload.get("email")),
+        email=_norm_import_value(payload.get("email"), max_len=255),
         website=_norm_import_value(payload.get("website")),
         whatsapp=_norm_import_value(payload.get("whatsapp")),
         telegram=_norm_import_value(payload.get("telegram")),

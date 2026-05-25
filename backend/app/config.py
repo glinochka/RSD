@@ -149,14 +149,12 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str = ""
     TELEPHONY_STREAM_TTS_PROVIDER: Literal["yandex", "elevenlabs", "voximplant", "openai"] = "yandex"
     ELEVENLABS_API_KEY: str = ""
-    TELEPHONY_ENDPOINT_SILENCE_MS: int = 600
     TELEPHONY_CRM_FILLER_THRESHOLD_MS: int = 1500
     TELEPHONY_DEDICATED_POOL_ENABLED: bool = True
     TELEPHONY_DEDICATED_POOL_SIZE: int = 8
     TELEPHONY_WORKER_PORT: int = 8001
     # Stage 6: human-like dialogue
     TELEPHONY_BARGE_IN_ENABLED: bool = True
-    TELEPHONY_BACKCHANNEL_MIN_MS: int = 5000
     TELEPHONY_SSML_ENABLED: bool = True
     REDIS_URL: str = ""
     # Stage 4: stateful dialog orchestrator + Redis hot session

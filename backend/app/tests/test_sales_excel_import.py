@@ -1,7 +1,9 @@
 from pathlib import Path
 
 from app.services.sales_excel_import import (
+    EMAIL_FIELD_MAX_LEN,
     PHONE_FIELD_MAX_LEN,
+    _fit_email,
     _fit_phone,
     _normalize_whatsapp_import_value,
     parse_sales_excel,
@@ -9,6 +11,7 @@ from app.services.sales_excel_import import (
 
 _ROOT = Path(__file__).resolve().parents[3]
 _YAMAP_XLSX = _ROOT / "yamap_with_lpr_prioritized.xlsx"
+_YAMAP_2GIS = _ROOT / "yamap (3).xlsx"
 
 
 def test_normalize_whatsapp_import_value_fixes_erroneous_leading_one() -> None:
@@ -21,6 +24,26 @@ def test_normalize_whatsapp_import_value_fixes_erroneous_leading_one() -> None:
 def test_fit_phone_truncates_beyond_limit() -> None:
     long_value = "+" + "7" * (PHONE_FIELD_MAX_LEN + 10)
     assert len(_fit_phone(long_value) or "") == PHONE_FIELD_MAX_LEN
+
+
+def test_fit_email_takes_first_from_comma_list() -> None:
+    raw = "a@x.com, b@y.com, c@z.com"
+    assert _fit_email(raw) == "a@x.com"
+
+
+def test_fit_email_fits_db_column() -> None:
+    assert len(_fit_email("a" * 300 + "@x.com") or "") <= EMAIL_FIELD_MAX_LEN
+
+
+def test_parse_yamap_2gis_email_fits_db_columns() -> None:
+    if not _YAMAP_2GIS.is_file():
+        return
+    rows = parse_sales_excel(_YAMAP_2GIS.read_bytes())
+    assert len(rows) > 0
+    for row in rows:
+        email = row.get("email")
+        if email:
+            assert len(email) <= EMAIL_FIELD_MAX_LEN, email[:80]
 
 
 def test_parse_yamap_phones_fit_db_columns() -> None:
