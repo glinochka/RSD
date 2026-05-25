@@ -27,6 +27,13 @@ const WORKFLOW_STATUS_LABELS = {
   hesitating: 'Сомневается',
 };
 
+/** Статус «В работе» в воронке (workflow_status in_progress). */
+const SALES_DESK_IN_PROGRESS_STATUS = 'in_progress';
+
+function shouldAutoMarkSalesContactInProgress(workflowStatus) {
+  return (workflowStatus || 'new') === 'new';
+}
+
 const FUNNEL_PERIOD_OPTIONS = [
   { id: 'day', label: 'За день' },
   { id: 'week', label: 'За неделю' },
@@ -341,7 +348,7 @@ function useDeskColumnWidths() {
   return { widths, startResize };
 }
 
-function SalesMessengerCell({ kind, value, label }) {
+function SalesMessengerCell({ kind, value, label, onEngage }) {
   const href = messengerOpenHref(kind, value);
   if (!href) return <span>—</span>;
   return (
@@ -350,13 +357,14 @@ function SalesMessengerCell({ kind, value, label }) {
       target="_blank"
       rel="noopener noreferrer"
       className="btn btn-sm btn-outline management-messenger-btn"
+      onClick={() => onEngage?.()}
     >
       {label}
     </a>
   );
 }
 
-function SalesContactTokens({ value, nowrap = false }) {
+function SalesContactTokens({ value, nowrap = false, onEngage }) {
   const parts = splitContactTokens(value);
   if (!parts.length) return <span>—</span>;
   return (
@@ -371,6 +379,7 @@ function SalesContactTokens({ value, nowrap = false }) {
             key={i}
             href={phoneToTelHref(p)}
             className="management-contact-value-chip management-contact-value-chip--phone"
+            onClick={() => onEngage?.()}
           >
             {p}
           </a>
@@ -490,6 +499,12 @@ function SalesContactRow({
 
   const lprPhoneDisplay = lprPhone || '—';
 
+  const markInProgressOnEngage = useCallback(() => {
+    if (readOnly || statusLocked) return;
+    if (!shouldAutoMarkSalesContactInProgress(status)) return;
+    setStatus(SALES_DESK_IN_PROGRESS_STATUS);
+  }, [readOnly, statusLocked, status]);
+
   return (
     <tr className="management-desk-contact-row">
       <td data-label="ID">{contact.id}</td>
@@ -512,7 +527,11 @@ function SalesContactRow({
       <td data-label="Телефон ЛПР" className="management-desk-col-lpr">
         {readOnly ? (
           looksLikePhone(lprPhone) ? (
-            <a href={phoneToTelHref(lprPhone)} className="management-desk-phone-link">
+            <a
+              href={phoneToTelHref(lprPhone)}
+              className="management-desk-phone-link"
+              onClick={() => markInProgressOnEngage()}
+            >
               {lprPhoneDisplay}
             </a>
           ) : (
@@ -529,19 +548,34 @@ function SalesContactRow({
         )}
       </td>
       <td data-label="Телефон организации" className="management-desk-col-phones">
-        <SalesContactTokens value={contact.org_phone} />
+        <SalesContactTokens value={contact.org_phone} onEngage={markInProgressOnEngage} />
       </td>
       <td data-label="Мобильный" className="management-desk-col-phones">
-        <SalesContactTokens value={contact.org_mobile} />
+        <SalesContactTokens value={contact.org_mobile} onEngage={markInProgressOnEngage} />
       </td>
       <td data-label="WhatsApp">
-        <SalesMessengerCell kind="whatsapp" value={contact.whatsapp} label="WhatsApp" />
+        <SalesMessengerCell
+          kind="whatsapp"
+          value={contact.whatsapp}
+          label="WhatsApp"
+          onEngage={markInProgressOnEngage}
+        />
       </td>
       <td data-label="Telegram">
-        <SalesMessengerCell kind="telegram" value={contact.telegram} label="Telegram" />
+        <SalesMessengerCell
+          kind="telegram"
+          value={contact.telegram}
+          label="Telegram"
+          onEngage={markInProgressOnEngage}
+        />
       </td>
       <td data-label="Макс">
-        <SalesMessengerCell kind="max" value={contact.messenger_max} label="Макс" />
+        <SalesMessengerCell
+          kind="max"
+          value={contact.messenger_max}
+          label="Макс"
+          onEngage={markInProgressOnEngage}
+        />
       </td>
       <td data-label="Статус">
         {readOnly || statusLocked ? (
@@ -581,6 +615,7 @@ function SalesContactRow({
             target="_blank"
             rel="noopener noreferrer"
             className="btn btn-sm btn-outline management-desk-site-link"
+            onClick={() => markInProgressOnEngage()}
           >
             Перейти
           </a>
@@ -596,7 +631,10 @@ function SalesContactRow({
                 type="button"
                 className="btn btn-sm btn-outline"
                 disabled={!!busy || autosaveState === 'saving'}
-                onClick={() => onInvoice(contact)}
+                onClick={() => {
+                  markInProgressOnEngage();
+                  onInvoice(contact);
+                }}
               >
                 Чек
               </button>
