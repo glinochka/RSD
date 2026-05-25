@@ -1,9 +1,8 @@
 /**
  * RFC-001 signed webhook posts from VoxEngine → telephony_bridge.
- * Requires Modules.Crypto in the parent scenario.
+ * Uses built-in Crypto.hmac_sha256 (no Modules.Crypto — not available on current VoxEngine).
  * @see docs/telephony/RFC-001-webhook-contract.md
  */
-require(Modules.Crypto);
 
 function _uuid() {
   var d = new Date().getTime();
@@ -80,17 +79,24 @@ function postControlEvent(opts, done) {
 }
 
 /**
- * Minimal HMAC-SHA256 hex (VoxEngine has Crypto/HMAC in newer runtimes).
- * Falls back to Net if Crypto unavailable — use getSecretValue for secret in prod.
+ * HMAC-SHA256 hex (RFC-001), lowercase — matches telephony_bridge verify.
+ * @see https://voximplant.com/docs/references/voxengine/crypto/hmac_sha256
  */
 function hmacSha256Hex(secret, message) {
-  if (typeof Crypto !== 'undefined' && typeof Crypto.hmac === 'function') {
-    return Crypto.hmac('sha256', secret, message, true);
+  if (typeof Crypto === 'undefined') {
+    throw new Error('rsd_control: Crypto is not available in VoxEngine');
   }
-  if (typeof Crypto !== 'undefined' && typeof Crypto.hmacSha256 === 'function') {
-    return Crypto.hmacSha256(message, secret, true);
+  if (typeof Crypto.hmac_sha256 === 'function') {
+    var hex = Crypto.hmac_sha256(message, secret);
+    if (!hex && typeof Crypto.hmac_sha256 === 'function') {
+      hex = Crypto.hmac_sha256(secret, message);
+    }
+    return String(hex || '').toLowerCase();
   }
-  throw new Error('rsd_control: Crypto.hmac not available in VoxEngine');
+  if (typeof Crypto.hmac === 'function') {
+    return String(Crypto.hmac('sha256', secret, message, true) || '').toLowerCase();
+  }
+  throw new Error('rsd_control: Crypto.hmac_sha256 not available in VoxEngine');
 }
 
 module.exports = {

@@ -15,9 +15,11 @@
 1. Создайте приложение и загрузите **все** файлы (`rsd_inbound.js`, `lib/*`) в одну папку сценария.
 2. Правило маршрутизации: сценарий `rsd_inbound`, маска номера.
 3. Секреты приложения (Manage → Secrets):
-   - `RSD_WEBHOOK_SECRET` — `webhook_secret` канала (RFC-001)
+   - `RSD_WEBHOOK_SECRET` — `webhook_secret` gate-канала (RFC-001)
    - `RSD_WEBHOOK_BASE_URL` — публичный HTTPS без path, напр. `https://telephony.example.com`
    - `TELEPHONY_MEDIA_WS_URL` — `wss://telephony.example.com/ws`
+
+   **Не** используйте `require(Modules.Crypto)` / `require(Modules.WebSocket)` — в актуальном runtime Crypto и WebSocket встроены; `Modules.Crypto` даёт `empty module argument!` и сценарий завершается до звонка.
 4. **script_custom_data** правила (JSON):
 
 ```json

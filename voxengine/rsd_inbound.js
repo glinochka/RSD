@@ -11,10 +11,8 @@
  * }
  *
  * Secret: VoxEngine application secret RSD_WEBHOOK_SECRET (webhook HMAC).
+ * WebSocket and Crypto are built-in (no require(Modules.*) — Modules.Crypto is absent on current runtime).
  */
-require(Modules.WebSocket);
-require(Modules.Crypto);
-
 var rsdControl = require('./lib/rsd_control');
 var rsdMedia = require('./lib/rsd_media_gateway');
 
