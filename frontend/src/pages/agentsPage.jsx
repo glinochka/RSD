@@ -581,6 +581,8 @@ const AgentsPageContent = () => {
   const [salesLiveChatSimulationEnabled, setSalesLiveChatSimulationEnabled] = useState(false);
   const [salesTriggerWords, setSalesTriggerWords] = useState(() => ['купить']);
   const [salesTriggerWordDraft, setSalesTriggerWordDraft] = useState('');
+  const [salesExcelUploadBusy, setSalesExcelUploadBusy] = useState(false);
+  const [salesExcelImportInfo, setSalesExcelImportInfo] = useState(null);
   const [agentAvailAlwaysOn, setAgentAvailAlwaysOn] = useState(true);
   const [agentAvailTimezone, setAgentAvailTimezone] = useState(() => getBrowserTimezoneSafe());
   const [agentAvailWeekdays, setAgentAvailWeekdays] = useState(buildDefaultAgentAvailabilityWeekdays);
@@ -1003,6 +1005,22 @@ const AgentsPageContent = () => {
       showError(error?.message || 'Не удалось обновить настройки шаблона Менеджер продаж');
     } finally {
       setIsSavingTemplateConfig(false);
+    }
+  };
+
+  const handleSalesManagerExcelUpload = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || !selectedAgent?.id) return;
+    setSalesExcelUploadBusy(true);
+    try {
+      const res = await agentService.uploadSalesManagerExcel(selectedAgent.id, file);
+      setSalesExcelImportInfo(res);
+      showSuccess(res?.message || 'База загружена, рассылка запущена');
+    } catch (error) {
+      showError(error?.response?.data?.detail || error?.message || 'Не удалось загрузить Excel');
+    } finally {
+      setSalesExcelUploadBusy(false);
     }
   };
 
@@ -2360,6 +2378,33 @@ const AgentsPageContent = () => {
                               Добавить
                             </button>
                           </div>
+                        </div>
+                        <div className="sales-excel-upload-block mt-input">
+                          <h4 className="agent-form-channel-title">База клиентов (Excel)</h4>
+                          <p className="sales-trigger-words-hint">
+                            Загрузите выгрузку 2GIS или совместимую таблицу (.xlsx). Контакты с WhatsApp
+                            или Telegram будут сохранены; агент сформирует первые сообщения и отправит их
+                            через подключённые userbot-каналы.
+                          </p>
+                          <input
+                            type="file"
+                            accept=".xlsx,.xls"
+                            onChange={handleSalesManagerExcelUpload}
+                            disabled={salesExcelUploadBusy || isSavingTemplateConfig}
+                          />
+                          {salesExcelUploadBusy ? (
+                            <p className="sales-trigger-words-hint">Обработка файла…</p>
+                          ) : null}
+                          {salesExcelImportInfo ? (
+                            <p className="sales-trigger-words-hint">
+                              Последняя загрузка: добавлено {salesExcelImportInfo.imported ?? 0}, обновлено{' '}
+                              {salesExcelImportInfo.updated ?? 0}
+                              {salesExcelImportInfo.skipped_no_messenger
+                                ? `, без канала: ${salesExcelImportInfo.skipped_no_messenger}`
+                                : ''}
+                              .
+                            </p>
+                          ) : null}
                         </div>
                         <button
                           type="button"

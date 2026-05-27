@@ -189,6 +189,10 @@ class Agent(Base):
         back_populates="agent",
         cascade="all, delete-orphan",
     )
+    sales_imported_contacts: Mapped[list["AgentSalesImportedContact"]] = relationship(
+        back_populates="agent",
+        cascade="all, delete-orphan",
+    )
     content_jobs: Mapped[list["AgentContentJob"]] = relationship(
         back_populates="agent",
         cascade="all, delete-orphan",
@@ -724,6 +728,48 @@ class AgentSalesDmQueue(Base):
         back_populates="sales_dm_queue",
         foreign_keys=[agent_id],
     )
+
+
+class AgentSalesImportedContact(Base):
+    """Контакты из Excel для холодного outreach sales_manager (per-agent)."""
+
+    __tablename__ = "agent_sales_imported_contacts"
+    __table_args__ = (
+        UniqueConstraint("agent_id", "dedup_key", name="uq_agent_sales_imported_contact_dedup"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), index=True, nullable=False)
+    import_batch_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    org_name: Mapped[str] = mapped_column(String(512), nullable=False)
+    lpr_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    lpr_phone: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    org_phone: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    org_mobile: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    website: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    whatsapp: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    telegram: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    extra_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    channel: Mapped[str] = mapped_column(String(32), nullable=False)
+    target_external_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    target_resolve_hint: Mapped[str | None] = mapped_column(Text, nullable=True)
+    outreach_status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="pending",
+        server_default="pending",
+        index=True,
+    )
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    dedup_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    queued_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    agent: Mapped["Agent"] = relationship(back_populates="sales_imported_contacts")
 
 
 class AgentContentJob(Base):

@@ -12,7 +12,7 @@ from collections import defaultdict
 from typing import Any
 
 import jwt
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Header, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import JSONResponse, Response, PlainTextResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt.exceptions import InvalidTokenError
@@ -39,6 +39,7 @@ from ..alembic.models import (
     AgentCrmConnection,
     AgentFrozenUser,
     AgentHttpIntegration,
+    AgentSalesImportedContact,
 )
 from ..config import settings
 from ..qdrant.search_service import delete_agent_vectors
@@ -251,6 +252,44 @@ async def _generate_sales_trigger_words_via_llm(
     except Exception:
         parsed = [segment.strip() for segment in raw.split(",") if segment.strip()]
     return _normalize_sales_trigger_words(parsed)
+
+
+async def _run_sales_manager_excel_outreach(*, agent_id: int, import_batch_id: str) -> None:
+    from ..services.sales.agent_outreach_service import schedule_outreach_for_import_batch
+
+    max_batches = 25
+    total_queued = 0
+    try:
+        for _ in range(max_batches):
+            result = await schedule_outreach_for_import_batch(
+                agent_id=agent_id,
+                import_batch_id=import_batch_id,
+            )
+            if result.get("error"):
+                logger.warning(
+                    "sales_manager excel outreach stopped agent_id=%s batch=%s: %s",
+                    agent_id,
+                    import_batch_id,
+                    result.get("error"),
+                )
+                break
+            queued = int(result.get("queued") or 0)
+            total_queued += queued
+            if queued == 0:
+                break
+            await asyncio.sleep(2)
+        logger.info(
+            "sales_manager excel outreach finished agent_id=%s batch=%s total_queued=%s",
+            agent_id,
+            import_batch_id,
+            total_queued,
+        )
+    except Exception:
+        logger.exception(
+            "sales_manager excel outreach failed agent_id=%s batch=%s",
+            agent_id,
+            import_batch_id,
+        )
 
 
 async def _schedule_sales_trigger_words_generation(
@@ -7016,6 +7055,126 @@ async def whatsapp_userbot_send_to_user_as_owner(
                 user_display_name=None,
             )
     return JSONResponse(content={"ok": True}, status_code=status.HTTP_200_OK)
+
+
+@router.post(
+    "/sales_manager/contacts/excel-upload",
+    dependencies=[Depends(rate_limit(max_requests=15, window_seconds=60, scope="sales_manager_excel_upload"))],
+)
+async def sales_manager_contacts_excel_upload(
+    background_tasks: BackgroundTasks,
+    agent_id: int = Form(..., gt=0),
+    file: UploadFile = File(...),
+    current_user=Depends(get_current_user_required),
+):
+    """Загрузка Excel-базы для sales_manager: парсинг, сохранение, фоновый outreach."""
+    if current_user.is_banned:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
+
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Пустой файл")
+
+    from ..services.sales.agent_excel_import import import_agent_contacts_from_excel
+
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=agent_id,
+                bot_id=None,
+                session=session,
+                current_user=current_user,
+                internal=False,
+            )
+            if agent.template_type != "sales_manager":
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Загрузка Excel доступна только для шаблона sales_manager",
+                )
+            try:
+                stats = await import_agent_contacts_from_excel(
+                    session,
+                    agent_id=int(agent.id),
+                    file_bytes=raw,
+                )
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+
+    batch_id = str(stats.get("import_batch_id") or "")
+    if batch_id and (int(stats.get("imported") or 0) + int(stats.get("updated") or 0)) > 0:
+        background_tasks.add_task(
+            _run_sales_manager_excel_outreach,
+            agent_id=int(agent.id),
+            import_batch_id=batch_id,
+        )
+
+    msg_parts = [
+        f"Добавлено контактов: {stats.get('imported', 0)}",
+        f"обновлено: {stats.get('updated', 0)}",
+    ]
+    if stats.get("skipped_no_messenger"):
+        msg_parts.append(f"без мессенджера/канала: {stats['skipped_no_messenger']}")
+    if stats.get("skipped_duplicate"):
+        msg_parts.append(f"пропущено (уже в работе): {stats['skipped_duplicate']}")
+    msg_parts.append("Рассылка первых сообщений запущена в фоне.")
+
+    return JSONResponse(
+        status_code=status.HTTP_201_CREATED,
+        content={
+            **stats,
+            "message": ". ".join(msg_parts),
+            "outreach_scheduled": bool(batch_id),
+        },
+    )
+
+
+@router.get("/sales_manager/contacts/import-status")
+async def sales_manager_contacts_import_status(
+    agent_id: int = Query(..., gt=0),
+    import_batch_id: str | None = Query(None),
+    current_user=Depends(get_current_user_required),
+):
+    """Статистика импортированных контактов и outreach для sales_manager."""
+    if current_user.is_banned:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
+
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=agent_id,
+                bot_id=None,
+                session=session,
+                current_user=current_user,
+                internal=False,
+            )
+            if agent.template_type != "sales_manager":
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Доступно только для sales_manager",
+                )
+
+            query = select(
+                AgentSalesImportedContact.outreach_status,
+                func.count(AgentSalesImportedContact.id),
+            ).where(AgentSalesImportedContact.agent_id == agent.id)
+            if import_batch_id:
+                query = query.where(AgentSalesImportedContact.import_batch_id == import_batch_id.strip())
+            query = query.group_by(AgentSalesImportedContact.outreach_status)
+            rows = (await session.execute(query)).all()
+            by_status = {str(status_key): int(cnt) for status_key, cnt in rows}
+
+    return JSONResponse(
+        content={
+            "agent_id": agent_id,
+            "import_batch_id": import_batch_id,
+            "by_status": by_status,
+            "total": sum(by_status.values()),
+        }
+    )
 
 
 @router.post("/max_userbot/send_to_user")

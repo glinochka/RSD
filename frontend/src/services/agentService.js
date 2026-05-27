@@ -618,6 +618,26 @@ export const agentService = {
     const response = await apiClient.delete(API_ROUTES.DOCUMENTS_DELETE(docId));
     return response.data;
   },
+
+  uploadSalesManagerExcel: async (agentId, file) => {
+    const form = new FormData();
+    form.append('agent_id', String(agentId));
+    form.append('file', file);
+    const response = await apiClient.post(API_ROUTES.AGENTS_SALES_MANAGER_EXCEL_UPLOAD, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 120_000,
+    });
+    return response.data;
+  },
+
+  getSalesManagerImportStatus: async (agentId, importBatchId = null) => {
+    const params = { agent_id: agentId };
+    if (importBatchId) {
+      params.import_batch_id = importBatchId;
+    }
+    const response = await apiClient.get(API_ROUTES.AGENTS_SALES_MANAGER_IMPORT_STATUS, { params });
+    return response.data;
+  },
 };
 
 export default agentService;

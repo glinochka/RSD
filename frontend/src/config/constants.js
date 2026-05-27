@@ -83,6 +83,8 @@ export const API_ROUTES = {
   AGENTS_MAX_USERBOT_SEND_TO_USER: '/api/agents/max_userbot/send_to_user',
   AGENTS_WHATSAPP_USERBOT_BROADCAST_RECIPIENTS: '/api/agents/whatsapp_userbot/broadcast_recipients',
   AGENTS_WHATSAPP_USERBOT_BROADCAST: '/api/agents/whatsapp_userbot/broadcast',
+  AGENTS_SALES_MANAGER_EXCEL_UPLOAD: '/api/agents/sales_manager/contacts/excel-upload',
+  AGENTS_SALES_MANAGER_IMPORT_STATUS: '/api/agents/sales_manager/contacts/import-status',
   AGENTS_CRM_CONNECT: '/api/agents/crm/connect',
   AGENTS_CRM_VALIDATE: '/api/agents/crm/validate',
   AGENTS_CRM_HEALTH: '/api/agents/crm/health',
