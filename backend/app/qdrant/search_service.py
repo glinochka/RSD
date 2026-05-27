@@ -8,6 +8,7 @@ from config import settings
 
 from openai import AsyncOpenAI
 
+from ..prompts.system_prompts import RAG_PLANNER_SYSTEM
 from .embeddings import embed_dense_for_query, get_active_embedding_profile, run_in_cpu_pool
 
 
@@ -47,13 +48,7 @@ async def plan_rag_queries(original_query: str, *, max_queries: int = 3) -> list
             messages=[
                 {
                     "role": "system",
-                    "content": (
-                        "Ты планируешь поиск по базе знаний (RAG). "
-                        "Сначала определи, нужен ли вообще поиск по базе знаний для ответа. "
-                        "Если запрос пользователя — small-talk/приветствие/вежливая реплика, "
-                        "или ответ не требует фактов из базы знаний, верни should_search=false и пустой queries. "
-                        "Если поиск нужен, верни should_search=true и 1-3 точных поисковых формулировки без воды."
-                    ),
+                    "content": RAG_PLANNER_SYSTEM,
                 },
                 {"role": "user", "content": original_query}
             ],

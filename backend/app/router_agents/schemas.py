@@ -1,6 +1,8 @@
 from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Any, Literal, Optional
 
+from ..prompts.system_prompts import DEFAULT_AGENT_SYSTEM_PROMPT
+
 
 class ContentFactoryTemplateConfig(BaseModel):
     company_name: str = Field(..., min_length=1, max_length=255, description="Название компании")
@@ -120,7 +122,11 @@ class NewAgent_byUserbotSession(BaseModel):
 
 
 class CreateEmptyAgent(BaseModel):
-    system_prompt: Optional[str] = Field(default="Ты — полезный ассистент.", min_length=1, description="System prompt for agent")
+    system_prompt: Optional[str] = Field(
+        default=DEFAULT_AGENT_SYSTEM_PROMPT,
+        min_length=1,
+        description="System prompt for agent",
+    )
     template_type: str = Field(
         default="qa",
         pattern="^(qa|crm_admin|function_calling|lead_generation|content_factory|sales_manager)$",

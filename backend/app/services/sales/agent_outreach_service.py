@@ -15,6 +15,8 @@ from ..template_runtime import TemplateRuntimeService
 from .agent_excel_import import EXCEL_IMPORT_SOURCE_CHAT_ID
 from .dm_queue_service import get_dm_queue_service
 from .fsm import SalesFSMService
+from .outreach_scheduling import next_stagger_delay_minutes, schedule_after_stagger
+from .sales_playbook import EXCEL_COLD_OUTREACH_EXTRA
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +50,7 @@ def _cold_outreach_user_message(row: AgentSalesImportedContact) -> str:
         parts.append(f"Telegram: {row.telegram}")
     if row.whatsapp:
         parts.append(f"WhatsApp: {row.whatsapp}")
-    parts.append("Холодный контакт из загруженной Excel-базы. Нужно первое ненавязчивое сообщение в мессенджер.")
+    parts.append(EXCEL_COLD_OUTREACH_EXTRA)
     return "\n".join(parts)
 
 
@@ -106,7 +108,10 @@ async def schedule_outreach_for_import_batch(
         "engagement_score": 40 if int(template_config.get("lead_score_scale") or 100) == 100 else 4.0,
     }
 
+    cumulative_stagger_minutes = 0.0
     for row in rows:
+        cumulative_stagger_minutes += next_stagger_delay_minutes()
+        scheduled_for = schedule_after_stagger(cumulative_minutes=cumulative_stagger_minutes)
         try:
             context_list, _sources = await runtime.retrieve_offer_context(
                 user_message=_cold_outreach_user_message(row),
@@ -145,6 +150,7 @@ async def schedule_outreach_for_import_batch(
                 target_user_external_id=row.target_external_id,
                 source_chat_id=EXCEL_IMPORT_SOURCE_CHAT_ID,
                 message_text=message_text.strip(),
+                scheduled_for=scheduled_for,
                 metadata=meta,
             )
 
@@ -213,10 +219,40 @@ async def schedule_outreach_for_import_batch(
 
 
 async def mark_import_contact_sent(*, imported_contact_id: int) -> None:
+    from .sales_followup_service import enqueue_follow_up_reminders
+
+    now = _utc_now()
+    channel = "telegram_userbot"
+    agent_id = 0
+    target = ""
     async with async_session_maker() as session:
         async with session.begin():
+            row = await session.scalar(
+                select(AgentSalesImportedContact).where(AgentSalesImportedContact.id == imported_contact_id)
+            )
+            if row is None:
+                return
+            channel = row.channel
+            agent_id = int(row.agent_id)
+            target = row.target_external_id
             await session.execute(
                 update(AgentSalesImportedContact)
                 .where(AgentSalesImportedContact.id == imported_contact_id)
-                .values(outreach_status="sent", sent_at=_utc_now(), updated_at=_utc_now())
+                .values(outreach_status="sent", sent_at=now, updated_at=now)
+            )
+
+    if agent_id and target:
+        try:
+            await enqueue_follow_up_reminders(
+                agent_id=agent_id,
+                imported_contact_id=imported_contact_id,
+                target_user_external_id=target,
+                channel=channel,
+                first_sent_at=now,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to enqueue follow-ups imported_contact_id=%s",
+                imported_contact_id,
+                exc_info=True,
             )

@@ -24,21 +24,31 @@ from .http_integration.errors import HttpIntegrationNeedsConfirmationError, Http
 from .http_integration.tool_registry import load_http_integration_registry
 from .sales.tool_registry import SalesNeedsConfirmationError, SalesToolRegistry
 from .sales.fsm import SalesFSMError, get_sales_fsm_service
+from ..prompts.system_prompts import (
+    CHAT_PORTRAIT_SYSTEM,
+    CRM_ADMIN_HTTP_INTEGRATION_HINT,
+    CRM_ADMIN_LLM_EMPTY_FALLBACK,
+    CRM_ADMIN_RESOURCE_LINKED_HINT,
+    CRM_ADMIN_RESOURCE_SEPARATE_HINT,
+    QA_OWNER_HANDOFF_INSTRUCTION,
+    SALES_COMPOSED_MESSAGE_FALLBACK,
+    SALES_DM_COMPOSE_INSTRUCTION,
+    SALES_HUMAN_FLEXIBILITY_BLOCK,
+    SALES_NEURO_COMMENT_INSTRUCTION,
+    SALES_PRE_SALES_FINISH_MODE_ADDON,
+    SALES_PRE_SALES_SCREENING_INSTRUCTION,
+    SALES_PRE_SALES_SCORING_ADDON,
+    SALES_TOOLS_SYSTEM_INSTRUCTION,
+    SALES_UNIFIED_FINISH_MODE_ADDON,
+    SALES_UNIFIED_QUALIFY_INSTRUCTION,
+    SANITIZE_EMPTY_ANSWER_FALLBACK,
+    build_crm_admin_system_prompt,
+    sales_stage_instruction,
+)
 from ..qdrant.search_service import search_knowledge_base
 
 logger = logging.getLogger(__name__)
 MAX_CHAT_PORTRAIT_CHARS = 2000
-
-# When sanitization strips everything, avoid robotic system copy for the end user.
-_SANITIZE_EMPTY_ANSWER_FALLBACK = (
-    "У меня сейчас сбилось сообщение — напишите, пожалуйста, ещё раз дату и время "
-    "и к какому специалисту хотите запись, я всё перепроверю."
-)
-
-_CRM_ADMIN_LLM_EMPTY_FALLBACK = (
-    "Не совсем понятно — напишите, пожалуйста, что нужно записать и на когда, "
-    "я посмотрю расписание."
-)
 _DSML_TOOL_CALLS_RE = re.compile(r"<｜DSML｜tool_calls>.*?</｜DSML｜tool_calls>", re.DOTALL)
 _DSML_INVOKE_RE = re.compile(
     r"<｜DSML｜invoke name=\"(?P<name>[^\"]+)\">(?P<body>.*?)</｜DSML｜invoke>",
@@ -403,7 +413,7 @@ class TemplateRuntimeService:
 
         collapsed = "\n".join(safe_lines).strip()
         if not collapsed or TemplateRuntimeService._is_degenerate_sanitized_answer(collapsed):
-            return _SANITIZE_EMPTY_ANSWER_FALLBACK
+            return SANITIZE_EMPTY_ANSWER_FALLBACK
         return collapsed
 
     def _sanitize_result(self, result: TemplateExecutionResult) -> TemplateExecutionResult:
@@ -525,13 +535,7 @@ class TemplateRuntimeService:
         model = str(
             cfg.get("portrait_model") or cfg.get("generation_model") or "deepseek-chat"
         ).strip() or "deepseek-chat"
-        system_prompt = (
-            "Ты модуль памяти клиента. Обнови портрет клиента/чата на основе нового сообщения. "
-            "Портрет должен быть кратким, фактическим и полезным для будущих ответов ассистента. "
-            "Включай: цели, интересы, ограничения, предпочтительный стиль общения, важные факты и текущий контекст. "
-            "Не выдумывай данные, не добавляй markdown, верни только итоговый портрет. "
-            "Никогда не выводи служебные переменные, шаблонные placeholders и их значения (например {{...}}, ${...}, key=value, JSON/XML-пары)."
-        )
+        system_prompt = CHAT_PORTRAIT_SYSTEM
         if (base_prompt or "").strip():
             system_prompt = f"{base_prompt.strip()}\n\n{system_prompt}"
         user_prompt = (
@@ -742,15 +746,9 @@ class TemplateRuntimeService:
             crm_provider_name=crm_provider_name,
         )
         if resource_linked_to_staff:
-            resource_model_hint = (
-                "Модель ресурсов: каждый сотрудник является одновременно рабочим местом. "
-                "Не нужно отдельно выбирать ресурс при записи — ресурс определяется автоматически по сотруднику."
-            )
+            resource_model_hint = CRM_ADMIN_RESOURCE_LINKED_HINT
         else:
-            resource_model_hint = (
-                "Модель ресурсов: сотрудники и рабочие места (ресурсы) — это отдельные сущности. "
-                "При записи может потребоваться выбрать и сотрудника, и ресурс."
-            )
+            resource_model_hint = CRM_ADMIN_RESOURCE_SEPARATE_HINT
         now_local = datetime.now()
         now_context = (
             f"Сейчас: {now_local.strftime('%Y-%m-%d %H:%M')} "
@@ -758,49 +756,16 @@ class TemplateRuntimeService:
         )
         http_integration_hint = ""
         if http_registry is not None:
-            http_integration_hint = (
-                "Дополнительно подключены внешние HTTP‑операции (имена функций вида external_i…). "
-                "Вызывай их за реальными данными из медицинской/учётной системы клиента; не смешивай их с операциями "
-                "локальной записи, если параметры конфликтуют."
-            )
+            http_integration_hint = CRM_ADMIN_HTTP_INTEGRATION_HINT
         context_tail = f"{now_context}\n{domain_instruction}\n{resource_model_hint}\n{backend_instruction}"
         if http_integration_hint:
             context_tail = f"{context_tail}\n\n{http_integration_hint}"
-        system_prompt = (
-            f"{prompt}\n\n"
-            "Ты администратор записи(Не ИИ, живой человек). Работай через function tools для операций расписания и записи. "
-            "Не выдумывай результаты операций: опирайся только на ответы tools. "
-            "Если не хватает параметров для tool call — задай уточняющий вопрос. "
-            "Никогда не показывай пользователю служебные блоки tool_calls/DSML/XML/JSON и не печатай внутренние id сотрудников/ресурсов. "
-            "В услугах используй поле price_rub как итоговую цену в рублях. price_minor — только техническое поле, не озвучивай его. "
-            "Имена врачей и услуг бери из ответов list_staff и list_services (там же будет staff_full_name у привязанных услуг). "
-            "Не предлагай процедуру у мастера, если в list_services эта услуга закреплена за другим staff_id. "
-            "ИЕРАРХИЯ ИСТОЧНИКОВ ДАННЫХ (соблюдай строго): "
-            "1. Ответы tools — единственная актуальная истина. Всегда вызывай нужный tool; никогда не используй данные из портрета/истории как замену вызову tool. "
-            "2. Портрет клиента — вспомогательный контекст (имя, предпочтения), НЕ замена вызову инструмента. "
-            "3. Особенно важно: ID сотрудников (staff_id) и ID ресурсов могут меняться — ВСЕГДА бери их из ответа list_staff/list_services, не из памяти или портрета. "
-            "ВАЖНО: Перед созданием, переносом или отменой записи ВСЕГДА уточни детали у клиента в одном сообщении — кратко и по-человечески перечисли дату, время, мастера/врача и услугу и спроси всё ли верно. Дождись согласия и только потом выполняй tool call. Не используй роботизированные фразы типа 'подтвердите' или 'напишите «подтверждаю»' — просто спроси естественно. "
-            "ВАЖНО: Перед созданием записи ВСЕГДА спрашивай имя клиента, если оно ещё не известно из контекста разговора. Записывай реальное имя человека в поле client_name — никогда не используй Telegram ID, username или технические идентификаторы в качестве имени. "
-            "Для проверки даты вызывай check_availability: при конкретной услуге передавай service_id из list_services и duration_minutes как duration_minutes услуги "
-            "(чтобы отличить короткое свободное окно от полного приёма нужной длительности). "
-            "Даты и время в системе — локальные (бизнес-время). Не конвертируй в UTC. "
-            f"Сегодняшняя дата: {now_local.strftime('%Y-%m-%d')}. "
-            "Если пользователь называет дату без года, используй текущий год(2026). Всегда передавай даты в формате YYYY-MM-DDTHH:MM:SS. "
-            "Для проверки конкретной даты ВСЕГДА вызывай check_availability с полным диапазоном дня (starts_at=ДАТА 00:00:00, ends_at=ДАТА 23:59:59) — даже если в портрете или истории уже есть информация о расписании. Расписание нужно проверять каждый раз заново. "
-            "find_next_available используй ТОЛЬКО когда пользователь не указал дату и просит найти ближайшее свободное время; не используй его для проверки конкретной даты. "
-            "Для отмены или переноса записи: вызывай cancel_appointment или reschedule_appointment с полем appointment_date (дата/время записи) — система найдёт запись автоматически. "
-            "НЕ передавай staff_id в cancel_appointment или reschedule_appointment, если ты не уверен в его актуальности — система найдёт запись по дате и клиенту без него. "
-            "Никогда не проси у пользователя ID записи. "
-            "Если включена платная бронь и tool вернул payment_url, сначала отправь клиенту ссылку и не сообщай о созданной записи до подтверждения оплаты. "
-            "Отвечай только чистым текстом, без markdown. "
-            "Строго запрещено показывать в ответе любые названия переменных, placeholders и их содержимое ({{...}}, ${...}, key=value, JSON/XML-поля и аналогичные техфрагменты). "
-            "Если из ответа инструмента следует, что запрос и каталог не сходятся (например, услуга у другого врача), скажи это клиенту своими словами, по-деловому и спокойно, без канцелярита и без служебных названий полей. "
-            "Если свободных окон нет и отдельной подсказки об ошибке тоже нет — не придумывай время; предложи соседний день или другого специалиста, как сделала бы администратор. "
-            "Если клиент повторяет тот же вопрос, опирайся на свежий ответ инструмента, а не на догадку из начала разговора.\n\n"
-            f"{context_tail}"
-        ).strip()
-        if portrait_block:
-            system_prompt = f"{system_prompt}\n\n{portrait_block}"
+        system_prompt = build_crm_admin_system_prompt(
+            agent_prompt=prompt,
+            context_tail=context_tail,
+            today_date=now_local.strftime("%Y-%m-%d"),
+            portrait_block=portrait_block,
+        )
 
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
@@ -830,7 +795,7 @@ class TemplateRuntimeService:
             if not tool_calls:
                 cleaned = self._clean_llm_text(content)
                 if not cleaned:
-                    cleaned = _CRM_ADMIN_LLM_EMPTY_FALLBACK
+                    cleaned = CRM_ADMIN_LLM_EMPTY_FALLBACK
                 return TemplateExecutionResult(answer=cleaned, sources=[], tool_events=tool_events)
 
             messages.append(
@@ -990,7 +955,7 @@ class TemplateRuntimeService:
                 final_content = (final_completion.choices[0].message.content or "").strip()
                 cleaned = self._clean_llm_text(final_content)
                 return TemplateExecutionResult(
-                    answer=cleaned or _CRM_ADMIN_LLM_EMPTY_FALLBACK,
+                    answer=cleaned or CRM_ADMIN_LLM_EMPTY_FALLBACK,
                     sources=[],
                     tool_events=tool_events,
                 )
@@ -1003,7 +968,7 @@ class TemplateRuntimeService:
         final_content = (final_completion.choices[0].message.content or "").strip()
         cleaned = self._clean_llm_text(final_content)
         return TemplateExecutionResult(
-            answer=cleaned or _CRM_ADMIN_LLM_EMPTY_FALLBACK,
+            answer=cleaned or CRM_ADMIN_LLM_EMPTY_FALLBACK,
             sources=[],
             tool_events=tool_events,
         )
@@ -1161,20 +1126,7 @@ class TemplateRuntimeService:
         portrait_block = self._format_portrait_block(chat_portrait)
         effective_prompt = prompt.strip()
         if enable_owner_handoff:
-            effective_prompt = (
-                f"{effective_prompt}\n\n"
-                "ВАЖНО: Ты можешь привлечь оператора когда это необходимо. Используй один из маркеров:\n"
-                "1. [OPERATOR_ASSIST] - если вопрос сложный и нужна помощь оператора, НО ты можешь "
-                "продолжать отвечать на другие вопросы клиента. Используй этот маркер, когда:\n"
-                "   - Клиент задаёт вопрос, на который ты не можешь дать точный ответ из контекста\n"
-                "   - Требуется уточнение от человека-менеджера\n"
-                "   - Клиент просит связаться с менеджером или оператором\n"
-                "   После маркера кратко укажи причину и сообщи клиенту, что вызываешь оператора.\n\n"
-                "2. [OWNER_HANDOFF] - ТОЛЬКО если клиент агрессивен, угрожает или ситуация критическая "
-                "и требует полной остановки бота. Это заморозит чат полностью.\n\n"
-                "В большинстве случаев используй [OPERATOR_ASSIST] - он вызовет оператора, "
-                "но позволит тебе продолжать помогать клиенту."
-            ).strip()
+            effective_prompt = f"{effective_prompt}\n\n{QA_OWNER_HANDOFF_INSTRUCTION}".strip()
         if portrait_block:
             effective_prompt = f"{effective_prompt}\n\n{portrait_block}" if effective_prompt else portrait_block
         is_phone = bool((runtime_context or {}).get("phone_channel"))
@@ -1310,14 +1262,7 @@ class TemplateRuntimeService:
             for c in context_list
         ]
         context_text = "\n\n---\n\n".join(context_parts) if context_parts else "Дополнительный контекст не найден."
-        system_prompt = (
-            f"{prompt}\n\n"
-            "Ты участник обсуждения под постом в Telegram-канале. "
-            "Напиши один короткий публичный комментарий (1–2 предложения): по сути поста, естественный тон, без канцелярита. "
-            "Допустимо мягко указать релевантность темы бренда, но без навязчивой рекламы, без призыва «пишите в личку», без спама. "
-            "Только обычный текст, без markdown и без хештегов.\n"
-            f"Тема бренда для уместности: {product_name} ({offer_type})."
-        )
+        system_prompt = f"{prompt}\n\n{SALES_NEURO_COMMENT_INSTRUCTION.format(product_name=product_name, offer_type=offer_type)}"
         if usp:
             system_prompt = f"{system_prompt}\nУТП: {usp}"
         user_prompt = (
@@ -1402,6 +1347,19 @@ class TemplateRuntimeService:
                 user_external_id=user_external_id,
             )
         contact_key = self._resolve_sales_contact_key(template_config=template_config)
+        if agent_id and user_external_id and self._is_userbot_channel(source_channel):
+            from .sales.agent_contact_context import resolve_sales_source_chat_id
+            from .sales.sales_followup_service import mark_excel_import_reply_if_any
+
+            await mark_excel_import_reply_if_any(
+                agent_id=agent_id,
+                user_external_id=user_external_id,
+            )
+            contact_key = await resolve_sales_source_chat_id(
+                agent_id=agent_id,
+                user_external_id=user_external_id,
+                default_source_chat_id=contact_key,
+            )
         workflow_completion_mode = self._sales_workflow_completion_mode(template_config)
         lead_score_scale = self._resolve_sales_score_scale(template_config)
         current_sales_state = "DISCOVERED"
@@ -1760,6 +1718,7 @@ class TemplateRuntimeService:
             user_external_id=user_external_id,
             mode=mode,
             telegram_peer_access_hash=telegram_peer_access_hash,
+            source_channel=source_channel,
         )
         llm_tools = registry.tools_for_llm()
         if not llm_tools:
@@ -1767,13 +1726,7 @@ class TemplateRuntimeService:
 
         generation_model = str(template_config.get("generation_model") or "deepseek-chat").strip() or "deepseek-chat"
         portrait_block = self._format_portrait_block(chat_portrait)
-        system_prompt = (
-            f"{prompt}\n\n"
-            "Ты управляешь действиями sales-агента через function tools. "
-            "Не пиши свободный ответ вместо действия, выбери tool call. "
-            "Если лид нецелевой — используй skip_lead. "
-            "Никогда не выводи в сообщениях названия переменных, placeholders и их значения ({{...}}, ${...}, key=value, JSON/XML-поля)."
-        )
+        system_prompt = f"{prompt}\n\n{SALES_TOOLS_SYSTEM_INSTRUCTION}"
         if portrait_block:
             system_prompt = f"{system_prompt}\n\n{portrait_block}"
         messages: list[dict[str, Any]] = [
@@ -1924,44 +1877,20 @@ class TemplateRuntimeService:
             for c in context_list
         ]
         context_text = "\n\n---\n\n".join(context_parts) if context_parts else "Контекст не найден."
-        stage_instruction = self._sales_stage_instruction(
+        stage_instruction = sales_stage_instruction(
             current_sales_state=(current_sales_state or "DISCOVERED").strip().upper(),
             stage_hint="first_touch",
         )
-        
-        instruction = (
-            f"{prompt}\n\n"
-            "Ты AI sales-менеджер с двумя задачами:\n"
-            "1) Квалификация лида: понять, стоит ли писать человеку в личку.\n"
-            "2) Генерация сообщения: составить следующее сообщение диалога.\n\n"
-            f"Продукт: {product_name}. Категория: {offer_type}.\n"
-            f"Текущая стадия CRM/FSM: {(current_sales_state or 'DISCOVERED').strip().upper()}\n"
-            f"Инструкция по стадии: {stage_instruction}\n\n"
-            "Верни JSON со структурой:\n"
-            "{\n"
-            '  "decision": "engage|ignore|finish",\n'
-            '  "intent": "target_hot|target_warm|non_target|do_not_contact|unsure|workflow_completed",\n'
-            '  "confidence": 0.0-1.0,\n'
-            '  "reason": "краткое обоснование",\n'
-            '  "lead_temperature": "cold|warm|hot",\n'
-            f'  "lead_heat_score": 0-{lead_score_scale},\n'
-            f'  "resilience_score": 0-{lead_score_scale},\n'
-            f'  "engagement_score": 0-{lead_score_scale},\n'
-            '  "stage_hint": "first_touch|discovery|value_pitch|handoff",\n'
-            '  "handoff_ready": true|false,\n'
-            '  "workflow_outcome": "continue|sale_closed|dialog_finished",\n'
-            '  "composed_message": "текст следующего сообщения (чистый текст, без markdown)"\n'
-            "}\n\n"
-            "Все сообщения должны быть ненавязчивыми, человеческими и полезными. "
-            "Не выдумывай факты про клиента. "
-            "Длина сообщения: 1-4 предложения."
-        )
+
+        instruction = f"{prompt}\n\n{SALES_UNIFIED_QUALIFY_INSTRUCTION.format(
+            product_name=product_name,
+            offer_type=offer_type,
+            current_sales_state=(current_sales_state or 'DISCOVERED').strip().upper(),
+            stage_instruction=stage_instruction,
+            lead_score_scale=lead_score_scale,
+        )}\n\n{SALES_HUMAN_FLEXIBILITY_BLOCK}"
         if workflow_completion_mode == "auto_finish_on_signal":
-            instruction = (
-                f"{instruction}\n"
-                "Если продажа уже совершена или диалог нужно завершить без дальнейшего догрева, "
-                'используй decision="finish".'
-            )
+            instruction = f"{instruction}\n{SALES_UNIFIED_FINISH_MODE_ADDON}"
         if portrait_block:
             instruction = f"{instruction}\n\n{portrait_block}"
         if usp:
@@ -2030,7 +1959,7 @@ class TemplateRuntimeService:
         )
         composed_message = str(parsed.get("composed_message") or "").replace("#", "").replace("*", "").strip()
         if not composed_message:
-            composed_message = "Интересное предложение! Подскажите, вам актуально?"
+            composed_message = SALES_COMPOSED_MESSAGE_FALLBACK
 
         qualification = {
             "decision": decision,
@@ -2068,29 +1997,14 @@ class TemplateRuntimeService:
         usp = str(template_config.get("sales_usp") or "").strip()
         history_block = self._format_sales_history(recent_history)
         portrait_block = self._format_portrait_block(chat_portrait)
-        instruction = (
-            f"{prompt}\n\n"
-            "Ты модуль pre-sales скрининга с function-calling. "
-            f"Продукт: {product_name}. Категория: {offer_type}. "
-            "Твоя задача: понять, стоит ли писать человеку в личку и как вести следующий шаг продаж.\n"
-            "Выбирай ровно один function call:\n"
-            "1) engage_lead - если нужно продолжать диалог/продажу.\n"
-            "2) ignore_lead - если лид нецелевой или писать не нужно.\n"
-            "Стадия продажи: "
-            f"{(current_sales_state or 'DISCOVERED').strip().upper()}.\n"
-            "Учитывай этап воронки, контекст и историю взаимодействия."
-        )
+        instruction = f"{prompt}\n\n{SALES_PRE_SALES_SCREENING_INSTRUCTION.format(
+            product_name=product_name,
+            offer_type=offer_type,
+            current_sales_state=(current_sales_state or 'DISCOVERED').strip().upper(),
+        )}"
         if workflow_completion_mode == "auto_finish_on_signal":
-            instruction = (
-                f"{instruction}\n"
-                "3) finish_workflow - если продажа уже совершена или диалог нужно завершить без дальнейшего догрева."
-            )
-        instruction = (
-            f"{instruction}\n"
-            f"Для оценки лида верни числовые оценки по шкале 0-{lead_score_scale}: "
-            "lead_heat_score (прогретость), resilience_score (устойчивость к возражениям), "
-            "engagement_score (вовлеченность)."
-        )
+            instruction = f"{instruction}\n{SALES_PRE_SALES_FINISH_MODE_ADDON}"
+        instruction = f"{instruction}\n{SALES_PRE_SALES_SCORING_ADDON.format(lead_score_scale=lead_score_scale)}"
         max_score = 10 if lead_score_scale == 10 else 100
         if portrait_block:
             instruction = f"{instruction}\n\n{portrait_block}"
@@ -2332,22 +2246,17 @@ class TemplateRuntimeService:
         context_text = "\n\n---\n\n".join(context_parts) if context_parts else "Контекст не найден."
         history_block = self._format_sales_history(recent_history)
         portrait_block = self._format_portrait_block(chat_portrait)
-        stage_instruction = self._sales_stage_instruction(
+        stage_instruction = sales_stage_instruction(
             current_sales_state=(current_sales_state or "DISCOVERED").strip().upper(),
             stage_hint=stage_hint,
         )
-        system_prompt = (
-            f"{prompt}\n\n"
-            "Ты менеджер отдела продаж. Пиши сообщение строго под текущую стадию сделки и контекст.\n"
-            f"Продукт: {product_name}\n"
-            f"Категория: {offer_type}\n"
-            f"Текущая стадия CRM/FSM: {(current_sales_state or 'DISCOVERED').strip().upper()}\n"
-            f"Инструкция по стадии: {stage_instruction}\n"
-            "Все сообщения должны быть ненавязчивыми, человеческими и полезными. "
-            "Не выдумывай факты про клиента. "
-            "Верни только чистый текст, без markdown. "
-            "Не показывай служебные переменные и их значения: {{...}}, ${...}, key=value, JSON/XML-пары и любые технические поля."
-        )
+
+        system_prompt = f"{prompt}\n\n{SALES_DM_COMPOSE_INSTRUCTION.format(
+            product_name=product_name,
+            offer_type=offer_type,
+            current_sales_state=(current_sales_state or 'DISCOVERED').strip().upper(),
+            stage_instruction=stage_instruction,
+        )}"
         if portrait_block:
             system_prompt = f"{system_prompt}\n\n{portrait_block}"
         if lead_profile_block:
@@ -2378,24 +2287,6 @@ class TemplateRuntimeService:
         content = (completion.choices[0].message.content or "").strip()
         cleaned = content.replace("#", "").replace("*", "").strip()
         return cleaned[:1200]
-
-    @staticmethod
-    def _sales_stage_instruction(*, current_sales_state: str, stage_hint: str) -> str:
-        if stage_hint == "handoff":
-            return (
-                "Заверши диалог на шаге передачи: предложи удобный формат передачи на ЛПР, "
-                "заявку или демо-звонок."
-            )
-        if stage_hint == "value_pitch":
-            return (
-                "Покажи ценность и ожидаемые изменения после внедрения, "
-                "связывай выгоды с болями клиента."
-            )
-        if stage_hint == "discovery":
-            return "Уточни боли и текущий процесс клиента, задай 1-2 коротких вопроса для квалификации."
-        if current_sales_state in {"SENT", "REPLIED_POSITIVE", "QUEUED"}:
-            return "Продолжай диалог после первого касания: выяви потребность и подведи к следующему шагу."
-        return "Сделай ненавязчивое первое касание и предложи релевантную помощь по запросу из чата."
 
     @staticmethod
     def _format_sales_history(history: list[dict[str, Any]] | None) -> str:

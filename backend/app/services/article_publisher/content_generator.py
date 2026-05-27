@@ -4,26 +4,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from ...prompts.system_prompts import ARTICLE_NEUTRAL_SYSTEM, ARTICLE_PROMO_SYSTEM
 from ...services.ai_authoring import ai_client
 
 logger = logging.getLogger(__name__)
-
-_PROMO_SYSTEM = """Ты профессиональный копирайтер для IT и AI-изданий (vc.ru, Яндекс Дзен).
-Пишешь экспертные, полезные статьи на русском языке.
-Стиль: профессиональный, но доступный; конкретные примеры; без воды.
-Структура: заголовок H1, несколько тематических разделов H2, практические советы, заключение.
-В заключении органично упомяни {company_name} как инструмент автоматизации ({company_url}).
-Описание: {company_description}
-Не используй звёздочки markdown. Используй чистый текст с HTML-тегами: <h1>, <h2>, <p>, <ul>, <li>, <strong>.
-Длина статьи: {min_words}–{max_words} слов."""
-
-_NEUTRAL_SYSTEM = """Ты профессиональный копирайтер для IT и AI-изданий (vc.ru, Яндекс Дзен).
-Пишешь экспертные, полезные статьи на русском языке.
-Стиль: профессиональный, но доступный; конкретные примеры; без воды.
-Структура: заголовок H1, несколько тематических разделов H2, практические советы, заключение.
-Не рекомендуй никакие конкретные сервисы или продукты.
-Используй чистый текст с HTML-тегами: <h1>, <h2>, <p>, <ul>, <li>, <strong>.
-Длина статьи: {min_words}–{max_words} слов."""
 
 
 @dataclass
@@ -48,7 +32,7 @@ async def generate_article(
     platform_hint = "vc.ru" if platform == "vcru" else "Яндекс Дзен"
 
     if is_promo:
-        system_prompt = _PROMO_SYSTEM.format(
+        system_prompt = ARTICLE_PROMO_SYSTEM.format(
             company_name=company_name,
             company_url=company_url or "https://rsd.ai",
             company_description=company_description or f"Сервис AI-автоматизации {company_name}",
@@ -56,7 +40,7 @@ async def generate_article(
             max_words=max_words,
         )
     else:
-        system_prompt = _NEUTRAL_SYSTEM.format(min_words=min_words, max_words=max_words)
+        system_prompt = ARTICLE_NEUTRAL_SYSTEM.format(min_words=min_words, max_words=max_words)
 
     user_prompt = (
         f"Напиши статью для {platform_hint} на тему: «{topic}».\n"

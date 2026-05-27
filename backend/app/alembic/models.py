@@ -27,6 +27,8 @@ except ImportError: from database import Base
 
 from datetime import datetime, date, timezone
 
+from prompts.system_prompts import DEFAULT_AGENT_SYSTEM_PROMPT
+
 
 def _utc_now_naive() -> datetime:
     """UTC 'now' without tzinfo — matches Postgres TIMESTAMP WITHOUT TIME ZONE + asyncpg."""
@@ -138,7 +140,7 @@ class Agent(Base):
         server_default="qa",
     )
     template_config: Mapped[str | None] = mapped_column(Text, nullable=True)
-    system_prompt: Mapped[str] = mapped_column(Text, default="Ты — полезный ассистент.")
+    system_prompt: Mapped[str] = mapped_column(Text, default=DEFAULT_AGENT_SYSTEM_PROMPT)
     
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -767,6 +769,10 @@ class AgentSalesImportedContact(Base):
     dedup_key: Mapped[str] = mapped_column(String(128), nullable=False)
     queued_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    reply_received_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    follow_up_day_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    follow_up_week_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    follow_up_month_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
 

@@ -9,10 +9,24 @@ from typing import Any
 from sqlalchemy import select, update
 
 from ...alembic.database import async_session_maker
-from ...alembic.models import Agent, AgentAnalyticsMessage, AgentChannelConnection, AgentSalesDmQueue
+from ...alembic.models import (
+    Agent,
+    AgentAnalyticsMessage,
+    AgentChannelConnection,
+    AgentSalesDmQueue,
+    AgentSalesImportedContact,
+)
 from .agent_outreach_service import mark_import_contact_sent
 from .dm_queue_service import get_dm_queue_service
 from .outreach_send import send_telegram_userbot_message, send_whatsapp_userbot_message
+from .agent_excel_import import EXCEL_IMPORT_SOURCE_CHAT_ID
+from .fsm import SalesFSMService
+from .sales_followup_service import (
+    COMPOSE_AT_SEND_PLACEHOLDER,
+    compose_follow_up_message,
+    mark_follow_up_sent,
+    should_send_follow_up,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +130,55 @@ class DmOutreachWorker:
         """Send a single queued message via userbot (Telegram or WhatsApp)."""
         meta = _parse_queue_metadata(item)
         channel = str(meta.get("channel") or "telegram_userbot").strip().lower()
+        message_text = (item.message_text or "").strip()
+        imported_id = meta.get("imported_contact_id")
+        follow_up_tier = str(meta.get("follow_up_tier") or "").strip().lower()
+
+        if meta.get("compose_at_send") or message_text == COMPOSE_AT_SEND_PLACEHOLDER:
+            if imported_id is None:
+                await get_dm_queue_service().mark_skipped(
+                    queue_id=item.id,
+                    reason="follow_up_missing_imported_contact_id",
+                )
+                return
+            if not await should_send_follow_up(
+                agent_id=item.agent_id,
+                imported_contact_id=int(imported_id),
+            ):
+                await get_dm_queue_service().mark_skipped(
+                    queue_id=item.id,
+                    reason="client_replied_or_not_eligible",
+                )
+                return
+            async with async_session_maker() as session:
+                async with session.begin():
+                    agent = await session.scalar(select(Agent).where(Agent.id == item.agent_id))
+                    row = await session.scalar(
+                        select(AgentSalesImportedContact).where(
+                            AgentSalesImportedContact.id == int(imported_id)
+                        )
+                    )
+            if agent is None or row is None:
+                await get_dm_queue_service().mark_failed(
+                    queue_id=item.id,
+                    error="Agent or imported contact not found",
+                    retry=False,
+                )
+                return
+            message_text = (
+                await compose_follow_up_message(
+                    agent=agent,
+                    row=row,
+                    tier=follow_up_tier or "day",
+                )
+            ).strip()
+            if not message_text:
+                await get_dm_queue_service().mark_failed(
+                    queue_id=item.id,
+                    error="Empty follow-up message",
+                    retry=True,
+                )
+                return
         peer_access_hash: int | None = None
         if meta.get("telegram_peer_access_hash") is not None:
             try:
@@ -177,13 +240,13 @@ class DmOutreachWorker:
                     connection_id=int(connection_id or 0),
                     encrypted_credentials=encrypted_credentials or "",
                     user_external_id=target_external,
-                    text=item.message_text,
+                    text=message_text,
                 )
             else:
                 await send_telegram_userbot_message(
                     encrypted_credentials=encrypted_credentials or "",
                     target_external_id=target_external,
-                    text=item.message_text,
+                    text=message_text,
                     peer_access_hash=peer_access_hash,
                 )
 
@@ -196,10 +259,26 @@ class DmOutreachWorker:
             )
             await get_dm_queue_service().mark_sent(queue_id=item.id)
 
-            imported_id = meta.get("imported_contact_id")
             if imported_id is not None:
                 try:
-                    await mark_import_contact_sent(imported_contact_id=int(imported_id))
+                    if meta.get("message_kind") == "follow_up" and follow_up_tier:
+                        await mark_follow_up_sent(
+                            imported_contact_id=int(imported_id),
+                            tier=follow_up_tier,
+                        )
+                    else:
+                        await mark_import_contact_sent(imported_contact_id=int(imported_id))
+                        fsm = SalesFSMService()
+                        try:
+                            await fsm.transition_contact(
+                                agent_id=item.agent_id,
+                                user_external_id=target_external,
+                                source_chat_id=EXCEL_IMPORT_SOURCE_CHAT_ID,
+                                to_state="SENT",
+                                reason="excel_import_first_message_sent",
+                            )
+                        except Exception:
+                            logger.debug("FSM SENT transition skipped queue_id=%s", item.id, exc_info=True)
                 except Exception:
                     logger.warning("Failed to mark imported contact sent id=%s", imported_id, exc_info=True)
 

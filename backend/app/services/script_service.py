@@ -12,6 +12,7 @@ from sqlalchemy import select
 
 from ..alembic.database import async_session_maker
 from ..alembic.models import Agent, AgentContentJob
+from ..prompts.system_prompts import build_kling_scriptwriter_prompt
 from .ai_authoring import ai_client
 from .content_job_service import get_content_job_service
 
@@ -172,28 +173,14 @@ class ScriptService:
         system_prompt: str,
         max_duration_seconds: int,
     ) -> str:
-        company_name = str(template_config.get("company_name") or "").strip() or "Компания"
-        company_activity = str(template_config.get("company_activity") or "").strip() or "бизнес-деятельность"
-        brand_tone = str(template_config.get("brand_tone") or "").strip() or "понятный и дружелюбный"
-        content_language = str(template_config.get("content_language") or "ru").strip().lower() or "ru"
-        base_prompt = (system_prompt or "").strip()
-
-        prompt = (
-            f"{base_prompt}\n\n" if base_prompt else ""
-        ) + (
-            "Ты сценарист коротких вертикальных роликов для генерации в Kling.\n"
-            f"Компания: {company_name}\n"
-            f"Деятельность: {company_activity}\n"
-            f"Тон: {brand_tone}\n"
-            f"Язык: {content_language}\n"
-            f"Лимит длительности: до {max_duration_seconds} секунд.\n\n"
-            "Жесткие ограничения MVP:\n"
-            "1) Только один клип/сцена.\n"
-            "2) Без частей, без нумерованных сегментов, без склеек.\n"
-            "3) Без markdown, заголовков и списков.\n"
-            "4) Верни только текст, готовый для рендера.\n"
+        return build_kling_scriptwriter_prompt(
+            base_prompt=system_prompt or "",
+            company_name=str(template_config.get("company_name") or "").strip() or "Компания",
+            company_activity=str(template_config.get("company_activity") or "").strip() or "бизнес-деятельность",
+            brand_tone=str(template_config.get("brand_tone") or "").strip() or "понятный и дружелюбный",
+            content_language=str(template_config.get("content_language") or "ru").strip().lower() or "ru",
+            max_duration_seconds=max_duration_seconds,
         )
-        return prompt
 
     def _sanitize_script(self, text: str) -> str:
         cleaned = (text or "").replace("#", "").replace("*", "").strip()

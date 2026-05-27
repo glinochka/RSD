@@ -51,6 +51,7 @@ from ..channels.message_processor import (
     get_message_processor,
 )
 from ..services.agent_availability import normalize_agent_availability_for_storage
+from ..prompts.system_prompts import DEFAULT_AGENT_SYSTEM_PROMPT, SALES_TRIGGER_WORDS_INSTRUCTION
 from ..services.ai_authoring import ai_client, generate_welcome_with_ai, improve_prompt_with_ai
 from ..services.admin_booking import get_admin_booking_service
 from ..services.admin_booking.domains import DOMAIN_REGISTRY as _DOMAIN_REGISTRY
@@ -237,14 +238,11 @@ async def _generate_sales_trigger_words_via_llm(
     product = str(template_config.get("sales_product_name") or "").strip()
     offer_type = str(template_config.get("sales_offer_type") or "").strip()
     usp = str(template_config.get("sales_usp") or "").strip()
-    instruction = (
-        "Сгенерируй список до 20 коротких слов/корней-триггеров для фильтра входящих сообщений в продажах. "
-        "Нужны слова, которые часто встречаются в намерении купить или запросить цену/условия/демо. "
-        "Верни строго JSON-массив строк без пояснений.\n"
-        f"Продукт: {product or 'не указан'}\n"
-        f"Тип оффера: {offer_type or 'не указан'}\n"
-        f"УТП: {usp or 'не указано'}\n"
-        f"Системный промпт: {system_prompt or 'не указан'}"
+    instruction = SALES_TRIGGER_WORDS_INSTRUCTION.format(
+        product=product or "не указан",
+        offer_type=offer_type or "не указан",
+        usp=usp or "не указано",
+        system_prompt=system_prompt or "не указан",
     )
     response = await ai_client.chat.completions.create(
         model="deepseek-chat",
@@ -7655,14 +7653,14 @@ async def external_chat(
             user_external_id=external_user_id,
             source_channel="external_api",
             user_message=message,
-            base_prompt=agent.system_prompt or "Ты — полезный ассистент.",
+            base_prompt=agent.system_prompt or DEFAULT_AGENT_SYSTEM_PROMPT,
             template_config=template_config,
         )
 
     try:
         execution = await get_template_runtime().execute(
             template_type=agent.template_type,
-            prompt=agent.system_prompt or "Ты — полезный ассистент.",
+            prompt=agent.system_prompt or DEFAULT_AGENT_SYSTEM_PROMPT,
             user_message=message,
             knowledge_scope_id=knowledge_scope_id,
             agent_id=agent.id,

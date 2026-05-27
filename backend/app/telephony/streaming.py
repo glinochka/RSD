@@ -121,12 +121,9 @@ async def stream_answer_sentences(
         ]
         context_text = "\n\n---\n\n".join(context_parts)
 
-    base_system = (
-        f"{system_prompt}\n\n"
-        "ВАЖНО: Отвечай только чистым текстом.\n"
-        "ЗАПРЕЩЕНО использовать markdown-форматирование.\n"
-        "ЗАПРЕЩЕНО показывать названия переменных/шаблонов и их значения."
-    )
+    from ..prompts.system_prompts import PLAIN_TEXT_RESPONSE_RULES_STREAMING
+
+    base_system = f"{system_prompt}\n\n{PLAIN_TEXT_RESPONSE_RULES_STREAMING}"
     user_prompt = f"КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ:\n{context_text}\n\nВОПРОС ПОЛЬЗОВАТЕЛЯ: {question}"
     model = _llm_model(chat_model)
     min_len = max(1, int(min_chunk_chars or settings.TELEPHONY_SYNTAGMA_MIN_CHARS))
