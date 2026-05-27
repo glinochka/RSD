@@ -672,7 +672,7 @@ const MENU_ITEMS = [
   { id: 'billing', label: 'Тарифы' },
   { id: 'promoCodes', label: 'Промокоды' },
   { id: 'emailBroadcast', label: 'Email рассылка' },
-  { id: 'contentPublisher', label: '📝 Контент' },
+  { id: 'contentPublisher', label: 'Контент' },
   { id: 'salesDepartment', label: 'Отдел продаж' },
 ];
 

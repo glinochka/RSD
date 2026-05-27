@@ -105,6 +105,13 @@ const newStaffId = () => `local-${++_staffLocalIdCounter}`;
 let _serviceLocalIdCounter = 0;
 const newServiceLocalId = () => `svc-${++_serviceLocalIdCounter}`;
 
+const rubToMinor = (raw) => {
+  const normalized = String(raw ?? '').replace(',', '.').trim();
+  const value = Number(normalized);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.max(0, Math.round(value * 100));
+};
+
 const buildAdminDomainPromptAppendix = (domainConfig, staffList, serviceList) => {
   const domainType = domainConfig?.key || 'beauty_salon';
   const staffRole = domainConfig?.staff_role_default || 'master';
@@ -923,7 +930,7 @@ const CreateAgentContent = () => {
                 staff_id: resolvedStaffId,
                 title: svc.title.trim(),
                 duration_minutes: Number(svc.duration) || 60,
-                price_minor: Math.round((Number(svc.price) || 0) * 100),
+                price_minor: rubToMinor(svc.price),
               });
             }
           }

@@ -8,7 +8,9 @@ import time
 from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError, model_validator
+from yookassa import Configuration, Payment
 
+from ...config import settings
 from .service import get_admin_booking_service
 
 _IDEMPOTENCY_TTL_SECONDS = 120
@@ -16,6 +18,7 @@ _IDEMPOTENCY_CACHE: dict[str, tuple[datetime, dict[str, Any]]] = {}
 _MAX_RAW_ARGUMENTS_BYTES = 16_000
 # Only write/mutating operations are idempotency-protected; reads always get fresh data.
 _IDEMPOTENCY_PROTECTED_TOOLS = {"create_appointment", "reschedule_appointment", "cancel_appointment"}
+_PAID_BOOKING_CACHE: dict[str, dict[str, Any]] = {}
 
 
 class AdminBookingNeedsConfirmationError(RuntimeError):
@@ -151,6 +154,10 @@ class _CreateAppointmentArgs(BaseModel):
         return self
 
 
+class _ConfirmPaidAppointmentArgs(BaseModel):
+    payment_id: str = Field(..., min_length=4, max_length=128)
+
+
 class _RescheduleAppointmentArgs(BaseModel):
     """Reschedule an appointment to a new time.
 
@@ -279,6 +286,7 @@ def _build_args_summary(tool_name: str, data: dict) -> str:
 _TOOL_MODELS: dict[str, type[BaseModel]] = {
     "check_availability": _CheckAvailabilityArgs,
     "create_appointment": _CreateAppointmentArgs,
+    "confirm_paid_appointment": _ConfirmPaidAppointmentArgs,
     "reschedule_appointment": _RescheduleAppointmentArgs,
     "cancel_appointment": _CancelAppointmentArgs,
     "list_appointments": _ListAppointmentsArgs,
@@ -297,6 +305,9 @@ _TOOL_DESCRIPTIONS = {
         "Returns schedule-backed free intervals (not 'invented' windows)."
     ),
     "create_appointment": "Create a booking appointment immediately without asking the user for confirmation.",
+    "confirm_paid_appointment": (
+        "Confirm paid booking by payment_id. Use it after the client says they completed payment."
+    ),
     "reschedule_appointment": (
         "Reschedule an existing appointment to a new time. "
         "If appointment_id is unknown, provide appointment_date (ISO date or datetime) to look up the booking "
@@ -311,7 +322,8 @@ _TOOL_DESCRIPTIONS = {
     "list_staff": "List staff members available for booking.",
     "list_services": (
         "List bookable services. Each item may include staff_id and staff_full_name when the service is tied to one specialist; "
-        "use this so you know which doctor performs which procedure before offering a time."
+        "use this so you know which doctor performs which procedure before offering a time. "
+        "For client-facing prices use price_rub (rubles), not price_minor."
     ),
     "find_next_available": (
         "Find the next available time slot starting from a given date. "
@@ -331,6 +343,8 @@ class AdminBookingToolRegistry:
         confirmation_policy: str = "never_confirm",
         user_message: str,
         allowed_tools: list[str] | None = None,
+        paid_booking_enabled: bool = False,
+        yookassa_api_key: str | None = None,
     ) -> None:
         requested = [str(tool or "").strip() for tool in (allowed_tools or [])]
         unique = []
@@ -342,6 +356,8 @@ class AdminBookingToolRegistry:
         self._user_external_id = (user_external_id or "").strip() or "anonymous"
         self._source_channel = (source_channel or "telegram").strip().lower() or "telegram"
         self._user_message = user_message or ""
+        self._paid_booking_enabled = bool(paid_booking_enabled)
+        self._yookassa_api_key = (yookassa_api_key or "").strip() or None
 
     def tools_for_llm(self) -> list[dict[str, Any]]:
         tools: list[dict[str, Any]] = []
@@ -373,6 +389,17 @@ class AdminBookingToolRegistry:
     def _idempotency_key(self, tool_name: str, canonical_args: str) -> str:
         raw = f"{self._agent_id}:{self._user_external_id}:{tool_name}:{canonical_args}"
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def _parse_yookassa_credentials(self) -> tuple[str, str]:
+        raw = (self._yookassa_api_key or "").strip()
+        if not raw or ":" not in raw:
+            raise RuntimeError("Платная бронь включена, но ЮKassa API ключ не настроен")
+        shop_id, secret_key = raw.split(":", 1)
+        shop_id = shop_id.strip()
+        secret_key = secret_key.strip()
+        if not shop_id or not secret_key:
+            raise RuntimeError("ЮKassa API ключ должен быть в формате shop_id:secret_key")
+        return shop_id, secret_key
 
     async def _lookup_appointment_id(
         self,
@@ -552,18 +579,128 @@ class AdminBookingToolRegistry:
                 )
                 result = _filter_slots_by_min_duration(slots, duration_minutes)
         elif tool_name == "create_appointment":
-            result = await service.create_appointment(
-                agent_id=self._agent_id,
-                client_external_id=self._user_external_id,
-                starts_at=_parse_iso_datetime(str(data.get("starts_at") or "")),
-                ends_at=_parse_iso_datetime(str(data.get("ends_at") or "")),
-                staff_id=data.get("staff_id"),
-                resource_id=data.get("resource_id"),
-                service_id=data.get("service_id"),
-                client_name=data.get("client_name"),
-                source_channel=self._source_channel,
-                notes=data.get("notes"),
-            )
+            if self._paid_booking_enabled:
+                service_id = data.get("service_id")
+                if service_id is None:
+                    raise RuntimeError("Для платной брони нужно выбрать услугу с service_id")
+                services = await service.list_services(agent_id=self._agent_id, active_only=False)
+                service_row = next(
+                    (
+                        item for item in services
+                        if str(item.get("id")) == str(service_id)
+                    ),
+                    None,
+                )
+                if not service_row:
+                    raise RuntimeError("Услуга не найдена, обновите список услуг и выберите заново")
+                amount_minor = int(service_row.get("price_minor") or 0)
+                if amount_minor <= 0:
+                    raise RuntimeError("Для выбранной услуги не задана стоимость. Платная бронь недоступна")
+
+                shop_id, secret_key = self._parse_yookassa_credentials()
+                Configuration.account_id = shop_id
+                Configuration.secret_key = secret_key
+                payment_payload = {
+                    "amount": {"value": f"{amount_minor / 100:.2f}", "currency": "RUB"},
+                    "capture": True,
+                    "confirmation": {
+                        "type": "redirect",
+                        "return_url": (settings.YOOKASSA_RETURN_URL or "https://yookassa.ru").strip(),
+                    },
+                    "description": f"Оплата брони: {str(service_row.get('title') or 'услуга').strip()}",
+                    "metadata": {
+                        "kind": "admin_booking",
+                        "agent_id": str(self._agent_id),
+                        "user_external_id": self._user_external_id,
+                        "starts_at": str(data.get("starts_at") or ""),
+                        "ends_at": str(data.get("ends_at") or ""),
+                        "staff_id": str(data.get("staff_id") or ""),
+                        "resource_id": str(data.get("resource_id") or ""),
+                        "service_id": str(service_id),
+                        "client_name": str(data.get("client_name") or ""),
+                        "notes": str(data.get("notes") or ""),
+                        "source_channel": self._source_channel,
+                    },
+                }
+                payment = Payment.create(payment_payload, hashlib.sha256(f"{self._agent_id}:{canonical_args}".encode("utf-8")).hexdigest())
+                confirmation = getattr(payment, "confirmation", None)
+                confirmation_url = None
+                if isinstance(confirmation, dict):
+                    confirmation_url = confirmation.get("confirmation_url")
+                else:
+                    confirmation_url = getattr(confirmation, "confirmation_url", None)
+                payment_id = str(getattr(payment, "id", "") or "")
+                if not payment_id or not confirmation_url:
+                    raise RuntimeError("Не удалось сформировать ссылку на оплату")
+                _PAID_BOOKING_CACHE[payment_id] = {
+                    "agent_id": self._agent_id,
+                    "user_external_id": self._user_external_id,
+                    "payload": data,
+                }
+                result = {
+                    "requires_payment": True,
+                    "payment_id": payment_id,
+                    "payment_url": confirmation_url,
+                    "amount_minor": amount_minor,
+                    "amount_rub": round(amount_minor / 100, 2),
+                    "service_title": str(service_row.get("title") or "").strip(),
+                    "status": "awaiting_payment",
+                    "message": "Ссылка на оплату сформирована. После оплаты подтвердите бронь через confirm_paid_appointment.",
+                }
+            else:
+                result = await service.create_appointment(
+                    agent_id=self._agent_id,
+                    client_external_id=self._user_external_id,
+                    starts_at=_parse_iso_datetime(str(data.get("starts_at") or "")),
+                    ends_at=_parse_iso_datetime(str(data.get("ends_at") or "")),
+                    staff_id=data.get("staff_id"),
+                    resource_id=data.get("resource_id"),
+                    service_id=data.get("service_id"),
+                    client_name=data.get("client_name"),
+                    source_channel=self._source_channel,
+                    notes=data.get("notes"),
+                )
+        elif tool_name == "confirm_paid_appointment":
+            if not self._paid_booking_enabled:
+                raise RuntimeError("Платная бронь выключена для текущего агента")
+            payment_id = str(data.get("payment_id") or "").strip()
+            if not payment_id:
+                raise RuntimeError("payment_id обязателен")
+            cached = _PAID_BOOKING_CACHE.get(payment_id)
+            if not cached:
+                raise RuntimeError("Платеж не найден в текущей сессии. Запросите новую ссылку на оплату.")
+            shop_id, secret_key = self._parse_yookassa_credentials()
+            Configuration.account_id = shop_id
+            Configuration.secret_key = secret_key
+            payment = Payment.find_one(payment_id)
+            payment_status = str(getattr(payment, "status", "") or "").strip().lower()
+            if payment_status != "succeeded":
+                result = {
+                    "status": "awaiting_payment",
+                    "payment_id": payment_id,
+                    "payment_status": payment_status or "pending",
+                    "message": "Оплата еще не подтверждена. Проверьте статус позже.",
+                }
+            else:
+                cached_payload = cached.get("payload") or {}
+                result = await service.create_appointment(
+                    agent_id=self._agent_id,
+                    client_external_id=self._user_external_id,
+                    starts_at=_parse_iso_datetime(str(cached_payload.get("starts_at") or "")),
+                    ends_at=_parse_iso_datetime(str(cached_payload.get("ends_at") or "")),
+                    staff_id=cached_payload.get("staff_id"),
+                    resource_id=cached_payload.get("resource_id"),
+                    service_id=cached_payload.get("service_id"),
+                    client_name=cached_payload.get("client_name"),
+                    source_channel=cached_payload.get("source_channel") or self._source_channel,
+                    notes=cached_payload.get("notes"),
+                )
+                result = {
+                    "status": "paid_and_booked",
+                    "payment_id": payment_id,
+                    "appointment": result,
+                    "message": "Оплата подтверждена, бронь успешно оформлена.",
+                }
         elif tool_name == "reschedule_appointment":
             appt_id = data.get("appointment_id")
             if not appt_id:

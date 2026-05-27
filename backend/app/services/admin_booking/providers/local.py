@@ -102,6 +102,7 @@ def _serialize_resource(row: AdminResource) -> dict[str, Any]:
 
 
 def _serialize_service(row: AdminService) -> dict[str, Any]:
+    price_minor = int(row.price_minor or 0)
     return {
         "id": row.id,
         "agent_id": row.agent_id,
@@ -109,7 +110,8 @@ def _serialize_service(row: AdminService) -> dict[str, Any]:
         "staff_id": row.staff_id,
         "title": row.title,
         "duration_minutes": int(row.duration_minutes),
-        "price_minor": int(row.price_minor or 0),
+        "price_minor": price_minor,
+        "price_rub": round(price_minor / 100, 2),
         "resource_type_filters": _json_list_load(row.resource_type_filters_json),
         "is_active": bool(row.is_active),
         "created_at": row.created_at.isoformat() if row.created_at else None,

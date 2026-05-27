@@ -385,7 +385,7 @@ const PriceList = () => {
               <ul className="price-features">
                 {plan.features.map((feature) => (
                   <li key={feature}>
-                    <span className="feature-icon">✓</span>
+                    <span className="feature-icon">-</span>
                     {feature}
                   </li>
                 ))}
@@ -434,7 +434,7 @@ const PriceList = () => {
                 <ul className="price-features">
                   {template.features.map((feature) => (
                     <li key={feature}>
-                      <span className="feature-icon">✓</span>
+                      <span className="feature-icon">-</span>
                       {feature}
                     </li>
                   ))}
@@ -466,7 +466,7 @@ const PriceList = () => {
                 <ul className="price-features">
                   {offer.features.map((feature) => (
                     <li key={feature}>
-                      <span className="feature-icon">✓</span>
+                      <span className="feature-icon">-</span>
                       {feature}
                     </li>
                   ))}

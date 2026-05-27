@@ -1682,7 +1682,7 @@ const AgentDetailedAnalyticsPageContent = () => {
             className={`analytics-section-btn ${selectedSection === ANALYTICS_SECTIONS.TELEPHONY ? 'analytics-section-btn--active' : ''}`}
             onClick={() => setSelectedSection(ANALYTICS_SECTIONS.TELEPHONY)}
           >
-            📞 Звонки <DemoBadge />
+            Звонки <DemoBadge />
           </button>
           <button
             type="button"

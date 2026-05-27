@@ -57,6 +57,11 @@ class UpdateAgent(AgentLookup):
         default=None,
         description="Конфигурация шаблона (JSON)",
     )
+    yookassa_api_key: Optional[str] = Field(
+        default=None,
+        max_length=4096,
+        description="API-ключ платежей для платной брони (формат shop_id:secret_key). Пустая строка очищает ключ.",
+    )
 
 class NewAgent_byUserWith_tgID(BaseModel):
     tg_id: int = Field(..., description="tg id")

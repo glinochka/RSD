@@ -571,6 +571,9 @@ const AgentsPageContent = () => {
   const [adminManualConfirmationEnabled, setAdminManualConfirmationEnabled] = useState(false);
   const [adminManualConfirmationPriceMinor, setAdminManualConfirmationPriceMinor] = useState('15000');
   const [adminManualConfirmationDurationMinutes, setAdminManualConfirmationDurationMinutes] = useState('120');
+  const [adminPaidBookingEnabled, setAdminPaidBookingEnabled] = useState(false);
+  const [adminYookassaApiKey, setAdminYookassaApiKey] = useState('');
+  const [adminHasYookassaApiKey, setAdminHasYookassaApiKey] = useState(false);
   const [salesProductName, setSalesProductName] = useState('');
   const [salesOfferType, setSalesOfferType] = useState('');
   const [salesUsp, setSalesUsp] = useState('');
@@ -940,11 +943,34 @@ const AgentsPageContent = () => {
       manual_confirmation_enabled: Boolean(adminManualConfirmationEnabled),
       manual_confirmation_price_minor: Math.max(0, Number(adminManualConfirmationPriceMinor) || 0),
       manual_confirmation_duration_minutes: Math.max(1, Number(adminManualConfirmationDurationMinutes) || 120),
+      paid_booking_enabled: Boolean(adminPaidBookingEnabled),
     };
+    const hasTypedYookassaKey = adminYookassaApiKey.trim().length > 0;
+    const updatePayload = { template_config: nextConfig };
+    if (adminPaidBookingEnabled) {
+      if (hasTypedYookassaKey) {
+        updatePayload.yookassa_api_key = adminYookassaApiKey.trim();
+      } else if (!adminHasYookassaApiKey) {
+        showError('Укажите API ключ ЮKassa в формате shop_id:secret_key');
+        return;
+      }
+    } else {
+      updatePayload.yookassa_api_key = '';
+    }
     setIsSavingTemplateConfig(true);
     try {
-      await agentService.update(selectedBotId, { template_config: nextConfig });
-      setSelectedAgent((prev) => (prev ? { ...prev, template_config: nextConfig } : prev));
+      await agentService.update(selectedBotId, updatePayload);
+      setSelectedAgent((prev) => (prev
+        ? { ...prev, template_config: nextConfig, has_booking_payment_api_key: adminPaidBookingEnabled ? (adminHasYookassaApiKey || hasTypedYookassaKey) : false }
+        : prev));
+      if (adminPaidBookingEnabled && hasTypedYookassaKey) {
+        setAdminYookassaApiKey('');
+        setAdminHasYookassaApiKey(true);
+      }
+      if (!adminPaidBookingEnabled) {
+        setAdminYookassaApiKey('');
+        setAdminHasYookassaApiKey(false);
+      }
       showSuccess('Настройки шаблона Администратор обновлены');
     } catch (error) {
       showError(error?.message || 'Не удалось обновить настройки шаблона Администратор');
@@ -1469,6 +1495,9 @@ const AgentsPageContent = () => {
     setAdminManualConfirmationDurationMinutes(
       String(Number(cfg.manual_confirmation_duration_minutes) || 120)
     );
+    setAdminPaidBookingEnabled(Boolean(cfg.paid_booking_enabled));
+    setAdminYookassaApiKey('');
+    setAdminHasYookassaApiKey(Boolean(selectedAgent?.has_booking_payment_api_key));
     setSalesProductName(String(cfg.sales_product_name || ''));
     setSalesOfferType(String(cfg.sales_offer_type || ''));
     setSalesUsp(String(cfg.sales_usp || ''));
@@ -1982,7 +2011,7 @@ const AgentsPageContent = () => {
                         className="agent-telephony-badge title-with-demo-badge"
                         title={telephonyChannel.external_id}
                       >
-                        📞 Телефония · {telephonyChannel.external_id}
+                        Телефония · {telephonyChannel.external_id}
                         <DemoBadge />
                       </p>
                     ) : null}
@@ -2224,6 +2253,30 @@ const AgentsPageContent = () => {
                           onChange={(event) => setAdminManualConfirmationDurationMinutes(event.target.value)}
                           disabled={isSavingTemplateConfig}
                         />
+                        <FeatureToggle
+                          checked={adminPaidBookingEnabled}
+                          onChange={setAdminPaidBookingEnabled}
+                          disabled={isSavingTemplateConfig}
+                          title="Платная бронь"
+                          helpText="При включении агент сначала отправляет ссылку на оплату, и только после успешной оплаты подтверждает бронь."
+                        />
+                        {adminPaidBookingEnabled ? (
+                          <div className="admin-template-field">
+                            <label htmlFor="admin_yookassa_api_key">
+                              API ключ ЮKassa (shop_id:secret_key):
+                            </label>
+                            <input
+                              id="admin_yookassa_api_key"
+                              type="password"
+                              className="input-main"
+                              value={adminYookassaApiKey}
+                              onChange={(event) => setAdminYookassaApiKey(event.target.value)}
+                              placeholder={adminHasYookassaApiKey ? 'Ключ уже сохранен. Введите новый для замены' : '123456:live_xxxxx'}
+                              disabled={isSavingTemplateConfig}
+                              autoComplete="off"
+                            />
+                          </div>
+                        ) : null}
                         <button
                           type="button"
                           className="btn btn-black"
@@ -2665,7 +2718,7 @@ const AgentsPageContent = () => {
                     disabled={isSavingChannel || isSalesManagerTemplate}
                   >
                     <span className="connection-type-card-label connection-type-card-label--with-demo">
-                      📞 Телефония
+                      Телефония
                       <DemoBadge />
                     </span>
                   </button>

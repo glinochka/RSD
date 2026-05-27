@@ -73,3 +73,27 @@ def decrypt_crm_credentials(encrypted_payload: str) -> tuple[str, bool]:
     fallback = Fernet(legacy.encode())
     return fallback.decrypt(value.encode()).decode(), True
 
+
+def _get_booking_primary_key() -> str:
+  key = settings.BOOKING_PAYMENT_ENCRYPTION_KEY.strip() or settings.CRM_CREDENTIALS_ENCRYPTION_KEY.strip() or os.getenv("ENCRYPTION_KEY", "").strip()
+  if not key:
+    raise RuntimeError("BOOKING_PAYMENT_ENCRYPTION_KEY is not configured")
+  return key
+
+
+def encrypt_booking_payment_secret(secret: str) -> str:
+  cipher = Fernet(_get_booking_primary_key().encode())
+  return f"bpay1:{cipher.encrypt(secret.encode()).decode()}"
+
+
+def decrypt_booking_payment_secret(encrypted_payload: str) -> str:
+  value = (encrypted_payload or "").strip()
+  if not value:
+    raise RuntimeError("Empty booking payment encrypted payload")
+  if value.startswith("bpay1:"):
+    token = value.split(":", 1)[1]
+    cipher = Fernet(_get_booking_primary_key().encode())
+    return cipher.decrypt(token.encode()).decode()
+  cipher = Fernet(_get_booking_primary_key().encode())
+  return cipher.decrypt(value.encode()).decode()
+
