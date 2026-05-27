@@ -12,8 +12,8 @@ from typing import Any
 from sqlalchemy import select
 
 from ..alembic.database import async_session_maker
-from ..alembic.models import AgentAnalyticsMessage, AgentCrmConnection, AgentSalesContact
-from ..utils.crypto import decrypt_crm_credentials
+from ..alembic.models import Agent, AgentAnalyticsMessage, AgentCrmConnection, AgentSalesContact
+from ..utils.crypto import decrypt_booking_payment_secret, decrypt_crm_credentials
 from ..utils.pii import mask_external_id, redact_pii_text
 from .admin_booking import AdminBookingNeedsConfirmationError, AdminBookingToolRegistry
 from .ai_authoring import ai_client, generate_answer_with_context
@@ -651,6 +651,7 @@ class TemplateRuntimeService:
         booking_backend = str(template_config.get("booking_backend") or "auto").strip().lower()
         if booking_backend not in {"local", "crm", "auto"}:
             booking_backend = "auto"
+        paid_booking_enabled = bool(template_config.get("paid_booking_enabled"))
         crm_provider_name = str(template_config.get("crm_provider") or "amocrm").strip().lower()
         confirmation_policy = str(template_config.get("confirmation_policy") or "confirm_risky").strip().lower()
         allowed_crm_tools_raw = template_config.get("allowed_tools")
@@ -667,6 +668,7 @@ class TemplateRuntimeService:
                 str(x or "").strip().lower() for x in http_integration_names_raw if str(x or "").strip()
             ]
 
+        booking_payment_api_key = await self._get_admin_booking_payment_api_key(agent_id=agent_id)
         booking_registry = AdminBookingToolRegistry(
             agent_id=agent_id,
             user_external_id=user_external_id,
@@ -674,6 +676,8 @@ class TemplateRuntimeService:
             confirmation_policy=confirmation_policy,
             user_message=user_message,
             allowed_tools=allowed_booking_tools,
+            paid_booking_enabled=paid_booking_enabled,
+            yookassa_api_key=booking_payment_api_key,
         )
         booking_llm_tools = booking_registry.tools_for_llm()
 
@@ -768,6 +772,7 @@ class TemplateRuntimeService:
             "Не выдумывай результаты операций: опирайся только на ответы tools. "
             "Если не хватает параметров для tool call — задай уточняющий вопрос. "
             "Никогда не показывай пользователю служебные блоки tool_calls/DSML/XML/JSON и не печатай внутренние id сотрудников/ресурсов. "
+            "В услугах используй поле price_rub как итоговую цену в рублях. price_minor — только техническое поле, не озвучивай его. "
             "Имена врачей и услуг бери из ответов list_staff и list_services (там же будет staff_full_name у привязанных услуг). "
             "Не предлагай процедуру у мастера, если в list_services эта услуга закреплена за другим staff_id. "
             "ИЕРАРХИЯ ИСТОЧНИКОВ ДАННЫХ (соблюдай строго): "
@@ -786,6 +791,7 @@ class TemplateRuntimeService:
             "Для отмены или переноса записи: вызывай cancel_appointment или reschedule_appointment с полем appointment_date (дата/время записи) — система найдёт запись автоматически. "
             "НЕ передавай staff_id в cancel_appointment или reschedule_appointment, если ты не уверен в его актуальности — система найдёт запись по дате и клиенту без него. "
             "Никогда не проси у пользователя ID записи. "
+            "Если включена платная бронь и tool вернул payment_url, сначала отправь клиенту ссылку и не сообщай о созданной записи до подтверждения оплаты. "
             "Отвечай только чистым текстом, без markdown. "
             "Строго запрещено показывать в ответе любые названия переменных, placeholders и их содержимое ({{...}}, ${...}, key=value, JSON/XML-поля и аналогичные техфрагменты). "
             "Если из ответа инструмента следует, что запрос и каталог не сходятся (например, услуга у другого врача), скажи это клиенту своими словами, по-деловому и спокойно, без канцелярита и без служебных названий полей. "
@@ -1067,6 +1073,18 @@ class TemplateRuntimeService:
                         AgentCrmConnection.is_active.is_(True),
                     )
                 )
+
+    async def _get_admin_booking_payment_api_key(self, *, agent_id: int) -> str | None:
+        async with async_session_maker() as session:
+            async with session.begin():
+                agent = await session.scalar(select(Agent).where(Agent.id == agent_id))
+                if not agent or not getattr(agent, "encrypted_booking_payment_api_key", None):
+                    return None
+                try:
+                    return decrypt_booking_payment_secret(agent.encrypted_booking_payment_api_key)
+                except Exception:
+                    logger.warning("Failed to decrypt booking payment key for agent_id=%s", agent_id)
+                    return None
 
     async def _load_recent_channel_history(
         self,

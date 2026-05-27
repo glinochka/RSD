@@ -102,7 +102,7 @@ const WIDGET_CONNECTOR_EXAMPLE = `<script
 
   data-proactive-message="Добрый день! Чем могу помочь?"
   data-proactive-delay="3"
-  data-proactive-message-2="Готов ответить на любые вопросы 😊"
+  data-proactive-message-2="Готов ответить на любые вопросы"
   data-proactive-delay-2="1"
 ></script>`;
 

@@ -62,7 +62,14 @@ from ..services.youtube_client import get_youtube_client
 from ..utils.api_keys import generate_agent_external_api_key, hash_agent_external_api_key
 from ..utils.JWT import get_user_from_access_token
 from ..utils.convert import convert_to_dict
-from ..utils.crypto import decrypt_crm_credentials, decrypt_token, encrypt_crm_credentials, encrypt_token
+from ..utils.crypto import (
+    decrypt_booking_payment_secret,
+    decrypt_crm_credentials,
+    decrypt_token,
+    encrypt_booking_payment_secret,
+    encrypt_crm_credentials,
+    encrypt_token,
+)
 from ..utils.internal_auth import is_internal_request, is_request_secure, verify_internal_signature
 from ..utils.pii import redact_pii_text
 from ..utils.rate_limit import rate_limit
@@ -687,6 +694,7 @@ def _default_crm_admin_config() -> dict[str, object]:
         "manual_confirmation_enabled": False,
         "manual_confirmation_price_minor": 15000,
         "manual_confirmation_duration_minutes": 120,
+        "paid_booking_enabled": False,
         "appointment_confirmation_enabled": True,
         "field_mapping": None,
         "resources_enabled": True,
@@ -770,6 +778,7 @@ def _migrate_crm_admin_config(raw_config: dict | None) -> dict[str, object]:
     appointment_confirmation_enabled = bool(
         raw.get("appointment_confirmation_enabled", defaults["appointment_confirmation_enabled"])
     )
+    paid_booking_enabled = bool(raw.get("paid_booking_enabled", defaults["paid_booking_enabled"]))
     reminder_offsets_raw = raw.get("reminder_offsets_hours", defaults["reminder_offsets_hours"])
     if not isinstance(reminder_offsets_raw, list):
         raise HTTPException(
@@ -890,6 +899,7 @@ def _migrate_crm_admin_config(raw_config: dict | None) -> dict[str, object]:
         "manual_confirmation_enabled": manual_confirmation_enabled,
         "manual_confirmation_price_minor": manual_confirmation_price_minor,
         "manual_confirmation_duration_minutes": manual_confirmation_duration_minutes,
+        "paid_booking_enabled": paid_booking_enabled,
         "appointment_confirmation_enabled": appointment_confirmation_enabled,
         "field_mapping": field_mapping,
         "resources_enabled": resources_enabled,
@@ -1377,6 +1387,7 @@ def _serialize_agent(
             data[key] = _safe_iso(value)
     data.pop("registered", None)
     data.pop("encrypted_external_api_key", None)
+    data.pop("encrypted_booking_payment_api_key", None)
     data.pop("external_api_key_hash", None)
     try:
         data["template_type"] = _normalize_template_type(data.get("template_type"), allow_legacy=True)
@@ -1400,6 +1411,7 @@ def _serialize_agent(
             data["external_api_key"] = decrypt_token(agent.encrypted_external_api_key)
         else:
             data["external_api_key"] = None
+    data["has_booking_payment_api_key"] = bool(getattr(agent, "encrypted_booking_payment_api_key", None))
     data["billing"] = build_agent_billing_state(agent, user=user)
     return data
 
@@ -5457,6 +5469,23 @@ async def update_by_bot_id(
             updates = new_data.model_dump(exclude_none=True)
             updates.pop("bot_id", None)
             updates.pop("agent_id", None)
+            if "yookassa_api_key" in updates:
+                raw_yookassa_key = str(updates.pop("yookassa_api_key") or "").strip()
+                if raw_yookassa_key:
+                    if ":" not in raw_yookassa_key:
+                        raise HTTPException(
+                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail="yookassa_api_key must be in format shop_id:secret_key",
+                        )
+                    shop_id_part, secret_part = raw_yookassa_key.split(":", 1)
+                    if not shop_id_part.strip() or not secret_part.strip():
+                        raise HTTPException(
+                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail="yookassa_api_key must include both shop_id and secret_key",
+                        )
+                    updates["encrypted_booking_payment_api_key"] = encrypt_booking_payment_secret(raw_yookassa_key)
+                else:
+                    updates["encrypted_booking_payment_api_key"] = None
             if "external_webhook_url" in updates:
                 updates["external_webhook_url"] = _normalize_external_webhook_url(updates["external_webhook_url"])
             if "template_type" in updates:
