@@ -572,7 +572,8 @@ const AgentsPageContent = () => {
   const [adminManualConfirmationPriceMinor, setAdminManualConfirmationPriceMinor] = useState('15000');
   const [adminManualConfirmationDurationMinutes, setAdminManualConfirmationDurationMinutes] = useState('120');
   const [adminPaidBookingEnabled, setAdminPaidBookingEnabled] = useState(false);
-  const [adminYookassaApiKey, setAdminYookassaApiKey] = useState('');
+  const [adminYookassaShopId, setAdminYookassaShopId] = useState('');
+  const [adminYookassaSecretKey, setAdminYookassaSecretKey] = useState('');
   const [adminHasYookassaApiKey, setAdminHasYookassaApiKey] = useState(false);
   const [salesProductName, setSalesProductName] = useState('');
   const [salesOfferType, setSalesOfferType] = useState('');
@@ -945,13 +946,19 @@ const AgentsPageContent = () => {
       manual_confirmation_duration_minutes: Math.max(1, Number(adminManualConfirmationDurationMinutes) || 120),
       paid_booking_enabled: Boolean(adminPaidBookingEnabled),
     };
-    const hasTypedYookassaKey = adminYookassaApiKey.trim().length > 0;
+    const yookassaShopId = adminYookassaShopId.trim();
+    const yookassaSecretKey = adminYookassaSecretKey.trim();
+    const hasTypedYookassaCredentials = yookassaShopId.length > 0 || yookassaSecretKey.length > 0;
     const updatePayload = { template_config: nextConfig };
     if (adminPaidBookingEnabled) {
-      if (hasTypedYookassaKey) {
-        updatePayload.yookassa_api_key = adminYookassaApiKey.trim();
+      if (hasTypedYookassaCredentials) {
+        if (!yookassaShopId || !yookassaSecretKey) {
+          showError('Укажите Shop ID и Secret key ЮKassa');
+          return;
+        }
+        updatePayload.yookassa_api_key = `${yookassaShopId}:${yookassaSecretKey}`;
       } else if (!adminHasYookassaApiKey) {
-        showError('Укажите API ключ ЮKassa в формате shop_id:secret_key');
+        showError('Укажите Shop ID и Secret key ЮKassa');
         return;
       }
     } else {
@@ -961,14 +968,16 @@ const AgentsPageContent = () => {
     try {
       await agentService.update(selectedBotId, updatePayload);
       setSelectedAgent((prev) => (prev
-        ? { ...prev, template_config: nextConfig, has_booking_payment_api_key: adminPaidBookingEnabled ? (adminHasYookassaApiKey || hasTypedYookassaKey) : false }
+        ? { ...prev, template_config: nextConfig, has_booking_payment_api_key: adminPaidBookingEnabled ? (adminHasYookassaApiKey || hasTypedYookassaCredentials) : false }
         : prev));
-      if (adminPaidBookingEnabled && hasTypedYookassaKey) {
-        setAdminYookassaApiKey('');
+      if (adminPaidBookingEnabled && hasTypedYookassaCredentials) {
+        setAdminYookassaShopId('');
+        setAdminYookassaSecretKey('');
         setAdminHasYookassaApiKey(true);
       }
       if (!adminPaidBookingEnabled) {
-        setAdminYookassaApiKey('');
+        setAdminYookassaShopId('');
+        setAdminYookassaSecretKey('');
         setAdminHasYookassaApiKey(false);
       }
       showSuccess('Настройки шаблона Администратор обновлены');
@@ -1496,7 +1505,8 @@ const AgentsPageContent = () => {
       String(Number(cfg.manual_confirmation_duration_minutes) || 120)
     );
     setAdminPaidBookingEnabled(Boolean(cfg.paid_booking_enabled));
-    setAdminYookassaApiKey('');
+    setAdminYookassaShopId('');
+    setAdminYookassaSecretKey('');
     setAdminHasYookassaApiKey(Boolean(selectedAgent?.has_booking_payment_api_key));
     setSalesProductName(String(cfg.sales_product_name || ''));
     setSalesOfferType(String(cfg.sales_offer_type || ''));
@@ -2262,16 +2272,29 @@ const AgentsPageContent = () => {
                         />
                         {adminPaidBookingEnabled ? (
                           <div className="admin-template-field">
-                            <label htmlFor="admin_yookassa_api_key">
-                              API ключ ЮKassa (shop_id:secret_key):
+                            <label htmlFor="admin_yookassa_shop_id">
+                              Shop ID ЮKassa:
                             </label>
                             <input
-                              id="admin_yookassa_api_key"
+                              id="admin_yookassa_shop_id"
+                              type="text"
+                              className="input-main"
+                              value={adminYookassaShopId}
+                              onChange={(event) => setAdminYookassaShopId(event.target.value)}
+                              placeholder={adminHasYookassaApiKey ? 'Ключ сохранён. Введите новый Shop ID для замены' : '123456'}
+                              disabled={isSavingTemplateConfig}
+                              autoComplete="off"
+                            />
+                            <label htmlFor="admin_yookassa_secret_key" className="mt-input">
+                              Secret key ЮKassa:
+                            </label>
+                            <input
+                              id="admin_yookassa_secret_key"
                               type="password"
                               className="input-main"
-                              value={adminYookassaApiKey}
-                              onChange={(event) => setAdminYookassaApiKey(event.target.value)}
-                              placeholder={adminHasYookassaApiKey ? 'Ключ уже сохранен. Введите новый для замены' : '123456:live_xxxxx'}
+                              value={adminYookassaSecretKey}
+                              onChange={(event) => setAdminYookassaSecretKey(event.target.value)}
+                              placeholder={adminHasYookassaApiKey ? 'Ключ сохранён. Введите новый Secret key для замены' : 'live_xxxxx'}
                               disabled={isSavingTemplateConfig}
                               autoComplete="off"
                             />

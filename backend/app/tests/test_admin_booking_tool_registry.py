@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta
+
 import pytest
 
 from app.services.admin_booking.tool_registry import AdminBookingToolRegistry
@@ -57,9 +59,10 @@ async def test_admin_booking_tool_registry_does_not_require_confirmation(monkeyp
         allowed_tools=["create_appointment"],
     )
 
+    future_day = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
     result = await registry.execute_tool(
         "create_appointment",
-        '{"starts_at":"2026-04-27T10:00:00","ends_at":"2026-04-27T11:00:00","staff_id":1}',
+        f'{{"starts_at":"{future_day}T10:00:00","ends_at":"{future_day}T11:00:00","staff_id":1}}',
     )
     assert result["ok"] is True
     assert result["tool_status"] == "success"
@@ -142,3 +145,37 @@ async def test_admin_booking_tool_registry_find_next_available_tool(monkeypatch)
     assert result["tool_status"] == "success"
     assert result["result"]["available"] is True
     assert "2026-04-30T09:00:00" in result["result"]["starts_at"]
+
+
+@pytest.mark.asyncio
+async def test_check_availability_past_date_returns_hint_not_busy(monkeypatch):
+    past_day = (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d")
+
+    class _FakeService:
+        async def list_staff(self, **kwargs):
+            return [{"id": 23, "full_name": "Anna"}]
+
+        async def list_available_slots(self, **kwargs):
+            raise AssertionError("list_available_slots must not run for a past day")
+
+    monkeypatch.setattr(
+        "app.services.admin_booking.tool_registry.get_admin_booking_service",
+        lambda: _FakeService(),
+    )
+
+    registry = AdminBookingToolRegistry(
+        agent_id=17,
+        user_external_id="u-5",
+        source_channel="telegram",
+        user_message="запиши на прошлый день",
+        allowed_tools=["check_availability"],
+    )
+    result = await registry.execute_tool(
+        "check_availability",
+        f'{{"starts_at":"{past_day}T00:00:00","ends_at":"{past_day}T23:59:59","staff_id":23}}',
+    )
+
+    assert result["ok"] is True
+    assert result["result"]["date_status"] == "past"
+    assert result["result"]["available_slots"] == []
+    assert "прошёл" in result["result"]["hint"].lower()

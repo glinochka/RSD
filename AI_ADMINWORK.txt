@@ -1,0 +1,204 @@
+m?
+Здравствуйте это тату салон?
+
+22.05.2026, 08:52
+Агент
+Здравствуйте! Да, это тату-салон "TATO". Чем я могу вам помочь? Хотите записаться на сеанс, узнать о наших услугах или что-то уточнить?
+
+22.05.2026, 08:52
+m?
+К кому можно записаться?
+
+22.05.2026, 08:52
+Вы (владелец)
+tool=list_staff status=success latency_ms=65 crm_provider=booking idempotent_replay=false
+
+22.05.2026, 08:52
+Агент
+У нас работает мастер Анна Петровна — опытный тату-мастер. Она специализируется на таких услугах, как: - Рукав (полноценная татуировка на руке) - Спина (татуировка на спине) Хотите узнать подробнее об услугах или записаться на консультацию к Анне Петровне?
+
+22.05.2026, 08:52
+m?
+Можно на рукав 25 мая
+
+22.05.2026, 08:53
+Вы (владелец)
+tool=list_services status=success latency_ms=56 crm_provider=booking idempotent_replay=false
+
+22.05.2026, 08:53
+Вы (владелец)
+tool=list_staff status=success latency_ms=18 crm_provider=booking idempotent_replay=false
+
+22.05.2026, 08:53
+Вы (владелец)
+tool=check_availability status=success latency_ms=128 crm_provider=booking idempotent_replay=false args=[2026-05-25 00:00→2026-05-25 23:59 staff=23]
+
+22.05.2026, 08:53
+Агент
+На 25 мая у Анны Петровны есть свободное время в течение всего рабочего дня — с 08:00 до 17:00. Подскажите, пожалуйста, как вас зовут? И какое время вам было бы удобно — утро, день или ближе к вечеру?
+
+22.05.2026, 08:53
+m?
+Давайте в 13
+
+22.05.2026, 08:53
+Вы (владелец)
+tool=list_staff status=success latency_ms=32 crm_provider=booking idempotent_replay=false
+
+22.05.2026, 08:53
+Вы (владелец)
+tool=list_services status=success latency_ms=47 crm_provider=booking idempotent_replay=false
+
+22.05.2026, 08:53
+Вы (владелец)
+tool=check_availability status=success latency_ms=104 crm_provider=booking idempotent_replay=false args=[2026-05-25 00:00→2026-05-25 23:59 staff=23]
+
+22.05.2026, 08:53
+Агент
+Время 13:00 подходит! 25 мая у Анны Петровны рабочий день с 08:00 до 17:00, так что в 13:00 она свободна. Давайте уточню детали: - Мастер: Анна Петровна - Услуга: Рукав - Дата: 25 мая 2026 г. - Время: 13:00 Скажите, как вас зовут, чтобы я мог оформить запись?
+
+22.05.2026, 08:53
+m?
+Илья
+
+22.05.2026, 08:53
+Агент
+Отлично, Илья! Проверьте, пожалуйста, все ли верно: - Мастер: Анна Петровна - Услуга: Рукав - Дата: 25 мая 2026 г. - Время: 13:00 - Ваше имя: Илья Всё устраивает? Мне можно оформлять запись?
+
+22.05.2026, 08:53
+m?
+Да
+
+22.05.2026, 08:53
+Вы (владелец)
+tool=list_services status=success latency_ms=42 crm_provider=booking idempotent_replay=false
+
+22.05.2026, 08:54
+Вы (владелец)
+tool=check_availability status=success latency_ms=100 crm_provider=booking idempotent_replay=false args=[2026-05-25 00:00→2026-05-25 23:59 staff=23]
+
+22.05.2026, 08:54
+Вы (владелец)
+tool=create_appointment status=success latency_ms=106 crm_provider=booking idempotent_replay=false args=[2026-05-25 13:00→2026-05-25 13:30 staff=23 client=Илья]
+
+22.05.2026, 08:54
+Агент
+Илья, запись оформлена! ✅ Краткое подтверждение: - Мастер: Анна Петровна - Услуга: Рукав - Дата: 25 мая 2026 г. - Время: 13:00 — 13:30 - Статус: Забронировано Будем ждать вас в салоне! Если понадобится что-то изменить или отменить — обращайтесь.
+
+22.05.2026, 08:54
+m?
+Привет, хочу записаться на приём
+
+28.05.2026, 13:43
+Агент
+Привет! Рад снова тебя слышать, Илья. Ты уже записан на 25 мая в 13:00 к Анне Петровне на услугу «Рукав». Ты хочешь записаться на что-то ещё или, может, изменить текущую запись?
+
+28.05.2026, 13:43
+m?
+Да, давай также но 26 мая
+
+28.05.2026, 13:43
+Вы (владелец)
+tool=check_availability status=success latency_ms=34 crm_provider=booking idempotent_replay=false args=[2026-05-26 00:00→2026-05-26 23:59 staff=1]
+
+28.05.2026, 13:43
+Вы (владелец)
+tool=list_staff status=success latency_ms=24 crm_provider=booking idempotent_replay=false
+
+28.05.2026, 13:44
+Вы (владелец)
+tool=list_services status=success latency_ms=57 crm_provider=booking idempotent_replay=false
+
+28.05.2026, 13:44
+Вы (владелец)
+tool=check_availability status=success latency_ms=180 crm_provider=booking idempotent_replay=false args=[2026-05-26 00:00→2026-05-26 23:59 staff=23]
+
+28.05.2026, 13:44
+Агент
+На 26 мая у Анны Петровны рабочий день с 08:00 до 17:00, и свободных окон нет — всё занято. Могу предложить другие варианты: - 27 мая (среда) — посмотреть свободное время? - Или, может, другой день на этой неделе? Как тебе удобнее?
+
+28.05.2026, 13:44
+m?
+Давай 29
+
+28.05.2026, 13:44
+Вы (владелец)
+tool=check_availability status=success latency_ms=27 crm_provider=booking idempotent_replay=false args=[2026-05-29 00:00→2026-05-29 23:59 staff=1]
+
+28.05.2026, 13:44
+Вы (владелец)
+tool=list_staff status=success latency_ms=21 crm_provider=booking idempotent_replay=false
+
+28.05.2026, 13:44
+Вы (владелец)
+tool=list_services status=success latency_ms=31 crm_provider=booking idempotent_replay=false
+
+28.05.2026, 13:44
+Вы (владелец)
+tool=check_availability status=success latency_ms=113 crm_provider=booking idempotent_replay=false args=[2026-05-29 00:00→2026-05-29 23:59 staff=23]
+
+28.05.2026, 13:44
+Агент
+На 29 мая (пятница) у Анны Петровны есть свободное время в течение всего рабочего дня — с 08:00 до 17:00. Какое время тебе удобно?
+
+28.05.2026, 13:44
+m?
+13.00 также, та же услуга
+
+28.05.2026, 13:45
+Вы (владелец)
+tool=list_services status=success latency_ms=40 crm_provider=booking idempotent_replay=false
+
+28.05.2026, 13:45
+Вы (владелец)
+tool=list_staff status=success latency_ms=13 crm_provider=booking idempotent_replay=false
+
+28.05.2026, 13:45
+Вы (владелец)
+tool=check_availability status=success latency_ms=74 crm_provider=booking idempotent_replay=false args=[2026-05-29 00:00→2026-05-29 23:59 staff=23]
+
+28.05.2026, 13:45
+Агент
+29 мая в 13:00 у Анны Петровны всё свободно! Давай уточню детали перед записью. Итак, сейчас у тебя уже есть запись на 25 мая в 13:00 на «Рукав». Ты хочешь перенести её на 29 мая в 13:00 к тому же мастеру? Или создать новую отдельную запись на 29 мая?
+
+28.05.2026, 13:45
+m?
+Да все верно, новая запись
+
+28.05.2026, 13:46
+Агент
+Понял, но перед созданием новой записи мне нужно узнать твоё имя, чтобы я мог записать тебя в систему. Как тебя зовут?
+
+28.05.2026, 13:46
+m?
+Илья
+
+28.05.2026, 13:47
+Агент
+Отлично, Илья! Давай проверю все детали: - Услуга: Рукав - Мастер: Анна Петровна - Дата: 29 мая 2026 - Время: 13:00 Всё верно? Могу создавать запись?
+
+28.05.2026, 13:47
+m?
+Да
+
+28.05.2026, 13:47
+Вы (владелец)
+tool=list_services status=success latency_ms=37 crm_provider=booking idempotent_replay=false
+
+28.05.2026, 13:47
+Вы (владелец)
+tool=list_staff status=success latency_ms=18 crm_provider=booking idempotent_replay=false
+
+28.05.2026, 13:47
+Вы (владелец)
+tool=check_availability status=success latency_ms=77 crm_provider=booking idempotent_replay=false args=[2026-05-29 00:00→2026-05-29 23:59 staff=23]
+
+28.05.2026, 13:47
+Вы (владелец)
+tool=create_appointment status=success latency_ms=519 crm_provider=booking idempotent_replay=false args=[2026-05-29 13:00→2026-05-29 13:30 staff=23 client=Илья]
+
+28.05.2026, 13:47
+Агент
+Илья, запись почти готова! Для подтверждения брони требуется предоплата — 50 000 руб. Вот ссылка для оплаты: технические данные скрыты После оплаты бронь будет подтверждена. Сообщи, когда оплатишь, или если возникнут вопросы!
+
+28.05.2026, 13:47

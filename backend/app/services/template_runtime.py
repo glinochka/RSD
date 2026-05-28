@@ -69,8 +69,11 @@ _INTERNAL_ASSIGNMENT_RE = re.compile(
     re.IGNORECASE,
 )
 _JSON_PAIR_RE = re.compile(
-    r"([\"'])?[A-Za-z_][A-Za-z0-9_]{2,}\1?\s*:\s*([\"'][^\"']*[\"']|[^,\]\}\n]+)"
+    r"(?P<key>[A-Za-z_][A-Za-z0-9_]{2,})\s*:\s*"
+    r"(?P<value>[\"'][^\"']*[\"']|https?://\S+|[^,\]\}\n]+)"
 )
+# Tool fields that must reach the client (especially payment links).
+_CUSTOMER_VISIBLE_JSON_KEYS = frozenset({"payment_url", "confirmation_url"})
 _INTERNAL_MARKER_RE = re.compile(r"\[[A-Z][A-Z0-9_]{2,}\]")
 
 
@@ -394,13 +397,38 @@ class TemplateRuntimeService:
         return True
 
     @staticmethod
+    def _redact_json_pairs(text: str) -> str:
+        """Strip internal key:value leaks; keep payment URLs visible for the client."""
+
+        def _repl(match: re.Match[str]) -> str:
+            key = (match.group("key") or "").strip().lower()
+            value = (match.group("value") or "").strip().strip("\"'")
+            if key in _CUSTOMER_VISIBLE_JSON_KEYS:
+                return value
+            return "технические данные скрыты"
+
+        return _JSON_PAIR_RE.sub(_repl, text or "")
+
+    @staticmethod
+    def _ensure_booking_payment_url(answer: str, payment_url: str | None) -> str:
+        url = (payment_url or "").strip()
+        if not url:
+            return answer or ""
+        body = (answer or "").strip()
+        if url in body:
+            return body
+        if not body:
+            return f"Ссылка для оплаты: {url}"
+        return f"{body}\n\nСсылка для оплаты: {url}"
+
+    @staticmethod
     def _sanitize_final_answer(text: str) -> str:
         """Remove leaked variable names/values from customer-facing answers."""
         sanitized = _CODE_BLOCK_RE.sub("Технические детали скрыты.", text or "")
         sanitized = _INTERNAL_MARKER_RE.sub("", sanitized)
         sanitized = _TEMPLATE_VAR_RE.sub("технические данные скрыты", sanitized)
         sanitized = _INTERNAL_ASSIGNMENT_RE.sub("технические данные скрыты", sanitized)
-        sanitized = _JSON_PAIR_RE.sub("технические данные скрыты", sanitized)
+        sanitized = TemplateRuntimeService._redact_json_pairs(sanitized)
 
         safe_lines: list[str] = []
         for raw_line in sanitized.splitlines():
@@ -773,6 +801,7 @@ class TemplateRuntimeService:
         messages.extend(chat_history)
         messages.append({"role": "user", "content": user_message})
         tool_events: list[dict[str, Any]] = []
+        pending_payment_url: str | None = None
         max_iterations = 15
 
         is_phone_channel = (source_channel or "").strip().lower() == "phone"
@@ -844,6 +873,12 @@ class TemplateRuntimeService:
                             "error": None,
                         }
                     )
+                    if tool_name == "create_appointment" and tool_result.get("ok"):
+                        inner = tool_result.get("result")
+                        if isinstance(inner, dict):
+                            raw_url = str(inner.get("payment_url") or inner.get("confirmation_url") or "").strip()
+                            if raw_url:
+                                pending_payment_url = raw_url
                 except AdminBookingNeedsConfirmationError as exc:
                     safe_error = redact_pii_text(str(exc))
                     tool_events.append(
@@ -953,7 +988,10 @@ class TemplateRuntimeService:
                     temperature=0.2,
                 )
                 final_content = (final_completion.choices[0].message.content or "").strip()
-                cleaned = self._clean_llm_text(final_content)
+                cleaned = self._ensure_booking_payment_url(
+                    self._clean_llm_text(final_content),
+                    pending_payment_url,
+                )
                 return TemplateExecutionResult(
                     answer=cleaned or CRM_ADMIN_LLM_EMPTY_FALLBACK,
                     sources=[],
@@ -966,7 +1004,10 @@ class TemplateRuntimeService:
             temperature=0.2,
         )
         final_content = (final_completion.choices[0].message.content or "").strip()
-        cleaned = self._clean_llm_text(final_content)
+        cleaned = self._ensure_booking_payment_url(
+            self._clean_llm_text(final_content),
+            pending_payment_url,
+        )
         return TemplateExecutionResult(
             answer=cleaned or CRM_ADMIN_LLM_EMPTY_FALLBACK,
             sources=[],
