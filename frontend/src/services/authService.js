@@ -14,6 +14,7 @@
 
 import apiClient from './apiClient';
 import { API_ROUTES } from '../config/constants';
+import { getStoredReferralCode, clearStoredReferralCode } from '../utils/referralStorage';
 
 /** Normalize backend auth response to a shape used by AuthContext and storage */
 function normalizeAuthResponse(data, userName) {
@@ -56,14 +57,17 @@ export const authService = {
         nonceLength: nonce?.length || 0,
       });
       
+      const referralCode = getStoredReferralCode();
       const response = await apiClient.post(API_ROUTES.AUTH_GOOGLE, {
         id_token: idToken,
         nonce,
         consent_personal_data: Boolean(consents.consentPersonalData),
         consent_terms: Boolean(consents.consentTerms),
+        ...(referralCode ? { referral_code: referralCode } : {}),
       });
       
       console.log('Google OAuth success:', { status: response.status });
+      clearStoredReferralCode();
       return normalizeAuthResponse(response.data, 'google_user');
     } catch (error) {
       // Log detailed error for debugging
@@ -81,12 +85,15 @@ export const authService = {
    * Register step 1: sends verification code to email.
    */
   register: async (email, password) => {
+    const referralCode = getStoredReferralCode();
     const response = await apiClient.post(API_ROUTES.AUTH_REGISTER, {
       email: email.trim(),
       password,
+      ...(referralCode ? { referral_code: referralCode } : {}),
     });
     const data = response.data;
     if (data?.access_token) {
+      clearStoredReferralCode();
       return {
         ...normalizeAuthResponse(data, email.trim()),
         status: data.status ?? 'registered',
@@ -111,6 +118,7 @@ export const authService = {
       email: email.trim(),
       code: code.trim(),
     });
+    clearStoredReferralCode();
     return normalizeAuthResponse(response.data, email.trim());
   },
 

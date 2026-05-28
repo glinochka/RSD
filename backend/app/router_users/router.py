@@ -21,6 +21,7 @@ from ..alembic.database import async_session_maker
 from ..alembic.models import UserAuthSession, UserExternalIdentity
 from ..config import settings
 from ..router_agents.dao import AgentDAO
+from ..services.referral import attach_referrer_on_signup, ensure_user_referral_code
 from ..utils.convert import convert_to_dict
 from ..utils.internal_auth import verify_internal_key
 from ..utils.JWT import create_access_token, decode_access_token_payload, get_user_from_access_token
@@ -844,6 +845,14 @@ async def user_registration(new_user: NewUser):
                     )
                     # Surface uniqueness races before leaving transaction block.
                     await session.flush()
+                    created_user = await user_dao.find_one_by_filter(email=normalized_email)
+                    if created_user:
+                        await attach_referrer_on_signup(
+                            user_dao,
+                            created_user,
+                            new_user.referral_code,
+                        )
+                        await ensure_user_referral_code(user_dao, created_user)
             break
         except IntegrityError:
             if attempt == 1:
@@ -1419,6 +1428,13 @@ async def user_google_oauth_login(payload: GoogleOAuthLoginRequest):
                         )
                         await session.flush()
                         user = await user_dao.find_one_by_filter(email=normalized_email)
+                        if user:
+                            await attach_referrer_on_signup(
+                                user_dao,
+                                user,
+                                payload.referral_code,
+                            )
+                            await ensure_user_referral_code(user_dao, user)
                         should_send_welcome = True
 
                     if user is None:

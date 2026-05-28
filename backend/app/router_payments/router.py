@@ -45,6 +45,8 @@ from .schemas import (
     ProcessTelegramPayment,
     YooKassaPaymentStatusResponse,
 )
+from ..router_referrals.dao import PartnerPromoCodeDAO
+from ..services.referral import attach_referrer_by_partner_id, record_referral_commission_for_transaction
 from .dao import (
     PaymentTransactionDAO,
     PromoCodeDAO,
@@ -125,6 +127,28 @@ def _normalize_promo_code(value: str | None) -> str | None:
     return cleaned or None
 
 
+async def _resolve_checkout_promo(
+    session,
+    normalized_promo: str,
+) -> tuple[int, str | None, int | None, int]:
+    """Returns (discount_percent, promo_code, partner_user_id, partner_promo_discount_percent)."""
+    partner_promo_dao = PartnerPromoCodeDAO(session)
+    partner_promo = await partner_promo_dao.find_active_by_code_case_insensitive(normalized_promo)
+    if partner_promo:
+        discount = int(partner_promo.discount_percent or 0)
+        return discount, partner_promo.code, partner_promo.partner_user_id, discount
+
+    promo_dao = PromoCodeDAO(session)
+    admin_promo = await promo_dao.find_by_code_case_insensitive(normalized_promo)
+    if admin_promo:
+        return int(admin_promo.discount_percent or 0), admin_promo.code, None, 0
+
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="Promo code not found",
+    )
+
+
 async def _apply_agent_billing_payment(
     agent_dao: AgentDAO,
     tx: WebsitePaymentTransaction,
@@ -181,6 +205,11 @@ async def _apply_yookassa_payment_to_subscription(
         await _apply_agent_billing_payment(agent_dao, tx)
         tx.is_processed = True
         tx.paid_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        await record_referral_commission_for_transaction(
+            user_dao._session,
+            user_dao,
+            tx,
+        )
         return
 
     user = await user_dao.find_one_by_filter(id=tx.user_id)
@@ -212,6 +241,11 @@ async def _apply_yookassa_payment_to_subscription(
     )
     tx.is_processed = True
     tx.paid_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    await record_referral_commission_for_transaction(
+        user_dao._session,
+        user_dao,
+        tx,
+    )
 
 
 @router.get("/plans")
@@ -507,19 +541,23 @@ async def create_yookassa_payment(
     normalized_promo = _normalize_promo_code(payload.promo_code)
     applied_discount_percent = 0
     applied_promo_code = None
+    partner_user_id = None
+    partner_promo_discount_percent = 0
 
     if normalized_promo:
         async with async_session_maker() as session:
-            promo_dao = PromoCodeDAO(session)
+            user_dao = UserDAO(session)
             async with session.begin():
-                promo = await promo_dao.find_by_code_case_insensitive(normalized_promo)
-        if not promo:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Promo code not found",
-            )
-        applied_discount_percent = int(promo.discount_percent or 0)
-        applied_promo_code = promo.code
+                (
+                    applied_discount_percent,
+                    applied_promo_code,
+                    partner_user_id,
+                    partner_promo_discount_percent,
+                ) = await _resolve_checkout_promo(session, normalized_promo)
+                if partner_user_id:
+                    buyer = await user_dao.find_one_by_filter(id=current_user.id)
+                    if buyer:
+                        await attach_referrer_by_partner_id(user_dao, buyer, partner_user_id)
 
     duration_discount_kopecks = (original_amount_kopecks * duration_discount_percent) // 100
     amount_after_duration_discount = max(0, original_amount_kopecks - duration_discount_kopecks)
@@ -538,6 +576,8 @@ async def create_yookassa_payment(
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="User not found",
                     )
+                if partner_user_id:
+                    await attach_referrer_by_partner_id(user_dao, user, partner_user_id)
 
                 new_end_date = _calculate_new_end_date(
                     user.subscription_end_date,
@@ -550,7 +590,7 @@ async def create_yookassa_payment(
                         "subscription_end_date": new_end_date,
                     },
                 )
-                await website_tx_dao.add(
+                tx_row = await website_tx_dao.add(
                     {
                         "user_id": current_user.id,
                         "plan_name": payload.plan_name,
@@ -560,12 +600,16 @@ async def create_yookassa_payment(
                         "discount_percent": applied_discount_percent,
                         "duration_months": duration_months,
                         "promo_code": applied_promo_code,
+                        "partner_user_id": partner_user_id,
+                        "partner_promo_discount_percent": partner_promo_discount_percent,
                         "yookassa_payment_id": f"promo-{uuid4()}",
                         "status": "succeeded",
                         "is_processed": True,
                         "paid_at": datetime.now(timezone.utc).replace(tzinfo=None),
                     }
                 )
+                await session.flush()
+                await record_referral_commission_for_transaction(session, user_dao, tx_row)
 
         return JSONResponse(
             content={
@@ -646,6 +690,8 @@ async def create_yookassa_payment(
                     "discount_percent": applied_discount_percent,
                     "duration_months": duration_months,
                     "promo_code": applied_promo_code,
+                    "partner_user_id": partner_user_id,
+                    "partner_promo_discount_percent": partner_promo_discount_percent,
                     "yookassa_payment_id": payment_id,
                     "status": payment_status,
                 }

@@ -12,6 +12,7 @@ from app.router_users import router as users_router
 from app.router_agents import router as agents_router
 from app.router_documents import router as documents_router
 from app.router_payments import router as payments_router
+from app.router_referrals import router as referrals_router
 from app.router_admin import router as admin_router
 from app.router_sales import management_router as sales_management_router
 from app.router_sales import router as sales_portal_router
@@ -246,6 +247,7 @@ app.include_router(users_router.router)
 app.include_router(agents_router.router)
 app.include_router(documents_router.router)
 app.include_router(payments_router.router)
+app.include_router(referrals_router.router)
 app.include_router(admin_router.router)
 app.include_router(sales_portal_router, prefix="/api/sales")
 app.include_router(sales_management_router, prefix="/api/sales/management")

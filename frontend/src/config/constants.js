@@ -29,6 +29,11 @@ export const API_ROUTES = {
   AUTH_LOGOUT: '/api/users/logout',
   AUTH_REFRESH: '/api/users/refresh',
 
+  // Partner referrals
+  REFERRALS_PARTNER_DASHBOARD: '/api/referrals/partner/dashboard',
+  REFERRALS_PARTNER_PROMO_CODES: '/api/referrals/partner/promo-codes',
+  REFERRALS_PARTNER_PROMO_CODE: (promoCodeId) => `/api/referrals/partner/promo-codes/${promoCodeId}`,
+
   // Users
   USERS_ME: '/api/users/me',
   USERS_PROFILE: '/api/users/profile',
@@ -190,6 +195,7 @@ export const NAVIGATION_ROUTES = {
   DOCUMENTATION: '/documentation',
   EDIT_AGENT: (id) => `/agents/${id}/edit`,
   PRICING: '/pricing',
+  PARTNER: '/partner',
   MANAGEMENT_PORTAL: '/management-portal',
   PUBLIC_OFFER: '/public-offer',
   USER_AGREEMENT: '/user-agreement',

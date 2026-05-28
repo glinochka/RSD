@@ -40,6 +40,7 @@ from ..qdrant.search_service import delete_agent_vectors
 from ..router_agents.dao import AgentDAO
 from ..router_documents.dao import DocumentDAO
 from ..router_payments.dao import PaymentTransactionDAO, PromoCodeDAO, TurnkeyAgentRequestDAO
+from ..router_referrals.dao import PartnerPromoCodeDAO
 from ..router_payments.router import _calculate_new_end_date
 from ..router_users.dao import UserDAO, UserErrorReportDAO
 from ..router_users.router import _build_unique_username, _validate_email_or_422
@@ -915,9 +916,15 @@ async def admin_create_promo_code(
 
     async with async_session_maker() as session:
         promo_code_dao = PromoCodeDAO(session)
+        partner_promo_dao = PartnerPromoCodeDAO(session)
         async with session.begin():
             existing = await promo_code_dao.find_by_code_case_insensitive(code)
             if existing:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Promo code already exists",
+                )
+            if await partner_promo_dao.find_by_code_case_insensitive(code):
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="Promo code already exists",

@@ -70,6 +70,13 @@ class User(Base):
 
     registered: Mapped[date] = mapped_column(default=datetime.now(timezone.utc))
 
+    referral_code: Mapped[str | None] = mapped_column(String(16), unique=True, index=True, nullable=True)
+    referred_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     agents: Mapped[list['Agent']] = relationship(back_populates='user', cascade="all, delete-orphan")
     external_identities: Mapped[list["UserExternalIdentity"]] = relationship(
         back_populates="user",
@@ -1024,6 +1031,17 @@ class WebsitePaymentTransaction(Base):
     discount_percent: Mapped[int] = mapped_column(nullable=False, default=0, server_default="0")
     duration_months: Mapped[int] = mapped_column(nullable=False, default=1, server_default="1")
     promo_code: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    partner_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    partner_promo_discount_percent: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
     yookassa_payment_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     is_processed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
@@ -1048,6 +1066,55 @@ class PromoCode(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     code: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     discount_percent: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+
+
+class PartnerPromoCode(Base):
+    __tablename__ = "partner_promo_codes"
+    __table_args__ = {"extend_existing": True}
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    partner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    code: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    discount_percent: Mapped[int] = mapped_column(Integer, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+
+
+class ReferralCommission(Base):
+    __tablename__ = "referral_commissions"
+    __table_args__ = (
+        UniqueConstraint(
+            "website_payment_transaction_id",
+            name="uq_referral_commissions_website_payment_tx",
+        ),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    partner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    buyer_user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    website_payment_transaction_id: Mapped[int] = mapped_column(
+        ForeignKey("website_payment_transactions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    gross_amount_kopecks: Mapped[int] = mapped_column(Integer, nullable=False)
+    commission_percent: Mapped[int] = mapped_column(Integer, nullable=False)
+    commission_amount_kopecks: Mapped[int] = mapped_column(Integer, nullable=False)
+    promo_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
 
 

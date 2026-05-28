@@ -13,6 +13,9 @@ import { NAVIGATION_ROUTES } from '../config/constants';
 import { normalizeDetail } from '../utils/errorUtils';
 import '../styles/navbar.css';
 
+const PROFILE_DRAWER_CLOSE_MS = 380;
+const ERROR_REPORT_CLOSE_MS = 300;
+
 function ProfilePersonIcon({ className }) {
   return (
     <svg
@@ -38,6 +41,7 @@ const Navbar = () => {
   const navigate = useNavigate();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isProfileClosing, setIsProfileClosing] = useState(false);
   const [isTelegramLinked, setIsTelegramLinked] = useState(!!user?.telegram_id);
   const [isTelegramFormOpen, setIsTelegramFormOpen] = useState(false);
   const [telegramUsernameInput, setTelegramUsernameInput] = useState('');
@@ -47,6 +51,7 @@ const Navbar = () => {
   const [isStartingTelegramLink, setIsStartingTelegramLink] = useState(false);
   const [isCheckingTelegramLink, setIsCheckingTelegramLink] = useState(false);
   const [isErrorReportOpen, setIsErrorReportOpen] = useState(false);
+  const [isErrorReportClosing, setIsErrorReportClosing] = useState(false);
   const [errorReportText, setErrorReportText] = useState('');
   const [isSendingErrorReport, setIsSendingErrorReport] = useState(false);
   const profilePanelId = useId();
@@ -56,7 +61,7 @@ const Navbar = () => {
 
   const handleLogout = async () => {
     try {
-      setIsProfileOpen(false);
+      closeProfile({ immediate: true });
       await logout();
       navigate(NAVIGATION_ROUTES.HOME);
     } catch (error) {
@@ -65,18 +70,57 @@ const Navbar = () => {
   };
 
   const toggleMenu = () => {
-    setIsMenuOpen(!isMenuOpen);
+    if (!isMenuOpen) {
+      closeProfile({ immediate: true });
+    }
+    setIsMenuOpen((open) => !open);
   };
 
-  const closeProfile = () => {
-    setIsErrorReportOpen(false);
-    setErrorReportText('');
-    setIsProfileOpen(false);
+  const closeMobileNav = () => {
+    setIsMenuOpen(false);
+  };
+
+  const closeErrorReport = ({ immediate = false } = {}) => {
+    if (!isErrorReportOpen) return;
+    if (immediate) {
+      setIsErrorReportClosing(false);
+      setIsErrorReportOpen(false);
+      setErrorReportText('');
+      return;
+    }
+    if (isErrorReportClosing) return;
+    setIsErrorReportClosing(true);
+    window.setTimeout(() => {
+      setIsErrorReportClosing(false);
+      setIsErrorReportOpen(false);
+      setErrorReportText('');
+    }, ERROR_REPORT_CLOSE_MS);
+  };
+
+  const closeProfile = ({ immediate = false } = {}) => {
+    if (!isProfileOpen && !isProfileClosing) return;
+    closeErrorReport({ immediate: true });
+    if (immediate) {
+      setIsProfileClosing(false);
+      setIsProfileOpen(false);
+      return;
+    }
+    if (isProfileClosing) return;
+    setIsProfileClosing(true);
+    window.setTimeout(() => {
+      setIsProfileClosing(false);
+      setIsProfileOpen(false);
+    }, PROFILE_DRAWER_CLOSE_MS);
   };
 
   const toggleProfile = () => {
+    if (isProfileOpen) {
+      closeProfile();
+      return;
+    }
     setIsMenuOpen(false);
-    setIsProfileOpen((open) => !open);
+    setIsProfileClosing(false);
+    setIsProfileOpen(true);
   };
 
   useEffect(() => {
@@ -85,8 +129,7 @@ const Navbar = () => {
     const onKeyDown = (e) => {
       if (e.key !== 'Escape') return;
       if (isErrorReportOpen) {
-        setIsErrorReportOpen(false);
-        setErrorReportText('');
+        closeErrorReport();
         return;
       }
       closeProfile();
@@ -100,7 +143,7 @@ const Navbar = () => {
       document.removeEventListener('keydown', onKeyDown);
       document.body.style.overflow = prevOverflow;
     };
-  }, [isProfileOpen, isErrorReportOpen]);
+  }, [isProfileOpen, isErrorReportOpen, isErrorReportClosing]);
 
   useEffect(() => {
     if (!isProfileOpen) return;
@@ -230,8 +273,7 @@ const Navbar = () => {
     try {
       setIsSendingErrorReport(true);
       await errorReportService.submit(text);
-      setIsErrorReportOpen(false);
-      setErrorReportText('');
+      closeErrorReport({ immediate: true });
       showSuccess('Спасибо, мы получили ваше сообщение', 4000);
     } catch (error) {
       const msg =
@@ -261,7 +303,12 @@ const Navbar = () => {
           RSD
         </Link>
 
-        <nav className={`nav ${isMenuOpen ? 'nav-open' : ''}`}>
+        <nav
+          className={`nav ${isMenuOpen ? 'nav-open' : ''}`}
+          onClick={(e) => {
+            if (e.target.closest('a')) closeMobileNav();
+          }}
+        >
           <Link to={NAVIGATION_ROUTES.AGENTS}>Мои агенты</Link>
           <Link to={NAVIGATION_ROUTES.CREATE_AGENT}>Создать агента</Link>
           <Link to={NAVIGATION_ROUTES.DOCUMENTATION}>Документация</Link>
@@ -303,15 +350,15 @@ const Navbar = () => {
       {isAuthenticated && isProfileOpen && (
         <>
           <div
-            className="profile-drawer-backdrop"
-            onClick={closeProfile}
+            className={`profile-drawer-backdrop${isProfileClosing ? ' profile-drawer-backdrop--closing' : ''}`}
+            onClick={() => closeProfile()}
             role="presentation"
             aria-hidden="true"
           />
           <aside
             ref={profilePanelRef}
             id={profilePanelId}
-            className="profile-drawer"
+            className={`profile-drawer${isProfileClosing ? ' profile-drawer--closing' : ''}`}
             role="dialog"
             aria-modal="true"
             aria-labelledby="profile-drawer-title"
@@ -427,6 +474,13 @@ const Navbar = () => {
             </div>
 
             <div className="profile-drawer-footer">
+              <Link
+                to={NAVIGATION_ROUTES.PARTNER}
+                className="btn btn-outline profile-drawer-btn profile-drawer-btn--link"
+                onClick={closeProfile}
+              >
+                Партнёрам
+              </Link>
               <button
                 type="button"
                 className="btn btn-outline profile-drawer-btn"
@@ -447,15 +501,12 @@ const Navbar = () => {
 
       {isAuthenticated && isErrorReportOpen && (
         <div
-          className="profile-error-report-overlay"
+          className={`profile-error-report-overlay${isErrorReportClosing ? ' profile-error-report-overlay--closing' : ''}`}
           role="presentation"
-          onClick={() => {
-            setIsErrorReportOpen(false);
-            setErrorReportText('');
-          }}
+          onClick={() => closeErrorReport()}
         >
           <div
-            className="profile-error-report-dialog"
+            className={`profile-error-report-dialog${isErrorReportClosing ? ' profile-error-report-dialog--closing' : ''}`}
             role="dialog"
             aria-modal="true"
             aria-labelledby="profile-error-report-title"
@@ -491,10 +542,7 @@ const Navbar = () => {
                 type="button"
                 className="btn btn-outline profile-drawer-btn"
                 disabled={isSendingErrorReport}
-                onClick={() => {
-                  setIsErrorReportOpen(false);
-                  setErrorReportText('');
-                }}
+                onClick={() => closeErrorReport()}
               >
                 Отмена
               </button>
