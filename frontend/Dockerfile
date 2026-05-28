@@ -42,9 +42,9 @@ RUN npm run build
 # Stage 2: Serve with Nginx (production)
 FROM nginx:alpine
 
-# Remove default config and copy our SPA config
+# Production image: static SPA only (TLS/routing in deploy/nginx on edge proxy).
 RUN rm /etc/nginx/conf.d/default.conf
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY nginx.static.conf /etc/nginx/conf.d/default.conf
 
 COPY --from=builder /app/dist /usr/share/nginx/html
 

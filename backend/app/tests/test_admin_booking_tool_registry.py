@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 
 import pytest
+from yookassa.domain.exceptions import ApiError
 
 from app.services.admin_booking.tool_registry import AdminBookingToolRegistry
 
@@ -179,3 +180,98 @@ async def test_check_availability_past_date_returns_hint_not_busy(monkeypatch):
     assert result["result"]["date_status"] == "past"
     assert result["result"]["available_slots"] == []
     assert "прошёл" in result["result"]["hint"].lower()
+
+
+@pytest.mark.asyncio
+async def test_create_appointment_rejects_staff_id_as_service_id(monkeypatch):
+    future_day = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
+
+    class _FakeService:
+        async def list_services(self, **kwargs):
+            return [
+                {"id": 5, "title": "Рукав", "staff_id": 23, "duration_minutes": 30, "price_minor": 5000000},
+            ]
+
+        async def list_staff(self, **kwargs):
+            return [{"id": 23, "full_name": "Анна"}]
+
+    monkeypatch.setattr(
+        "app.services.admin_booking.tool_registry.get_admin_booking_service",
+        lambda: _FakeService(),
+    )
+
+    registry = AdminBookingToolRegistry(
+        agent_id=17,
+        user_external_id="u-5",
+        source_channel="telegram",
+        user_message="запиши",
+        paid_booking_enabled=True,
+        yookassa_api_key="123456:live_test_secret_key",
+        allowed_tools=["create_appointment"],
+    )
+
+    with pytest.raises(RuntimeError, match="service_id совпадает с staff_id"):
+        await registry.execute_tool(
+            "create_appointment",
+            f'{{"starts_at":"{future_day}T13:00:00","ends_at":"{future_day}T13:30:00",'
+            f'"staff_id":23,"service_id":23,"client_name":"Пётр"}}',
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_appointment_yookassa_invalid_credentials_message(monkeypatch):
+    future_day = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
+
+    class _FakeService:
+        async def list_services(self, **kwargs):
+            return [
+                {"id": 5, "title": "Рукав", "staff_id": 23, "duration_minutes": 30, "price_minor": 5000000},
+            ]
+
+        async def list_staff(self, **kwargs):
+            return [{"id": 23, "full_name": "Анна"}]
+
+    class _FakePayment:
+        @staticmethod
+        def create(*args, **kwargs):
+            raise ApiError(
+                {
+                    "type": "error",
+                    "code": "invalid_credentials",
+                    "description": "Incorrect password format",
+                }
+            )
+
+    monkeypatch.setattr(
+        "app.services.admin_booking.tool_registry.get_admin_booking_service",
+        lambda: _FakeService(),
+    )
+    monkeypatch.setattr("app.services.admin_booking.tool_registry.Payment", _FakePayment)
+    class _FakePaySvc:
+        async def find_by_idempotency_key(self, *args, **kwargs):
+            return None
+
+        async def save_pending_payment(self, *args, **kwargs):
+            return None
+
+    monkeypatch.setattr(
+        "app.services.admin_booking.tool_registry.get_admin_booking_payment_service",
+        lambda: _FakePaySvc(),
+    )
+
+    registry = AdminBookingToolRegistry(
+        agent_id=17,
+        user_external_id="u-5",
+        source_channel="telegram",
+        user_message="запиши",
+        paid_booking_enabled=True,
+        yookassa_api_key="123456:live_test_secret_key",
+        allowed_tools=["create_appointment"],
+    )
+
+    with pytest.raises(RuntimeError, match="Ошибка авторизации ЮKassa"):
+        await registry.execute_tool(
+            "create_appointment",
+            f'{{"starts_at":"{future_day}T13:00:00","ends_at":"{future_day}T13:30:00",'
+            f'"staff_id":23,"service_id":5,"client_name":"Пётр"}}',
+        )

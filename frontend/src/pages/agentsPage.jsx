@@ -49,6 +49,28 @@ const getTemplateConfig = (agent) => {
   const cfg = agent?.template_config;
   return cfg && typeof cfg === 'object' ? cfg : {};
 };
+
+/** Validate YooKassa fields before composing shop_id:secret_key for the API. */
+const validateYookassaCredentials = (shopId, secretKey) => {
+  const trimmedShopId = String(shopId || '').trim();
+  const trimmedSecret = String(secretKey || '').trim();
+  if (!trimmedShopId || !trimmedSecret) {
+    return 'Укажите Shop ID и Secret key ЮKassa';
+  }
+  if (!/^\d+$/.test(trimmedShopId)) {
+    return 'Shop ID ЮKassa — только цифры (идентификатор магазина из личного кабинета)';
+  }
+  if (!trimmedSecret.startsWith('live_') && !trimmedSecret.startsWith('test_')) {
+    return 'Secret key должен начинаться с live_ или test_ (секретный ключ из раздела «Ключи API»)';
+  }
+  if (trimmedSecret.includes(':')) {
+    return 'В поле Secret key укажите только секретный ключ, без Shop ID и без двоеточия';
+  }
+  if (trimmedShopId.includes(':')) {
+    return 'В поле Shop ID укажите только номер магазина, без Secret key';
+  }
+  return null;
+};
 const AGENT_AVAILABILITY_WEEKDAY_LABELS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 const COMMON_AGENT_TIMEZONES = [
   'Europe/Moscow',
@@ -961,8 +983,12 @@ const AgentsPageContent = () => {
     const updatePayload = { template_config: nextConfig };
     if (adminPaidBookingEnabled) {
       if (hasTypedYookassaCredentials) {
-        if (!yookassaShopId || !yookassaSecretKey) {
-          showError('Укажите Shop ID и Secret key ЮKassa');
+        const yookassaValidationError = validateYookassaCredentials(
+          yookassaShopId,
+          yookassaSecretKey,
+        );
+        if (yookassaValidationError) {
+          showError(yookassaValidationError);
           return;
         }
         updatePayload.yookassa_api_key = `${yookassaShopId}:${yookassaSecretKey}`;
@@ -1475,7 +1501,15 @@ const AgentsPageContent = () => {
       return;
     }
     resetChannelModalFields();
-    setChannelModalTab(selectedAgent?.template_type === 'sales_manager' ? 'userbot' : 'bot');
+    const salesChannels = (selectedAgent?.channels || []).filter((ch) =>
+      ['telegram_userbot', 'whatsapp_userbot'].includes(ch.provider)
+    );
+    const preferredSalesTab = salesChannels.some((ch) => ch.provider === 'whatsapp_userbot')
+      ? 'whatsapp_userbot'
+      : 'userbot';
+    setChannelModalTab(
+      selectedAgent?.template_type === 'sales_manager' ? preferredSalesTab : 'bot'
+    );
     setIsChannelsModalOpen(true);
     setIsLoadingChannels(true);
     try {
@@ -1551,12 +1585,6 @@ const AgentsPageContent = () => {
     }
   }, [selectedAgent]);
 
-  useEffect(() => {
-    if (!isChannelsModalOpen || !isSalesManagerTemplate) return;
-    if (channelModalTab !== 'userbot') {
-      setChannelModalTab('userbot');
-    }
-  }, [channelModalTab, isChannelsModalOpen, isSalesManagerTemplate]);
 
   const agentAvailabilityTimezoneOptions = useMemo(() => {
     const browser = getBrowserTimezoneSafe();
@@ -2877,9 +2905,9 @@ const AgentsPageContent = () => {
                   </button>
                   <button
                     type="button"
-                    className={`connection-type-card ${channelModalTab === 'whatsapp_userbot' ? 'active' : ''} ${isSalesManagerTemplate ? 'connection-type-card--disabled' : ''}`}
+                    className={`connection-type-card ${channelModalTab === 'whatsapp_userbot' ? 'active' : ''}`}
                     onClick={() => setChannelModalTab('whatsapp_userbot')}
-                    disabled={isSavingChannel || isSalesManagerTemplate}
+                    disabled={isSavingChannel}
                   >
                     WhatsApp userbot
                   </button>
@@ -2911,7 +2939,7 @@ const AgentsPageContent = () => {
                 </div>
                 {isSalesManagerTemplate ? (
                   <p className="help-text">
-                    Для шаблона "Менеджер продаж" доступно только подключение Telegram userbot.
+                    Для шаблона «ИИ МОП» доступны Telegram userbot и/или WhatsApp userbot. Сканирование групп — только в Telegram.
                   </p>
                 ) : null}
 

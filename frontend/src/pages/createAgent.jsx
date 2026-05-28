@@ -1733,12 +1733,17 @@ const CreateAgentContent = () => {
   useEffect(() => {
     if (!isSalesManagerTemplate) return;
     setUseBotChannel(false);
-    setUseUserbotChannel(true);
     setUseMaxBotChannel(false);
     setUseMaxUserbotChannel(false);
-    setUseWhatsAppUserbotChannel(false);
     setUseWhatsAppBusinessApiChannel(false);
   }, [isSalesManagerTemplate]);
+
+  useEffect(() => {
+    if (!isSalesManagerTemplate) return;
+    if (!useUserbotChannel && !useWhatsAppUserbotChannel) {
+      setUseUserbotChannel(true);
+    }
+  }, [isSalesManagerTemplate, useUserbotChannel, useWhatsAppUserbotChannel]);
 
   return (
     <MainLayout>
@@ -1863,9 +1868,9 @@ const CreateAgentContent = () => {
                     </button>
                     <button
                       type="button"
-                      className={`connection-type-card ${useWhatsAppUserbotChannel ? 'active' : ''} ${isSalesManagerTemplate ? 'connection-type-card--disabled' : ''}`}
+                      className={`connection-type-card ${useWhatsAppUserbotChannel ? 'active' : ''}`}
                       onClick={toggleWhatsAppUserbotChannel}
-                      disabled={form.isSubmitting || isSalesManagerTemplate}
+                      disabled={form.isSubmitting}
                     >
                       WhatsApp юзербот
                     </button>
@@ -1886,7 +1891,7 @@ const CreateAgentContent = () => {
                   </div>
                   {isSalesManagerTemplate ? (
                     <p className="help-text">
-                      Для шаблона "Менеджер продаж" активно только подключение Telegram юзербот.
+                      Для шаблона «ИИ МОП» доступны Telegram юзербот и/или WhatsApp юзербот (личные чаты и рассылка по базе).
                     </p>
                   ) : null}
 

@@ -9,6 +9,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError, model_validator
 from yookassa import Configuration, Payment
+from yookassa.domain.exceptions import ApiError
 
 from ...config import settings
 from .payment_service import get_admin_booking_payment_service
@@ -61,6 +62,71 @@ def _filter_slots_by_min_duration(
         if (end - start).total_seconds() + 0.001 >= min_sec:
             out.append(slot)
     return out
+
+
+def _find_service_row(
+    services: list[dict[str, Any]],
+    service_id: Any,
+) -> dict[str, Any] | None:
+    try:
+        target_id = int(service_id)
+    except (TypeError, ValueError):
+        return None
+    for item in services:
+        try:
+            if int(item.get("id")) == target_id:
+                return item
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _format_service_catalog_hint(
+    services: list[dict[str, Any]],
+    *,
+    staff_id: int | None = None,
+) -> str:
+    filtered = services
+    if staff_id is not None:
+        filtered = [
+            item
+            for item in services
+            if item.get("staff_id") is None or int(item.get("staff_id") or 0) == int(staff_id)
+        ]
+    lines: list[str] = []
+    for item in filtered[:12]:
+        try:
+            sid = int(item.get("id"))
+        except (TypeError, ValueError):
+            continue
+        title = str(item.get("title") or "услуга").strip()
+        lines.append(f"id={sid} «{title}»")
+    if not lines:
+        return "Вызови list_services и используй поле id из ответа."
+    return "Доступные услуги: " + "; ".join(lines) + "."
+
+
+def _raise_unknown_service_id(
+    *,
+    service_id: Any,
+    services: list[dict[str, Any]],
+    staff_id: int | None,
+) -> None:
+    if staff_id is not None:
+        try:
+            if int(service_id) == int(staff_id):
+                raise RuntimeError(
+                    "service_id совпадает с staff_id — это разные поля. "
+                    "Вызови list_services и передай id услуги (поле id), а не id мастера из list_staff."
+                )
+        except (TypeError, ValueError):
+            pass
+    hint = _format_service_catalog_hint(services, staff_id=staff_id)
+    raise RuntimeError(
+        "Услуга не найдена по переданному service_id. "
+        "Вызови list_services заново и используй поле id из актуального ответа. "
+        + hint
+    )
 
 
 async def _enrich_services_with_staff_names(
@@ -288,6 +354,8 @@ def _build_args_summary(tool_name: str, data: dict) -> str:
         parts = [f"{_fmt_dt(data.get('starts_at'))}→{_fmt_dt(data.get('ends_at'))}"]
         if data.get("staff_id"):
             parts.append(f"staff={data['staff_id']}")
+        if data.get("service_id"):
+            parts.append(f"svc={data['service_id']}")
         if data.get("client_name"):
             parts.append(f"client={data['client_name']}")
         return " ".join(parts)
@@ -332,7 +400,12 @@ _TOOL_DESCRIPTIONS = {
         "Returns schedule-backed free intervals (not 'invented' windows). "
         "If the requested day is already in the past, returns date_status=past with a hint — do not tell the client the schedule is fully booked."
     ),
-    "create_appointment": "Create a booking appointment immediately without asking the user for confirmation.",
+    "create_appointment": (
+        "Create a booking appointment immediately without asking the user for confirmation. "
+        "service_id is required when paid booking is enabled; take it only from the latest list_services "
+        "(integer id field — never staff_id, price, duration, or list position). "
+        "Set ends_at = starts_at + service duration_minutes from list_services."
+    ),
     "confirm_paid_appointment": (
         "Confirm paid booking by payment_id. Use it after the client says they completed payment."
     ),
@@ -429,7 +502,25 @@ class AdminBookingToolRegistry:
         secret_key = secret_key.strip()
         if not shop_id or not secret_key:
             raise RuntimeError("ЮKassa API ключ должен быть в формате shop_id:secret_key")
+        if not secret_key.startswith(("live_", "test_")):
+            raise RuntimeError(
+                "Некорректный Secret key ЮKassa: в настройках агента укажите shop_id:secret_key, "
+                "где secret_key — секретный ключ из личного кабинета (начинается с live_ или test_)."
+            )
         return shop_id, secret_key
+
+    @staticmethod
+    def _raise_yookassa_error(exc: Exception) -> None:
+        code = ""
+        if isinstance(exc, ApiError):
+            code = str(getattr(exc, "code", "") or "")
+        message = str(exc)
+        if code == "invalid_credentials" or "invalid_credentials" in message:
+            raise RuntimeError(
+                "Ошибка авторизации ЮKassa: в настройках агента укажите ключ в формате "
+                "shop_id:secret_key (Secret key из раздела «Интеграция → Ключи API» в личном кабинете ЮKassa)."
+            ) from exc
+        raise exc
 
     async def _lookup_appointment_id(
         self,
@@ -617,20 +708,50 @@ class AdminBookingToolRegistry:
             _assert_booking_not_in_past(
                 _parse_iso_datetime(str(data.get("starts_at") or "")),
             )
+            raw_service_id = data.get("service_id")
+            raw_staff_id = data.get("staff_id")
+            services_for_booking: list[dict[str, Any]] | None = None
+            if raw_service_id is not None:
+                services_for_booking = await service.list_services(
+                    agent_id=self._agent_id,
+                    active_only=False,
+                )
+                await _enrich_services_with_staff_names(service, self._agent_id, services_for_booking)
+                service_row = _find_service_row(services_for_booking, raw_service_id)
+                if service_row is None:
+                    _raise_unknown_service_id(
+                        service_id=raw_service_id,
+                        services=services_for_booking,
+                        staff_id=raw_staff_id,
+                    )
+                bound_staff = service_row.get("staff_id")
+                if bound_staff is not None and raw_staff_id is not None:
+                    try:
+                        if int(bound_staff) != int(raw_staff_id):
+                            title = str(service_row.get("title") or "услуга")
+                            raise RuntimeError(
+                                f"Услуга «{title}» привязана к другому специалисту (staff_id={bound_staff}). "
+                                "Используй staff_id из list_services для этой услуги."
+                            )
+                    except (TypeError, ValueError):
+                        pass
             if self._paid_booking_enabled:
-                service_id = data.get("service_id")
+                service_id = raw_service_id
                 if service_id is None:
                     raise RuntimeError("Для платной брони нужно выбрать услугу с service_id")
-                services = await service.list_services(agent_id=self._agent_id, active_only=False)
-                service_row = next(
-                    (
-                        item for item in services
-                        if str(item.get("id")) == str(service_id)
-                    ),
-                    None,
-                )
+                if services_for_booking is None:
+                    services_for_booking = await service.list_services(
+                        agent_id=self._agent_id,
+                        active_only=False,
+                    )
+                    await _enrich_services_with_staff_names(service, self._agent_id, services_for_booking)
+                service_row = _find_service_row(services_for_booking, service_id)
                 if not service_row:
-                    raise RuntimeError("Услуга не найдена, обновите список услуг и выберите заново")
+                    _raise_unknown_service_id(
+                        service_id=service_id,
+                        services=services_for_booking,
+                        staff_id=raw_staff_id,
+                    )
                 amount_minor = int(service_row.get("price_minor") or 0)
                 if amount_minor <= 0:
                     raise RuntimeError("Для выбранной услуги не задана стоимость. Платная бронь недоступна")
@@ -664,9 +785,15 @@ class AdminBookingToolRegistry:
                 payment_svc = get_admin_booking_payment_service()
                 existing_row = await payment_svc.find_by_idempotency_key(idempotency_key)
                 if existing_row is not None and existing_row.yookassa_payment_id:
-                    payment = Payment.find_one(existing_row.yookassa_payment_id)
+                    try:
+                        payment = Payment.find_one(existing_row.yookassa_payment_id)
+                    except Exception as exc:
+                        self._raise_yookassa_error(exc)
                 else:
-                    payment = Payment.create(payment_payload, idempotency_key)
+                    try:
+                        payment = Payment.create(payment_payload, idempotency_key)
+                    except Exception as exc:
+                        self._raise_yookassa_error(exc)
                 confirmation = getattr(payment, "confirmation", None)
                 confirmation_url = None
                 if isinstance(confirmation, dict):
