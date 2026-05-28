@@ -20,9 +20,9 @@ logger = logging.getLogger(__name__)
 
 # Same application ids as opentele API.TelegramDesktop / API.TelegramAndroid (public client keys).
 _TELEGRAM_DESKTOP_API_ID = 2040
-_TELEGRAM_DESKTOP_API_HASH = "b18441a1ff607e10a989891a5462e7da"
+_TELEGRAM_DESKTOP_API_HASH = "b18441a1ff607e10a989891a5462e627"
 _TELEGRAM_ANDROID_API_ID = 6
-_TELEGRAM_ANDROID_API_HASH = "eb06d4abfb49dc3eeb1aeb98ae0f581a"
+_TELEGRAM_ANDROID_API_HASH = "eb06d4abfb49dc3eeb1aeb98ae0f581e"
 
 QR_WAIT_TIMEOUT_SECONDS = 180
 _QR_TTL_SECONDS = 600

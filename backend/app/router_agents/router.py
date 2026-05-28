@@ -64,6 +64,7 @@ from ..services.template_runtime import EscalationType, get_template_runtime
 from ..services.telegram_userbot_auth import (
     TelegramUserbotAuthError,
     complete_qr_2fa,
+    create_telegram_client,
     get_qr_status,
     import_session_file,
     resolve_api_credentials,
@@ -4177,11 +4178,6 @@ async def request_userbot_code(
     if current_user.is_banned:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
 
-    api_id, api_hash = _resolve_userbot_api_pair(
-        payload.api_id,
-        payload.api_hash.strip() if payload.api_hash else None,
-        prefer_desktop=False,
-    )
     phone_number = payload.phone_number.strip()
 
     try:
@@ -4192,7 +4188,11 @@ async def request_userbot_code(
             detail=f"Telethon не установлен на сервере: {exc}",
         )
 
-    client = _create_telethon_client(api_id=api_id, api_hash=api_hash)
+    client, api_id, api_hash = create_telegram_client(
+        api_id=payload.api_id,
+        api_hash=payload.api_hash.strip() if payload.api_hash else None,
+        prefer_desktop=True,
+    )
     phone_code_hash = None
     pending_session_string = ""
     try:
@@ -4213,9 +4213,16 @@ async def request_userbot_code(
     except HTTPException:
         raise
     except Exception as exc:
+        detail = f"Не удалось отправить код подтверждения Telegram: {exc}"
+        if "api_id/api_hash combination is invalid" in str(exc).lower():
+            detail = (
+                "Telegram отклонил API-ключи. Попробуйте вход по QR-код "
+                "или задайте TELEGRAM_USERBOT_API_ID и TELEGRAM_USERBOT_API_HASH в .env "
+                "(пара с my.telegram.org)."
+            )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Не удалось отправить код подтверждения Telegram: {exc}",
+            detail=detail,
         )
     finally:
         await client.disconnect()
@@ -4265,10 +4272,11 @@ async def verify_userbot_code(
             detail=f"Telethon не установлен на сервере: {exc}",
         )
 
-    client = _create_telethon_client(
+    client, api_id, api_hash = create_telegram_client(
         api_id=api_id,
         api_hash=api_hash,
         session_string=pending_session or "",
+        prefer_desktop=True,
     )
     try:
         await client.connect()

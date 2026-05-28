@@ -35,7 +35,7 @@ def test_resolve_api_credentials_custom():
 def test_resolve_api_credentials_builtin_fallback():
     api_id, api_hash = resolve_api_credentials(None, None, prefer_desktop=True)
     assert api_id == 2040
-    assert len(api_hash) >= 16
+    assert api_hash == "b18441a1ff607e10a989891a5462e627"
 
 
 @pytest.mark.skipif(not opentele_available(), reason="opentele not installed")
