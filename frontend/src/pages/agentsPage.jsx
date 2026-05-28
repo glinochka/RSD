@@ -17,6 +17,7 @@ import { NAVIGATION_ROUTES } from '../config/constants';
 import { useAuth } from '../context/useAuth';
 import { validateFile } from '../utils/validation';
 import DemoBadge, { TitleWithDemoBadge } from '../components/DemoBadge';
+import UserbotSessionFileUpload from '../components/UserbotSessionFileUpload';
 import {
   TELEPHONY_PROVIDER,
   copyTextToClipboard,
@@ -3061,17 +3062,10 @@ const AgentsPageContent = () => {
                     ) : null}
                     {userbotAuthMode === 'file' ? (
                       <>
-                        <p className="help-text">.zip (tdata), .session или .txt (StringSession)</p>
-                        <input
-                          type="file"
-                          accept=".zip,.session,.txt"
-                          className="input-main"
-                          disabled={isSavingChannel || isImportingUserbotSession}
-                          onChange={(event) => {
-                            const file = event.target.files?.[0];
-                            if (file) handleUserbotImportSession(file);
-                            event.target.value = '';
-                          }}
+                        <UserbotSessionFileUpload
+                          disabled={isSavingChannel}
+                          isImporting={isImportingUserbotSession}
+                          onFileSelect={handleUserbotImportSession}
                         />
                       </>
                     ) : null}

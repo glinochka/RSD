@@ -450,14 +450,6 @@
   justify-content: center;
 }
 
-.profile-drawer-btn--link {
-  display: inline-flex;
-  align-items: center;
-  text-align: center;
-  text-decoration: none;
-  box-sizing: border-box;
-}
-
 .profile-error-report-overlay {
   position: fixed;
   inset: 0;

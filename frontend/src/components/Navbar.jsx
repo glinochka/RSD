@@ -474,13 +474,16 @@ const Navbar = () => {
             </div>
 
             <div className="profile-drawer-footer">
-              <Link
-                to={NAVIGATION_ROUTES.PARTNER}
-                className="btn btn-outline profile-drawer-btn profile-drawer-btn--link"
-                onClick={closeProfile}
+              <button
+                type="button"
+                className="btn btn-outline profile-drawer-btn"
+                onClick={() => {
+                  closeProfile();
+                  navigate(NAVIGATION_ROUTES.PARTNER);
+                }}
               >
                 Партнёрам
-              </Link>
+              </button>
               <button
                 type="button"
                 className="btn btn-outline profile-drawer-btn"

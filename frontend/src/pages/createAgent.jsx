@@ -16,6 +16,7 @@ import { NAVIGATION_ROUTES } from '../config/constants';
 import pricingService from '../services/pricingService';
 import { formatMaintenancePrice } from '../utils/agentTemplatePricing';
 import DemoBadge, { TitleWithDemoBadge } from '../components/DemoBadge';
+import UserbotSessionFileUpload from '../components/UserbotSessionFileUpload';
 import '../styles/createAgent.css';
 
 const fileIdentity = (file) => `${file.name}::${file.size}::${file.lastModified}`;
@@ -2698,20 +2699,11 @@ const CreateAgentContent = () => {
                     <p className="help-text">
                       Загрузите .zip с папкой tdata, файл .session (Telethon) или .txt со StringSession.
                     </p>
-                    <input
-                      type="file"
-                      accept=".zip,.session,.txt"
-                      className="input-main"
-                      disabled={form.isSubmitting || isImportingUserbotSession}
-                      onChange={(event) => {
-                        const file = event.target.files?.[0];
-                        if (file) handleUserbotImportSession(file);
-                        event.target.value = '';
-                      }}
+                    <UserbotSessionFileUpload
+                      disabled={form.isSubmitting}
+                      isImporting={isImportingUserbotSession}
+                      onFileSelect={handleUserbotImportSession}
                     />
-                    {isImportingUserbotSession ? (
-                      <p className="help-text">Импорт сессии...</p>
-                    ) : null}
                     {form.errors.session_string && (
                       <span className="error-message">{form.errors.session_string}</span>
                     )}

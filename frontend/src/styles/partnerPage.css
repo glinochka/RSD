@@ -24,11 +24,6 @@
   margin-top: 1.25rem;
 }
 
-.partner-card--highlight {
-  border-color: #c7d2fe;
-  background: linear-gradient(180deg, #f8faff 0%, #fff 100%);
-}
-
 .partner-card h2 {
   margin: 0 0 0.75rem;
   font-size: 1.125rem;

@@ -136,7 +136,7 @@ const PartnerPage = () => {
           <Loading />
         ) : (
           <>
-            <section className="partner-card partner-card--highlight">
+            <section className="partner-card">
               <h2>Ваша реферальная ссылка</h2>
               <p className="partner-card__hint">
                 Параметр <code>ref</code> сохраняется у гостя на 30 дней. При регистрации клиент закрепляется за вами.
