@@ -31,7 +31,7 @@ class AgentTemplatePricing:
         data = asdict(self)
         data["card_title"] = card_title or self.title
         data["llm_tokens_note"] = (
-            "Токены LLM включены в стоимость на этапе запуска — расходы на модели покрывает платформа."
+            "Токены LLM включены в подписку — расходы на модели покрывает платформа."
         )
         return data
 
@@ -53,26 +53,26 @@ AGENT_TEMPLATE_PRICING: dict[str, AgentTemplatePricing] = {
     "crm_admin": AgentTemplatePricing(
         code="crm_admin",
         title="ИИ оператор",
-        setup_rub_min=25_000,
+        setup_rub_min=0,
         monthly_maintenance_rub_min=3_000,
         is_free=False,
         selectable=True,
         status="available",
         description=(
-            "Запись, расписание и интеграции с CRM/ERP. Минимальная цена — базовый запуск; "
+            "Запись, расписание и интеграции с CRM/ERP. Ежемесячная подписка на обслуживание; "
             "сложные интеграции и ручная настройка оцениваются отдельно."
         ),
     ),
     "sales_manager": AgentTemplatePricing(
         code="sales_manager",
         title="ИИ МОП",
-        setup_rub_min=5_000,
+        setup_rub_min=0,
         monthly_maintenance_rub_min=3_000,
         is_free=False,
         selectable=True,
         status="available",
         description=(
-            "Исходящие и входящие продажи в мессенджерах. Минимальная цена — стартовая конфигурация; "
+            "Исходящие и входящие продажи в мессенджерах. Ежемесячная подписка; "
             "доработка сценариев и CRM — по согласованию."
         ),
     ),
@@ -112,7 +112,7 @@ AGENT_TEMPLATE_PRICING: dict[str, AgentTemplatePricing] = {
 AGENT_TEMPLATE_PRICING["lead_generation"] = AgentTemplatePricing(
     code="lead_generation",
     title="Генерация лидов (legacy)",
-    setup_rub_min=5_000,
+    setup_rub_min=0,
     monthly_maintenance_rub_min=3_000,
     is_free=False,
     selectable=False,

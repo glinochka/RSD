@@ -48,13 +48,13 @@ def test_qa_is_free():
 
 def test_crm_admin_minimum_prices():
     pricing = get_agent_template_pricing("crm_admin")
-    assert pricing.setup_rub_min == 25_000
+    assert pricing.setup_rub_min == 0
     assert pricing.monthly_maintenance_rub_min == 3_000
 
 
 def test_sales_manager_minimum_prices():
     pricing = get_agent_template_pricing("sales_manager")
-    assert pricing.setup_rub_min == 5_000
+    assert pricing.setup_rub_min == 0
     assert pricing.monthly_maintenance_rub_min == 3_000
 
 
@@ -73,11 +73,11 @@ def test_ai_logist_not_selectable():
         assert_template_selectable("ai_logist")
 
 
-def test_activation_billing_state_unpaid():
+def test_activation_billing_state_no_setup_fee():
     agent = _FakeAgent(template_type="crm_admin")
     billing = build_agent_billing_state(agent)
-    assert billing["can_activate"] is False
-    assert billing["activation_required_rub"] == 25_000
+    assert billing["can_activate"] is True
+    assert billing["activation_required_rub"] == 0
     assert billing["activation_exempt"] is False
 
 

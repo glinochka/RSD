@@ -16,7 +16,6 @@ import { useNotification } from '../context/useNotification';
 import { NAVIGATION_ROUTES } from '../config/constants';
 import { useAuth } from '../context/useAuth';
 import { validateFile } from '../utils/validation';
-import TelephonyVoicePreview from '../components/TelephonyVoicePreview';
 import DemoBadge, { TitleWithDemoBadge } from '../components/DemoBadge';
 import {
   TELEPHONY_PROVIDER,
@@ -270,7 +269,6 @@ const channelLabel = (channel) => {
   return channel.provider || 'Канал';
 };
 const WIDGET_TEMPLATE_TYPES = new Set(['qa', 'crm_admin']);
-const TELEPHONY_VOICE_PREVIEW_TEMPLATES = WIDGET_TEMPLATE_TYPES;
 
 const CustomSelect = ({
   id,
@@ -2154,10 +2152,6 @@ const AgentsPageContent = () => {
   const isWidgetSupportedTemplate = WIDGET_TEMPLATE_TYPES.has(
     String(selectedAgent?.template_type || 'qa').trim().toLowerCase()
   );
-  const isTelephonyVoicePreviewTemplate = TELEPHONY_VOICE_PREVIEW_TEMPLATES.has(
-    String(selectedAgent?.template_type || 'qa').trim().toLowerCase()
-  );
-
   if (isLoading && isAuthenticated) {
     return <Loading message="Загрузка агентов..." />;
   }
@@ -2223,20 +2217,6 @@ const AgentsPageContent = () => {
                      Дашборд агента
                     </button>
                   </div>
-
-                  {isTelephonyVoicePreviewTemplate ? (
-                    <div className="agent-management-block">
-                      <TitleWithDemoBadge as="h4" className="agent-form-channel-title">
-                        Голосовой тест (в браузере)
-                      </TitleWithDemoBadge>
-                      <TelephonyVoicePreview
-                        agentId={selectedAgent.id}
-                        hasTelephonyChannel={hasTelephonyChannel}
-                        showError={showError}
-                        showSuccess={showSuccess}
-                      />
-                    </div>
-                  ) : null}
 
                   <div className="agent-management-block">
                     <label>API ключ для внешних интеграций</label>

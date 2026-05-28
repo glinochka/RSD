@@ -14,7 +14,7 @@ import { TELEPHONY_PROVIDER, copyTextToClipboard } from '../utils/telephony';
 import { validateFile } from '../utils/validation';
 import { NAVIGATION_ROUTES } from '../config/constants';
 import pricingService from '../services/pricingService';
-import { formatMaintenancePrice, formatSetupPrice } from '../utils/agentTemplatePricing';
+import { formatMaintenancePrice } from '../utils/agentTemplatePricing';
 import DemoBadge, { TitleWithDemoBadge } from '../components/DemoBadge';
 import '../styles/createAgent.css';
 
@@ -345,9 +345,9 @@ const SALES_DEFAULT_TEMPLATE_CONFIG = {
 const TEMPLATE_TYPE_HELP = {
   qa: 'Бесплатный пробный шаблон: ответы по базе знаний (RAG) для поддержки и консультаций. Токены LLM включены.',
   crm_admin:
-    'Админ салона или клиники: запись, расписание, CRM/ERP. Запуск — от 25 000 ₽; первый месяц обслуживания бесплатно, далее — от 3 000 ₽/мес.',
+    'Админ салона или клиники: запись, расписание, CRM/ERP. Первый месяц обслуживания бесплатно, далее — от 3 000 ₽/мес.',
   sales_manager:
-    'МОП в мессенджерах: квалификация и диалог по стадиям. Запуск — от 5 000 ₽; первый месяц обслуживания бесплатно, далее — от 3 000 ₽/мес.',
+    'МОП в мессенджерах: квалификация и диалог по стадиям. Первый месяц обслуживания бесплатно, далее — от 3 000 ₽/мес.',
   ai_logist: 'Шаблон находится в разработке.',
   content_factory: 'Контент‑завод в разработке — создание временно недоступно.',
   ai_manager: 'ИИ менеджер в разработке — телефония и входящие звонки скоро на платформе.',
@@ -1780,15 +1780,12 @@ const CreateAgentContent = () => {
               </p>
               {selectedTemplatePricing ? (
                 <div className="template-pricing-summary" role="note" aria-label="Стоимость шаблона">
-                  <p className="template-pricing-summary__row">
-                    <span>Запуск:</span>
-                    <strong>
-                      {formatSetupPrice(selectedTemplatePricing.setup_rub_min, {
-                        isFree: selectedTemplatePricing.is_free,
-                      })}
-                    </strong>
-                  </p>
-                  {formatMaintenancePrice(selectedTemplatePricing.monthly_maintenance_rub_min) ? (
+                  {selectedTemplatePricing.is_free ? (
+                    <p className="template-pricing-summary__row">
+                      <span>Тариф:</span>
+                      <strong>Бесплатно</strong>
+                    </p>
+                  ) : formatMaintenancePrice(selectedTemplatePricing.monthly_maintenance_rub_min) ? (
                     <>
                       <p className="template-pricing-summary__row">
                         <span>Обслуживание:</span>
@@ -1797,12 +1794,13 @@ const CreateAgentContent = () => {
                         </strong>
                       </p>
                       <p className="help-text template-pricing-summary__note">
-                        Первый месяц после создания агента обслуживание бесплатно.
+                        Разовый взнос за запуск не требуется. Первый месяц после создания агента
+                        обслуживание бесплатно.
                       </p>
                     </>
                   ) : null}
                   <p className="help-text template-pricing-summary__note">
-                    При активации оплачивается минимальная стоимость запуска. Токены LLM включены.
+                    Токены LLM включены.
                   </p>
                 </div>
               ) : null}
