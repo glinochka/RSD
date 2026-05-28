@@ -569,6 +569,84 @@ class AdminAppointment(Base):
     staff: Mapped["AdminStaff"] = relationship(back_populates="appointments")
     resource: Mapped["AdminResource"] = relationship(back_populates="appointments")
     service: Mapped["AdminService"] = relationship(back_populates="appointments")
+    booking_payment: Mapped["AdminBookingPayment | None"] = relationship(
+        back_populates="appointment",
+        uselist=False,
+    )
+
+
+class AdminBookingPayment(Base):
+    __tablename__ = "admin_booking_payments"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending','paid','expired','refunded')",
+            name="ck_admin_booking_payments_status",
+        ),
+        Index("ix_admin_booking_payments_agent_status", "agent_id", "status"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    appointment_id: Mapped[int | None] = mapped_column(
+        ForeignKey("admin_appointments.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    client_external_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    yookassa_payment_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    amount_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String(10), nullable=False, default="RUB", server_default="RUB")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", server_default="pending")
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True, index=True)
+    booking_payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    agent: Mapped["Agent"] = relationship()
+    appointment: Mapped["AdminAppointment | None"] = relationship(back_populates="booking_payment")
+    refund_request: Mapped["AdminBookingRefundRequest | None"] = relationship(
+        back_populates="payment",
+        uselist=False,
+    )
+
+
+class AdminBookingRefundRequest(Base):
+    __tablename__ = "admin_booking_refund_requests"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending','approved','rejected','refunded','failed')",
+            name="ck_admin_booking_refund_requests_status",
+        ),
+        Index("ix_admin_booking_refund_requests_agent_status", "agent_id", "status"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    payment_id: Mapped[int] = mapped_column(
+        ForeignKey("admin_booking_payments.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    appointment_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    client_external_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    amount_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String(10), nullable=False, default="RUB", server_default="RUB")
+    cancel_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", server_default="pending")
+    yookassa_refund_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewed_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    agent: Mapped["Agent"] = relationship()
+    payment: Mapped["AdminBookingPayment"] = relationship(back_populates="refund_request")
+    reviewed_by: Mapped["User | None"] = relationship()
 
 
 class AdminWaitlistEntry(Base):

@@ -674,6 +674,12 @@ class AdminTemplateAppointmentConfirmPayload(AgentLookup):
 
 class AdminTemplateAppointmentDeletePayload(AgentLookup):
     appointment_id: int = Field(..., gt=0, description="ID записи")
+    reason: Optional[str] = Field(default=None, max_length=1000, description="Причина отмены")
+
+
+class AdminTemplateRefundRequestActionPayload(AgentLookup):
+    refund_request_id: int = Field(..., gt=0, description="ID заявки на возврат")
+    reason: Optional[str] = Field(default=None, max_length=1000, description="Комментарий при отклонении")
 
 
 class AdminTemplateWaitlistCreatePayload(AgentLookup):

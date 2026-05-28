@@ -54,6 +54,7 @@ from ..services.agent_availability import normalize_agent_availability_for_stora
 from ..prompts.system_prompts import DEFAULT_AGENT_SYSTEM_PROMPT, SALES_TRIGGER_WORDS_INSTRUCTION
 from ..services.ai_authoring import ai_client, generate_welcome_with_ai, improve_prompt_with_ai
 from ..services.admin_booking import get_admin_booking_service
+from ..services.admin_booking.payment_service import get_admin_booking_payment_service
 from ..services.admin_booking.domains import DOMAIN_REGISTRY as _DOMAIN_REGISTRY
 from ..services.voice_transcription import is_voice_stt_configured, transcribe_voice_bytes
 from ..services.http_integration.errors import HttpIntegrationValidationError
@@ -8369,6 +8370,87 @@ async def admin_template_appointments_cancel(
     return JSONResponse(content=row, status_code=status.HTTP_200_OK)
 
 
+@router.get("/admin_template/refund_requests")
+async def admin_template_refund_requests_list(
+    agent_id: int | None = Query(default=None),
+    bot_id: int | None = Query(default=None),
+    status_filter: str | None = Query(default=None, alias="status"),
+    domain_type: str | None = Query(default=None),
+    current_user=Depends(get_current_user_required),
+):
+    if agent_id is None and bot_id is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="agent_id or bot_id is required")
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent, _ = await _find_admin_template_agent(
+                session=session,
+                agent_dao=agent_dao,
+                current_user=current_user,
+                agent_id=agent_id,
+                bot_id=bot_id,
+                domain_type=domain_type,
+            )
+            items = await get_admin_booking_payment_service().list_refund_requests(
+                agent_id=agent.id,
+                status=status_filter,
+            )
+    return JSONResponse(content={"items": items}, status_code=status.HTTP_200_OK)
+
+
+@router.post("/admin_template/refund_requests/approve")
+async def admin_template_refund_requests_approve(
+    payload: AdminTemplateRefundRequestActionPayload,
+    current_user=Depends(get_current_user_required),
+):
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent, _ = await _find_admin_template_agent(
+                session=session,
+                agent_dao=agent_dao,
+                current_user=current_user,
+                payload=payload,
+            )
+            try:
+                item = await get_admin_booking_payment_service().approve_refund_request(
+                    agent_id=agent.id,
+                    refund_request_id=payload.refund_request_id,
+                    reviewed_by_user_id=current_user.id,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+            except RuntimeError as exc:
+                raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    return JSONResponse(content=item, status_code=status.HTTP_200_OK)
+
+
+@router.post("/admin_template/refund_requests/reject")
+async def admin_template_refund_requests_reject(
+    payload: AdminTemplateRefundRequestActionPayload,
+    current_user=Depends(get_current_user_required),
+):
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent, _ = await _find_admin_template_agent(
+                session=session,
+                agent_dao=agent_dao,
+                current_user=current_user,
+                payload=payload,
+            )
+            try:
+                item = await get_admin_booking_payment_service().reject_refund_request(
+                    agent_id=agent.id,
+                    refund_request_id=payload.refund_request_id,
+                    reviewed_by_user_id=current_user.id,
+                    reason=payload.reason,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return JSONResponse(content=item, status_code=status.HTTP_200_OK)
+
+
 @router.patch("/admin_template/appointments/confirm")
 async def admin_template_appointments_confirm(
     payload: AdminTemplateAppointmentConfirmPayload,
@@ -8407,6 +8489,7 @@ async def admin_template_appointments_delete(
             await get_admin_booking_service().delete_appointment(
                 agent_id=agent.id,
                 appointment_id=payload.appointment_id,
+                reason=payload.reason,
             )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

@@ -277,12 +277,12 @@ class CrmBookingProvider(BookingProvider):
         appointment_id: int,
         reason: str | None = None,
     ) -> dict[str, Any]:
-        appointment = await self._local.cancel_appointment(
+        del reason
+        appointment = await self._local.delete_appointment(
             agent_id=agent_id,
             appointment_id=appointment_id,
-            reason=reason,
         )
-        await self._sync_crm_event(event="cancelled", appointment=appointment)
+        await self._sync_crm_event(event="deleted", appointment=appointment)
         return appointment
 
     async def confirm_appointment(

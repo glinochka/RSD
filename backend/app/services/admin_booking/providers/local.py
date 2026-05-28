@@ -831,35 +831,11 @@ class LocalBookingProvider(BookingProvider):
         appointment_id: int,
         reason: str | None = None,
     ) -> dict[str, Any]:
-        async with self._session_factory() as session:
-            async with _maybe_begin(session):
-                row = await session.scalar(
-                    select(AdminAppointment).where(
-                        AdminAppointment.id == appointment_id,
-                        AdminAppointment.agent_id == agent_id,
-                    )
-                )
-                if row is None:
-                    raise ValueError("Appointment not found")
-
-                row.status = "cancelled"
-                normalized_reason = _normalize_string(reason)
-                if normalized_reason:
-                    previous_notes = _normalize_string(row.notes) or ""
-                    suffix = f"cancel_reason: {normalized_reason}"
-                    row.notes = f"{previous_notes}\n{suffix}".strip()
-                await session.flush()
-                await self._try_waitlist_auto_book(
-                    session,
-                    agent_id=agent_id,
-                    freed_starts_at=row.starts_at,
-                    freed_ends_at=row.ends_at,
-                    staff_id=row.staff_id,
-                    resource_id=row.resource_id,
-                    service_id=row.service_id,
-                )
-                await session.refresh(row)
-                return _serialize_appointment(row)
+        del reason
+        return await self.delete_appointment(
+            agent_id=agent_id,
+            appointment_id=appointment_id,
+        )
 
     async def confirm_appointment(
         self,

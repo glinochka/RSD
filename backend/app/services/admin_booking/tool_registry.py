@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, ValidationError, model_validator
 from yookassa import Configuration, Payment
 
 from ...config import settings
+from .payment_service import get_admin_booking_payment_service
 from .service import get_admin_booking_service
 
 _IDEMPOTENCY_TTL_SECONDS = 120
@@ -18,7 +19,6 @@ _IDEMPOTENCY_CACHE: dict[str, tuple[datetime, dict[str, Any]]] = {}
 _MAX_RAW_ARGUMENTS_BYTES = 16_000
 # Only write/mutating operations are idempotency-protected; reads always get fresh data.
 _IDEMPOTENCY_PROTECTED_TOOLS = {"create_appointment", "reschedule_appointment", "cancel_appointment"}
-_PAID_BOOKING_CACHE: dict[str, dict[str, Any]] = {}
 
 
 class AdminBookingNeedsConfirmationError(RuntimeError):
@@ -314,7 +314,9 @@ _TOOL_DESCRIPTIONS = {
         "by the current user. Use lookup_staff_id to narrow the search if needed."
     ),
     "cancel_appointment": (
-        "Cancel an existing appointment. "
+        "Cancel (remove) an existing appointment. The slot is freed immediately. "
+        "For paid bookings a refund request is created for manual approval by the business owner — "
+        "tell the client the refund will be processed after review, not instantly. "
         "If appointment_id is unknown, provide appointment_date (ISO date or datetime) to look up the booking "
         "by the current user. Never ask the user for an appointment ID."
     ),
@@ -622,7 +624,13 @@ class AdminBookingToolRegistry:
                         "source_channel": self._source_channel,
                     },
                 }
-                payment = Payment.create(payment_payload, hashlib.sha256(f"{self._agent_id}:{canonical_args}".encode("utf-8")).hexdigest())
+                idempotency_key = hashlib.sha256(f"{self._agent_id}:{canonical_args}".encode("utf-8")).hexdigest()
+                payment_svc = get_admin_booking_payment_service()
+                existing_row = await payment_svc.find_by_idempotency_key(idempotency_key)
+                if existing_row is not None and existing_row.yookassa_payment_id:
+                    payment = Payment.find_one(existing_row.yookassa_payment_id)
+                else:
+                    payment = Payment.create(payment_payload, idempotency_key)
                 confirmation = getattr(payment, "confirmation", None)
                 confirmation_url = None
                 if isinstance(confirmation, dict):
@@ -632,11 +640,14 @@ class AdminBookingToolRegistry:
                 payment_id = str(getattr(payment, "id", "") or "")
                 if not payment_id or not confirmation_url:
                     raise RuntimeError("Не удалось сформировать ссылку на оплату")
-                _PAID_BOOKING_CACHE[payment_id] = {
-                    "agent_id": self._agent_id,
-                    "user_external_id": self._user_external_id,
-                    "payload": data,
-                }
+                await payment_svc.save_pending_payment(
+                    agent_id=self._agent_id,
+                    client_external_id=self._user_external_id,
+                    idempotency_key=idempotency_key,
+                    yookassa_payment_id=payment_id,
+                    amount_minor=amount_minor,
+                    booking_payload=data,
+                )
                 result = {
                     "requires_payment": True,
                     "payment_id": payment_id,
@@ -666,14 +677,14 @@ class AdminBookingToolRegistry:
             payment_id = str(data.get("payment_id") or "").strip()
             if not payment_id:
                 raise RuntimeError("payment_id обязателен")
-            cached = _PAID_BOOKING_CACHE.get(payment_id)
-            if not cached:
-                raise RuntimeError("Платеж не найден в текущей сессии. Запросите новую ссылку на оплату.")
+            payment_svc = get_admin_booking_payment_service()
             shop_id, secret_key = self._parse_yookassa_credentials()
             Configuration.account_id = shop_id
             Configuration.secret_key = secret_key
-            payment = Payment.find_one(payment_id)
-            payment_status = str(getattr(payment, "status", "") or "").strip().lower()
+            payment_status = await payment_svc.verify_yookassa_payment_succeeded(
+                agent_id=self._agent_id,
+                yookassa_payment_id=payment_id,
+            )
             if payment_status != "succeeded":
                 result = {
                     "status": "awaiting_payment",
@@ -682,25 +693,41 @@ class AdminBookingToolRegistry:
                     "message": "Оплата еще не подтверждена. Проверьте статус позже.",
                 }
             else:
-                cached_payload = cached.get("payload") or {}
-                result = await service.create_appointment(
+                db_payment, cached_payload = await payment_svc.get_pending_payment_context(
                     agent_id=self._agent_id,
+                    yookassa_payment_id=payment_id,
                     client_external_id=self._user_external_id,
-                    starts_at=_parse_iso_datetime(str(cached_payload.get("starts_at") or "")),
-                    ends_at=_parse_iso_datetime(str(cached_payload.get("ends_at") or "")),
-                    staff_id=cached_payload.get("staff_id"),
-                    resource_id=cached_payload.get("resource_id"),
-                    service_id=cached_payload.get("service_id"),
-                    client_name=cached_payload.get("client_name"),
-                    source_channel=cached_payload.get("source_channel") or self._source_channel,
-                    notes=cached_payload.get("notes"),
                 )
-                result = {
-                    "status": "paid_and_booked",
-                    "payment_id": payment_id,
-                    "appointment": result,
-                    "message": "Оплата подтверждена, бронь успешно оформлена.",
-                }
+                if db_payment.appointment_id:
+                    result = {
+                        "status": "paid_and_booked",
+                        "payment_id": payment_id,
+                        "appointment_id": db_payment.appointment_id,
+                        "message": "Оплата уже подтверждена, бронь оформлена ранее.",
+                    }
+                else:
+                    appointment = await service.create_appointment(
+                        agent_id=self._agent_id,
+                        client_external_id=self._user_external_id,
+                        starts_at=_parse_iso_datetime(str(cached_payload.get("starts_at") or "")),
+                        ends_at=_parse_iso_datetime(str(cached_payload.get("ends_at") or "")),
+                        staff_id=cached_payload.get("staff_id"),
+                        resource_id=cached_payload.get("resource_id"),
+                        service_id=cached_payload.get("service_id"),
+                        client_name=cached_payload.get("client_name"),
+                        source_channel=cached_payload.get("source_channel") or self._source_channel,
+                        notes=cached_payload.get("notes"),
+                    )
+                    await payment_svc.mark_payment_paid(
+                        payment_id=db_payment.id,
+                        appointment_id=int(appointment["id"]),
+                    )
+                    result = {
+                        "status": "paid_and_booked",
+                        "payment_id": payment_id,
+                        "appointment": appointment,
+                        "message": "Оплата подтверждена, бронь успешно оформлена.",
+                    }
         elif tool_name == "reschedule_appointment":
             appt_id = data.get("appointment_id")
             if not appt_id:
@@ -725,11 +752,26 @@ class AdminBookingToolRegistry:
                     appointment_date=str(data.get("appointment_date") or ""),
                     staff_id=data.get("staff_id"),
                 )
-            result = await service.cancel_appointment(
+            cancel_result = await service.cancel_appointment(
                 agent_id=self._agent_id,
                 appointment_id=int(appt_id),
                 reason=data.get("reason"),
             )
+            refund_request = cancel_result.get("refund_request")
+            if refund_request:
+                result = {
+                    "deleted": True,
+                    "refund_request": refund_request,
+                    "message": (
+                        "Запись отменена и удалена. Заявка на возврат создана — "
+                        "владелец бизнеса подтвердит полный возврат вручную."
+                    ),
+                }
+            else:
+                result = {
+                    "deleted": True,
+                    "message": "Запись отменена и удалена.",
+                }
         elif tool_name == "list_appointments":
             result = await service.list_appointments(
                 agent_id=self._agent_id,

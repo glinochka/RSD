@@ -72,7 +72,11 @@ async def test_admin_booking_tool_registry_supports_list_and_cancel_tools(monkey
             return [{"id": 77, "status": "booked", "client_external_id": kwargs.get("client_external_id")}]
 
         async def cancel_appointment(self, **kwargs):
-            return {"id": kwargs["appointment_id"], "status": "cancelled"}
+            return {
+                "deleted": True,
+                "appointment": {"id": kwargs["appointment_id"]},
+                "refund_request": None,
+            }
 
     monkeypatch.setattr(
         "app.services.admin_booking.tool_registry.get_admin_booking_service",
@@ -99,7 +103,7 @@ async def test_admin_booking_tool_registry_supports_list_and_cancel_tools(monkey
     assert list_result["ok"] is True
     assert list_result["result"][0]["id"] == 77
     assert cancel_result["ok"] is True
-    assert cancel_result["result"]["status"] == "cancelled"
+    assert cancel_result["result"]["deleted"] is True
 
 
 @pytest.mark.asyncio

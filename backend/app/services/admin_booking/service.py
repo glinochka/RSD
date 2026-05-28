@@ -442,12 +442,30 @@ class AdminBookingService:
         appointment_id: int,
         reason: str | None = None,
     ) -> dict[str, Any]:
-        resolution = await self.resolve_provider(agent_id=agent_id)
-        return await resolution.provider.cancel_appointment(
+        from .payment_service import get_admin_booking_payment_service
+
+        payment_svc = get_admin_booking_payment_service()
+        paid_payment = await payment_svc.get_paid_payment_for_appointment(
             agent_id=agent_id,
             appointment_id=appointment_id,
-            reason=reason,
         )
+        resolution = await self.resolve_provider(agent_id=agent_id)
+        deleted = await resolution.provider.delete_appointment(
+            agent_id=agent_id,
+            appointment_id=appointment_id,
+        )
+        refund_request = None
+        if paid_payment is not None:
+            refund_request = await payment_svc.create_refund_request_for_payment(
+                payment=paid_payment,
+                appointment_id=appointment_id,
+                cancel_reason=reason,
+            )
+        return {
+            "deleted": True,
+            "appointment": deleted,
+            "refund_request": refund_request,
+        }
 
     async def confirm_appointment(
         self,
@@ -488,11 +506,12 @@ class AdminBookingService:
         *,
         agent_id: int,
         appointment_id: int,
+        reason: str | None = None,
     ) -> dict[str, Any]:
-        resolution = await self.resolve_provider(agent_id=agent_id)
-        return await resolution.provider.delete_appointment(
+        return await self.cancel_appointment(
             agent_id=agent_id,
             appointment_id=appointment_id,
+            reason=reason,
         )
 
     async def _build_crm_provider(self, *, connection: AgentCrmConnection | None):

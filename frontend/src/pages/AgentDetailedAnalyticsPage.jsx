@@ -651,6 +651,7 @@ const AgentDetailedAnalyticsPageContent = () => {
   const [serviceItems, setServiceItems] = useState([]);
   const [scheduleItems, setScheduleItems] = useState([]);
   const [appointmentItems, setAppointmentItems] = useState([]);
+  const [refundRequestItems, setRefundRequestItems] = useState([]);
   const [calendarScheduleItems, setCalendarScheduleItems] = useState([]);
   const [calendarAppointmentItems, setCalendarAppointmentItems] = useState([]);
   const [occupancyData, setOccupancyData] = useState(null);
@@ -768,6 +769,7 @@ const AgentDetailedAnalyticsPageContent = () => {
         quickReplies,
         calendarSchedule,
         calendarAppointments,
+        refundRequests,
       ] = await Promise.all([
         agentService.listAdminTemplateStaff(paramsBase),
         agentService.listAdminTemplateResources(paramsBase),
@@ -803,6 +805,7 @@ const AgentDetailedAnalyticsPageContent = () => {
           starts_at: _toLocalIso(monthRange.start),
           ends_at: _toLocalIso(monthRange.end),
         }),
+        agentService.listAdminTemplateRefundRequests(paramsBase),
       ]);
       setStaffItems(Array.isArray(staff?.items) ? staff.items : []);
       setResourceItems(Array.isArray(resources?.items) ? resources.items : []);
@@ -816,6 +819,7 @@ const AgentDetailedAnalyticsPageContent = () => {
       setWaitlistItems(Array.isArray(waitlist?.items) ? waitlist.items : []);
       setClientProfileItems(Array.isArray(profiles?.items) ? profiles.items : []);
       setQuickReplyItems(Array.isArray(quickReplies?.items) ? quickReplies.items : []);
+      setRefundRequestItems(Array.isArray(refundRequests?.items) ? refundRequests.items : []);
     } catch (error) {
       showError(error?.message || 'Не удалось загрузить операционный дашборд');
     } finally {
@@ -1476,30 +1480,51 @@ const AgentDetailedAnalyticsPageContent = () => {
   };
 
   const handleCancelAppointmentQuick = async (appointment) => {
-    if (!window.confirm('Отменить запись?')) return;
+    if (!window.confirm('Отменить запись? Слот освободится сразу.')) return;
     try {
-      await agentService.cancelAdminTemplateAppointment({
+      const result = await agentService.cancelAdminTemplateAppointment({
         bot_id: botId,
         appointment_id: appointment.id,
         reason: 'cancelled_from_dashboard',
       });
       await loadOperationsDashboard();
+      if (result?.refund_request) {
+        showSuccess('Запись удалена. Заявка на возврат отправлена на ручное подтверждение.');
+      } else {
+        showSuccess('Запись удалена');
+      }
     } catch (error) {
       showError(error?.message || 'Не удалось отменить запись');
     }
   };
 
-  const handleDeleteAppointmentQuick = async (appointment) => {
-    if (!window.confirm('Удалить запись?')) return;
+  const handleApproveRefundRequest = async (item) => {
+    if (!window.confirm(`Подтвердить полный возврат ${item.amount_rub} ₽ клиенту ${item.client_external_id}?`)) return;
     try {
-      await agentService.deleteAdminTemplateAppointment({
+      await agentService.approveAdminTemplateRefundRequest({
         bot_id: botId,
-        appointment_id: appointment.id,
+        refund_request_id: item.id,
       });
       await loadOperationsDashboard();
-      showSuccess('Запись удалена');
+      showSuccess('Возврат отправлен в ЮKassa');
     } catch (error) {
-      showError(error?.message || 'Не удалось удалить запись');
+      showError(error?.message || 'Не удалось подтвердить возврат');
+    }
+  };
+
+  const handleRejectRefundRequest = async (item) => {
+    const reason = window.prompt('Причина отклонения (необязательно):', '');
+    if (reason === null) return;
+    try {
+      await agentService.rejectAdminTemplateRefundRequest({
+        bot_id: botId,
+        refund_request_id: item.id,
+        reason: reason.trim() || undefined,
+      });
+      await loadOperationsDashboard();
+      showSuccess('Заявка на возврат отклонена');
+    } catch (error) {
+      showError(error?.message || 'Не удалось отклонить возврат');
     }
   };
 
@@ -2821,10 +2846,7 @@ const AgentDetailedAnalyticsPageContent = () => {
                   </div>
                   <div className="analytics-ops-list">
                     {appointmentItems.map((item) => (
-                      <div
-                        key={item.id}
-                        className={`analytics-ops-row ${item.status === 'cancelled' ? 'analytics-ops-row--cancelled' : ''}`}
-                      >
+                      <div key={item.id} className="analytics-ops-row">
                         <div className="analytics-ops-row-main">
                           <strong>{item.client_name || item.client_external_id}</strong>
                           <span>
@@ -2841,13 +2863,41 @@ const AgentDetailedAnalyticsPageContent = () => {
                           <button type="button" className="btn btn-outline" onClick={() => handleCancelAppointmentQuick(item)}>
                             Отменить
                           </button>
-                          <button type="button" className="btn btn-outline" onClick={() => handleDeleteAppointmentQuick(item)}>
-                            Удалить
-                          </button>
                         </div>
                       </div>
                     ))}
                   </div>
+                </article>
+
+                <article className="analytics-ops-card">
+                  <h4>Заявки на возврат (ручное подтверждение)</h4>
+                  {refundRequestItems.length === 0 ? (
+                    <p className="analytics-note">Нет заявок на возврат.</p>
+                  ) : (
+                    <div className="analytics-ops-list">
+                      {refundRequestItems.map((item) => (
+                        <div key={item.id} className="analytics-ops-row">
+                          <div className="analytics-ops-row-main">
+                            <strong>{item.client_external_id}</strong>
+                            <span>
+                              {item.amount_rub} ₽ · запись #{item.appointment_id || '—'} · {item.status}
+                              {item.cancel_reason ? ` · ${item.cancel_reason}` : ''}
+                            </span>
+                          </div>
+                          {item.status === 'pending' ? (
+                            <div className="analytics-ops-row-actions">
+                              <button type="button" className="btn btn-black" onClick={() => handleApproveRefundRequest(item)}>
+                                Вернуть полностью
+                              </button>
+                              <button type="button" className="btn btn-outline" onClick={() => handleRejectRefundRequest(item)}>
+                                Отклонить
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </article>
               </div>
 

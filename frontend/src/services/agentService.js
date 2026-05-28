@@ -504,6 +504,24 @@ export const agentService = {
     const response = await apiClient.delete(API_ROUTES.AGENTS_ADMIN_TEMPLATE_APPOINTMENTS, { data });
     return response.data;
   },
+  listAdminTemplateRefundRequests: async ({ agent_id = null, bot_id = null, status_filter = null } = {}) => {
+    const response = await apiClient.get(API_ROUTES.AGENTS_ADMIN_TEMPLATE_REFUND_REQUESTS, {
+      params: {
+        agent_id: agent_id ?? undefined,
+        bot_id: bot_id ?? undefined,
+        status: status_filter ?? undefined,
+      },
+    });
+    return response.data;
+  },
+  approveAdminTemplateRefundRequest: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_ADMIN_TEMPLATE_REFUND_REQUESTS_APPROVE, data);
+    return response.data;
+  },
+  rejectAdminTemplateRefundRequest: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_ADMIN_TEMPLATE_REFUND_REQUESTS_REJECT, data);
+    return response.data;
+  },
   getAdminTemplateOccupancy: async ({ agent_id = null, bot_id = null, starts_at, ends_at, staff_id = null, service_id = null, resource_id = null, granularity_minutes = 30 } = {}) => {
     const response = await apiClient.get(API_ROUTES.AGENTS_ADMIN_TEMPLATE_OCCUPANCY, {
       params: {
