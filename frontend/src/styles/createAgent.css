@@ -727,6 +727,20 @@
   color: var(--color-text);
 }
 
+.userbot-qr-wrap {
+  margin: 12px 0;
+  display: flex;
+  justify-content: center;
+}
+
+.userbot-qr-image {
+  max-width: 220px;
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
+  border: 1px solid var(--border-color, #e0e0e0);
+}
+
 .wa-qr-image {
   width: 240px;
   max-width: 100%;

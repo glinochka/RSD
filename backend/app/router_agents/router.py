@@ -61,6 +61,14 @@ from ..services.http_integration.errors import HttpIntegrationValidationError
 from ..services.http_integration.tool_registry import validate_integration_config_dict
 from ..services.qa_handoff_service import EscalationType as QAEscalationType, get_qa_handoff_service
 from ..services.template_runtime import EscalationType, get_template_runtime
+from ..services.telegram_userbot_auth import (
+    TelegramUserbotAuthError,
+    complete_qr_2fa,
+    get_qr_status,
+    import_session_file,
+    resolve_api_credentials,
+    start_qr_login,
+)
 from ..services.youtube_client import get_youtube_client
 from ..utils.api_keys import generate_agent_external_api_key, hash_agent_external_api_key
 from ..utils.JWT import get_user_from_access_token
@@ -2680,6 +2688,64 @@ def _decode_userbot_auth_token(auth_token: str) -> dict:
     return data
 
 
+def _create_userbot_qr_auth_token(
+    *,
+    api_id: int,
+    api_hash: str,
+    auth_id: str,
+    encrypted_pending_session: str,
+) -> str:
+    now = datetime.utcnow()
+    payload = {
+        "scope": "userbot_qr_auth",
+        "api_id": api_id,
+        "encrypted_api_hash": encrypt_token(api_hash),
+        "auth_id": auth_id,
+        "encrypted_pending_session": encrypted_pending_session,
+        "exp": now + timedelta(minutes=USERBOT_AUTH_TOKEN_TTL_MINUTES),
+        "iat": now,
+    }
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+
+def _decode_userbot_qr_auth_token(auth_token: str) -> dict:
+    try:
+        data = jwt.decode(auth_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+    except InvalidTokenError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Невалидный или просроченный токен QR-входа userbot",
+        )
+    if data.get("scope") != "userbot_qr_auth":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Некорректный scope токена QR-входа userbot",
+        )
+    auth_id = str(data.get("auth_id") or "").strip()
+    if not auth_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Токен QR-входа userbot не содержит auth_id",
+        )
+    return data
+
+
+def _userbot_auth_http_error(exc: TelegramUserbotAuthError) -> HTTPException:
+    return HTTPException(status_code=exc.status_code, detail=str(exc))
+
+
+def _resolve_userbot_api_pair(
+    api_id: int | None,
+    api_hash: str | None,
+    *,
+    prefer_desktop: bool = True,
+) -> tuple[int, str]:
+    try:
+        return resolve_api_credentials(api_id, api_hash, prefer_desktop=prefer_desktop)
+    except TelegramUserbotAuthError as exc:
+        raise _userbot_auth_http_error(exc) from exc
+
+
 def _create_whatsapp_userbot_auth_token(
     *,
     user_id: int,
@@ -4007,8 +4073,7 @@ async def create_agent_by_userbot_session(
     if current_user.is_banned:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
 
-    api_id = new_agent.api_id
-    api_hash = new_agent.api_hash.strip()
+    api_id, api_hash = _resolve_userbot_api_pair(new_agent.api_id, new_agent.api_hash)
     session_string = new_agent.session_string.strip()
     me = await _validate_userbot_session(api_id=api_id, api_hash=api_hash, session_string=session_string)
 
@@ -4112,8 +4177,11 @@ async def request_userbot_code(
     if current_user.is_banned:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
 
-    api_id = payload.api_id
-    api_hash = payload.api_hash.strip()
+    api_id, api_hash = _resolve_userbot_api_pair(
+        payload.api_id,
+        payload.api_hash.strip() if payload.api_hash else None,
+        prefer_desktop=False,
+    )
     phone_number = payload.phone_number.strip()
 
     try:
@@ -4255,6 +4323,168 @@ async def verify_userbot_code(
         },
         status_code=status.HTTP_200_OK,
     )
+
+
+@router.post("/userbot/qr/start")
+async def userbot_qr_start(
+    payload: UserbotQrStart, current_user=Depends(get_current_user_required)
+):
+    if current_user.is_banned:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
+
+    api_id, api_hash = _resolve_userbot_api_pair(
+        payload.api_id,
+        payload.api_hash.strip() if payload.api_hash else None,
+        prefer_desktop=True,
+    )
+    try:
+        result = await start_qr_login(api_id=api_id, api_hash=api_hash)
+    except TelegramUserbotAuthError as exc:
+        raise _userbot_auth_http_error(exc) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Не удалось начать QR-вход Telegram: {exc}",
+        ) from exc
+
+    auth_token = _create_userbot_qr_auth_token(
+        api_id=api_id,
+        api_hash=api_hash,
+        auth_id=str(result["auth_id"]),
+        encrypted_pending_session=encrypt_token(str(result.get("pending_session_string") or "")),
+    )
+    content: dict[str, Any] = {
+        "auth_token": auth_token,
+        "qr_url": result.get("qr_url") or "",
+        "qr_data_url": result.get("qr_data_url") or "",
+        "already_authorized": bool(result.get("already_authorized")),
+    }
+    if result.get("already_authorized"):
+        content["session_string"] = str(result.get("pending_session_string") or "")
+        content["api_id"] = result.get("api_id", api_id)
+        content["api_hash"] = result.get("api_hash", api_hash)
+    return JSONResponse(content=content, status_code=status.HTTP_200_OK)
+
+
+@router.post("/userbot/qr/status")
+async def userbot_qr_status(
+    payload: UserbotQrStatus, current_user=Depends(get_current_user_required)
+):
+    if current_user.is_banned:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
+
+    token_data = _decode_userbot_qr_auth_token(payload.auth_token.strip())
+    api_id = int(token_data["api_id"])
+    api_hash = decrypt_token(token_data["encrypted_api_hash"])
+    auth_id = str(token_data["auth_id"])
+    qr_state = await get_qr_status(auth_id=auth_id)
+
+    response: dict[str, Any] = {
+        "status": qr_state.get("status") or "pending",
+        "error": qr_state.get("error"),
+        "api_id": api_id,
+        "api_hash": api_hash,
+    }
+    if qr_state.get("status") == "success":
+        session_string = str(qr_state.get("session_string") or "").strip()
+        if not session_string:
+            pending_enc = token_data.get("encrypted_pending_session")
+            if pending_enc:
+                session_string = decrypt_token(pending_enc)
+        if qr_state.get("api_id"):
+            response["api_id"] = int(qr_state["api_id"])
+        if qr_state.get("api_hash"):
+            response["api_hash"] = str(qr_state["api_hash"])
+        me = qr_state.get("me") if isinstance(qr_state.get("me"), dict) else {}
+        response.update(
+            {
+                "session_string": session_string,
+                "telegram_id": me.get("telegram_id"),
+                "username": me.get("username"),
+                "first_name": me.get("first_name"),
+                "last_name": me.get("last_name"),
+                "phone_number": me.get("phone_number"),
+            }
+        )
+    elif qr_state.get("status") == "need_2fa":
+        pending_enc = token_data.get("encrypted_pending_session")
+        if qr_state.get("session_string"):
+            response["pending_session_string"] = qr_state.get("session_string")
+        elif pending_enc:
+            response["pending_session_string"] = decrypt_token(pending_enc)
+    return JSONResponse(content=response, status_code=status.HTTP_200_OK)
+
+
+@router.post("/userbot/qr/verify_2fa")
+async def userbot_qr_verify_2fa(
+    payload: UserbotQrVerify2fa, current_user=Depends(get_current_user_required)
+):
+    if current_user.is_banned:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
+
+    token_data = _decode_userbot_qr_auth_token(payload.auth_token.strip())
+    api_id = int(token_data["api_id"])
+    api_hash = decrypt_token(token_data["encrypted_api_hash"])
+    pending_enc = token_data.get("encrypted_pending_session")
+    pending_session = decrypt_token(pending_enc) if pending_enc else ""
+
+    qr_state = await get_qr_status(auth_id=str(token_data["auth_id"]))
+    if qr_state.get("session_string"):
+        pending_session = str(qr_state["session_string"])
+
+    try:
+        result = await complete_qr_2fa(
+            api_id=api_id,
+            api_hash=api_hash,
+            session_string=pending_session,
+            password=payload.password,
+        )
+    except TelegramUserbotAuthError as exc:
+        raise _userbot_auth_http_error(exc) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Не удалось подтвердить 2FA Telegram: {exc}",
+        ) from exc
+
+    return JSONResponse(content=result, status_code=status.HTTP_200_OK)
+
+
+@router.post("/userbot/import_session")
+async def userbot_import_session(
+    session_file: UploadFile = File(...),
+    api_id: int | None = Form(default=None),
+    api_hash: str | None = Form(default=None),
+    current_user=Depends(get_current_user_required),
+):
+    if current_user.is_banned:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
+
+    raw = await session_file.read()
+    if len(raw) > 25 * 1024 * 1024:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Файл сессии слишком большой (макс. 25 МБ)",
+        )
+    try:
+        custom_hash = api_hash.strip() if api_hash else None
+        custom_id = int(api_id) if api_id is not None and int(api_id) > 0 else None
+        result = await import_session_file(
+            api_id=custom_id,
+            api_hash=custom_hash,
+            filename=session_file.filename or "upload",
+            content=raw,
+        )
+    except TelegramUserbotAuthError as exc:
+        raise _userbot_auth_http_error(exc) from exc
+    except Exception as exc:
+        logger.warning("userbot import_session failed: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Не удалось импортировать сессию: {exc}",
+        ) from exc
+
+    return JSONResponse(content=result, status_code=status.HTTP_200_OK)
 
 
 @router.post("/whatsapp_userbot/request_code")
@@ -4697,8 +4927,10 @@ async def add_agent_userbot_channel(
     payload: AddTelegramUserbotChannel,
     current_user=Depends(get_current_user_required),
 ):
-    api_id = payload.api_id
-    api_hash = payload.api_hash.strip()
+    api_id, api_hash = _resolve_userbot_api_pair(
+        payload.api_id,
+        payload.api_hash.strip() if payload.api_hash else None,
+    )
     session_string = payload.session_string.strip()
     me = await _validate_userbot_session(api_id=api_id, api_hash=api_hash, session_string=session_string)
 

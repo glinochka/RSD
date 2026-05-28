@@ -58,6 +58,43 @@ export const agentService = {
     return response.data;
   },
 
+  startUserbotQr: async (data = {}) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_USERBOT_QR_START, data, {
+      timeout: USERBOT_TELETHON_TIMEOUT_MS,
+    });
+    return response.data;
+  },
+
+  userbotQrStatus: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_USERBOT_QR_STATUS, data, {
+      timeout: USERBOT_TELETHON_TIMEOUT_MS,
+    });
+    return response.data;
+  },
+
+  verifyUserbotQr2fa: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_USERBOT_QR_VERIFY_2FA, data, {
+      timeout: USERBOT_TELETHON_TIMEOUT_MS,
+    });
+    return response.data;
+  },
+
+  importUserbotSession: async ({ session_file, api_id, api_hash }) => {
+    const formData = new FormData();
+    formData.append('session_file', session_file);
+    if (api_id != null && api_id !== '') {
+      formData.append('api_id', String(api_id));
+    }
+    if (api_hash) {
+      formData.append('api_hash', api_hash);
+    }
+    const response = await apiClient.post(API_ROUTES.AGENTS_USERBOT_IMPORT_SESSION, formData, {
+      timeout: USERBOT_TELETHON_TIMEOUT_MS,
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  },
+
   requestWhatsAppUserbotCode: async (data) => {
     const response = await apiClient.post(API_ROUTES.AGENTS_WHATSAPP_USERBOT_REQUEST_CODE, data);
     return response.data;

@@ -106,8 +106,17 @@ class NewAgent_byToken(BaseModel):
 
 
 class NewAgent_byUserbotSession(BaseModel):
-    api_id: int = Field(..., gt=0, description="Telegram API ID from my.telegram.org")
-    api_hash: str = Field(..., min_length=16, max_length=128, description="Telegram API hash")
+    api_id: Optional[int] = Field(
+        default=None,
+        gt=0,
+        description="Опционально: API ID (иначе из ответа QR/импорта или серверный opentele)",
+    )
+    api_hash: Optional[str] = Field(
+        default=None,
+        min_length=16,
+        max_length=128,
+        description="Опционально: API hash",
+    )
     session_string: str = Field(..., min_length=10, max_length=65535, description="Telethon StringSession")
     system_prompt: str = Field(..., min_length=1, description="System prompt for agent")
     template_type: str = Field(
@@ -148,8 +157,13 @@ class AddTelegramBotChannel(AgentLookup):
 
 
 class AddTelegramUserbotChannel(AgentLookup):
-    api_id: int = Field(..., gt=0, description="Telegram API ID from my.telegram.org")
-    api_hash: str = Field(..., min_length=16, max_length=128, description="Telegram API hash")
+    api_id: Optional[int] = Field(default=None, gt=0, description="Опционально: API ID")
+    api_hash: Optional[str] = Field(
+        default=None,
+        min_length=16,
+        max_length=128,
+        description="Опционально: API hash",
+    )
     session_string: str = Field(..., min_length=10, max_length=65535, description="Telethon StringSession")
     make_primary: bool = Field(default=False, description="Сделать канал основным")
 
@@ -292,8 +306,13 @@ class YouTubeHealthPayload(AgentLookup):
 
 
 class UserbotRequestCode(BaseModel):
-    api_id: int = Field(..., gt=0, description="Telegram API ID from my.telegram.org")
-    api_hash: str = Field(..., min_length=16, max_length=128, description="Telegram API hash")
+    api_id: Optional[int] = Field(default=None, gt=0, description="Опционально: API ID")
+    api_hash: Optional[str] = Field(
+        default=None,
+        min_length=16,
+        max_length=128,
+        description="Опционально: API hash",
+    )
     phone_number: str = Field(..., min_length=5, max_length=32, description="Telegram phone number")
 
 
@@ -301,6 +320,25 @@ class UserbotVerifyCode(BaseModel):
     auth_token: str = Field(..., min_length=20, max_length=4096, description="Temporary auth token")
     code: str = Field(..., min_length=3, max_length=12, description="Telegram code from message")
     password: Optional[str] = Field(None, min_length=1, max_length=128, description="Telegram 2FA password")
+
+
+class UserbotQrStart(BaseModel):
+    api_id: Optional[int] = Field(default=None, gt=0, description="Опционально: API ID")
+    api_hash: Optional[str] = Field(
+        default=None,
+        min_length=16,
+        max_length=128,
+        description="Опционально: API hash",
+    )
+
+
+class UserbotQrStatus(BaseModel):
+    auth_token: str = Field(..., min_length=20, max_length=4096, description="Temporary QR auth token")
+
+
+class UserbotQrVerify2fa(BaseModel):
+    auth_token: str = Field(..., min_length=20, max_length=4096, description="Temporary QR auth token")
+    password: str = Field(..., min_length=1, max_length=128, description="Telegram 2FA password")
 
 
 class WhatsAppUserbotRequestCode(BaseModel):

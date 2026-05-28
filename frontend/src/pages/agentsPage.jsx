@@ -531,17 +531,26 @@ const AgentsPageContent = () => {
   const [isSavingChannel, setIsSavingChannel] = useState(false);
   const [botTokenDraft, setBotTokenDraft] = useState('');
   const [makePrimaryChannel, setMakePrimaryChannel] = useState(false);
-  const [userbotApiId, setUserbotApiId] = useState('');
-  const [userbotApiHash, setUserbotApiHash] = useState('');
+  const [userbotResolvedApiId, setUserbotResolvedApiId] = useState(null);
+  const [userbotResolvedApiHash, setUserbotResolvedApiHash] = useState('');
   const [userbotPhone, setUserbotPhone] = useState('');
   const [userbotCode, setUserbotCode] = useState('');
   const [userbotPassword, setUserbotPassword] = useState('');
+  const [userbotAuthMode, setUserbotAuthMode] = useState('qr');
   const [userbotAuthToken, setUserbotAuthToken] = useState('');
+  const [userbotQrAuthToken, setUserbotQrAuthToken] = useState('');
+  const [userbotQrDataUrl, setUserbotQrDataUrl] = useState('');
+  const [userbotQrNeeds2fa, setUserbotQrNeeds2fa] = useState(false);
   const [userbotSessionString, setUserbotSessionString] = useState('');
+  const [userbotVerifiedLabel, setUserbotVerifiedLabel] = useState('');
   const [maxBotTokenDraft, setMaxBotTokenDraft] = useState('');
   const [maxUserbotTokenDraft, setMaxUserbotTokenDraft] = useState('');
   const [isSendingUserbotCode, setIsSendingUserbotCode] = useState(false);
   const [isVerifyingUserbotCode, setIsVerifyingUserbotCode] = useState(false);
+  const [isStartingUserbotQr, setIsStartingUserbotQr] = useState(false);
+  const [isVerifyingUserbotQr2fa, setIsVerifyingUserbotQr2fa] = useState(false);
+  const [isImportingUserbotSession, setIsImportingUserbotSession] = useState(false);
+  const userbotLastQrStatusRef = useRef('');
   const [whatsappUserbotPhone, setWhatsappUserbotPhone] = useState('');
   const [whatsappUserbotSessionString, setWhatsappUserbotSessionString] = useState('');
   const [whatsappUserbotClientLabel, setWhatsappUserbotClientLabel] = useState('');
@@ -1293,17 +1302,26 @@ const AgentsPageContent = () => {
   const resetChannelModalFields = () => {
     setBotTokenDraft('');
     setMakePrimaryChannel(false);
-    setUserbotApiId('');
-    setUserbotApiHash('');
+    setUserbotResolvedApiId(null);
+    setUserbotResolvedApiHash('');
     setUserbotPhone('');
     setUserbotCode('');
     setUserbotPassword('');
+    setUserbotAuthMode('qr');
     setUserbotAuthToken('');
+    setUserbotQrAuthToken('');
+    setUserbotQrDataUrl('');
+    setUserbotQrNeeds2fa(false);
     setUserbotSessionString('');
+    setUserbotVerifiedLabel('');
     setMaxBotTokenDraft('');
     setMaxUserbotTokenDraft('');
     setIsSendingUserbotCode(false);
     setIsVerifyingUserbotCode(false);
+    setIsStartingUserbotQr(false);
+    setIsVerifyingUserbotQr2fa(false);
+    setIsImportingUserbotSession(false);
+    userbotLastQrStatusRef.current = '';
     setWhatsappUserbotPhone('');
     setWhatsappUserbotSessionString('');
     setWhatsappUserbotClientLabel('');
@@ -1646,16 +1664,160 @@ const AgentsPageContent = () => {
     }
   };
 
+  const applyUserbotChannelVerified = (response) => {
+    setUserbotSessionString(response?.session_string || '');
+    if (response?.api_id != null) {
+      setUserbotResolvedApiId(Number(response.api_id));
+    }
+    if (response?.api_hash) {
+      setUserbotResolvedApiHash(String(response.api_hash));
+    }
+    const label = response?.username
+      ? `@${response.username}`
+      : [response?.first_name, response?.last_name].filter(Boolean).join(' ')
+        || response?.phone_number
+        || (response?.telegram_id ? `id: ${response.telegram_id}` : 'успешно');
+    setUserbotVerifiedLabel(label);
+  };
+
+  const switchUserbotAuthMode = (mode) => {
+    setUserbotAuthMode(mode);
+    setUserbotAuthToken('');
+    setUserbotQrAuthToken('');
+    setUserbotQrDataUrl('');
+    setUserbotQrNeeds2fa(false);
+    setUserbotResolvedApiId(null);
+    setUserbotResolvedApiHash('');
+    setUserbotSessionString('');
+    setUserbotVerifiedLabel('');
+    setUserbotCode('');
+    setUserbotPassword('');
+    userbotLastQrStatusRef.current = '';
+  };
+
+  const handleUserbotQrStart = async () => {
+    setIsStartingUserbotQr(true);
+    try {
+      const response = await agentService.startUserbotQr({});
+      setUserbotQrAuthToken(response?.auth_token || '');
+      setUserbotQrDataUrl(response?.qr_data_url || '');
+      setUserbotQrNeeds2fa(false);
+      setUserbotSessionString('');
+      setUserbotVerifiedLabel('');
+      userbotLastQrStatusRef.current = '';
+      if (response?.already_authorized && response?.session_string) {
+        applyUserbotChannelVerified(response);
+        showSuccess('Сессия Telegram уже авторизована');
+      } else {
+        showSuccess('Отсканируйте QR в Telegram: Настройки → Устройства → Подключить устройство');
+      }
+    } catch (error) {
+      showError(error?.message || 'Не удалось начать QR-вход');
+    } finally {
+      setIsStartingUserbotQr(false);
+    }
+  };
+
+  const handleUserbotQrVerify2fa = async () => {
+    if (!userbotQrAuthToken) {
+      showError('Сначала начните QR-вход');
+      return;
+    }
+    if (!userbotPassword.trim()) {
+      showError('Введите пароль 2FA');
+      return;
+    }
+    setIsVerifyingUserbotQr2fa(true);
+    try {
+      const response = await agentService.verifyUserbotQr2fa({
+        auth_token: userbotQrAuthToken,
+        password: userbotPassword.trim(),
+      });
+      applyUserbotChannelVerified(response);
+      setUserbotQrNeeds2fa(false);
+      showSuccess('2FA подтверждена');
+    } catch (error) {
+      showError(error?.message || 'Не удалось подтвердить 2FA');
+    } finally {
+      setIsVerifyingUserbotQr2fa(false);
+    }
+  };
+
+  const handleUserbotImportSession = async (file) => {
+    if (!file) return;
+    setIsImportingUserbotSession(true);
+    try {
+      const response = await agentService.importUserbotSession({
+        session_file: file,
+      });
+      applyUserbotChannelVerified(response);
+      showSuccess('Сессия импортирована');
+    } catch (error) {
+      showError(error?.message || 'Не удалось импортировать сессию');
+    } finally {
+      setIsImportingUserbotSession(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!isChannelsModalOpen || channelModalTab !== 'userbot') return undefined;
+    if (userbotAuthMode !== 'qr') return undefined;
+    if (!userbotQrAuthToken) return undefined;
+    if (userbotSessionString.trim()) return undefined;
+
+    let cancelled = false;
+    const pollStatus = async () => {
+      try {
+        const response = await agentService.userbotQrStatus({ auth_token: userbotQrAuthToken });
+        if (cancelled) return;
+        const nextStatus = String(response?.status || '').trim().toLowerCase();
+        const prevStatus = userbotLastQrStatusRef.current;
+        if (nextStatus === 'need_2fa') {
+          setUserbotQrNeeds2fa(true);
+          if (prevStatus !== 'need_2fa') {
+            showSuccess('QR принят. Введите пароль 2FA.');
+          }
+        } else if (nextStatus === 'success' && response?.session_string) {
+          applyUserbotChannelVerified(response);
+          setUserbotQrNeeds2fa(false);
+          if (prevStatus !== 'success') {
+            showSuccess('Telegram userbot авторизован');
+          }
+        } else if (nextStatus === 'expired' || nextStatus === 'error') {
+          if (prevStatus !== nextStatus) {
+            showError(response?.error || 'QR-вход завершился с ошибкой');
+          }
+        }
+        userbotLastQrStatusRef.current = nextStatus;
+      } catch {
+        // ignore polling errors
+      }
+    };
+
+    pollStatus();
+    const intervalId = window.setInterval(pollStatus, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [
+    isChannelsModalOpen,
+    channelModalTab,
+    userbotAuthMode,
+    userbotQrAuthToken,
+    userbotSessionString,
+    showError,
+    showSuccess,
+  ]);
+
   const handleRequestUserbotCode = async () => {
-    if (!userbotApiId.trim() || !userbotApiHash.trim() || !userbotPhone.trim()) {
-      showError('Заполните API ID, API hash и номер телефона');
+    if (!userbotPhone.trim()) {
+      showError('Введите номер телефона');
       return;
     }
     setIsSendingUserbotCode(true);
     try {
       const response = await agentService.requestUserbotCode({
-        api_id: Number(userbotApiId),
-        api_hash: userbotApiHash.trim(),
         phone_number: userbotPhone.trim(),
       });
       setUserbotAuthToken(response?.auth_token || '');
@@ -1684,7 +1846,7 @@ const AgentsPageContent = () => {
         code: userbotCode.trim(),
         password: userbotPassword.trim() || undefined,
       });
-      setUserbotSessionString(response?.session_string || '');
+      applyUserbotChannelVerified(response);
       showSuccess('Код подтвержден, можно подключать userbot');
     } catch (error) {
       showError(error?.message || 'Не удалось подтвердить код');
@@ -1695,20 +1857,20 @@ const AgentsPageContent = () => {
 
   const handleAddUserbotChannel = async () => {
     if (!selectedBotId) return;
-    if (!userbotApiId.trim() || !userbotApiHash.trim()) {
-      showError('Заполните API ID и API hash');
+    if (!userbotSessionString.trim()) {
+      showError('Сначала завершите вход (QR, код или импорт файла)');
       return;
     }
-    if (!userbotSessionString.trim()) {
-      showError('Сначала подтвердите код Telegram и получите session string');
+    if (!userbotResolvedApiId || !userbotResolvedApiHash) {
+      showError('Сессия userbot неполная. Повторите вход.');
       return;
     }
     setIsSavingChannel(true);
     try {
       const res = await agentService.addUserbotChannel({
         agent_id: selectedBotId,
-        api_id: Number(userbotApiId),
-        api_hash: userbotApiHash.trim(),
+        api_id: Number(userbotResolvedApiId),
+        api_hash: userbotResolvedApiHash,
         session_string: userbotSessionString.trim(),
         make_primary: makePrimaryChannel,
       });
@@ -2783,62 +2945,131 @@ const AgentsPageContent = () => {
                   </div>
                 ) : channelModalTab === 'userbot' ? (
                   <div className="agent-management-block">
-                    <input
-                      type="number"
-                      className="input-main"
-                      placeholder="API ID"
-                      value={userbotApiId}
-                      onChange={(event) => setUserbotApiId(event.target.value)}
-                      disabled={isSavingChannel}
-                    />
-                    <input
-                      type="text"
-                      className="input-main"
-                      placeholder="API hash"
-                      value={userbotApiHash}
-                      onChange={(event) => setUserbotApiHash(event.target.value)}
-                      disabled={isSavingChannel}
-                    />
-                    <input
-                      type="text"
-                      className="input-main"
-                      placeholder="+79990001122"
-                      value={userbotPhone}
-                      onChange={(event) => setUserbotPhone(event.target.value)}
-                      disabled={isSavingChannel}
-                    />
-                    <button
-                      type="button"
-                      className="btn btn-outline"
-                      onClick={handleRequestUserbotCode}
-                      disabled={isSavingChannel || isSendingUserbotCode}
-                    >
-                      {isSendingUserbotCode ? 'Отправка...' : 'Отправить код'}
-                    </button>
-                    <input
-                      type="text"
-                      className="input-main"
-                      placeholder="Код из Telegram"
-                      value={userbotCode}
-                      onChange={(event) => setUserbotCode(event.target.value)}
-                      disabled={isSavingChannel}
-                    />
-                    <input
-                      type="password"
-                      className="input-main"
-                      placeholder="Пароль 2FA (если есть)"
-                      value={userbotPassword}
-                      onChange={(event) => setUserbotPassword(event.target.value)}
-                      disabled={isSavingChannel}
-                    />
-                    <button
-                      type="button"
-                      className="btn btn-outline"
-                      onClick={handleVerifyUserbotCode}
-                      disabled={isSavingChannel || isVerifyingUserbotCode}
-                    >
-                      {isVerifyingUserbotCode ? 'Проверка...' : 'Подтвердить код'}
-                    </button>
+                    <p className="help-text">
+                      Как в Telegram: QR, код по SMS или файл сессии. API-ключи с my.telegram.org не нужны.
+                    </p>
+                    <div className="connection-type-grid connection-type-grid--channels">
+                      <button
+                        type="button"
+                        className={`connection-type-card ${userbotAuthMode === 'qr' ? 'active' : ''}`}
+                        onClick={() => switchUserbotAuthMode('qr')}
+                        disabled={isSavingChannel}
+                      >
+                        QR-код
+                      </button>
+                      <button
+                        type="button"
+                        className={`connection-type-card ${userbotAuthMode === 'phone' ? 'active' : ''}`}
+                        onClick={() => switchUserbotAuthMode('phone')}
+                        disabled={isSavingChannel}
+                      >
+                        Код по SMS
+                      </button>
+                      <button
+                        type="button"
+                        className={`connection-type-card ${userbotAuthMode === 'file' ? 'active' : ''}`}
+                        onClick={() => switchUserbotAuthMode('file')}
+                        disabled={isSavingChannel}
+                      >
+                        Файл сессии
+                      </button>
+                    </div>
+                    {userbotAuthMode === 'qr' ? (
+                      <>
+                        <button
+                          type="button"
+                          className="btn btn-outline"
+                          onClick={handleUserbotQrStart}
+                          disabled={isSavingChannel || isStartingUserbotQr}
+                        >
+                          {isStartingUserbotQr ? 'Генерация QR...' : 'Показать QR-код'}
+                        </button>
+                        {userbotQrDataUrl ? (
+                          <div className="userbot-qr-wrap">
+                            <img src={userbotQrDataUrl} alt="Telegram QR" className="userbot-qr-image" />
+                          </div>
+                        ) : null}
+                        <input
+                          type="password"
+                          className="input-main"
+                          placeholder="Пароль 2FA (если включена)"
+                          value={userbotPassword}
+                          onChange={(event) => setUserbotPassword(event.target.value)}
+                          disabled={isSavingChannel}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-outline"
+                          onClick={handleUserbotQrVerify2fa}
+                          disabled={isSavingChannel || isVerifyingUserbotQr2fa || !userbotQrNeeds2fa}
+                        >
+                          {isVerifyingUserbotQr2fa ? 'Проверка...' : 'Подтвердить 2FA'}
+                        </button>
+                      </>
+                    ) : null}
+                    {userbotAuthMode === 'phone' ? (
+                      <>
+                        <input
+                          type="text"
+                          className="input-main"
+                          placeholder="+79990001122"
+                          value={userbotPhone}
+                          onChange={(event) => setUserbotPhone(event.target.value)}
+                          disabled={isSavingChannel}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-outline"
+                          onClick={handleRequestUserbotCode}
+                          disabled={isSavingChannel || isSendingUserbotCode}
+                        >
+                          {isSendingUserbotCode ? 'Отправка...' : 'Отправить код'}
+                        </button>
+                        <input
+                          type="text"
+                          className="input-main"
+                          placeholder="Код из Telegram"
+                          value={userbotCode}
+                          onChange={(event) => setUserbotCode(event.target.value)}
+                          disabled={isSavingChannel}
+                        />
+                        <input
+                          type="password"
+                          className="input-main"
+                          placeholder="Пароль 2FA (если есть)"
+                          value={userbotPassword}
+                          onChange={(event) => setUserbotPassword(event.target.value)}
+                          disabled={isSavingChannel}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-outline"
+                          onClick={handleVerifyUserbotCode}
+                          disabled={isSavingChannel || isVerifyingUserbotCode}
+                        >
+                          {isVerifyingUserbotCode ? 'Проверка...' : 'Подтвердить код'}
+                        </button>
+                      </>
+                    ) : null}
+                    {userbotAuthMode === 'file' ? (
+                      <>
+                        <p className="help-text">.zip (tdata), .session или .txt (StringSession)</p>
+                        <input
+                          type="file"
+                          accept=".zip,.session,.txt"
+                          className="input-main"
+                          disabled={isSavingChannel || isImportingUserbotSession}
+                          onChange={(event) => {
+                            const file = event.target.files?.[0];
+                            if (file) handleUserbotImportSession(file);
+                            event.target.value = '';
+                          }}
+                        />
+                      </>
+                    ) : null}
+                    {userbotVerifiedLabel ? (
+                      <p className="help-text userbot-success">Готово: {userbotVerifiedLabel}</p>
+                    ) : null}
                     <label className="channel-primary-checkbox">
                       <input
                         type="checkbox"
