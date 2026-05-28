@@ -18,6 +18,12 @@ from ..config import settings
 
 logger = logging.getLogger(__name__)
 
+# Same application ids as opentele API.TelegramDesktop / API.TelegramAndroid (public client keys).
+_TELEGRAM_DESKTOP_API_ID = 2040
+_TELEGRAM_DESKTOP_API_HASH = "b18441a1ff607e10a989891a5462e7da"
+_TELEGRAM_ANDROID_API_ID = 6
+_TELEGRAM_ANDROID_API_HASH = "eb06d4abfb49dc3eeb1aeb98ae0f581a"
+
 QR_WAIT_TIMEOUT_SECONDS = 180
 _QR_TTL_SECONDS = 600
 
@@ -63,13 +69,19 @@ def _official_android_api():
     return API.TelegramAndroid.Generate(unique_id="rsd_userbot_phone")
 
 
+def _builtin_api_credentials(*, prefer_desktop: bool) -> tuple[int, str]:
+    if prefer_desktop:
+        return _TELEGRAM_DESKTOP_API_ID, _TELEGRAM_DESKTOP_API_HASH
+    return _TELEGRAM_ANDROID_API_ID, _TELEGRAM_ANDROID_API_HASH
+
+
 def resolve_api_credentials(
     api_id: int | None = None,
     api_hash: str | None = None,
     *,
     prefer_desktop: bool = True,
 ) -> tuple[int, str]:
-    """Resolve MTProto app credentials (user input > env > opentele official API)."""
+    """Resolve MTProto app credentials (custom > env > opentele > Telethon builtin)."""
     custom_id = int(api_id) if api_id is not None and int(api_id) > 0 else 0
     custom_hash = str(api_hash or "").strip()
     if custom_id > 0 and custom_hash:
@@ -81,14 +93,18 @@ def resolve_api_credentials(
         return env_id, env_hash
 
     if opentele_available():
-        api = _official_desktop_api() if prefer_desktop else _official_android_api()
-        return int(api.api_id), str(api.api_hash)
+        try:
+            api = _official_desktop_api() if prefer_desktop else _official_android_api()
+            return int(api.api_id), str(api.api_hash)
+        except Exception as exc:
+            logger.warning("opentele API resolve failed, using Telethon builtin: %s", exc)
 
-    raise TelegramUserbotAuthError(
-        "На сервере не установлен opentele. Установите зависимости backend "
-        "или задайте TELEGRAM_USERBOT_API_ID и TELEGRAM_USERBOT_API_HASH в .env",
-        status_code=503,
+    creds = _builtin_api_credentials(prefer_desktop=prefer_desktop)
+    logger.debug(
+        "telegram userbot: using builtin %s API (opentele not installed)",
+        "desktop" if prefer_desktop else "android",
     )
+    return creds
 
 
 def _build_api_data(api_id: int, api_hash: str):
@@ -387,7 +403,8 @@ def _find_tdata_dir(root: Path) -> Path | None:
 async def _import_from_tdata_dir(tdata_dir: Path) -> dict[str, Any]:
     if not opentele_available():
         raise TelegramUserbotAuthError(
-            "Импорт tdata требует пакет opentele на сервере (установите зависимости backend)",
+            "Импорт архива tdata (Telegram Desktop) требует пакет opentele на сервере. "
+            "Пересоберите Docker-образ backend или используйте вход по QR / .session / .txt",
             status_code=503,
         )
     from opentele.api import UseCurrentSession

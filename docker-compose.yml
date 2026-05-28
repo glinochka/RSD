@@ -47,6 +47,8 @@ services:
             # Do not set HF_ENDPOINT here. Mirroring sites (e.g. hf-mirror.com) often break
             # with current huggingface_hub (redirects / domain checks). Use the public hub by
             # default; override HF_ENDPOINT in .env only if you have a compatible mirror.
+            TELEGRAM_USERBOT_API_ID: ${TELEGRAM_USERBOT_API_ID:-0}
+            TELEGRAM_USERBOT_API_HASH: ${TELEGRAM_USERBOT_API_HASH:-}
             DB_HOST: ${DB_HOST}
             DB_PORT: ${DB_PORT}
             DB_USER: ${DB_USER}
