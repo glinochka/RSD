@@ -75,6 +75,7 @@ _JSON_PAIR_RE = re.compile(
 # Tool fields that must reach the client (especially payment links).
 _CUSTOMER_VISIBLE_JSON_KEYS = frozenset({"payment_url", "confirmation_url"})
 _INTERNAL_MARKER_RE = re.compile(r"\[[A-Z][A-Z0-9_]{2,}\]")
+_HTTPS_URL_RE = re.compile(r"https?://[^\s<>\"']+")
 
 
 class EscalationType(str, Enum):
@@ -417,14 +418,43 @@ class TemplateRuntimeService:
         body = (answer or "").strip()
         if url in body:
             return body
+        placeholder = "технические данные скрыты"
+        if placeholder in body:
+            body = re.sub(
+                r"(ссылк[а-яё][^\n.]{0,120}?:\s*)" + re.escape(placeholder),
+                rf"\1{url}",
+                body,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+            if url in body:
+                return body
         if not body:
             return f"Ссылка для оплаты: {url}"
         return f"{body}\n\nСсылка для оплаты: {url}"
 
     @staticmethod
+    def _stash_https_urls(text: str) -> tuple[str, list[str]]:
+        urls: list[str] = []
+
+        def _repl(match: re.Match[str]) -> str:
+            urls.append(match.group(0))
+            return f"\x00PAYURL{len(urls) - 1}\x00"
+
+        return _HTTPS_URL_RE.sub(_repl, text or ""), urls
+
+    @staticmethod
+    def _restore_https_urls(text: str, urls: list[str]) -> str:
+        restored = text or ""
+        for index, url in enumerate(urls):
+            restored = restored.replace(f"\x00PAYURL{index}\x00", url)
+        return restored
+
+    @staticmethod
     def _sanitize_final_answer(text: str) -> str:
         """Remove leaked variable names/values from customer-facing answers."""
-        sanitized = _CODE_BLOCK_RE.sub("Технические детали скрыты.", text or "")
+        sanitized, stashed_urls = TemplateRuntimeService._stash_https_urls(text or "")
+        sanitized = _CODE_BLOCK_RE.sub("Технические детали скрыты.", sanitized)
         sanitized = _INTERNAL_MARKER_RE.sub("", sanitized)
         sanitized = _TEMPLATE_VAR_RE.sub("технические данные скрыты", sanitized)
         sanitized = _INTERNAL_ASSIGNMENT_RE.sub("технические данные скрыты", sanitized)
@@ -442,7 +472,7 @@ class TemplateRuntimeService:
         collapsed = "\n".join(safe_lines).strip()
         if not collapsed or TemplateRuntimeService._is_degenerate_sanitized_answer(collapsed):
             return SANITIZE_EMPTY_ANSWER_FALLBACK
-        return collapsed
+        return TemplateRuntimeService._restore_https_urls(collapsed, stashed_urls)
 
     def _sanitize_result(self, result: TemplateExecutionResult) -> TemplateExecutionResult:
         result.answer = self._sanitize_final_answer(result.answer)
@@ -825,6 +855,7 @@ class TemplateRuntimeService:
                 cleaned = self._clean_llm_text(content)
                 if not cleaned:
                     cleaned = CRM_ADMIN_LLM_EMPTY_FALLBACK
+                cleaned = self._ensure_booking_payment_url(cleaned, pending_payment_url)
                 return TemplateExecutionResult(answer=cleaned, sources=[], tool_events=tool_events)
 
             messages.append(
