@@ -435,36 +435,123 @@ class AdminBookingService:
             resource_id=resource_id,
         )
 
+    async def _get_appointment_snapshot(
+        self,
+        *,
+        agent_id: int,
+        appointment_id: int,
+    ) -> dict[str, Any]:
+        async with self._session_factory() as session:
+            row = await session.scalar(
+                select(AdminAppointment).where(
+                    AdminAppointment.id == appointment_id,
+                    AdminAppointment.agent_id == agent_id,
+                )
+            )
+            if row is None:
+                raise ValueError("Appointment not found")
+            return {
+                "id": row.id,
+                "agent_id": row.agent_id,
+                "staff_id": row.staff_id,
+                "resource_id": row.resource_id,
+                "service_id": row.service_id,
+                "client_external_id": row.client_external_id,
+                "client_name": row.client_name,
+                "source_channel": row.source_channel,
+                "starts_at": row.starts_at.isoformat() if row.starts_at else None,
+                "ends_at": row.ends_at.isoformat() if row.ends_at else None,
+                "status": row.status,
+                "notes": row.notes,
+            }
+
     async def cancel_appointment(
         self,
         *,
         agent_id: int,
         appointment_id: int,
         reason: str | None = None,
+        client_full_name: str | None = None,
+        client_phone: str | None = None,
+        require_refund_contact: bool = False,
     ) -> dict[str, Any]:
-        from .payment_service import get_admin_booking_payment_service
+        from .payment_service import (
+            RefundContactDetailsRequired,
+            _is_auto_refund_eligible,
+            _normalize_phone,
+            get_admin_booking_payment_service,
+        )
 
         payment_svc = get_admin_booking_payment_service()
+        snapshot = await self._get_appointment_snapshot(
+            agent_id=agent_id,
+            appointment_id=appointment_id,
+        )
         paid_payment = await payment_svc.get_paid_payment_for_appointment(
             agent_id=agent_id,
             appointment_id=appointment_id,
         )
+
+        if paid_payment is not None and require_refund_contact:
+            starts_at = payment_svc._parse_appointment_starts_at(snapshot)
+            if not _is_auto_refund_eligible(starts_at):
+                full_name = (client_full_name or snapshot.get("client_name") or "").strip()
+                phone = _normalize_phone(client_phone)
+                if not full_name or len(full_name.split()) < 2:
+                    raise RefundContactDetailsRequired(
+                        "Для возврата нужно полное ФИО клиента (фамилия, имя и при наличии отчество)."
+                    )
+                if not phone:
+                    raise RefundContactDetailsRequired(
+                        "Для возврата нужен номер телефона клиента в формате +7XXXXXXXXXX."
+                    )
+
         resolution = await self.resolve_provider(agent_id=agent_id)
         deleted = await resolution.provider.delete_appointment(
             agent_id=agent_id,
             appointment_id=appointment_id,
         )
+
         refund_request = None
+        auto_refunded = False
         if paid_payment is not None:
             refund_request = await payment_svc.create_refund_request_for_payment(
                 payment=paid_payment,
                 appointment_id=appointment_id,
                 cancel_reason=reason,
+                appointment_snapshot=snapshot,
+                client_full_name=client_full_name,
+                client_phone=client_phone,
+                require_contact_details=False,
             )
+            auto_refunded = (
+                refund_request.get("refund_mode") == "auto"
+                and refund_request.get("status") == "refunded"
+            )
+            if auto_refunded:
+                from .client_notify import notify_refund_auto_completed
+
+                try:
+                    await notify_refund_auto_completed(
+                        agent_id=agent_id,
+                        client_external_id=str(snapshot.get("client_external_id") or ""),
+                        source_channel=snapshot.get("source_channel"),
+                        amount_rub=refund_request.get("amount_rub"),
+                    )
+                except Exception:
+                    import logging
+
+                    logging.getLogger(__name__).exception(
+                        "notify_refund_auto_completed failed agent_id=%s appointment_id=%s",
+                        agent_id,
+                        appointment_id,
+                    )
+
         return {
             "deleted": True,
             "appointment": deleted,
             "refund_request": refund_request,
+            "auto_refunded": auto_refunded,
         }
 
     async def confirm_appointment(

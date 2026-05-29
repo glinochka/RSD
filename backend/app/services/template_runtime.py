@@ -705,6 +705,24 @@ class TemplateRuntimeService:
         if not agent_id:
             return None
 
+        from .admin_booking.payment_fulfillment import sync_pending_payments_for_client
+        from .admin_booking.client_notify import notify_booking_payment_confirmed
+
+        paid_sync = await sync_pending_payments_for_client(
+            agent_id=agent_id,
+            client_external_id=(user_external_id or "").strip(),
+        )
+        if paid_sync and paid_sync.fulfilled and paid_sync.client_message:
+            try:
+                await notify_booking_payment_confirmed(paid_sync)
+            except Exception:
+                logger.exception("Failed to notify client after pending payment sync")
+            return TemplateExecutionResult(
+                answer=paid_sync.client_message,
+                sources=[],
+                tool_events=[],
+            )
+
         from .admin_booking.domains import DOMAIN_REGISTRY as _domain_registry
         domain_type = str(template_config.get("domain_type") or "beauty_salon").strip().lower()
         if domain_type not in _domain_registry:

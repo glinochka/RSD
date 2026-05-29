@@ -280,12 +280,17 @@ class _CancelAppointmentArgs(BaseModel):
     (ISO date "YYYY-MM-DD" or datetime "YYYY-MM-DDTHH:MM") so the system can
     look up the booking by the current user + date.
     ``staff_id`` narrows the lookup when needed.
+
+    For paid bookings cancelled less than 24 hours before the visit (or after it),
+    ``client_full_name`` and ``client_phone`` are required to open a refund request.
     """
 
     appointment_id: int | None = Field(default=None, gt=0)
     appointment_date: str | None = Field(default=None, min_length=8, max_length=40)
     staff_id: int | None = Field(default=None, gt=0)
     reason: str | None = Field(default=None, max_length=1000)
+    client_full_name: str | None = Field(default=None, max_length=256)
+    client_phone: str | None = Field(default=None, max_length=32)
 
     @model_validator(mode="after")
     def _validate(self):
@@ -435,8 +440,9 @@ _TOOL_DESCRIPTIONS = {
     ),
     "cancel_appointment": (
         "Cancel (remove) an existing appointment. The slot is freed immediately. "
-        "For paid bookings a refund request is created for manual approval by the business owner — "
-        "tell the client the refund will be processed after review, not instantly. "
+        "For paid bookings: if the visit is more than 24 hours away, a full refund is issued automatically via YooKassa. "
+        "If less than 24 hours remain or the visit already passed, collect the client's full name (ФИО) and phone number, "
+        "then call cancel_appointment with client_full_name and client_phone — a refund request is sent to the owner for approval. "
         "If appointment_id is unknown, provide appointment_date (ISO date or datetime) to look up the booking "
         "by the current user. Never ask the user for an appointment ID."
     ),
@@ -840,7 +846,10 @@ class AdminBookingToolRegistry:
                     "amount_rub": round(amount_minor / 100, 2),
                     "service_title": str(service_row.get("title") or "").strip(),
                     "status": "awaiting_payment",
-                    "message": "Ссылка на оплату сформирована. После оплаты подтвердите бронь через confirm_paid_appointment.",
+                    "message": (
+                        "Ссылка на оплату сформирована. Запись появится в календаре после успешной оплаты "
+                        "(автоматически или через confirm_paid_appointment, если клиент написал, что оплатил)."
+                    ),
                 }
             else:
                 result = await service.create_appointment(
@@ -861,57 +870,37 @@ class AdminBookingToolRegistry:
             payment_id = str(data.get("payment_id") or "").strip()
             if not payment_id:
                 raise RuntimeError("payment_id обязателен")
-            payment_svc = get_admin_booking_payment_service()
-            shop_id, secret_key = self._parse_yookassa_credentials()
-            Configuration.account_id = shop_id
-            Configuration.secret_key = secret_key
-            payment_status = await payment_svc.verify_yookassa_payment_succeeded(
-                agent_id=self._agent_id,
+            from .payment_fulfillment import fulfill_admin_booking_payment
+
+            fulfillment = await fulfill_admin_booking_payment(
                 yookassa_payment_id=payment_id,
             )
-            if payment_status != "succeeded":
+            if fulfillment is None:
+                raise RuntimeError("Платёж не найден. Запросите новую ссылку на оплату.")
+            if fulfillment.client_external_id != self._user_external_id.strip():
+                raise RuntimeError("Платеж принадлежит другому клиенту")
+            if fulfillment.fulfilled:
+                result = {
+                    "status": "paid_and_booked",
+                    "payment_id": payment_id,
+                    "appointment": fulfillment.appointment,
+                    "message": fulfillment.client_message
+                    or "Оплата подтверждена, бронь успешно оформлена.",
+                }
+            elif fulfillment.already_booked:
+                result = {
+                    "status": "paid_and_booked",
+                    "payment_id": payment_id,
+                    "appointment": fulfillment.appointment,
+                    "message": fulfillment.client_message
+                    or "Оплата уже подтверждена, бронь оформлена ранее.",
+                }
+            else:
                 result = {
                     "status": "awaiting_payment",
                     "payment_id": payment_id,
-                    "payment_status": payment_status or "pending",
-                    "message": "Оплата еще не подтверждена. Проверьте статус позже.",
+                    "message": "Оплата ещё не подтверждена. Проверьте статус позже или подождите пару минут.",
                 }
-            else:
-                db_payment, cached_payload = await payment_svc.get_pending_payment_context(
-                    agent_id=self._agent_id,
-                    yookassa_payment_id=payment_id,
-                    client_external_id=self._user_external_id,
-                )
-                if db_payment.appointment_id:
-                    result = {
-                        "status": "paid_and_booked",
-                        "payment_id": payment_id,
-                        "appointment_id": db_payment.appointment_id,
-                        "message": "Оплата уже подтверждена, бронь оформлена ранее.",
-                    }
-                else:
-                    appointment = await service.create_appointment(
-                        agent_id=self._agent_id,
-                        client_external_id=self._user_external_id,
-                        starts_at=_parse_iso_datetime(str(cached_payload.get("starts_at") or "")),
-                        ends_at=_parse_iso_datetime(str(cached_payload.get("ends_at") or "")),
-                        staff_id=cached_payload.get("staff_id"),
-                        resource_id=cached_payload.get("resource_id"),
-                        service_id=cached_payload.get("service_id"),
-                        client_name=cached_payload.get("client_name"),
-                        source_channel=cached_payload.get("source_channel") or self._source_channel,
-                        notes=cached_payload.get("notes"),
-                    )
-                    await payment_svc.mark_payment_paid(
-                        payment_id=db_payment.id,
-                        appointment_id=int(appointment["id"]),
-                    )
-                    result = {
-                        "status": "paid_and_booked",
-                        "payment_id": payment_id,
-                        "appointment": appointment,
-                        "message": "Оплата подтверждена, бронь успешно оформлена.",
-                    }
         elif tool_name == "reschedule_appointment":
             appt_id = data.get("appointment_id")
             if not appt_id:
@@ -936,19 +925,39 @@ class AdminBookingToolRegistry:
                     appointment_date=str(data.get("appointment_date") or ""),
                     staff_id=data.get("staff_id"),
                 )
-            cancel_result = await service.cancel_appointment(
-                agent_id=self._agent_id,
-                appointment_id=int(appt_id),
-                reason=data.get("reason"),
-            )
+            from .payment_service import RefundContactDetailsRequired
+
+            try:
+                cancel_result = await service.cancel_appointment(
+                    agent_id=self._agent_id,
+                    appointment_id=int(appt_id),
+                    reason=data.get("reason"),
+                    client_full_name=data.get("client_full_name"),
+                    client_phone=data.get("client_phone"),
+                    require_refund_contact=bool(self._paid_booking_enabled),
+                )
+            except RefundContactDetailsRequired as exc:
+                raise RuntimeError(
+                    f"{exc} Сначала уточни у клиента полное ФИО и номер телефона, затем повтори отмену."
+                ) from exc
+
             refund_request = cancel_result.get("refund_request")
-            if refund_request:
+            if cancel_result.get("auto_refunded"):
                 result = {
                     "deleted": True,
                     "refund_request": refund_request,
                     "message": (
-                        "Запись отменена и удалена. Заявка на возврат создана — "
-                        "владелец бизнеса подтвердит полный возврат вручную."
+                        "Запись отменена. Полный возврат оформлен автоматически — "
+                        "деньги вернутся на карту клиента в срок банка (обычно 3–10 рабочих дней)."
+                    ),
+                }
+            elif refund_request:
+                result = {
+                    "deleted": True,
+                    "refund_request": refund_request,
+                    "message": (
+                        "Запись отменена. Заявка на возврат передана владельцу — "
+                        "решение придёт клиенту после проверки."
                     ),
                 }
             else:

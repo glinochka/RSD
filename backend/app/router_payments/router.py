@@ -29,7 +29,7 @@ from ..agent_template_pricing import (
     parse_agent_payment_plan_name,
     user_has_free_agent_activation,
 )
-from ..alembic.models import Agent, UserPaymentMethod, WebsitePaymentTransaction
+from ..alembic.models import AdminBookingPayment, Agent, UserPaymentMethod, WebsitePaymentTransaction
 from ..router_agents.dao import AgentDAO
 from ..config import settings
 from ..router_users.dao import UserDAO
@@ -1081,6 +1081,30 @@ async def yookassa_webhook(request: Request):
     payment_obj = getattr(notification, "object", None)
     payment_id = str(getattr(payment_obj, "id", "") or "")
     if not payment_id:
+        return Response(status_code=status.HTTP_200_OK)
+
+    notification_status = str(getattr(payment_obj, "status", "") or "").strip().lower()
+
+    async with async_session_maker() as session:
+        booking_payment_id = await session.scalar(
+            select(AdminBookingPayment.id).where(
+                AdminBookingPayment.yookassa_payment_id == payment_id,
+            )
+        )
+    if booking_payment_id is not None:
+        from ..services.admin_booking.payment_fulfillment import process_admin_booking_yookassa_webhook
+
+        if event == WebhookNotificationEventType.PAYMENT_SUCCEEDED:
+            await process_admin_booking_yookassa_webhook(
+                yookassa_payment_id=payment_id,
+                verified_status=notification_status or "succeeded",
+            )
+        logger.info(
+            "YooKassa webhook: admin_booking payment_id=%s event=%s status=%s",
+            payment_id,
+            event,
+            notification_status,
+        )
         return Response(status_code=status.HTTP_200_OK)
 
     _configure_yookassa()

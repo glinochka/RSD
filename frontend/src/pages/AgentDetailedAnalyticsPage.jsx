@@ -16,6 +16,25 @@ const ANALYTICS_SECTIONS = {
   TELEPHONY: 'telephony',
   BROADCAST: 'broadcast',
   OPERATIONS: 'operations',
+  REFUNDS: 'refunds',
+};
+
+const refundChannelLabel = (channel) => {
+  const key = String(channel || '').trim().toLowerCase();
+  if (key === 'telegram' || key === 'telegram_bot') return 'Telegram';
+  if (key === 'telegram_userbot') return 'Telegram (аккаунт)';
+  if (key === 'whatsapp_userbot') return 'WhatsApp';
+  if (key === 'external_api') return 'API';
+  return key || '—';
+};
+
+const refundStatusLabel = (status) => {
+  const key = String(status || '').trim().toLowerCase();
+  if (key === 'pending') return 'Ожидает решения';
+  if (key === 'refunded') return 'Возврат выполнен';
+  if (key === 'rejected') return 'Отклонена';
+  if (key === 'failed') return 'Ошибка возврата';
+  return key || '—';
 };
 
 const BROADCAST_LIMIT_OPTIONS = [100, 250, 500, 1000, 2000, 5000];
@@ -770,7 +789,6 @@ const AgentDetailedAnalyticsPageContent = () => {
         quickReplies,
         calendarSchedule,
         calendarAppointments,
-        refundRequests,
       ] = await Promise.all([
         agentService.listAdminTemplateStaff(paramsBase),
         agentService.listAdminTemplateResources(paramsBase),
@@ -806,7 +824,6 @@ const AgentDetailedAnalyticsPageContent = () => {
           starts_at: _toLocalIso(monthRange.start),
           ends_at: _toLocalIso(monthRange.end),
         }),
-        agentService.listAdminTemplateRefundRequests(paramsBase),
       ]);
       setStaffItems(Array.isArray(staff?.items) ? staff.items : []);
       setResourceItems(Array.isArray(resources?.items) ? resources.items : []);
@@ -820,7 +837,6 @@ const AgentDetailedAnalyticsPageContent = () => {
       setWaitlistItems(Array.isArray(waitlist?.items) ? waitlist.items : []);
       setClientProfileItems(Array.isArray(profiles?.items) ? profiles.items : []);
       setQuickReplyItems(Array.isArray(quickReplies?.items) ? quickReplies.items : []);
-      setRefundRequestItems(Array.isArray(refundRequests?.items) ? refundRequests.items : []);
     } catch (error) {
       showError(error?.message || 'Не удалось загрузить операционный дашборд');
     } finally {
@@ -952,12 +968,42 @@ const AgentDetailedAnalyticsPageContent = () => {
     loadWaBroadcastStats();
   }, [selectedSection, botId, showError]);
 
+  const loadRefundRequests = async () => {
+    if (!Number.isFinite(botId) || botId <= 0) return;
+    setOpsLoading(true);
+    try {
+      const data = await agentService.listAdminTemplateRefundRequests({ bot_id: botId });
+      setRefundRequestItems(Array.isArray(data?.items) ? data.items : []);
+    } catch (error) {
+      showError(error?.message || 'Не удалось загрузить заявки на возврат');
+    } finally {
+      setOpsLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!isCrmAdminTemplate) return;
     if (selectedSection !== ANALYTICS_SECTIONS.OPERATIONS) return;
     loadOperationsDashboard();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedSection, isCrmAdminTemplate, botId, operationRange.start, operationRange.end, monthRange.start, monthRange.end]);
+
+  useEffect(() => {
+    if (!isCrmAdminTemplate) return;
+    if (selectedSection !== ANALYTICS_SECTIONS.REFUNDS) return;
+    loadRefundRequests();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSection, isCrmAdminTemplate, botId]);
+
+  useEffect(() => {
+    if (!isCrmAdminTemplate || !Number.isFinite(botId) || botId <= 0) return;
+    agentService
+      .listAdminTemplateRefundRequests({ bot_id: botId })
+      .then((data) => {
+        setRefundRequestItems(Array.isArray(data?.items) ? data.items : []);
+      })
+      .catch(() => {});
+  }, [isCrmAdminTemplate, botId]);
 
   const selectedUser = useMemo(
     () => filteredChatUsers.find((user) => user.id === selectedUserId) || null,
@@ -1489,8 +1535,10 @@ const AgentDetailedAnalyticsPageContent = () => {
         reason: 'cancelled_from_dashboard',
       });
       await loadOperationsDashboard();
-      if (result?.refund_request) {
-        showSuccess('Запись удалена. Заявка на возврат отправлена на ручное подтверждение.');
+      if (result?.auto_refunded) {
+        showSuccess('Запись удалена. Возврат оформлен автоматически, клиенту отправлено уведомление.');
+      } else if (result?.refund_request) {
+        showSuccess('Запись удалена. Заявка на возврат создана — решение придёт клиенту после проверки.');
       } else {
         showSuccess('Запись удалена');
       }
@@ -1506,8 +1554,8 @@ const AgentDetailedAnalyticsPageContent = () => {
         bot_id: botId,
         refund_request_id: item.id,
       });
-      await loadOperationsDashboard();
-      showSuccess('Возврат отправлен в ЮKassa');
+      await loadRefundRequests();
+      showSuccess('Возврат одобрен. Клиенту отправлено уведомление.');
     } catch (error) {
       showError(error?.message || 'Не удалось подтвердить возврат');
     }
@@ -1522,8 +1570,8 @@ const AgentDetailedAnalyticsPageContent = () => {
         refund_request_id: item.id,
         reason: reason.trim() || undefined,
       });
-      await loadOperationsDashboard();
-      showSuccess('Заявка на возврат отклонена');
+      await loadRefundRequests();
+      showSuccess('Заявка отклонена. Клиенту отправлено уведомление.');
     } catch (error) {
       showError(error?.message || 'Не удалось отклонить возврат');
     }
@@ -1718,13 +1766,27 @@ const AgentDetailedAnalyticsPageContent = () => {
             Рассылка
           </button>
           {isCrmAdminTemplate ? (
-            <button
-              type="button"
-              className={`analytics-section-btn ${selectedSection === ANALYTICS_SECTIONS.OPERATIONS ? 'analytics-section-btn--active' : ''}`}
-              onClick={() => setSelectedSection(ANALYTICS_SECTIONS.OPERATIONS)}
-            >
-              Операционный дашборд
-            </button>
+            <>
+              <button
+                type="button"
+                className={`analytics-section-btn ${selectedSection === ANALYTICS_SECTIONS.OPERATIONS ? 'analytics-section-btn--active' : ''}`}
+                onClick={() => setSelectedSection(ANALYTICS_SECTIONS.OPERATIONS)}
+              >
+                Операционный дашборд
+              </button>
+              <button
+                type="button"
+                className={`analytics-section-btn ${selectedSection === ANALYTICS_SECTIONS.REFUNDS ? 'analytics-section-btn--active' : ''}`}
+                onClick={() => setSelectedSection(ANALYTICS_SECTIONS.REFUNDS)}
+              >
+                Заявки на возврат
+                {refundRequestItems.some((item) => item.status === 'pending') ? (
+                  <span className="analytics-section-badge">
+                    {refundRequestItems.filter((item) => item.status === 'pending').length}
+                  </span>
+                ) : null}
+              </button>
+            </>
           ) : null}
         </aside>
 
@@ -2870,36 +2932,6 @@ const AgentDetailedAnalyticsPageContent = () => {
                   </div>
                 </article>
 
-                <article className="analytics-ops-card">
-                  <h4>Заявки на возврат (ручное подтверждение)</h4>
-                  {refundRequestItems.length === 0 ? (
-                    <p className="analytics-note">Нет заявок на возврат.</p>
-                  ) : (
-                    <div className="analytics-ops-list">
-                      {refundRequestItems.map((item) => (
-                        <div key={item.id} className="analytics-ops-row">
-                          <div className="analytics-ops-row-main">
-                            <strong>{item.client_external_id}</strong>
-                            <span>
-                              {item.amount_rub} ₽ · запись #{item.appointment_id || '—'} · {item.status}
-                              {item.cancel_reason ? ` · ${item.cancel_reason}` : ''}
-                            </span>
-                          </div>
-                          {item.status === 'pending' ? (
-                            <div className="analytics-ops-row-actions">
-                              <button type="button" className="btn btn-black" onClick={() => handleApproveRefundRequest(item)}>
-                                Вернуть полностью
-                              </button>
-                              <button type="button" className="btn btn-outline" onClick={() => handleRejectRefundRequest(item)}>
-                                Отклонить
-                              </button>
-                            </div>
-                          ) : null}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </article>
               </div>
 
               <article className="analytics-ops-card analytics-ops-card--wide">
@@ -3084,6 +3116,51 @@ const AgentDetailedAnalyticsPageContent = () => {
                   </article>
                 </div>
               ) : null}
+            </section>
+          ) : selectedSection === ANALYTICS_SECTIONS.REFUNDS ? (
+            <section className="analytics-operations">
+              <h3>Заявки на возврат</h3>
+              <p className="analytics-note">
+                Заявки создаются при отмене оплаченной записи менее чем за 24 часа до визита (или после визита).
+                Возврат более чем за 24 часа оформляется автоматически через ЮKassa.
+              </p>
+              {opsLoading ? (
+                <p className="analytics-note">Загрузка...</p>
+              ) : refundRequestItems.length === 0 ? (
+                <p className="analytics-note">Нет заявок на возврат.</p>
+              ) : (
+                <div className="analytics-ops-list">
+                  {refundRequestItems.map((item) => (
+                    <div key={item.id} className="analytics-ops-row analytics-ops-row--refund">
+                      <div className="analytics-ops-row-main">
+                        <strong>{item.client_full_name || item.client_external_id}</strong>
+                        <span>
+                          {item.client_phone ? `Тел.: ${item.client_phone} · ` : ''}
+                          ID чата: {item.client_external_id} · {refundChannelLabel(item.source_channel)}
+                        </span>
+                        <span>
+                          {item.appointment_starts_at ? formatDateTime(item.appointment_starts_at) : '—'}
+                          {item.service_title ? ` · ${item.service_title}` : ''}
+                          {' · '}
+                          {item.amount_rub} ₽ · {refundStatusLabel(item.status)}
+                          {item.refund_mode === 'auto' ? ' · автовозврат' : ''}
+                        </span>
+                        {item.cancel_reason ? <span>Причина отмены: {item.cancel_reason}</span> : null}
+                      </div>
+                      {item.status === 'pending' ? (
+                        <div className="analytics-ops-row-actions">
+                          <button type="button" className="btn btn-black" onClick={() => handleApproveRefundRequest(item)}>
+                            Одобрить
+                          </button>
+                          <button type="button" className="btn btn-outline" onClick={() => handleRejectRefundRequest(item)}>
+                            Отказать
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              )}
             </section>
           ) : (
             <>

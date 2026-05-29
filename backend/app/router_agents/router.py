@@ -8536,6 +8536,21 @@ async def admin_template_refund_requests_approve(
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
             except RuntimeError as exc:
                 raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    if item.get("status") == "refunded":
+        from ..services.admin_booking.client_notify import notify_refund_request_approved
+
+        try:
+            await notify_refund_request_approved(
+                agent_id=agent.id,
+                client_external_id=str(item.get("client_external_id") or ""),
+                source_channel=item.get("source_channel"),
+                amount_rub=item.get("amount_rub"),
+            )
+        except Exception:
+            logger.exception(
+                "Failed to notify client about approved refund request_id=%s",
+                payload.refund_request_id,
+            )
     return JSONResponse(content=item, status_code=status.HTTP_200_OK)
 
 
@@ -8562,6 +8577,21 @@ async def admin_template_refund_requests_reject(
                 )
             except ValueError as exc:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    if item.get("status") == "rejected":
+        from ..services.admin_booking.client_notify import notify_refund_request_rejected
+
+        try:
+            await notify_refund_request_rejected(
+                agent_id=agent.id,
+                client_external_id=str(item.get("client_external_id") or ""),
+                source_channel=item.get("source_channel"),
+                reason=item.get("error_message") or payload.reason,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to notify client about rejected refund request_id=%s",
+                payload.refund_request_id,
+            )
     return JSONResponse(content=item, status_code=status.HTTP_200_OK)
 
 

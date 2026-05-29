@@ -1,9 +1,10 @@
-"""Paid booking payments and manual full-refund workflow."""
+"""Paid booking payments, auto-refund (>24h) and manual refund requests."""
 from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+import re
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 from sqlalchemy import select
@@ -11,10 +12,46 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from yookassa import Configuration, Payment, Refund
 
 from ...alembic.database import async_session_maker
-from ...alembic.models import AdminBookingPayment, AdminBookingRefundRequest, Agent
+from ...alembic.models import AdminBookingPayment, AdminBookingRefundRequest, AdminService, Agent
 from ...utils.crypto import decrypt_booking_payment_secret
 
 logger = logging.getLogger(__name__)
+
+REFUND_AUTO_WINDOW = timedelta(hours=24)
+_PHONE_RE = re.compile(r"^\+?[\d\s\-()]{10,20}$")
+
+
+class RefundContactDetailsRequired(ValueError):
+    """Отмена платной брони <24ч до визита без ФИО и телефона клиента."""
+
+
+def _normalize_phone(raw: str | None) -> str | None:
+    text = (raw or "").strip()
+    if not text:
+        return None
+    if not _PHONE_RE.match(text):
+        return None
+    digits = re.sub(r"\D", "", text)
+    if len(digits) < 10:
+        return None
+    return text
+
+
+def _hours_until_appointment(starts_at: datetime | None) -> float | None:
+    if starts_at is None:
+        return None
+    now = _utc_now_naive()
+    start = starts_at
+    if getattr(start, "tzinfo", None) is not None:
+        start = start.astimezone(timezone.utc).replace(tzinfo=None)
+    return (start - now).total_seconds() / 3600.0
+
+
+def _is_auto_refund_eligible(starts_at: datetime | None) -> bool:
+    hours = _hours_until_appointment(starts_at)
+    if hours is None:
+        return False
+    return hours >= 24.0
 
 
 def _utc_now_naive() -> datetime:
@@ -44,6 +81,12 @@ def _serialize_refund_request(row: AdminBookingRefundRequest) -> dict[str, Any]:
         "payment_id": row.payment_id,
         "appointment_id": row.appointment_id,
         "client_external_id": row.client_external_id,
+        "client_full_name": row.client_full_name,
+        "client_phone": row.client_phone,
+        "source_channel": row.source_channel,
+        "appointment_starts_at": row.appointment_starts_at.isoformat() if row.appointment_starts_at else None,
+        "service_title": row.service_title,
+        "refund_mode": row.refund_mode,
         "amount_minor": row.amount_minor,
         "amount_rub": round(int(row.amount_minor) / 100, 2),
         "currency": row.currency,
@@ -193,13 +236,116 @@ class AdminBookingPaymentService:
                 )
             )
 
-    async def create_refund_request_for_payment(
+    async def _resolve_service_title(self, session: Any, *, agent_id: int, service_id: Any) -> str | None:
+        if service_id is None:
+            return None
+        try:
+            sid = int(service_id)
+        except (TypeError, ValueError):
+            return None
+        row = await session.scalar(
+            select(AdminService.title).where(
+                AdminService.id == sid,
+                AdminService.agent_id == agent_id,
+            )
+        )
+        return str(row).strip() if row else None
+
+    @staticmethod
+    def _parse_appointment_starts_at(appointment_snapshot: dict[str, Any]) -> datetime | None:
+        raw = appointment_snapshot.get("starts_at")
+        if not raw:
+            return None
+        try:
+            normalized = str(raw).strip().replace("Z", "+00:00")
+            parsed = datetime.fromisoformat(normalized)
+            if parsed.tzinfo is not None:
+                return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+            return parsed
+        except Exception:
+            return None
+
+    async def _execute_yookassa_refund(
+        self,
+        session: Any,
+        *,
+        agent_id: int,
+        payment: AdminBookingPayment,
+        refund_row: AdminBookingRefundRequest,
+        reviewed_by_user_id: int | None = None,
+    ) -> None:
+        shop_id, secret_key = await self._get_agent_yookassa_credentials(session, agent_id=agent_id)
+        self.configure_yookassa(shop_id, secret_key)
+
+        amount_rub = f"{int(refund_row.amount_minor) / 100:.2f}"
+        idempotence_key = f"booking-refund:{refund_row.id}"
+        now = _utc_now_naive()
+        try:
+            refund = Refund.create(
+                {
+                    "payment_id": payment.yookassa_payment_id,
+                    "amount": {"value": amount_rub, "currency": refund_row.currency or "RUB"},
+                    "description": f"Возврат за отмену записи #{refund_row.appointment_id or '—'}",
+                },
+                idempotence_key,
+            )
+        except Exception as exc:
+            refund_row.status = "failed"
+            refund_row.error_message = str(exc)[:2000]
+            refund_row.reviewed_by_user_id = reviewed_by_user_id
+            refund_row.reviewed_at = now
+            refund_row.updated_at = now
+            await session.flush()
+            raise RuntimeError(f"Не удалось создать возврат в ЮKassa: {exc}") from exc
+
+        refund_status = str(getattr(refund, "status", "") or "").strip().lower()
+        refund_id = str(getattr(refund, "id", "") or "").strip()
+        refund_row.yookassa_refund_id = refund_id or None
+        if reviewed_by_user_id is not None:
+            refund_row.reviewed_by_user_id = reviewed_by_user_id
+            refund_row.reviewed_at = now
+        refund_row.updated_at = now
+
+        if refund_status in ("succeeded", "pending", "waiting_for_capture"):
+            refund_row.status = "refunded"
+            payment.status = "refunded"
+            payment.updated_at = now
+        else:
+            refund_row.status = "failed"
+            refund_row.error_message = f"Unexpected refund status: {refund_status or 'unknown'}"
+
+    async def process_refund_on_cancellation(
         self,
         *,
         payment: AdminBookingPayment,
+        appointment_snapshot: dict[str, Any],
         appointment_id: int | None,
         cancel_reason: str | None,
+        client_full_name: str | None = None,
+        client_phone: str | None = None,
+        require_contact_details: bool = False,
     ) -> dict[str, Any]:
+        """
+        Обработка возврата при отмене оплаченной записи.
+        >=24ч до визита — автовозврат через ЮKassa.
+        Иначе — заявка pending (для агента обязательны ФИО и телефон).
+        """
+        starts_at = self._parse_appointment_starts_at(appointment_snapshot)
+        auto_eligible = _is_auto_refund_eligible(starts_at)
+
+        full_name = (client_full_name or appointment_snapshot.get("client_name") or "").strip() or None
+        phone = _normalize_phone(client_phone)
+
+        if not auto_eligible and require_contact_details:
+            if not full_name or len(full_name.split()) < 2:
+                raise RefundContactDetailsRequired(
+                    "Для возврата нужно полное ФИО клиента (фамилия, имя и при наличии отчество)."
+                )
+            if not phone:
+                raise RefundContactDetailsRequired(
+                    "Для возврата нужен номер телефона клиента в формате +7XXXXXXXXXX."
+                )
+
         now = _utc_now_naive()
         async with self._session_factory() as session:
             async with session.begin():
@@ -210,6 +356,15 @@ class AdminBookingPaymentService:
                 )
                 if existing is not None:
                     return _serialize_refund_request(existing)
+
+                service_title = await self._resolve_service_title(
+                    session,
+                    agent_id=payment.agent_id,
+                    service_id=appointment_snapshot.get("service_id"),
+                )
+                source_channel = str(appointment_snapshot.get("source_channel") or "").strip() or None
+
+                refund_mode = "auto" if auto_eligible else "manual"
                 row = AdminBookingRefundRequest(
                     agent_id=payment.agent_id,
                     payment_id=payment.id,
@@ -218,14 +373,59 @@ class AdminBookingPaymentService:
                     amount_minor=payment.amount_minor,
                     currency=payment.currency,
                     cancel_reason=(cancel_reason or "").strip() or None,
+                    client_full_name=full_name,
+                    client_phone=phone,
+                    source_channel=source_channel,
+                    appointment_starts_at=starts_at,
+                    service_title=service_title,
+                    refund_mode=refund_mode,
                     status="pending",
                     created_at=now,
                     updated_at=now,
                 )
                 session.add(row)
                 await session.flush()
+
+                db_payment = await session.scalar(
+                    select(AdminBookingPayment).where(AdminBookingPayment.id == payment.id)
+                )
+                if db_payment is None:
+                    raise RuntimeError("Payment not found")
+                if db_payment.status not in ("paid",):
+                    raise RuntimeError(f"Payment status '{db_payment.status}' is not refundable")
+
+                if auto_eligible:
+                    await self._execute_yookassa_refund(
+                        session,
+                        agent_id=payment.agent_id,
+                        payment=db_payment,
+                        refund_row=row,
+                    )
+
                 await session.refresh(row)
                 return _serialize_refund_request(row)
+
+    async def create_refund_request_for_payment(
+        self,
+        *,
+        payment: AdminBookingPayment,
+        appointment_id: int | None,
+        cancel_reason: str | None,
+        appointment_snapshot: dict[str, Any] | None = None,
+        client_full_name: str | None = None,
+        client_phone: str | None = None,
+        require_contact_details: bool = False,
+    ) -> dict[str, Any]:
+        snapshot = appointment_snapshot or {}
+        return await self.process_refund_on_cancellation(
+            payment=payment,
+            appointment_snapshot=snapshot,
+            appointment_id=appointment_id,
+            cancel_reason=cancel_reason,
+            client_full_name=client_full_name,
+            client_phone=client_phone,
+            require_contact_details=require_contact_details,
+        )
 
     async def list_refund_requests(
         self,
@@ -279,43 +479,13 @@ class AdminBookingPaymentService:
                 if payment.status not in ("paid",):
                     raise ValueError(f"Payment status '{payment.status}' is not refundable")
 
-                shop_id, secret_key = await self._get_agent_yookassa_credentials(session, agent_id=agent_id)
-                self.configure_yookassa(shop_id, secret_key)
-
-                amount_rub = f"{int(refund_row.amount_minor) / 100:.2f}"
-                idempotence_key = f"booking-refund:{refund_row.id}"
-                try:
-                    refund = Refund.create(
-                        {
-                            "payment_id": payment.yookassa_payment_id,
-                            "amount": {"value": amount_rub, "currency": refund_row.currency or "RUB"},
-                            "description": f"Возврат за отмену записи #{refund_row.appointment_id or '—'}",
-                        },
-                        idempotence_key,
-                    )
-                except Exception as exc:
-                    refund_row.status = "failed"
-                    refund_row.error_message = str(exc)[:2000]
-                    refund_row.reviewed_by_user_id = reviewed_by_user_id
-                    refund_row.reviewed_at = now
-                    refund_row.updated_at = now
-                    await session.flush()
-                    raise RuntimeError(f"Не удалось создать возврат в ЮKassa: {exc}") from exc
-
-                refund_status = str(getattr(refund, "status", "") or "").strip().lower()
-                refund_id = str(getattr(refund, "id", "") or "").strip()
-                refund_row.yookassa_refund_id = refund_id or None
-                refund_row.reviewed_by_user_id = reviewed_by_user_id
-                refund_row.reviewed_at = now
-                refund_row.updated_at = now
-
-                if refund_status in ("succeeded", "pending", "waiting_for_capture"):
-                    refund_row.status = "refunded"
-                    payment.status = "refunded"
-                    payment.updated_at = now
-                else:
-                    refund_row.status = "failed"
-                    refund_row.error_message = f"Unexpected refund status: {refund_status or 'unknown'}"
+                await self._execute_yookassa_refund(
+                    session,
+                    agent_id=agent_id,
+                    payment=payment,
+                    refund_row=refund_row,
+                    reviewed_by_user_id=reviewed_by_user_id,
+                )
 
                 await session.flush()
                 await session.refresh(refund_row)
