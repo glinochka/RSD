@@ -305,7 +305,7 @@ async def get_subscription_plans():
 
 
 @router.get("/agent-templates")
-async def get_agent_template_pricing():
+async def list_agent_template_pricing():
     return JSONResponse(
         content={
             "templates": list_public_agent_template_pricing(),
