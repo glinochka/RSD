@@ -3,6 +3,7 @@ import pytest
 from datetime import date, timedelta
 
 from app.agent_template_pricing import (
+    AGENT_TEMPLATE_PRICING,
     MAINTENANCE_GRACE_DAYS,
     _reload_agent_template_pricing,
     assert_template_selectable,
@@ -15,6 +16,7 @@ from app.agent_template_pricing import (
     parse_agent_payment_plan_name,
     agent_payment_plan_name,
     PAYMENT_KIND_AGENT_ACTIVATION,
+    PAYMENT_KIND_AGENT_MAINTENANCE,
     update_agent_template_pricing_overrides,
     user_has_free_agent_activation,
 )
@@ -107,6 +109,19 @@ def test_agent_payment_plan_roundtrip():
     )
     parsed = parse_agent_payment_plan_name(plan)
     assert parsed == (PAYMENT_KIND_AGENT_ACTIVATION, "sales_manager")
+
+
+def test_agent_payment_plan_name_fits_website_transaction_column():
+    max_len = 0
+    for template_type in AGENT_TEMPLATE_PRICING:
+        for payment_kind in (PAYMENT_KIND_AGENT_ACTIVATION, PAYMENT_KIND_AGENT_MAINTENANCE):
+            plan = agent_payment_plan_name(
+                payment_kind=payment_kind,
+                template_type=template_type,
+            )
+            max_len = max(max_len, len(plan))
+            assert len(plan) <= 64, plan
+    assert max_len > 32
 
 
 def test_public_catalog_only_pricing_page_templates():
