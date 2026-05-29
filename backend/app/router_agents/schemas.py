@@ -653,7 +653,7 @@ class AdminTemplateServiceCreatePayload(AgentLookup):
     staff_id: Optional[int] = Field(default=None, gt=0, description="ID конкретного сотрудника-исполнителя")
     title: str = Field(..., min_length=1, max_length=128, description="Название услуги")
     duration_minutes: int = Field(..., ge=1, le=24 * 60, description="Длительность услуги в минутах")
-    price_minor: int = Field(default=0, ge=0, description="Стоимость в minor units")
+    price_minor: int = Field(default=0, ge=0, description="Стоимость в копейках (100 ₽ = 10000)")
     resource_type_filters: list[str] = Field(default_factory=list, description="Ограничение по типам ресурсов")
     is_active: bool = Field(default=True, description="Активна ли услуга")
 
@@ -663,7 +663,7 @@ class AdminTemplateServiceUpdatePayload(AgentLookup):
     staff_id: Optional[int] = Field(default=None, gt=0, description="ID конкретного сотрудника-исполнителя")
     title: Optional[str] = Field(default=None, min_length=1, max_length=128, description="Название услуги")
     duration_minutes: Optional[int] = Field(default=None, ge=1, le=24 * 60, description="Длительность услуги")
-    price_minor: Optional[int] = Field(default=None, ge=0, description="Стоимость в minor units")
+    price_minor: Optional[int] = Field(default=None, ge=0, description="Стоимость в копейках (100 ₽ = 10000)")
     resource_type_filters: Optional[list[str]] = Field(default=None, description="Ограничение по типам ресурсов")
     is_active: Optional[bool] = Field(default=None, description="Активность услуги")
 

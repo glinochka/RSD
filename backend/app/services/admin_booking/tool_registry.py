@@ -64,6 +64,25 @@ def _filter_slots_by_min_duration(
     return out
 
 
+def _strip_minor_price_fields(item: dict[str, Any]) -> dict[str, Any]:
+    """Убираем копейки из ответа LLM — модель путает price_minor с рублями."""
+    out = dict(item)
+    out.pop("price_minor", None)
+    out.pop("amount_minor", None)
+    return out
+
+
+def _sanitize_tool_result_for_llm(tool_name: str, result: Any) -> Any:
+    if tool_name == "list_services" and isinstance(result, list):
+        return [_strip_minor_price_fields(item) for item in result if isinstance(item, dict)]
+    if isinstance(result, dict):
+        if tool_name == "create_appointment":
+            return _strip_minor_price_fields(result)
+        if "price_minor" in result or "amount_minor" in result:
+            return _strip_minor_price_fields(result)
+    return result
+
+
 def _find_service_row(
     services: list[dict[str, Any]],
     service_id: Any,
@@ -426,7 +445,8 @@ _TOOL_DESCRIPTIONS = {
     "list_services": (
         "List bookable services. Each item may include staff_id and staff_full_name when the service is tied to one specialist; "
         "use this so you know which doctor performs which procedure before offering a time. "
-        "For client-facing prices use price_rub (rubles), not price_minor."
+        "Each service includes price_rub — the client-facing price in rubles. "
+        "Always quote price_rub from the latest call; never infer price from chat history."
     ),
     "find_next_available": (
         "Find the next available time slot starting from a given date. "
@@ -604,6 +624,7 @@ class AdminBookingToolRegistry:
             cached = _IDEMPOTENCY_CACHE.get(idempotency_key)
             if cached:
                 _, value = cached
+                cached_result = value.get("result") if isinstance(value, dict) else value
                 return {
                     "ok": True,
                     "tool_name": tool_name,
@@ -613,7 +634,7 @@ class AdminBookingToolRegistry:
                     "latency_ms": 0,
                     "idempotent_replay": True,
                     "idempotency_key": idempotency_key,
-                    "result": value,
+                    "result": _sanitize_tool_result_for_llm(tool_name, cached_result),
                 }
 
         data = args.model_dump()
@@ -1017,5 +1038,5 @@ class AdminBookingToolRegistry:
             "latency_ms": latency_ms,
             "idempotency_key": idempotency_key,
             "tool_args_summary": _build_args_summary(tool_name, data),
-            "result": result,
+            "result": _sanitize_tool_result_for_llm(tool_name, result),
         }

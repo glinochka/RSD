@@ -15,6 +15,7 @@ import { validateFile } from '../utils/validation';
 import { NAVIGATION_ROUTES } from '../config/constants';
 import pricingService from '../services/pricingService';
 import { formatMaintenancePrice } from '../utils/agentTemplatePricing';
+import { rubToMinor } from '../utils/bookingPrice';
 import DemoBadge, { TitleWithDemoBadge } from '../components/DemoBadge';
 import UserbotSessionFileUpload from '../components/UserbotSessionFileUpload';
 import '../styles/createAgent.css';
@@ -105,13 +106,6 @@ const newStaffId = () => `local-${++_staffLocalIdCounter}`;
 
 let _serviceLocalIdCounter = 0;
 const newServiceLocalId = () => `svc-${++_serviceLocalIdCounter}`;
-
-const rubToMinor = (raw) => {
-  const normalized = String(raw ?? '').replace(',', '.').trim();
-  const value = Number(normalized);
-  if (!Number.isFinite(value) || value <= 0) return 0;
-  return Math.max(0, Math.round(value * 100));
-};
 
 const buildAdminDomainPromptAppendix = (domainConfig, staffList, serviceList) => {
   const domainType = domainConfig?.key || 'beauty_salon';

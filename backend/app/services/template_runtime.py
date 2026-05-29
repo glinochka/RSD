@@ -16,6 +16,7 @@ from ..alembic.models import Agent, AgentAnalyticsMessage, AgentCrmConnection, A
 from ..utils.crypto import decrypt_booking_payment_secret, decrypt_crm_credentials
 from ..utils.pii import mask_external_id, redact_pii_text
 from .admin_booking import AdminBookingNeedsConfirmationError, AdminBookingToolRegistry
+from .admin_booking.catalog_prompt import load_booking_catalog_knowledge
 from .ai_authoring import ai_client, generate_answer_with_context
 from .content_factory_runtime import get_content_factory_orchestrator
 from .crm import build_provider
@@ -818,11 +819,13 @@ class TemplateRuntimeService:
         context_tail = f"{now_context}\n{domain_instruction}\n{resource_model_hint}\n{backend_instruction}"
         if http_integration_hint:
             context_tail = f"{context_tail}\n\n{http_integration_hint}"
+        knowledge_catalog_block = await load_booking_catalog_knowledge(agent_id=agent_id)
         system_prompt = build_crm_admin_system_prompt(
             agent_prompt=prompt,
             context_tail=context_tail,
             today_date=now_local.strftime("%Y-%m-%d"),
             portrait_block=portrait_block,
+            knowledge_catalog_block=knowledge_catalog_block,
         )
 
         messages: list[dict[str, Any]] = [

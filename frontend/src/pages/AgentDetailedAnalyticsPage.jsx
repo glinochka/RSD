@@ -6,6 +6,7 @@ import agentService from '../services/agentService';
 import { useNotification } from '../context/useNotification';
 import { NAVIGATION_ROUTES } from '../config/constants';
 import { findTelephonyChannel, telephonyCallTitle, telephonyStatusLabel } from '../utils/telephony';
+import { formatServicePriceLabel, minorToRubInput, rubToMinor } from '../utils/bookingPrice';
 import DemoBadge, { TitleWithDemoBadge } from '../components/DemoBadge';
 import '../styles/agentDetailedAnalytics.css';
 
@@ -673,7 +674,7 @@ const AgentDetailedAnalyticsPageContent = () => {
     title: '',
     target_role: 'master',
     duration_minutes: 60,
-    price_minor: 0,
+    price_rub: '',
     resource_type_filters: '',
   });
   const [newStaffDraft, setNewStaffDraft] = useState({ full_name: '', role: 'master', specializations: '' });
@@ -682,7 +683,7 @@ const AgentDetailedAnalyticsPageContent = () => {
     title: '',
     target_role: 'master',
     duration_minutes: 60,
-    price_minor: 0,
+    price_rub: '',
     resource_type_filters: '',
   });
   const [newScheduleDraft, setNewScheduleDraft] = useState({
@@ -1267,14 +1268,14 @@ const AgentDetailedAnalyticsPageContent = () => {
         target_role: newServiceDraft.target_role,
         title: newServiceDraft.title.trim(),
         duration_minutes: Number(newServiceDraft.duration_minutes || 60),
-        price_minor: Number(newServiceDraft.price_minor || 0),
+        price_minor: rubToMinor(newServiceDraft.price_rub),
         resource_type_filters: parseCsv(newServiceDraft.resource_type_filters),
       });
       setNewServiceDraft({
         title: '',
         target_role: 'master',
         duration_minutes: 60,
-        price_minor: 0,
+        price_rub: '',
         resource_type_filters: '',
       });
       await loadOperationsDashboard();
@@ -1295,7 +1296,7 @@ const AgentDetailedAnalyticsPageContent = () => {
         service_id: editingServiceId,
         title: editingServiceDraft.title.trim(),
         duration_minutes: Number(editingServiceDraft.duration_minutes || 60),
-        price_minor: Number(editingServiceDraft.price_minor || 0),
+        price_minor: rubToMinor(editingServiceDraft.price_rub),
         resource_type_filters: parseCsv(editingServiceDraft.resource_type_filters),
       });
       setEditingServiceId(null);
@@ -2589,9 +2590,9 @@ const AgentDetailedAnalyticsPageContent = () => {
                       className="input-main"
                       type="number"
                       min="0"
-                      placeholder="Цена minor"
-                      value={newServiceDraft.price_minor}
-                      onChange={(e) => setNewServiceDraft((prev) => ({ ...prev, price_minor: e.target.value }))}
+                      placeholder="Цена (руб)"
+                      value={newServiceDraft.price_rub}
+                      onChange={(e) => setNewServiceDraft((prev) => ({ ...prev, price_rub: e.target.value }))}
                     />
                     <input
                       className="input-main"
@@ -2630,9 +2631,9 @@ const AgentDetailedAnalyticsPageContent = () => {
                                 className="input-main"
                                 type="number"
                                 min="0"
-                                value={editingServiceDraft.price_minor}
+                                value={editingServiceDraft.price_rub}
                                 onChange={(e) =>
-                                  setEditingServiceDraft((prev) => ({ ...prev, price_minor: e.target.value }))
+                                  setEditingServiceDraft((prev) => ({ ...prev, price_rub: e.target.value }))
                                 }
                               />
                               <button type="button" className="btn btn-black" onClick={handleSaveService}>Сохранить</button>
@@ -2643,7 +2644,7 @@ const AgentDetailedAnalyticsPageContent = () => {
                               <div className="analytics-ops-row-main">
                                 <strong>{item.title}</strong>
                                 <span>
-                                  {item.target_role} · {item.duration_minutes} мин · {item.price_minor}
+                                  {item.target_role} · {item.duration_minutes} мин · {formatServicePriceLabel(item.price_minor)}
                                 </span>
                               </div>
                               <div className="analytics-ops-row-actions">
@@ -2656,7 +2657,7 @@ const AgentDetailedAnalyticsPageContent = () => {
                                       title: item.title || '',
                                       target_role: item.target_role || 'master',
                                       duration_minutes: item.duration_minutes || 60,
-                                      price_minor: item.price_minor || 0,
+                                      price_rub: minorToRubInput(item.price_minor),
                                       resource_type_filters: Array.isArray(item.resource_type_filters)
                                         ? item.resource_type_filters.join(', ')
                                         : '',

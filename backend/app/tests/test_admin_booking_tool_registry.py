@@ -275,3 +275,37 @@ async def test_create_appointment_yookassa_invalid_credentials_message(monkeypat
             f'{{"starts_at":"{future_day}T13:00:00","ends_at":"{future_day}T13:30:00",'
             f'"staff_id":23,"service_id":5,"client_name":"Пётр"}}',
         )
+
+
+@pytest.mark.asyncio
+async def test_list_services_strips_price_minor_from_llm_payload(monkeypatch):
+    class _FakeService:
+        async def list_services(self, **kwargs):
+            return [
+                {
+                    "id": 20,
+                    "title": "Рукав",
+                    "price_minor": 10000,
+                    "price_rub": 100.0,
+                    "duration_minutes": 30,
+                }
+            ]
+
+    monkeypatch.setattr(
+        "app.services.admin_booking.tool_registry.get_admin_booking_service",
+        lambda: _FakeService(),
+    )
+
+    registry = AdminBookingToolRegistry(
+        agent_id=17,
+        user_external_id="u-5",
+        source_channel="telegram",
+        user_message="сколько стоит рукав",
+        allowed_tools=["list_services"],
+    )
+    payload = await registry.execute_tool("list_services", '{"active_only":true}')
+
+    assert payload["ok"] is True
+    item = payload["result"][0]
+    assert item["price_rub"] == 100.0
+    assert "price_minor" not in item
