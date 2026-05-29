@@ -395,7 +395,7 @@ const CustomSelect = ({
   );
 };
 
-const FeatureToggle = ({ checked, onChange, disabled, title, description, helpText }) => {
+const FeatureToggle = ({ checked, onChange, disabled, title, helpText }) => {
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const toggleRef = useRef(null);
 
@@ -444,7 +444,6 @@ const FeatureToggle = ({ checked, onChange, disabled, title, description, helpTe
       >
         <span className="feature-toggle__content">
           <span className="feature-toggle__title">{title}</span>
-          {description ? <span className="feature-toggle__description">{description}</span> : null}
         </span>
         <span className="feature-toggle__switch" aria-hidden="true">
           <span className="feature-toggle__thumb" />
@@ -2424,8 +2423,7 @@ const AgentsPageContent = () => {
                       onChange={(next) => setAgentAvailAlwaysOn(Boolean(next))}
                       disabled={isSavingAgentAvailability}
                       title="Круглосуточный режим (24/7)"
-                      description="Выключите, чтобы вне заданного расписания входящие сообщения не обрабатывались и не получали ответа."
-                      helpText="Вне окна сообщение не попадает в аналитику и не вызывает LLM; пользователь не получает ответ. Подписка и блокировки пользователя проверяются как обычно."
+                      helpText="Выключите, чтобы вне заданного расписания входящие сообщения не обрабатывались и не получали ответа. Вне окна сообщение не попадает в аналитику и не вызывает LLM; пользователь не получает ответ. Подписка и блокировки пользователя проверяются как обычно."
                     />
                     <label htmlFor="agent_avail_timezone" className="mt-input">
                       Часовой пояс расписания
@@ -2686,24 +2684,21 @@ const AgentsPageContent = () => {
                           onChange={(enabled) => handleToggleSalesActivity('lead_generation_enabled', enabled)}
                           disabled={isSavingTemplateConfig}
                           title="Лидогенерация"
-                          description="Основной контур sales_manager: анализ чатов, отлов лидов и продажа."
-                          helpText="Если выключить, агент прекращает выполнение основной задачи sales_manager. Если одновременно выключить Лидогенерацию, Нейрокомментинг и Имитацию живого общения, агент будет автоматически выключен."
+                          helpText="Основной контур sales_manager: анализ чатов, отлов лидов и продажа. Если выключить, агент прекращает выполнение основной задачи sales_manager. Если одновременно выключить Лидогенерацию, Нейрокомментинг и Имитацию живого общения, агент будет автоматически выключен."
                         />
                         <FeatureToggle
                           checked={salesNeuroCommentingEnabled}
                           onChange={(enabled) => handleToggleSalesActivity('neuro_commenting_enabled', enabled)}
                           disabled={isSavingTemplateConfig}
                           title="Нейрокомментинг"
-                          description="Юзербот комментирует посты в каналах аккаунта, где доступен как участник."
-                          helpText="К каждому новому посту формируется короткий LLM-комментарий без фильтра по триггер-словам и без квалификации целевого лида. Для групп и чатов по-прежнему действует список триггер-слов ниже (лидогенерация и имитация общения)."
+                          helpText="Юзербот комментирует посты в каналах аккаунта, где доступен как участник. К каждому новому посту формируется короткий LLM-комментарий без фильтра по триггер-словам и без квалификации целевого лида. Для групп и чатов по-прежнему действует список триггер-слов ниже (лидогенерация и имитация общения)."
                         />
                         <FeatureToggle
                           checked={salesLiveChatSimulationEnabled}
                           onChange={(enabled) => handleToggleSalesActivity('live_chat_simulation_enabled', enabled)}
                           disabled={isSavingTemplateConfig}
                           title="Имитация живого общения"
-                          description="Юзербот периодически включается в обсуждения по триггер-словам из списка ниже."
-                          helpText="Когда включено, юзербот может периодически вступать в разговор в чатах и отправлять 2–3 сообщения за одно включение; сообщение учитывается только если совпало хотя бы с одним триггер-словом."
+                          helpText="Юзербот периодически включается в обсуждения по триггер-словам из списка ниже. Когда включено, юзербот может периодически вступать в разговор в чатах и отправлять 2–3 сообщения за одно включение; сообщение учитывается только если совпало хотя бы с одним триггер-словом."
                         />
                         <div className="sales-trigger-words-block">
                           <label htmlFor="sales_trigger_word_draft" className="sales-trigger-words-label">
@@ -2805,8 +2800,7 @@ const AgentsPageContent = () => {
                       onChange={handleToggleSmartSearch}
                       disabled={isSavingSmartSearch}
                       title="Умный поиск"
-                      description="ON: LLM формирует RAG-запросы. OFF: в RAG отправляется исходный запрос и извлекается 6 чанков."
-                      helpText="Управляет логикой поиска в базе знаний: LLM-планирование запросов или прямой поиск по исходному сообщению."
+                      helpText="ON: LLM формирует RAG-запросы. OFF: в RAG отправляется исходный запрос и извлекается 6 чанков. Управляет логикой поиска в базе знаний."
                     />
                     {isQATemplate ? (
                       <FeatureToggle
@@ -2814,8 +2808,7 @@ const AgentsPageContent = () => {
                         onChange={handleToggleChatFreeze}
                         disabled={isSavingChatFreeze}
                         title="Заморозка чата"
-                        description="Авто-передача диалога владельцу при неуверенном ответе агента."
-                        helpText="Доступно только для шаблона Консультант (QA). Если включено, агент может пометить диалог как требующий владельца и временно заморозить чат для пользователя."
+                        helpText="Авто-передача диалога владельцу при неуверенном ответе агента. Доступно только для шаблона Консультант (QA). Если включено, агент может пометить диалог как требующий владельца и временно заморозить чат для пользователя."
                       />
                     ) : null}
                     <FeatureToggle
@@ -2823,8 +2816,7 @@ const AgentsPageContent = () => {
                       onChange={handleToggleStartProcessing}
                       disabled={isSavingStartProcessing}
                       title="Обработка /start"
-                      description="ON: /start отправляется в LLM. OFF: отправляется дефолтное/пользовательское приветствие."
-                      helpText="По умолчанию выключено: команда /start вернет текст приветствия. Включите, чтобы /start обрабатывался как обычное сообщение пользователя."
+                      helpText="ON: /start отправляется в LLM. OFF: отправляется дефолтное/пользовательское приветствие. По умолчанию выключено: команда /start вернет текст приветствия. Включите, чтобы /start обрабатывался как обычное сообщение пользователя."
                     />
                   </div>
 

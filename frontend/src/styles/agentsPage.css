@@ -673,11 +673,6 @@
   color: var(--color-text);
 }
 
-.feature-toggle__description {
-  font-size: var(--font-size-sm);
-  color: var(--color-text-light);
-}
-
 .feature-toggle__switch {
   width: 46px;
   height: 26px;
