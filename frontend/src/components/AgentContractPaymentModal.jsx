@@ -2,13 +2,15 @@
  * Modal to pay or extend a paid agent subscription (YooKassa).
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import FeatureToggle from './FeatureToggle';
 import {
   AGENT_CONTRACT_DURATION_OPTIONS,
   calculateContractTotalRub,
   formatRubPrice,
 } from '../utils/agentTemplatePricing';
 import '../styles/priceList.css';
+import '../styles/featureToggle.css';
 
 const AgentContractPaymentModal = ({
   isOpen,
@@ -23,6 +25,16 @@ const AgentContractPaymentModal = ({
   const templateTitle = billing.template_title || 'Агент';
   const [durationMonths, setDurationMonths] = useState(1);
   const [promoCode, setPromoCode] = useState('');
+  const autopayAvailable = Boolean(
+    billing.autopay_available && billing.yookassa_autopay_available !== false,
+  );
+  const [enableAutopay, setEnableAutopay] = useState(autopayAvailable);
+
+  useEffect(() => {
+    if (isOpen) {
+      setEnableAutopay(autopayAvailable);
+    }
+  }, [isOpen, autopayAvailable]);
 
   const trialHint = useMemo(() => {
     if (billing.maintenance_grace_active && billing.maintenance_grace_until) {
@@ -56,6 +68,7 @@ const AgentContractPaymentModal = ({
       agentId: agent.id,
       durationMonths,
       promoCode: promoCode.trim() || undefined,
+      enableAutopay: autopayAvailable ? enableAutopay : false,
     });
   };
 
@@ -123,6 +136,18 @@ const AgentContractPaymentModal = ({
             autoComplete="off"
             spellCheck="false"
           />
+
+          {autopayAvailable ? (
+            <div className="pricing-modal-autopay-wrap">
+              <FeatureToggle
+                checked={enableAutopay}
+                onChange={setEnableAutopay}
+                disabled={isProcessing}
+                title="Автопродление подписки"
+                description="Списание за выбранный срок за 1 день до окончания. Управление картами — в профиле, «Способы оплаты»."
+              />
+            </div>
+          ) : null}
 
           <div className="pricing-modal-actions">
             <button type="submit" className="btn btn-black" disabled={isProcessing}>

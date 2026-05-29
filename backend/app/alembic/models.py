@@ -78,6 +78,10 @@ class User(Base):
     )
 
     agents: Mapped[list['Agent']] = relationship(back_populates='user', cascade="all, delete-orphan")
+    payment_methods: Mapped[list['UserPaymentMethod']] = relationship(
+        back_populates='user',
+        cascade='all, delete-orphan',
+    )
     external_identities: Mapped[list["UserExternalIdentity"]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
@@ -120,6 +124,27 @@ class TelegramLinkChallenge(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
+class UserPaymentMethod(Base):
+    __tablename__ = "user_payment_methods"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "yookassa_payment_method_id",
+            name="uq_user_payment_methods_user_method",
+        ),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    yookassa_payment_method_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    card_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    card_last4: Mapped[str | None] = mapped_column(String(4), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    user: Mapped["User"] = relationship(back_populates="payment_methods")
+
+
 class Agent(Base):
     __table_args__ = {'extend_existing': True}
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -153,6 +178,11 @@ class Agent(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=False)
     activation_paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     maintenance_paid_until: Mapped[date | None] = mapped_column(Date, nullable=True)
+    autopay_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    yookassa_payment_method_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    autopay_duration_months: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    autopay_last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    autopay_last_error: Mapped[str | None] = mapped_column(String(512), nullable=True)
     welcome_message: Mapped[str] = mapped_column(Text, nullable=True)
     process_start_with_llm: Mapped[bool] = mapped_column(
         Boolean,
@@ -1045,6 +1075,8 @@ class WebsitePaymentTransaction(Base):
     yookassa_payment_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     is_processed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    autopay_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    is_autopay_charge: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utc_now_naive)
     paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 

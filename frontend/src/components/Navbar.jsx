@@ -11,6 +11,7 @@ import authService from '../services/authService';
 import errorReportService from '../services/errorReportService';
 import { NAVIGATION_ROUTES } from '../config/constants';
 import { normalizeDetail } from '../utils/errorUtils';
+import PaymentMethodsModal from './PaymentMethodsModal';
 import '../styles/navbar.css';
 
 const PROFILE_DRAWER_CLOSE_MS = 380;
@@ -42,6 +43,7 @@ const Navbar = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isProfileClosing, setIsProfileClosing] = useState(false);
+  const [isPaymentMethodsOpen, setIsPaymentMethodsOpen] = useState(false);
   const [isTelegramLinked, setIsTelegramLinked] = useState(!!user?.telegram_id);
   const [isTelegramFormOpen, setIsTelegramFormOpen] = useState(false);
   const [telegramUsernameInput, setTelegramUsernameInput] = useState('');
@@ -478,6 +480,15 @@ const Navbar = () => {
                 type="button"
                 className="btn btn-outline profile-drawer-btn"
                 onClick={() => {
+                  setIsPaymentMethodsOpen(true);
+                }}
+              >
+                Способы оплаты
+              </button>
+              <button
+                type="button"
+                className="btn btn-outline profile-drawer-btn"
+                onClick={() => {
                   closeProfile();
                   navigate(NAVIGATION_ROUTES.PARTNER);
                 }}
@@ -553,6 +564,11 @@ const Navbar = () => {
           </div>
         </div>
       )}
+
+      <PaymentMethodsModal
+        isOpen={isPaymentMethodsOpen}
+        onClose={() => setIsPaymentMethodsOpen(false)}
+      />
     </>
   );
 };

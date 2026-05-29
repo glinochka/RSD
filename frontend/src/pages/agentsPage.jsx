@@ -528,7 +528,7 @@ const AgentCard = ({ agent, isSelected, onManage, onDelete, onToggle }) => {
 const AgentsPageContent = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { showError, showSuccess } = useNotification();
+  const { showError, showSuccess, showInfo } = useNotification();
   const { isAuthenticated } = useAuth();
   const [selectedBotId, setSelectedBotId] = useState(null);
   const [selectedAgent, setSelectedAgent] = useState(null);
@@ -766,7 +766,7 @@ const AgentsPageContent = () => {
     setContractModalTitle('');
   };
 
-  const handleContractPaymentSubmit = async ({ agentId, durationMonths, promoCode }) => {
+  const handleContractPaymentSubmit = async ({ agentId, durationMonths, promoCode, enableAutopay }) => {
     if (isContractPaymentProcessing) return;
     setIsContractPaymentProcessing(true);
     try {
@@ -777,7 +777,12 @@ const AgentsPageContent = () => {
         return_url: returnUrl,
         promo_code: promoCode,
         duration_months: durationMonths,
+        enable_autopay: enableAutopay,
       });
+
+      if (payment?.autopay_warning) {
+        showInfo(payment.autopay_warning);
+      }
 
       if (payment?.status === 'succeeded' && !payment?.confirmation_url) {
         showSuccess('Подписка активирована по промокоду.');
@@ -2319,6 +2324,12 @@ const AgentsPageContent = () => {
                               ? `Подписка до ${new Date(selectedAgentBilling.maintenance_paid_until).toLocaleDateString('ru-RU')}`
                               : 'Подписка активна'
                             : 'Подписка не оплачена — агент будет отключён'}
+                        {selectedAgentBilling.autopay_enabled
+                          ? ` · автопродление на ${selectedAgentBilling.autopay_duration_months} мес.`
+                          : ''}
+                        {selectedAgentBilling.autopay_last_error
+                          ? ` · ${selectedAgentBilling.autopay_last_error}`
+                          : ''}
                       </p>
                     ) : null}
                   </div>

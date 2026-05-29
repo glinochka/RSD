@@ -210,6 +210,14 @@ export const agentService = {
     return response.data;
   },
 
+  setAutopay: async (agentId, enabled) => {
+    const response = await apiClient.patch(API_ROUTES.AGENTS_AUTOPAY, {
+      agent_id: agentId,
+      enabled: Boolean(enabled),
+    });
+    return response.data;
+  },
+
   aiImprovePrompt: async (agentId) => {
     const response = await apiClient.post(API_ROUTES.AGENTS_AI_IMPROVE_PROMPT, {
       agent_id: agentId,

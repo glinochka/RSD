@@ -20,6 +20,8 @@ from app.router_telephony import router as telephony_router
 from app.origins import origins
 from app.config import settings
 from app.services.subscription_maintenance import downgrade_expired_subscriptions_once
+from app.services.agent_autopay import process_agent_autopay_renewals_once
+from app.services.agent_billing_maintenance import deactivate_expired_agent_maintenance_once
 from app.services.onboarding_email_maintenance import send_onboarding_inactive_user_reminders_once
 from app.services.reindex_jobs import run_reindex_worker_forever
 from app.services.content_factory_worker import get_content_factory_worker
@@ -58,6 +60,8 @@ async def lifespan(app: FastAPI):
         while True:
             try:
                 await downgrade_expired_subscriptions_once()
+                await process_agent_autopay_renewals_once()
+                await deactivate_expired_agent_maintenance_once()
                 await send_onboarding_inactive_user_reminders_once()
             except Exception:
                 logger.exception("Subscription cron failed")

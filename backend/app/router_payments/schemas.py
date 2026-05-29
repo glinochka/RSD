@@ -65,6 +65,10 @@ class CreateAgentBillingPayment(BaseModel):
     return_url: str | None = Field(default=None, description="URL возврата после оплаты в ЮKassa")
     promo_code: str | None = Field(default=None, max_length=64, description="Optional promo code")
     duration_months: int = Field(default=1, description="Contract duration in months (1, 3, or 6)")
+    enable_autopay: bool = Field(
+        default=False,
+        description="Save payment method in YooKassa for automatic renewals",
+    )
 
     @field_validator("payment_kind")
     @classmethod

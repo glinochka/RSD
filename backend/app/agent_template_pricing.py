@@ -288,7 +288,19 @@ def build_agent_billing_state(agent, *, user=None) -> dict[str, Any]:
         "renewal_payment_kind": PAYMENT_KIND_AGENT_MAINTENANCE if requires_subscription else None,
         "duration_discounts": AGENT_DURATION_DISCOUNT_BY_MONTHS,
         "llm_tokens_included": True,
+        "autopay_enabled": bool(getattr(agent, "autopay_enabled", False)),
+        "autopay_available": requires_subscription,
+        "autopay_has_payment_method": bool(getattr(agent, "yookassa_payment_method_id", None)),
+        "autopay_duration_months": int(getattr(agent, "autopay_duration_months", None) or 1),
+        "autopay_last_error": getattr(agent, "autopay_last_error", None),
+        "yookassa_autopay_available": _yookassa_autopay_available(),
     }
+
+
+def _yookassa_autopay_available() -> bool:
+    from .services.agent_autopay import is_yookassa_autopay_available
+
+    return is_yookassa_autopay_available()
 
 
 def agent_payment_plan_name(*, payment_kind: str, template_type: str) -> str:

@@ -87,6 +87,10 @@ class NewAgent_byUserWith_tgID(BaseModel):
 class Agent_by_botID(AgentLookup):
     pass
 
+
+class AgentAutopayUpdateRequest(AgentLookup):
+    enabled: bool = Field(..., description="Enable or disable automatic subscription renewal")
+
 class User_by_agent_or_tgID(BaseModel):
     id: int = Field(..., description="id")
 

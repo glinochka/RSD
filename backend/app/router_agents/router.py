@@ -5902,6 +5902,56 @@ async def toggle_status(
             )
 
 
+@router.patch("/autopay")
+async def update_agent_autopay(
+    payload: AgentAutopayUpdateRequest,
+    current_user=Depends(get_current_user_required),
+):
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
+                current_user=current_user,
+                internal=False,
+            )
+            from ..agent_template_pricing import build_agent_billing_state, get_agent_template_pricing
+
+            pricing = get_agent_template_pricing(agent.template_type)
+            if not pricing or pricing.monthly_maintenance_rub_min <= 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Автопродление доступно только для платных агентов",
+                )
+            if payload.enabled and not getattr(agent, "yookassa_payment_method_id", None):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        "Сначала оплатите подписку с включённым автопродлением, "
+                        "чтобы сохранить способ оплаты"
+                    ),
+                )
+            updates: dict[str, object] = {
+                "autopay_enabled": payload.enabled,
+                "autopay_last_error": None if payload.enabled else agent.autopay_last_error,
+            }
+            await agent_dao.update(agent, updates)
+            agent = await agent_dao.find_one_by_filter(id=agent.id)
+            billing_user = await _resolve_billing_user(session, agent, current_user)
+            return JSONResponse(
+                content={
+                    "agent_id": agent.id,
+                    "autopay_enabled": bool(agent.autopay_enabled),
+                    "billing": build_agent_billing_state(agent, user=billing_user),
+                },
+                status_code=status.HTTP_200_OK,
+            )
+
+
 @router.delete("")
 async def delete_by_bot_id(
     agent_id: Agent_by_botID = Depends(),

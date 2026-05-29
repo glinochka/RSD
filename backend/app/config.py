@@ -85,6 +85,8 @@ class Settings(BaseSettings):
     YOOKASSA_SHOP_ID: str = ""
     YOOKASSA_SECRET_KEY: str = ""
     YOOKASSA_RETURN_URL: str | None = None
+    # Recurring payments in YooKassa merchant settings must be enabled when true.
+    YOOKASSA_AUTOPAY_ENABLED: bool = False
     MASTER_BOT_TOKEN: str = ""
     # Шаблон наименования услуги в чеке «Мой налог» ({org_name}, {contact_id}).
     SALES_INVOICE_SERVICE_NAME_TEMPLATE: str = "Услуги RSD для {org_name}"

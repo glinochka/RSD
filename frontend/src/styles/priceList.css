@@ -242,6 +242,21 @@
   font-size: var(--font-size-base);
 }
 
+.pricing-modal-autopay-option {
+  display: flex;
+  gap: var(--spacing-sm);
+  align-items: flex-start;
+  margin: 0 0 var(--spacing-base);
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+  cursor: pointer;
+}
+
+.pricing-modal-autopay-option input {
+  margin-top: 0.2rem;
+  flex-shrink: 0;
+}
+
 .pricing-duration-list {
   display: grid;
   gap: var(--spacing-sm);

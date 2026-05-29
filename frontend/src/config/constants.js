@@ -72,6 +72,7 @@ export const API_ROUTES = {
   AGENTS_DELETE: '/api/agents',
   AGENTS_DETAIL: '/api/agents',
   AGENTS_TOGGLE: '/api/agents/toggle_status',
+  AGENTS_AUTOPAY: '/api/agents/autopay',
   AGENTS_AI_IMPROVE_PROMPT: '/api/agents/ai/improve_prompt',
   AGENTS_AI_GENERATE_WELCOME: '/api/agents/ai/generate_welcome',
   AGENTS_EXTERNAL_CHAT: '/api/agents/external/chat',
