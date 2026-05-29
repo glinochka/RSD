@@ -414,6 +414,63 @@ class TestAdminPlans:
         assert "plans" in data
 
 
+class TestAdminAgentTemplatePricing:
+    """Tests for GET/PUT /api/admin/agent-template-pricing endpoints."""
+
+    @pytest.mark.asyncio
+    async def test_get_agent_template_pricing_success(self, client):
+        from app.utils.JWT import create_access_token
+
+        admin_token = create_access_token({"admin_web": True})
+        client.headers["Authorization"] = f"Bearer {admin_token}"
+
+        response = await client.get("/api/admin/agent-template-pricing")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "templates" in data
+        codes = {row["code"] for row in data["templates"]}
+        assert "crm_admin" in codes
+        assert "lead_generation" not in codes
+
+    @pytest.mark.asyncio
+    async def test_update_agent_template_pricing_success(self, client):
+        from app.agent_template_pricing import _OVERRIDE_FILE_PATH, _reload_agent_template_pricing
+        from app.utils.JWT import create_access_token
+
+        admin_token = create_access_token({"admin_web": True})
+        client.headers["Authorization"] = f"Bearer {admin_token}"
+
+        try:
+            response = await client.put(
+                "/api/admin/agent-template-pricing",
+                json={
+                    "templates": [
+                        {
+                            "code": "crm_admin",
+                            "title": "ИИ Администратор",
+                            "card_title": "ИИ Администратор",
+                            "setup_rub_min": 0,
+                            "monthly_maintenance_rub_min": 1090,
+                            "is_free": False,
+                            "selectable": True,
+                            "status": "available",
+                            "description": "Тестовое описание",
+                        }
+                    ]
+                },
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+            crm = next(row for row in data["templates"] if row["code"] == "crm_admin")
+            assert crm["monthly_maintenance_rub_min"] == 1090
+        finally:
+            if _OVERRIDE_FILE_PATH.exists():
+                _OVERRIDE_FILE_PATH.unlink()
+            _reload_agent_template_pricing()
+
+
 class TestAdminBanUser:
     """Tests for POST /api/admin/users/{user_id}/ban endpoint."""
 

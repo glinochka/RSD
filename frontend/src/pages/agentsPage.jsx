@@ -73,6 +73,46 @@ const validateYookassaCredentials = (shopId, secretKey) => {
   }
   return null;
 };
+
+/** Build yookassa_api_key for PATCH or validation error; omit key to keep stored credentials. */
+const resolveYookassaCredentialsUpdate = ({ paidBookingEnabled, shopId, secretKey, hasStoredKey }) => {
+  const trimmedShopId = String(shopId || '').trim();
+  const trimmedSecret = String(secretKey || '').trim();
+  const hasShop = trimmedShopId.length > 0;
+  const hasSecret = trimmedSecret.length > 0;
+
+  if (!paidBookingEnabled) {
+    return { yookassa_api_key: '', clearStoredKey: true };
+  }
+
+  if (!hasShop && !hasSecret) {
+    if (!hasStoredKey) {
+      return { error: 'Укажите Shop ID и Secret key из личного кабинета ЮKassa (раздел «Настройки → Ключи API»)' };
+    }
+    return {};
+  }
+
+  if (hasShop !== hasSecret) {
+    return {
+      error:
+        'Заполните оба поля ЮKassa. Это не логин сайта: Shop ID — только цифры, Secret key — ключ вида live_… или test_…',
+    };
+  }
+
+  const validationError = validateYookassaCredentials(trimmedShopId, trimmedSecret);
+  if (validationError) {
+    return { error: validationError };
+  }
+
+  return {
+    yookassa_api_key: `${trimmedShopId}:${trimmedSecret}`,
+    credentialsUpdated: true,
+  };
+};
+
+const unlockYookassaInput = (event) => {
+  event.currentTarget.removeAttribute('readonly');
+};
 const AGENT_AVAILABILITY_WEEKDAY_LABELS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 const COMMON_AGENT_TIMEZONES = [
   'Europe/Moscow',
@@ -601,9 +641,6 @@ const AgentsPageContent = () => {
   const [adminWaitlistEnabled, setAdminWaitlistEnabled] = useState(true);
   const [adminReminderEnabled, setAdminReminderEnabled] = useState(true);
   const [adminReminderOffsets, setAdminReminderOffsets] = useState('24,2');
-  const [adminManualConfirmationEnabled, setAdminManualConfirmationEnabled] = useState(false);
-  const [adminManualConfirmationPriceMinor, setAdminManualConfirmationPriceMinor] = useState('15000');
-  const [adminManualConfirmationDurationMinutes, setAdminManualConfirmationDurationMinutes] = useState('120');
   const [adminPaidBookingEnabled, setAdminPaidBookingEnabled] = useState(false);
   const [adminYookassaShopId, setAdminYookassaShopId] = useState('');
   const [adminYookassaSecretKey, setAdminYookassaSecretKey] = useState('');
@@ -1055,49 +1092,36 @@ const AgentsPageContent = () => {
       waitlist_enabled: Boolean(adminWaitlistEnabled),
       reminder_enabled: Boolean(adminReminderEnabled),
       reminder_offsets_hours: parseReminderOffsets(adminReminderOffsets),
-      manual_confirmation_enabled: Boolean(adminManualConfirmationEnabled),
-      manual_confirmation_price_minor: Math.max(0, Number(adminManualConfirmationPriceMinor) || 0),
-      manual_confirmation_duration_minutes: Math.max(1, Number(adminManualConfirmationDurationMinutes) || 120),
       paid_booking_enabled: Boolean(adminPaidBookingEnabled),
     };
-    const yookassaShopId = adminYookassaShopId.trim();
-    const yookassaSecretKey = adminYookassaSecretKey.trim();
-    const hasTypedYookassaCredentials = yookassaShopId.length > 0 || yookassaSecretKey.length > 0;
+    const yookassaUpdate = resolveYookassaCredentialsUpdate({
+      paidBookingEnabled: adminPaidBookingEnabled,
+      shopId: adminYookassaShopId,
+      secretKey: adminYookassaSecretKey,
+      hasStoredKey: adminHasYookassaApiKey,
+    });
+    if (yookassaUpdate.error) {
+      showError(yookassaUpdate.error);
+      return;
+    }
     const updatePayload = { template_config: nextConfig };
-    if (adminPaidBookingEnabled) {
-      if (hasTypedYookassaCredentials) {
-        const yookassaValidationError = validateYookassaCredentials(
-          yookassaShopId,
-          yookassaSecretKey,
-        );
-        if (yookassaValidationError) {
-          showError(yookassaValidationError);
-          return;
-        }
-        updatePayload.yookassa_api_key = `${yookassaShopId}:${yookassaSecretKey}`;
-      } else if (!adminHasYookassaApiKey) {
-        showError('Укажите Shop ID и Secret key ЮKassa');
-        return;
-      }
-    } else {
-      updatePayload.yookassa_api_key = '';
+    if (Object.prototype.hasOwnProperty.call(yookassaUpdate, 'yookassa_api_key')) {
+      updatePayload.yookassa_api_key = yookassaUpdate.yookassa_api_key;
     }
     setIsSavingTemplateConfig(true);
     try {
       await agentService.update(selectedBotId, updatePayload);
+      const refreshedAgent = await agentService.getById(selectedBotId);
       setSelectedAgent((prev) => (prev
-        ? { ...prev, template_config: nextConfig, has_booking_payment_api_key: adminPaidBookingEnabled ? (adminHasYookassaApiKey || hasTypedYookassaCredentials) : false }
-        : prev));
-      if (adminPaidBookingEnabled && hasTypedYookassaCredentials) {
-        setAdminYookassaShopId('');
-        setAdminYookassaSecretKey('');
-        setAdminHasYookassaApiKey(true);
-      }
-      if (!adminPaidBookingEnabled) {
-        setAdminYookassaShopId('');
-        setAdminYookassaSecretKey('');
-        setAdminHasYookassaApiKey(false);
-      }
+        ? {
+          ...prev,
+          ...refreshedAgent,
+          template_config: nextConfig,
+        }
+        : refreshedAgent));
+      setAdminYookassaShopId('');
+      setAdminYookassaSecretKey('');
+      setAdminHasYookassaApiKey(Boolean(refreshedAgent?.has_booking_payment_api_key));
       showSuccess('Настройки шаблона Администратор обновлены');
     } catch (error) {
       showError(error?.message || 'Не удалось обновить настройки шаблона Администратор');
@@ -1634,11 +1658,6 @@ const AgentsPageContent = () => {
     setAdminWaitlistEnabled(cfg.waitlist_enabled !== false);
     setAdminReminderEnabled(cfg.reminder_enabled !== false);
     setAdminReminderOffsets(toCsvOffsets(cfg.reminder_offsets_hours));
-    setAdminManualConfirmationEnabled(Boolean(cfg.manual_confirmation_enabled));
-    setAdminManualConfirmationPriceMinor(String(Number(cfg.manual_confirmation_price_minor) || 15000));
-    setAdminManualConfirmationDurationMinutes(
-      String(Number(cfg.manual_confirmation_duration_minutes) || 120)
-    );
     setAdminPaidBookingEnabled(Boolean(cfg.paid_booking_enabled));
     setAdminYookassaShopId('');
     setAdminYookassaSecretKey('');
@@ -2519,37 +2538,6 @@ const AgentsPageContent = () => {
                           />
                         </div>
                         <FeatureToggle
-                          checked={adminManualConfirmationEnabled}
-                          onChange={setAdminManualConfirmationEnabled}
-                          disabled={isSavingTemplateConfig}
-                          title="Ручное подтверждение дорогих/долгих услуг"
-                          helpText="Агент будет запрашивать ручное подтверждение при превышении ценового порога или длительности услуги."
-                        />
-                        <label htmlFor="admin_manual_confirmation_price_minor" className="mt-input">
-                          Порог цены (minor):
-                        </label>
-                        <input
-                          id="admin_manual_confirmation_price_minor"
-                          type="number"
-                          min="0"
-                          className="input-main"
-                          value={adminManualConfirmationPriceMinor}
-                          onChange={(event) => setAdminManualConfirmationPriceMinor(event.target.value)}
-                          disabled={isSavingTemplateConfig}
-                        />
-                        <label htmlFor="admin_manual_confirmation_duration_minutes" className="mt-input">
-                          Порог длительности (мин):
-                        </label>
-                        <input
-                          id="admin_manual_confirmation_duration_minutes"
-                          type="number"
-                          min="1"
-                          className="input-main"
-                          value={adminManualConfirmationDurationMinutes}
-                          onChange={(event) => setAdminManualConfirmationDurationMinutes(event.target.value)}
-                          disabled={isSavingTemplateConfig}
-                        />
-                        <FeatureToggle
                           checked={adminPaidBookingEnabled}
                           onChange={setAdminPaidBookingEnabled}
                           disabled={isSavingTemplateConfig}
@@ -2557,34 +2545,60 @@ const AgentsPageContent = () => {
                           helpText="При включении агент сначала отправляет ссылку на оплату, и только после успешной оплаты подтверждает бронь."
                         />
                         {adminPaidBookingEnabled ? (
-                          <div className="admin-template-field">
+                          <form
+                            className="admin-template-field yookassa-credentials-form"
+                            autoComplete="off"
+                            onSubmit={(event) => event.preventDefault()}
+                          >
+                            {adminHasYookassaApiKey ? (
+                              <p className="yookassa-credentials-form__status">
+                                Ключи ЮKassa сохранены. Чтобы заменить, введите новую пару Shop ID и Secret key.
+                              </p>
+                            ) : null}
+                            <p className="yookassa-credentials-form__hint">
+                              Данные из личного кабинета ЮKassa → Настройки → Ключи API. Не используйте логин и пароль от сайта RSD.
+                            </p>
                             <label htmlFor="admin_yookassa_shop_id">
                               Shop ID ЮKassa:
                             </label>
                             <input
                               id="admin_yookassa_shop_id"
+                              name="yookassa-shop-id"
                               type="text"
+                              inputMode="numeric"
                               className="input-main"
                               value={adminYookassaShopId}
                               onChange={(event) => setAdminYookassaShopId(event.target.value)}
-                              placeholder={adminHasYookassaApiKey ? 'Ключ сохранён. Введите новый Shop ID для замены' : '123456'}
+                              onFocus={unlockYookassaInput}
+                              placeholder={adminHasYookassaApiKey ? 'Новый Shop ID (только цифры)' : '123456'}
                               disabled={isSavingTemplateConfig}
                               autoComplete="off"
+                              readOnly
+                              data-lpignore="true"
+                              data-1p-ignore="true"
+                              data-form-type="other"
                             />
                             <label htmlFor="admin_yookassa_secret_key" className="mt-input">
                               Secret key ЮKassa:
                             </label>
                             <input
                               id="admin_yookassa_secret_key"
-                              type="password"
-                              className="input-main"
+                              name="yookassa-secret-key"
+                              type="text"
+                              className="input-main yookassa-secret-input"
                               value={adminYookassaSecretKey}
                               onChange={(event) => setAdminYookassaSecretKey(event.target.value)}
-                              placeholder={adminHasYookassaApiKey ? 'Ключ сохранён. Введите новый Secret key для замены' : 'live_xxxxx'}
+                              onFocus={unlockYookassaInput}
+                              placeholder={adminHasYookassaApiKey ? 'Новый Secret key (live_… или test_…)' : 'live_xxxxx'}
                               disabled={isSavingTemplateConfig}
-                              autoComplete="off"
+                              autoComplete="new-password"
+                              readOnly
+                              spellCheck={false}
+                              data-lpignore="true"
+                              data-1p-ignore="true"
+                              data-form-type="other"
                             />
-                          </div>
+                          </form>
                         ) : null}
                         <button
                           type="button"

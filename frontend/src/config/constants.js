@@ -129,6 +129,7 @@ export const API_ROUTES = {
   ADMIN_CHATS: '/api/admin/chats',
   ADMIN_TURNKEY_REQUESTS: '/api/admin/turnkey-requests',
   ADMIN_PLANS: '/api/admin/plans',
+  ADMIN_AGENT_TEMPLATE_PRICING: '/api/admin/agent-template-pricing',
   ADMIN_PROMO_CODES: '/api/admin/promo-codes',
   ADMIN_BAN_USER: (userId) => `/api/admin/users/${userId}/ban`,
   ADMIN_UNBAN_USER: (userId) => `/api/admin/users/${userId}/unban`,

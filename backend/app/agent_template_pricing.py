@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 MAINTENANCE_GRACE_DAYS = 3
@@ -43,7 +45,9 @@ class AgentTemplatePricing:
         return data
 
 
-AGENT_TEMPLATE_PRICING: dict[str, AgentTemplatePricing] = {
+_DEFAULT_PRICING_CARD_TITLES: dict[str, str] = dict(PRICING_CARD_TITLES)
+
+_DEFAULT_AGENT_TEMPLATE_PRICING: dict[str, AgentTemplatePricing] = {
     "qa": AgentTemplatePricing(
         code="qa",
         title="ИИ консультант",
@@ -116,7 +120,7 @@ AGENT_TEMPLATE_PRICING: dict[str, AgentTemplatePricing] = {
 }
 
 # Legacy alias kept for stored agents; not offered in UI.
-AGENT_TEMPLATE_PRICING["lead_generation"] = AgentTemplatePricing(
+_DEFAULT_AGENT_TEMPLATE_PRICING["lead_generation"] = AgentTemplatePricing(
     code="lead_generation",
     title="Генерация лидов (legacy)",
     setup_rub_min=0,
@@ -127,9 +131,140 @@ AGENT_TEMPLATE_PRICING["lead_generation"] = AgentTemplatePricing(
     description="Устаревший шаблон, используйте «ИИ МОП».",
 )
 
-TEMPLATE_TYPES_IN_DEVELOPMENT = {
-    code for code, row in AGENT_TEMPLATE_PRICING.items() if row.status == "in_development"
-}
+_ADMIN_EDITABLE_TEMPLATE_CODES = frozenset(
+    code for code in _DEFAULT_AGENT_TEMPLATE_PRICING if code != "lead_generation"
+)
+
+_OVERRIDE_FILE_PATH = Path(__file__).with_name("agent_template_pricing.override.json")
+
+AGENT_TEMPLATE_PRICING: dict[str, AgentTemplatePricing] = {}
+TEMPLATE_TYPES_IN_DEVELOPMENT: set[str] = set()
+
+
+def _read_pricing_overrides() -> dict[str, dict[str, Any]]:
+    if not _OVERRIDE_FILE_PATH.exists():
+        return {}
+    try:
+        raw = json.loads(_OVERRIDE_FILE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    overrides: dict[str, dict[str, Any]] = {}
+    for code, data in raw.items():
+        if code in _ADMIN_EDITABLE_TEMPLATE_CODES and isinstance(data, dict):
+            overrides[str(code)] = data
+    return overrides
+
+
+def _merge_template_pricing(
+    base: AgentTemplatePricing,
+    upd: dict[str, Any],
+    *,
+    card_titles: dict[str, str],
+) -> AgentTemplatePricing:
+    code = base.code
+    title = str(upd.get("title", base.title) or base.title)
+    setup_rub_min = int(upd.get("setup_rub_min", base.setup_rub_min) or 0)
+    monthly_maintenance_rub_min = int(
+        upd.get("monthly_maintenance_rub_min", base.monthly_maintenance_rub_min) or 0
+    )
+    is_free = bool(upd.get("is_free", base.is_free))
+    selectable = bool(upd.get("selectable", base.selectable))
+    status = str(upd.get("status", base.status) or base.status)
+    if status not in ("available", "in_development"):
+        status = base.status
+    description = str(upd.get("description", base.description) or "")
+    if "card_title" in upd:
+        card_title = str(upd.get("card_title") or "").strip()
+        if card_title:
+            card_titles[code] = card_title
+        elif code in card_titles:
+            del card_titles[code]
+    return AgentTemplatePricing(
+        code=code,
+        title=title,
+        setup_rub_min=setup_rub_min,
+        monthly_maintenance_rub_min=monthly_maintenance_rub_min,
+        is_free=is_free,
+        selectable=selectable,
+        status=status,
+        description=description,
+    )
+
+
+def _apply_pricing_overrides(overrides: dict[str, dict[str, Any]]) -> tuple[dict[str, AgentTemplatePricing], dict[str, str]]:
+    card_titles = dict(_DEFAULT_PRICING_CARD_TITLES)
+    pricing: dict[str, AgentTemplatePricing] = {}
+    for code, base in _DEFAULT_AGENT_TEMPLATE_PRICING.items():
+        upd = overrides.get(code, {})
+        if upd:
+            pricing[code] = _merge_template_pricing(base, upd, card_titles=card_titles)
+        else:
+            pricing[code] = base
+    return pricing, card_titles
+
+
+def _reload_agent_template_pricing() -> None:
+    global AGENT_TEMPLATE_PRICING, TEMPLATE_TYPES_IN_DEVELOPMENT, PRICING_CARD_TITLES
+    AGENT_TEMPLATE_PRICING, PRICING_CARD_TITLES = _apply_pricing_overrides(_read_pricing_overrides())
+    TEMPLATE_TYPES_IN_DEVELOPMENT = {
+        code for code, row in AGENT_TEMPLATE_PRICING.items() if row.status == "in_development"
+    }
+
+
+_reload_agent_template_pricing()
+
+
+def get_paid_agent_template_types() -> tuple[str, ...]:
+    return tuple(
+        code
+        for code, pricing in AGENT_TEMPLATE_PRICING.items()
+        if pricing.monthly_maintenance_rub_min > 0
+    )
+
+
+def get_all_agent_template_pricing_admin() -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for code in sorted(_ADMIN_EDITABLE_TEMPLATE_CODES):
+        row = AGENT_TEMPLATE_PRICING.get(code)
+        if not row:
+            continue
+        data = row.to_public_dict(card_title=PRICING_CARD_TITLES.get(code))
+        data["on_pricing_page"] = code in PRICING_PAGE_TEMPLATE_CODES
+        items.append(data)
+    return items
+
+
+def update_agent_template_pricing_overrides(*, template_updates: list[dict[str, Any]]) -> None:
+    overrides = _read_pricing_overrides()
+    for upd in template_updates:
+        code = upd.get("code")
+        if code not in _ADMIN_EDITABLE_TEMPLATE_CODES:
+            continue
+        base = _DEFAULT_AGENT_TEMPLATE_PRICING[code]
+        entry: dict[str, Any] = {
+            "title": str(upd.get("title", base.title) or base.title),
+            "setup_rub_min": int(upd.get("setup_rub_min", base.setup_rub_min) or 0),
+            "monthly_maintenance_rub_min": int(
+                upd.get("monthly_maintenance_rub_min", base.monthly_maintenance_rub_min) or 0
+            ),
+            "is_free": bool(upd.get("is_free", base.is_free)),
+            "selectable": bool(upd.get("selectable", base.selectable)),
+            "status": str(upd.get("status", base.status) or base.status),
+            "description": str(upd.get("description", base.description) or ""),
+        }
+        card_title = upd.get("card_title")
+        if card_title is not None:
+            card_title_str = str(card_title).strip()
+            if card_title_str:
+                entry["card_title"] = card_title_str
+        overrides[str(code)] = entry
+
+    tmp_path = _OVERRIDE_FILE_PATH.with_suffix(".json.tmp")
+    tmp_path.write_text(json.dumps(overrides, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp_path.replace(_OVERRIDE_FILE_PATH)
+    _reload_agent_template_pricing()
 
 PAYMENT_KIND_SUBSCRIPTION = "subscription"
 PAYMENT_KIND_AGENT_ACTIVATION = "agent_activation"

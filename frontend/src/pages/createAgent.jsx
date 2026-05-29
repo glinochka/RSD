@@ -654,9 +654,6 @@ const CreateAgentContent = () => {
       waitlist_enabled: true,
       reminder_enabled: true,
       reminder_offsets_hours: '24,2',
-      manual_confirmation_enabled: false,
-      manual_confirmation_price_minor: '15000',
-      manual_confirmation_duration_minutes: '120',
       sales_product_name: '',
       sales_offer_type: '',
       sales_usp: '',
@@ -852,9 +849,6 @@ const CreateAgentContent = () => {
                 .split(',')
                 .map((item) => Number(item.trim()))
                 .filter((item) => Number.isFinite(item) && item > 0 && item <= 72),
-              manual_confirmation_enabled: Boolean(values.manual_confirmation_enabled),
-              manual_confirmation_price_minor: Number(values.manual_confirmation_price_minor || 0),
-              manual_confirmation_duration_minutes: Number(values.manual_confirmation_duration_minutes || 120),
               appointment_confirmation_enabled: true,
               resources_enabled: _selectedDomainCfg?.resources_mode !== 'none',
               resource_linked_to_staff: _selectedDomainCfg?.resource_linked_to_staff ?? true,
@@ -2066,39 +2060,6 @@ const CreateAgentContent = () => {
                       placeholder="24,2"
                     />
                   </div>
-                  <FeatureToggle
-                    checked={Boolean(form.values.manual_confirmation_enabled)}
-                    onChange={(enabled) => form.setFieldValue('manual_confirmation_enabled', enabled)}
-                    disabled={form.isSubmitting}
-                    title="Ручное подтверждение дорогих/долгих услуг"
-                    helpText="Агент будет запрашивать ручное подтверждение при превышении ценового порога или длительности услуги."
-                  />
-                  <label htmlFor="manual_confirmation_price_minor" className="mt-input">
-                    Порог цены (minor):
-                  </label>
-                  <input
-                    id="manual_confirmation_price_minor"
-                    type="number"
-                    min="0"
-                    name="manual_confirmation_price_minor"
-                    className="input-main"
-                    value={form.values.manual_confirmation_price_minor}
-                    onChange={form.handleChange}
-                    disabled={form.isSubmitting}
-                  />
-                  <label htmlFor="manual_confirmation_duration_minutes" className="mt-input">
-                    Порог длительности (мин):
-                  </label>
-                  <input
-                    id="manual_confirmation_duration_minutes"
-                    type="number"
-                    min="1"
-                    name="manual_confirmation_duration_minutes"
-                    className="input-main"
-                    value={form.values.manual_confirmation_duration_minutes}
-                    onChange={form.handleChange}
-                    disabled={form.isSubmitting}
-                  />
                 </div>
 
                 <div className="admin-template-onboarding-block">

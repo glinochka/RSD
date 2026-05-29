@@ -13,11 +13,11 @@ from sqlalchemy import select
 from yookassa import Configuration, Payment
 
 from ..agent_template_pricing import (
-    AGENT_TEMPLATE_PRICING,
     PAYMENT_KIND_AGENT_MAINTENANCE,
     agent_payment_plan_name,
     calculate_contract_amount_kopecks,
     get_agent_template_pricing,
+    get_paid_agent_template_types,
 )
 from ..alembic.database import async_session_maker
 from ..alembic.models import Agent, WebsitePaymentTransaction
@@ -35,13 +35,6 @@ def is_yookassa_autopay_available() -> bool:
         return False
     return bool(settings.YOOKASSA_SHOP_ID.strip() and settings.YOOKASSA_SECRET_KEY.strip())
 AUTOPAY_RETRY_COOLDOWN_HOURS = 12
-
-PAID_AGENT_TEMPLATE_TYPES: tuple[str, ...] = tuple(
-    code
-    for code, pricing in AGENT_TEMPLATE_PRICING.items()
-    if pricing.monthly_maintenance_rub_min > 0
-)
-
 
 def _configure_yookassa_from_settings() -> None:
     shop_id = settings.YOOKASSA_SHOP_ID.strip()
@@ -278,7 +271,7 @@ async def process_agent_autopay_renewals_once() -> int:
             query = select(Agent).where(
                 Agent.autopay_enabled.is_(True),
                 Agent.yookassa_payment_method_id.is_not(None),
-                Agent.template_type.in_(PAID_AGENT_TEMPLATE_TYPES),
+                Agent.template_type.in_(get_paid_agent_template_types()),
             )
             candidates = await agent_dao.list_scalars(query)
 

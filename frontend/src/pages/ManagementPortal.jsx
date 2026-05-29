@@ -820,9 +820,11 @@ const ManagementPortal = () => {
   });
   const [selectedChatKey, setSelectedChatKey] = useState(null);
 
+  const [billingTab, setBillingTab] = useState('templates');
   const [isLoadingPlans, setIsLoadingPlans] = useState(false);
   const [isSavingPlans, setIsSavingPlans] = useState(false);
   const [plansDraft, setPlansDraft] = useState([]);
+  const [templatePricingDraft, setTemplatePricingDraft] = useState([]);
   const [isLoadingPromoCodes, setIsLoadingPromoCodes] = useState(false);
   const [promoCodes, setPromoCodes] = useState([]);
   const [promoCodeDraft, setPromoCodeDraft] = useState({ code: '', discountPercent: 0 });
@@ -1042,23 +1044,43 @@ const ManagementPortal = () => {
     if (activeSection !== 'billing') return;
 
     let cancelled = false;
-    const fetchPlans = async () => {
+    const fetchBilling = async () => {
       try {
         setIsLoadingPlans(true);
         setError('');
-        const data = await adminService.getPlans(adminToken);
-        const plans = Array.isArray(data?.plans) ? data.plans : [];
-        if (cancelled) return;
-        setPlansDraft(
-          plans.map((p) => ({
-            code: p?.code,
-            title: p?.title || p?.code,
-            price_rub_month: Number(p?.price_rub_month ?? 0),
-            max_active_agents: Number(p?.max_active_agents ?? 0),
-            knowledge_base_chunk_limit:
-              p?.knowledge_base_chunk_limit === null ? null : Number(p?.knowledge_base_chunk_limit ?? 0),
-          }))
-        );
+        if (billingTab === 'templates') {
+          const data = await adminService.getAgentTemplatePricing(adminToken);
+          const templates = Array.isArray(data?.templates) ? data.templates : [];
+          if (cancelled) return;
+          setTemplatePricingDraft(
+            templates.map((t) => ({
+              code: t?.code,
+              title: t?.title || t?.code,
+              card_title: t?.card_title || '',
+              setup_rub_min: Number(t?.setup_rub_min ?? 0),
+              monthly_maintenance_rub_min: Number(t?.monthly_maintenance_rub_min ?? 0),
+              is_free: Boolean(t?.is_free),
+              selectable: Boolean(t?.selectable),
+              status: t?.status || 'available',
+              description: t?.description || '',
+              on_pricing_page: Boolean(t?.on_pricing_page),
+            }))
+          );
+        } else {
+          const data = await adminService.getPlans(adminToken);
+          const plans = Array.isArray(data?.plans) ? data.plans : [];
+          if (cancelled) return;
+          setPlansDraft(
+            plans.map((p) => ({
+              code: p?.code,
+              title: p?.title || p?.code,
+              price_rub_month: Number(p?.price_rub_month ?? 0),
+              max_active_agents: Number(p?.max_active_agents ?? 0),
+              knowledge_base_chunk_limit:
+                p?.knowledge_base_chunk_limit === null ? null : Number(p?.knowledge_base_chunk_limit ?? 0),
+            }))
+          );
+        }
       } catch (err) {
         if (!cancelled) setError(formatError(err));
       } finally {
@@ -1066,11 +1088,11 @@ const ManagementPortal = () => {
       }
     };
 
-    fetchPlans();
+    fetchBilling();
     return () => {
       cancelled = true;
     };
-  }, [activeSection, adminToken]);
+  }, [activeSection, adminToken, billingTab]);
 
   useEffect(() => {
     if (!adminToken) return;
@@ -1524,6 +1546,46 @@ const ManagementPortal = () => {
     setPassword('');
   };
 
+  const mapTemplatePricingDraft = (templates) =>
+    (templates || []).map((t) => ({
+      code: t?.code,
+      title: t?.title || t?.code,
+      card_title: t?.card_title || '',
+      setup_rub_min: Number(t?.setup_rub_min ?? 0),
+      monthly_maintenance_rub_min: Number(t?.monthly_maintenance_rub_min ?? 0),
+      is_free: Boolean(t?.is_free),
+      selectable: Boolean(t?.selectable),
+      status: t?.status || 'available',
+      description: t?.description || '',
+      on_pricing_page: Boolean(t?.on_pricing_page),
+    }));
+
+  const handleSaveTemplatePricing = async () => {
+    try {
+      setIsSavingPlans(true);
+      setError('');
+
+      const payloadTemplates = (templatePricingDraft || []).map((t) => ({
+        code: t.code,
+        title: t.title,
+        card_title: t.on_pricing_page ? (t.card_title || null) : null,
+        setup_rub_min: Number(t.setup_rub_min ?? 0),
+        monthly_maintenance_rub_min: Number(t.monthly_maintenance_rub_min ?? 0),
+        is_free: Boolean(t.is_free),
+        selectable: Boolean(t.selectable),
+        status: t.status,
+        description: t.description || '',
+      }));
+
+      const data = await adminService.updateAgentTemplatePricing(adminToken, payloadTemplates);
+      setTemplatePricingDraft(mapTemplatePricingDraft(data?.templates));
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setIsSavingPlans(false);
+    }
+  };
+
   const handleSavePlans = async () => {
     try {
       setIsSavingPlans(true);
@@ -1556,6 +1618,12 @@ const ManagementPortal = () => {
     } finally {
       setIsSavingPlans(false);
     }
+  };
+
+  const updateTemplateDraft = (code, patch) => {
+    setTemplatePricingDraft((prev) =>
+      prev.map((row) => (row.code === code ? { ...row, ...patch } : row))
+    );
   };
 
   const refreshUsers = async () => {
@@ -2565,114 +2633,268 @@ const ManagementPortal = () => {
     </>
   );
 
-  const renderBilling = () => (
-    <>
-      <div className="management-content-head">
-        <h2>Тарифы</h2>
-        <button
-          type="button"
-          className="btn btn-outline"
-          disabled={isSavingPlans || isLoadingPlans || (plansDraft || []).length === 0}
-          onClick={handleSavePlans}
-        >
-          Сохранить изменения
-        </button>
-      </div>
+  const renderBilling = () => {
+    const isTemplatesTab = billingTab === 'templates';
+    const canSaveTemplates = (templatePricingDraft || []).length > 0;
+    const canSaveLegacy = (plansDraft || []).length > 0;
 
-      {error && <div className="management-error">{error}</div>}
+    return (
+      <>
+        <div className="management-content-head">
+          <h2>Тарифы</h2>
+          <button
+            type="button"
+            className="btn btn-outline"
+            disabled={
+              isSavingPlans
+              || isLoadingPlans
+              || (isTemplatesTab ? !canSaveTemplates : !canSaveLegacy)
+            }
+            onClick={isTemplatesTab ? handleSaveTemplatePricing : handleSavePlans}
+          >
+            Сохранить изменения
+          </button>
+        </div>
 
-      {isLoadingPlans ? (
-        <p>Загрузка тарифов...</p>
-      ) : (
-        <div className="management-plans-editor">
-          {(plansDraft || []).map((plan) => {
-            const kbUnlimited = plan.knowledge_base_chunk_limit === null;
-            return (
-              <article key={plan.code} className="management-plan-editor-card">
-                <h3>{plan.title}</h3>
+        <div className="management-billing-tabs" role="tablist">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={isTemplatesTab}
+            className={`management-billing-tab${isTemplatesTab ? ' is-active' : ''}`}
+            onClick={() => setBillingTab('templates')}
+          >
+            Шаблоны агентов
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={!isTemplatesTab}
+            className={`management-billing-tab${!isTemplatesTab ? ' is-active' : ''}`}
+            onClick={() => setBillingTab('legacy')}
+          >
+            Подписки (legacy)
+          </button>
+        </div>
 
-                <div className="management-form-row">
-                  <label>Цена (руб/мес)</label>
-                  <input
-                    type="number"
-                    min={0}
-                    value={plan.price_rub_month}
-                    onChange={(e) => {
-                      const val = Number(e.target.value);
-                      setPlansDraft((prev) =>
-                        prev.map((p) =>
-                          p.code === plan.code ? { ...p, price_rub_month: Number.isNaN(val) ? 0 : val } : p
-                        )
-                      );
-                    }}
-                  />
-                </div>
+        {error && <div className="management-error">{error}</div>}
 
-                <div className="management-form-row">
-                  <label>Макс. активных агентов</label>
-                  <input
-                    type="number"
-                    min={0}
-                    value={plan.max_active_agents}
-                    onChange={(e) => {
-                      const val = Number(e.target.value);
-                      setPlansDraft((prev) =>
-                        prev.map((p) =>
-                          p.code === plan.code ? { ...p, max_active_agents: Number.isNaN(val) ? 0 : val } : p
-                        )
-                      );
-                    }}
-                  />
-                </div>
+        {isLoadingPlans ? (
+          <p>Загрузка тарифов...</p>
+        ) : isTemplatesTab ? (
+          <>
+            <p className="management-hint">
+              Цены шаблонов на странице /pricing и при оплате обслуживания агентов.
+              Скидки за срок: 3 мес — 15%, 6 мес — 25%.
+            </p>
+            <div className="management-plans-editor">
+              {(templatePricingDraft || []).map((template) => (
+                <article key={template.code} className="management-plan-editor-card">
+                  <div className="management-plan-editor-card-head">
+                    <h3>{template.title}</h3>
+                    <span className="management-cell-muted">{template.code}</span>
+                    {template.status === 'in_development' && (
+                      <span className="management-badge management-badge-muted">В разработке</span>
+                    )}
+                    {template.on_pricing_page && (
+                      <span className="management-badge">На /pricing</span>
+                    )}
+                  </div>
 
-                <div className="management-form-row">
-                  <label className="management-checkbox">
+                  <div className="management-form-row">
+                    <label>Название</label>
                     <input
-                      type="checkbox"
-                      checked={kbUnlimited}
+                      type="text"
+                      value={template.title}
+                      onChange={(e) => updateTemplateDraft(template.code, { title: e.target.value })}
+                    />
+                  </div>
+
+                  {template.on_pricing_page && (
+                    <div className="management-form-row">
+                      <label>Заголовок на витрине</label>
+                      <input
+                        type="text"
+                        value={template.card_title}
+                        onChange={(e) => updateTemplateDraft(template.code, { card_title: e.target.value })}
+                      />
+                    </div>
+                  )}
+
+                  <div className="management-form-row">
+                    <label>Обслуживание (₽/мес)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={template.monthly_maintenance_rub_min}
+                      disabled={template.is_free}
                       onChange={(e) => {
-                        const checked = e.target.checked;
-                        setPlansDraft((prev) =>
-                          prev.map((p) => {
-                            if (p.code !== plan.code) return p;
-                            if (checked) return { ...p, knowledge_base_chunk_limit: null };
-                            // If leaving unlimited mode, restore a sane default.
-                            return {
-                              ...p,
-                              knowledge_base_chunk_limit: p.knowledge_base_chunk_limit ?? 100,
-                            };
-                          })
-                        );
+                        const val = Number(e.target.value);
+                        updateTemplateDraft(template.code, {
+                          monthly_maintenance_rub_min: Number.isNaN(val) ? 0 : val,
+                        });
                       }}
                     />
-                    Безлимит базы знаний
-                  </label>
+                  </div>
 
-                  <input
-                    type="number"
-                    min={0}
-                    disabled={kbUnlimited}
-                    value={kbUnlimited ? '' : plan.knowledge_base_chunk_limit ?? 0}
-                    onChange={(e) => {
-                      const val = Number(e.target.value);
-                      setPlansDraft((prev) =>
-                        prev.map((p) =>
-                          p.code === plan.code
-                            ? { ...p, knowledge_base_chunk_limit: Number.isNaN(val) ? 0 : val }
-                            : p
-                        )
-                      );
-                    }}
-                    placeholder="Лимит чанков"
-                  />
-                </div>
-              </article>
-            );
-          })}
-        </div>
-      )}
-    </>
-  );
+                  <div className="management-form-row">
+                    <label>Разовый взнос (₽)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={template.setup_rub_min}
+                      onChange={(e) => {
+                        const val = Number(e.target.value);
+                        updateTemplateDraft(template.code, {
+                          setup_rub_min: Number.isNaN(val) ? 0 : val,
+                        });
+                      }}
+                    />
+                  </div>
+
+                  <div className="management-form-row management-form-row-inline">
+                    <label className="management-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={template.is_free}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          updateTemplateDraft(template.code, {
+                            is_free: checked,
+                            monthly_maintenance_rub_min: checked ? 0 : template.monthly_maintenance_rub_min,
+                          });
+                        }}
+                      />
+                      Бесплатный
+                    </label>
+                    <label className="management-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={template.selectable}
+                        onChange={(e) => updateTemplateDraft(template.code, { selectable: e.target.checked })}
+                      />
+                      Доступен для создания
+                    </label>
+                  </div>
+
+                  <div className="management-form-row">
+                    <label>Статус</label>
+                    <select
+                      value={template.status}
+                      onChange={(e) => updateTemplateDraft(template.code, { status: e.target.value })}
+                    >
+                      <option value="available">Доступен</option>
+                      <option value="in_development">В разработке</option>
+                    </select>
+                  </div>
+
+                  <div className="management-form-row">
+                    <label>Описание</label>
+                    <textarea
+                      rows={3}
+                      value={template.description}
+                      onChange={(e) => updateTemplateDraft(template.code, { description: e.target.value })}
+                    />
+                  </div>
+                </article>
+              ))}
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="management-hint">
+              Legacy-подписки Free / Advanced / Pro для лимитов аккаунта и Telegram-бота.
+            </p>
+            <div className="management-plans-editor">
+              {(plansDraft || []).map((plan) => {
+                const kbUnlimited = plan.knowledge_base_chunk_limit === null;
+                return (
+                  <article key={plan.code} className="management-plan-editor-card">
+                    <h3>{plan.title}</h3>
+
+                    <div className="management-form-row">
+                      <label>Цена (руб/мес)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={plan.price_rub_month}
+                        onChange={(e) => {
+                          const val = Number(e.target.value);
+                          setPlansDraft((prev) =>
+                            prev.map((p) =>
+                              p.code === plan.code ? { ...p, price_rub_month: Number.isNaN(val) ? 0 : val } : p
+                            )
+                          );
+                        }}
+                      />
+                    </div>
+
+                    <div className="management-form-row">
+                      <label>Макс. активных агентов</label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={plan.max_active_agents}
+                        onChange={(e) => {
+                          const val = Number(e.target.value);
+                          setPlansDraft((prev) =>
+                            prev.map((p) =>
+                              p.code === plan.code ? { ...p, max_active_agents: Number.isNaN(val) ? 0 : val } : p
+                            )
+                          );
+                        }}
+                      />
+                    </div>
+
+                    <div className="management-form-row">
+                      <label className="management-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={kbUnlimited}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            setPlansDraft((prev) =>
+                              prev.map((p) => {
+                                if (p.code !== plan.code) return p;
+                                if (checked) return { ...p, knowledge_base_chunk_limit: null };
+                                return {
+                                  ...p,
+                                  knowledge_base_chunk_limit: p.knowledge_base_chunk_limit ?? 100,
+                                };
+                              })
+                            );
+                          }}
+                        />
+                        Безлимит базы знаний
+                      </label>
+
+                      <input
+                        type="number"
+                        min={0}
+                        disabled={kbUnlimited}
+                        value={kbUnlimited ? '' : plan.knowledge_base_chunk_limit ?? 0}
+                        onChange={(e) => {
+                          const val = Number(e.target.value);
+                          setPlansDraft((prev) =>
+                            prev.map((p) =>
+                              p.code === plan.code
+                                ? { ...p, knowledge_base_chunk_limit: Number.isNaN(val) ? 0 : val }
+                                : p
+                            )
+                          );
+                        }}
+                        placeholder="Лимит чанков"
+                      />
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </>
+    );
+  };
 
   const PARTNER_PAYOUT_STATUS_LABELS = {
     pending: 'Ожидает',

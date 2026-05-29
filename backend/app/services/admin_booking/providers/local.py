@@ -703,19 +703,7 @@ class LocalBookingProvider(BookingProvider):
                 else:
                     service_row = None
 
-                manual_confirmation_enabled = bool(cfg.get("manual_confirmation_enabled"))
-                manual_confirmation_duration = int(cfg.get("manual_confirmation_duration_minutes") or 120)
-                manual_confirmation_price = int(cfg.get("manual_confirmation_price_minor") or 15000)
                 appointment_status = "booked"
-                if (
-                    manual_confirmation_enabled
-                    and service_row is not None
-                    and (
-                        int(service_row.duration_minutes or 0) >= max(1, manual_confirmation_duration)
-                        or int(service_row.price_minor or 0) >= max(0, manual_confirmation_price)
-                    )
-                ):
-                    appointment_status = "pending_confirmation"
 
                 await self._assert_no_appointment_overlap(
                     session,

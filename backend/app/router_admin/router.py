@@ -27,6 +27,7 @@ from .schemas import (
     AdminLoginRequest,
     AdminPartnerPayoutUpdateRequest,
     AdminPromoCodeCreateRequest,
+    AdminAgentTemplatePricingUpdateRequest,
     AdminSubscriptionPlansUpdateRequest,
     ArticlePublisherAddTopicsRequest,
     ArticlePublisherGenerateTopicsRequest,
@@ -51,6 +52,11 @@ from ..services.partner_payouts import (
 from ..router_payments.router import _calculate_new_end_date
 from ..router_users.dao import UserDAO, UserErrorReportDAO
 from ..router_users.router import _build_unique_username, _validate_email_or_422
+from ..agent_template_pricing import (
+    AGENT_DURATION_DISCOUNT_BY_MONTHS,
+    get_all_agent_template_pricing_admin,
+    update_agent_template_pricing_overrides,
+)
 from ..subscription_plans import (
     get_all_subscription_plans,
     get_subscription_plan,
@@ -911,6 +917,33 @@ async def admin_update_plans(
     update_subscription_plan_overrides(plan_updates=plan_updates)
     return JSONResponse(
         content={"plans": get_all_subscription_plans()},
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@router.get("/agent-template-pricing")
+async def admin_agent_template_pricing(_admin=Depends(get_current_admin)):
+    return JSONResponse(
+        content={
+            "templates": get_all_agent_template_pricing_admin(),
+            "duration_discounts": dict(AGENT_DURATION_DISCOUNT_BY_MONTHS),
+        },
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@router.put("/agent-template-pricing")
+async def admin_update_agent_template_pricing(
+    payload: AdminAgentTemplatePricingUpdateRequest,
+    _admin=Depends(get_current_admin),
+):
+    template_updates = [t.model_dump() for t in payload.templates]
+    update_agent_template_pricing_overrides(template_updates=template_updates)
+    return JSONResponse(
+        content={
+            "templates": get_all_agent_template_pricing_admin(),
+            "duration_discounts": dict(AGENT_DURATION_DISCOUNT_BY_MONTHS),
+        },
         status_code=status.HTTP_200_OK,
     )
 

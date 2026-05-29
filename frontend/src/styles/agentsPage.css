@@ -1303,3 +1303,25 @@
 .sales-trigger-word-add-btn {
   flex-shrink: 0;
 }
+
+.yookassa-credentials-form__hint,
+.yookassa-credentials-form__status {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+}
+
+.yookassa-credentials-form__hint {
+  color: var(--color-text-muted, #6b7280);
+}
+
+.yookassa-credentials-form__status {
+  color: var(--color-success, #15803d);
+  font-weight: var(--font-weight-semibold);
+}
+
+.yookassa-secret-input {
+  -webkit-text-security: disc;
+  text-security: disc;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}

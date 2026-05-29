@@ -6,20 +6,13 @@ from logging import getLogger
 
 from sqlalchemy import select
 
-from ..agent_template_pricing import AGENT_TEMPLATE_PRICING
+from ..agent_template_pricing import get_paid_agent_template_types
 from ..alembic.database import async_session_maker
 from ..alembic.models import Agent
 from ..router_agents.dao import AgentDAO
 from .agent_billing import enforce_expired_maintenance, should_auto_deactivate_for_expired_maintenance
 
 logger = getLogger(__name__)
-
-PAID_AGENT_TEMPLATE_TYPES: tuple[str, ...] = tuple(
-    code
-    for code, pricing in AGENT_TEMPLATE_PRICING.items()
-    if pricing.monthly_maintenance_rub_min > 0
-)
-
 
 async def _disable_telegram_bot_webhook_for_agent(session, agent_id: int) -> None:
     """Best-effort webhook removal when cron deactivates an agent."""
@@ -63,7 +56,8 @@ async def deactivate_expired_agent_maintenance_once() -> int:
     Deactivate active paid-template agents whose trial or subscription has expired.
     Returns the number of agents deactivated.
     """
-    if not PAID_AGENT_TEMPLATE_TYPES:
+    paid_template_types = get_paid_agent_template_types()
+    if not paid_template_types:
         return 0
 
     deactivated_count = 0
@@ -73,7 +67,7 @@ async def deactivate_expired_agent_maintenance_once() -> int:
         async with session.begin():
             query = select(Agent).where(
                 Agent.is_active.is_(True),
-                Agent.template_type.in_(PAID_AGENT_TEMPLATE_TYPES),
+                Agent.template_type.in_(paid_template_types),
             )
             candidates = await agent_dao.list_scalars(query)
 

@@ -731,9 +731,6 @@ def _default_crm_admin_config() -> dict[str, object]:
         "waitlist_enabled": True,
         "reminder_enabled": True,
         "reminder_offsets_hours": [24, 2],
-        "manual_confirmation_enabled": False,
-        "manual_confirmation_price_minor": 15000,
-        "manual_confirmation_duration_minutes": 120,
         "paid_booking_enabled": False,
         "appointment_confirmation_enabled": True,
         "field_mapping": None,
@@ -812,9 +809,6 @@ def _migrate_crm_admin_config(raw_config: dict | None) -> dict[str, object]:
 
     waitlist_enabled = bool(raw.get("waitlist_enabled", defaults["waitlist_enabled"]))
     reminder_enabled = bool(raw.get("reminder_enabled", defaults["reminder_enabled"]))
-    manual_confirmation_enabled = bool(
-        raw.get("manual_confirmation_enabled", defaults["manual_confirmation_enabled"])
-    )
     appointment_confirmation_enabled = bool(
         raw.get("appointment_confirmation_enabled", defaults["appointment_confirmation_enabled"])
     )
@@ -835,25 +829,6 @@ def _migrate_crm_admin_config(raw_config: dict | None) -> dict[str, object]:
             reminder_offsets_hours.append(value)
     if not reminder_offsets_hours:
         reminder_offsets_hours = [24, 2]
-    manual_confirmation_price_minor = int(
-        raw.get("manual_confirmation_price_minor", defaults["manual_confirmation_price_minor"])
-    )
-    manual_confirmation_duration_minutes = int(
-        raw.get(
-            "manual_confirmation_duration_minutes",
-            defaults["manual_confirmation_duration_minutes"],
-        )
-    )
-    if manual_confirmation_price_minor < 0:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="template_config.manual_confirmation_price_minor must be >= 0",
-        )
-    if manual_confirmation_duration_minutes < 1:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="template_config.manual_confirmation_duration_minutes must be >= 1",
-        )
 
     allowed_tools_raw = raw.get("allowed_tools")
     if allowed_tools_raw is None:
@@ -936,9 +911,6 @@ def _migrate_crm_admin_config(raw_config: dict | None) -> dict[str, object]:
         "waitlist_enabled": waitlist_enabled,
         "reminder_enabled": reminder_enabled,
         "reminder_offsets_hours": reminder_offsets_hours,
-        "manual_confirmation_enabled": manual_confirmation_enabled,
-        "manual_confirmation_price_minor": manual_confirmation_price_minor,
-        "manual_confirmation_duration_minutes": manual_confirmation_duration_minutes,
         "paid_booking_enabled": paid_booking_enabled,
         "appointment_confirmation_enabled": appointment_confirmation_enabled,
         "field_mapping": field_mapping,
