@@ -310,6 +310,11 @@ class AdminBookingPaymentService:
             refund_row.status = "refunded"
             payment.status = "refunded"
             payment.updated_at = now
+            if reviewed_by_user_id is None:
+                refund_row.reviewed_at = now
+        elif refund_status == "canceled":
+            refund_row.status = "failed"
+            refund_row.error_message = "Возврат отменён в ЮKassa"
         else:
             refund_row.status = "failed"
             refund_row.error_message = f"Unexpected refund status: {refund_status or 'unknown'}"
@@ -355,6 +360,30 @@ class AdminBookingPaymentService:
                     )
                 )
                 if existing is not None:
+                    if existing.status == "pending":
+                        db_payment = await session.scalar(
+                            select(AdminBookingPayment).where(AdminBookingPayment.id == existing.payment_id)
+                        )
+                        if existing.yookassa_refund_id or (
+                            db_payment is not None and db_payment.status == "refunded"
+                        ):
+                            existing.status = "refunded"
+                            existing.reviewed_at = existing.reviewed_at or now
+                            existing.updated_at = now
+                            if db_payment is not None and db_payment.status == "paid":
+                                db_payment.status = "refunded"
+                                db_payment.updated_at = now
+                            await session.flush()
+                            await session.refresh(existing)
+                        elif existing.refund_mode == "auto" and db_payment is not None and db_payment.status == "paid":
+                            await self._execute_yookassa_refund(
+                                session,
+                                agent_id=payment.agent_id,
+                                payment=db_payment,
+                                refund_row=existing,
+                            )
+                            await session.flush()
+                            await session.refresh(existing)
                     return _serialize_refund_request(existing)
 
                 service_title = await self._resolve_service_title(
@@ -402,6 +431,7 @@ class AdminBookingPaymentService:
                         refund_row=row,
                     )
 
+                await session.flush()
                 await session.refresh(row)
                 return _serialize_refund_request(row)
 
@@ -435,18 +465,35 @@ class AdminBookingPaymentService:
         limit: int = 100,
     ) -> list[dict[str, Any]]:
         async with self._session_factory() as session:
-            conditions = [AdminBookingRefundRequest.agent_id == agent_id]
-            if status:
-                conditions.append(AdminBookingRefundRequest.status == status.strip().lower())
-            rows = (
-                await session.execute(
-                    select(AdminBookingRefundRequest)
-                    .where(*conditions)
-                    .order_by(AdminBookingRefundRequest.created_at.desc())
-                    .limit(max(1, min(limit, 500)))
-                )
-            ).scalars().all()
-            return [_serialize_refund_request(row) for row in rows]
+            async with session.begin():
+                conditions = [AdminBookingRefundRequest.agent_id == agent_id]
+                if status:
+                    conditions.append(AdminBookingRefundRequest.status == status.strip().lower())
+                rows = (
+                    await session.execute(
+                        select(AdminBookingRefundRequest)
+                        .where(*conditions)
+                        .order_by(AdminBookingRefundRequest.created_at.desc())
+                        .limit(max(1, min(limit, 500)))
+                    )
+                ).scalars().all()
+                now = _utc_now_naive()
+                for row in rows:
+                    if row.status != "pending":
+                        continue
+                    payment = await session.scalar(
+                        select(AdminBookingPayment).where(AdminBookingPayment.id == row.payment_id)
+                    )
+                    if (row.yookassa_refund_id and row.refund_mode == "auto") or (
+                        payment is not None and payment.status == "refunded"
+                    ):
+                        row.status = "refunded"
+                        row.reviewed_at = row.reviewed_at or now
+                        row.updated_at = now
+                        if payment is not None and payment.status == "paid":
+                            payment.status = "refunded"
+                            payment.updated_at = now
+                return [_serialize_refund_request(row) for row in rows]
 
     async def approve_refund_request(
         self,
@@ -476,6 +523,13 @@ class AdminBookingPaymentService:
                 )
                 if payment is None:
                     raise ValueError("Payment not found for refund request")
+                if payment.status == "refunded" and refund_row.status == "pending":
+                    refund_row.status = "refunded"
+                    refund_row.reviewed_at = refund_row.reviewed_at or now
+                    refund_row.updated_at = now
+                    await session.flush()
+                    await session.refresh(refund_row)
+                    return _serialize_refund_request(refund_row)
                 if payment.status not in ("paid",):
                     raise ValueError(f"Payment status '{payment.status}' is not refundable")
 

@@ -13,6 +13,7 @@ from ...alembic.database import async_session_maker
 from ...alembic.models import Agent, AgentSalesDmQueue, AgentSalesImportedContact
 from ..template_runtime import TemplateRuntimeService
 from .agent_excel_import import EXCEL_IMPORT_SOURCE_CHAT_ID
+from .contact_pool import external_id_lookup_variants
 from .dm_queue_service import get_dm_queue_service
 from .outreach_scheduling import FOLLOW_UP_DELAYS, utc_now_naive
 from .sales_playbook import FOLLOW_UP_TIER_HINTS
@@ -41,7 +42,8 @@ async def cancel_pending_follow_ups(
 ) -> int:
     """Отменить запланированные follow-up в очереди после ответа клиента."""
     uid = (target_user_external_id or "").strip()
-    if not uid:
+    variants = external_id_lookup_variants(uid)
+    if not variants:
         return 0
     async with async_session_maker() as session:
         async with session.begin():
@@ -49,7 +51,7 @@ async def cancel_pending_follow_ups(
                 await session.execute(
                     select(AgentSalesDmQueue).where(
                         AgentSalesDmQueue.agent_id == agent_id,
-                        AgentSalesDmQueue.target_user_external_id == uid,
+                        AgentSalesDmQueue.target_user_external_id.in_(variants),
                         AgentSalesDmQueue.status == "pending",
                         AgentSalesDmQueue.source_chat_id == EXCEL_IMPORT_SOURCE_CHAT_ID,
                     )
@@ -76,25 +78,31 @@ async def mark_excel_import_reply_if_any(
 ) -> bool:
     """Зафиксировать ответ по контакту из Excel и отменить follow-up."""
     uid = (user_external_id or "").strip()
-    if not uid:
+    variants = external_id_lookup_variants(uid)
+    if not variants:
         return False
     now = utc_now_naive()
+    matched_target: str | None = None
     async with async_session_maker() as session:
         async with session.begin():
             row = await session.scalar(
                 select(AgentSalesImportedContact).where(
                     AgentSalesImportedContact.agent_id == agent_id,
-                    AgentSalesImportedContact.target_external_id == uid,
+                    AgentSalesImportedContact.target_external_id.in_(variants),
                     AgentSalesImportedContact.sent_at.is_not(None),
                     AgentSalesImportedContact.reply_received_at.is_(None),
                 )
             )
             if row is None:
                 return False
+            matched_target = str(row.target_external_id or "").strip() or None
             row.reply_received_at = now
             row.updated_at = now
 
-    await cancel_pending_follow_ups(agent_id=agent_id, target_user_external_id=uid)
+    await cancel_pending_follow_ups(
+        agent_id=agent_id,
+        target_user_external_id=matched_target or uid,
+    )
     return True
 
 

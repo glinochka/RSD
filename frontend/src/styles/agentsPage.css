@@ -1299,6 +1299,91 @@
   flex-shrink: 0;
 }
 
+.sales-excel-upload-block {
+  margin-top: var(--spacing-lg);
+  padding: var(--spacing-lg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-bg);
+}
+
+.sales-excel-upload-block .agent-form-channel-title {
+  margin: 0 0 var(--spacing-xs);
+}
+
+.sales-excel-upload-block .sales-trigger-words-hint:last-child {
+  margin-bottom: 0;
+}
+
+.sales-excel-file-upload {
+  margin-top: var(--spacing-md);
+}
+
+.sales-excel-file-upload__input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.sales-excel-file-upload__label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-lg) var(--spacing-xl);
+  background-color: var(--color-bg-lighter);
+  border: 2px dashed var(--color-border);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition:
+    border-color var(--transition-base),
+    background-color var(--transition-base),
+    box-shadow var(--transition-base);
+  text-align: center;
+}
+
+.sales-excel-file-upload__label:hover:not(.is-disabled) {
+  border-color: var(--color-primary);
+  background-color: #eef2ff;
+}
+
+.sales-excel-file-upload:focus-within .sales-excel-file-upload__label:not(.is-disabled) {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
+}
+
+.sales-excel-file-upload__label.is-disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.sales-excel-file-upload__icon {
+  width: 28px;
+  height: 28px;
+  color: var(--color-primary);
+  flex-shrink: 0;
+}
+
+.sales-excel-file-upload__title {
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
+.sales-excel-file-upload__formats {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-lighter);
+  max-width: 28rem;
+  line-height: 1.4;
+}
+
 .yookassa-credentials-form__hint,
 .yookassa-credentials-form__status {
   margin: 0;

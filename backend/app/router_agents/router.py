@@ -179,6 +179,7 @@ SALES_DEFAULT_CONFIG = {
     "workflow_completion_mode": "auto_finish_on_signal",
     "lead_score_scale": 100,
     "lead_generation_enabled": True,
+    "contacts_pool_only": False,
     "neuro_commenting_enabled": False,
     "live_chat_simulation_enabled": False,
     "scan_scope": {
@@ -217,20 +218,9 @@ WIDGET_ALLOWED_TEMPLATE_TYPES = {"qa", "crm_admin"}
 
 
 def _normalize_sales_trigger_words(raw_value: Any) -> list[str]:
-    if not isinstance(raw_value, list):
-        return ["купить"]
-    normalized: list[str] = []
-    for item in raw_value:
-        word = str(item or "").strip().lower()
-        if not word:
-            continue
-        if len(word) > 64:
-            word = word[:64]
-        if word not in normalized:
-            normalized.append(word)
-        if len(normalized) >= 30:
-            break
-    return normalized or ["купить"]
+    from ..services.sales.trigger_words import normalize_sales_trigger_words
+
+    return normalize_sales_trigger_words(raw_value)
 
 
 async def _generate_sales_trigger_words_via_llm(
@@ -253,12 +243,10 @@ async def _generate_sales_trigger_words_via_llm(
         temperature=0.2,
         max_tokens=250,
     )
+    from ..services.sales.trigger_words import parse_llm_trigger_words_response
+
     raw = str(response.choices[0].message.content or "").strip()
-    parsed: Any = []
-    try:
-        parsed = json.loads(raw)
-    except Exception:
-        parsed = [segment.strip() for segment in raw.split(",") if segment.strip()]
+    parsed = parse_llm_trigger_words_response(raw)
     return _normalize_sales_trigger_words(parsed)
 
 
@@ -1124,6 +1112,9 @@ def _normalize_template_config(template_type: str, template_config: dict | None)
         lead_generation_enabled = bool(
             raw.get("lead_generation_enabled", SALES_DEFAULT_CONFIG["lead_generation_enabled"])
         )
+        contacts_pool_only = bool(
+            raw.get("contacts_pool_only", SALES_DEFAULT_CONFIG["contacts_pool_only"])
+        )
         neuro_commenting_enabled = bool(
             raw.get("neuro_commenting_enabled", SALES_DEFAULT_CONFIG["neuro_commenting_enabled"])
         )
@@ -1292,6 +1283,7 @@ def _normalize_template_config(template_type: str, template_config: dict | None)
             "workflow_completion_mode": workflow_completion_mode,
             "lead_score_scale": lead_score_scale,
             "lead_generation_enabled": lead_generation_enabled,
+            "contacts_pool_only": contacts_pool_only,
             "neuro_commenting_enabled": neuro_commenting_enabled,
             "live_chat_simulation_enabled": live_chat_simulation_enabled,
             "scan_scope": scan_scope,

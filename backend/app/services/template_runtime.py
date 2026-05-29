@@ -97,6 +97,7 @@ class TemplateExecutionResult:
     requires_owner_handoff: bool = False
     owner_handoff_reason: str | None = None
     escalation_type: EscalationType = EscalationType.NONE
+    discard_message: bool = False
 
 
 class TemplateRuntimeService:
@@ -476,7 +477,8 @@ class TemplateRuntimeService:
         return TemplateRuntimeService._restore_https_urls(collapsed, stashed_urls)
 
     def _sanitize_result(self, result: TemplateExecutionResult) -> TemplateExecutionResult:
-        result.answer = self._sanitize_final_answer(result.answer)
+        if not result.discard_message:
+            result.answer = self._sanitize_final_answer(result.answer)
         handoff = getattr(result, "owner_handoff_reason", None)
         if handoff:
             result.owner_handoff_reason = self._sanitize_final_answer(str(handoff))
@@ -1439,6 +1441,52 @@ class TemplateRuntimeService:
                 source_channel=source_channel,
                 user_external_id=user_external_id,
             )
+
+        contacts_pool_only = bool(template_config.get("contacts_pool_only"))
+        is_private_inbound = bool(
+            runtime_context.get("is_private_chat")
+            or runtime_context.get("lead_initiated_private_dialog")
+        )
+        runtime_source_chat_id = str(runtime_context.get("source_chat_id") or "").strip()
+        if agent_id and user_external_id:
+            from .sales.contact_pool import (
+                is_user_in_agent_contact_pool,
+                register_user_in_agent_contact_pool,
+            )
+
+            if contacts_pool_only and is_private_inbound:
+                if not await is_user_in_agent_contact_pool(
+                    agent_id=agent_id,
+                    user_external_id=user_external_id,
+                ):
+                    return TemplateExecutionResult(
+                        answer="",
+                        sources=[],
+                        discard_message=True,
+                        tool_events=[
+                            {
+                                "tool_name": "sales_contact_pool_guard",
+                                "tool_args_hash": None,
+                                "tool_status": "contact_not_in_pool",
+                                "latency_ms": 0,
+                                "crm_provider": None,
+                                "source_channel": source_channel,
+                                "user_external_id": mask_external_id(user_external_id),
+                                "ok": True,
+                                "idempotent_replay": False,
+                                "idempotency_key": None,
+                                "error": None,
+                            }
+                        ],
+                    )
+            if bool(runtime_context.get("is_group_chat")):
+                await register_user_in_agent_contact_pool(
+                    agent_id=agent_id,
+                    user_external_id=user_external_id,
+                    source_chat_id=runtime_source_chat_id or "global",
+                    origin="lead_generation",
+                )
+
         contact_key = self._resolve_sales_contact_key(template_config=template_config)
         if agent_id and user_external_id and self._is_userbot_channel(source_channel):
             from .sales.agent_contact_context import resolve_sales_source_chat_id

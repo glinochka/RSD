@@ -105,3 +105,36 @@ def test_trigger_matching_ignores_short_stopword_tokens() -> None:
 def test_trigger_matching_multi_word_phrase_split() -> None:
     assert _is_message_matching_triggers("Нужна автоматизация бизнес-процессов", ["ии автоматизация бизнес"]) is True
     assert _is_message_matching_triggers("Интересуюсь ИИ для склада", ["ии автоматизация бизнес"]) is True
+
+
+SALES_DEFAULT_TRIGGER_WORDS = [
+    "цена",
+    "стоимость",
+    "сколько",
+    "купить",
+    "заказать",
+    "демо",
+    "попробовать",
+    "условия",
+    "рассчитать",
+    "предложение",
+    "скидка",
+    "оплата",
+    "внедрить",
+    "подключить",
+    "тест",
+    "доступ",
+    "тариф",
+    "пробный",
+    "консультация",
+    "заявка",
+]
+
+
+def test_trigger_matching_russian_word_forms() -> None:
+    triggers = SALES_DEFAULT_TRIGGER_WORDS
+    assert _is_message_matching_triggers("Хочу узнать цену", triggers) is True
+    assert _is_message_matching_triggers("Сколько стоит?", triggers) is True
+    assert _is_message_matching_triggers("Оставить заявку на демо", triggers) is True
+    assert _is_message_matching_triggers("несколько человек в офисе", triggers) is False
+    assert _is_message_matching_triggers("Просто болтаем о погоде", triggers) is False

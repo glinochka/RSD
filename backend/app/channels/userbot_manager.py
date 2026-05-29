@@ -108,24 +108,44 @@ def _expand_trigger_tokens(trigger_words: list[str]) -> list[str]:
     return expanded or ["купить"]
 
 
+def _common_prefix_len(a: str, b: str) -> int:
+    limit = min(len(a), len(b))
+    for i in range(limit):
+        if a[i] != b[i]:
+            return i
+    return limit
+
+
 def _trigger_token_matches(token: str, trigger: str) -> bool:
-    """Match message token to trigger: exact, prefix stem, or trigger root inside a longer word."""
-    if len(trigger) < _TRIGGER_WORD_MIN_LEN:
+    """Match message token to trigger: substring inside word (sales_manager UI contract)."""
+    if len(trigger) < _TRIGGER_WORD_MIN_LEN or len(token) < _TRIGGER_WORD_MIN_LEN:
         return False
     if token == trigger:
         return True
-    if len(token) < _TRIGGER_MESSAGE_MIN_LEN and len(token) != len(trigger):
-        return False
-    shorter, longer = (token, trigger) if len(token) <= len(trigger) else (trigger, token)
-    if len(shorter) < _TRIGGER_WORD_MIN_LEN:
-        return False
-    if longer.startswith(shorter):
-        return True
-    # Short triggers (e.g. "ии") must not match inside unrelated words like "индонезии".
+    # Short triggers (e.g. «ии»): only whole-token match, not inside «индонезии».
     if len(trigger) < _TRIGGER_MESSAGE_MIN_LEN:
         return False
-    if trigger in token:
+
+    if token.startswith(trigger) or trigger.startswith(token):
         return True
+
+    if len(token) == len(trigger):
+        shared = _common_prefix_len(token, trigger)
+        min_len = min(len(token), len(trigger))
+        if shared >= max(_TRIGGER_MESSAGE_MIN_LEN, min_len - 1):
+            return True
+
+    idx = token.find(trigger)
+    if idx < 0:
+        return False
+    if idx == 0:
+        return True
+    prefix_len = len(token[:idx])
+    # Embedded trigger (e.g. «купить» in «покупке»), not glued prefix («сколько» in «несколько»).
+    if prefix_len <= 1:
+        return True
+    if len(trigger) <= _TRIGGER_MESSAGE_MIN_LEN and prefix_len <= 2:
+        return len(token) - len(trigger) >= 2
     return False
 
 
@@ -415,8 +435,9 @@ async def _handle_chat_message(
         return
 
     query = str(raw).strip()
-    trigger_words = cfg.get("trigger_words")
-    normalized_trigger_words = trigger_words if isinstance(trigger_words, list) else []
+    from ..services.sales.trigger_words import normalize_sales_trigger_words
+
+    normalized_trigger_words = normalize_sales_trigger_words(cfg.get("trigger_words"))
     if should_process_group and not _is_message_matching_triggers(query, normalized_trigger_words):
         return
     user_external_id = str(getattr(sender, "id", None) or "")
@@ -452,6 +473,8 @@ async def _handle_chat_message(
             "is_group_chat": should_process_group,
             "is_channel_chat": should_process_channel,
             "lead_initiated_private_dialog": False,
+            "is_private_chat": False,
+            "source_chat_id": source_chat_id,
             "lead_generation_enabled": lead_generation_enabled,
             "neuro_commenting_enabled": neuro_commenting_enabled,
             "live_chat_simulation_enabled": live_chat_simulation_enabled,

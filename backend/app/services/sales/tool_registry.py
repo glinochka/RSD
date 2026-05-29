@@ -42,7 +42,10 @@ class _CreateCrmLeadArgs(BaseModel):
 
 
 class _MarkContactedArgs(BaseModel):
-    channel: str = Field(default="telegram_userbot", pattern="^(telegram_userbot)$")
+    channel: str = Field(
+        default="telegram_userbot",
+        pattern="^(telegram_userbot|whatsapp_userbot)$",
+    )
     campaign_id: str | None = Field(default=None, max_length=128)
 
 
@@ -224,6 +227,15 @@ class SalesToolRegistry:
                 message_text=data.get("text", ""),
                 metadata=meta,
             )
+            if self._agent_id and target_uid:
+                from .contact_pool import register_user_in_agent_contact_pool
+
+                await register_user_in_agent_contact_pool(
+                    agent_id=self._agent_id,
+                    user_external_id=target_uid,
+                    source_chat_id=source_cid,
+                    origin="outbound_schedule_dm",
+                )
             
             if self._mode == "auto":
                 status = "sent_auto"

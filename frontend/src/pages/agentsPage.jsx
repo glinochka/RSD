@@ -3,7 +3,7 @@
  * Display user's agents and manage full lifecycle
  */
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import MainLayout from '../components/Layout';
 import Loading from '../components/Loading';
@@ -289,11 +289,62 @@ const parseReminderOffsets = (value) =>
     .map((item) => Number(item.trim()))
     .filter((item) => Number.isFinite(item) && item > 0 && item <= 72);
 
+const stripSalesTriggerWord = (value) => {
+  let w = String(value || '').trim().toLowerCase();
+  if (!w) return '';
+  w = w.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+  if (w.startsWith('json')) w = w.slice(4).replace(/^[\s:[\]-]+/, '');
+  w = w.replace(/^[\s[\]"'({]+|[\s[\]"'})]+$/g, '');
+  w = w.replace(/^[\s[\]"'({]+|[\s[\]"'})]+$/g, '');
+  return w;
+};
+
+const coerceSalesTriggerWordsInput = (raw) => {
+  if (Array.isArray(raw)) {
+    const items = [];
+    raw.forEach((item) => {
+      if (typeof item === 'string' && item.trim().startsWith('[')) {
+        try {
+          const nested = JSON.parse(
+            item.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, ''),
+          );
+          if (Array.isArray(nested)) {
+            items.push(...nested);
+            return;
+          }
+        } catch {
+          // fall through
+        }
+      }
+      items.push(item);
+    });
+    return items;
+  }
+  if (typeof raw !== 'string') return [];
+  const text = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+  if (!text) return [];
+  try {
+    const parsed = JSON.parse(text);
+    return Array.isArray(parsed) ? parsed : [text];
+  } catch {
+    const bracketMatch = text.match(/\[[\s\S]*\]/);
+    if (bracketMatch) {
+      try {
+        const parsed = JSON.parse(bracketMatch[0]);
+        if (Array.isArray(parsed)) return parsed;
+      } catch {
+        // fall through
+      }
+    }
+    return text.split(',').map((part) => part.trim()).filter(Boolean);
+  }
+};
+
 const normalizeSalesTriggerWordsList = (raw) => {
-  const list = Array.isArray(raw) ? raw : [];
+  const list = coerceSalesTriggerWordsInput(raw);
   const out = [];
   for (const item of list) {
-    const w = String(item || '').trim().toLowerCase();
+    const w = stripSalesTriggerWord(item);
     if (!w || w.length > 64) continue;
     if (!out.includes(w)) out.push(w);
     if (out.length >= 30) break;
@@ -650,12 +701,14 @@ const AgentsPageContent = () => {
   const [salesWorkflowCompletionMode, setSalesWorkflowCompletionMode] = useState('auto_finish_on_signal');
   const [salesLeadScoreScale, setSalesLeadScoreScale] = useState('100');
   const [salesLeadGenerationEnabled, setSalesLeadGenerationEnabled] = useState(true);
+  const [salesContactsPoolOnly, setSalesContactsPoolOnly] = useState(false);
   const [salesNeuroCommentingEnabled, setSalesNeuroCommentingEnabled] = useState(false);
   const [salesLiveChatSimulationEnabled, setSalesLiveChatSimulationEnabled] = useState(false);
   const [salesTriggerWords, setSalesTriggerWords] = useState(() => ['купить']);
   const [salesTriggerWordDraft, setSalesTriggerWordDraft] = useState('');
   const [salesExcelUploadBusy, setSalesExcelUploadBusy] = useState(false);
   const [salesExcelImportInfo, setSalesExcelImportInfo] = useState(null);
+  const salesExcelFileInputId = useId();
   const [agentAvailAlwaysOn, setAgentAvailAlwaysOn] = useState(true);
   const [agentAvailTimezone, setAgentAvailTimezone] = useState(() => getBrowserTimezoneSafe());
   const [agentAvailWeekdays, setAgentAvailWeekdays] = useState(buildDefaultAgentAvailabilityWeekdays);
@@ -1149,6 +1202,7 @@ const AgentsPageContent = () => {
         salesWorkflowCompletionMode === 'continue_dialog' ? 'continue_dialog' : 'auto_finish_on_signal',
       lead_score_scale: salesLeadScoreScale === '10' ? 10 : 100,
       lead_generation_enabled: Boolean(salesLeadGenerationEnabled),
+      contacts_pool_only: Boolean(salesContactsPoolOnly),
       neuro_commenting_enabled: Boolean(salesNeuroCommentingEnabled),
       live_chat_simulation_enabled: Boolean(salesLiveChatSimulationEnabled),
       trigger_words: normalizeSalesTriggerWordsList(salesTriggerWords),
@@ -1230,6 +1284,9 @@ const AgentsPageContent = () => {
           : prev
       );
       setSalesLeadGenerationEnabled(leadGenerationEnabled);
+      if (field === 'contacts_pool_only') {
+        setSalesContactsPoolOnly(Boolean(enabled));
+      }
       setSalesNeuroCommentingEnabled(neuroCommentingEnabled);
       setSalesLiveChatSimulationEnabled(liveChatSimulationEnabled);
       showSuccess(
@@ -1245,12 +1302,21 @@ const AgentsPageContent = () => {
   };
 
   const handleAddSalesTriggerWord = () => {
-    const w = salesTriggerWordDraft.trim().toLowerCase();
-    if (!w || w.length > 64) return;
+    const draft = salesTriggerWordDraft.trim();
+    if (!draft) return;
+    const candidates = normalizeSalesTriggerWordsList(
+      draft.startsWith('[') || draft.includes('```') ? draft : [draft],
+    );
+    if (candidates.length === 0) return;
     setSalesTriggerWords((prev) => {
-      if (prev.includes(w)) return prev;
-      if (prev.length >= 30) return prev;
-      return [...prev, w];
+      let next = prev;
+      for (const w of candidates) {
+        if (!w || w.length > 64) continue;
+        if (next.includes(w)) continue;
+        if (next.length >= 30) break;
+        next = [...next, w];
+      }
+      return next;
     });
     setSalesTriggerWordDraft('');
   };
@@ -1669,6 +1735,7 @@ const AgentsPageContent = () => {
     );
     setSalesLeadScoreScale(String(Number(cfg.lead_score_scale) === 10 ? 10 : 100));
     setSalesLeadGenerationEnabled(cfg.lead_generation_enabled !== false);
+    setSalesContactsPoolOnly(Boolean(cfg.contacts_pool_only));
     setSalesNeuroCommentingEnabled(Boolean(cfg.neuro_commenting_enabled));
     setSalesLiveChatSimulationEnabled(Boolean(cfg.live_chat_simulation_enabled));
     setSalesTriggerWords(normalizeSalesTriggerWordsList(cfg.trigger_words));
@@ -2687,6 +2754,13 @@ const AgentsPageContent = () => {
                           helpText="Основной контур sales_manager: анализ чатов, отлов лидов и продажа. Если выключить, агент прекращает выполнение основной задачи sales_manager. Если одновременно выключить Лидогенерацию, Нейрокомментинг и Имитацию живого общения, агент будет автоматически выключен."
                         />
                         <FeatureToggle
+                          checked={salesContactsPoolOnly}
+                          onChange={(enabled) => handleToggleSalesActivity('contacts_pool_only', enabled)}
+                          disabled={isSavingTemplateConfig}
+                          title="Только контакты из пула"
+                          helpText="В личных сообщениях агент отвечает только тем, кто уже в базе (Excel), найден лидогенерацией в чатах или кому агент сам написал. Случайные входящие без истории игнорируются."
+                        />
+                        <FeatureToggle
                           checked={salesNeuroCommentingEnabled}
                           onChange={(enabled) => handleToggleSalesActivity('neuro_commenting_enabled', enabled)}
                           disabled={isSavingTemplateConfig}
@@ -2758,15 +2832,50 @@ const AgentsPageContent = () => {
                             между контактами. Если нет ответа — напоминания через 1 день, неделю и месяц.
                             Агент ведёт диалог гибко: ресепшен, запрос ЛПР, КП в чат по просьбе клиента.
                           </p>
-                          <input
-                            type="file"
-                            accept=".xlsx,.xls"
-                            onChange={handleSalesManagerExcelUpload}
-                            disabled={salesExcelUploadBusy || isSavingTemplateConfig}
-                          />
-                          {salesExcelUploadBusy ? (
-                            <p className="sales-trigger-words-hint">Обработка файла…</p>
-                          ) : null}
+                          <div className="sales-excel-file-upload">
+                            <input
+                              id={salesExcelFileInputId}
+                              type="file"
+                              accept=".xlsx,.xls"
+                              className="sales-excel-file-upload__input"
+                              onChange={handleSalesManagerExcelUpload}
+                              disabled={salesExcelUploadBusy || isSavingTemplateConfig}
+                            />
+                            <label
+                              htmlFor={salesExcelFileInputId}
+                              className={`sales-excel-file-upload__label${
+                                salesExcelUploadBusy || isSavingTemplateConfig ? ' is-disabled' : ''
+                              }`}
+                            >
+                              <svg
+                                className="sales-excel-file-upload__icon"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                xmlns="http://www.w3.org/2000/svg"
+                                aria-hidden="true"
+                              >
+                                <path
+                                  d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z"
+                                  stroke="currentColor"
+                                  strokeWidth="1.75"
+                                  strokeLinejoin="round"
+                                />
+                                <path
+                                  d="M14 2v6h6M8 13h8M8 17h5"
+                                  stroke="currentColor"
+                                  strokeWidth="1.75"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                />
+                              </svg>
+                              <span className="sales-excel-file-upload__title">
+                                {salesExcelUploadBusy ? 'Обработка файла…' : 'Выбрать файл Excel'}
+                              </span>
+                              <span className="sales-excel-file-upload__formats">
+                                .xlsx или .xls — выгрузка 2GIS и совместимые таблицы
+                              </span>
+                            </label>
+                          </div>
                           {salesExcelImportInfo ? (
                             <p className="sales-trigger-words-hint">
                               Последняя загрузка: добавлено {salesExcelImportInfo.imported ?? 0}, обновлено{' '}

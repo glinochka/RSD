@@ -192,6 +192,8 @@ class MessageProcessor:
                 chat_portrait=chat_portrait,
                 runtime_context=merged_runtime_ctx,
             )
+            if execution.discard_message:
+                return MessageResponse(text="", status=ProcessingStatus.DISCARDED)
             answer = execution.answer
             handoff_applied = False
             escalation_type_applied: str | None = None
