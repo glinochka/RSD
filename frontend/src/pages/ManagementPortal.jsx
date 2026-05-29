@@ -671,6 +671,7 @@ const MENU_ITEMS = [
   { id: 'errorReports', label: 'Сообщения об ошибках' },
   { id: 'billing', label: 'Тарифы' },
   { id: 'promoCodes', label: 'Промокоды' },
+  { id: 'partnerPayouts', label: 'Выплаты партнёрам' },
   { id: 'emailBroadcast', label: 'Email рассылка' },
   { id: 'contentPublisher', label: 'Контент' },
   { id: 'salesDepartment', label: 'Отдел продаж' },
@@ -825,6 +826,9 @@ const ManagementPortal = () => {
   const [isLoadingPromoCodes, setIsLoadingPromoCodes] = useState(false);
   const [promoCodes, setPromoCodes] = useState([]);
   const [promoCodeDraft, setPromoCodeDraft] = useState({ code: '', discountPercent: 0 });
+  const [partnerPayouts, setPartnerPayouts] = useState([]);
+  const [isLoadingPartnerPayouts, setIsLoadingPartnerPayouts] = useState(false);
+  const [partnerPayoutStatusFilter, setPartnerPayoutStatusFilter] = useState('');
   const [createUserDraft, setCreateUserDraft] = useState({ email: '', password: '', telegramId: '' });
   const [actionInProgress, setActionInProgress] = useState(null);
   const [giftModal, setGiftModal] = useState({ open: false, user: null, planCode: 'Advanced' });
@@ -1092,6 +1096,33 @@ const ManagementPortal = () => {
       cancelled = true;
     };
   }, [activeSection, adminToken]);
+
+  useEffect(() => {
+    if (!adminToken) return;
+    if (activeSection !== 'partnerPayouts') return;
+
+    let cancelled = false;
+    const fetchPartnerPayouts = async () => {
+      try {
+        setIsLoadingPartnerPayouts(true);
+        setError('');
+        const data = await adminService.getPartnerPayouts(adminToken, {
+          status: partnerPayoutStatusFilter || undefined,
+        });
+        if (cancelled) return;
+        setPartnerPayouts(Array.isArray(data?.items) ? data.items : []);
+      } catch (err) {
+        if (!cancelled) setError(formatError(err));
+      } finally {
+        if (!cancelled) setIsLoadingPartnerPayouts(false);
+      }
+    };
+
+    fetchPartnerPayouts();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSection, adminToken, partnerPayoutStatusFilter]);
 
   // --- Content Publisher effects ---
   useEffect(() => {
@@ -1684,6 +1715,43 @@ const ManagementPortal = () => {
       });
       setPromoCodeDraft({ code: '', discountPercent: 0 });
       await refreshPromoCodes();
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setActionInProgress(null);
+    }
+  };
+
+  const refreshPartnerPayouts = async () => {
+    if (!adminToken) return;
+    try {
+      setIsLoadingPartnerPayouts(true);
+      const data = await adminService.getPartnerPayouts(adminToken, {
+        status: partnerPayoutStatusFilter || undefined,
+      });
+      setPartnerPayouts(Array.isArray(data?.items) ? data.items : []);
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setIsLoadingPartnerPayouts(false);
+    }
+  };
+
+  const handlePartnerPayoutAction = async (payoutItem, action) => {
+    let adminNote = null;
+    if (action === 'reject') {
+      adminNote = window.prompt('Комментарий для партнёра (необязательно):', '') ?? '';
+    }
+    if (action === 'mark_paid') {
+      const confirmed = window.confirm(
+        `Подтвердите, что перевели ${(payoutItem.amount_kopecks / 100).toLocaleString('ru-RU')} ₽ партнёру ${payoutItem.partner_email || payoutItem.partner_name || payoutItem.partner_user_id}`,
+      );
+      if (!confirmed) return;
+    }
+    try {
+      setActionInProgress(`payout-${action}-${payoutItem.id}`);
+      await adminService.updatePartnerPayout(adminToken, payoutItem.id, { action, adminNote });
+      await refreshPartnerPayouts();
     } catch (err) {
       setError(formatError(err));
     } finally {
@@ -2601,6 +2669,134 @@ const ManagementPortal = () => {
               </article>
             );
           })}
+        </div>
+      )}
+    </>
+  );
+
+  const PARTNER_PAYOUT_STATUS_LABELS = {
+    pending: 'Ожидает',
+    approved: 'Одобрена',
+    paid: 'Выплачена',
+    rejected: 'Отклонена',
+  };
+
+  const renderPartnerPayouts = () => (
+    <>
+      <div className="management-content-head">
+        <h2>Выплаты партнёрам</h2>
+        <button
+          type="button"
+          className="btn btn-outline"
+          disabled={isLoadingPartnerPayouts}
+          onClick={refreshPartnerPayouts}
+        >
+          Обновить
+        </button>
+      </div>
+      {error && <div className="management-error">{error}</div>}
+      <p className="management-hint">
+        Одобрите заявку, затем переведите средства вручную (банк / СБП / карта) и нажмите «Выплачено».
+        ЮKassa принимает платежи клиентов; выплаты партнёрам идут с вашего расчётного счёта отдельно.
+      </p>
+      <div className="management-form-row" style={{ maxWidth: 280, marginBottom: 16 }}>
+        <label htmlFor="payout-status-filter">Статус</label>
+        <select
+          id="payout-status-filter"
+          value={partnerPayoutStatusFilter}
+          onChange={(e) => setPartnerPayoutStatusFilter(e.target.value)}
+        >
+          <option value="">Все</option>
+          <option value="pending">Ожидает</option>
+          <option value="approved">Одобрена</option>
+          <option value="paid">Выплачена</option>
+          <option value="rejected">Отклонена</option>
+        </select>
+      </div>
+      {isLoadingPartnerPayouts ? (
+        <p>Загрузка заявок...</p>
+      ) : (
+        <div className="management-table-wrap">
+          <table className="management-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Партнёр</th>
+                <th>Сумма</th>
+                <th>Реквизиты</th>
+                <th>Статус</th>
+                <th>Создана</th>
+                <th>Действия</th>
+              </tr>
+            </thead>
+            <tbody>
+              {partnerPayouts.map((row) => (
+                <tr key={row.id}>
+                  <td>{row.id}</td>
+                  <td>
+                    <div>{row.partner_name || '—'}</div>
+                    <div className="management-table-sub">{row.partner_email || row.partner_user_id}</div>
+                  </td>
+                  <td>{(row.amount_kopecks / 100).toLocaleString('ru-RU')} ₽</td>
+                  <td className="management-table-pre">{row.payment_details}</td>
+                  <td>
+                    {PARTNER_PAYOUT_STATUS_LABELS[row.status] || row.status}
+                    {row.admin_note && (
+                      <div className="management-table-sub">{row.admin_note}</div>
+                    )}
+                  </td>
+                  <td>
+                    {row.created_at ? new Date(row.created_at).toLocaleString() : '—'}
+                  </td>
+                  <td className="management-table-actions">
+                    {row.status === 'pending' && (
+                      <>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-black"
+                          disabled={actionInProgress === `payout-approve-${row.id}`}
+                          onClick={() => handlePartnerPayoutAction(row, 'approve')}
+                        >
+                          Одобрить
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-danger"
+                          disabled={actionInProgress === `payout-reject-${row.id}`}
+                          onClick={() => handlePartnerPayoutAction(row, 'reject')}
+                        >
+                          Отклонить
+                        </button>
+                      </>
+                    )}
+                    {row.status === 'approved' && (
+                      <>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-black"
+                          disabled={actionInProgress === `payout-mark_paid-${row.id}`}
+                          onClick={() => handlePartnerPayoutAction(row, 'mark_paid')}
+                        >
+                          Выплачено
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-danger"
+                          disabled={actionInProgress === `payout-reject-${row.id}`}
+                          onClick={() => handlePartnerPayoutAction(row, 'reject')}
+                        >
+                          Отклонить
+                        </button>
+                      </>
+                    )}
+                  </td>
+                </tr>
+              ))}
+              {partnerPayouts.length === 0 && (
+                <tr><td colSpan={7}>Заявок нет</td></tr>
+              )}
+            </tbody>
+          </table>
         </div>
       )}
     </>
@@ -4896,6 +5092,7 @@ const ManagementPortal = () => {
             {activeSection === 'errorReports' && renderErrorReports()}
             {activeSection === 'billing' && renderBilling()}
             {activeSection === 'promoCodes' && renderPromoCodes()}
+            {activeSection === 'partnerPayouts' && renderPartnerPayouts()}
             {activeSection === 'emailBroadcast' && renderEmailBroadcast()}
             {activeSection === 'salesDepartment' && renderSalesDepartment()}
           </section>

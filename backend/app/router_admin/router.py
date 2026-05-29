@@ -25,6 +25,7 @@ from .schemas import (
     AdminFreeAgentActivationRequest,
     AdminGiftSubscriptionRequest,
     AdminLoginRequest,
+    AdminPartnerPayoutUpdateRequest,
     AdminPromoCodeCreateRequest,
     AdminSubscriptionPlansUpdateRequest,
     ArticlePublisherAddTopicsRequest,
@@ -40,7 +41,13 @@ from ..qdrant.search_service import delete_agent_vectors
 from ..router_agents.dao import AgentDAO
 from ..router_documents.dao import DocumentDAO
 from ..router_payments.dao import PaymentTransactionDAO, PromoCodeDAO, TurnkeyAgentRequestDAO
-from ..router_referrals.dao import PartnerPromoCodeDAO
+from ..router_referrals.dao import PartnerPayoutRequestDAO, PartnerPromoCodeDAO
+from ..services.partner_payouts import (
+    PAYOUT_STATUS_APPROVED,
+    PAYOUT_STATUS_PAID,
+    PAYOUT_STATUS_PENDING,
+    PAYOUT_STATUS_REJECTED,
+)
 from ..router_payments.router import _calculate_new_end_date
 from ..router_users.dao import UserDAO, UserErrorReportDAO
 from ..router_users.router import _build_unique_username, _validate_email_or_422
@@ -295,6 +302,22 @@ def _serialize_promo_code(item: PromoCode) -> dict:
         "code": item.code,
         "discount_percent": item.discount_percent,
         "created_at": item.created_at.isoformat() if item.created_at else None,
+    }
+
+
+def _serialize_partner_payout_for_admin(item, partner_user: User | None) -> dict:
+    return {
+        "id": item.id,
+        "partner_user_id": item.partner_user_id,
+        "partner_name": partner_user.name if partner_user else None,
+        "partner_email": partner_user.email if partner_user else None,
+        "amount_kopecks": item.amount_kopecks,
+        "payment_details": item.payment_details,
+        "status": item.status,
+        "admin_note": item.admin_note,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+        "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+        "processed_at": item.processed_at.isoformat() if item.processed_at else None,
     }
 
 
@@ -959,6 +982,102 @@ async def admin_delete_promo_code(
             await promo_code_dao.delete(item)
 
     return JSONResponse(content={"detail": "Promo code deleted"}, status_code=status.HTTP_200_OK)
+
+
+@router.get("/partner-payouts")
+async def admin_list_partner_payouts(
+    status_filter: str | None = Query(default=None, alias="status"),
+    _admin=Depends(get_current_admin),
+):
+    async with async_session_maker() as session:
+        payout_dao = PartnerPayoutRequestDAO(session)
+        user_dao = UserDAO(session)
+        async with session.begin():
+            rows = await payout_dao.list_for_admin(status=status_filter)
+            partner_ids = {row.partner_user_id for row in rows}
+            partners_by_id: dict[int, User] = {}
+            for partner_id in partner_ids:
+                partner = await user_dao.find_one_by_filter(id=partner_id)
+                if partner:
+                    partners_by_id[partner_id] = partner
+
+    return JSONResponse(
+        content={
+            "items": [
+                _serialize_partner_payout_for_admin(row, partners_by_id.get(row.partner_user_id))
+                for row in rows
+            ],
+        },
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@router.patch("/partner-payouts/{payout_id}")
+async def admin_update_partner_payout(
+    payload: AdminPartnerPayoutUpdateRequest,
+    payout_id: int = Path(..., ge=1),
+    _admin=Depends(get_current_admin),
+):
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    async with async_session_maker() as session:
+        payout_dao = PartnerPayoutRequestDAO(session)
+        user_dao = UserDAO(session)
+        async with session.begin():
+            item = await payout_dao.find_one_by_filter(id=payout_id)
+            if not item:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Заявка не найдена")
+
+            if payload.action == "approve":
+                if item.status != PAYOUT_STATUS_PENDING:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Одобрить можно только заявку в статусе «ожидает»",
+                    )
+                await payout_dao.update(
+                    item,
+                    {
+                        "status": PAYOUT_STATUS_APPROVED,
+                        "admin_note": payload.admin_note or item.admin_note,
+                        "updated_at": now,
+                    },
+                )
+            elif payload.action == "reject":
+                if item.status not in (PAYOUT_STATUS_PENDING, PAYOUT_STATUS_APPROVED):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Отклонить можно только необработанную заявку",
+                    )
+                await payout_dao.update(
+                    item,
+                    {
+                        "status": PAYOUT_STATUS_REJECTED,
+                        "admin_note": payload.admin_note,
+                        "updated_at": now,
+                        "processed_at": now,
+                    },
+                )
+            elif payload.action == "mark_paid":
+                if item.status != PAYOUT_STATUS_APPROVED:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Отметить выплату можно только для одобренной заявки",
+                    )
+                await payout_dao.update(
+                    item,
+                    {
+                        "status": PAYOUT_STATUS_PAID,
+                        "admin_note": payload.admin_note or item.admin_note,
+                        "updated_at": now,
+                        "processed_at": now,
+                    },
+                )
+
+            partner = await user_dao.find_one_by_filter(id=item.partner_user_id)
+
+    return JSONResponse(
+        content={"item": _serialize_partner_payout_for_admin(item, partner)},
+        status_code=status.HTTP_200_OK,
+    )
 
 
 @router.post("/users/{user_id}/ban")

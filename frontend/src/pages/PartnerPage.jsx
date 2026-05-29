@@ -19,6 +19,13 @@ const formatRubFromKopecks = (kopecks) =>
     maximumFractionDigits: 2,
   });
 
+const PAYOUT_STATUS_LABELS = {
+  pending: 'Ожидает проверки',
+  approved: 'Одобрена — ожидает перевода',
+  paid: 'Выплачена',
+  rejected: 'Отклонена',
+};
+
 const PartnerPage = () => {
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
@@ -28,23 +35,37 @@ const PartnerPage = () => {
   const [promoDraft, setPromoDraft] = useState({ code: '', discountPercent: 10 });
   const [isSavingPromo, setIsSavingPromo] = useState(false);
   const [actionId, setActionId] = useState(null);
+  const [balance, setBalance] = useState(null);
+  const [payouts, setPayouts] = useState([]);
+  const [payoutDraft, setPayoutDraft] = useState({ amountRub: '', paymentDetails: '' });
+  const [isSubmittingPayout, setIsSubmittingPayout] = useState(false);
 
   const referralLink = useMemo(() => {
     if (!dashboard?.referral_code) return '';
     return buildReferralLink(dashboard.referral_code);
   }, [dashboard?.referral_code]);
 
+  const loadPayoutData = useCallback(async () => {
+    const [balanceData, payoutsData] = await Promise.all([
+      referralService.getPayoutBalance(),
+      referralService.getPayouts(),
+    ]);
+    setBalance(balanceData);
+    setPayouts(Array.isArray(payoutsData?.items) ? payoutsData.items : []);
+  }, []);
+
   const loadDashboard = useCallback(async () => {
     setIsLoading(true);
     try {
       const data = await referralService.getPartnerDashboard();
       setDashboard(data);
+      await loadPayoutData();
     } catch (error) {
       showError(error?.message || 'Не удалось загрузить кабинет партнёра');
     } finally {
       setIsLoading(false);
     }
-  }, [showError]);
+  }, [showError, loadPayoutData]);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -98,6 +119,34 @@ const PartnerPage = () => {
       showError(error?.message || 'Не удалось обновить промокод');
     } finally {
       setActionId(null);
+    }
+  };
+
+  const handleCreatePayout = async (event) => {
+    event.preventDefault();
+    const amountRub = Number(payoutDraft.amountRub);
+    const paymentDetails = payoutDraft.paymentDetails.trim();
+    const minRub = balance?.min_payout_rub ?? 100;
+
+    if (!Number.isFinite(amountRub) || amountRub < minRub) {
+      showError(`Минимальная сумма вывода — ${minRub} ₽`);
+      return;
+    }
+    if (paymentDetails.length < 10) {
+      showError('Укажите реквизиты для перевода (минимум 10 символов)');
+      return;
+    }
+
+    setIsSubmittingPayout(true);
+    try {
+      await referralService.createPayout({ amountRub, paymentDetails });
+      setPayoutDraft({ amountRub: '', paymentDetails: '' });
+      showSuccess('Заявка на вывод отправлена');
+      await loadPayoutData();
+    } catch (error) {
+      showError(error?.message || 'Не удалось создать заявку');
+    } finally {
+      setIsSubmittingPayout(false);
     }
   };
 
@@ -176,6 +225,84 @@ const PartnerPage = () => {
                 </strong>
               </article>
             </div>
+
+            <section className="partner-card">
+              <h2>Вывод средств</h2>
+              <p className="partner-card__hint">
+                Заявки обрабатываются вручную. После одобрения перевод выполняется с расчётного счёта
+                организации (банк, СБП или карта — укажите реквизиты в заявке). Минимум{' '}
+                {balance?.min_payout_rub ?? 100} ₽.
+              </p>
+              <div className="partner-payout-balance">
+                <div>
+                  <span className="partner-stat__label">Доступно к выводу</span>
+                  <strong className="partner-payout-balance__value">
+                    {formatRubFromKopecks(balance?.available_kopecks)} ₽
+                  </strong>
+                </div>
+                <div>
+                  <span className="partner-stat__label">В обработке</span>
+                  <strong>{formatRubFromKopecks(balance?.reserved_kopecks)} ₽</strong>
+                </div>
+                <div>
+                  <span className="partner-stat__label">Уже выплачено</span>
+                  <strong>{formatRubFromKopecks(balance?.withdrawn_kopecks)} ₽</strong>
+                </div>
+              </div>
+              <form className="partner-payout-form" onSubmit={handleCreatePayout}>
+                <label>
+                  Сумма (₽)
+                  <input
+                    type="number"
+                    min={balance?.min_payout_rub ?? 100}
+                    step={1}
+                    value={payoutDraft.amountRub}
+                    onChange={(e) =>
+                      setPayoutDraft((prev) => ({ ...prev, amountRub: e.target.value }))
+                    }
+                    placeholder="100"
+                  />
+                </label>
+                <label>
+                  Реквизиты для перевода
+                  <textarea
+                    rows={3}
+                    value={payoutDraft.paymentDetails}
+                    onChange={(e) =>
+                      setPayoutDraft((prev) => ({ ...prev, paymentDetails: e.target.value }))
+                    }
+                    placeholder="ФИО, банк, номер карты или телефон для СБП, счёт…"
+                  />
+                </label>
+                <button type="submit" className="btn btn-primary" disabled={isSubmittingPayout}>
+                  {isSubmittingPayout ? 'Отправка…' : 'Запросить вывод'}
+                </button>
+              </form>
+              <div className="partner-payout-history">
+                <h3>История заявок</h3>
+                {payouts.map((item) => (
+                  <div key={item.id} className="partner-payout-row">
+                    <div>
+                      <strong>{formatRubFromKopecks(item.amount_kopecks)} ₽</strong>
+                      <span className="partner-payout-row__status">
+                        {PAYOUT_STATUS_LABELS[item.status] || item.status}
+                      </span>
+                      {item.admin_note && (
+                        <span className="partner-payout-row__note">{item.admin_note}</span>
+                      )}
+                    </div>
+                    <time>
+                      {item.created_at
+                        ? new Date(item.created_at).toLocaleString('ru-RU')
+                        : '—'}
+                    </time>
+                  </div>
+                ))}
+                {!payouts.length && (
+                  <p className="partner-card__empty">Заявок на вывод пока нет.</p>
+                )}
+              </div>
+            </section>
 
             <section className="partner-card">
               <h2>Динамика за 30 дней</h2>

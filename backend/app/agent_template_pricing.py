@@ -4,14 +4,21 @@ from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 from typing import Any
 
-MAINTENANCE_GRACE_DAYS = 30
+MAINTENANCE_GRACE_DAYS = 3
+
+AGENT_CONTRACT_DURATION_MONTHS = (1, 3, 6)
+AGENT_DURATION_DISCOUNT_BY_MONTHS: dict[int, int] = {
+    1: 0,
+    3: 15,
+    6: 25,
+}
 
 # Шаблоны на странице /pricing (без «под ключ» и без content_factory).
 PRICING_PAGE_TEMPLATE_CODES: tuple[str, ...] = ("qa", "crm_admin", "sales_manager")
 
 PRICING_CARD_TITLES: dict[str, str] = {
     "qa": "ИИ консультант",
-    "crm_admin": "ИИ оператор",
+    "crm_admin": "ИИ Администратор",
     "sales_manager": "ИИ МОП",
 }
 
@@ -52,28 +59,28 @@ AGENT_TEMPLATE_PRICING: dict[str, AgentTemplatePricing] = {
     ),
     "crm_admin": AgentTemplatePricing(
         code="crm_admin",
-        title="ИИ оператор",
+        title="ИИ Администратор",
         setup_rub_min=0,
-        monthly_maintenance_rub_min=3_000,
+        monthly_maintenance_rub_min=990,
         is_free=False,
         selectable=True,
         status="available",
         description=(
-            "Запись, расписание и интеграции с CRM/ERP. Ежемесячная подписка на обслуживание; "
-            "сложные интеграции и ручная настройка оцениваются отдельно."
+            "Запись, расписание и интеграции с CRM/ERP. Подписка 990 ₽/мес; "
+            "первые 3 дня после создания бесплатно. Сложные интеграции — отдельно."
         ),
     ),
     "sales_manager": AgentTemplatePricing(
         code="sales_manager",
         title="ИИ МОП",
         setup_rub_min=0,
-        monthly_maintenance_rub_min=3_000,
+        monthly_maintenance_rub_min=1_990,
         is_free=False,
         selectable=True,
         status="available",
         description=(
-            "Исходящие и входящие продажи в мессенджерах. Ежемесячная подписка; "
-            "доработка сценариев и CRM — по согласованию."
+            "Исходящие и входящие продажи в мессенджерах. Подписка 1 990 ₽/мес; "
+            "первые 3 дня после создания бесплатно."
         ),
     ),
     "content_factory": AgentTemplatePricing(
@@ -113,11 +120,11 @@ AGENT_TEMPLATE_PRICING["lead_generation"] = AgentTemplatePricing(
     code="lead_generation",
     title="Генерация лидов (legacy)",
     setup_rub_min=0,
-    monthly_maintenance_rub_min=3_000,
+    monthly_maintenance_rub_min=1_990,
     is_free=False,
     selectable=False,
     status="in_development",
-    description="Устаревший шаблон, используйте «Менеджер продаж».",
+    description="Устаревший шаблон, используйте «ИИ МОП».",
 )
 
 TEMPLATE_TYPES_IN_DEVELOPMENT = {
@@ -208,6 +215,27 @@ def is_activation_paid(agent, *, user=None) -> bool:
     return paid_at is not None
 
 
+def round_contract_total_rub(value: int) -> int:
+    normalized = int(value or 0)
+    if normalized <= 0:
+        return 0
+    return max(90, round((normalized - 90) / 100) * 100 + 90)
+
+
+def calculate_contract_total_rub(monthly_rub: int, duration_months: int) -> int:
+    months = int(duration_months or 1)
+    if months not in AGENT_CONTRACT_DURATION_MONTHS:
+        months = 1
+    discount_percent = AGENT_DURATION_DISCOUNT_BY_MONTHS.get(months, 0)
+    base_total = int(monthly_rub) * months
+    discounted = round(base_total * (1 - discount_percent / 100))
+    return round_contract_total_rub(discounted)
+
+
+def calculate_contract_amount_kopecks(monthly_rub: int, duration_months: int) -> int:
+    return calculate_contract_total_rub(monthly_rub, duration_months) * 100
+
+
 def is_maintenance_current(agent, *, today: date | None = None) -> bool:
     pricing = get_agent_template_pricing(getattr(agent, "template_type", None))
     if not pricing or pricing.monthly_maintenance_rub_min <= 0:
@@ -231,18 +259,34 @@ def build_agent_billing_state(agent, *, user=None) -> dict[str, Any]:
     maintenance_current = is_maintenance_current(agent)
     grace_until = maintenance_grace_until(agent)
     grace_active = is_maintenance_grace_active(agent)
+    paid_until = getattr(agent, "maintenance_paid_until", None)
+    if isinstance(paid_until, datetime):
+        paid_until = paid_until.date()
+    requires_subscription = pricing.monthly_maintenance_rub_min > 0
+    can_activate = maintenance_current if requires_subscription else activation_paid
+    today = date.today()
+    trial_days_left = None
+    if grace_active and grace_until is not None:
+        trial_days_left = max(0, (grace_until - today).days)
     return {
         "template_type": template_type,
+        "template_title": pricing.title,
         "setup_rub_min": pricing.setup_rub_min,
         "monthly_maintenance_rub_min": pricing.monthly_maintenance_rub_min,
+        "monthly_price_rub": pricing.monthly_maintenance_rub_min,
         "is_free": pricing.is_free,
+        "requires_subscription": requires_subscription,
         "activation_exempt": activation_exempt,
         "activation_paid": activation_paid,
         "maintenance_current": maintenance_current,
         "maintenance_grace_active": grace_active,
         "maintenance_grace_until": grace_until.isoformat() if grace_until else None,
-        "can_activate": activation_paid,
-        "activation_required_rub": 0 if activation_paid else pricing.setup_rub_min,
+        "maintenance_paid_until": paid_until.isoformat() if paid_until else None,
+        "trial_days_left": trial_days_left,
+        "can_activate": can_activate,
+        "activation_required_rub": 0,
+        "renewal_payment_kind": PAYMENT_KIND_AGENT_MAINTENANCE if requires_subscription else None,
+        "duration_discounts": AGENT_DURATION_DISCOUNT_BY_MONTHS,
         "llm_tokens_included": True,
     }
 

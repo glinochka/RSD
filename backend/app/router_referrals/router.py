@@ -1,6 +1,7 @@
+from datetime import datetime, timezone
 from logging import getLogger
 
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.exc import IntegrityError
@@ -8,6 +9,12 @@ from sqlalchemy.exc import IntegrityError
 from ..alembic.database import async_session_maker
 from ..router_payments.dao import PromoCodeDAO
 from ..router_users.dao import UserDAO
+from ..services.partner_payouts import (
+    MIN_PAYOUT_KOPECKS,
+    MIN_PAYOUT_RUB,
+    PAYOUT_STATUS_PENDING,
+    get_partner_balance_kopecks,
+)
 from ..services.referral import (
     PARTNER_BASE_COMMISSION_PERCENT,
     compute_partner_commission_percent,
@@ -15,8 +22,12 @@ from ..services.referral import (
     ensure_user_referral_code,
 )
 from ..utils.JWT import get_user_from_access_token
-from .dao import PartnerPromoCodeDAO, ReferralCommissionDAO
-from .schemas import PartnerPromoCodeCreateRequest, PartnerPromoCodePatchRequest
+from .dao import PartnerPayoutRequestDAO, PartnerPromoCodeDAO, ReferralCommissionDAO
+from .schemas import (
+    PartnerPayoutCreateRequest,
+    PartnerPromoCodeCreateRequest,
+    PartnerPromoCodePatchRequest,
+)
 
 logger = getLogger(__name__)
 
@@ -47,6 +58,23 @@ def _serialize_partner_promo(item) -> dict:
         "partner_commission_percent": compute_partner_commission_percent(item.discount_percent),
         "is_active": bool(item.is_active),
         "created_at": item.created_at.isoformat() if item.created_at else None,
+    }
+
+
+def _utc_now_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _serialize_payout(item) -> dict:
+    return {
+        "id": item.id,
+        "amount_kopecks": item.amount_kopecks,
+        "payment_details": item.payment_details,
+        "status": item.status,
+        "admin_note": item.admin_note,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+        "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+        "processed_at": item.processed_at.isoformat() if item.processed_at else None,
     }
 
 
@@ -201,3 +229,67 @@ async def delete_partner_promo_code(
             await promo_dao.delete(item)
 
     return JSONResponse(content={"detail": "Промокод удалён"}, status_code=status.HTTP_200_OK)
+
+
+@router.get("/partner/payouts/balance")
+async def partner_payout_balance(current_user=Depends(get_current_user_required)):
+    async with async_session_maker() as session:
+        async with session.begin():
+            balance = await get_partner_balance_kopecks(session, current_user.id)
+    return JSONResponse(content=balance, status_code=status.HTTP_200_OK)
+
+
+@router.get("/partner/payouts")
+async def partner_list_payouts(current_user=Depends(get_current_user_required)):
+    async with async_session_maker() as session:
+        payout_dao = PartnerPayoutRequestDAO(session)
+        async with session.begin():
+            rows = await payout_dao.list_for_partner(current_user.id)
+    return JSONResponse(
+        content={"items": [_serialize_payout(row) for row in rows]},
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@router.post("/partner/payouts")
+async def partner_create_payout(
+    payload: PartnerPayoutCreateRequest,
+    current_user=Depends(get_current_user_required),
+):
+    amount_kopecks = int(payload.amount_rub) * 100
+    if amount_kopecks < MIN_PAYOUT_KOPECKS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Минимальная сумма вывода — {MIN_PAYOUT_RUB} ₽",
+        )
+
+    now = _utc_now_naive()
+    async with async_session_maker() as session:
+        payout_dao = PartnerPayoutRequestDAO(session)
+        async with session.begin():
+            balance = await get_partner_balance_kopecks(session, current_user.id)
+            if amount_kopecks > balance["available_kopecks"]:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Недостаточно средств на балансе",
+                )
+            if await payout_dao.has_active_request(current_user.id):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="У вас уже есть активная заявка на вывод. Дождитесь её обработки.",
+                )
+            item = await payout_dao.add(
+                {
+                    "partner_user_id": current_user.id,
+                    "amount_kopecks": amount_kopecks,
+                    "payment_details": payload.payment_details,
+                    "status": PAYOUT_STATUS_PENDING,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            )
+
+    return JSONResponse(
+        content={"item": _serialize_payout(item)},
+        status_code=status.HTTP_201_CREATED,
+    )

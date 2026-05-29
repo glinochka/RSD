@@ -29,6 +29,24 @@ const referralService = {
     );
     return response.data;
   },
+
+  async getPayoutBalance() {
+    const response = await apiClient.get(API_ROUTES.REFERRALS_PARTNER_PAYOUT_BALANCE);
+    return response.data;
+  },
+
+  async getPayouts() {
+    const response = await apiClient.get(API_ROUTES.REFERRALS_PARTNER_PAYOUTS);
+    return response.data;
+  },
+
+  async createPayout({ amountRub, paymentDetails }) {
+    const response = await apiClient.post(API_ROUTES.REFERRALS_PARTNER_PAYOUTS, {
+      amount_rub: amountRub,
+      payment_details: paymentDetails,
+    });
+    return response.data;
+  },
 };
 
 export default referralService;

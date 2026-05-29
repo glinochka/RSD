@@ -3810,6 +3810,9 @@ async def read_agent(
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
             await _ensure_external_api_key(found_agent, agent_dao)
             await _ensure_single_primary_flag(session=session, agent_id=found_agent.id)
+            from ..services.agent_billing import enforce_expired_maintenance
+
+            await enforce_expired_maintenance(agent_dao, found_agent)
             channels = await _list_agent_channels(session, found_agent.id)
             crm_connections = await _list_agent_crm_connections(session, found_agent.id)
             http_integrations = await _list_agent_http_integrations(session, found_agent.id)
@@ -3853,11 +3856,17 @@ async def read_all_agents(
                 user = await user_dao.find_one_by_filter(load_relations=True, telegram_id=tg_id)
             if not user:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-            return JSONResponse(
-                content=[
+            from ..services.agent_billing import enforce_expired_maintenance
+
+            agent_dao = AgentDAO(session)
+            serialized_agents = []
+            for agent in user.agents or []:
+                await enforce_expired_maintenance(agent_dao, agent)
+                serialized_agents.append(
                     _serialize_agent(agent, user=user, include_encrypted_token=internal)
-                    for agent in (user.agents or [])
-                ],
+                )
+            return JSONResponse(
+                content=serialized_agents,
                 status_code=status.HTTP_200_OK,
             )
 
@@ -3888,7 +3897,7 @@ async def create_empty_agent(
                     "external_api_key_hash": hash_agent_external_api_key(external_api_key),
                     "bot_username": None,
                     "system_prompt": payload.system_prompt.strip(),
-                    "is_active": False,
+                    "is_active": True,
                     **_initial_agent_billing_fields(template_type, user=current_user),
                 }
             )
@@ -5812,13 +5821,18 @@ async def toggle_status(
                 current_user=current_user,
                 internal=internal,
             )
+            from ..services.agent_billing import enforce_expired_maintenance
+
+            await enforce_expired_maintenance(agent_dao, agent)
             new_status = not agent.is_active
             billing_user = await _resolve_billing_user(session, agent, current_user)
             if new_status:
                 from ..agent_template_pricing import (
+                    PAYMENT_KIND_AGENT_MAINTENANCE,
                     build_agent_billing_state,
                     get_agent_template_pricing,
                     is_activation_paid,
+                    is_maintenance_current,
                     user_has_free_agent_activation,
                 )
 
@@ -5836,12 +5850,22 @@ async def toggle_status(
                         {"activation_paid_at": datetime.now(timezone.utc).replace(tzinfo=None)},
                     )
                     agent = await agent_dao.find_one_by_filter(id=agent.id)
+                if pricing and pricing.monthly_maintenance_rub_min > 0 and not is_maintenance_current(agent):
+                    billing = build_agent_billing_state(agent, user=billing_user)
+                    raise HTTPException(
+                        status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                        detail={
+                            "message": "Для активации агента требуется оплата подписки",
+                            "billing": billing,
+                            "payment_kind": PAYMENT_KIND_AGENT_MAINTENANCE,
+                        },
+                    )
                 if not is_activation_paid(agent, user=billing_user):
                     billing = build_agent_billing_state(agent, user=billing_user)
                     raise HTTPException(
                         status_code=status.HTTP_402_PAYMENT_REQUIRED,
                         detail={
-                            "message": "Для активации агента требуется оплата минимального взноса за запуск",
+                            "message": "Для активации агента требуется оплата",
                             "billing": billing,
                             "payment_kind": "agent_activation",
                         },

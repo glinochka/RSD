@@ -49,13 +49,13 @@ def test_qa_is_free():
 def test_crm_admin_minimum_prices():
     pricing = get_agent_template_pricing("crm_admin")
     assert pricing.setup_rub_min == 0
-    assert pricing.monthly_maintenance_rub_min == 3_000
+    assert pricing.monthly_maintenance_rub_min == 990
 
 
 def test_sales_manager_minimum_prices():
     pricing = get_agent_template_pricing("sales_manager")
     assert pricing.setup_rub_min == 0
-    assert pricing.monthly_maintenance_rub_min == 3_000
+    assert pricing.monthly_maintenance_rub_min == 1_990
 
 
 def test_content_factory_not_selectable():
@@ -73,12 +73,18 @@ def test_ai_logist_not_selectable():
         assert_template_selectable("ai_logist")
 
 
-def test_activation_billing_state_no_setup_fee():
-    agent = _FakeAgent(template_type="crm_admin")
+def test_activation_billing_state_paid_template_in_trial():
+    created = date.today()
+    agent = _FakeAgent(
+        template_type="crm_admin",
+        registered=created,
+        maintenance_paid_until=initial_maintenance_paid_until_for_template("crm_admin", from_date=created),
+    )
     billing = build_agent_billing_state(agent)
     assert billing["can_activate"] is True
-    assert billing["activation_required_rub"] == 0
-    assert billing["activation_exempt"] is False
+    assert billing["maintenance_current"] is True
+    assert billing["requires_subscription"] is True
+    assert billing["monthly_price_rub"] == 990
 
 
 def test_free_agent_activation_exempt_user():
@@ -106,15 +112,15 @@ def test_public_catalog_only_pricing_page_templates():
     assert codes == ["qa", "crm_admin", "sales_manager"]
     assert "content_factory" not in codes
     admin = next(row for row in list_public_agent_template_pricing() if row["code"] == "crm_admin")
-    assert admin["card_title"] == "ИИ оператор"
+    assert admin["card_title"] == "ИИ Администратор"
     mop = next(row for row in list_public_agent_template_pricing() if row["code"] == "sales_manager")
     assert mop["card_title"] == "ИИ МОП"
     qa = next(row for row in list_public_agent_template_pricing() if row["code"] == "qa")
     assert qa["card_title"] == "ИИ консультант"
 
 
-def test_maintenance_grace_first_month_free():
-    created = date.today() - timedelta(days=5)
+def test_maintenance_grace_three_day_trial():
+    created = date.today() - timedelta(days=1)
     agent = _FakeAgent(
         template_type="crm_admin",
         registered=created,

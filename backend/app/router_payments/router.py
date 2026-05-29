@@ -15,14 +15,15 @@ from yookassa.domain.notification.webhook_notification_types import WebhookNotif
 from yookassa.domain.exceptions import NotFoundError
 from ..alembic.database import async_session_maker
 from ..agent_template_pricing import (
+    AGENT_DURATION_DISCOUNT_BY_MONTHS,
     PAYMENT_KIND_AGENT_ACTIVATION,
     PAYMENT_KIND_AGENT_MAINTENANCE,
     PAYMENT_KIND_SUBSCRIPTION,
     agent_payment_plan_name,
     build_agent_billing_state,
+    calculate_contract_amount_kopecks,
     get_agent_template_pricing,
     is_activation_paid,
-    is_maintenance_grace_active,
     list_public_agent_template_pricing,
     parse_agent_payment_plan_name,
     user_has_free_agent_activation,
@@ -181,12 +182,19 @@ async def _apply_agent_billing_payment(
         await agent_dao.update(agent, {"activation_paid_at": now_naive})
         return
     if payment_kind == PAYMENT_KIND_AGENT_MAINTENANCE:
+        duration_months = max(1, int(getattr(tx, "duration_months", None) or 1))
         base = date.today()
         current_until = getattr(agent, "maintenance_paid_until", None)
         if isinstance(current_until, date) and current_until > base:
             base = current_until
-        new_until = base + timedelta(days=30)
-        await agent_dao.update(agent, {"maintenance_paid_until": new_until})
+        new_until = base + timedelta(days=30 * duration_months)
+        await agent_dao.update(
+            agent,
+            {
+                "maintenance_paid_until": new_until,
+                "is_active": True,
+            },
+        )
 
 
 async def _apply_yookassa_payment_to_subscription(
@@ -262,18 +270,24 @@ async def get_agent_template_pricing():
         content={
             "templates": list_public_agent_template_pricing(),
             "policy_notes": [
-                "Оплата только ежемесячная — разовый взнос за запуск не требуется.",
-                "Первый месяц после создания агента ежемесячное обслуживание бесплатно.",
-                "Далее обслуживание — подписка на обновления и работу серверной инфраструктуры (от 3 000 ₽/мес).",
-                "Сложные интеграции с CRM/ERP и ручная настройка оцениваются отдельно.",
-                "Токены LLM на текущем этапе включены — расходы на модели покрывает платформа.",
+                "ИИ консультант — бесплатно.",
+                "ИИ Администратор — 990 ₽/мес, ИИ МОП — 1 990 ₽/мес.",
+                "Первые 3 дня после создания платного агента — бесплатный пробный период.",
+                "Оплата на 1, 3 или 6 месяцев; при длительном сроке действует скидка.",
+                "Токены LLM включены — расходы на модели покрывает платформа.",
             ],
         },
         status_code=status.HTTP_200_OK,
     )
 
 
-def _agent_billing_amount_kopecks(*, payment_kind: str, template_type: str) -> tuple[int, str]:
+def _agent_billing_amount_kopecks(
+    *,
+    payment_kind: str,
+    template_type: str,
+    duration_months: int = 1,
+    promo_discount_percent: int = 0,
+) -> tuple[int, str, int]:
     pricing = get_agent_template_pricing(template_type)
     if not pricing:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown agent template")
@@ -283,17 +297,27 @@ def _agent_billing_amount_kopecks(*, payment_kind: str, template_type: str) -> t
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Activation payment is not required for this template",
             )
-        return pricing.setup_rub_min * 100, (
-            f"Запуск агента «{pricing.title}» (минимальная стоимость)"
-        )
+        original_kopecks = pricing.setup_rub_min * 100
+        promo_discount_kopecks = (original_kopecks * promo_discount_percent) // 100
+        amount_kopecks = max(0, original_kopecks - promo_discount_kopecks)
+        return amount_kopecks, f"Запуск агента «{pricing.title}»", original_kopecks
     if payment_kind == PAYMENT_KIND_AGENT_MAINTENANCE:
         if pricing.monthly_maintenance_rub_min <= 0:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Monthly maintenance is not billed for this template",
             )
-        return pricing.monthly_maintenance_rub_min * 100, (
-            f"Ежемесячное обслуживание агента «{pricing.title}»"
+        original_kopecks = calculate_contract_amount_kopecks(
+            pricing.monthly_maintenance_rub_min,
+            duration_months,
+        )
+        promo_discount_kopecks = (original_kopecks * promo_discount_percent) // 100
+        amount_kopecks = max(0, original_kopecks - promo_discount_kopecks)
+        duration_label = f"{duration_months} мес."
+        return (
+            amount_kopecks,
+            f"Подписка на агента «{pricing.title}» ({duration_label})",
+            original_kopecks,
         )
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid payment kind")
 
@@ -303,6 +327,13 @@ async def create_yookassa_agent_billing_payment(
     payload: CreateAgentBillingPayment,
     current_user=Depends(get_current_user_required),
 ):
+    duration_months = int(payload.duration_months or 1)
+    normalized_promo = _normalize_promo_code(payload.promo_code)
+    applied_discount_percent = 0
+    applied_promo_code = None
+    partner_user_id = None
+    partner_promo_discount_percent = 0
+
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
         async with session.begin():
@@ -322,20 +353,77 @@ async def create_yookassa_agent_billing_payment(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail="Activation payment already completed",
                     )
-            if payload.payment_kind == PAYMENT_KIND_AGENT_MAINTENANCE and is_maintenance_grace_active(agent):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Первый месяц обслуживания после создания агента уже включён бесплатно",
-                )
+            if normalized_promo:
+                (
+                    applied_discount_percent,
+                    applied_promo_code,
+                    partner_user_id,
+                    partner_promo_discount_percent,
+                ) = await _resolve_checkout_promo(session, normalized_promo)
+                if partner_user_id:
+                    user_dao = UserDAO(session)
+                    buyer = await user_dao.find_one_by_filter(id=current_user.id)
+                    if buyer:
+                        await attach_referrer_by_partner_id(user_dao, buyer, partner_user_id)
 
-    amount_kopecks, description = _agent_billing_amount_kopecks(
+    amount_kopecks, description, original_amount_kopecks = _agent_billing_amount_kopecks(
         payment_kind=payload.payment_kind,
         template_type=template_type,
+        duration_months=duration_months,
+        promo_discount_percent=applied_discount_percent,
     )
     plan_name = agent_payment_plan_name(
         payment_kind=payload.payment_kind,
         template_type=template_type,
     )
+    duration_discount_percent = AGENT_DURATION_DISCOUNT_BY_MONTHS.get(duration_months, 0)
+
+    if amount_kopecks == 0:
+        async with async_session_maker() as session:
+            agent_dao = AgentDAO(session)
+            website_tx_dao = WebsitePaymentTransactionDAO(session)
+            async with session.begin():
+                tx_row = await website_tx_dao.add(
+                    {
+                        "user_id": current_user.id,
+                        "agent_id": payload.agent_id,
+                        "payment_kind": payload.payment_kind,
+                        "plan_name": plan_name,
+                        "currency": "RUB",
+                        "total_amount": 0,
+                        "original_total_amount": original_amount_kopecks,
+                        "discount_percent": applied_discount_percent,
+                        "duration_months": duration_months,
+                        "promo_code": applied_promo_code,
+                        "partner_user_id": partner_user_id,
+                        "partner_promo_discount_percent": partner_promo_discount_percent,
+                        "yookassa_payment_id": f"promo-{uuid4()}",
+                        "status": "succeeded",
+                        "is_processed": True,
+                        "paid_at": datetime.now(timezone.utc).replace(tzinfo=None),
+                    }
+                )
+                await session.flush()
+                await _apply_agent_billing_payment(agent_dao, tx_row)
+                await record_referral_commission_for_transaction(session, UserDAO(session), tx_row)
+        return JSONResponse(
+            content={
+                "payment_id": None,
+                "status": "succeeded",
+                "confirmation_url": None,
+                "plan_name": plan_name,
+                "payment_kind": payload.payment_kind,
+                "agent_id": payload.agent_id,
+                "amount_kopecks": 0,
+                "template_type": template_type,
+                "promo_code": applied_promo_code,
+                "discount_percent": applied_discount_percent,
+                "duration_discount_percent": duration_discount_percent,
+                "duration_months": duration_months,
+                "contract_activated": True,
+            },
+            status_code=status.HTTP_200_OK,
+        )
 
     return_url = (payload.return_url or settings.YOOKASSA_RETURN_URL or "").strip()
     if not return_url:
@@ -361,6 +449,7 @@ async def create_yookassa_agent_billing_payment(
                     "agent_id": str(payload.agent_id),
                     "payment_kind": payload.payment_kind,
                     "template_type": template_type,
+                    "duration_months": str(duration_months),
                 },
             },
             idempotence_key,
@@ -392,10 +481,12 @@ async def create_yookassa_agent_billing_payment(
                     "plan_name": plan_name,
                     "currency": "RUB",
                     "total_amount": amount_kopecks,
-                    "original_total_amount": amount_kopecks,
-                    "discount_percent": 0,
-                    "duration_months": 1,
-                    "promo_code": None,
+                    "original_total_amount": original_amount_kopecks,
+                    "discount_percent": applied_discount_percent,
+                    "duration_months": duration_months,
+                    "promo_code": applied_promo_code,
+                    "partner_user_id": partner_user_id,
+                    "partner_promo_discount_percent": partner_promo_discount_percent,
                     "yookassa_payment_id": payment_id,
                     "status": payment_status,
                 }
@@ -411,6 +502,10 @@ async def create_yookassa_agent_billing_payment(
             "agent_id": payload.agent_id,
             "amount_kopecks": amount_kopecks,
             "template_type": template_type,
+            "promo_code": applied_promo_code,
+            "discount_percent": applied_discount_percent,
+            "duration_discount_percent": duration_discount_percent,
+            "duration_months": duration_months,
         },
         status_code=status.HTTP_201_CREATED,
     )

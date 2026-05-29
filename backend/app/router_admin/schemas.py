@@ -40,6 +40,19 @@ class AdminFreeAgentActivationRequest(BaseModel):
     enabled: bool = Field(..., description="Бесплатная активация агентов для аккаунта")
 
 
+class AdminPartnerPayoutUpdateRequest(BaseModel):
+    action: Literal["approve", "reject", "mark_paid"]
+    admin_note: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("admin_note", mode="before")
+    @classmethod
+    def strip_admin_note(cls, value: str | None) -> str | None:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+
 class AdminPromoCodeCreateRequest(BaseModel):
     code: str = Field(..., min_length=1, max_length=64)
     discount_percent: int = Field(..., ge=0, le=100)

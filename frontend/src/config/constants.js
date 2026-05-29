@@ -33,6 +33,8 @@ export const API_ROUTES = {
   REFERRALS_PARTNER_DASHBOARD: '/api/referrals/partner/dashboard',
   REFERRALS_PARTNER_PROMO_CODES: '/api/referrals/partner/promo-codes',
   REFERRALS_PARTNER_PROMO_CODE: (promoCodeId) => `/api/referrals/partner/promo-codes/${promoCodeId}`,
+  REFERRALS_PARTNER_PAYOUT_BALANCE: '/api/referrals/partner/payouts/balance',
+  REFERRALS_PARTNER_PAYOUTS: '/api/referrals/partner/payouts',
 
   // Users
   USERS_ME: '/api/users/me',
@@ -132,6 +134,8 @@ export const API_ROUTES = {
   ADMIN_GIFT_SUBSCRIPTION: (userId) => `/api/admin/users/${userId}/gift-subscription`,
   ADMIN_FREE_AGENT_ACTIVATION: (userId) => `/api/admin/users/${userId}/free-agent-activation`,
   ADMIN_DELETE_PROMO_CODE: (promoCodeId) => `/api/admin/promo-codes/${promoCodeId}`,
+  ADMIN_PARTNER_PAYOUTS: '/api/admin/partner-payouts',
+  ADMIN_PARTNER_PAYOUT: (payoutId) => `/api/admin/partner-payouts/${payoutId}`,
   ADMIN_ERROR_REPORTS: '/api/admin/error-reports',
   ADMIN_EMAIL_BROADCAST: '/api/admin/email-broadcast',
   ADMIN_EMAIL_TARGETED_PREVIEW: '/api/admin/email-targeted-preview',

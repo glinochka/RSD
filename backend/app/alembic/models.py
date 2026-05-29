@@ -1085,6 +1085,25 @@ class PartnerPromoCode(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
 
 
+class PartnerPayoutRequest(Base):
+    __tablename__ = "partner_payout_requests"
+    __table_args__ = {"extend_existing": True}
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    partner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    amount_kopecks: Mapped[int] = mapped_column(Integer, nullable=False)
+    payment_details: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", index=True)
+    admin_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class ReferralCommission(Base):
     __tablename__ = "referral_commissions"
     __table_args__ = (

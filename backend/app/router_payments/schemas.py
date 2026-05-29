@@ -60,15 +60,24 @@ class CreateAgentBillingPayment(BaseModel):
     agent_id: int = Field(..., ge=1, description="ID агента")
     payment_kind: Literal["agent_activation", "agent_maintenance"] = Field(
         ...,
-        description="Тип платежа: разовый запуск или ежемесячное обслуживание",
+        description="Тип платежа: разовый запуск или подписка на агента",
     )
     return_url: str | None = Field(default=None, description="URL возврата после оплаты в ЮKassa")
+    promo_code: str | None = Field(default=None, max_length=64, description="Optional promo code")
+    duration_months: int = Field(default=1, description="Contract duration in months (1, 3, or 6)")
 
     @field_validator("payment_kind")
     @classmethod
     def validate_payment_kind(cls, value: str) -> str:
         if value not in (PAYMENT_KIND_AGENT_ACTIVATION, PAYMENT_KIND_AGENT_MAINTENANCE):
             raise ValueError("Invalid agent billing payment kind")
+        return value
+
+    @field_validator("duration_months")
+    @classmethod
+    def validate_duration_months(cls, value: int) -> int:
+        if value not in (1, 3, 6):
+            raise ValueError("duration_months must be one of 1, 3, 6")
         return value
 
 

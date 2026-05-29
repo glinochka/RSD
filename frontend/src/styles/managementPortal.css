@@ -244,6 +244,32 @@
   margin-bottom: var(--spacing-base);
 }
 
+.management-hint {
+  margin: 0 0 var(--spacing-base);
+  color: var(--color-text-lighter);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+.management-table-sub {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-lighter);
+  margin-top: 2px;
+}
+
+.management-table-pre {
+  max-width: 220px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: var(--font-size-xs);
+}
+
+.management-table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 @media (max-width: 900px) {
   .management-dashboard {
     grid-template-columns: 1fr;

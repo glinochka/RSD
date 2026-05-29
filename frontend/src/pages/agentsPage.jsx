@@ -4,10 +4,11 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import MainLayout from '../components/Layout';
 import Loading from '../components/Loading';
 import AgentsEmptyState from '../components/AgentsEmptyState';
+import AgentContractPaymentModal from '../components/AgentContractPaymentModal';
 import { useAsync } from '../hooks/useAsync';
 import agentService from '../services/agentService';
 import pricingService from '../services/pricingService';
@@ -27,6 +28,7 @@ import '../styles/agentsPage.css';
 
 const AGENTS_EMPTY_MESSAGE = 'У вас еще нет агентов, создайте прямо сейчас';
 const AGENTS_EMPTY_CTA = 'Создайте прямо сейчас';
+const PENDING_AGENT_CONTRACT_PAYMENT_ID_KEY = 'pending_agent_contract_payment_id';
 const fileIdentity = (file) => `${file.name}::${file.size}::${file.lastModified}`;
 const linkIdentity = (link) => link.trim().toLowerCase();
 const isPortraitFeatureEnabled = (agent) => {
@@ -525,6 +527,7 @@ const AgentCard = ({ agent, isSelected, onManage, onDelete, onToggle }) => {
 
 const AgentsPageContent = () => {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { showError, showSuccess } = useNotification();
   const { isAuthenticated } = useAuth();
   const [selectedBotId, setSelectedBotId] = useState(null);
@@ -622,6 +625,9 @@ const AgentsPageContent = () => {
   const [agentAvailWeekdays, setAgentAvailWeekdays] = useState(buildDefaultAgentAvailabilityWeekdays);
   const [isSavingAgentAvailability, setIsSavingAgentAvailability] = useState(false);
   const detailsRequestIdRef = useRef(0);
+  const [contractModalAgent, setContractModalAgent] = useState(null);
+  const [contractModalTitle, setContractModalTitle] = useState('');
+  const [isContractPaymentProcessing, setIsContractPaymentProcessing] = useState(false);
   const { data: agents, isLoading, execute } = useAsync(
     () => agentService.getAll(),
     false
@@ -630,6 +636,44 @@ const AgentsPageContent = () => {
   useEffect(() => {
     if (!isAuthenticated) return;
     execute();
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const pendingPaymentId = localStorage.getItem(PENDING_AGENT_CONTRACT_PAYMENT_ID_KEY);
+    if (!pendingPaymentId) return;
+
+    let cancelled = false;
+    const verifyPayment = async () => {
+      try {
+        const statusData = await pricingService.getYooKassaPaymentStatus(pendingPaymentId);
+        if (cancelled) return;
+        if (statusData?.status === 'succeeded') {
+          showSuccess('Подписка на агента успешно оплачена.');
+          await refreshAgents();
+          if (statusData.agent_id) {
+            await loadAgentDetails(statusData.agent_id);
+          }
+        } else if (statusData?.status === 'canceled') {
+          showError('Оплата отменена.');
+        }
+      } catch (error) {
+        if (!cancelled) {
+          showError(error?.message || 'Не удалось проверить статус оплаты');
+        }
+      } finally {
+        localStorage.removeItem(PENDING_AGENT_CONTRACT_PAYMENT_ID_KEY);
+        if (searchParams.get('agent_payment')) {
+          const next = new URLSearchParams(searchParams);
+          next.delete('agent_payment');
+          setSearchParams(next, { replace: true });
+        }
+      }
+    };
+    verifyPayment();
+    return () => {
+      cancelled = true;
+    };
   }, [isAuthenticated]);
 
   useEffect(() => {
@@ -710,6 +754,53 @@ const AgentsPageContent = () => {
     }
   };
 
+  const openContractPaymentModal = (agent, title) => {
+    if (!agent) return;
+    setContractModalAgent(agent);
+    setContractModalTitle(title);
+  };
+
+  const closeContractPaymentModal = () => {
+    if (isContractPaymentProcessing) return;
+    setContractModalAgent(null);
+    setContractModalTitle('');
+  };
+
+  const handleContractPaymentSubmit = async ({ agentId, durationMonths, promoCode }) => {
+    if (isContractPaymentProcessing) return;
+    setIsContractPaymentProcessing(true);
+    try {
+      const returnUrl = `${window.location.origin}${NAVIGATION_ROUTES.AGENTS}?agent_payment=1`;
+      const payment = await pricingService.createAgentBillingPayment({
+        agent_id: agentId,
+        payment_kind: 'agent_maintenance',
+        return_url: returnUrl,
+        promo_code: promoCode,
+        duration_months: durationMonths,
+      });
+
+      if (payment?.status === 'succeeded' && !payment?.confirmation_url) {
+        showSuccess('Подписка активирована по промокоду.');
+        closeContractPaymentModal();
+        await refreshAgents();
+        if (selectedBotId === agentId) {
+          await loadAgentDetails(agentId);
+        }
+        return;
+      }
+
+      if (!payment?.confirmation_url || !payment?.payment_id) {
+        throw new Error('Сервис оплаты вернул некорректный ответ.');
+      }
+
+      localStorage.setItem(PENDING_AGENT_CONTRACT_PAYMENT_ID_KEY, payment.payment_id);
+      window.location.href = payment.confirmation_url;
+    } catch (error) {
+      showError(error?.message || 'Не удалось создать платёж');
+      setIsContractPaymentProcessing(false);
+    }
+  };
+
   const handleToggleAgent = async (botId) => {
     const agentBeforeToggle = (agents || []).find((item) => item.id === botId)
       || (selectedBotId === botId ? selectedAgent : null);
@@ -725,29 +816,17 @@ const AgentsPageContent = () => {
     } catch (error) {
       const paymentDetail = error?.data?.detail;
       const billing = paymentDetail && typeof paymentDetail === 'object' ? paymentDetail.billing : null;
-      const activationRub = Number(billing?.activation_required_rub || 0);
-      if (error?.status === 402 && willActivate && activationRub > 0) {
-        const confirmed = window.confirm(
-          `Для активации требуется оплата запуска от ${formatRubPrice(activationRub)} ₽. Перейти к оплате?`
+      const paymentKind = paymentDetail?.payment_kind;
+      if (error?.status === 402 && willActivate && billing?.requires_subscription) {
+        openContractPaymentModal(
+          { ...agentBeforeToggle, billing },
+          'Оплата подписки для активации',
         );
-        if (confirmed) {
-          try {
-            const returnUrl = `${window.location.origin}${NAVIGATION_ROUTES.AGENTS}?agent_payment=1`;
-            const payment = await pricingService.createAgentBillingPayment({
-              agent_id: botId,
-              payment_kind: 'agent_activation',
-              return_url: returnUrl,
-            });
-            if (payment?.confirmation_url) {
-              window.location.href = payment.confirmation_url;
-              return;
-            }
-            showError('Сервис оплаты вернул некорректный ответ.');
-          } catch (paymentError) {
-            showError(paymentError?.message || 'Не удалось создать платёж');
-          }
-          return;
-        }
+        return;
+      }
+      if (error?.status === 402 && willActivate && paymentKind === 'agent_activation') {
+        openContractPaymentModal(agentBeforeToggle, 'Оплата для активации агента');
+        return;
       }
       const message =
         (paymentDetail && typeof paymentDetail === 'object' && paymentDetail.message)
@@ -2150,6 +2229,11 @@ const AgentsPageContent = () => {
     if (!selectedAgent) return '';
     return selectedAgent.bot_username ? `@${selectedAgent.bot_username}` : `Агент #${selectedAgent.id}`;
   }, [selectedAgent]);
+  const selectedAgentBilling = selectedAgent?.billing;
+  const showExtendContractButton = Boolean(
+    selectedAgentBilling?.requires_subscription
+    && Number(selectedAgentBilling?.monthly_price_rub || 0) > 0,
+  );
   const isWidgetSupportedTemplate = WIDGET_TEMPLATE_TYPES.has(
     String(selectedAgent?.template_type || 'qa').trim().toLowerCase()
   );
@@ -2217,6 +2301,26 @@ const AgentsPageContent = () => {
                     >
                      Дашборд агента
                     </button>
+                    {showExtendContractButton ? (
+                      <button
+                        type="button"
+                        className="btn btn-outline agent-extend-contract-btn"
+                        onClick={() => openContractPaymentModal(selectedAgent, 'Продление подписки')}
+                      >
+                        Продлить контракт
+                      </button>
+                    ) : null}
+                    {selectedAgentBilling?.requires_subscription ? (
+                      <p className="agent-billing-status">
+                        {selectedAgentBilling.maintenance_grace_active
+                          ? `Пробный период${typeof selectedAgentBilling.trial_days_left === 'number' ? ` (${selectedAgentBilling.trial_days_left} дн.)` : ''}`
+                          : selectedAgentBilling.maintenance_current
+                            ? selectedAgentBilling.maintenance_paid_until
+                              ? `Подписка до ${new Date(selectedAgentBilling.maintenance_paid_until).toLocaleDateString('ru-RU')}`
+                              : 'Подписка активна'
+                            : 'Подписка не оплачена — агент будет отключён'}
+                      </p>
+                    ) : null}
                   </div>
 
                   <div className="agent-management-block">
@@ -3446,6 +3550,15 @@ const AgentsPageContent = () => {
           </div>
         </div>
       )}
+
+      <AgentContractPaymentModal
+        isOpen={Boolean(contractModalAgent)}
+        agent={contractModalAgent}
+        title={contractModalTitle}
+        onClose={closeContractPaymentModal}
+        onSubmit={handleContractPaymentSubmit}
+        isProcessing={isContractPaymentProcessing}
+      />
     </div>
   );
 };

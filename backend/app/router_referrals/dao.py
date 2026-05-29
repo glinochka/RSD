@@ -3,7 +3,7 @@ from datetime import datetime
 from sqlalchemy import desc, func, select
 
 from ..BaseDAO import BaseDAO
-from ..alembic.models import PartnerPromoCode, ReferralCommission, User
+from ..alembic.models import PartnerPayoutRequest, PartnerPromoCode, ReferralCommission, User
 
 
 class PartnerPromoCodeDAO(BaseDAO):
@@ -40,6 +40,54 @@ class PartnerPromoCodeDAO(BaseDAO):
             .where(func.upper(self.model.code) == normalized_code)
         )
         return await self._session.scalar(query)
+
+
+class PartnerPayoutRequestDAO(BaseDAO):
+    model = PartnerPayoutRequest
+
+    async def sum_amount_by_statuses(
+        self,
+        partner_user_id: int,
+        statuses: tuple[str, ...] | list[str],
+    ) -> int:
+        if not statuses:
+            return 0
+        query = (
+            select(func.coalesce(func.sum(self.model.amount_kopecks), 0))
+            .where(self.model.partner_user_id == partner_user_id)
+            .where(self.model.status.in_(list(statuses)))
+        )
+        return int(await self.scalar_or_default(query, 0))
+
+    async def has_active_request(self, partner_user_id: int) -> bool:
+        query = (
+            select(self.model.id)
+            .where(self.model.partner_user_id == partner_user_id)
+            .where(self.model.status.in_(["pending", "approved"]))
+            .limit(1)
+        )
+        return (await self._session.scalar(query)) is not None
+
+    async def list_for_partner(self, partner_user_id: int, *, limit: int = 50) -> list[PartnerPayoutRequest]:
+        query = (
+            select(self.model)
+            .where(self.model.partner_user_id == partner_user_id)
+            .order_by(desc(self.model.created_at), desc(self.model.id))
+            .limit(limit)
+        )
+        return await self.list_scalars(query)
+
+    async def list_for_admin(
+        self,
+        *,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list[PartnerPayoutRequest]:
+        query = select(self.model).order_by(desc(self.model.created_at), desc(self.model.id))
+        if status:
+            query = query.where(self.model.status == status)
+        query = query.limit(limit)
+        return await self.list_scalars(query)
 
 
 class ReferralCommissionDAO(BaseDAO):
