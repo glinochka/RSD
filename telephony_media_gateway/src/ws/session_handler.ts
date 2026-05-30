@@ -188,6 +188,9 @@ export function attachMediaSessionHandler(ws: WebSocket): void {
 
     if (session) {
       const voxPayload = parseVoxMediaMessage(text);
+      if (voxPayload === 'ignore') {
+        return;
+      }
       if (voxPayload && voxPayload.length > 0) {
         handleAudioIn(ws, session, voxPayload);
         return;

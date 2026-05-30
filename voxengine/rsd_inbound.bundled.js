@@ -1,33 +1,240 @@
 /**
- * RSD inbound PSTN — Early Media + Media Gateway WebSocket (streaming refactor stage 2).
+ * RSD inbound — единый сценарий для Voximplant Cloud IDE.
+ * Скопируйте всё содержимое в сценарий rsd_inbound (один файл, без require).
+ * На routing rule привяжите только rsd_inbound.
  *
- * Routing rule customData (JSON), example:
- * {
- *   "connection_id": 42,
- *   "webhook_base_url": "https://telephony.example.com",
- *   "media_ws_url": "wss://telephony.example.com/ws",
- *   "greeting_url": "https://cdn.example/telephony/greeting.ulaw",
- *   "greeting_text": "Здравствуйте"
- * }
+ * Источник: rsd_inbound.js + lib/rsd_control.js + lib/rsd_media_gateway.js
+ * Обновляйте через: node voxengine/scripts/bundle.mjs
  *
- * Secret: VoxEngine application secret RSD_WEBHOOK_SECRET (webhook HMAC).
- * WebSocket and Crypto are built-in (no require(Modules.*) — Modules.Crypto is absent on current runtime).
+ * Secrets приложения (обязательно для входящего PSTN — customData rule не передаётся):
+ *   RSD_CONNECTION_ID, RSD_WEBHOOK_SECRET, RSD_WEBHOOK_BASE_URL, TELEPHONY_MEDIA_WS_URL
+ *   RSD_REQUIRE_EXTENSION=true — приветствие «введите 4 цифры»
+ * script_custom_data rule — только при ручном StartScenarios, не при звонке на номер
  */
-function requireRsdModule(name) {
-  try {
-    return require('./lib/' + name);
-  } catch (e1) {
-    try {
-      return require('./' + name);
-    } catch (e2) {
-      Logger.write('[rsd] cannot load module ' + name + ': ' + e1 + ' / ' + e2);
-      throw e2;
+
+Logger.write('[rsd] scenario loaded (bundled rsd_inbound)');
+
+VoxEngine.addEventListener(AppEvents.Started, function () {
+  Logger.write('[rsd] Application.Started customData=' + String(VoxEngine.customData() || ''));
+});
+
+// --- rsd_control (webhook → telephony_bridge) ---
+
+function _uuid() {
+  var d = new Date().getTime();
+  if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+    d += performance.now();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+    var r = (d + Math.random() * 16) % 16 | 0;
+    d = Math.floor(d / 16);
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
+function _isoNow() {
+  return new Date().toISOString();
+}
+
+function postControlEvent(opts, done) {
+  var connectionId = Number(opts.connectionId);
+  var base = String(opts.webhookBaseUrl || '').replace(/\/$/, '');
+  if (!base || !connectionId || !opts.webhookSecret) {
+    done('rsd_control: missing webhook config');
+    return;
+  }
+
+  var bodyObj = {
+    schema_version: 1,
+    event_id: _uuid(),
+    event: String(opts.event),
+    emitted_at: _isoNow(),
+    call_id: String(opts.callId),
+    connection_id: connectionId,
+    payload: opts.payload || {},
+  };
+  var rawBody = JSON.stringify(bodyObj);
+  var timestamp = String(Math.floor(Date.now() / 1000));
+
+  var signPayload = 'v1\n' + timestamp + '\n' + connectionId + '\n' + rawBody;
+  var signature = hmacSha256Hex(String(opts.webhookSecret), signPayload);
+
+  var url = base + '/webhook/voximplant/' + connectionId;
+  var httpOpts = {
+    method: 'POST',
+    headers: [
+      'Content-Type: application/json; charset=utf-8',
+      'X-RSD-Telephony-Timestamp: ' + timestamp,
+      'X-RSD-Telephony-Signature: ' + signature,
+    ],
+    postData: rawBody,
+  };
+
+  Net.httpRequest(url, function (res) {
+    if (!res || res.code < 200 || res.code >= 300) {
+      done('rsd_control http ' + (res ? res.code : 'no_response') + ' ' + (res ? res.text : ''));
+      return;
     }
+    try {
+      done(null, JSON.parse(res.text || '{}'));
+    } catch (e) {
+      done(null, { ok: true, raw: res.text });
+    }
+  }, httpOpts);
+}
+
+function hmacSha256Hex(secret, message) {
+  if (typeof Crypto === 'undefined') {
+    throw new Error('rsd_control: Crypto is not available in VoxEngine');
+  }
+  if (typeof Crypto.hmac_sha256 === 'function') {
+    var hex = Crypto.hmac_sha256(secret, message);
+    if (!hex) {
+      hex = Crypto.hmac_sha256(message, secret);
+    }
+    return String(hex || '').toLowerCase();
+  }
+  if (typeof Crypto.hmac === 'function') {
+    return String(Crypto.hmac('sha256', secret, message, true) || '').toLowerCase();
+  }
+  throw new Error('rsd_control: Crypto.hmac_sha256 not available in VoxEngine');
+}
+
+// --- rsd_media_gateway (WebSocket ↔ telephony_media_gateway) ---
+
+function connectMediaGateway(opts) {
+  var wsUrl = String(opts.mediaWsUrl || '').trim();
+  if (!wsUrl) {
+    opts.onError('media_ws_url missing');
+    return null;
+  }
+
+  var webSocket = VoxEngine.createWebSocket(wsUrl);
+  var downlinkStarted = false;
+
+  function startMediaBridges() {
+    opts.call.sendMediaTo(webSocket, {
+      encoding: WebSocketAudioEncoding.ULAW,
+      tag: 'rsd_audio_in',
+    });
+    if (!downlinkStarted) {
+      downlinkStarted = true;
+      webSocket.sendMediaTo(opts.call, {
+        encoding: WebSocketAudioEncoding.ULAW,
+        tag: 'rsd_audio_out',
+      });
+    }
+  }
+
+  webSocket.addEventListener(WebSocketEvents.OPEN, function () {
+    var startMsg = {
+      type: 'session.start',
+      payload: {
+        call_id: String(opts.callId),
+        connection_id: Number(opts.connectionId),
+        caller_e164: String(opts.callerE164),
+        codec: 'pcmu',
+        called_number: opts.calledNumber ? String(opts.calledNumber) : undefined,
+        protocol_version: '1',
+      },
+    };
+    webSocket.send(JSON.stringify(startMsg));
+    startMediaBridges();
+    if (opts.onReady) opts.onReady(webSocket);
+  });
+
+  webSocket.addEventListener(WebSocketEvents.MESSAGE, function (e) {
+    var text = (e && e.text) ? String(e.text) : '';
+    if (!text) return;
+
+    try {
+      var msg = JSON.parse(text);
+      if (msg.type === 'session.start' && msg.payload && msg.payload.ok) {
+        Logger.write('[rsd] gateway session.start ok call_id=' + opts.callId);
+        return;
+      }
+      if (msg.type === 'error') {
+        Logger.write('[rsd] gateway error: ' + JSON.stringify(msg.payload));
+        return;
+      }
+      if (msg.type === 'call.transfer' && msg.payload) {
+        var target = String(msg.payload.e164 || msg.payload.operator_transfer_e164 || '').trim();
+        if (target && target !== 'operator') {
+          try {
+            opts.call.transfer(target);
+            Logger.write('[rsd] call.transfer to ' + target + ' call_id=' + opts.callId);
+          } catch (transferErr) {
+            Logger.write('[rsd] call.transfer failed: ' + transferErr);
+          }
+        } else if (opts.onTransferRequest) {
+          opts.onTransferRequest(target || 'operator');
+        }
+        return;
+      }
+      if (msg.type === 'barge_in' && msg.payload && msg.payload.clear_playback) {
+        try {
+          if (typeof webSocket.clearMediaBuffer === 'function') {
+            webSocket.clearMediaBuffer();
+            Logger.write('[rsd] gateway barge_in clearMediaBuffer call_id=' + opts.callId);
+          } else {
+            Logger.write('[rsd] gateway barge_in: clearMediaBuffer not available on WebSocket');
+          }
+        } catch (clearErr) {
+          Logger.write('[rsd] gateway barge_in clear failed: ' + clearErr);
+        }
+        return;
+      }
+      if (msg.event === 'media' && msg.media && msg.media.payload) {
+        return;
+      }
+    } catch (err) {
+      Logger.write('[rsd] gateway ws text: ' + text.substring(0, 200));
+    }
+  });
+
+  webSocket.addEventListener(WebSocketEvents.ERROR, function (e) {
+    Logger.write('[rsd] gateway ws error: ' + JSON.stringify(e || {}));
+    if (opts.onError) opts.onError('websocket_error');
+  });
+
+  webSocket.addEventListener(WebSocketEvents.CLOSE, function (e) {
+    Logger.write('[rsd] gateway ws close: ' + (e && e.reason ? e.reason : ''));
+  });
+
+  return webSocket;
+}
+
+function sendDtmfToGateway(webSocket, digit) {
+  if (!webSocket || !digit) return;
+  webSocket.send(
+    JSON.stringify({
+      type: 'dtmf',
+      payload: { digit: String(digit) },
+    }),
+  );
+}
+
+function sendSessionEnd(webSocket, reason) {
+  if (!webSocket) return;
+  try {
+    webSocket.send(JSON.stringify({ type: 'session.end', payload: { reason: reason || 'hangup' } }));
+    webSocket.close();
+  } catch (e) {
+    Logger.write('[rsd] session.end failed: ' + e);
   }
 }
 
-var rsdControl = requireRsdModule('rsd_control');
-var rsdMedia = requireRsdModule('rsd_media_gateway');
+var rsdControl = {
+  postControlEvent: postControlEvent,
+};
+
+var rsdMedia = {
+  connectMediaGateway: connectMediaGateway,
+  sendDtmfToGateway: sendDtmfToGateway,
+  sendSessionEnd: sendSessionEnd,
+};
+
+// --- rsd_inbound (Early Media + answer + gateway) ---
 
 var DEFAULT_GREETING_TEXT = 'Здравствуйте! Ожидайте, пожалуйста.';
 var POOL_GREETING_TEXT =
@@ -126,6 +333,14 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, function (e) {
   var callId = String(call.id());
   var caller = callerE164(e, call);
   var called = calledNumber(e, call);
+  Logger.write(
+    '[rsd] CallAlerting call_id=' +
+      callId +
+      ' caller=' +
+      caller +
+      ' called=' +
+      called,
+  );
   var mediaWs = null;
   var operatorTransferE164 = '';
   var playRecordingDisclaimer = false;
@@ -258,8 +473,8 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, function (e) {
       if (typeof call.headers === 'function') {
         return String(call.headers(name) || '').trim();
       }
-    } catch (e) {
-      Logger.write('[rsd] sipHeader read failed: ' + e);
+    } catch (err) {
+      Logger.write('[rsd] sipHeader read failed: ' + err);
     }
     return '';
   }

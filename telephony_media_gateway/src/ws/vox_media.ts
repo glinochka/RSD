@@ -8,10 +8,16 @@ export interface VoxMediaMessage {
   media: { payload: string; tag?: string };
 }
 
-export function parseVoxMediaMessage(text: string): Buffer | null {
+/** Voximplant may send start/stop before media frames — ignore without error. */
+const VOX_IGNORED_EVENTS = new Set(['start', 'stop', 'connected', 'playback_started', 'playback_finished']);
+
+export function parseVoxMediaMessage(text: string): Buffer | null | 'ignore' {
   try {
     const data = JSON.parse(text) as { event?: string; media?: { payload?: string } };
-    if (data.event !== 'media' || !data.media?.payload) return null;
+    const event = String(data.event || '').trim().toLowerCase();
+    if (!event) return null;
+    if (VOX_IGNORED_EVENTS.has(event)) return 'ignore';
+    if (event !== 'media' || !data.media?.payload) return null;
     return Buffer.from(data.media.payload, 'base64');
   } catch {
     return null;

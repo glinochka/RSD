@@ -87,9 +87,10 @@ function hmacSha256Hex(secret, message) {
     throw new Error('rsd_control: Crypto is not available in VoxEngine');
   }
   if (typeof Crypto.hmac_sha256 === 'function') {
-    var hex = Crypto.hmac_sha256(message, secret);
-    if (!hex && typeof Crypto.hmac_sha256 === 'function') {
-      hex = Crypto.hmac_sha256(secret, message);
+    // VoxEngine API: hmac_sha256(key, data) — secret first
+    var hex = Crypto.hmac_sha256(secret, message);
+    if (!hex) {
+      hex = Crypto.hmac_sha256(message, secret);
     }
     return String(hex || '').toLowerCase();
   }

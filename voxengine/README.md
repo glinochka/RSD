@@ -12,12 +12,24 @@
 
 ## Деплой в Voximplant
 
+**Вариант A — Cloud IDE (один файл, рекомендуется):**
+
+1. Откройте сценарий `rsd_inbound` в Voximplant.
+2. Скопируйте **целиком** содержимое `rsd_inbound.bundled.js` из репозитория.
+3. Сохраните. Другие файлы (`lib/*`) загружать не нужно.
+
+**Вариант B — несколько файлов:**
+
 1. Создайте приложение и загрузите **все** файлы (`rsd_inbound.js`, `lib/*`) в одну папку сценария.
 2. Правило маршрутизации: сценарий `rsd_inbound`, маска номера.
-3. Секреты приложения (Manage → Secrets):
-   - `RSD_WEBHOOK_SECRET` — `webhook_secret` gate-канала (RFC-001)
-   - `RSD_WEBHOOK_BASE_URL` — публичный HTTPS без path, напр. `https://telephony.example.com`
-   - `TELEPHONY_MEDIA_WS_URL` — `wss://telephony.example.com/ws`
+3. **Application → Secrets** (левое меню приложения, не customData routing rule):
+   - `RSD_CONNECTION_ID` — ID канала телефонии (из URL `/webhook/voximplant/47` → `47`)
+   - `RSD_WEBHOOK_SECRET` — `webhook_secret` канала (RFC-001)
+   - `RSD_WEBHOOK_BASE_URL` — публичный HTTPS без path, напр. `https://rsd-ai.ru`
+   - `TELEPHONY_MEDIA_WS_URL` — `wss://rsd-ai.ru/ws`
+   - `RSD_REQUIRE_EXTENSION` — `true` для общего номера (приветствие + DTMF)
+
+   **Важно:** при входящем PSTN-звонке `VoxEngine.customData()` пустой. Custom data rule работает только при ручном **Start rule** / API. Для prod — только Secrets.
 
    **Не** используйте `require(Modules.Crypto)` / `require(Modules.WebSocket)` — в актуальном runtime Crypto и WebSocket встроены; `Modules.Crypto` даёт `empty module argument!` и сценарий завершается до звонка.
 4. **script_custom_data** правила (JSON):
