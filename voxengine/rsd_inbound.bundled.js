@@ -3,7 +3,7 @@
  * Скопируйте всё содержимое в сценарий rsd_inbound (один файл, без require).
  * На routing rule привяжите только rsd_inbound.
  *
- * Источник: rsd_inbound.js + lib/rsd_control.js + lib/rsd_media_gateway.js
+ * Источник: rsd_inbound.js + lib/rsd_control.js + lib/rsd_media_gateway.js + lib/rsd_transfer.js
  * Обновляйте через: node voxengine/scripts/bundle.mjs
  *
  * Secrets приложения (обязательно для входящего PSTN — customData rule не передаётся):
@@ -18,8 +18,8 @@ VoxEngine.addEventListener(AppEvents.Started, function () {
   Logger.write('[rsd] Application.Started customData=' + String(VoxEngine.customData() || ''));
 });
 
-// --- rsd_control (webhook → telephony_bridge) ---
 
+// --- lib/rsd_control.js ---
 function _uuid() {
   var d = new Date().getTime();
   if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
@@ -36,6 +36,16 @@ function _isoNow() {
   return new Date().toISOString();
 }
 
+/**
+ * @param {object} opts
+ * @param {string} opts.webhookBaseUrl - e.g. https://host (no trailing slash)
+ * @param {number} opts.connectionId
+ * @param {string} opts.webhookSecret
+ * @param {string} opts.event
+ * @param {string} opts.callId
+ * @param {object} opts.payload
+ * @param {function} done - (err, responseBody)
+ */
 function postControlEvent(opts, done) {
   var connectionId = Number(opts.connectionId);
   var base = String(opts.webhookBaseUrl || '').replace(/\/$/, '');
@@ -56,6 +66,7 @@ function postControlEvent(opts, done) {
   var rawBody = JSON.stringify(bodyObj);
   var timestamp = String(Math.floor(Date.now() / 1000));
 
+  // HMAC v1 — same as backend test_webhook_signature / bridge verify
   var signPayload = 'v1\n' + timestamp + '\n' + connectionId + '\n' + rawBody;
   var signature = hmacSha256Hex(String(opts.webhookSecret), signPayload);
 
@@ -83,11 +94,16 @@ function postControlEvent(opts, done) {
   }, httpOpts);
 }
 
+/**
+ * HMAC-SHA256 hex (RFC-001), lowercase — matches telephony_bridge verify.
+ * @see https://voximplant.com/docs/references/voxengine/crypto/hmac_sha256
+ */
 function hmacSha256Hex(secret, message) {
   if (typeof Crypto === 'undefined') {
     throw new Error('rsd_control: Crypto is not available in VoxEngine');
   }
   if (typeof Crypto.hmac_sha256 === 'function') {
+    // VoxEngine API: hmac_sha256(key, data) — secret first
     var hex = Crypto.hmac_sha256(secret, message);
     if (!hex) {
       hex = Crypto.hmac_sha256(message, secret);
@@ -100,8 +116,92 @@ function hmacSha256Hex(secret, message) {
   throw new Error('rsd_control: Crypto.hmac_sha256 not available in VoxEngine');
 }
 
-// --- rsd_media_gateway (WebSocket ↔ telephony_media_gateway) ---
 
+
+// --- lib/rsd_transfer.js ---
+function normalizePstnE164(raw) {
+  var s = String(raw || '').trim();
+  if (!s || s === 'operator') return '';
+  var digits = s.replace(/[^\d+]/g, '');
+  if (!digits) return '';
+  if (digits.charAt(0) === '+') return digits;
+  if (digits.length === 11 && digits.charAt(0) === '7') return '+' + digits;
+  if (digits.length === 10) return '+7' + digits;
+  return '+' + digits;
+}
+
+/**
+ * @param {object} opts
+ * @param {Call} opts.inboundCall
+ * @param {string} opts.destinationE164
+ * @param {string} [opts.callerId] - outbound CLI (pool DID)
+ * @param {string} [opts.callId]
+ * @param {function} [opts.onConnected]
+ * @param {function} [opts.onFailed]
+ * @returns {boolean}
+ */
+function transferToPstn(opts) {
+  var dest = normalizePstnE164(opts.destinationE164);
+  if (!dest) {
+    return false;
+  }
+
+  var callerId = String(opts.callerId || opts.inboundCall.callerid() || '').trim();
+  var callId = String(opts.callId || '');
+
+  try {
+    var outbound = VoxEngine.callPSTN(dest, callerId);
+
+    outbound.addEventListener(CallEvents.Failed, function (ev) {
+      Logger.write(
+        '[rsd] transfer PSTN failed dest=' + dest + ' call_id=' + callId + ' ' + JSON.stringify(ev || {}),
+      );
+      if (opts.onFailed) opts.onFailed(ev);
+    });
+
+    outbound.addEventListener(CallEvents.Connected, function () {
+      VoxEngine.sendMediaBetween(opts.inboundCall, outbound);
+      Logger.write('[rsd] transfer bridged to ' + dest + ' call_id=' + callId);
+      if (opts.onConnected) opts.onConnected(outbound);
+    });
+
+    outbound.addEventListener(CallEvents.Disconnected, function () {
+      try {
+        opts.inboundCall.hangup();
+      } catch (hangupErr) {
+        Logger.write('[rsd] transfer inbound hangup: ' + hangupErr);
+      }
+    });
+
+    opts.inboundCall.addEventListener(CallEvents.Disconnected, function () {
+      try {
+        outbound.hangup();
+      } catch (hangupErr) {
+        Logger.write('[rsd] transfer outbound hangup: ' + hangupErr);
+      }
+    });
+
+    return true;
+  } catch (err) {
+    Logger.write('[rsd] transferToPstn error: ' + err);
+    return false;
+  }
+}
+
+
+
+// --- lib/rsd_media_gateway.js ---
+/**
+ * @param {object} opts
+ * @param {string} opts.mediaWsUrl - wss://host/ws
+ * @param {string} opts.callId
+ * @param {number} opts.connectionId
+ * @param {string} opts.callerE164
+ * @param {string} [opts.calledNumber]
+ * @param {Call} opts.call - VoxEngine call for playback
+ * @param {function} opts.onReady
+ * @param {function} opts.onError
+ */
 function connectMediaGateway(opts) {
   var wsUrl = String(opts.mediaWsUrl || '').trim();
   if (!wsUrl) {
@@ -157,17 +257,13 @@ function connectMediaGateway(opts) {
         Logger.write('[rsd] gateway error: ' + JSON.stringify(msg.payload));
         return;
       }
+      // Stage 6 barge-in: stop agent playback buffer (<100ms target)
       if (msg.type === 'call.transfer' && msg.payload) {
         var target = String(msg.payload.e164 || msg.payload.operator_transfer_e164 || '').trim();
-        if (target && target !== 'operator') {
-          try {
-            opts.call.transfer(target);
-            Logger.write('[rsd] call.transfer to ' + target + ' call_id=' + opts.callId);
-          } catch (transferErr) {
-            Logger.write('[rsd] call.transfer failed: ' + transferErr);
-          }
-        } else if (opts.onTransferRequest) {
+        if (opts.onTransferRequest) {
           opts.onTransferRequest(target || 'operator');
+        } else {
+          Logger.write('[rsd] call.transfer ignored: no onTransferRequest handler call_id=' + opts.callId);
         }
         return;
       }
@@ -184,6 +280,7 @@ function connectMediaGateway(opts) {
         }
         return;
       }
+      // Loopback: gateway returns Vox-native media JSON — downlink already bridged
       if (msg.event === 'media' && msg.media && msg.media.payload) {
         return;
       }
@@ -224,18 +321,19 @@ function sendSessionEnd(webSocket, reason) {
   }
 }
 
-var rsdControl = {
-  postControlEvent: postControlEvent,
-};
 
+
+// --- rsd_inbound (main) ---
+  }
+}
+
+var rsdControl = { postControlEvent: postControlEvent };
 var rsdMedia = {
   connectMediaGateway: connectMediaGateway,
   sendDtmfToGateway: sendDtmfToGateway,
   sendSessionEnd: sendSessionEnd,
 };
-
-// --- rsd_inbound (Early Media + answer + gateway) ---
-
+var rsdTransfer = { transferToPstn: transferToPstn };
 var DEFAULT_GREETING_TEXT = 'Здравствуйте! Ожидайте, пожалуйста.';
 var POOL_GREETING_TEXT =
   'Здравствуйте! Введите добавочный номер из четырёх цифр на клавиатуре телефона.';
@@ -333,14 +431,6 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, function (e) {
   var callId = String(call.id());
   var caller = callerE164(e, call);
   var called = calledNumber(e, call);
-  Logger.write(
-    '[rsd] CallAlerting call_id=' +
-      callId +
-      ' caller=' +
-      caller +
-      ' called=' +
-      called,
-  );
   var mediaWs = null;
   var operatorTransferE164 = '';
   var playRecordingDisclaimer = false;
@@ -397,20 +487,21 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, function (e) {
     if (!dest) {
       return false;
     }
-    try {
-      call.transfer(dest);
-      Logger.write('[rsd] degraded transfer to ' + dest + ' call_id=' + callId);
-      return true;
-    } catch (transferErr) {
-      Logger.write('[rsd] degraded transfer failed: ' + transferErr);
-      return false;
-    }
+    return rsdTransfer.transferToPstn({
+      inboundCall: call,
+      destinationE164: dest,
+      callerId: called || caller,
+      callId: callId,
+    });
   }
 
   function onAnswered() {
     if (degradedTransferE164) {
-      tryDegradedTransfer();
-      return;
+      if (tryDegradedTransfer()) {
+        return;
+      }
+      Logger.write('[rsd] degraded transfer failed, continuing with media gateway call_id=' + callId);
+      degradedTransferE164 = '';
     }
 
     try {
@@ -454,12 +545,12 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, function (e) {
       onTransferRequest: function (target) {
         var dest = operatorTransferE164 || target || 'operator';
         if (dest && dest !== 'operator') {
-          try {
-            call.transfer(dest);
-            Logger.write('[rsd] transfer via operator e164 ' + dest);
-          } catch (transferErr) {
-            Logger.write('[rsd] transfer failed: ' + transferErr);
-          }
+          rsdTransfer.transferToPstn({
+            inboundCall: call,
+            destinationE164: dest,
+            callerId: called || caller,
+            callId: callId,
+          });
         }
       },
     });
@@ -473,8 +564,8 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, function (e) {
       if (typeof call.headers === 'function') {
         return String(call.headers(name) || '').trim();
       }
-    } catch (err) {
-      Logger.write('[rsd] sipHeader read failed: ' + err);
+    } catch (e) {
+      Logger.write('[rsd] sipHeader read failed: ' + e);
     }
     return '';
   }

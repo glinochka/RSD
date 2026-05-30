@@ -72,15 +72,10 @@ function connectMediaGateway(opts) {
       // Stage 6 barge-in: stop agent playback buffer (<100ms target)
       if (msg.type === 'call.transfer' && msg.payload) {
         var target = String(msg.payload.e164 || msg.payload.operator_transfer_e164 || '').trim();
-        if (target && target !== 'operator') {
-          try {
-            opts.call.transfer(target);
-            Logger.write('[rsd] call.transfer to ' + target + ' call_id=' + opts.callId);
-          } catch (transferErr) {
-            Logger.write('[rsd] call.transfer failed: ' + transferErr);
-          }
-        } else if (opts.onTransferRequest) {
+        if (opts.onTransferRequest) {
           opts.onTransferRequest(target || 'operator');
+        } else {
+          Logger.write('[rsd] call.transfer ignored: no onTransferRequest handler call_id=' + opts.callId);
         }
         return;
       }

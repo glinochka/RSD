@@ -28,6 +28,7 @@ function requireRsdModule(name) {
 
 var rsdControl = requireRsdModule('rsd_control');
 var rsdMedia = requireRsdModule('rsd_media_gateway');
+var rsdTransfer = requireRsdModule('rsd_transfer');
 
 var DEFAULT_GREETING_TEXT = 'Здравствуйте! Ожидайте, пожалуйста.';
 var POOL_GREETING_TEXT =
@@ -182,20 +183,21 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, function (e) {
     if (!dest) {
       return false;
     }
-    try {
-      call.transfer(dest);
-      Logger.write('[rsd] degraded transfer to ' + dest + ' call_id=' + callId);
-      return true;
-    } catch (transferErr) {
-      Logger.write('[rsd] degraded transfer failed: ' + transferErr);
-      return false;
-    }
+    return rsdTransfer.transferToPstn({
+      inboundCall: call,
+      destinationE164: dest,
+      callerId: called || caller,
+      callId: callId,
+    });
   }
 
   function onAnswered() {
     if (degradedTransferE164) {
-      tryDegradedTransfer();
-      return;
+      if (tryDegradedTransfer()) {
+        return;
+      }
+      Logger.write('[rsd] degraded transfer failed, continuing with media gateway call_id=' + callId);
+      degradedTransferE164 = '';
     }
 
     try {
@@ -239,12 +241,12 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, function (e) {
       onTransferRequest: function (target) {
         var dest = operatorTransferE164 || target || 'operator';
         if (dest && dest !== 'operator') {
-          try {
-            call.transfer(dest);
-            Logger.write('[rsd] transfer via operator e164 ' + dest);
-          } catch (transferErr) {
-            Logger.write('[rsd] transfer failed: ' + transferErr);
-          }
+          rsdTransfer.transferToPstn({
+            inboundCall: call,
+            destinationE164: dest,
+            callerId: called || caller,
+            callId: callId,
+          });
         }
       },
     });

@@ -1,8 +1,24 @@
 import crypto from 'crypto';
 import { config } from './config';
 
+/** Matches Python json.dumps(..., sort_keys=True, separators=(",", ":")). */
+function sortKeysDeep(value: unknown): unknown {
+  if (value === null || typeof value !== 'object') {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map(sortKeysDeep);
+  }
+  const obj = value as Record<string, unknown>;
+  const sorted: Record<string, unknown> = {};
+  for (const key of Object.keys(obj).sort()) {
+    sorted[key] = sortKeysDeep(obj[key]);
+  }
+  return sorted;
+}
+
 function canonicalJson(data: Record<string, unknown>): string {
-  return JSON.stringify(data, Object.keys(data).sort());
+  return JSON.stringify(sortKeysDeep(data));
 }
 
 function internalHeaders(method: string, path: string, body: Record<string, unknown>): Record<string, string> {
@@ -22,6 +38,7 @@ function internalHeaders(method: string, path: string, body: Record<string, unkn
 
 async function postJson<T>(path: string, body: Record<string, unknown>): Promise<T> {
   const url = `${config.backendUrl}${path}`;
+  const bodyStr = canonicalJson(body);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), config.backendRequestTimeoutMs);
   let response: Response;
@@ -29,7 +46,7 @@ async function postJson<T>(path: string, body: Record<string, unknown>): Promise
     response = await fetch(url, {
       method: 'POST',
       headers: internalHeaders('POST', path, body),
-      body: JSON.stringify(body),
+      body: bodyStr,
       signal: controller.signal,
     });
   } finally {
