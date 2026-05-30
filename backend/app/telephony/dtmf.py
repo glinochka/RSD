@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-_DTMF_MENU_PROMPT = (
-    "Не расслышал. Нажмите 1 — запись на приём, 2 — оператор, или скажите запрос голосом."
-)
+from ..prompts.system_prompts import DTMF_MENU_PROMPT as _DTMF_MENU_PROMPT
 
 _DTMF_MAP: dict[str, str] = {
     "1": "Хочу записаться на приём",

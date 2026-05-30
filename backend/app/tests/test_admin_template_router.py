@@ -298,9 +298,6 @@ async def test_admin_template_stage8_waitlist_reminders_profiles_quick_replies(c
             "waitlist_enabled": True,
             "reminder_enabled": True,
             "reminder_offsets_hours": [24, 2],
-            "manual_confirmation_enabled": True,
-            "manual_confirmation_price_minor": 0,
-            "manual_confirmation_duration_minutes": 1,
         },
     )
     staff = (
@@ -348,7 +345,7 @@ async def test_admin_template_stage8_waitlist_reminders_profiles_quick_replies(c
             },
         )
     ).json()
-    assert appointment["status"] == "pending_confirmation"
+    assert appointment["status"] == "booked"
 
     waitlist = (
         await client.post(

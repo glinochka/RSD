@@ -1,0 +1,276 @@
+.partner-page {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 2rem 1.25rem 4rem;
+}
+
+.partner-page__header h1 {
+  margin: 0 0 0.5rem;
+  font-size: 1.75rem;
+}
+
+.partner-page__lead {
+  margin: 0;
+  color: var(--text-muted, #6b7280);
+  line-height: 1.5;
+  max-width: 52rem;
+}
+
+.partner-card {
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 12px;
+  padding: 1.25rem 1.5rem;
+  margin-top: 1.25rem;
+}
+
+.partner-card h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.125rem;
+}
+
+.partner-card__hint {
+  margin: 0 0 1rem;
+  font-size: 0.9rem;
+  color: #6b7280;
+}
+
+.partner-card__hint--winwin {
+  padding: 0.65rem 0.85rem;
+  background: #f0fdf4;
+  border-radius: 8px;
+  border: 1px solid #bbf7d0;
+  color: #166534;
+}
+
+.partner-card__meta {
+  margin: 0.75rem 0 0;
+  font-size: 0.9rem;
+  color: #4b5563;
+}
+
+.partner-card__empty {
+  color: #9ca3af;
+  margin: 0;
+}
+
+.partner-link-row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.partner-link-row__input {
+  flex: 1;
+  min-width: 200px;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+
+.partner-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+}
+
+.partner-stat {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 1rem;
+}
+
+.partner-stat__label {
+  display: block;
+  font-size: 0.8rem;
+  color: #6b7280;
+  margin-bottom: 0.35rem;
+}
+
+.partner-stat__value {
+  font-size: 1.35rem;
+  font-weight: 700;
+}
+
+.partner-timeseries {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.35rem;
+  height: 140px;
+  padding-top: 0.5rem;
+}
+
+.partner-timeseries__bar-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+  justify-content: flex-end;
+}
+
+.partner-timeseries__bar {
+  width: 100%;
+  max-width: 28px;
+  background: linear-gradient(180deg, #6366f1, #4f46e5);
+  border-radius: 4px 4px 0 0;
+  min-height: 8px;
+}
+
+.partner-timeseries__label {
+  font-size: 0.65rem;
+  color: #9ca3af;
+  margin-top: 0.25rem;
+}
+
+.partner-promo-form {
+  display: grid;
+  grid-template-columns: 1fr 140px auto;
+  gap: 0.75rem;
+  align-items: end;
+  margin-bottom: 1rem;
+}
+
+.partner-promo-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: #374151;
+}
+
+.partner-promo-form input {
+  padding: 0.5rem 0.65rem;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+}
+
+.partner-promo-table-wrap {
+  overflow-x: auto;
+}
+
+.partner-promo-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.partner-promo-table th,
+.partner-promo-table td {
+  padding: 0.5rem 0.65rem;
+  border-bottom: 1px solid #f3f4f6;
+  text-align: left;
+}
+
+.partner-promo-table__actions {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.partner-commissions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.partner-commission-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.partner-commission-row__meta {
+  display: block;
+  font-size: 0.8rem;
+  color: #6b7280;
+  margin-top: 0.15rem;
+}
+
+.partner-commission-row time {
+  font-size: 0.8rem;
+  color: #9ca3af;
+  white-space: nowrap;
+}
+
+.partner-payout-balance {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.partner-payout-balance__value {
+  display: block;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #4f46e5;
+}
+
+.partner-payout-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.partner-payout-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: #374151;
+}
+
+.partner-payout-form input,
+.partner-payout-form textarea {
+  padding: 0.5rem 0.65rem;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font: inherit;
+}
+
+.partner-payout-history h3 {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+}
+
+.partner-payout-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.partner-payout-row__status {
+  display: block;
+  font-size: 0.85rem;
+  color: #6b7280;
+  margin-top: 0.15rem;
+}
+
+.partner-payout-row__note {
+  display: block;
+  font-size: 0.8rem;
+  color: #9ca3af;
+  margin-top: 0.25rem;
+}
+
+.partner-payout-row time {
+  font-size: 0.8rem;
+  color: #9ca3af;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .partner-promo-form {
+    grid-template-columns: 1fr;
+  }
+}

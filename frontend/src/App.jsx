@@ -12,6 +12,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import NotificationContainer from './components/NotificationContainer';
 import { NAVIGATION_ROUTES } from './config/constants';
 import DocumentHead from './components/DocumentHead';
+import ReferralCapture from './components/ReferralCapture';
 
 // Pages
 import Main from './pages/Main';
@@ -25,6 +26,7 @@ import DocumentationPage from './pages/DocumentationPage';
 import PublicOfferPage from './pages/PublicOfferPage';
 import UserAgreementPage from './pages/UserAgreementPage';
 import PrivacyPolicyPage from './pages/PrivacyPolicyPage';
+import PartnerPage from './pages/PartnerPage';
 
 const App = () => {
   return (
@@ -32,6 +34,7 @@ const App = () => {
       <HelmetProvider>
         <Router>
           <DocumentHead />
+          <ReferralCapture />
           <AuthProvider>
             <NotificationProvider>
               <NotificationContainer />
@@ -40,6 +43,7 @@ const App = () => {
                 <Route path={NAVIGATION_ROUTES.HOME} element={<Main />} />
                 <Route path={NAVIGATION_ROUTES.AUTH} element={<Auth />} />
                 <Route path={NAVIGATION_ROUTES.PRICING} element={<PriceList />} />
+                <Route path={NAVIGATION_ROUTES.PARTNER} element={<PartnerPage />} />
                 <Route path={NAVIGATION_ROUTES.DOCUMENTATION} element={<DocumentationPage />} />
                 <Route path={NAVIGATION_ROUTES.PUBLIC_OFFER} element={<PublicOfferPage />} />
                 <Route path={NAVIGATION_ROUTES.USER_AGREEMENT} element={<UserAgreementPage />} />

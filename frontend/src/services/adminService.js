@@ -147,6 +147,28 @@ const adminService = {
     return response.data;
   },
 
+  async getAgentTemplatePricing(token) {
+    const response = await adminClient.get(API_ROUTES.ADMIN_AGENT_TEMPLATE_PRICING, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    return response.data;
+  },
+
+  async updateAgentTemplatePricing(token, templates) {
+    const response = await adminClient.put(
+      API_ROUTES.ADMIN_AGENT_TEMPLATE_PRICING,
+      { templates },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+    return response.data;
+  },
+
   async getPromoCodes(token) {
     const response = await adminClient.get(API_ROUTES.ADMIN_PROMO_CODES, {
       headers: {
@@ -177,6 +199,23 @@ const adminService = {
           Authorization: `Bearer ${token}`,
         },
       }
+    );
+    return response.data;
+  },
+
+  async getPartnerPayouts(token, { status } = {}) {
+    const response = await adminClient.get(API_ROUTES.ADMIN_PARTNER_PAYOUTS, {
+      headers: { Authorization: `Bearer ${token}` },
+      params: status ? { status } : undefined,
+    });
+    return response.data;
+  },
+
+  async updatePartnerPayout(token, payoutId, { action, adminNote }) {
+    const response = await adminClient.patch(
+      API_ROUTES.ADMIN_PARTNER_PAYOUT(payoutId),
+      { action, admin_note: adminNote ?? null },
+      { headers: { Authorization: `Bearer ${token}` } },
     );
     return response.data;
   },

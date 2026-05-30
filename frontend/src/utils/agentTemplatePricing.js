@@ -7,13 +7,34 @@ export const formatSetupPrice = (setupRubMin, { isFree = false } = {}) => {
 
 export const formatMaintenancePrice = (monthlyRubMin) => {
   if (monthlyRubMin <= 0) return null;
-  return `от ${formatRubPrice(monthlyRubMin)} ₽/мес`;
+  return `${formatRubPrice(monthlyRubMin)} ₽/мес`;
+};
+
+export const AGENT_CONTRACT_DURATION_OPTIONS = [
+  { months: 1, label: '1 месяц', discountPercent: 0 },
+  { months: 3, label: '3 месяца', discountPercent: 15 },
+  { months: 6, label: '6 месяцев', discountPercent: 25 },
+];
+
+const roundToPriceEndingNinety = (value) => {
+  const normalized = Number(value || 0);
+  if (normalized <= 0) return 0;
+  return Math.max(90, Math.round((normalized - 90) / 100) * 100 + 90);
+};
+
+export const calculateContractTotalRub = (monthlyPrice, months) => {
+  const price = Number(monthlyPrice || 0);
+  const option = AGENT_CONTRACT_DURATION_OPTIONS.find((row) => row.months === months)
+    || AGENT_CONTRACT_DURATION_OPTIONS[0];
+  const baseTotal = price * option.months;
+  const discounted = Math.round(baseTotal * (1 - option.discountPercent / 100));
+  return roundToPriceEndingNinety(discounted);
 };
 
 export const getTemplateLabel = (code) => {
   const labels = {
     qa: 'ИИ консультант',
-    crm_admin: 'ИИ оператор',
+    crm_admin: 'ИИ Администратор',
     sales_manager: 'ИИ МОП',
     content_factory: 'Контент‑завод',
     ai_logist: 'ИИ Логист',
@@ -71,8 +92,8 @@ export const SPECIAL_CONDITIONS = [
     name: 'Для фрилансеров',
     description: 'Специальные условия на запуск агентов для независимых специалистов и небольших команд.',
     features: [
-      'Скидки на запуск шаблонов',
-      'Гибкая оплата обслуживания',
+      'Скидки на ежемесячное обслуживание',
+      'Гибкая оплата подписки',
       'Реферальная программа',
     ],
     requestLabel: 'Условия для фрилансеров',
@@ -82,11 +103,11 @@ export const SPECIAL_CONDITIONS = [
 ];
 
 export const POLICY_NOTES = [
-  'Цены «от» — минимальный взнос за запуск; ручная настройка и сложные интеграции с CRM или ERP оцениваются отдельно.',
-  'Первый месяц после создания агента ежемесячное обслуживание бесплатно.',
-  'Далее обслуживание — подписка на обновления и работу серверов (от 3 000 ₽/мес).',
-  'При активации оплачивается минимальная стоимость запуска по выбранному шаблону.',
-  'Токены LLM на текущем этапе включены — расходы на модели покрывает платформа.',
+  'ИИ консультант — бесплатно.',
+  'ИИ Администратор — 990 ₽/мес, ИИ МОП — 1 990 ₽/мес.',
+  'Первые 3 дня после создания платного агента — бесплатный пробный период.',
+  'Оплата на 1, 3 или 6 месяцев; при длительном сроке действует скидка.',
+  'Токены LLM включены — расходы на модели покрывает платформа.',
 ];
 
 export const PRICING_PAGE_TEMPLATE_ORDER = ['qa', 'crm_admin', 'sales_manager'];
@@ -95,6 +116,8 @@ export default {
   formatRubPrice,
   formatSetupPrice,
   formatMaintenancePrice,
+  calculateContractTotalRub,
+  AGENT_CONTRACT_DURATION_OPTIONS,
   getTemplateLabel,
   COMING_SOON_TEMPLATES,
   SPECIAL_CONDITIONS,

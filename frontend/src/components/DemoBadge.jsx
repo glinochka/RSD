@@ -1,6 +1,6 @@
 import '../styles/demoBadge.css';
 
-/** Плашка «Демо» для голосовой телефонии и тестового звонка */
+/** Плашка «Демо» для голосовой телефонии */
 export default function DemoBadge({ className = '' }) {
   return <span className={`demo-badge${className ? ` ${className}` : ''}`}>Демо</span>;
 }

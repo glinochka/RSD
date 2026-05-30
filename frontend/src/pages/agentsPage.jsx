@@ -3,11 +3,12 @@
  * Display user's agents and manage full lifecycle
  */
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import MainLayout from '../components/Layout';
 import Loading from '../components/Loading';
 import AgentsEmptyState from '../components/AgentsEmptyState';
+import AgentContractPaymentModal from '../components/AgentContractPaymentModal';
 import { useAsync } from '../hooks/useAsync';
 import agentService from '../services/agentService';
 import pricingService from '../services/pricingService';
@@ -16,8 +17,8 @@ import { useNotification } from '../context/useNotification';
 import { NAVIGATION_ROUTES } from '../config/constants';
 import { useAuth } from '../context/useAuth';
 import { validateFile } from '../utils/validation';
-import TelephonyVoicePreview from '../components/TelephonyVoicePreview';
 import DemoBadge, { TitleWithDemoBadge } from '../components/DemoBadge';
+import UserbotSessionFileUpload from '../components/UserbotSessionFileUpload';
 import {
   TELEPHONY_PROVIDER,
   copyTextToClipboard,
@@ -27,6 +28,7 @@ import '../styles/agentsPage.css';
 
 const AGENTS_EMPTY_MESSAGE = 'У вас еще нет агентов, создайте прямо сейчас';
 const AGENTS_EMPTY_CTA = 'Создайте прямо сейчас';
+const PENDING_AGENT_CONTRACT_PAYMENT_ID_KEY = 'pending_agent_contract_payment_id';
 const fileIdentity = (file) => `${file.name}::${file.size}::${file.lastModified}`;
 const linkIdentity = (link) => link.trim().toLowerCase();
 const isPortraitFeatureEnabled = (agent) => {
@@ -48,6 +50,68 @@ const isStartProcessingEnabled = (agent) => Boolean(agent?.process_start_with_ll
 const getTemplateConfig = (agent) => {
   const cfg = agent?.template_config;
   return cfg && typeof cfg === 'object' ? cfg : {};
+};
+
+/** Validate YooKassa fields before composing shop_id:secret_key for the API. */
+const validateYookassaCredentials = (shopId, secretKey) => {
+  const trimmedShopId = String(shopId || '').trim();
+  const trimmedSecret = String(secretKey || '').trim();
+  if (!trimmedShopId || !trimmedSecret) {
+    return 'Укажите Shop ID и Secret key ЮKassa';
+  }
+  if (!/^\d+$/.test(trimmedShopId)) {
+    return 'Shop ID ЮKassa — только цифры (идентификатор магазина из личного кабинета)';
+  }
+  if (!trimmedSecret.startsWith('live_') && !trimmedSecret.startsWith('test_')) {
+    return 'Secret key должен начинаться с live_ или test_ (секретный ключ из раздела «Ключи API»)';
+  }
+  if (trimmedSecret.includes(':')) {
+    return 'В поле Secret key укажите только секретный ключ, без Shop ID и без двоеточия';
+  }
+  if (trimmedShopId.includes(':')) {
+    return 'В поле Shop ID укажите только номер магазина, без Secret key';
+  }
+  return null;
+};
+
+/** Build yookassa_api_key for PATCH or validation error; omit key to keep stored credentials. */
+const resolveYookassaCredentialsUpdate = ({ paidBookingEnabled, shopId, secretKey, hasStoredKey }) => {
+  const trimmedShopId = String(shopId || '').trim();
+  const trimmedSecret = String(secretKey || '').trim();
+  const hasShop = trimmedShopId.length > 0;
+  const hasSecret = trimmedSecret.length > 0;
+
+  if (!paidBookingEnabled) {
+    return { yookassa_api_key: '', clearStoredKey: true };
+  }
+
+  if (!hasShop && !hasSecret) {
+    if (!hasStoredKey) {
+      return { error: 'Укажите Shop ID и Secret key из личного кабинета ЮKassa (раздел «Настройки → Ключи API»)' };
+    }
+    return {};
+  }
+
+  if (hasShop !== hasSecret) {
+    return {
+      error:
+        'Заполните оба поля ЮKassa. Это не логин сайта: Shop ID — только цифры, Secret key — ключ вида live_… или test_…',
+    };
+  }
+
+  const validationError = validateYookassaCredentials(trimmedShopId, trimmedSecret);
+  if (validationError) {
+    return { error: validationError };
+  }
+
+  return {
+    yookassa_api_key: `${trimmedShopId}:${trimmedSecret}`,
+    credentialsUpdated: true,
+  };
+};
+
+const unlockYookassaInput = (event) => {
+  event.currentTarget.removeAttribute('readonly');
 };
 const AGENT_AVAILABILITY_WEEKDAY_LABELS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 const COMMON_AGENT_TIMEZONES = [
@@ -225,11 +289,62 @@ const parseReminderOffsets = (value) =>
     .map((item) => Number(item.trim()))
     .filter((item) => Number.isFinite(item) && item > 0 && item <= 72);
 
+const stripSalesTriggerWord = (value) => {
+  let w = String(value || '').trim().toLowerCase();
+  if (!w) return '';
+  w = w.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+  if (w.startsWith('json')) w = w.slice(4).replace(/^[\s:[\]-]+/, '');
+  w = w.replace(/^[\s[\]"'({]+|[\s[\]"'})]+$/g, '');
+  w = w.replace(/^[\s[\]"'({]+|[\s[\]"'})]+$/g, '');
+  return w;
+};
+
+const coerceSalesTriggerWordsInput = (raw) => {
+  if (Array.isArray(raw)) {
+    const items = [];
+    raw.forEach((item) => {
+      if (typeof item === 'string' && item.trim().startsWith('[')) {
+        try {
+          const nested = JSON.parse(
+            item.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, ''),
+          );
+          if (Array.isArray(nested)) {
+            items.push(...nested);
+            return;
+          }
+        } catch {
+          // fall through
+        }
+      }
+      items.push(item);
+    });
+    return items;
+  }
+  if (typeof raw !== 'string') return [];
+  const text = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+  if (!text) return [];
+  try {
+    const parsed = JSON.parse(text);
+    return Array.isArray(parsed) ? parsed : [text];
+  } catch {
+    const bracketMatch = text.match(/\[[\s\S]*\]/);
+    if (bracketMatch) {
+      try {
+        const parsed = JSON.parse(bracketMatch[0]);
+        if (Array.isArray(parsed)) return parsed;
+      } catch {
+        // fall through
+      }
+    }
+    return text.split(',').map((part) => part.trim()).filter(Boolean);
+  }
+};
+
 const normalizeSalesTriggerWordsList = (raw) => {
-  const list = Array.isArray(raw) ? raw : [];
+  const list = coerceSalesTriggerWordsInput(raw);
   const out = [];
   for (const item of list) {
-    const w = String(item || '').trim().toLowerCase();
+    const w = stripSalesTriggerWord(item);
     if (!w || w.length > 64) continue;
     if (!out.includes(w)) out.push(w);
     if (out.length >= 30) break;
@@ -248,7 +363,6 @@ const channelLabel = (channel) => {
   return channel.provider || 'Канал';
 };
 const WIDGET_TEMPLATE_TYPES = new Set(['qa', 'crm_admin']);
-const TELEPHONY_VOICE_PREVIEW_TEMPLATES = WIDGET_TEMPLATE_TYPES;
 
 const CustomSelect = ({
   id,
@@ -332,7 +446,7 @@ const CustomSelect = ({
   );
 };
 
-const FeatureToggle = ({ checked, onChange, disabled, title, description, helpText }) => {
+const FeatureToggle = ({ checked, onChange, disabled, title, helpText }) => {
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const toggleRef = useRef(null);
 
@@ -381,7 +495,6 @@ const FeatureToggle = ({ checked, onChange, disabled, title, description, helpTe
       >
         <span className="feature-toggle__content">
           <span className="feature-toggle__title">{title}</span>
-          {description ? <span className="feature-toggle__description">{description}</span> : null}
         </span>
         <span className="feature-toggle__switch" aria-hidden="true">
           <span className="feature-toggle__thumb" />
@@ -504,7 +617,8 @@ const AgentCard = ({ agent, isSelected, onManage, onDelete, onToggle }) => {
 
 const AgentsPageContent = () => {
   const navigate = useNavigate();
-  const { showError, showSuccess } = useNotification();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { showError, showSuccess, showInfo } = useNotification();
   const { isAuthenticated } = useAuth();
   const [selectedBotId, setSelectedBotId] = useState(null);
   const [selectedAgent, setSelectedAgent] = useState(null);
@@ -531,17 +645,26 @@ const AgentsPageContent = () => {
   const [isSavingChannel, setIsSavingChannel] = useState(false);
   const [botTokenDraft, setBotTokenDraft] = useState('');
   const [makePrimaryChannel, setMakePrimaryChannel] = useState(false);
-  const [userbotApiId, setUserbotApiId] = useState('');
-  const [userbotApiHash, setUserbotApiHash] = useState('');
+  const [userbotResolvedApiId, setUserbotResolvedApiId] = useState(null);
+  const [userbotResolvedApiHash, setUserbotResolvedApiHash] = useState('');
   const [userbotPhone, setUserbotPhone] = useState('');
   const [userbotCode, setUserbotCode] = useState('');
   const [userbotPassword, setUserbotPassword] = useState('');
+  const [userbotAuthMode, setUserbotAuthMode] = useState('qr');
   const [userbotAuthToken, setUserbotAuthToken] = useState('');
+  const [userbotQrAuthToken, setUserbotQrAuthToken] = useState('');
+  const [userbotQrDataUrl, setUserbotQrDataUrl] = useState('');
+  const [userbotQrNeeds2fa, setUserbotQrNeeds2fa] = useState(false);
   const [userbotSessionString, setUserbotSessionString] = useState('');
+  const [userbotVerifiedLabel, setUserbotVerifiedLabel] = useState('');
   const [maxBotTokenDraft, setMaxBotTokenDraft] = useState('');
   const [maxUserbotTokenDraft, setMaxUserbotTokenDraft] = useState('');
   const [isSendingUserbotCode, setIsSendingUserbotCode] = useState(false);
   const [isVerifyingUserbotCode, setIsVerifyingUserbotCode] = useState(false);
+  const [isStartingUserbotQr, setIsStartingUserbotQr] = useState(false);
+  const [isVerifyingUserbotQr2fa, setIsVerifyingUserbotQr2fa] = useState(false);
+  const [isImportingUserbotSession, setIsImportingUserbotSession] = useState(false);
+  const userbotLastQrStatusRef = useRef('');
   const [whatsappUserbotPhone, setWhatsappUserbotPhone] = useState('');
   const [whatsappUserbotSessionString, setWhatsappUserbotSessionString] = useState('');
   const [whatsappUserbotClientLabel, setWhatsappUserbotClientLabel] = useState('');
@@ -568,11 +691,9 @@ const AgentsPageContent = () => {
   const [adminWaitlistEnabled, setAdminWaitlistEnabled] = useState(true);
   const [adminReminderEnabled, setAdminReminderEnabled] = useState(true);
   const [adminReminderOffsets, setAdminReminderOffsets] = useState('24,2');
-  const [adminManualConfirmationEnabled, setAdminManualConfirmationEnabled] = useState(false);
-  const [adminManualConfirmationPriceMinor, setAdminManualConfirmationPriceMinor] = useState('15000');
-  const [adminManualConfirmationDurationMinutes, setAdminManualConfirmationDurationMinutes] = useState('120');
   const [adminPaidBookingEnabled, setAdminPaidBookingEnabled] = useState(false);
-  const [adminYookassaApiKey, setAdminYookassaApiKey] = useState('');
+  const [adminYookassaShopId, setAdminYookassaShopId] = useState('');
+  const [adminYookassaSecretKey, setAdminYookassaSecretKey] = useState('');
   const [adminHasYookassaApiKey, setAdminHasYookassaApiKey] = useState(false);
   const [salesProductName, setSalesProductName] = useState('');
   const [salesOfferType, setSalesOfferType] = useState('');
@@ -580,15 +701,22 @@ const AgentsPageContent = () => {
   const [salesWorkflowCompletionMode, setSalesWorkflowCompletionMode] = useState('auto_finish_on_signal');
   const [salesLeadScoreScale, setSalesLeadScoreScale] = useState('100');
   const [salesLeadGenerationEnabled, setSalesLeadGenerationEnabled] = useState(true);
+  const [salesContactsPoolOnly, setSalesContactsPoolOnly] = useState(false);
   const [salesNeuroCommentingEnabled, setSalesNeuroCommentingEnabled] = useState(false);
   const [salesLiveChatSimulationEnabled, setSalesLiveChatSimulationEnabled] = useState(false);
   const [salesTriggerWords, setSalesTriggerWords] = useState(() => ['купить']);
   const [salesTriggerWordDraft, setSalesTriggerWordDraft] = useState('');
+  const [salesExcelUploadBusy, setSalesExcelUploadBusy] = useState(false);
+  const [salesExcelImportInfo, setSalesExcelImportInfo] = useState(null);
+  const salesExcelFileInputId = useId();
   const [agentAvailAlwaysOn, setAgentAvailAlwaysOn] = useState(true);
   const [agentAvailTimezone, setAgentAvailTimezone] = useState(() => getBrowserTimezoneSafe());
   const [agentAvailWeekdays, setAgentAvailWeekdays] = useState(buildDefaultAgentAvailabilityWeekdays);
   const [isSavingAgentAvailability, setIsSavingAgentAvailability] = useState(false);
   const detailsRequestIdRef = useRef(0);
+  const [contractModalAgent, setContractModalAgent] = useState(null);
+  const [contractModalTitle, setContractModalTitle] = useState('');
+  const [isContractPaymentProcessing, setIsContractPaymentProcessing] = useState(false);
   const { data: agents, isLoading, execute } = useAsync(
     () => agentService.getAll(),
     false
@@ -597,6 +725,44 @@ const AgentsPageContent = () => {
   useEffect(() => {
     if (!isAuthenticated) return;
     execute();
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const pendingPaymentId = localStorage.getItem(PENDING_AGENT_CONTRACT_PAYMENT_ID_KEY);
+    if (!pendingPaymentId) return;
+
+    let cancelled = false;
+    const verifyPayment = async () => {
+      try {
+        const statusData = await pricingService.getYooKassaPaymentStatus(pendingPaymentId);
+        if (cancelled) return;
+        if (statusData?.status === 'succeeded') {
+          showSuccess('Подписка на агента успешно оплачена.');
+          await refreshAgents();
+          if (statusData.agent_id) {
+            await loadAgentDetails(statusData.agent_id);
+          }
+        } else if (statusData?.status === 'canceled') {
+          showError('Оплата отменена.');
+        }
+      } catch (error) {
+        if (!cancelled) {
+          showError(error?.message || 'Не удалось проверить статус оплаты');
+        }
+      } finally {
+        localStorage.removeItem(PENDING_AGENT_CONTRACT_PAYMENT_ID_KEY);
+        if (searchParams.get('agent_payment')) {
+          const next = new URLSearchParams(searchParams);
+          next.delete('agent_payment');
+          setSearchParams(next, { replace: true });
+        }
+      }
+    };
+    verifyPayment();
+    return () => {
+      cancelled = true;
+    };
   }, [isAuthenticated]);
 
   useEffect(() => {
@@ -677,6 +843,58 @@ const AgentsPageContent = () => {
     }
   };
 
+  const openContractPaymentModal = (agent, title) => {
+    if (!agent) return;
+    setContractModalAgent(agent);
+    setContractModalTitle(title);
+  };
+
+  const closeContractPaymentModal = () => {
+    if (isContractPaymentProcessing) return;
+    setContractModalAgent(null);
+    setContractModalTitle('');
+  };
+
+  const handleContractPaymentSubmit = async ({ agentId, durationMonths, promoCode, enableAutopay }) => {
+    if (isContractPaymentProcessing) return;
+    setIsContractPaymentProcessing(true);
+    try {
+      const returnUrl = `${window.location.origin}${NAVIGATION_ROUTES.AGENTS}?agent_payment=1`;
+      const payment = await pricingService.createAgentBillingPayment({
+        agent_id: agentId,
+        payment_kind: 'agent_maintenance',
+        return_url: returnUrl,
+        promo_code: promoCode,
+        duration_months: durationMonths,
+        enable_autopay: enableAutopay,
+      });
+
+      if (payment?.autopay_warning) {
+        showInfo(payment.autopay_warning);
+      }
+
+      if (payment?.status === 'succeeded' && !payment?.confirmation_url) {
+        showSuccess('Подписка активирована по промокоду.');
+        closeContractPaymentModal();
+        await refreshAgents();
+        if (selectedBotId === agentId) {
+          await loadAgentDetails(agentId);
+        }
+        return;
+      }
+
+      if (!payment?.confirmation_url || !payment?.payment_id) {
+        throw new Error('Сервис оплаты вернул некорректный ответ.');
+      }
+
+      localStorage.setItem(PENDING_AGENT_CONTRACT_PAYMENT_ID_KEY, payment.payment_id);
+      window.location.href = payment.confirmation_url;
+    } catch (error) {
+      showError(error?.message || 'Не удалось создать платёж');
+      setIsContractPaymentProcessing(false);
+    }
+  };
+
   const handleToggleAgent = async (botId) => {
     const agentBeforeToggle = (agents || []).find((item) => item.id === botId)
       || (selectedBotId === botId ? selectedAgent : null);
@@ -692,29 +910,17 @@ const AgentsPageContent = () => {
     } catch (error) {
       const paymentDetail = error?.data?.detail;
       const billing = paymentDetail && typeof paymentDetail === 'object' ? paymentDetail.billing : null;
-      const activationRub = Number(billing?.activation_required_rub || 0);
-      if (error?.status === 402 && willActivate && activationRub > 0) {
-        const confirmed = window.confirm(
-          `Для активации требуется оплата запуска от ${formatRubPrice(activationRub)} ₽. Перейти к оплате?`
+      const paymentKind = paymentDetail?.payment_kind;
+      if (error?.status === 402 && willActivate && billing?.requires_subscription) {
+        openContractPaymentModal(
+          { ...agentBeforeToggle, billing },
+          'Оплата подписки для активации',
         );
-        if (confirmed) {
-          try {
-            const returnUrl = `${window.location.origin}${NAVIGATION_ROUTES.AGENTS}?agent_payment=1`;
-            const payment = await pricingService.createAgentBillingPayment({
-              agent_id: botId,
-              payment_kind: 'agent_activation',
-              return_url: returnUrl,
-            });
-            if (payment?.confirmation_url) {
-              window.location.href = payment.confirmation_url;
-              return;
-            }
-            showError('Сервис оплаты вернул некорректный ответ.');
-          } catch (paymentError) {
-            showError(paymentError?.message || 'Не удалось создать платёж');
-          }
-          return;
-        }
+        return;
+      }
+      if (error?.status === 402 && willActivate && paymentKind === 'agent_activation') {
+        openContractPaymentModal(agentBeforeToggle, 'Оплата для активации агента');
+        return;
       }
       const message =
         (paymentDetail && typeof paymentDetail === 'object' && paymentDetail.message)
@@ -938,37 +1144,36 @@ const AgentsPageContent = () => {
       waitlist_enabled: Boolean(adminWaitlistEnabled),
       reminder_enabled: Boolean(adminReminderEnabled),
       reminder_offsets_hours: parseReminderOffsets(adminReminderOffsets),
-      manual_confirmation_enabled: Boolean(adminManualConfirmationEnabled),
-      manual_confirmation_price_minor: Math.max(0, Number(adminManualConfirmationPriceMinor) || 0),
-      manual_confirmation_duration_minutes: Math.max(1, Number(adminManualConfirmationDurationMinutes) || 120),
       paid_booking_enabled: Boolean(adminPaidBookingEnabled),
     };
-    const hasTypedYookassaKey = adminYookassaApiKey.trim().length > 0;
+    const yookassaUpdate = resolveYookassaCredentialsUpdate({
+      paidBookingEnabled: adminPaidBookingEnabled,
+      shopId: adminYookassaShopId,
+      secretKey: adminYookassaSecretKey,
+      hasStoredKey: adminHasYookassaApiKey,
+    });
+    if (yookassaUpdate.error) {
+      showError(yookassaUpdate.error);
+      return;
+    }
     const updatePayload = { template_config: nextConfig };
-    if (adminPaidBookingEnabled) {
-      if (hasTypedYookassaKey) {
-        updatePayload.yookassa_api_key = adminYookassaApiKey.trim();
-      } else if (!adminHasYookassaApiKey) {
-        showError('Укажите API ключ ЮKassa в формате shop_id:secret_key');
-        return;
-      }
-    } else {
-      updatePayload.yookassa_api_key = '';
+    if (Object.prototype.hasOwnProperty.call(yookassaUpdate, 'yookassa_api_key')) {
+      updatePayload.yookassa_api_key = yookassaUpdate.yookassa_api_key;
     }
     setIsSavingTemplateConfig(true);
     try {
       await agentService.update(selectedBotId, updatePayload);
+      const refreshedAgent = await agentService.getById(selectedBotId);
       setSelectedAgent((prev) => (prev
-        ? { ...prev, template_config: nextConfig, has_booking_payment_api_key: adminPaidBookingEnabled ? (adminHasYookassaApiKey || hasTypedYookassaKey) : false }
-        : prev));
-      if (adminPaidBookingEnabled && hasTypedYookassaKey) {
-        setAdminYookassaApiKey('');
-        setAdminHasYookassaApiKey(true);
-      }
-      if (!adminPaidBookingEnabled) {
-        setAdminYookassaApiKey('');
-        setAdminHasYookassaApiKey(false);
-      }
+        ? {
+          ...prev,
+          ...refreshedAgent,
+          template_config: nextConfig,
+        }
+        : refreshedAgent));
+      setAdminYookassaShopId('');
+      setAdminYookassaSecretKey('');
+      setAdminHasYookassaApiKey(Boolean(refreshedAgent?.has_booking_payment_api_key));
       showSuccess('Настройки шаблона Администратор обновлены');
     } catch (error) {
       showError(error?.message || 'Не удалось обновить настройки шаблона Администратор');
@@ -997,6 +1202,7 @@ const AgentsPageContent = () => {
         salesWorkflowCompletionMode === 'continue_dialog' ? 'continue_dialog' : 'auto_finish_on_signal',
       lead_score_scale: salesLeadScoreScale === '10' ? 10 : 100,
       lead_generation_enabled: Boolean(salesLeadGenerationEnabled),
+      contacts_pool_only: Boolean(salesContactsPoolOnly),
       neuro_commenting_enabled: Boolean(salesNeuroCommentingEnabled),
       live_chat_simulation_enabled: Boolean(salesLiveChatSimulationEnabled),
       trigger_words: normalizeSalesTriggerWordsList(salesTriggerWords),
@@ -1032,6 +1238,22 @@ const AgentsPageContent = () => {
     }
   };
 
+  const handleSalesManagerExcelUpload = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || !selectedAgent?.id) return;
+    setSalesExcelUploadBusy(true);
+    try {
+      const res = await agentService.uploadSalesManagerExcel(selectedAgent.id, file);
+      setSalesExcelImportInfo(res);
+      showSuccess(res?.message || 'База загружена, рассылка запущена');
+    } catch (error) {
+      showError(error?.response?.data?.detail || error?.message || 'Не удалось загрузить Excel');
+    } finally {
+      setSalesExcelUploadBusy(false);
+    }
+  };
+
   const handleToggleSalesActivity = async (field, enabled) => {
     if (!selectedBotId || !selectedAgent) return;
     const currentConfig = getTemplateConfig(selectedAgent);
@@ -1062,6 +1284,9 @@ const AgentsPageContent = () => {
           : prev
       );
       setSalesLeadGenerationEnabled(leadGenerationEnabled);
+      if (field === 'contacts_pool_only') {
+        setSalesContactsPoolOnly(Boolean(enabled));
+      }
       setSalesNeuroCommentingEnabled(neuroCommentingEnabled);
       setSalesLiveChatSimulationEnabled(liveChatSimulationEnabled);
       showSuccess(
@@ -1077,12 +1302,21 @@ const AgentsPageContent = () => {
   };
 
   const handleAddSalesTriggerWord = () => {
-    const w = salesTriggerWordDraft.trim().toLowerCase();
-    if (!w || w.length > 64) return;
+    const draft = salesTriggerWordDraft.trim();
+    if (!draft) return;
+    const candidates = normalizeSalesTriggerWordsList(
+      draft.startsWith('[') || draft.includes('```') ? draft : [draft],
+    );
+    if (candidates.length === 0) return;
     setSalesTriggerWords((prev) => {
-      if (prev.includes(w)) return prev;
-      if (prev.length >= 30) return prev;
-      return [...prev, w];
+      let next = prev;
+      for (const w of candidates) {
+        if (!w || w.length > 64) continue;
+        if (next.includes(w)) continue;
+        if (next.length >= 30) break;
+        next = [...next, w];
+      }
+      return next;
     });
     setSalesTriggerWordDraft('');
   };
@@ -1266,17 +1500,26 @@ const AgentsPageContent = () => {
   const resetChannelModalFields = () => {
     setBotTokenDraft('');
     setMakePrimaryChannel(false);
-    setUserbotApiId('');
-    setUserbotApiHash('');
+    setUserbotResolvedApiId(null);
+    setUserbotResolvedApiHash('');
     setUserbotPhone('');
     setUserbotCode('');
     setUserbotPassword('');
+    setUserbotAuthMode('qr');
     setUserbotAuthToken('');
+    setUserbotQrAuthToken('');
+    setUserbotQrDataUrl('');
+    setUserbotQrNeeds2fa(false);
     setUserbotSessionString('');
+    setUserbotVerifiedLabel('');
     setMaxBotTokenDraft('');
     setMaxUserbotTokenDraft('');
     setIsSendingUserbotCode(false);
     setIsVerifyingUserbotCode(false);
+    setIsStartingUserbotQr(false);
+    setIsVerifyingUserbotQr2fa(false);
+    setIsImportingUserbotSession(false);
+    userbotLastQrStatusRef.current = '';
     setWhatsappUserbotPhone('');
     setWhatsappUserbotSessionString('');
     setWhatsappUserbotClientLabel('');
@@ -1430,7 +1673,15 @@ const AgentsPageContent = () => {
       return;
     }
     resetChannelModalFields();
-    setChannelModalTab(selectedAgent?.template_type === 'sales_manager' ? 'userbot' : 'bot');
+    const salesChannels = (selectedAgent?.channels || []).filter((ch) =>
+      ['telegram_userbot', 'whatsapp_userbot'].includes(ch.provider)
+    );
+    const preferredSalesTab = salesChannels.some((ch) => ch.provider === 'whatsapp_userbot')
+      ? 'whatsapp_userbot'
+      : 'userbot';
+    setChannelModalTab(
+      selectedAgent?.template_type === 'sales_manager' ? preferredSalesTab : 'bot'
+    );
     setIsChannelsModalOpen(true);
     setIsLoadingChannels(true);
     try {
@@ -1472,13 +1723,9 @@ const AgentsPageContent = () => {
     setAdminWaitlistEnabled(cfg.waitlist_enabled !== false);
     setAdminReminderEnabled(cfg.reminder_enabled !== false);
     setAdminReminderOffsets(toCsvOffsets(cfg.reminder_offsets_hours));
-    setAdminManualConfirmationEnabled(Boolean(cfg.manual_confirmation_enabled));
-    setAdminManualConfirmationPriceMinor(String(Number(cfg.manual_confirmation_price_minor) || 15000));
-    setAdminManualConfirmationDurationMinutes(
-      String(Number(cfg.manual_confirmation_duration_minutes) || 120)
-    );
     setAdminPaidBookingEnabled(Boolean(cfg.paid_booking_enabled));
-    setAdminYookassaApiKey('');
+    setAdminYookassaShopId('');
+    setAdminYookassaSecretKey('');
     setAdminHasYookassaApiKey(Boolean(selectedAgent?.has_booking_payment_api_key));
     setSalesProductName(String(cfg.sales_product_name || ''));
     setSalesOfferType(String(cfg.sales_offer_type || ''));
@@ -1488,6 +1735,7 @@ const AgentsPageContent = () => {
     );
     setSalesLeadScoreScale(String(Number(cfg.lead_score_scale) === 10 ? 10 : 100));
     setSalesLeadGenerationEnabled(cfg.lead_generation_enabled !== false);
+    setSalesContactsPoolOnly(Boolean(cfg.contacts_pool_only));
     setSalesNeuroCommentingEnabled(Boolean(cfg.neuro_commenting_enabled));
     setSalesLiveChatSimulationEnabled(Boolean(cfg.live_chat_simulation_enabled));
     setSalesTriggerWords(normalizeSalesTriggerWordsList(cfg.trigger_words));
@@ -1505,12 +1753,6 @@ const AgentsPageContent = () => {
     }
   }, [selectedAgent]);
 
-  useEffect(() => {
-    if (!isChannelsModalOpen || !isSalesManagerTemplate) return;
-    if (channelModalTab !== 'userbot') {
-      setChannelModalTab('userbot');
-    }
-  }, [channelModalTab, isChannelsModalOpen, isSalesManagerTemplate]);
 
   const agentAvailabilityTimezoneOptions = useMemo(() => {
     const browser = getBrowserTimezoneSafe();
@@ -1618,16 +1860,160 @@ const AgentsPageContent = () => {
     }
   };
 
+  const applyUserbotChannelVerified = (response) => {
+    setUserbotSessionString(response?.session_string || '');
+    if (response?.api_id != null) {
+      setUserbotResolvedApiId(Number(response.api_id));
+    }
+    if (response?.api_hash) {
+      setUserbotResolvedApiHash(String(response.api_hash));
+    }
+    const label = response?.username
+      ? `@${response.username}`
+      : [response?.first_name, response?.last_name].filter(Boolean).join(' ')
+        || response?.phone_number
+        || (response?.telegram_id ? `id: ${response.telegram_id}` : 'успешно');
+    setUserbotVerifiedLabel(label);
+  };
+
+  const switchUserbotAuthMode = (mode) => {
+    setUserbotAuthMode(mode);
+    setUserbotAuthToken('');
+    setUserbotQrAuthToken('');
+    setUserbotQrDataUrl('');
+    setUserbotQrNeeds2fa(false);
+    setUserbotResolvedApiId(null);
+    setUserbotResolvedApiHash('');
+    setUserbotSessionString('');
+    setUserbotVerifiedLabel('');
+    setUserbotCode('');
+    setUserbotPassword('');
+    userbotLastQrStatusRef.current = '';
+  };
+
+  const handleUserbotQrStart = async () => {
+    setIsStartingUserbotQr(true);
+    try {
+      const response = await agentService.startUserbotQr({});
+      setUserbotQrAuthToken(response?.auth_token || '');
+      setUserbotQrDataUrl(response?.qr_data_url || '');
+      setUserbotQrNeeds2fa(false);
+      setUserbotSessionString('');
+      setUserbotVerifiedLabel('');
+      userbotLastQrStatusRef.current = '';
+      if (response?.already_authorized && response?.session_string) {
+        applyUserbotChannelVerified(response);
+        showSuccess('Сессия Telegram уже авторизована');
+      } else {
+        showSuccess('Отсканируйте QR в Telegram: Настройки → Устройства → Подключить устройство');
+      }
+    } catch (error) {
+      showError(error?.message || 'Не удалось начать QR-вход');
+    } finally {
+      setIsStartingUserbotQr(false);
+    }
+  };
+
+  const handleUserbotQrVerify2fa = async () => {
+    if (!userbotQrAuthToken) {
+      showError('Сначала начните QR-вход');
+      return;
+    }
+    if (!userbotPassword.trim()) {
+      showError('Введите пароль 2FA');
+      return;
+    }
+    setIsVerifyingUserbotQr2fa(true);
+    try {
+      const response = await agentService.verifyUserbotQr2fa({
+        auth_token: userbotQrAuthToken,
+        password: userbotPassword.trim(),
+      });
+      applyUserbotChannelVerified(response);
+      setUserbotQrNeeds2fa(false);
+      showSuccess('2FA подтверждена');
+    } catch (error) {
+      showError(error?.message || 'Не удалось подтвердить 2FA');
+    } finally {
+      setIsVerifyingUserbotQr2fa(false);
+    }
+  };
+
+  const handleUserbotImportSession = async (file) => {
+    if (!file) return;
+    setIsImportingUserbotSession(true);
+    try {
+      const response = await agentService.importUserbotSession({
+        session_file: file,
+      });
+      applyUserbotChannelVerified(response);
+      showSuccess('Сессия импортирована');
+    } catch (error) {
+      showError(error?.message || 'Не удалось импортировать сессию');
+    } finally {
+      setIsImportingUserbotSession(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!isChannelsModalOpen || channelModalTab !== 'userbot') return undefined;
+    if (userbotAuthMode !== 'qr') return undefined;
+    if (!userbotQrAuthToken) return undefined;
+    if (userbotSessionString.trim()) return undefined;
+
+    let cancelled = false;
+    const pollStatus = async () => {
+      try {
+        const response = await agentService.userbotQrStatus({ auth_token: userbotQrAuthToken });
+        if (cancelled) return;
+        const nextStatus = String(response?.status || '').trim().toLowerCase();
+        const prevStatus = userbotLastQrStatusRef.current;
+        if (nextStatus === 'need_2fa') {
+          setUserbotQrNeeds2fa(true);
+          if (prevStatus !== 'need_2fa') {
+            showSuccess('QR принят. Введите пароль 2FA.');
+          }
+        } else if (nextStatus === 'success' && response?.session_string) {
+          applyUserbotChannelVerified(response);
+          setUserbotQrNeeds2fa(false);
+          if (prevStatus !== 'success') {
+            showSuccess('Telegram userbot авторизован');
+          }
+        } else if (nextStatus === 'expired' || nextStatus === 'error') {
+          if (prevStatus !== nextStatus) {
+            showError(response?.error || 'QR-вход завершился с ошибкой');
+          }
+        }
+        userbotLastQrStatusRef.current = nextStatus;
+      } catch {
+        // ignore polling errors
+      }
+    };
+
+    pollStatus();
+    const intervalId = window.setInterval(pollStatus, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [
+    isChannelsModalOpen,
+    channelModalTab,
+    userbotAuthMode,
+    userbotQrAuthToken,
+    userbotSessionString,
+    showError,
+    showSuccess,
+  ]);
+
   const handleRequestUserbotCode = async () => {
-    if (!userbotApiId.trim() || !userbotApiHash.trim() || !userbotPhone.trim()) {
-      showError('Заполните API ID, API hash и номер телефона');
+    if (!userbotPhone.trim()) {
+      showError('Введите номер телефона');
       return;
     }
     setIsSendingUserbotCode(true);
     try {
       const response = await agentService.requestUserbotCode({
-        api_id: Number(userbotApiId),
-        api_hash: userbotApiHash.trim(),
         phone_number: userbotPhone.trim(),
       });
       setUserbotAuthToken(response?.auth_token || '');
@@ -1656,7 +2042,7 @@ const AgentsPageContent = () => {
         code: userbotCode.trim(),
         password: userbotPassword.trim() || undefined,
       });
-      setUserbotSessionString(response?.session_string || '');
+      applyUserbotChannelVerified(response);
       showSuccess('Код подтвержден, можно подключать userbot');
     } catch (error) {
       showError(error?.message || 'Не удалось подтвердить код');
@@ -1667,20 +2053,20 @@ const AgentsPageContent = () => {
 
   const handleAddUserbotChannel = async () => {
     if (!selectedBotId) return;
-    if (!userbotApiId.trim() || !userbotApiHash.trim()) {
-      showError('Заполните API ID и API hash');
+    if (!userbotSessionString.trim()) {
+      showError('Сначала завершите вход (QR, код или импорт файла)');
       return;
     }
-    if (!userbotSessionString.trim()) {
-      showError('Сначала подтвердите код Telegram и получите session string');
+    if (!userbotResolvedApiId || !userbotResolvedApiHash) {
+      showError('Сессия userbot неполная. Повторите вход.');
       return;
     }
     setIsSavingChannel(true);
     try {
       const res = await agentService.addUserbotChannel({
         agent_id: selectedBotId,
-        api_id: Number(userbotApiId),
-        api_hash: userbotApiHash.trim(),
+        api_id: Number(userbotResolvedApiId),
+        api_hash: userbotResolvedApiHash,
         session_string: userbotSessionString.trim(),
         make_primary: makePrimaryChannel,
       });
@@ -1933,13 +2319,14 @@ const AgentsPageContent = () => {
     if (!selectedAgent) return '';
     return selectedAgent.bot_username ? `@${selectedAgent.bot_username}` : `Агент #${selectedAgent.id}`;
   }, [selectedAgent]);
+  const selectedAgentBilling = selectedAgent?.billing;
+  const showExtendContractButton = Boolean(
+    selectedAgentBilling?.requires_subscription
+    && Number(selectedAgentBilling?.monthly_price_rub || 0) > 0,
+  );
   const isWidgetSupportedTemplate = WIDGET_TEMPLATE_TYPES.has(
     String(selectedAgent?.template_type || 'qa').trim().toLowerCase()
   );
-  const isTelephonyVoicePreviewTemplate = TELEPHONY_VOICE_PREVIEW_TEMPLATES.has(
-    String(selectedAgent?.template_type || 'qa').trim().toLowerCase()
-  );
-
   if (isLoading && isAuthenticated) {
     return <Loading message="Загрузка агентов..." />;
   }
@@ -2004,21 +2391,33 @@ const AgentsPageContent = () => {
                     >
                      Дашборд агента
                     </button>
+                    {showExtendContractButton ? (
+                      <button
+                        type="button"
+                        className="btn btn-outline agent-extend-contract-btn"
+                        onClick={() => openContractPaymentModal(selectedAgent, 'Продление подписки')}
+                      >
+                        Продлить контракт
+                      </button>
+                    ) : null}
+                    {selectedAgentBilling?.requires_subscription ? (
+                      <p className="agent-billing-status">
+                        {selectedAgentBilling.maintenance_grace_active
+                          ? `Пробный период${typeof selectedAgentBilling.trial_days_left === 'number' ? ` (${selectedAgentBilling.trial_days_left} дн.)` : ''}`
+                          : selectedAgentBilling.maintenance_current
+                            ? selectedAgentBilling.maintenance_paid_until
+                              ? `Подписка до ${new Date(selectedAgentBilling.maintenance_paid_until).toLocaleDateString('ru-RU')}`
+                              : 'Подписка активна'
+                            : 'Подписка не оплачена — агент будет отключён'}
+                        {selectedAgentBilling.autopay_enabled
+                          ? ` · автопродление на ${selectedAgentBilling.autopay_duration_months} мес.`
+                          : ''}
+                        {selectedAgentBilling.autopay_last_error
+                          ? ` · ${selectedAgentBilling.autopay_last_error}`
+                          : ''}
+                      </p>
+                    ) : null}
                   </div>
-
-                  {isTelephonyVoicePreviewTemplate ? (
-                    <div className="agent-management-block">
-                      <TitleWithDemoBadge as="h4" className="agent-form-channel-title">
-                        Голосовой тест (в браузере)
-                      </TitleWithDemoBadge>
-                      <TelephonyVoicePreview
-                        agentId={selectedAgent.id}
-                        hasTelephonyChannel={hasTelephonyChannel}
-                        showError={showError}
-                        showSuccess={showSuccess}
-                      />
-                    </div>
-                  ) : null}
 
                   <div className="agent-management-block">
                     <label>API ключ для внешних интеграций</label>
@@ -2091,8 +2490,7 @@ const AgentsPageContent = () => {
                       onChange={(next) => setAgentAvailAlwaysOn(Boolean(next))}
                       disabled={isSavingAgentAvailability}
                       title="Круглосуточный режим (24/7)"
-                      description="Выключите, чтобы вне заданного расписания входящие сообщения не обрабатывались и не получали ответа."
-                      helpText="Вне окна сообщение не попадает в аналитику и не вызывает LLM; пользователь не получает ответ. Подписка и блокировки пользователя проверяются как обычно."
+                      helpText="Выключите, чтобы вне заданного расписания входящие сообщения не обрабатывались и не получали ответа. Вне окна сообщение не попадает в аналитику и не вызывает LLM; пользователь не получает ответ. Подписка и блокировки пользователя проверяются как обычно."
                     />
                     <label htmlFor="agent_avail_timezone" className="mt-input">
                       Часовой пояс расписания
@@ -2205,37 +2603,6 @@ const AgentsPageContent = () => {
                           />
                         </div>
                         <FeatureToggle
-                          checked={adminManualConfirmationEnabled}
-                          onChange={setAdminManualConfirmationEnabled}
-                          disabled={isSavingTemplateConfig}
-                          title="Ручное подтверждение дорогих/долгих услуг"
-                          helpText="Агент будет запрашивать ручное подтверждение при превышении ценового порога или длительности услуги."
-                        />
-                        <label htmlFor="admin_manual_confirmation_price_minor" className="mt-input">
-                          Порог цены (minor):
-                        </label>
-                        <input
-                          id="admin_manual_confirmation_price_minor"
-                          type="number"
-                          min="0"
-                          className="input-main"
-                          value={adminManualConfirmationPriceMinor}
-                          onChange={(event) => setAdminManualConfirmationPriceMinor(event.target.value)}
-                          disabled={isSavingTemplateConfig}
-                        />
-                        <label htmlFor="admin_manual_confirmation_duration_minutes" className="mt-input">
-                          Порог длительности (мин):
-                        </label>
-                        <input
-                          id="admin_manual_confirmation_duration_minutes"
-                          type="number"
-                          min="1"
-                          className="input-main"
-                          value={adminManualConfirmationDurationMinutes}
-                          onChange={(event) => setAdminManualConfirmationDurationMinutes(event.target.value)}
-                          disabled={isSavingTemplateConfig}
-                        />
-                        <FeatureToggle
                           checked={adminPaidBookingEnabled}
                           onChange={setAdminPaidBookingEnabled}
                           disabled={isSavingTemplateConfig}
@@ -2243,21 +2610,60 @@ const AgentsPageContent = () => {
                           helpText="При включении агент сначала отправляет ссылку на оплату, и только после успешной оплаты подтверждает бронь."
                         />
                         {adminPaidBookingEnabled ? (
-                          <div className="admin-template-field">
-                            <label htmlFor="admin_yookassa_api_key">
-                              API ключ ЮKassa (shop_id:secret_key):
+                          <form
+                            className="admin-template-field yookassa-credentials-form"
+                            autoComplete="off"
+                            onSubmit={(event) => event.preventDefault()}
+                          >
+                            {adminHasYookassaApiKey ? (
+                              <p className="yookassa-credentials-form__status">
+                                Ключи ЮKassa сохранены. Чтобы заменить, введите новую пару Shop ID и Secret key.
+                              </p>
+                            ) : null}
+                            <p className="yookassa-credentials-form__hint">
+                              Данные из личного кабинета ЮKassa → Настройки → Ключи API. Не используйте логин и пароль от сайта RSD.
+                            </p>
+                            <label htmlFor="admin_yookassa_shop_id">
+                              Shop ID ЮKassa:
                             </label>
                             <input
-                              id="admin_yookassa_api_key"
-                              type="password"
+                              id="admin_yookassa_shop_id"
+                              name="yookassa-shop-id"
+                              type="text"
+                              inputMode="numeric"
                               className="input-main"
-                              value={adminYookassaApiKey}
-                              onChange={(event) => setAdminYookassaApiKey(event.target.value)}
-                              placeholder={adminHasYookassaApiKey ? 'Ключ уже сохранен. Введите новый для замены' : '123456:live_xxxxx'}
+                              value={adminYookassaShopId}
+                              onChange={(event) => setAdminYookassaShopId(event.target.value)}
+                              onFocus={unlockYookassaInput}
+                              placeholder={adminHasYookassaApiKey ? 'Новый Shop ID (только цифры)' : '123456'}
                               disabled={isSavingTemplateConfig}
                               autoComplete="off"
+                              readOnly
+                              data-lpignore="true"
+                              data-1p-ignore="true"
+                              data-form-type="other"
                             />
-                          </div>
+                            <label htmlFor="admin_yookassa_secret_key" className="mt-input">
+                              Secret key ЮKassa:
+                            </label>
+                            <input
+                              id="admin_yookassa_secret_key"
+                              name="yookassa-secret-key"
+                              type="text"
+                              className="input-main yookassa-secret-input"
+                              value={adminYookassaSecretKey}
+                              onChange={(event) => setAdminYookassaSecretKey(event.target.value)}
+                              onFocus={unlockYookassaInput}
+                              placeholder={adminHasYookassaApiKey ? 'Новый Secret key (live_… или test_…)' : 'live_xxxxx'}
+                              disabled={isSavingTemplateConfig}
+                              autoComplete="new-password"
+                              readOnly
+                              spellCheck={false}
+                              data-lpignore="true"
+                              data-1p-ignore="true"
+                              data-form-type="other"
+                            />
+                          </form>
                         ) : null}
                         <button
                           type="button"
@@ -2345,24 +2751,28 @@ const AgentsPageContent = () => {
                           onChange={(enabled) => handleToggleSalesActivity('lead_generation_enabled', enabled)}
                           disabled={isSavingTemplateConfig}
                           title="Лидогенерация"
-                          description="Основной контур sales_manager: анализ чатов, отлов лидов и продажа."
-                          helpText="Если выключить, агент прекращает выполнение основной задачи sales_manager. Если одновременно выключить Лидогенерацию, Нейрокомментинг и Имитацию живого общения, агент будет автоматически выключен."
+                          helpText="Основной контур sales_manager: анализ чатов, отлов лидов и продажа. Если выключить, агент прекращает выполнение основной задачи sales_manager. Если одновременно выключить Лидогенерацию, Нейрокомментинг и Имитацию живого общения, агент будет автоматически выключен."
+                        />
+                        <FeatureToggle
+                          checked={salesContactsPoolOnly}
+                          onChange={(enabled) => handleToggleSalesActivity('contacts_pool_only', enabled)}
+                          disabled={isSavingTemplateConfig}
+                          title="Только контакты из пула"
+                          helpText="В личных сообщениях агент отвечает только тем, кто уже в базе (Excel), найден лидогенерацией в чатах или кому агент сам написал. Случайные входящие без истории игнорируются."
                         />
                         <FeatureToggle
                           checked={salesNeuroCommentingEnabled}
                           onChange={(enabled) => handleToggleSalesActivity('neuro_commenting_enabled', enabled)}
                           disabled={isSavingTemplateConfig}
                           title="Нейрокомментинг"
-                          description="Юзербот комментирует посты в каналах аккаунта, где доступен как участник."
-                          helpText="К каждому новому посту формируется короткий LLM-комментарий без фильтра по триггер-словам и без квалификации целевого лида. Для групп и чатов по-прежнему действует список триггер-слов ниже (лидогенерация и имитация общения)."
+                          helpText="Юзербот комментирует посты в каналах аккаунта, где доступен как участник. К каждому новому посту формируется короткий LLM-комментарий без фильтра по триггер-словам и без квалификации целевого лида. Для групп и чатов по-прежнему действует список триггер-слов ниже (лидогенерация и имитация общения)."
                         />
                         <FeatureToggle
                           checked={salesLiveChatSimulationEnabled}
                           onChange={(enabled) => handleToggleSalesActivity('live_chat_simulation_enabled', enabled)}
                           disabled={isSavingTemplateConfig}
                           title="Имитация живого общения"
-                          description="Юзербот периодически включается в обсуждения по триггер-словам из списка ниже."
-                          helpText="Когда включено, юзербот может периодически вступать в разговор в чатах и отправлять 2–3 сообщения за одно включение; сообщение учитывается только если совпало хотя бы с одним триггер-словом."
+                          helpText="Юзербот периодически включается в обсуждения по триггер-словам из списка ниже. Когда включено, юзербот может периодически вступать в разговор в чатах и отправлять 2–3 сообщения за одно включение; сообщение учитывается только если совпало хотя бы с одним триггер-словом."
                         />
                         <div className="sales-trigger-words-block">
                           <label htmlFor="sales_trigger_word_draft" className="sales-trigger-words-label">
@@ -2414,6 +2824,69 @@ const AgentsPageContent = () => {
                             </button>
                           </div>
                         </div>
+                        <div className="sales-excel-upload-block mt-input">
+                          <h4 className="agent-form-channel-title">База клиентов (Excel)</h4>
+                          <p className="sales-trigger-words-hint">
+                            Загрузите выгрузку 2GIS или совместимую таблицу (.xlsx). Контакты с WhatsApp
+                            или Telegram сохраняются; первые сообщения ставятся в очередь с паузой 15–20 минут
+                            между контактами. Если нет ответа — напоминания через 1 день, неделю и месяц.
+                            Агент ведёт диалог гибко: ресепшен, запрос ЛПР, КП в чат по просьбе клиента.
+                          </p>
+                          <div className="sales-excel-file-upload">
+                            <input
+                              id={salesExcelFileInputId}
+                              type="file"
+                              accept=".xlsx,.xls"
+                              className="sales-excel-file-upload__input"
+                              onChange={handleSalesManagerExcelUpload}
+                              disabled={salesExcelUploadBusy || isSavingTemplateConfig}
+                            />
+                            <label
+                              htmlFor={salesExcelFileInputId}
+                              className={`sales-excel-file-upload__label${
+                                salesExcelUploadBusy || isSavingTemplateConfig ? ' is-disabled' : ''
+                              }`}
+                            >
+                              <svg
+                                className="sales-excel-file-upload__icon"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                xmlns="http://www.w3.org/2000/svg"
+                                aria-hidden="true"
+                              >
+                                <path
+                                  d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z"
+                                  stroke="currentColor"
+                                  strokeWidth="1.75"
+                                  strokeLinejoin="round"
+                                />
+                                <path
+                                  d="M14 2v6h6M8 13h8M8 17h5"
+                                  stroke="currentColor"
+                                  strokeWidth="1.75"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                />
+                              </svg>
+                              <span className="sales-excel-file-upload__title">
+                                {salesExcelUploadBusy ? 'Обработка файла…' : 'Выбрать файл Excel'}
+                              </span>
+                              <span className="sales-excel-file-upload__formats">
+                                .xlsx или .xls — выгрузка 2GIS и совместимые таблицы
+                              </span>
+                            </label>
+                          </div>
+                          {salesExcelImportInfo ? (
+                            <p className="sales-trigger-words-hint">
+                              Последняя загрузка: добавлено {salesExcelImportInfo.imported ?? 0}, обновлено{' '}
+                              {salesExcelImportInfo.updated ?? 0}
+                              {salesExcelImportInfo.skipped_no_messenger
+                                ? `, без канала: ${salesExcelImportInfo.skipped_no_messenger}`
+                                : ''}
+                              .
+                            </p>
+                          ) : null}
+                        </div>
                         <button
                           type="button"
                           className="btn btn-black"
@@ -2436,8 +2909,7 @@ const AgentsPageContent = () => {
                       onChange={handleToggleSmartSearch}
                       disabled={isSavingSmartSearch}
                       title="Умный поиск"
-                      description="ON: LLM формирует RAG-запросы. OFF: в RAG отправляется исходный запрос и извлекается 6 чанков."
-                      helpText="Управляет логикой поиска в базе знаний: LLM-планирование запросов или прямой поиск по исходному сообщению."
+                      helpText="ON: LLM формирует RAG-запросы. OFF: в RAG отправляется исходный запрос и извлекается 6 чанков. Управляет логикой поиска в базе знаний."
                     />
                     {isQATemplate ? (
                       <FeatureToggle
@@ -2445,8 +2917,7 @@ const AgentsPageContent = () => {
                         onChange={handleToggleChatFreeze}
                         disabled={isSavingChatFreeze}
                         title="Заморозка чата"
-                        description="Авто-передача диалога владельцу при неуверенном ответе агента."
-                        helpText="Доступно только для шаблона Консультант (QA). Если включено, агент может пометить диалог как требующий владельца и временно заморозить чат для пользователя."
+                        helpText="Авто-передача диалога владельцу при неуверенном ответе агента. Доступно только для шаблона Консультант (QA). Если включено, агент может пометить диалог как требующий владельца и временно заморозить чат для пользователя."
                       />
                     ) : null}
                     <FeatureToggle
@@ -2454,8 +2925,7 @@ const AgentsPageContent = () => {
                       onChange={handleToggleStartProcessing}
                       disabled={isSavingStartProcessing}
                       title="Обработка /start"
-                      description="ON: /start отправляется в LLM. OFF: отправляется дефолтное/пользовательское приветствие."
-                      helpText="По умолчанию выключено: команда /start вернет текст приветствия. Включите, чтобы /start обрабатывался как обычное сообщение пользователя."
+                      helpText="ON: /start отправляется в LLM. OFF: отправляется дефолтное/пользовательское приветствие. По умолчанию выключено: команда /start вернет текст приветствия. Включите, чтобы /start обрабатывался как обычное сообщение пользователя."
                     />
                   </div>
 
@@ -2646,9 +3116,9 @@ const AgentsPageContent = () => {
                   </button>
                   <button
                     type="button"
-                    className={`connection-type-card ${channelModalTab === 'whatsapp_userbot' ? 'active' : ''} ${isSalesManagerTemplate ? 'connection-type-card--disabled' : ''}`}
+                    className={`connection-type-card ${channelModalTab === 'whatsapp_userbot' ? 'active' : ''}`}
                     onClick={() => setChannelModalTab('whatsapp_userbot')}
-                    disabled={isSavingChannel || isSalesManagerTemplate}
+                    disabled={isSavingChannel}
                   >
                     WhatsApp userbot
                   </button>
@@ -2680,7 +3150,7 @@ const AgentsPageContent = () => {
                 </div>
                 {isSalesManagerTemplate ? (
                   <p className="help-text">
-                    Для шаблона "Менеджер продаж" доступно только подключение Telegram userbot.
+                    Для шаблона «ИИ МОП» доступны Telegram userbot и/или WhatsApp userbot. Сканирование групп — только в Telegram.
                   </p>
                 ) : null}
 
@@ -2714,62 +3184,124 @@ const AgentsPageContent = () => {
                   </div>
                 ) : channelModalTab === 'userbot' ? (
                   <div className="agent-management-block">
-                    <input
-                      type="number"
-                      className="input-main"
-                      placeholder="API ID"
-                      value={userbotApiId}
-                      onChange={(event) => setUserbotApiId(event.target.value)}
-                      disabled={isSavingChannel}
-                    />
-                    <input
-                      type="text"
-                      className="input-main"
-                      placeholder="API hash"
-                      value={userbotApiHash}
-                      onChange={(event) => setUserbotApiHash(event.target.value)}
-                      disabled={isSavingChannel}
-                    />
-                    <input
-                      type="text"
-                      className="input-main"
-                      placeholder="+79990001122"
-                      value={userbotPhone}
-                      onChange={(event) => setUserbotPhone(event.target.value)}
-                      disabled={isSavingChannel}
-                    />
-                    <button
-                      type="button"
-                      className="btn btn-outline"
-                      onClick={handleRequestUserbotCode}
-                      disabled={isSavingChannel || isSendingUserbotCode}
-                    >
-                      {isSendingUserbotCode ? 'Отправка...' : 'Отправить код'}
-                    </button>
-                    <input
-                      type="text"
-                      className="input-main"
-                      placeholder="Код из Telegram"
-                      value={userbotCode}
-                      onChange={(event) => setUserbotCode(event.target.value)}
-                      disabled={isSavingChannel}
-                    />
-                    <input
-                      type="password"
-                      className="input-main"
-                      placeholder="Пароль 2FA (если есть)"
-                      value={userbotPassword}
-                      onChange={(event) => setUserbotPassword(event.target.value)}
-                      disabled={isSavingChannel}
-                    />
-                    <button
-                      type="button"
-                      className="btn btn-outline"
-                      onClick={handleVerifyUserbotCode}
-                      disabled={isSavingChannel || isVerifyingUserbotCode}
-                    >
-                      {isVerifyingUserbotCode ? 'Проверка...' : 'Подтвердить код'}
-                    </button>
+                    <p className="help-text">
+                      Как в Telegram: QR, код по SMS или файл сессии. API-ключи с my.telegram.org не нужны.
+                    </p>
+                    <div className="connection-type-grid connection-type-grid--channels">
+                      <button
+                        type="button"
+                        className={`connection-type-card ${userbotAuthMode === 'qr' ? 'active' : ''}`}
+                        onClick={() => switchUserbotAuthMode('qr')}
+                        disabled={isSavingChannel}
+                      >
+                        QR-код
+                      </button>
+                      <button
+                        type="button"
+                        className={`connection-type-card ${userbotAuthMode === 'phone' ? 'active' : ''}`}
+                        onClick={() => switchUserbotAuthMode('phone')}
+                        disabled={isSavingChannel}
+                      >
+                        Код по SMS
+                      </button>
+                      <button
+                        type="button"
+                        className={`connection-type-card ${userbotAuthMode === 'file' ? 'active' : ''}`}
+                        onClick={() => switchUserbotAuthMode('file')}
+                        disabled={isSavingChannel}
+                      >
+                        Файл сессии
+                      </button>
+                    </div>
+                    {userbotAuthMode === 'qr' ? (
+                      <>
+                        <button
+                          type="button"
+                          className="btn btn-outline"
+                          onClick={handleUserbotQrStart}
+                          disabled={isSavingChannel || isStartingUserbotQr}
+                        >
+                          {isStartingUserbotQr ? 'Генерация QR...' : 'Показать QR-код'}
+                        </button>
+                        {userbotQrDataUrl ? (
+                          <div className="userbot-qr-wrap">
+                            <img src={userbotQrDataUrl} alt="Telegram QR" className="userbot-qr-image" />
+                          </div>
+                        ) : null}
+                        <input
+                          type="password"
+                          className="input-main"
+                          placeholder="Пароль 2FA (если включена)"
+                          value={userbotPassword}
+                          onChange={(event) => setUserbotPassword(event.target.value)}
+                          disabled={isSavingChannel}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-outline"
+                          onClick={handleUserbotQrVerify2fa}
+                          disabled={isSavingChannel || isVerifyingUserbotQr2fa || !userbotQrNeeds2fa}
+                        >
+                          {isVerifyingUserbotQr2fa ? 'Проверка...' : 'Подтвердить 2FA'}
+                        </button>
+                      </>
+                    ) : null}
+                    {userbotAuthMode === 'phone' ? (
+                      <>
+                        <input
+                          type="text"
+                          className="input-main"
+                          placeholder="+79990001122"
+                          value={userbotPhone}
+                          onChange={(event) => setUserbotPhone(event.target.value)}
+                          disabled={isSavingChannel}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-outline"
+                          onClick={handleRequestUserbotCode}
+                          disabled={isSavingChannel || isSendingUserbotCode}
+                        >
+                          {isSendingUserbotCode ? 'Отправка...' : 'Отправить код'}
+                        </button>
+                        <input
+                          type="text"
+                          className="input-main"
+                          placeholder="Код из Telegram"
+                          value={userbotCode}
+                          onChange={(event) => setUserbotCode(event.target.value)}
+                          disabled={isSavingChannel}
+                        />
+                        <input
+                          type="password"
+                          className="input-main"
+                          placeholder="Пароль 2FA (если есть)"
+                          value={userbotPassword}
+                          onChange={(event) => setUserbotPassword(event.target.value)}
+                          disabled={isSavingChannel}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-outline"
+                          onClick={handleVerifyUserbotCode}
+                          disabled={isSavingChannel || isVerifyingUserbotCode}
+                        >
+                          {isVerifyingUserbotCode ? 'Проверка...' : 'Подтвердить код'}
+                        </button>
+                      </>
+                    ) : null}
+                    {userbotAuthMode === 'file' ? (
+                      <>
+                        <UserbotSessionFileUpload
+                          disabled={isSavingChannel}
+                          isImporting={isImportingUserbotSession}
+                          onFileSelect={handleUserbotImportSession}
+                        />
+                      </>
+                    ) : null}
+                    {userbotVerifiedLabel ? (
+                      <p className="help-text userbot-success">Готово: {userbotVerifiedLabel}</p>
+                    ) : null}
                     <label className="channel-primary-checkbox">
                       <input
                         type="checkbox"
@@ -3144,6 +3676,15 @@ const AgentsPageContent = () => {
           </div>
         </div>
       )}
+
+      <AgentContractPaymentModal
+        isOpen={Boolean(contractModalAgent)}
+        agent={contractModalAgent}
+        title={contractModalTitle}
+        onClose={closeContractPaymentModal}
+        onSubmit={handleContractPaymentSubmit}
+        isProcessing={isContractPaymentProcessing}
+      />
     </div>
   );
 };

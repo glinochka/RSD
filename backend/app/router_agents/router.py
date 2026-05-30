@@ -12,7 +12,7 @@ from collections import defaultdict
 from typing import Any
 
 import jwt
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Header, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import JSONResponse, Response, PlainTextResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt.exceptions import InvalidTokenError
@@ -39,6 +39,7 @@ from ..alembic.models import (
     AgentCrmConnection,
     AgentFrozenUser,
     AgentHttpIntegration,
+    AgentSalesImportedContact,
 )
 from ..config import settings
 from ..qdrant.search_service import delete_agent_vectors
@@ -50,14 +51,25 @@ from ..channels.message_processor import (
     get_message_processor,
 )
 from ..services.agent_availability import normalize_agent_availability_for_storage
+from ..prompts.system_prompts import DEFAULT_AGENT_SYSTEM_PROMPT, SALES_TRIGGER_WORDS_INSTRUCTION
 from ..services.ai_authoring import ai_client, generate_welcome_with_ai, improve_prompt_with_ai
 from ..services.admin_booking import get_admin_booking_service
+from ..services.admin_booking.payment_service import get_admin_booking_payment_service
 from ..services.admin_booking.domains import DOMAIN_REGISTRY as _DOMAIN_REGISTRY
 from ..services.voice_transcription import is_voice_stt_configured, transcribe_voice_bytes
 from ..services.http_integration.errors import HttpIntegrationValidationError
 from ..services.http_integration.tool_registry import validate_integration_config_dict
 from ..services.qa_handoff_service import EscalationType as QAEscalationType, get_qa_handoff_service
 from ..services.template_runtime import EscalationType, get_template_runtime
+from ..services.telegram_userbot_auth import (
+    TelegramUserbotAuthError,
+    complete_qr_2fa,
+    create_telegram_client,
+    get_qr_status,
+    import_session_file,
+    resolve_api_credentials,
+    start_qr_login,
+)
 from ..services.youtube_client import get_youtube_client
 from ..utils.api_keys import generate_agent_external_api_key, hash_agent_external_api_key
 from ..utils.JWT import get_user_from_access_token
@@ -100,13 +112,6 @@ from .telephony_channel import (
     validate_telephony_credentials_input,
 )
 from .telephony_analytics import list_agent_telephony_calls
-from .telephony_preview import (
-    end_telephony_preview_session,
-    preview_tts_status_for_agent,
-    run_telephony_preview_turn,
-    start_telephony_preview_session,
-    synthesize_preview_speech_for_agent,
-)
 
 logger = getLogger(__name__)
 router = APIRouter(prefix="/api/agents")
@@ -174,6 +179,7 @@ SALES_DEFAULT_CONFIG = {
     "workflow_completion_mode": "auto_finish_on_signal",
     "lead_score_scale": 100,
     "lead_generation_enabled": True,
+    "contacts_pool_only": False,
     "neuro_commenting_enabled": False,
     "live_chat_simulation_enabled": False,
     "scan_scope": {
@@ -212,20 +218,9 @@ WIDGET_ALLOWED_TEMPLATE_TYPES = {"qa", "crm_admin"}
 
 
 def _normalize_sales_trigger_words(raw_value: Any) -> list[str]:
-    if not isinstance(raw_value, list):
-        return ["купить"]
-    normalized: list[str] = []
-    for item in raw_value:
-        word = str(item or "").strip().lower()
-        if not word:
-            continue
-        if len(word) > 64:
-            word = word[:64]
-        if word not in normalized:
-            normalized.append(word)
-        if len(normalized) >= 30:
-            break
-    return normalized or ["купить"]
+    from ..services.sales.trigger_words import normalize_sales_trigger_words
+
+    return normalize_sales_trigger_words(raw_value)
 
 
 async def _generate_sales_trigger_words_via_llm(
@@ -236,14 +231,11 @@ async def _generate_sales_trigger_words_via_llm(
     product = str(template_config.get("sales_product_name") or "").strip()
     offer_type = str(template_config.get("sales_offer_type") or "").strip()
     usp = str(template_config.get("sales_usp") or "").strip()
-    instruction = (
-        "Сгенерируй список до 20 коротких слов/корней-триггеров для фильтра входящих сообщений в продажах. "
-        "Нужны слова, которые часто встречаются в намерении купить или запросить цену/условия/демо. "
-        "Верни строго JSON-массив строк без пояснений.\n"
-        f"Продукт: {product or 'не указан'}\n"
-        f"Тип оффера: {offer_type or 'не указан'}\n"
-        f"УТП: {usp or 'не указано'}\n"
-        f"Системный промпт: {system_prompt or 'не указан'}"
+    instruction = SALES_TRIGGER_WORDS_INSTRUCTION.format(
+        product=product or "не указан",
+        offer_type=offer_type or "не указан",
+        usp=usp or "не указано",
+        system_prompt=system_prompt or "не указан",
     )
     response = await ai_client.chat.completions.create(
         model="deepseek-chat",
@@ -251,13 +243,49 @@ async def _generate_sales_trigger_words_via_llm(
         temperature=0.2,
         max_tokens=250,
     )
+    from ..services.sales.trigger_words import parse_llm_trigger_words_response
+
     raw = str(response.choices[0].message.content or "").strip()
-    parsed: Any = []
-    try:
-        parsed = json.loads(raw)
-    except Exception:
-        parsed = [segment.strip() for segment in raw.split(",") if segment.strip()]
+    parsed = parse_llm_trigger_words_response(raw)
     return _normalize_sales_trigger_words(parsed)
+
+
+async def _run_sales_manager_excel_outreach(*, agent_id: int, import_batch_id: str) -> None:
+    from ..services.sales.agent_outreach_service import schedule_outreach_for_import_batch
+
+    max_batches = 25
+    total_queued = 0
+    try:
+        for _ in range(max_batches):
+            result = await schedule_outreach_for_import_batch(
+                agent_id=agent_id,
+                import_batch_id=import_batch_id,
+            )
+            if result.get("error"):
+                logger.warning(
+                    "sales_manager excel outreach stopped agent_id=%s batch=%s: %s",
+                    agent_id,
+                    import_batch_id,
+                    result.get("error"),
+                )
+                break
+            queued = int(result.get("queued") or 0)
+            total_queued += queued
+            if queued == 0:
+                break
+            await asyncio.sleep(2)
+        logger.info(
+            "sales_manager excel outreach finished agent_id=%s batch=%s total_queued=%s",
+            agent_id,
+            import_batch_id,
+            total_queued,
+        )
+    except Exception:
+        logger.exception(
+            "sales_manager excel outreach failed agent_id=%s batch=%s",
+            agent_id,
+            import_batch_id,
+        )
 
 
 async def _schedule_sales_trigger_words_generation(
@@ -691,9 +719,6 @@ def _default_crm_admin_config() -> dict[str, object]:
         "waitlist_enabled": True,
         "reminder_enabled": True,
         "reminder_offsets_hours": [24, 2],
-        "manual_confirmation_enabled": False,
-        "manual_confirmation_price_minor": 15000,
-        "manual_confirmation_duration_minutes": 120,
         "paid_booking_enabled": False,
         "appointment_confirmation_enabled": True,
         "field_mapping": None,
@@ -772,9 +797,6 @@ def _migrate_crm_admin_config(raw_config: dict | None) -> dict[str, object]:
 
     waitlist_enabled = bool(raw.get("waitlist_enabled", defaults["waitlist_enabled"]))
     reminder_enabled = bool(raw.get("reminder_enabled", defaults["reminder_enabled"]))
-    manual_confirmation_enabled = bool(
-        raw.get("manual_confirmation_enabled", defaults["manual_confirmation_enabled"])
-    )
     appointment_confirmation_enabled = bool(
         raw.get("appointment_confirmation_enabled", defaults["appointment_confirmation_enabled"])
     )
@@ -795,25 +817,6 @@ def _migrate_crm_admin_config(raw_config: dict | None) -> dict[str, object]:
             reminder_offsets_hours.append(value)
     if not reminder_offsets_hours:
         reminder_offsets_hours = [24, 2]
-    manual_confirmation_price_minor = int(
-        raw.get("manual_confirmation_price_minor", defaults["manual_confirmation_price_minor"])
-    )
-    manual_confirmation_duration_minutes = int(
-        raw.get(
-            "manual_confirmation_duration_minutes",
-            defaults["manual_confirmation_duration_minutes"],
-        )
-    )
-    if manual_confirmation_price_minor < 0:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="template_config.manual_confirmation_price_minor must be >= 0",
-        )
-    if manual_confirmation_duration_minutes < 1:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="template_config.manual_confirmation_duration_minutes must be >= 1",
-        )
 
     allowed_tools_raw = raw.get("allowed_tools")
     if allowed_tools_raw is None:
@@ -896,9 +899,6 @@ def _migrate_crm_admin_config(raw_config: dict | None) -> dict[str, object]:
         "waitlist_enabled": waitlist_enabled,
         "reminder_enabled": reminder_enabled,
         "reminder_offsets_hours": reminder_offsets_hours,
-        "manual_confirmation_enabled": manual_confirmation_enabled,
-        "manual_confirmation_price_minor": manual_confirmation_price_minor,
-        "manual_confirmation_duration_minutes": manual_confirmation_duration_minutes,
         "paid_booking_enabled": paid_booking_enabled,
         "appointment_confirmation_enabled": appointment_confirmation_enabled,
         "field_mapping": field_mapping,
@@ -1112,6 +1112,9 @@ def _normalize_template_config(template_type: str, template_config: dict | None)
         lead_generation_enabled = bool(
             raw.get("lead_generation_enabled", SALES_DEFAULT_CONFIG["lead_generation_enabled"])
         )
+        contacts_pool_only = bool(
+            raw.get("contacts_pool_only", SALES_DEFAULT_CONFIG["contacts_pool_only"])
+        )
         neuro_commenting_enabled = bool(
             raw.get("neuro_commenting_enabled", SALES_DEFAULT_CONFIG["neuro_commenting_enabled"])
         )
@@ -1280,6 +1283,7 @@ def _normalize_template_config(template_type: str, template_config: dict | None)
             "workflow_completion_mode": workflow_completion_mode,
             "lead_score_scale": lead_score_scale,
             "lead_generation_enabled": lead_generation_enabled,
+            "contacts_pool_only": contacts_pool_only,
             "neuro_commenting_enabled": neuro_commenting_enabled,
             "live_chat_simulation_enabled": live_chat_simulation_enabled,
             "scan_scope": scan_scope,
@@ -2642,6 +2646,64 @@ def _decode_userbot_auth_token(auth_token: str) -> dict:
     return data
 
 
+def _create_userbot_qr_auth_token(
+    *,
+    api_id: int,
+    api_hash: str,
+    auth_id: str,
+    encrypted_pending_session: str,
+) -> str:
+    now = datetime.utcnow()
+    payload = {
+        "scope": "userbot_qr_auth",
+        "api_id": api_id,
+        "encrypted_api_hash": encrypt_token(api_hash),
+        "auth_id": auth_id,
+        "encrypted_pending_session": encrypted_pending_session,
+        "exp": now + timedelta(minutes=USERBOT_AUTH_TOKEN_TTL_MINUTES),
+        "iat": now,
+    }
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+
+def _decode_userbot_qr_auth_token(auth_token: str) -> dict:
+    try:
+        data = jwt.decode(auth_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+    except InvalidTokenError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Невалидный или просроченный токен QR-входа userbot",
+        )
+    if data.get("scope") != "userbot_qr_auth":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Некорректный scope токена QR-входа userbot",
+        )
+    auth_id = str(data.get("auth_id") or "").strip()
+    if not auth_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Токен QR-входа userbot не содержит auth_id",
+        )
+    return data
+
+
+def _userbot_auth_http_error(exc: TelegramUserbotAuthError) -> HTTPException:
+    return HTTPException(status_code=exc.status_code, detail=str(exc))
+
+
+def _resolve_userbot_api_pair(
+    api_id: int | None,
+    api_hash: str | None,
+    *,
+    prefer_desktop: bool = True,
+) -> tuple[int, str]:
+    try:
+        return resolve_api_credentials(api_id, api_hash, prefer_desktop=prefer_desktop)
+    except TelegramUserbotAuthError as exc:
+        raise _userbot_auth_http_error(exc) from exc
+
+
 def _create_whatsapp_userbot_auth_token(
     *,
     user_id: int,
@@ -3712,6 +3774,9 @@ async def read_agent(
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
             await _ensure_external_api_key(found_agent, agent_dao)
             await _ensure_single_primary_flag(session=session, agent_id=found_agent.id)
+            from ..services.agent_billing import enforce_expired_maintenance
+
+            await enforce_expired_maintenance(agent_dao, found_agent)
             channels = await _list_agent_channels(session, found_agent.id)
             crm_connections = await _list_agent_crm_connections(session, found_agent.id)
             http_integrations = await _list_agent_http_integrations(session, found_agent.id)
@@ -3755,11 +3820,17 @@ async def read_all_agents(
                 user = await user_dao.find_one_by_filter(load_relations=True, telegram_id=tg_id)
             if not user:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-            return JSONResponse(
-                content=[
+            from ..services.agent_billing import enforce_expired_maintenance
+
+            agent_dao = AgentDAO(session)
+            serialized_agents = []
+            for agent in user.agents or []:
+                await enforce_expired_maintenance(agent_dao, agent)
+                serialized_agents.append(
                     _serialize_agent(agent, user=user, include_encrypted_token=internal)
-                    for agent in (user.agents or [])
-                ],
+                )
+            return JSONResponse(
+                content=serialized_agents,
                 status_code=status.HTTP_200_OK,
             )
 
@@ -3790,7 +3861,7 @@ async def create_empty_agent(
                     "external_api_key_hash": hash_agent_external_api_key(external_api_key),
                     "bot_username": None,
                     "system_prompt": payload.system_prompt.strip(),
-                    "is_active": False,
+                    "is_active": True,
                     **_initial_agent_billing_fields(template_type, user=current_user),
                 }
             )
@@ -3969,8 +4040,7 @@ async def create_agent_by_userbot_session(
     if current_user.is_banned:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
 
-    api_id = new_agent.api_id
-    api_hash = new_agent.api_hash.strip()
+    api_id, api_hash = _resolve_userbot_api_pair(new_agent.api_id, new_agent.api_hash)
     session_string = new_agent.session_string.strip()
     me = await _validate_userbot_session(api_id=api_id, api_hash=api_hash, session_string=session_string)
 
@@ -4074,8 +4144,6 @@ async def request_userbot_code(
     if current_user.is_banned:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
 
-    api_id = payload.api_id
-    api_hash = payload.api_hash.strip()
     phone_number = payload.phone_number.strip()
 
     try:
@@ -4086,7 +4154,11 @@ async def request_userbot_code(
             detail=f"Telethon не установлен на сервере: {exc}",
         )
 
-    client = _create_telethon_client(api_id=api_id, api_hash=api_hash)
+    client, api_id, api_hash = create_telegram_client(
+        api_id=payload.api_id,
+        api_hash=payload.api_hash.strip() if payload.api_hash else None,
+        prefer_desktop=True,
+    )
     phone_code_hash = None
     pending_session_string = ""
     try:
@@ -4107,9 +4179,16 @@ async def request_userbot_code(
     except HTTPException:
         raise
     except Exception as exc:
+        detail = f"Не удалось отправить код подтверждения Telegram: {exc}"
+        if "api_id/api_hash combination is invalid" in str(exc).lower():
+            detail = (
+                "Telegram отклонил API-ключи. Попробуйте вход по QR-код "
+                "или задайте TELEGRAM_USERBOT_API_ID и TELEGRAM_USERBOT_API_HASH в .env "
+                "(пара с my.telegram.org)."
+            )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Не удалось отправить код подтверждения Telegram: {exc}",
+            detail=detail,
         )
     finally:
         await client.disconnect()
@@ -4159,10 +4238,11 @@ async def verify_userbot_code(
             detail=f"Telethon не установлен на сервере: {exc}",
         )
 
-    client = _create_telethon_client(
+    client, api_id, api_hash = create_telegram_client(
         api_id=api_id,
         api_hash=api_hash,
         session_string=pending_session or "",
+        prefer_desktop=True,
     )
     try:
         await client.connect()
@@ -4217,6 +4297,168 @@ async def verify_userbot_code(
         },
         status_code=status.HTTP_200_OK,
     )
+
+
+@router.post("/userbot/qr/start")
+async def userbot_qr_start(
+    payload: UserbotQrStart, current_user=Depends(get_current_user_required)
+):
+    if current_user.is_banned:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
+
+    api_id, api_hash = _resolve_userbot_api_pair(
+        payload.api_id,
+        payload.api_hash.strip() if payload.api_hash else None,
+        prefer_desktop=True,
+    )
+    try:
+        result = await start_qr_login(api_id=api_id, api_hash=api_hash)
+    except TelegramUserbotAuthError as exc:
+        raise _userbot_auth_http_error(exc) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Не удалось начать QR-вход Telegram: {exc}",
+        ) from exc
+
+    auth_token = _create_userbot_qr_auth_token(
+        api_id=api_id,
+        api_hash=api_hash,
+        auth_id=str(result["auth_id"]),
+        encrypted_pending_session=encrypt_token(str(result.get("pending_session_string") or "")),
+    )
+    content: dict[str, Any] = {
+        "auth_token": auth_token,
+        "qr_url": result.get("qr_url") or "",
+        "qr_data_url": result.get("qr_data_url") or "",
+        "already_authorized": bool(result.get("already_authorized")),
+    }
+    if result.get("already_authorized"):
+        content["session_string"] = str(result.get("pending_session_string") or "")
+        content["api_id"] = result.get("api_id", api_id)
+        content["api_hash"] = result.get("api_hash", api_hash)
+    return JSONResponse(content=content, status_code=status.HTTP_200_OK)
+
+
+@router.post("/userbot/qr/status")
+async def userbot_qr_status(
+    payload: UserbotQrStatus, current_user=Depends(get_current_user_required)
+):
+    if current_user.is_banned:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
+
+    token_data = _decode_userbot_qr_auth_token(payload.auth_token.strip())
+    api_id = int(token_data["api_id"])
+    api_hash = decrypt_token(token_data["encrypted_api_hash"])
+    auth_id = str(token_data["auth_id"])
+    qr_state = await get_qr_status(auth_id=auth_id)
+
+    response: dict[str, Any] = {
+        "status": qr_state.get("status") or "pending",
+        "error": qr_state.get("error"),
+        "api_id": api_id,
+        "api_hash": api_hash,
+    }
+    if qr_state.get("status") == "success":
+        session_string = str(qr_state.get("session_string") or "").strip()
+        if not session_string:
+            pending_enc = token_data.get("encrypted_pending_session")
+            if pending_enc:
+                session_string = decrypt_token(pending_enc)
+        if qr_state.get("api_id"):
+            response["api_id"] = int(qr_state["api_id"])
+        if qr_state.get("api_hash"):
+            response["api_hash"] = str(qr_state["api_hash"])
+        me = qr_state.get("me") if isinstance(qr_state.get("me"), dict) else {}
+        response.update(
+            {
+                "session_string": session_string,
+                "telegram_id": me.get("telegram_id"),
+                "username": me.get("username"),
+                "first_name": me.get("first_name"),
+                "last_name": me.get("last_name"),
+                "phone_number": me.get("phone_number"),
+            }
+        )
+    elif qr_state.get("status") == "need_2fa":
+        pending_enc = token_data.get("encrypted_pending_session")
+        if qr_state.get("session_string"):
+            response["pending_session_string"] = qr_state.get("session_string")
+        elif pending_enc:
+            response["pending_session_string"] = decrypt_token(pending_enc)
+    return JSONResponse(content=response, status_code=status.HTTP_200_OK)
+
+
+@router.post("/userbot/qr/verify_2fa")
+async def userbot_qr_verify_2fa(
+    payload: UserbotQrVerify2fa, current_user=Depends(get_current_user_required)
+):
+    if current_user.is_banned:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
+
+    token_data = _decode_userbot_qr_auth_token(payload.auth_token.strip())
+    api_id = int(token_data["api_id"])
+    api_hash = decrypt_token(token_data["encrypted_api_hash"])
+    pending_enc = token_data.get("encrypted_pending_session")
+    pending_session = decrypt_token(pending_enc) if pending_enc else ""
+
+    qr_state = await get_qr_status(auth_id=str(token_data["auth_id"]))
+    if qr_state.get("session_string"):
+        pending_session = str(qr_state["session_string"])
+
+    try:
+        result = await complete_qr_2fa(
+            api_id=api_id,
+            api_hash=api_hash,
+            session_string=pending_session,
+            password=payload.password,
+        )
+    except TelegramUserbotAuthError as exc:
+        raise _userbot_auth_http_error(exc) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Не удалось подтвердить 2FA Telegram: {exc}",
+        ) from exc
+
+    return JSONResponse(content=result, status_code=status.HTTP_200_OK)
+
+
+@router.post("/userbot/import_session")
+async def userbot_import_session(
+    session_file: UploadFile = File(...),
+    api_id: int | None = Form(default=None),
+    api_hash: str | None = Form(default=None),
+    current_user=Depends(get_current_user_required),
+):
+    if current_user.is_banned:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
+
+    raw = await session_file.read()
+    if len(raw) > 25 * 1024 * 1024:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Файл сессии слишком большой (макс. 25 МБ)",
+        )
+    try:
+        custom_hash = api_hash.strip() if api_hash else None
+        custom_id = int(api_id) if api_id is not None and int(api_id) > 0 else None
+        result = await import_session_file(
+            api_id=custom_id,
+            api_hash=custom_hash,
+            filename=session_file.filename or "upload",
+            content=raw,
+        )
+    except TelegramUserbotAuthError as exc:
+        raise _userbot_auth_http_error(exc) from exc
+    except Exception as exc:
+        logger.warning("userbot import_session failed: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Не удалось импортировать сессию: {exc}",
+        ) from exc
+
+    return JSONResponse(content=result, status_code=status.HTTP_200_OK)
 
 
 @router.post("/whatsapp_userbot/request_code")
@@ -4659,8 +4901,10 @@ async def add_agent_userbot_channel(
     payload: AddTelegramUserbotChannel,
     current_user=Depends(get_current_user_required),
 ):
-    api_id = payload.api_id
-    api_hash = payload.api_hash.strip()
+    api_id, api_hash = _resolve_userbot_api_pair(
+        payload.api_id,
+        payload.api_hash.strip() if payload.api_hash else None,
+    )
     session_string = payload.session_string.strip()
     me = await _validate_userbot_session(api_id=api_id, api_hash=api_hash, session_string=session_string)
 
@@ -5541,13 +5785,18 @@ async def toggle_status(
                 current_user=current_user,
                 internal=internal,
             )
+            from ..services.agent_billing import enforce_expired_maintenance
+
+            await enforce_expired_maintenance(agent_dao, agent)
             new_status = not agent.is_active
             billing_user = await _resolve_billing_user(session, agent, current_user)
             if new_status:
                 from ..agent_template_pricing import (
+                    PAYMENT_KIND_AGENT_MAINTENANCE,
                     build_agent_billing_state,
                     get_agent_template_pricing,
                     is_activation_paid,
+                    is_maintenance_current,
                     user_has_free_agent_activation,
                 )
 
@@ -5565,12 +5814,22 @@ async def toggle_status(
                         {"activation_paid_at": datetime.now(timezone.utc).replace(tzinfo=None)},
                     )
                     agent = await agent_dao.find_one_by_filter(id=agent.id)
+                if pricing and pricing.monthly_maintenance_rub_min > 0 and not is_maintenance_current(agent):
+                    billing = build_agent_billing_state(agent, user=billing_user)
+                    raise HTTPException(
+                        status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                        detail={
+                            "message": "Для активации агента требуется оплата подписки",
+                            "billing": billing,
+                            "payment_kind": PAYMENT_KIND_AGENT_MAINTENANCE,
+                        },
+                    )
                 if not is_activation_paid(agent, user=billing_user):
                     billing = build_agent_billing_state(agent, user=billing_user)
                     raise HTTPException(
                         status_code=status.HTTP_402_PAYMENT_REQUIRED,
                         detail={
-                            "message": "Для активации агента требуется оплата минимального взноса за запуск",
+                            "message": "Для активации агента требуется оплата",
                             "billing": billing,
                             "payment_kind": "agent_activation",
                         },
@@ -5603,6 +5862,56 @@ async def toggle_status(
             payload["channels"] = [_serialize_channel_connection(item) for item in channels]
             return JSONResponse(
                 content=payload,
+                status_code=status.HTTP_200_OK,
+            )
+
+
+@router.patch("/autopay")
+async def update_agent_autopay(
+    payload: AgentAutopayUpdateRequest,
+    current_user=Depends(get_current_user_required),
+):
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=lookup_agent_id,
+                bot_id=lookup_bot_id,
+                session=session,
+                current_user=current_user,
+                internal=False,
+            )
+            from ..agent_template_pricing import build_agent_billing_state, get_agent_template_pricing
+
+            pricing = get_agent_template_pricing(agent.template_type)
+            if not pricing or pricing.monthly_maintenance_rub_min <= 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Автопродление доступно только для платных агентов",
+                )
+            if payload.enabled and not getattr(agent, "yookassa_payment_method_id", None):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        "Сначала оплатите подписку с включённым автопродлением, "
+                        "чтобы сохранить способ оплаты"
+                    ),
+                )
+            updates: dict[str, object] = {
+                "autopay_enabled": payload.enabled,
+                "autopay_last_error": None if payload.enabled else agent.autopay_last_error,
+            }
+            await agent_dao.update(agent, updates)
+            agent = await agent_dao.find_one_by_filter(id=agent.id)
+            billing_user = await _resolve_billing_user(session, agent, current_user)
+            return JSONResponse(
+                content={
+                    "agent_id": agent.id,
+                    "autopay_enabled": bool(agent.autopay_enabled),
+                    "billing": build_agent_billing_state(agent, user=billing_user),
+                },
                 status_code=status.HTTP_200_OK,
             )
 
@@ -6201,171 +6510,6 @@ async def read_analytics_telephony_calls(
                     "bot_id": agent.bot_id,
                     "calls": calls,
                 },
-                status_code=status.HTTP_200_OK,
-            )
-
-
-_TELEPHONY_PREVIEW_RATE = Depends(
-    rate_limit(max_requests=30, window_seconds=60, scope="agents_telephony_preview")
-)
-
-
-@router.get("/telephony/preview/tts-status")
-async def telephony_preview_tts_status(
-    agent_id: int = Query(..., gt=0),
-    current_user=Depends(get_current_user_required),
-    _rate_limited=_TELEPHONY_PREVIEW_RATE,
-):
-    async with async_session_maker() as session:
-        agent_dao = AgentDAO(session)
-        async with session.begin():
-            agent = await _find_agent_with_access(
-                agent_dao,
-                agent_id=agent_id,
-                bot_id=None,
-                session=session,
-                current_user=current_user,
-                internal=False,
-            )
-            data = await preview_tts_status_for_agent(session, agent=agent)
-            return JSONResponse(content=data, status_code=status.HTTP_200_OK)
-
-
-@router.post("/telephony/preview/start")
-async def telephony_preview_start(
-    payload: TelephonyPreviewStartPayload,
-    current_user=Depends(get_current_user_required),
-    _rate_limited=_TELEPHONY_PREVIEW_RATE,
-):
-    async with async_session_maker() as session:
-        agent_dao = AgentDAO(session)
-        async with session.begin():
-            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
-            agent = await _find_agent_with_access(
-                agent_dao,
-                agent_id=lookup_agent_id,
-                bot_id=lookup_bot_id,
-                session=session,
-                current_user=current_user,
-                internal=False,
-            )
-            if not agent.is_active:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Agent is disabled")
-            data = await start_telephony_preview_session(
-                session,
-                agent=agent,
-                owner_user_id=int(current_user.id),
-            )
-            return JSONResponse(
-                content={"agent_id": agent.id, "bot_id": agent.bot_id, **data},
-                status_code=status.HTTP_200_OK,
-            )
-
-
-@router.post("/telephony/preview/turn")
-async def telephony_preview_turn(
-    payload: TelephonyPreviewTurnPayload,
-    current_user=Depends(get_current_user_required),
-    _rate_limited=_TELEPHONY_PREVIEW_RATE,
-):
-    transcript = (payload.user_transcript or "").strip()
-    if not transcript and not (payload.audio_base64 or "").strip():
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Укажите user_transcript или audio_base64",
-        )
-    async with async_session_maker() as session:
-        agent_dao = AgentDAO(session)
-        async with session.begin():
-            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
-            agent = await _find_agent_with_access(
-                agent_dao,
-                agent_id=lookup_agent_id,
-                bot_id=lookup_bot_id,
-                session=session,
-                current_user=current_user,
-                internal=False,
-            )
-            if not agent.is_active:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Agent is disabled")
-            history = None
-            if payload.turn_history:
-                history = [item.model_dump() for item in payload.turn_history]
-            data = await run_telephony_preview_turn(
-                session,
-                agent=agent,
-                owner_user_id=int(current_user.id),
-                call_db_id=int(payload.call_db_id) if payload.call_db_id is not None else None,
-                preview_session_id=(payload.preview_session_id or "").strip() or None,
-                dialog_state=(payload.dialog_state or "").strip() or None,
-                turn_history=history,
-                user_transcript=payload.user_transcript,
-                audio_base64=payload.audio_base64,
-                audio_mime_type=payload.audio_mime_type,
-            )
-            return JSONResponse(
-                content={"agent_id": agent.id, **data},
-                status_code=status.HTTP_200_OK,
-            )
-
-
-@router.post("/telephony/preview/speak")
-async def telephony_preview_speak(
-    payload: TelephonyPreviewSpeakPayload,
-    current_user=Depends(get_current_user_required),
-    _rate_limited=_TELEPHONY_PREVIEW_RATE,
-):
-    text = (payload.text or "").strip()
-    if not text:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Укажите text")
-    async with async_session_maker() as session:
-        agent_dao = AgentDAO(session)
-        async with session.begin():
-            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
-            agent = await _find_agent_with_access(
-                agent_dao,
-                agent_id=lookup_agent_id,
-                bot_id=lookup_bot_id,
-                session=session,
-                current_user=current_user,
-                internal=False,
-            )
-            if not agent.is_active:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Agent is disabled")
-            data = await synthesize_preview_speech_for_agent(session, agent=agent, text=text)
-            return JSONResponse(
-                content={"agent_id": agent.id, **data},
-                status_code=status.HTTP_200_OK,
-            )
-
-
-@router.post("/telephony/preview/end")
-async def telephony_preview_end(
-    payload: TelephonyPreviewEndPayload,
-    current_user=Depends(get_current_user_required),
-    _rate_limited=_TELEPHONY_PREVIEW_RATE,
-):
-    async with async_session_maker() as session:
-        agent_dao = AgentDAO(session)
-        async with session.begin():
-            lookup_agent_id, lookup_bot_id = _resolve_lookup(payload)
-            agent = await _find_agent_with_access(
-                agent_dao,
-                agent_id=lookup_agent_id,
-                bot_id=lookup_bot_id,
-                session=session,
-                current_user=current_user,
-                internal=False,
-            )
-            data = await end_telephony_preview_session(
-                session,
-                agent=agent,
-                owner_user_id=int(current_user.id),
-                call_db_id=int(payload.call_db_id) if payload.call_db_id is not None else None,
-                preview_session_id=(payload.preview_session_id or "").strip() or None,
-            )
-            return JSONResponse(
-                content={"agent_id": agent.id, **data},
                 status_code=status.HTTP_200_OK,
             )
 
@@ -7047,6 +7191,126 @@ async def whatsapp_userbot_send_to_user_as_owner(
     return JSONResponse(content={"ok": True}, status_code=status.HTTP_200_OK)
 
 
+@router.post(
+    "/sales_manager/contacts/excel-upload",
+    dependencies=[Depends(rate_limit(max_requests=15, window_seconds=60, scope="sales_manager_excel_upload"))],
+)
+async def sales_manager_contacts_excel_upload(
+    background_tasks: BackgroundTasks,
+    agent_id: int = Form(..., gt=0),
+    file: UploadFile = File(...),
+    current_user=Depends(get_current_user_required),
+):
+    """Загрузка Excel-базы для sales_manager: парсинг, сохранение, фоновый outreach."""
+    if current_user.is_banned:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
+
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Пустой файл")
+
+    from ..services.sales.agent_excel_import import import_agent_contacts_from_excel
+
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=agent_id,
+                bot_id=None,
+                session=session,
+                current_user=current_user,
+                internal=False,
+            )
+            if agent.template_type != "sales_manager":
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Загрузка Excel доступна только для шаблона sales_manager",
+                )
+            try:
+                stats = await import_agent_contacts_from_excel(
+                    session,
+                    agent_id=int(agent.id),
+                    file_bytes=raw,
+                )
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+
+    batch_id = str(stats.get("import_batch_id") or "")
+    if batch_id and (int(stats.get("imported") or 0) + int(stats.get("updated") or 0)) > 0:
+        background_tasks.add_task(
+            _run_sales_manager_excel_outreach,
+            agent_id=int(agent.id),
+            import_batch_id=batch_id,
+        )
+
+    msg_parts = [
+        f"Добавлено контактов: {stats.get('imported', 0)}",
+        f"обновлено: {stats.get('updated', 0)}",
+    ]
+    if stats.get("skipped_no_messenger"):
+        msg_parts.append(f"без мессенджера/канала: {stats['skipped_no_messenger']}")
+    if stats.get("skipped_duplicate"):
+        msg_parts.append(f"пропущено (уже в работе): {stats['skipped_duplicate']}")
+    msg_parts.append("Рассылка первых сообщений запущена в фоне.")
+
+    return JSONResponse(
+        status_code=status.HTTP_201_CREATED,
+        content={
+            **stats,
+            "message": ". ".join(msg_parts),
+            "outreach_scheduled": bool(batch_id),
+        },
+    )
+
+
+@router.get("/sales_manager/contacts/import-status")
+async def sales_manager_contacts_import_status(
+    agent_id: int = Query(..., gt=0),
+    import_batch_id: str | None = Query(None),
+    current_user=Depends(get_current_user_required),
+):
+    """Статистика импортированных контактов и outreach для sales_manager."""
+    if current_user.is_banned:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
+
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent = await _find_agent_with_access(
+                agent_dao,
+                agent_id=agent_id,
+                bot_id=None,
+                session=session,
+                current_user=current_user,
+                internal=False,
+            )
+            if agent.template_type != "sales_manager":
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Доступно только для sales_manager",
+                )
+
+            query = select(
+                AgentSalesImportedContact.outreach_status,
+                func.count(AgentSalesImportedContact.id),
+            ).where(AgentSalesImportedContact.agent_id == agent.id)
+            if import_batch_id:
+                query = query.where(AgentSalesImportedContact.import_batch_id == import_batch_id.strip())
+            query = query.group_by(AgentSalesImportedContact.outreach_status)
+            rows = (await session.execute(query)).all()
+            by_status = {str(status_key): int(cnt) for status_key, cnt in rows}
+
+    return JSONResponse(
+        content={
+            "agent_id": agent_id,
+            "import_batch_id": import_batch_id,
+            "by_status": by_status,
+            "total": sum(by_status.values()),
+        }
+    )
+
+
 @router.post("/max_userbot/send_to_user")
 async def max_userbot_send_to_user_as_owner(
     payload: AgentMaxUserbotSendToUserPayload,
@@ -7496,14 +7760,14 @@ async def external_chat(
             user_external_id=external_user_id,
             source_channel="external_api",
             user_message=message,
-            base_prompt=agent.system_prompt or "Ты — полезный ассистент.",
+            base_prompt=agent.system_prompt or DEFAULT_AGENT_SYSTEM_PROMPT,
             template_config=template_config,
         )
 
     try:
         execution = await get_template_runtime().execute(
             template_type=agent.template_type,
-            prompt=agent.system_prompt or "Ты — полезный ассистент.",
+            prompt=agent.system_prompt or DEFAULT_AGENT_SYSTEM_PROMPT,
             user_message=message,
             knowledge_scope_id=knowledge_scope_id,
             agent_id=agent.id,
@@ -8212,6 +8476,117 @@ async def admin_template_appointments_cancel(
     return JSONResponse(content=row, status_code=status.HTTP_200_OK)
 
 
+@router.get("/admin_template/refund_requests")
+async def admin_template_refund_requests_list(
+    agent_id: int | None = Query(default=None),
+    bot_id: int | None = Query(default=None),
+    status_filter: str | None = Query(default=None, alias="status"),
+    domain_type: str | None = Query(default=None),
+    current_user=Depends(get_current_user_required),
+):
+    if agent_id is None and bot_id is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="agent_id or bot_id is required")
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent, _ = await _find_admin_template_agent(
+                session=session,
+                agent_dao=agent_dao,
+                current_user=current_user,
+                agent_id=agent_id,
+                bot_id=bot_id,
+                domain_type=domain_type,
+            )
+            items = await get_admin_booking_payment_service().list_refund_requests(
+                agent_id=agent.id,
+                status=status_filter,
+            )
+    return JSONResponse(content={"items": items}, status_code=status.HTTP_200_OK)
+
+
+@router.post("/admin_template/refund_requests/approve")
+async def admin_template_refund_requests_approve(
+    payload: AdminTemplateRefundRequestActionPayload,
+    current_user=Depends(get_current_user_required),
+):
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent, _ = await _find_admin_template_agent(
+                session=session,
+                agent_dao=agent_dao,
+                current_user=current_user,
+                payload=payload,
+            )
+            try:
+                item = await get_admin_booking_payment_service().approve_refund_request(
+                    agent_id=agent.id,
+                    refund_request_id=payload.refund_request_id,
+                    reviewed_by_user_id=current_user.id,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+            except RuntimeError as exc:
+                raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    if item.get("status") == "refunded":
+        from ..services.admin_booking.client_notify import notify_refund_request_approved
+
+        try:
+            await notify_refund_request_approved(
+                agent_id=agent.id,
+                client_external_id=str(item.get("client_external_id") or ""),
+                source_channel=item.get("source_channel"),
+                amount_rub=item.get("amount_rub"),
+            )
+        except Exception:
+            logger.exception(
+                "Failed to notify client about approved refund request_id=%s",
+                payload.refund_request_id,
+            )
+    return JSONResponse(content=item, status_code=status.HTTP_200_OK)
+
+
+@router.post("/admin_template/refund_requests/reject")
+async def admin_template_refund_requests_reject(
+    payload: AdminTemplateRefundRequestActionPayload,
+    current_user=Depends(get_current_user_required),
+):
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent, _ = await _find_admin_template_agent(
+                session=session,
+                agent_dao=agent_dao,
+                current_user=current_user,
+                payload=payload,
+            )
+            try:
+                item = await get_admin_booking_payment_service().reject_refund_request(
+                    agent_id=agent.id,
+                    refund_request_id=payload.refund_request_id,
+                    reviewed_by_user_id=current_user.id,
+                    reason=payload.reason,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    if item.get("status") == "rejected":
+        from ..services.admin_booking.client_notify import notify_refund_request_rejected
+
+        try:
+            await notify_refund_request_rejected(
+                agent_id=agent.id,
+                client_external_id=str(item.get("client_external_id") or ""),
+                source_channel=item.get("source_channel"),
+                reason=item.get("error_message") or payload.reason,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to notify client about rejected refund request_id=%s",
+                payload.refund_request_id,
+            )
+    return JSONResponse(content=item, status_code=status.HTTP_200_OK)
+
+
 @router.patch("/admin_template/appointments/confirm")
 async def admin_template_appointments_confirm(
     payload: AdminTemplateAppointmentConfirmPayload,
@@ -8250,6 +8625,7 @@ async def admin_template_appointments_delete(
             await get_admin_booking_service().delete_appointment(
                 agent_id=agent.id,
                 appointment_id=payload.appointment_id,
+                reason=payload.reason,
             )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

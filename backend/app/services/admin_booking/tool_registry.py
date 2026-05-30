@@ -9,8 +9,10 @@ from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError, model_validator
 from yookassa import Configuration, Payment
+from yookassa.domain.exceptions import ApiError
 
 from ...config import settings
+from .payment_service import get_admin_booking_payment_service
 from .service import get_admin_booking_service
 
 _IDEMPOTENCY_TTL_SECONDS = 120
@@ -18,7 +20,6 @@ _IDEMPOTENCY_CACHE: dict[str, tuple[datetime, dict[str, Any]]] = {}
 _MAX_RAW_ARGUMENTS_BYTES = 16_000
 # Only write/mutating operations are idempotency-protected; reads always get fresh data.
 _IDEMPOTENCY_PROTECTED_TOOLS = {"create_appointment", "reschedule_appointment", "cancel_appointment"}
-_PAID_BOOKING_CACHE: dict[str, dict[str, Any]] = {}
 
 
 class AdminBookingNeedsConfirmationError(RuntimeError):
@@ -61,6 +62,90 @@ def _filter_slots_by_min_duration(
         if (end - start).total_seconds() + 0.001 >= min_sec:
             out.append(slot)
     return out
+
+
+def _strip_minor_price_fields(item: dict[str, Any]) -> dict[str, Any]:
+    """Убираем копейки из ответа LLM — модель путает price_minor с рублями."""
+    out = dict(item)
+    out.pop("price_minor", None)
+    out.pop("amount_minor", None)
+    return out
+
+
+def _sanitize_tool_result_for_llm(tool_name: str, result: Any) -> Any:
+    if tool_name == "list_services" and isinstance(result, list):
+        return [_strip_minor_price_fields(item) for item in result if isinstance(item, dict)]
+    if isinstance(result, dict):
+        if tool_name == "create_appointment":
+            return _strip_minor_price_fields(result)
+        if "price_minor" in result or "amount_minor" in result:
+            return _strip_minor_price_fields(result)
+    return result
+
+
+def _find_service_row(
+    services: list[dict[str, Any]],
+    service_id: Any,
+) -> dict[str, Any] | None:
+    try:
+        target_id = int(service_id)
+    except (TypeError, ValueError):
+        return None
+    for item in services:
+        try:
+            if int(item.get("id")) == target_id:
+                return item
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _format_service_catalog_hint(
+    services: list[dict[str, Any]],
+    *,
+    staff_id: int | None = None,
+) -> str:
+    filtered = services
+    if staff_id is not None:
+        filtered = [
+            item
+            for item in services
+            if item.get("staff_id") is None or int(item.get("staff_id") or 0) == int(staff_id)
+        ]
+    lines: list[str] = []
+    for item in filtered[:12]:
+        try:
+            sid = int(item.get("id"))
+        except (TypeError, ValueError):
+            continue
+        title = str(item.get("title") or "услуга").strip()
+        lines.append(f"id={sid} «{title}»")
+    if not lines:
+        return "Вызови list_services и используй поле id из ответа."
+    return "Доступные услуги: " + "; ".join(lines) + "."
+
+
+def _raise_unknown_service_id(
+    *,
+    service_id: Any,
+    services: list[dict[str, Any]],
+    staff_id: int | None,
+) -> None:
+    if staff_id is not None:
+        try:
+            if int(service_id) == int(staff_id):
+                raise RuntimeError(
+                    "service_id совпадает с staff_id — это разные поля. "
+                    "Вызови list_services и передай id услуги (поле id), а не id мастера из list_staff."
+                )
+        except (TypeError, ValueError):
+            pass
+    hint = _format_service_catalog_hint(services, staff_id=staff_id)
+    raise RuntimeError(
+        "Услуга не найдена по переданному service_id. "
+        "Вызови list_services заново и используй поле id из актуального ответа. "
+        + hint
+    )
 
 
 async def _enrich_services_with_staff_names(
@@ -195,12 +280,17 @@ class _CancelAppointmentArgs(BaseModel):
     (ISO date "YYYY-MM-DD" or datetime "YYYY-MM-DDTHH:MM") so the system can
     look up the booking by the current user + date.
     ``staff_id`` narrows the lookup when needed.
+
+    For paid bookings cancelled less than 24 hours before the visit (or after it),
+    ``client_full_name`` and ``client_phone`` are required to open a refund request.
     """
 
     appointment_id: int | None = Field(default=None, gt=0)
     appointment_date: str | None = Field(default=None, min_length=8, max_length=40)
     staff_id: int | None = Field(default=None, gt=0)
     reason: str | None = Field(default=None, max_length=1000)
+    client_full_name: str | None = Field(default=None, max_length=256)
+    client_phone: str | None = Field(default=None, max_length=32)
 
     @model_validator(mode="after")
     def _validate(self):
@@ -240,6 +330,33 @@ class _FindNextAvailableArgs(BaseModel):
     search_days_ahead: int = Field(default=7, gt=0, le=30)
 
 
+def _now_local() -> datetime:
+    return datetime.now()
+
+
+def _is_past_calendar_day(ends_at: datetime) -> bool:
+    return ends_at.date() < _now_local().date()
+
+
+def _past_date_availability_result(starts_at: datetime) -> dict[str, Any]:
+    return {
+        "date_status": "past",
+        "requested_date": starts_at.date().isoformat(),
+        "available_slots": [],
+        "hint": (
+            "Запрошенный день уже прошёл. Сообщи клиенту, что на эту дату записаться нельзя, "
+            "и предложи выбрать другой день — не говори, что расписание полностью занято."
+        ),
+    }
+
+
+def _assert_booking_not_in_past(starts_at: datetime) -> None:
+    if starts_at < _now_local():
+        raise RuntimeError(
+            "Нельзя записать на прошедшее время. Предложи клиенту выбрать дату не раньше сегодняшней."
+        )
+
+
 def _fmt_dt(raw: str | None) -> str:
     if not raw:
         return "?"
@@ -261,6 +378,8 @@ def _build_args_summary(tool_name: str, data: dict) -> str:
         parts = [f"{_fmt_dt(data.get('starts_at'))}→{_fmt_dt(data.get('ends_at'))}"]
         if data.get("staff_id"):
             parts.append(f"staff={data['staff_id']}")
+        if data.get("service_id"):
+            parts.append(f"svc={data['service_id']}")
         if data.get("client_name"):
             parts.append(f"client={data['client_name']}")
         return " ".join(parts)
@@ -302,9 +421,15 @@ _TOOL_DESCRIPTIONS = {
         "staff_id must be taken from the latest list_staff response (integer id field) — never guess or reuse resource/service ids. "
         "When the user names a service, pass service_id from list_services and set duration_minutes to that service's duration_minutes "
         "so short gaps are not mistaken for a full appointment. "
-        "Returns schedule-backed free intervals (not 'invented' windows)."
+        "Returns schedule-backed free intervals (not 'invented' windows). "
+        "If the requested day is already in the past, returns date_status=past with a hint — do not tell the client the schedule is fully booked."
     ),
-    "create_appointment": "Create a booking appointment immediately without asking the user for confirmation.",
+    "create_appointment": (
+        "Create a booking appointment immediately without asking the user for confirmation. "
+        "service_id is required when paid booking is enabled; take it only from the latest list_services "
+        "(integer id field — never staff_id, price, duration, or list position). "
+        "Set ends_at = starts_at + service duration_minutes from list_services."
+    ),
     "confirm_paid_appointment": (
         "Confirm paid booking by payment_id. Use it after the client says they completed payment."
     ),
@@ -314,7 +439,10 @@ _TOOL_DESCRIPTIONS = {
         "by the current user. Use lookup_staff_id to narrow the search if needed."
     ),
     "cancel_appointment": (
-        "Cancel an existing appointment. "
+        "Cancel (remove) an existing appointment. The slot is freed immediately. "
+        "For paid bookings: if the visit is more than 24 hours away, a full refund is issued automatically via YooKassa. "
+        "If less than 24 hours remain or the visit already passed, collect the client's full name (ФИО) and phone number, "
+        "then call cancel_appointment with client_full_name and client_phone — a refund request is sent to the owner for approval. "
         "If appointment_id is unknown, provide appointment_date (ISO date or datetime) to look up the booking "
         "by the current user. Never ask the user for an appointment ID."
     ),
@@ -323,7 +451,8 @@ _TOOL_DESCRIPTIONS = {
     "list_services": (
         "List bookable services. Each item may include staff_id and staff_full_name when the service is tied to one specialist; "
         "use this so you know which doctor performs which procedure before offering a time. "
-        "For client-facing prices use price_rub (rubles), not price_minor."
+        "Each service includes price_rub — the client-facing price in rubles. "
+        "Always quote price_rub from the latest call; never infer price from chat history."
     ),
     "find_next_available": (
         "Find the next available time slot starting from a given date. "
@@ -399,7 +528,25 @@ class AdminBookingToolRegistry:
         secret_key = secret_key.strip()
         if not shop_id or not secret_key:
             raise RuntimeError("ЮKassa API ключ должен быть в формате shop_id:secret_key")
+        if not secret_key.startswith(("live_", "test_")):
+            raise RuntimeError(
+                "Некорректный Secret key ЮKassa: в настройках агента укажите shop_id:secret_key, "
+                "где secret_key — секретный ключ из личного кабинета (начинается с live_ или test_)."
+            )
         return shop_id, secret_key
+
+    @staticmethod
+    def _raise_yookassa_error(exc: Exception) -> None:
+        code = ""
+        if isinstance(exc, ApiError):
+            code = str(getattr(exc, "code", "") or "")
+        message = str(exc)
+        if code == "invalid_credentials" or "invalid_credentials" in message:
+            raise RuntimeError(
+                "Ошибка авторизации ЮKassa: в настройках агента укажите ключ в формате "
+                "shop_id:secret_key (Secret key из раздела «Интеграция → Ключи API» в личном кабинете ЮKassa)."
+            ) from exc
+        raise exc
 
     async def _lookup_appointment_id(
         self,
@@ -483,6 +630,7 @@ class AdminBookingToolRegistry:
             cached = _IDEMPOTENCY_CACHE.get(idempotency_key)
             if cached:
                 _, value = cached
+                cached_result = value.get("result") if isinstance(value, dict) else value
                 return {
                     "ok": True,
                     "tool_name": tool_name,
@@ -492,7 +640,7 @@ class AdminBookingToolRegistry:
                     "latency_ms": 0,
                     "idempotent_replay": True,
                     "idempotency_key": idempotency_key,
-                    "result": value,
+                    "result": _sanitize_tool_result_for_llm(tool_name, cached_result),
                 }
 
         data = args.model_dump()
@@ -513,86 +661,124 @@ class AdminBookingToolRegistry:
             )
             await _enrich_services_with_staff_names(service, self._agent_id, result)
         elif tool_name == "check_availability":
-            raw_staff = data.get("staff_id")
-            raw_service = data.get("service_id")
-            duration_minutes = data.get("duration_minutes")
-            staff_rows_list = await service.list_staff(agent_id=self._agent_id, active_only=False)
-            valid_staff_ids = set()
-            staff_name_by_id: dict[int, str] = {}
-            for row in staff_rows_list:
-                try:
-                    sid = int(row["id"])
-                except (TypeError, ValueError, KeyError):
-                    continue
-                valid_staff_ids.add(sid)
-                n = str(row.get("full_name") or "").strip()
-                if n:
-                    staff_name_by_id[sid] = n
+            window_start = _parse_iso_datetime(str(data.get("starts_at") or ""))
+            window_end = _parse_iso_datetime(str(data.get("ends_at") or ""))
+            if _is_past_calendar_day(window_end):
+                result = _past_date_availability_result(window_start)
+            else:
+                raw_staff = data.get("staff_id")
+                raw_service = data.get("service_id")
+                duration_minutes = data.get("duration_minutes")
+                staff_rows_list = await service.list_staff(agent_id=self._agent_id, active_only=False)
+                valid_staff_ids = set()
+                staff_name_by_id: dict[int, str] = {}
+                for row in staff_rows_list:
+                    try:
+                        sid = int(row["id"])
+                    except (TypeError, ValueError, KeyError):
+                        continue
+                    valid_staff_ids.add(sid)
+                    n = str(row.get("full_name") or "").strip()
+                    if n:
+                        staff_name_by_id[sid] = n
 
-            if raw_staff is not None and int(raw_staff) not in valid_staff_ids:
-                result = {
-                    "validation_error": (
-                        "Указанный staff_id отсутствует в списке сотрудников этого агента. "
-                        "Вызови list_staff и используй поле id из актуального ответа. "
-                        "Не смешивай id сотрудника с id услуги, ресурса или произвольными числами из памяти."
-                    ),
-                    "available_slots": [],
-                }
-            elif raw_staff is not None and raw_service is not None:
-                svc_list = await service.list_services(agent_id=self._agent_id, active_only=False)
-                await _enrich_services_with_staff_names(service, self._agent_id, svc_list)
-                srv = next((x for x in svc_list if int(x["id"]) == int(raw_service)), None)
-                bound: int | None = None
-                if srv is not None and srv.get("staff_id") is not None:
-                    bound = int(srv["staff_id"])
-                if bound is not None and bound != int(raw_staff):
-                    title = str((srv or {}).get("title") or "услуга")
-                    other_name = staff_name_by_id.get(bound, "")
+                if raw_staff is not None and int(raw_staff) not in valid_staff_ids:
                     result = {
                         "validation_error": (
-                            f"Услуга «{title}» в каталоге привязана к другому специалисту"
-                            + (f" ({other_name})" if other_name else "")
-                            + ". Указанному мастеру эту услугу искать нельзя. "
-                            "Предложи записаться к нужному врачу из list_services (поля staff_id / staff_full_name) "
-                            "или выбрать у этого мастера другую услугу из его списка."
+                            "Указанный staff_id отсутствует в списке сотрудников этого агента. "
+                            "Вызови list_staff и используй поле id из актуального ответа. "
+                            "Не смешивай id сотрудника с id услуги, ресурса или произвольными числами из памяти."
                         ),
                         "available_slots": [],
                     }
+                elif raw_staff is not None and raw_service is not None:
+                    svc_list = await service.list_services(agent_id=self._agent_id, active_only=False)
+                    await _enrich_services_with_staff_names(service, self._agent_id, svc_list)
+                    srv = next((x for x in svc_list if int(x["id"]) == int(raw_service)), None)
+                    bound: int | None = None
+                    if srv is not None and srv.get("staff_id") is not None:
+                        bound = int(srv["staff_id"])
+                    if bound is not None and bound != int(raw_staff):
+                        title = str((srv or {}).get("title") or "услуга")
+                        other_name = staff_name_by_id.get(bound, "")
+                        result = {
+                            "validation_error": (
+                                f"Услуга «{title}» в каталоге привязана к другому специалисту"
+                                + (f" ({other_name})" if other_name else "")
+                                + ". Указанному мастеру эту услугу искать нельзя. "
+                                "Предложи записаться к нужному врачу из list_services (поля staff_id / staff_full_name) "
+                                "или выбрать у этого мастера другую услугу из его списка."
+                            ),
+                            "available_slots": [],
+                        }
+                    else:
+                        slots = await service.list_available_slots(
+                            agent_id=self._agent_id,
+                            starts_at=window_start,
+                            ends_at=window_end,
+                            staff_id=data.get("staff_id"),
+                            resource_id=data.get("resource_id"),
+                            service_id=data.get("service_id"),
+                        )
+                        result = _filter_slots_by_min_duration(slots, duration_minutes)
                 else:
                     slots = await service.list_available_slots(
                         agent_id=self._agent_id,
-                        starts_at=_parse_iso_datetime(str(data.get("starts_at") or "")),
-                        ends_at=_parse_iso_datetime(str(data.get("ends_at") or "")),
+                        starts_at=window_start,
+                        ends_at=window_end,
                         staff_id=data.get("staff_id"),
                         resource_id=data.get("resource_id"),
                         service_id=data.get("service_id"),
                     )
                     result = _filter_slots_by_min_duration(slots, duration_minutes)
-            else:
-                slots = await service.list_available_slots(
-                    agent_id=self._agent_id,
-                    starts_at=_parse_iso_datetime(str(data.get("starts_at") or "")),
-                    ends_at=_parse_iso_datetime(str(data.get("ends_at") or "")),
-                    staff_id=data.get("staff_id"),
-                    resource_id=data.get("resource_id"),
-                    service_id=data.get("service_id"),
-                )
-                result = _filter_slots_by_min_duration(slots, duration_minutes)
         elif tool_name == "create_appointment":
+            _assert_booking_not_in_past(
+                _parse_iso_datetime(str(data.get("starts_at") or "")),
+            )
+            raw_service_id = data.get("service_id")
+            raw_staff_id = data.get("staff_id")
+            services_for_booking: list[dict[str, Any]] | None = None
+            if raw_service_id is not None:
+                services_for_booking = await service.list_services(
+                    agent_id=self._agent_id,
+                    active_only=False,
+                )
+                await _enrich_services_with_staff_names(service, self._agent_id, services_for_booking)
+                service_row = _find_service_row(services_for_booking, raw_service_id)
+                if service_row is None:
+                    _raise_unknown_service_id(
+                        service_id=raw_service_id,
+                        services=services_for_booking,
+                        staff_id=raw_staff_id,
+                    )
+                bound_staff = service_row.get("staff_id")
+                if bound_staff is not None and raw_staff_id is not None:
+                    try:
+                        if int(bound_staff) != int(raw_staff_id):
+                            title = str(service_row.get("title") or "услуга")
+                            raise RuntimeError(
+                                f"Услуга «{title}» привязана к другому специалисту (staff_id={bound_staff}). "
+                                "Используй staff_id из list_services для этой услуги."
+                            )
+                    except (TypeError, ValueError):
+                        pass
             if self._paid_booking_enabled:
-                service_id = data.get("service_id")
+                service_id = raw_service_id
                 if service_id is None:
                     raise RuntimeError("Для платной брони нужно выбрать услугу с service_id")
-                services = await service.list_services(agent_id=self._agent_id, active_only=False)
-                service_row = next(
-                    (
-                        item for item in services
-                        if str(item.get("id")) == str(service_id)
-                    ),
-                    None,
-                )
+                if services_for_booking is None:
+                    services_for_booking = await service.list_services(
+                        agent_id=self._agent_id,
+                        active_only=False,
+                    )
+                    await _enrich_services_with_staff_names(service, self._agent_id, services_for_booking)
+                service_row = _find_service_row(services_for_booking, service_id)
                 if not service_row:
-                    raise RuntimeError("Услуга не найдена, обновите список услуг и выберите заново")
+                    _raise_unknown_service_id(
+                        service_id=service_id,
+                        services=services_for_booking,
+                        staff_id=raw_staff_id,
+                    )
                 amount_minor = int(service_row.get("price_minor") or 0)
                 if amount_minor <= 0:
                     raise RuntimeError("Для выбранной услуги не задана стоимость. Платная бронь недоступна")
@@ -622,7 +808,19 @@ class AdminBookingToolRegistry:
                         "source_channel": self._source_channel,
                     },
                 }
-                payment = Payment.create(payment_payload, hashlib.sha256(f"{self._agent_id}:{canonical_args}".encode("utf-8")).hexdigest())
+                idempotency_key = hashlib.sha256(f"{self._agent_id}:{canonical_args}".encode("utf-8")).hexdigest()
+                payment_svc = get_admin_booking_payment_service()
+                existing_row = await payment_svc.find_by_idempotency_key(idempotency_key)
+                if existing_row is not None and existing_row.yookassa_payment_id:
+                    try:
+                        payment = Payment.find_one(existing_row.yookassa_payment_id)
+                    except Exception as exc:
+                        self._raise_yookassa_error(exc)
+                else:
+                    try:
+                        payment = Payment.create(payment_payload, idempotency_key)
+                    except Exception as exc:
+                        self._raise_yookassa_error(exc)
                 confirmation = getattr(payment, "confirmation", None)
                 confirmation_url = None
                 if isinstance(confirmation, dict):
@@ -632,11 +830,14 @@ class AdminBookingToolRegistry:
                 payment_id = str(getattr(payment, "id", "") or "")
                 if not payment_id or not confirmation_url:
                     raise RuntimeError("Не удалось сформировать ссылку на оплату")
-                _PAID_BOOKING_CACHE[payment_id] = {
-                    "agent_id": self._agent_id,
-                    "user_external_id": self._user_external_id,
-                    "payload": data,
-                }
+                await payment_svc.save_pending_payment(
+                    agent_id=self._agent_id,
+                    client_external_id=self._user_external_id,
+                    idempotency_key=idempotency_key,
+                    yookassa_payment_id=payment_id,
+                    amount_minor=amount_minor,
+                    booking_payload=data,
+                )
                 result = {
                     "requires_payment": True,
                     "payment_id": payment_id,
@@ -645,7 +846,10 @@ class AdminBookingToolRegistry:
                     "amount_rub": round(amount_minor / 100, 2),
                     "service_title": str(service_row.get("title") or "").strip(),
                     "status": "awaiting_payment",
-                    "message": "Ссылка на оплату сформирована. После оплаты подтвердите бронь через confirm_paid_appointment.",
+                    "message": (
+                        "Ссылка на оплату сформирована. Запись появится в календаре после успешной оплаты "
+                        "(автоматически или через confirm_paid_appointment, если клиент написал, что оплатил)."
+                    ),
                 }
             else:
                 result = await service.create_appointment(
@@ -666,40 +870,36 @@ class AdminBookingToolRegistry:
             payment_id = str(data.get("payment_id") or "").strip()
             if not payment_id:
                 raise RuntimeError("payment_id обязателен")
-            cached = _PAID_BOOKING_CACHE.get(payment_id)
-            if not cached:
-                raise RuntimeError("Платеж не найден в текущей сессии. Запросите новую ссылку на оплату.")
-            shop_id, secret_key = self._parse_yookassa_credentials()
-            Configuration.account_id = shop_id
-            Configuration.secret_key = secret_key
-            payment = Payment.find_one(payment_id)
-            payment_status = str(getattr(payment, "status", "") or "").strip().lower()
-            if payment_status != "succeeded":
-                result = {
-                    "status": "awaiting_payment",
-                    "payment_id": payment_id,
-                    "payment_status": payment_status or "pending",
-                    "message": "Оплата еще не подтверждена. Проверьте статус позже.",
-                }
-            else:
-                cached_payload = cached.get("payload") or {}
-                result = await service.create_appointment(
-                    agent_id=self._agent_id,
-                    client_external_id=self._user_external_id,
-                    starts_at=_parse_iso_datetime(str(cached_payload.get("starts_at") or "")),
-                    ends_at=_parse_iso_datetime(str(cached_payload.get("ends_at") or "")),
-                    staff_id=cached_payload.get("staff_id"),
-                    resource_id=cached_payload.get("resource_id"),
-                    service_id=cached_payload.get("service_id"),
-                    client_name=cached_payload.get("client_name"),
-                    source_channel=cached_payload.get("source_channel") or self._source_channel,
-                    notes=cached_payload.get("notes"),
-                )
+            from .payment_fulfillment import fulfill_admin_booking_payment
+
+            fulfillment = await fulfill_admin_booking_payment(
+                yookassa_payment_id=payment_id,
+            )
+            if fulfillment is None:
+                raise RuntimeError("Платёж не найден. Запросите новую ссылку на оплату.")
+            if fulfillment.client_external_id != self._user_external_id.strip():
+                raise RuntimeError("Платеж принадлежит другому клиенту")
+            if fulfillment.fulfilled:
                 result = {
                     "status": "paid_and_booked",
                     "payment_id": payment_id,
-                    "appointment": result,
-                    "message": "Оплата подтверждена, бронь успешно оформлена.",
+                    "appointment": fulfillment.appointment,
+                    "message": fulfillment.client_message
+                    or "Оплата подтверждена, бронь успешно оформлена.",
+                }
+            elif fulfillment.already_booked:
+                result = {
+                    "status": "paid_and_booked",
+                    "payment_id": payment_id,
+                    "appointment": fulfillment.appointment,
+                    "message": fulfillment.client_message
+                    or "Оплата уже подтверждена, бронь оформлена ранее.",
+                }
+            else:
+                result = {
+                    "status": "awaiting_payment",
+                    "payment_id": payment_id,
+                    "message": "Оплата ещё не подтверждена. Проверьте статус позже или подождите пару минут.",
                 }
         elif tool_name == "reschedule_appointment":
             appt_id = data.get("appointment_id")
@@ -725,11 +925,46 @@ class AdminBookingToolRegistry:
                     appointment_date=str(data.get("appointment_date") or ""),
                     staff_id=data.get("staff_id"),
                 )
-            result = await service.cancel_appointment(
-                agent_id=self._agent_id,
-                appointment_id=int(appt_id),
-                reason=data.get("reason"),
-            )
+            from .payment_service import RefundContactDetailsRequired
+
+            try:
+                cancel_result = await service.cancel_appointment(
+                    agent_id=self._agent_id,
+                    appointment_id=int(appt_id),
+                    reason=data.get("reason"),
+                    client_full_name=data.get("client_full_name"),
+                    client_phone=data.get("client_phone"),
+                    require_refund_contact=bool(self._paid_booking_enabled),
+                )
+            except RefundContactDetailsRequired as exc:
+                raise RuntimeError(
+                    f"{exc} Сначала уточни у клиента полное ФИО и номер телефона, затем повтори отмену."
+                ) from exc
+
+            refund_request = cancel_result.get("refund_request")
+            if cancel_result.get("auto_refunded"):
+                result = {
+                    "deleted": True,
+                    "refund_request": refund_request,
+                    "message": (
+                        "Запись отменена. Полный возврат оформлен автоматически — "
+                        "деньги вернутся на карту клиента в срок банка (обычно 3–10 рабочих дней)."
+                    ),
+                }
+            elif refund_request:
+                result = {
+                    "deleted": True,
+                    "refund_request": refund_request,
+                    "message": (
+                        "Запись отменена. Заявка на возврат передана владельцу — "
+                        "решение придёт клиенту после проверки."
+                    ),
+                }
+            else:
+                result = {
+                    "deleted": True,
+                    "message": "Запись отменена и удалена.",
+                }
         elif tool_name == "list_appointments":
             result = await service.list_appointments(
                 agent_id=self._agent_id,
@@ -812,5 +1047,5 @@ class AdminBookingToolRegistry:
             "latency_ms": latency_ms,
             "idempotency_key": idempotency_key,
             "tool_args_summary": _build_args_summary(tool_name, data),
-            "result": result,
+            "result": _sanitize_tool_result_for_llm(tool_name, result),
         }

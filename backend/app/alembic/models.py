@@ -27,6 +27,8 @@ except ImportError: from database import Base
 
 from datetime import datetime, date, timezone
 
+from prompts.system_prompts import DEFAULT_AGENT_SYSTEM_PROMPT
+
 
 def _utc_now_naive() -> datetime:
     """UTC 'now' without tzinfo — matches Postgres TIMESTAMP WITHOUT TIME ZONE + asyncpg."""
@@ -68,7 +70,18 @@ class User(Base):
 
     registered: Mapped[date] = mapped_column(default=datetime.now(timezone.utc))
 
+    referral_code: Mapped[str | None] = mapped_column(String(16), unique=True, index=True, nullable=True)
+    referred_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     agents: Mapped[list['Agent']] = relationship(back_populates='user', cascade="all, delete-orphan")
+    payment_methods: Mapped[list['UserPaymentMethod']] = relationship(
+        back_populates='user',
+        cascade='all, delete-orphan',
+    )
     external_identities: Mapped[list["UserExternalIdentity"]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
@@ -111,6 +124,27 @@ class TelegramLinkChallenge(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
+class UserPaymentMethod(Base):
+    __tablename__ = "user_payment_methods"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "yookassa_payment_method_id",
+            name="uq_user_payment_methods_user_method",
+        ),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    yookassa_payment_method_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    card_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    card_last4: Mapped[str | None] = mapped_column(String(4), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    user: Mapped["User"] = relationship(back_populates="payment_methods")
+
+
 class Agent(Base):
     __table_args__ = {'extend_existing': True}
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -138,12 +172,17 @@ class Agent(Base):
         server_default="qa",
     )
     template_config: Mapped[str | None] = mapped_column(Text, nullable=True)
-    system_prompt: Mapped[str] = mapped_column(Text, default="Ты — полезный ассистент.")
+    system_prompt: Mapped[str] = mapped_column(Text, default=DEFAULT_AGENT_SYSTEM_PROMPT)
     
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=False)
     activation_paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     maintenance_paid_until: Mapped[date | None] = mapped_column(Date, nullable=True)
+    autopay_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    yookassa_payment_method_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    autopay_duration_months: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    autopay_last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    autopay_last_error: Mapped[str | None] = mapped_column(String(512), nullable=True)
     welcome_message: Mapped[str] = mapped_column(Text, nullable=True)
     process_start_with_llm: Mapped[bool] = mapped_column(
         Boolean,
@@ -187,6 +226,10 @@ class Agent(Base):
         cascade="all, delete-orphan",
     )
     sales_dm_queue: Mapped[list["AgentSalesDmQueue"]] = relationship(
+        back_populates="agent",
+        cascade="all, delete-orphan",
+    )
+    sales_imported_contacts: Mapped[list["AgentSalesImportedContact"]] = relationship(
         back_populates="agent",
         cascade="all, delete-orphan",
     )
@@ -563,6 +606,90 @@ class AdminAppointment(Base):
     staff: Mapped["AdminStaff"] = relationship(back_populates="appointments")
     resource: Mapped["AdminResource"] = relationship(back_populates="appointments")
     service: Mapped["AdminService"] = relationship(back_populates="appointments")
+    booking_payment: Mapped["AdminBookingPayment | None"] = relationship(
+        back_populates="appointment",
+        uselist=False,
+    )
+
+
+class AdminBookingPayment(Base):
+    __tablename__ = "admin_booking_payments"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending','paid','expired','refunded')",
+            name="ck_admin_booking_payments_status",
+        ),
+        Index("ix_admin_booking_payments_agent_status", "agent_id", "status"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    appointment_id: Mapped[int | None] = mapped_column(
+        ForeignKey("admin_appointments.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    client_external_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    yookassa_payment_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    amount_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String(10), nullable=False, default="RUB", server_default="RUB")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", server_default="pending")
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True, index=True)
+    booking_payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    agent: Mapped["Agent"] = relationship()
+    appointment: Mapped["AdminAppointment | None"] = relationship(back_populates="booking_payment")
+    refund_request: Mapped["AdminBookingRefundRequest | None"] = relationship(
+        back_populates="payment",
+        uselist=False,
+    )
+
+
+class AdminBookingRefundRequest(Base):
+    __tablename__ = "admin_booking_refund_requests"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending','approved','rejected','refunded','failed')",
+            name="ck_admin_booking_refund_requests_status",
+        ),
+        Index("ix_admin_booking_refund_requests_agent_status", "agent_id", "status"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    payment_id: Mapped[int] = mapped_column(
+        ForeignKey("admin_booking_payments.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    appointment_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    client_external_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    amount_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String(10), nullable=False, default="RUB", server_default="RUB")
+    cancel_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    client_full_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    client_phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    source_channel: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    appointment_starts_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    service_title: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    refund_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending", server_default="pending")
+    yookassa_refund_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewed_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    agent: Mapped["Agent"] = relationship()
+    payment: Mapped["AdminBookingPayment"] = relationship(back_populates="refund_request")
+    reviewed_by: Mapped["User | None"] = relationship()
 
 
 class AdminWaitlistEntry(Base):
@@ -725,6 +852,52 @@ class AgentSalesDmQueue(Base):
         back_populates="sales_dm_queue",
         foreign_keys=[agent_id],
     )
+
+
+class AgentSalesImportedContact(Base):
+    """Контакты из Excel для холодного outreach sales_manager (per-agent)."""
+
+    __tablename__ = "agent_sales_imported_contacts"
+    __table_args__ = (
+        UniqueConstraint("agent_id", "dedup_key", name="uq_agent_sales_imported_contact_dedup"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), index=True, nullable=False)
+    import_batch_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    org_name: Mapped[str] = mapped_column(String(512), nullable=False)
+    lpr_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    lpr_phone: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    org_phone: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    org_mobile: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    website: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    whatsapp: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    telegram: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    extra_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    channel: Mapped[str] = mapped_column(String(32), nullable=False)
+    target_external_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    target_resolve_hint: Mapped[str | None] = mapped_column(Text, nullable=True)
+    outreach_status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="pending",
+        server_default="pending",
+        index=True,
+    )
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    dedup_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    queued_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    reply_received_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    follow_up_day_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    follow_up_week_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    follow_up_month_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    agent: Mapped["Agent"] = relationship(back_populates="sales_imported_contacts")
 
 
 class AgentContentJob(Base):
@@ -894,9 +1067,22 @@ class WebsitePaymentTransaction(Base):
     discount_percent: Mapped[int] = mapped_column(nullable=False, default=0, server_default="0")
     duration_months: Mapped[int] = mapped_column(nullable=False, default=1, server_default="1")
     promo_code: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    partner_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    partner_promo_discount_percent: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
     yookassa_payment_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     is_processed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    autopay_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    is_autopay_charge: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utc_now_naive)
     paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -918,6 +1104,74 @@ class PromoCode(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     code: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     discount_percent: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+
+
+class PartnerPromoCode(Base):
+    __tablename__ = "partner_promo_codes"
+    __table_args__ = {"extend_existing": True}
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    partner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    code: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    discount_percent: Mapped[int] = mapped_column(Integer, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+
+
+class PartnerPayoutRequest(Base):
+    __tablename__ = "partner_payout_requests"
+    __table_args__ = {"extend_existing": True}
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    partner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    amount_kopecks: Mapped[int] = mapped_column(Integer, nullable=False)
+    payment_details: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", index=True)
+    admin_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class ReferralCommission(Base):
+    __tablename__ = "referral_commissions"
+    __table_args__ = (
+        UniqueConstraint(
+            "website_payment_transaction_id",
+            name="uq_referral_commissions_website_payment_tx",
+        ),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    partner_user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    buyer_user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    website_payment_transaction_id: Mapped[int] = mapped_column(
+        ForeignKey("website_payment_transactions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    gross_amount_kopecks: Mapped[int] = mapped_column(Integer, nullable=False)
+    commission_percent: Mapped[int] = mapped_column(Integer, nullable=False)
+    commission_amount_kopecks: Mapped[int] = mapped_column(Integer, nullable=False)
+    promo_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
 
 

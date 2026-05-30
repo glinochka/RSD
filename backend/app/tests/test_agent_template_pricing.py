@@ -3,7 +3,9 @@ import pytest
 from datetime import date, timedelta
 
 from app.agent_template_pricing import (
+    AGENT_TEMPLATE_PRICING,
     MAINTENANCE_GRACE_DAYS,
+    _reload_agent_template_pricing,
     assert_template_selectable,
     build_agent_billing_state,
     get_agent_template_pricing,
@@ -14,6 +16,8 @@ from app.agent_template_pricing import (
     parse_agent_payment_plan_name,
     agent_payment_plan_name,
     PAYMENT_KIND_AGENT_ACTIVATION,
+    PAYMENT_KIND_AGENT_MAINTENANCE,
+    update_agent_template_pricing_overrides,
     user_has_free_agent_activation,
 )
 
@@ -48,14 +52,14 @@ def test_qa_is_free():
 
 def test_crm_admin_minimum_prices():
     pricing = get_agent_template_pricing("crm_admin")
-    assert pricing.setup_rub_min == 25_000
-    assert pricing.monthly_maintenance_rub_min == 3_000
+    assert pricing.setup_rub_min == 0
+    assert pricing.monthly_maintenance_rub_min == 990
 
 
 def test_sales_manager_minimum_prices():
     pricing = get_agent_template_pricing("sales_manager")
-    assert pricing.setup_rub_min == 5_000
-    assert pricing.monthly_maintenance_rub_min == 3_000
+    assert pricing.setup_rub_min == 0
+    assert pricing.monthly_maintenance_rub_min == 1_990
 
 
 def test_content_factory_not_selectable():
@@ -73,12 +77,18 @@ def test_ai_logist_not_selectable():
         assert_template_selectable("ai_logist")
 
 
-def test_activation_billing_state_unpaid():
-    agent = _FakeAgent(template_type="crm_admin")
+def test_activation_billing_state_paid_template_in_trial():
+    created = date.today()
+    agent = _FakeAgent(
+        template_type="crm_admin",
+        registered=created,
+        maintenance_paid_until=initial_maintenance_paid_until_for_template("crm_admin", from_date=created),
+    )
     billing = build_agent_billing_state(agent)
-    assert billing["can_activate"] is False
-    assert billing["activation_required_rub"] == 25_000
-    assert billing["activation_exempt"] is False
+    assert billing["can_activate"] is True
+    assert billing["maintenance_current"] is True
+    assert billing["requires_subscription"] is True
+    assert billing["monthly_price_rub"] == 990
 
 
 def test_free_agent_activation_exempt_user():
@@ -101,20 +111,64 @@ def test_agent_payment_plan_roundtrip():
     assert parsed == (PAYMENT_KIND_AGENT_ACTIVATION, "sales_manager")
 
 
+def test_agent_payment_plan_name_fits_website_transaction_column():
+    max_len = 0
+    for template_type in AGENT_TEMPLATE_PRICING:
+        for payment_kind in (PAYMENT_KIND_AGENT_ACTIVATION, PAYMENT_KIND_AGENT_MAINTENANCE):
+            plan = agent_payment_plan_name(
+                payment_kind=payment_kind,
+                template_type=template_type,
+            )
+            max_len = max(max_len, len(plan))
+            assert len(plan) <= 64, plan
+    assert max_len > 32
+
+
 def test_public_catalog_only_pricing_page_templates():
     codes = [row["code"] for row in list_public_agent_template_pricing()]
     assert codes == ["qa", "crm_admin", "sales_manager"]
     assert "content_factory" not in codes
     admin = next(row for row in list_public_agent_template_pricing() if row["code"] == "crm_admin")
-    assert admin["card_title"] == "ИИ оператор"
+    assert admin["card_title"] == "ИИ Администратор"
     mop = next(row for row in list_public_agent_template_pricing() if row["code"] == "sales_manager")
     assert mop["card_title"] == "ИИ МОП"
     qa = next(row for row in list_public_agent_template_pricing() if row["code"] == "qa")
     assert qa["card_title"] == "ИИ консультант"
 
 
-def test_maintenance_grace_first_month_free():
-    created = date.today() - timedelta(days=5)
+def test_admin_pricing_override_applies_and_reloads():
+    from app.agent_template_pricing import _OVERRIDE_FILE_PATH
+
+    try:
+        update_agent_template_pricing_overrides(
+            template_updates=[
+                {
+                    "code": "crm_admin",
+                    "title": "ИИ Администратор",
+                    "card_title": "ИИ Администратор",
+                    "setup_rub_min": 0,
+                    "monthly_maintenance_rub_min": 1290,
+                    "is_free": False,
+                    "selectable": True,
+                    "status": "available",
+                    "description": "override test",
+                }
+            ]
+        )
+        pricing = get_agent_template_pricing("crm_admin")
+        assert pricing is not None
+        assert pricing.monthly_maintenance_rub_min == 1290
+        public = list_public_agent_template_pricing()
+        crm = next(row for row in public if row["code"] == "crm_admin")
+        assert crm["monthly_maintenance_rub_min"] == 1290
+    finally:
+        if _OVERRIDE_FILE_PATH.exists():
+            _OVERRIDE_FILE_PATH.unlink()
+        _reload_agent_template_pricing()
+
+
+def test_maintenance_grace_three_day_trial():
+    created = date.today() - timedelta(days=1)
     agent = _FakeAgent(
         template_type="crm_admin",
         registered=created,

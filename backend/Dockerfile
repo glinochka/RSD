@@ -16,7 +16,9 @@ ENV PIP_DEFAULT_TIMEOUT=600 \
     PIP_RETRIES=10 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    && python -c "import telethon; print('telethon', telethon.__version__)" \
+    && (python -c "import opentele; print('opentele ok')" || echo "WARNING: opentele not installed (tdata import unavailable; QR/SMS use Telethon fallback)")
 
 
 # Принудительно скачиваем модель при сборке (best-effort).

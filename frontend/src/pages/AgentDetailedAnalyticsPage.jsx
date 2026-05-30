@@ -6,6 +6,7 @@ import agentService from '../services/agentService';
 import { useNotification } from '../context/useNotification';
 import { NAVIGATION_ROUTES } from '../config/constants';
 import { findTelephonyChannel, telephonyCallTitle, telephonyStatusLabel } from '../utils/telephony';
+import { formatServicePriceLabel, minorToRubInput, rubToMinor } from '../utils/bookingPrice';
 import DemoBadge, { TitleWithDemoBadge } from '../components/DemoBadge';
 import '../styles/agentDetailedAnalytics.css';
 
@@ -15,6 +16,25 @@ const ANALYTICS_SECTIONS = {
   TELEPHONY: 'telephony',
   BROADCAST: 'broadcast',
   OPERATIONS: 'operations',
+  REFUNDS: 'refunds',
+};
+
+const refundChannelLabel = (channel) => {
+  const key = String(channel || '').trim().toLowerCase();
+  if (key === 'telegram' || key === 'telegram_bot') return 'Telegram';
+  if (key === 'telegram_userbot') return 'Telegram (аккаунт)';
+  if (key === 'whatsapp_userbot') return 'WhatsApp';
+  if (key === 'external_api') return 'API';
+  return key || '—';
+};
+
+const refundStatusLabel = (status) => {
+  const key = String(status || '').trim().toLowerCase();
+  if (key === 'pending') return 'Ожидает решения';
+  if (key === 'refunded') return 'Возврат выполнен';
+  if (key === 'rejected') return 'Отклонена';
+  if (key === 'failed') return 'Ошибка возврата';
+  return key || '—';
 };
 
 const BROADCAST_LIMIT_OPTIONS = [100, 250, 500, 1000, 2000, 5000];
@@ -651,6 +671,7 @@ const AgentDetailedAnalyticsPageContent = () => {
   const [serviceItems, setServiceItems] = useState([]);
   const [scheduleItems, setScheduleItems] = useState([]);
   const [appointmentItems, setAppointmentItems] = useState([]);
+  const [refundRequestItems, setRefundRequestItems] = useState([]);
   const [calendarScheduleItems, setCalendarScheduleItems] = useState([]);
   const [calendarAppointmentItems, setCalendarAppointmentItems] = useState([]);
   const [occupancyData, setOccupancyData] = useState(null);
@@ -672,7 +693,7 @@ const AgentDetailedAnalyticsPageContent = () => {
     title: '',
     target_role: 'master',
     duration_minutes: 60,
-    price_minor: 0,
+    price_rub: '',
     resource_type_filters: '',
   });
   const [newStaffDraft, setNewStaffDraft] = useState({ full_name: '', role: 'master', specializations: '' });
@@ -681,7 +702,7 @@ const AgentDetailedAnalyticsPageContent = () => {
     title: '',
     target_role: 'master',
     duration_minutes: 60,
-    price_minor: 0,
+    price_rub: '',
     resource_type_filters: '',
   });
   const [newScheduleDraft, setNewScheduleDraft] = useState({
@@ -947,12 +968,42 @@ const AgentDetailedAnalyticsPageContent = () => {
     loadWaBroadcastStats();
   }, [selectedSection, botId, showError]);
 
+  const loadRefundRequests = async () => {
+    if (!Number.isFinite(botId) || botId <= 0) return;
+    setOpsLoading(true);
+    try {
+      const data = await agentService.listAdminTemplateRefundRequests({ bot_id: botId });
+      setRefundRequestItems(Array.isArray(data?.items) ? data.items : []);
+    } catch (error) {
+      showError(error?.message || 'Не удалось загрузить заявки на возврат');
+    } finally {
+      setOpsLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!isCrmAdminTemplate) return;
     if (selectedSection !== ANALYTICS_SECTIONS.OPERATIONS) return;
     loadOperationsDashboard();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedSection, isCrmAdminTemplate, botId, operationRange.start, operationRange.end, monthRange.start, monthRange.end]);
+
+  useEffect(() => {
+    if (!isCrmAdminTemplate) return;
+    if (selectedSection !== ANALYTICS_SECTIONS.REFUNDS) return;
+    loadRefundRequests();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSection, isCrmAdminTemplate, botId]);
+
+  useEffect(() => {
+    if (!isCrmAdminTemplate || !Number.isFinite(botId) || botId <= 0) return;
+    agentService
+      .listAdminTemplateRefundRequests({ bot_id: botId })
+      .then((data) => {
+        setRefundRequestItems(Array.isArray(data?.items) ? data.items : []);
+      })
+      .catch(() => {});
+  }, [isCrmAdminTemplate, botId]);
 
   const selectedUser = useMemo(
     () => filteredChatUsers.find((user) => user.id === selectedUserId) || null,
@@ -1263,14 +1314,14 @@ const AgentDetailedAnalyticsPageContent = () => {
         target_role: newServiceDraft.target_role,
         title: newServiceDraft.title.trim(),
         duration_minutes: Number(newServiceDraft.duration_minutes || 60),
-        price_minor: Number(newServiceDraft.price_minor || 0),
+        price_minor: rubToMinor(newServiceDraft.price_rub),
         resource_type_filters: parseCsv(newServiceDraft.resource_type_filters),
       });
       setNewServiceDraft({
         title: '',
         target_role: 'master',
         duration_minutes: 60,
-        price_minor: 0,
+        price_rub: '',
         resource_type_filters: '',
       });
       await loadOperationsDashboard();
@@ -1291,7 +1342,7 @@ const AgentDetailedAnalyticsPageContent = () => {
         service_id: editingServiceId,
         title: editingServiceDraft.title.trim(),
         duration_minutes: Number(editingServiceDraft.duration_minutes || 60),
-        price_minor: Number(editingServiceDraft.price_minor || 0),
+        price_minor: rubToMinor(editingServiceDraft.price_rub),
         resource_type_filters: parseCsv(editingServiceDraft.resource_type_filters),
       });
       setEditingServiceId(null);
@@ -1476,30 +1527,53 @@ const AgentDetailedAnalyticsPageContent = () => {
   };
 
   const handleCancelAppointmentQuick = async (appointment) => {
-    if (!window.confirm('Отменить запись?')) return;
+    if (!window.confirm('Отменить запись? Слот освободится сразу.')) return;
     try {
-      await agentService.cancelAdminTemplateAppointment({
+      const result = await agentService.cancelAdminTemplateAppointment({
         bot_id: botId,
         appointment_id: appointment.id,
         reason: 'cancelled_from_dashboard',
       });
       await loadOperationsDashboard();
+      if (result?.auto_refunded) {
+        showSuccess('Запись удалена. Возврат оформлен автоматически, клиенту отправлено уведомление.');
+      } else if (result?.refund_request) {
+        showSuccess('Запись удалена. Заявка на возврат создана — решение придёт клиенту после проверки.');
+      } else {
+        showSuccess('Запись удалена');
+      }
     } catch (error) {
       showError(error?.message || 'Не удалось отменить запись');
     }
   };
 
-  const handleDeleteAppointmentQuick = async (appointment) => {
-    if (!window.confirm('Удалить запись?')) return;
+  const handleApproveRefundRequest = async (item) => {
+    if (!window.confirm(`Подтвердить полный возврат ${item.amount_rub} ₽ клиенту ${item.client_external_id}?`)) return;
     try {
-      await agentService.deleteAdminTemplateAppointment({
+      await agentService.approveAdminTemplateRefundRequest({
         bot_id: botId,
-        appointment_id: appointment.id,
+        refund_request_id: item.id,
       });
-      await loadOperationsDashboard();
-      showSuccess('Запись удалена');
+      await loadRefundRequests();
+      showSuccess('Возврат одобрен. Клиенту отправлено уведомление.');
     } catch (error) {
-      showError(error?.message || 'Не удалось удалить запись');
+      showError(error?.message || 'Не удалось подтвердить возврат');
+    }
+  };
+
+  const handleRejectRefundRequest = async (item) => {
+    const reason = window.prompt('Причина отклонения (необязательно):', '');
+    if (reason === null) return;
+    try {
+      await agentService.rejectAdminTemplateRefundRequest({
+        bot_id: botId,
+        refund_request_id: item.id,
+        reason: reason.trim() || undefined,
+      });
+      await loadRefundRequests();
+      showSuccess('Заявка отклонена. Клиенту отправлено уведомление.');
+    } catch (error) {
+      showError(error?.message || 'Не удалось отклонить возврат');
     }
   };
 
@@ -1692,13 +1766,27 @@ const AgentDetailedAnalyticsPageContent = () => {
             Рассылка
           </button>
           {isCrmAdminTemplate ? (
-            <button
-              type="button"
-              className={`analytics-section-btn ${selectedSection === ANALYTICS_SECTIONS.OPERATIONS ? 'analytics-section-btn--active' : ''}`}
-              onClick={() => setSelectedSection(ANALYTICS_SECTIONS.OPERATIONS)}
-            >
-              Операционный дашборд
-            </button>
+            <>
+              <button
+                type="button"
+                className={`analytics-section-btn ${selectedSection === ANALYTICS_SECTIONS.OPERATIONS ? 'analytics-section-btn--active' : ''}`}
+                onClick={() => setSelectedSection(ANALYTICS_SECTIONS.OPERATIONS)}
+              >
+                Операционный дашборд
+              </button>
+              <button
+                type="button"
+                className={`analytics-section-btn ${selectedSection === ANALYTICS_SECTIONS.REFUNDS ? 'analytics-section-btn--active' : ''}`}
+                onClick={() => setSelectedSection(ANALYTICS_SECTIONS.REFUNDS)}
+              >
+                Заявки на возврат
+                {refundRequestItems.some((item) => item.status === 'pending') ? (
+                  <span className="analytics-section-badge">
+                    {refundRequestItems.filter((item) => item.status === 'pending').length}
+                  </span>
+                ) : null}
+              </button>
+            </>
           ) : null}
         </aside>
 
@@ -2564,9 +2652,9 @@ const AgentDetailedAnalyticsPageContent = () => {
                       className="input-main"
                       type="number"
                       min="0"
-                      placeholder="Цена minor"
-                      value={newServiceDraft.price_minor}
-                      onChange={(e) => setNewServiceDraft((prev) => ({ ...prev, price_minor: e.target.value }))}
+                      placeholder="Цена (руб)"
+                      value={newServiceDraft.price_rub}
+                      onChange={(e) => setNewServiceDraft((prev) => ({ ...prev, price_rub: e.target.value }))}
                     />
                     <input
                       className="input-main"
@@ -2605,9 +2693,9 @@ const AgentDetailedAnalyticsPageContent = () => {
                                 className="input-main"
                                 type="number"
                                 min="0"
-                                value={editingServiceDraft.price_minor}
+                                value={editingServiceDraft.price_rub}
                                 onChange={(e) =>
-                                  setEditingServiceDraft((prev) => ({ ...prev, price_minor: e.target.value }))
+                                  setEditingServiceDraft((prev) => ({ ...prev, price_rub: e.target.value }))
                                 }
                               />
                               <button type="button" className="btn btn-black" onClick={handleSaveService}>Сохранить</button>
@@ -2618,7 +2706,7 @@ const AgentDetailedAnalyticsPageContent = () => {
                               <div className="analytics-ops-row-main">
                                 <strong>{item.title}</strong>
                                 <span>
-                                  {item.target_role} · {item.duration_minutes} мин · {item.price_minor}
+                                  {item.target_role} · {item.duration_minutes} мин · {formatServicePriceLabel(item.price_minor)}
                                 </span>
                               </div>
                               <div className="analytics-ops-row-actions">
@@ -2631,7 +2719,7 @@ const AgentDetailedAnalyticsPageContent = () => {
                                       title: item.title || '',
                                       target_role: item.target_role || 'master',
                                       duration_minutes: item.duration_minutes || 60,
-                                      price_minor: item.price_minor || 0,
+                                      price_rub: minorToRubInput(item.price_minor),
                                       resource_type_filters: Array.isArray(item.resource_type_filters)
                                         ? item.resource_type_filters.join(', ')
                                         : '',
@@ -2821,10 +2909,7 @@ const AgentDetailedAnalyticsPageContent = () => {
                   </div>
                   <div className="analytics-ops-list">
                     {appointmentItems.map((item) => (
-                      <div
-                        key={item.id}
-                        className={`analytics-ops-row ${item.status === 'cancelled' ? 'analytics-ops-row--cancelled' : ''}`}
-                      >
+                      <div key={item.id} className="analytics-ops-row">
                         <div className="analytics-ops-row-main">
                           <strong>{item.client_name || item.client_external_id}</strong>
                           <span>
@@ -2841,14 +2926,12 @@ const AgentDetailedAnalyticsPageContent = () => {
                           <button type="button" className="btn btn-outline" onClick={() => handleCancelAppointmentQuick(item)}>
                             Отменить
                           </button>
-                          <button type="button" className="btn btn-outline" onClick={() => handleDeleteAppointmentQuick(item)}>
-                            Удалить
-                          </button>
                         </div>
                       </div>
                     ))}
                   </div>
                 </article>
+
               </div>
 
               <article className="analytics-ops-card analytics-ops-card--wide">
@@ -3033,6 +3116,51 @@ const AgentDetailedAnalyticsPageContent = () => {
                   </article>
                 </div>
               ) : null}
+            </section>
+          ) : selectedSection === ANALYTICS_SECTIONS.REFUNDS ? (
+            <section className="analytics-operations">
+              <h3>Заявки на возврат</h3>
+              <p className="analytics-note">
+                Заявки создаются при отмене оплаченной записи менее чем за 24 часа до визита (или после визита).
+                Возврат более чем за 24 часа оформляется автоматически через ЮKassa.
+              </p>
+              {opsLoading ? (
+                <p className="analytics-note">Загрузка...</p>
+              ) : refundRequestItems.length === 0 ? (
+                <p className="analytics-note">Нет заявок на возврат.</p>
+              ) : (
+                <div className="analytics-ops-list">
+                  {refundRequestItems.map((item) => (
+                    <div key={item.id} className="analytics-ops-row analytics-ops-row--refund">
+                      <div className="analytics-ops-row-main">
+                        <strong>{item.client_full_name || item.client_external_id}</strong>
+                        <span>
+                          {item.client_phone ? `Тел.: ${item.client_phone} · ` : ''}
+                          ID чата: {item.client_external_id} · {refundChannelLabel(item.source_channel)}
+                        </span>
+                        <span>
+                          {item.appointment_starts_at ? formatDateTime(item.appointment_starts_at) : '—'}
+                          {item.service_title ? ` · ${item.service_title}` : ''}
+                          {' · '}
+                          {item.amount_rub} ₽ · {refundStatusLabel(item.status)}
+                          {item.refund_mode === 'auto' ? ' · автовозврат' : ''}
+                        </span>
+                        {item.cancel_reason ? <span>Причина отмены: {item.cancel_reason}</span> : null}
+                      </div>
+                      {item.status === 'pending' ? (
+                        <div className="analytics-ops-row-actions">
+                          <button type="button" className="btn btn-black" onClick={() => handleApproveRefundRequest(item)}>
+                            Одобрить
+                          </button>
+                          <button type="button" className="btn btn-outline" onClick={() => handleRejectRefundRequest(item)}>
+                            Отказать
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              )}
             </section>
           ) : (
             <>

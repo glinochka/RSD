@@ -85,6 +85,8 @@ class Settings(BaseSettings):
     YOOKASSA_SHOP_ID: str = ""
     YOOKASSA_SECRET_KEY: str = ""
     YOOKASSA_RETURN_URL: str | None = None
+    # Recurring payments in YooKassa merchant settings must be enabled when true.
+    YOOKASSA_AUTOPAY_ENABLED: bool = False
     MASTER_BOT_TOKEN: str = ""
     # Шаблон наименования услуги в чеке «Мой налог» ({org_name}, {contact_id}).
     SALES_INVOICE_SERVICE_NAME_TEMPLATE: str = "Услуги RSD для {org_name}"
@@ -119,6 +121,9 @@ class Settings(BaseSettings):
     MAX_USERBOT_RECONNECT_DELAY_SECONDS: int = 5
     WHATSAPP_USERBOT_POLL_INTERVAL_SECONDS: int = 5
     WA_USERBOT_SESSION_SECRET: str = ""
+    # Опционально: своя пара с my.telegram.org для всех userbot (иначе opentele official API).
+    TELEGRAM_USERBOT_API_ID: int = 0
+    TELEGRAM_USERBOT_API_HASH: str = ""
     TELEPHONY_ENABLED: bool = False
     TELEPHONY_INTERNAL_API_KEY: str = ""
     TELEPHONY_MAX_TURN_SECONDS: int = 30

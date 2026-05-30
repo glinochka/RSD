@@ -68,6 +68,7 @@ export const ENV_CONFIG = {
     ADMIN_TOKEN: 'admin_token',
     SALES_TOKEN: 'sales_token',
     THEME: 'theme',
+    REFERRAL_CODE: 'referral_code',
   },
 };
 

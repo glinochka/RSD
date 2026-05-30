@@ -8,6 +8,11 @@ class NewUser(BaseModel):
     password: str = Field(..., min_length=6, max_length=30, description="Пароль: длина от 6 до 30 символов")
     # Optional Telegram ID for linking bot later; web registration does not require it.
     telegram_id: Optional[int] = Field(default=None, description="Id пользователя в телеграме (необязательное поле)")
+    referral_code: Optional[str] = Field(
+        default=None,
+        max_length=32,
+        description="Код партнёра из ссылки ?ref= (закрепляется при регистрации)",
+    )
 
 class LoginUser(BaseModel):
     name: str = Field(..., min_length=3, max_length=255, description="Логин: имя пользователя или email")
@@ -24,6 +29,11 @@ class GoogleOAuthLoginRequest(BaseModel):
     consent_terms: bool = Field(
         default=False,
         description="Подтверждение принятия оферты и пользовательского соглашения (для новых аккаунтов)",
+    )
+    referral_code: Optional[str] = Field(
+        default=None,
+        max_length=32,
+        description="Код партнёра из ссылки ?ref= (закрепляется при регистрации)",
     )
 
 

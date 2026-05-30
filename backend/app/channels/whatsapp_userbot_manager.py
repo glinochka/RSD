@@ -69,6 +69,8 @@ async def _fetch_whatsapp_configs() -> list[dict[str, Any]]:
                             Agent.bot_id,
                             Agent.system_prompt,
                             Agent.welcome_message,
+                            Agent.template_type,
+                            Agent.template_config,
                             AgentChannelConnection.id.label("connection_id"),
                             AgentChannelConnection.external_id.label("phone_number"),
                             AgentChannelConnection.encrypted_credentials,
@@ -86,18 +88,31 @@ async def _fetch_whatsapp_configs() -> list[dict[str, Any]]:
                 .mappings()
                 .all()
             )
-    return [
-        {
-            "agent_id": int(row["agent_id"]),
-            "bot_id": int(row["bot_id"] if row["bot_id"] is not None else row["agent_id"]),
-            "connection_id": int(row["connection_id"]),
-            "phone_number": row["phone_number"] or "",
-            "system_prompt": row["system_prompt"] or "",
-            "welcome_message": row["welcome_message"],
-            "encrypted_credentials": row["encrypted_credentials"],
-        }
-        for row in rows
-    ]
+    configs: list[dict[str, Any]] = []
+    for row in rows:
+        template_config: dict[str, Any] = {}
+        raw_cfg = row.get("template_config")
+        if raw_cfg:
+            try:
+                loaded = json.loads(raw_cfg) if isinstance(raw_cfg, str) else raw_cfg
+                if isinstance(loaded, dict):
+                    template_config = loaded
+            except Exception:
+                template_config = {}
+        configs.append(
+            {
+                "agent_id": int(row["agent_id"]),
+                "bot_id": int(row["bot_id"] if row["bot_id"] is not None else row["agent_id"]),
+                "connection_id": int(row["connection_id"]),
+                "phone_number": row["phone_number"] or "",
+                "system_prompt": row["system_prompt"] or "",
+                "welcome_message": row["welcome_message"],
+                "template_type": str(row.get("template_type") or "qa").strip().lower(),
+                "template_config": template_config,
+                "encrypted_credentials": row["encrypted_credentials"],
+            }
+        )
+    return configs
 
 
 def _extract_text(message: dict[str, Any]) -> str:
@@ -204,7 +219,13 @@ async def _process_incoming(cfg: dict[str, Any], incoming: dict[str, Any]) -> No
     kind = _whatsapp_media_kind(inner)
     wa_full = incoming.get("wa_message") if isinstance(incoming.get("wa_message"), dict) else None
 
+    template_type = str(cfg.get("template_type") or "qa").strip().lower()
     runtime_ctx: dict[str, Any] = {}
+    if template_type == "sales_manager":
+        runtime_ctx = {
+            "lead_initiated_private_dialog": True,
+            "is_private_chat": True,
+        }
     query = text
     _unsupported_media_reply = (
         "Спасибо, что написали! Пока я лучше всего понимаю текст и голосовые — "

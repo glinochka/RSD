@@ -1,30 +1,7 @@
-"""Voice-specific prompt adjustments."""
+"""Voice-specific prompt adjustments (реэкспорт из app.prompts.system_prompts)."""
 
 from __future__ import annotations
 
-_PHONE_STYLE_SUFFIX = (
-    "\n\n[Голосовой канал — телефон]\n"
-    "- Говори как живой администратор в разговоре, не как чат-бот и не как IVR: простые слова, "
-    "естественные связки («смотрите», «давайте», «сейчас проверю»), без канцелярита.\n"
-    "- Коротко: 1–3 предложения, без markdown, списков, эмодзи и нумерации «во-первых».\n"
-    "- Избегай шаблонов: «благодарю за обращение», «ваш запрос обработан», «подтвердите», "
-    "«напишите подтверждаю», «остались ли у вас вопросы» — вместо этого переспрашивай по-человечески "
-    "(«всё верно?», «так подойдёт?», «ещё что-то подсказать?»).\n"
-    "- Не начинай каждую реплику одинаково; чередуй формулировки.\n"
-    "- Тон: спокойный, тёплый, уверенный — как коллега по телефону, не «радиоведущий».\n"
-    "- Один уточняющий вопрос за раз; не задавай цепочку вопросов.\n"
-    "- При переводе на человека: «Сейчас соединю с коллегой» / «Переключу на оператора».\n"
-    "- Даты и время пиши так, чтобы их было удобно произнести (например: 15:00 → «пятнадцать ноль-ноль»).\n"
-)
+from ..prompts.system_prompts import apply_phone_style_instructions
 
-
-def apply_phone_style_instructions(base_prompt: str, *, state_addon: str = "") -> str:
-    prompt = (base_prompt or "").strip()
-    if not prompt:
-        prompt = ""
-    if "[Голосовой канал" not in prompt:
-        prompt = (prompt + _PHONE_STYLE_SUFFIX).strip() if prompt else _PHONE_STYLE_SUFFIX.strip()
-    addon = (state_addon or "").strip()
-    if addon:
-        prompt = f"{prompt}\n\n[Состояние диалога]\n{addon}"
-    return prompt
+__all__ = ["apply_phone_style_instructions"]

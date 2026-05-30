@@ -42,7 +42,10 @@ class _CreateCrmLeadArgs(BaseModel):
 
 
 class _MarkContactedArgs(BaseModel):
-    channel: str = Field(default="telegram_userbot", pattern="^(telegram_userbot)$")
+    channel: str = Field(
+        default="telegram_userbot",
+        pattern="^(telegram_userbot|whatsapp_userbot)$",
+    )
     campaign_id: str | None = Field(default=None, max_length=128)
 
 
@@ -93,6 +96,7 @@ class SalesToolRegistry:
         user_external_id: str | None,
         mode: str,
         telegram_peer_access_hash: int | None = None,
+        source_channel: str | None = None,
     ) -> None:
         requested = [str(tool or "").strip() for tool in (allowed_tools or [])]
         unique: list[str] = []
@@ -113,6 +117,11 @@ class SalesToolRegistry:
                     self._telegram_peer_access_hash = h
             except (TypeError, ValueError):
                 self._telegram_peer_access_hash = None
+        ch = (source_channel or "telegram_userbot").strip().lower()
+        if ch == "whatsapp_userbot":
+            self._outbound_channel = "whatsapp_userbot"
+        else:
+            self._outbound_channel = "telegram_userbot"
 
     def tools_for_llm(self) -> list[dict[str, Any]]:
         tools: list[dict[str, Any]] = []
@@ -207,6 +216,7 @@ class SalesToolRegistry:
             meta: dict[str, Any] = {
                 "mode": self._mode,
                 "qualification": "auto" if self._mode == "auto" else "manual",
+                "channel": self._outbound_channel,
             }
             if self._telegram_peer_access_hash is not None:
                 meta["telegram_peer_access_hash"] = self._telegram_peer_access_hash
@@ -217,6 +227,15 @@ class SalesToolRegistry:
                 message_text=data.get("text", ""),
                 metadata=meta,
             )
+            if self._agent_id and target_uid:
+                from .contact_pool import register_user_in_agent_contact_pool
+
+                await register_user_in_agent_contact_pool(
+                    agent_id=self._agent_id,
+                    user_external_id=target_uid,
+                    source_chat_id=source_cid,
+                    origin="outbound_schedule_dm",
+                )
             
             if self._mode == "auto":
                 status = "sent_auto"

@@ -12,6 +12,7 @@ from app.router_users import router as users_router
 from app.router_agents import router as agents_router
 from app.router_documents import router as documents_router
 from app.router_payments import router as payments_router
+from app.router_referrals import router as referrals_router
 from app.router_admin import router as admin_router
 from app.router_sales import management_router as sales_management_router
 from app.router_sales import router as sales_portal_router
@@ -19,6 +20,8 @@ from app.router_telephony import router as telephony_router
 from app.origins import origins
 from app.config import settings
 from app.services.subscription_maintenance import downgrade_expired_subscriptions_once
+from app.services.agent_autopay import process_agent_autopay_renewals_once
+from app.services.agent_billing_maintenance import deactivate_expired_agent_maintenance_once
 from app.services.onboarding_email_maintenance import send_onboarding_inactive_user_reminders_once
 from app.services.reindex_jobs import run_reindex_worker_forever
 from app.services.content_factory_worker import get_content_factory_worker
@@ -57,6 +60,8 @@ async def lifespan(app: FastAPI):
         while True:
             try:
                 await downgrade_expired_subscriptions_once()
+                await process_agent_autopay_renewals_once()
+                await deactivate_expired_agent_maintenance_once()
                 await send_onboarding_inactive_user_reminders_once()
             except Exception:
                 logger.exception("Subscription cron failed")
@@ -246,6 +251,7 @@ app.include_router(users_router.router)
 app.include_router(agents_router.router)
 app.include_router(documents_router.router)
 app.include_router(payments_router.router)
+app.include_router(referrals_router.router)
 app.include_router(admin_router.router)
 app.include_router(sales_portal_router, prefix="/api/sales")
 app.include_router(sales_management_router, prefix="/api/sales/management")

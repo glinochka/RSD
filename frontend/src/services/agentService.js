@@ -8,7 +8,6 @@ import { API_ROUTES } from '../config/constants';
 
 /** Telethon + SOCKS can exceed default API timeout (30s); avoid axios abort → nginx 499. */
 const USERBOT_TELETHON_TIMEOUT_MS = 120_000;
-const TELEPHONY_PREVIEW_TIMEOUT_MS = 120_000;
 
 export const agentService = {
   /**
@@ -54,6 +53,43 @@ export const agentService = {
   verifyUserbotCode: async (data) => {
     const response = await apiClient.post(API_ROUTES.AGENTS_USERBOT_VERIFY_CODE, data, {
       timeout: USERBOT_TELETHON_TIMEOUT_MS,
+    });
+    return response.data;
+  },
+
+  startUserbotQr: async (data = {}) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_USERBOT_QR_START, data, {
+      timeout: USERBOT_TELETHON_TIMEOUT_MS,
+    });
+    return response.data;
+  },
+
+  userbotQrStatus: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_USERBOT_QR_STATUS, data, {
+      timeout: USERBOT_TELETHON_TIMEOUT_MS,
+    });
+    return response.data;
+  },
+
+  verifyUserbotQr2fa: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_USERBOT_QR_VERIFY_2FA, data, {
+      timeout: USERBOT_TELETHON_TIMEOUT_MS,
+    });
+    return response.data;
+  },
+
+  importUserbotSession: async ({ session_file, api_id, api_hash }) => {
+    const formData = new FormData();
+    formData.append('session_file', session_file);
+    if (api_id != null && api_id !== '') {
+      formData.append('api_id', String(api_id));
+    }
+    if (api_hash) {
+      formData.append('api_hash', api_hash);
+    }
+    const response = await apiClient.post(API_ROUTES.AGENTS_USERBOT_IMPORT_SESSION, formData, {
+      timeout: USERBOT_TELETHON_TIMEOUT_MS,
+      headers: { 'Content-Type': 'multipart/form-data' },
     });
     return response.data;
   },
@@ -139,41 +175,6 @@ export const agentService = {
     return response.data;
   },
 
-  getTelephonyPreviewTtsStatus: async (agentId) => {
-    const response = await apiClient.get(API_ROUTES.AGENTS_TELEPHONY_PREVIEW_TTS_STATUS, {
-      params: { agent_id: agentId },
-    });
-    return response.data;
-  },
-
-  startTelephonyPreview: async (data, options = {}) => {
-    const response = await apiClient.post(API_ROUTES.AGENTS_TELEPHONY_PREVIEW_START, data, {
-      timeout: options.timeout ?? TELEPHONY_PREVIEW_TIMEOUT_MS,
-    });
-    return response.data;
-  },
-
-  telephonyPreviewTurn: async (data, options = {}) => {
-    const response = await apiClient.post(API_ROUTES.AGENTS_TELEPHONY_PREVIEW_TURN, data, {
-      timeout: options.timeout ?? TELEPHONY_PREVIEW_TIMEOUT_MS,
-    });
-    return response.data;
-  },
-
-  telephonyPreviewSpeak: async (data, options = {}) => {
-    const response = await apiClient.post(API_ROUTES.AGENTS_TELEPHONY_PREVIEW_SPEAK, data, {
-      timeout: options.timeout ?? TELEPHONY_PREVIEW_TIMEOUT_MS,
-    });
-    return response.data;
-  },
-
-  endTelephonyPreview: async (data, options = {}) => {
-    const response = await apiClient.post(API_ROUTES.AGENTS_TELEPHONY_PREVIEW_END, data, {
-      timeout: options.timeout ?? TELEPHONY_PREVIEW_TIMEOUT_MS,
-    });
-    return response.data;
-  },
-
   removeChannel: async ({ agent_id, connection_id }) => {
     const response = await apiClient.delete(API_ROUTES.AGENTS_CHANNELS_DELETE, {
       params: { agent_id, connection_id },
@@ -205,6 +206,14 @@ export const agentService = {
   toggleStatus: async (agentId) => {
     const response = await apiClient.patch(API_ROUTES.AGENTS_TOGGLE, {
       agent_id: agentId,
+    });
+    return response.data;
+  },
+
+  setAutopay: async (agentId, enabled) => {
+    const response = await apiClient.patch(API_ROUTES.AGENTS_AUTOPAY, {
+      agent_id: agentId,
+      enabled: Boolean(enabled),
     });
     return response.data;
   },
@@ -504,6 +513,24 @@ export const agentService = {
     const response = await apiClient.delete(API_ROUTES.AGENTS_ADMIN_TEMPLATE_APPOINTMENTS, { data });
     return response.data;
   },
+  listAdminTemplateRefundRequests: async ({ agent_id = null, bot_id = null, status_filter = null } = {}) => {
+    const response = await apiClient.get(API_ROUTES.AGENTS_ADMIN_TEMPLATE_REFUND_REQUESTS, {
+      params: {
+        agent_id: agent_id ?? undefined,
+        bot_id: bot_id ?? undefined,
+        status: status_filter ?? undefined,
+      },
+    });
+    return response.data;
+  },
+  approveAdminTemplateRefundRequest: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_ADMIN_TEMPLATE_REFUND_REQUESTS_APPROVE, data);
+    return response.data;
+  },
+  rejectAdminTemplateRefundRequest: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_ADMIN_TEMPLATE_REFUND_REQUESTS_REJECT, data);
+    return response.data;
+  },
   getAdminTemplateOccupancy: async ({ agent_id = null, bot_id = null, starts_at, ends_at, staff_id = null, service_id = null, resource_id = null, granularity_minutes = 30 } = {}) => {
     const response = await apiClient.get(API_ROUTES.AGENTS_ADMIN_TEMPLATE_OCCUPANCY, {
       params: {
@@ -616,6 +643,26 @@ export const agentService = {
 
   deleteDocumentById: async (docId) => {
     const response = await apiClient.delete(API_ROUTES.DOCUMENTS_DELETE(docId));
+    return response.data;
+  },
+
+  uploadSalesManagerExcel: async (agentId, file) => {
+    const form = new FormData();
+    form.append('agent_id', String(agentId));
+    form.append('file', file);
+    const response = await apiClient.post(API_ROUTES.AGENTS_SALES_MANAGER_EXCEL_UPLOAD, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 120_000,
+    });
+    return response.data;
+  },
+
+  getSalesManagerImportStatus: async (agentId, importBatchId = null) => {
+    const params = { agent_id: agentId };
+    if (importBatchId) {
+      params.import_batch_id = importBatchId;
+    }
+    const response = await apiClient.get(API_ROUTES.AGENTS_SALES_MANAGER_IMPORT_STATUS, { params });
     return response.data;
   },
 };

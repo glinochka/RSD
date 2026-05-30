@@ -1,0 +1,510 @@
+/**
+ * RSD inbound — единый сценарий для Voximplant Cloud IDE.
+ * Скопируйте всё содержимое в сценарий rsd_inbound (один файл, без require).
+ * На routing rule привяжите только rsd_inbound.
+ *
+ * Secrets приложения: RSD_WEBHOOK_SECRET, RSD_WEBHOOK_BASE_URL, TELEPHONY_MEDIA_WS_URL
+ * script_custom_data пример: {"connection_id":42,"require_extension":true}
+ *
+ * Диагностика в логе сессии:
+ *   [rsd] scenario loaded — скрипт стартовал
+ *   [rsd] CallAlerting — PSTN дошёл до сценария (если нет — проблема номер/rule, не webhook)
+ *   [rsd] missing connection_id — нет Secrets в приложении
+ */
+
+Logger.write('[rsd] scenario loaded (bundled rsd_inbound)');
+
+VoxEngine.addEventListener(AppEvents.Started, function () {
+  Logger.write('[rsd] Application.Started customData=' + String(VoxEngine.customData() || ''));
+});
+
+// --- rsd_control (webhook → telephony_bridge) ---
+
+function _uuid() {
+  var d = new Date().getTime();
+  if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+    d += performance.now();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+    var r = (d + Math.random() * 16) % 16 | 0;
+    d = Math.floor(d / 16);
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
+function _isoNow() {
+  return new Date().toISOString();
+}
+
+function postControlEvent(opts, done) {
+  var connectionId = Number(opts.connectionId);
+  var base = String(opts.webhookBaseUrl || '').replace(/\/$/, '');
+  if (!base || !connectionId || !opts.webhookSecret) {
+    done('rsd_control: missing webhook config');
+    return;
+  }
+
+  var bodyObj = {
+    schema_version: 1,
+    event_id: _uuid(),
+    event: String(opts.event),
+    emitted_at: _isoNow(),
+    call_id: String(opts.callId),
+    connection_id: connectionId,
+    payload: opts.payload || {},
+  };
+  var rawBody = JSON.stringify(bodyObj);
+  var timestamp = String(Math.floor(Date.now() / 1000));
+
+  var signPayload = 'v1\n' + timestamp + '\n' + connectionId + '\n' + rawBody;
+  var signature = hmacSha256Hex(String(opts.webhookSecret), signPayload);
+
+  var url = base + '/webhook/voximplant/' + connectionId;
+  var httpOpts = {
+    method: 'POST',
+    headers: [
+      'Content-Type: application/json; charset=utf-8',
+      'X-RSD-Telephony-Timestamp: ' + timestamp,
+      'X-RSD-Telephony-Signature: ' + signature,
+    ],
+    postData: rawBody,
+  };
+
+  Net.httpRequest(url, function (res) {
+    if (!res || res.code < 200 || res.code >= 300) {
+      done('rsd_control http ' + (res ? res.code : 'no_response') + ' ' + (res ? res.text : ''));
+      return;
+    }
+    try {
+      done(null, JSON.parse(res.text || '{}'));
+    } catch (e) {
+      done(null, { ok: true, raw: res.text });
+    }
+  }, httpOpts);
+}
+
+function hmacSha256Hex(secret, message) {
+  if (typeof Crypto === 'undefined') {
+    throw new Error('rsd_control: Crypto is not available in VoxEngine');
+  }
+  if (typeof Crypto.hmac_sha256 === 'function') {
+    var hex = Crypto.hmac_sha256(message, secret);
+    if (!hex && typeof Crypto.hmac_sha256 === 'function') {
+      hex = Crypto.hmac_sha256(secret, message);
+    }
+    return String(hex || '').toLowerCase();
+  }
+  if (typeof Crypto.hmac === 'function') {
+    return String(Crypto.hmac('sha256', secret, message, true) || '').toLowerCase();
+  }
+  throw new Error('rsd_control: Crypto.hmac_sha256 not available in VoxEngine');
+}
+
+// --- rsd_media_gateway (WebSocket ↔ telephony_media_gateway) ---
+
+function connectMediaGateway(opts) {
+  var wsUrl = String(opts.mediaWsUrl || '').trim();
+  if (!wsUrl) {
+    opts.onError('media_ws_url missing');
+    return null;
+  }
+
+  var webSocket = VoxEngine.createWebSocket(wsUrl);
+  var downlinkStarted = false;
+
+  function startMediaBridges() {
+    opts.call.sendMediaTo(webSocket, {
+      encoding: WebSocketAudioEncoding.ULAW,
+      tag: 'rsd_audio_in',
+    });
+    if (!downlinkStarted) {
+      downlinkStarted = true;
+      webSocket.sendMediaTo(opts.call, {
+        encoding: WebSocketAudioEncoding.ULAW,
+        tag: 'rsd_audio_out',
+      });
+    }
+  }
+
+  webSocket.addEventListener(WebSocketEvents.OPEN, function () {
+    var startMsg = {
+      type: 'session.start',
+      payload: {
+        call_id: String(opts.callId),
+        connection_id: Number(opts.connectionId),
+        caller_e164: String(opts.callerE164),
+        codec: 'pcmu',
+        called_number: opts.calledNumber ? String(opts.calledNumber) : undefined,
+        protocol_version: '1',
+      },
+    };
+    webSocket.send(JSON.stringify(startMsg));
+    startMediaBridges();
+    if (opts.onReady) opts.onReady(webSocket);
+  });
+
+  webSocket.addEventListener(WebSocketEvents.MESSAGE, function (e) {
+    var text = (e && e.text) ? String(e.text) : '';
+    if (!text) return;
+
+    try {
+      var msg = JSON.parse(text);
+      if (msg.type === 'session.start' && msg.payload && msg.payload.ok) {
+        Logger.write('[rsd] gateway session.start ok call_id=' + opts.callId);
+        return;
+      }
+      if (msg.type === 'error') {
+        Logger.write('[rsd] gateway error: ' + JSON.stringify(msg.payload));
+        return;
+      }
+      if (msg.type === 'call.transfer' && msg.payload) {
+        var target = String(msg.payload.e164 || msg.payload.operator_transfer_e164 || '').trim();
+        if (target && target !== 'operator') {
+          try {
+            opts.call.transfer(target);
+            Logger.write('[rsd] call.transfer to ' + target + ' call_id=' + opts.callId);
+          } catch (transferErr) {
+            Logger.write('[rsd] call.transfer failed: ' + transferErr);
+          }
+        } else if (opts.onTransferRequest) {
+          opts.onTransferRequest(target || 'operator');
+        }
+        return;
+      }
+      if (msg.type === 'barge_in' && msg.payload && msg.payload.clear_playback) {
+        try {
+          if (typeof webSocket.clearMediaBuffer === 'function') {
+            webSocket.clearMediaBuffer();
+            Logger.write('[rsd] gateway barge_in clearMediaBuffer call_id=' + opts.callId);
+          } else {
+            Logger.write('[rsd] gateway barge_in: clearMediaBuffer not available on WebSocket');
+          }
+        } catch (clearErr) {
+          Logger.write('[rsd] gateway barge_in clear failed: ' + clearErr);
+        }
+        return;
+      }
+      if (msg.event === 'media' && msg.media && msg.media.payload) {
+        return;
+      }
+    } catch (err) {
+      Logger.write('[rsd] gateway ws text: ' + text.substring(0, 200));
+    }
+  });
+
+  webSocket.addEventListener(WebSocketEvents.ERROR, function (e) {
+    Logger.write('[rsd] gateway ws error: ' + JSON.stringify(e || {}));
+    if (opts.onError) opts.onError('websocket_error');
+  });
+
+  webSocket.addEventListener(WebSocketEvents.CLOSE, function (e) {
+    Logger.write('[rsd] gateway ws close: ' + (e && e.reason ? e.reason : ''));
+  });
+
+  return webSocket;
+}
+
+function sendDtmfToGateway(webSocket, digit) {
+  if (!webSocket || !digit) return;
+  webSocket.send(
+    JSON.stringify({
+      type: 'dtmf',
+      payload: { digit: String(digit) },
+    }),
+  );
+}
+
+function sendSessionEnd(webSocket, reason) {
+  if (!webSocket) return;
+  try {
+    webSocket.send(JSON.stringify({ type: 'session.end', payload: { reason: reason || 'hangup' } }));
+    webSocket.close();
+  } catch (e) {
+    Logger.write('[rsd] session.end failed: ' + e);
+  }
+}
+
+var rsdControl = {
+  postControlEvent: postControlEvent,
+};
+
+var rsdMedia = {
+  connectMediaGateway: connectMediaGateway,
+  sendDtmfToGateway: sendDtmfToGateway,
+  sendSessionEnd: sendSessionEnd,
+};
+
+// --- rsd_inbound (Early Media + answer + gateway) ---
+
+var DEFAULT_GREETING_TEXT = 'Здравствуйте! Ожидайте, пожалуйста.';
+var POOL_GREETING_TEXT =
+  'Здравствуйте! Введите добавочный номер из четырёх цифр на клавиатуре телефона.';
+var RECORDING_DISCLAIMER_RU =
+  'Разговор может быть записан в целях контроля качества обслуживания.';
+
+function parseCustomData() {
+  try {
+    var raw = VoxEngine.customData();
+    if (!raw) return {};
+    return JSON.parse(raw);
+  } catch (e) {
+    Logger.write('[rsd] invalid customData: ' + e);
+    return {};
+  }
+}
+
+function resolveConfig() {
+  var cfg = parseCustomData();
+  var connectionId = Number(cfg.connection_id || cfg.connectionId || 0);
+  var webhookBase = String(
+    cfg.webhook_base_url || cfg.webhookBaseUrl || VoxEngine.getSecretValue('RSD_WEBHOOK_BASE_URL') || '',
+  ).replace(/\/$/, '');
+  var mediaWsUrl = String(
+    cfg.media_ws_url || cfg.mediaWsUrl || VoxEngine.getSecretValue('TELEPHONY_MEDIA_WS_URL') || '',
+  ).trim();
+  var webhookSecret = String(
+    VoxEngine.getSecretValue('RSD_WEBHOOK_SECRET') || cfg.webhook_secret || '',
+  ).trim();
+  return {
+    connectionId: connectionId,
+    webhookBaseUrl: webhookBase,
+    mediaWsUrl: mediaWsUrl,
+    greetingUrl: String(cfg.greeting_url || cfg.greetingUrl || '').trim(),
+    greetingText: String(cfg.greeting_text || cfg.greetingText || DEFAULT_GREETING_TEXT).trim(),
+    webhookSecret: webhookSecret,
+    requireExtension: Boolean(cfg.require_extension || cfg.requireExtension),
+  };
+}
+
+function callerE164(call) {
+  return String(call.callerid() || call.displayName() || '+00000000000').trim();
+}
+
+function calledNumber(call) {
+  return String(call.destination() || call.number() || '').trim();
+}
+
+VoxEngine.addEventListener(AppEvents.CallAlerting, function (e) {
+  var call = e.call;
+  var cfg = resolveConfig();
+  var callId = String(call.id());
+  Logger.write(
+    '[rsd] CallAlerting call_id=' +
+      callId +
+      ' caller=' +
+      callerE164(call) +
+      ' called=' +
+      calledNumber(call),
+  );
+  var caller = callerE164(call);
+  var called = calledNumber(call);
+  var mediaWs = null;
+  var operatorTransferE164 = '';
+  var playRecordingDisclaimer = false;
+  var degradedTransferE164 = '';
+
+  if (!cfg.connectionId || !cfg.webhookBaseUrl || !cfg.webhookSecret) {
+    Logger.write('[rsd] missing connection_id / webhook_base_url / RSD_WEBHOOK_SECRET');
+    call.reject(603, 'misconfigured');
+    return;
+  }
+
+  call.addEventListener(CallEvents.Disconnected, function () {
+    rsdMedia.sendSessionEnd(mediaWs, 'hangup');
+    rsdControl.postControlEvent(
+      {
+        webhookBaseUrl: cfg.webhookBaseUrl,
+        connectionId: cfg.connectionId,
+        webhookSecret: cfg.webhookSecret,
+        event: 'call.hangup',
+        callId: callId,
+        payload: { caller_e164: caller, reason: 'completed' },
+      },
+      function () {
+        VoxEngine.terminate();
+      },
+    );
+  });
+
+  call.addEventListener(CallEvents.Failed, function () {
+    rsdMedia.sendSessionEnd(mediaWs, 'failed');
+    VoxEngine.terminate();
+  });
+
+  call.addEventListener(CallEvents.ToneReceived, function (ev) {
+    var digit = ev && ev.tone ? String(ev.tone) : '';
+    if (digit && mediaWs) {
+      rsdMedia.sendDtmfToGateway(mediaWs, digit);
+    }
+  });
+
+  function tryDegradedTransfer() {
+    var dest = String(degradedTransferE164 || operatorTransferE164 || '').trim();
+    if (!dest) {
+      return false;
+    }
+    try {
+      call.transfer(dest);
+      Logger.write('[rsd] degraded transfer to ' + dest + ' call_id=' + callId);
+      return true;
+    } catch (transferErr) {
+      Logger.write('[rsd] degraded transfer failed: ' + transferErr);
+      return false;
+    }
+  }
+
+  function onAnswered() {
+    if (degradedTransferE164) {
+      tryDegradedTransfer();
+      return;
+    }
+
+    try {
+      call.handleTones(true);
+    } catch (toneErr) {
+      Logger.write('[rsd] handleTones: ' + toneErr);
+    }
+
+    rsdControl.postControlEvent(
+      {
+        webhookBaseUrl: cfg.webhookBaseUrl,
+        connectionId: cfg.connectionId,
+        webhookSecret: cfg.webhookSecret,
+        event: 'call.answered',
+        callId: callId,
+        payload: { caller_e164: caller, called_e164: called },
+      },
+      function (err) {
+        if (err) Logger.write('[rsd] call.answered webhook failed: ' + err);
+      },
+    );
+
+    if (!cfg.mediaWsUrl) {
+      Logger.write('[rsd] media_ws_url missing — audio not streamed');
+      return;
+    }
+
+    mediaWs = rsdMedia.connectMediaGateway({
+      mediaWsUrl: cfg.mediaWsUrl,
+      callId: callId,
+      connectionId: cfg.connectionId,
+      callerE164: caller,
+      calledNumber: called,
+      call: call,
+      onReady: function () {
+        Logger.write('[rsd] media gateway ready call_id=' + callId);
+      },
+      onError: function (msg) {
+        Logger.write('[rsd] media gateway error: ' + msg);
+      },
+      onTransferRequest: function (target) {
+        var dest = operatorTransferE164 || target || 'operator';
+        if (dest && dest !== 'operator') {
+          try {
+            call.transfer(dest);
+            Logger.write('[rsd] transfer via operator e164 ' + dest);
+          } catch (transferErr) {
+            Logger.write('[rsd] transfer failed: ' + transferErr);
+          }
+        }
+      },
+    });
+  }
+
+  function sipHeader(name) {
+    try {
+      if (typeof call.sipHeader === 'function') {
+        return String(call.sipHeader(name) || '').trim();
+      }
+      if (typeof call.headers === 'function') {
+        return String(call.headers(name) || '').trim();
+      }
+    } catch (e) {
+      Logger.write('[rsd] sipHeader read failed: ' + e);
+    }
+    return '';
+  }
+
+  function playEarlyGreetingThenAnswer() {
+    call.startEarlyMedia();
+    var greetText = cfg.requireExtension ? POOL_GREETING_TEXT : cfg.greetingText;
+    var steps = [];
+
+    if (playRecordingDisclaimer) {
+      steps.push(function (next) {
+        call.say(RECORDING_DISCLAIMER_RU, Language.RU_RUSSIAN_FEMALE);
+        call.addEventListener(CallEvents.PlaybackFinished, function onDisclaimer() {
+          call.removeEventListener(CallEvents.PlaybackFinished, onDisclaimer);
+          next();
+        });
+      });
+    }
+
+    steps.push(function (next) {
+      if (cfg.greetingUrl && !cfg.requireExtension) {
+        call.startPlayback(cfg.greetingUrl, false);
+        call.addEventListener(CallEvents.PlaybackFinished, function finishPlayback() {
+          call.removeEventListener(CallEvents.PlaybackFinished, finishPlayback);
+          next();
+        });
+        call.addEventListener(CallEvents.PlaybackError, function () {
+          Logger.write('[rsd] greeting playback error, answering anyway');
+          next();
+        });
+        return;
+      }
+      call.say(greetText, Language.RU_RUSSIAN_FEMALE);
+      call.addEventListener(CallEvents.PlaybackFinished, function finishSay() {
+        call.removeEventListener(CallEvents.PlaybackFinished, finishSay);
+        next();
+      });
+    });
+
+    function runStep(i) {
+      if (i >= steps.length) {
+        call.answer();
+        onAnswered();
+        return;
+      }
+      steps[i](function () {
+        runStep(i + 1);
+      });
+    }
+    runStep(0);
+  }
+
+  rsdControl.postControlEvent(
+    {
+      webhookBaseUrl: cfg.webhookBaseUrl,
+      connectionId: cfg.connectionId,
+      webhookSecret: cfg.webhookSecret,
+      event: 'call.inbound',
+      callId: callId,
+      payload: {
+        caller_e164: caller,
+        called_e164: called,
+        provider_session_id: callId,
+        sip_from: sipHeader('From') || sipHeader('from'),
+        sip_to: sipHeader('To') || sipHeader('to'),
+      },
+    },
+    function (err, body) {
+      if (err) Logger.write('[rsd] call.inbound webhook failed: ' + err);
+      if (body && body.operator_transfer_e164) {
+        operatorTransferE164 = String(body.operator_transfer_e164).trim();
+      }
+      if (body && body.degraded && body.transfer_e164) {
+        degradedTransferE164 = String(body.transfer_e164).trim();
+      }
+      if (body && body.record_calls && !body.disclaimer_played) {
+        playRecordingDisclaimer = true;
+      }
+      if (degradedTransferE164) {
+        call.answer();
+        onAnswered();
+        return;
+      }
+      playEarlyGreetingThenAnswer();
+    },
+  );
+});

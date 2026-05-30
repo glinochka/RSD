@@ -1,6 +1,8 @@
 from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Any, Literal, Optional
 
+from ..prompts.system_prompts import DEFAULT_AGENT_SYSTEM_PROMPT
+
 
 class ContentFactoryTemplateConfig(BaseModel):
     company_name: str = Field(..., min_length=1, max_length=255, description="Название компании")
@@ -85,6 +87,10 @@ class NewAgent_byUserWith_tgID(BaseModel):
 class Agent_by_botID(AgentLookup):
     pass
 
+
+class AgentAutopayUpdateRequest(AgentLookup):
+    enabled: bool = Field(..., description="Enable or disable automatic subscription renewal")
+
 class User_by_agent_or_tgID(BaseModel):
     id: int = Field(..., description="id")
 
@@ -104,8 +110,17 @@ class NewAgent_byToken(BaseModel):
 
 
 class NewAgent_byUserbotSession(BaseModel):
-    api_id: int = Field(..., gt=0, description="Telegram API ID from my.telegram.org")
-    api_hash: str = Field(..., min_length=16, max_length=128, description="Telegram API hash")
+    api_id: Optional[int] = Field(
+        default=None,
+        gt=0,
+        description="Опционально: API ID (иначе из ответа QR/импорта или серверный opentele)",
+    )
+    api_hash: Optional[str] = Field(
+        default=None,
+        min_length=16,
+        max_length=128,
+        description="Опционально: API hash",
+    )
     session_string: str = Field(..., min_length=10, max_length=65535, description="Telethon StringSession")
     system_prompt: str = Field(..., min_length=1, description="System prompt for agent")
     template_type: str = Field(
@@ -120,7 +135,11 @@ class NewAgent_byUserbotSession(BaseModel):
 
 
 class CreateEmptyAgent(BaseModel):
-    system_prompt: Optional[str] = Field(default="Ты — полезный ассистент.", min_length=1, description="System prompt for agent")
+    system_prompt: Optional[str] = Field(
+        default=DEFAULT_AGENT_SYSTEM_PROMPT,
+        min_length=1,
+        description="System prompt for agent",
+    )
     template_type: str = Field(
         default="qa",
         pattern="^(qa|crm_admin|function_calling|lead_generation|content_factory|sales_manager)$",
@@ -142,8 +161,13 @@ class AddTelegramBotChannel(AgentLookup):
 
 
 class AddTelegramUserbotChannel(AgentLookup):
-    api_id: int = Field(..., gt=0, description="Telegram API ID from my.telegram.org")
-    api_hash: str = Field(..., min_length=16, max_length=128, description="Telegram API hash")
+    api_id: Optional[int] = Field(default=None, gt=0, description="Опционально: API ID")
+    api_hash: Optional[str] = Field(
+        default=None,
+        min_length=16,
+        max_length=128,
+        description="Опционально: API hash",
+    )
     session_string: str = Field(..., min_length=10, max_length=65535, description="Telethon StringSession")
     make_primary: bool = Field(default=False, description="Сделать канал основным")
 
@@ -286,8 +310,13 @@ class YouTubeHealthPayload(AgentLookup):
 
 
 class UserbotRequestCode(BaseModel):
-    api_id: int = Field(..., gt=0, description="Telegram API ID from my.telegram.org")
-    api_hash: str = Field(..., min_length=16, max_length=128, description="Telegram API hash")
+    api_id: Optional[int] = Field(default=None, gt=0, description="Опционально: API ID")
+    api_hash: Optional[str] = Field(
+        default=None,
+        min_length=16,
+        max_length=128,
+        description="Опционально: API hash",
+    )
     phone_number: str = Field(..., min_length=5, max_length=32, description="Telegram phone number")
 
 
@@ -295,6 +324,25 @@ class UserbotVerifyCode(BaseModel):
     auth_token: str = Field(..., min_length=20, max_length=4096, description="Temporary auth token")
     code: str = Field(..., min_length=3, max_length=12, description="Telegram code from message")
     password: Optional[str] = Field(None, min_length=1, max_length=128, description="Telegram 2FA password")
+
+
+class UserbotQrStart(BaseModel):
+    api_id: Optional[int] = Field(default=None, gt=0, description="Опционально: API ID")
+    api_hash: Optional[str] = Field(
+        default=None,
+        min_length=16,
+        max_length=128,
+        description="Опционально: API hash",
+    )
+
+
+class UserbotQrStatus(BaseModel):
+    auth_token: str = Field(..., min_length=20, max_length=4096, description="Temporary QR auth token")
+
+
+class UserbotQrVerify2fa(BaseModel):
+    auth_token: str = Field(..., min_length=20, max_length=4096, description="Temporary QR auth token")
+    password: str = Field(..., min_length=1, max_length=128, description="Telegram 2FA password")
 
 
 class WhatsAppUserbotRequestCode(BaseModel):
@@ -605,7 +653,7 @@ class AdminTemplateServiceCreatePayload(AgentLookup):
     staff_id: Optional[int] = Field(default=None, gt=0, description="ID конкретного сотрудника-исполнителя")
     title: str = Field(..., min_length=1, max_length=128, description="Название услуги")
     duration_minutes: int = Field(..., ge=1, le=24 * 60, description="Длительность услуги в минутах")
-    price_minor: int = Field(default=0, ge=0, description="Стоимость в minor units")
+    price_minor: int = Field(default=0, ge=0, description="Стоимость в копейках (100 ₽ = 10000)")
     resource_type_filters: list[str] = Field(default_factory=list, description="Ограничение по типам ресурсов")
     is_active: bool = Field(default=True, description="Активна ли услуга")
 
@@ -615,7 +663,7 @@ class AdminTemplateServiceUpdatePayload(AgentLookup):
     staff_id: Optional[int] = Field(default=None, gt=0, description="ID конкретного сотрудника-исполнителя")
     title: Optional[str] = Field(default=None, min_length=1, max_length=128, description="Название услуги")
     duration_minutes: Optional[int] = Field(default=None, ge=1, le=24 * 60, description="Длительность услуги")
-    price_minor: Optional[int] = Field(default=None, ge=0, description="Стоимость в minor units")
+    price_minor: Optional[int] = Field(default=None, ge=0, description="Стоимость в копейках (100 ₽ = 10000)")
     resource_type_filters: Optional[list[str]] = Field(default=None, description="Ограничение по типам ресурсов")
     is_active: Optional[bool] = Field(default=None, description="Активность услуги")
 
@@ -668,6 +716,12 @@ class AdminTemplateAppointmentConfirmPayload(AgentLookup):
 
 class AdminTemplateAppointmentDeletePayload(AgentLookup):
     appointment_id: int = Field(..., gt=0, description="ID записи")
+    reason: Optional[str] = Field(default=None, max_length=1000, description="Причина отмены")
+
+
+class AdminTemplateRefundRequestActionPayload(AgentLookup):
+    refund_request_id: int = Field(..., gt=0, description="ID заявки на возврат")
+    reason: Optional[str] = Field(default=None, max_length=1000, description="Комментарий при отклонении")
 
 
 class AdminTemplateWaitlistCreatePayload(AgentLookup):
@@ -722,43 +776,4 @@ class AdminTemplateRemindersRunPayload(AgentLookup):
     now_iso: Optional[str] = Field(default=None, min_length=16, max_length=40)
     channel: Optional[str] = Field(default=None, max_length=32)
 
-
-class TelephonyPreviewStartPayload(AgentLookup):
-    pass
-
-
-class TelephonyPreviewHistoryItem(BaseModel):
-    role: str = Field(..., min_length=1, max_length=16)
-    text: str = Field(..., min_length=1, max_length=8000)
-
-
-class TelephonyPreviewTurnPayload(AgentLookup):
-    call_db_id: Optional[int] = Field(default=None, gt=0, description="ID сессии с телефонией")
-    preview_session_id: Optional[str] = Field(default=None, max_length=128)
-    dialog_state: Optional[str] = Field(default=None, max_length=32)
-    turn_history: Optional[list[TelephonyPreviewHistoryItem]] = Field(default=None, max_length=32)
-    user_transcript: Optional[str] = Field(default=None, max_length=8000)
-    audio_base64: Optional[str] = Field(default=None, description="Аудио реплики (base64)")
-    audio_mime_type: Optional[str] = Field(default="audio/webm", max_length=64)
-
-    @model_validator(mode="after")
-    def validate_session_ref(self):
-        if self.call_db_id is None and not (self.preview_session_id or "").strip():
-            raise ValueError("Either call_db_id or preview_session_id is required")
-        return self
-
-
-class TelephonyPreviewEndPayload(AgentLookup):
-    call_db_id: Optional[int] = Field(default=None, gt=0)
-    preview_session_id: Optional[str] = Field(default=None, max_length=128)
-
-    @model_validator(mode="after")
-    def validate_session_ref(self):
-        if self.call_db_id is None and not (self.preview_session_id or "").strip():
-            raise ValueError("Either call_db_id or preview_session_id is required")
-        return self
-
-
-class TelephonyPreviewSpeakPayload(AgentLookup):
-    text: str = Field(..., min_length=1, max_length=4000)
 

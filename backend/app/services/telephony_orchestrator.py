@@ -11,6 +11,10 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..alembic.models import AgentTelephonyCall, AgentTelephonyTurn
+from ..prompts.system_prompts import (
+    TELEPHONY_DIALOG_STATE_PROMPTS,
+    telephony_barge_in_addon,
+)
 from ..telephony.intent import detect_hangup_intent, detect_operator_transfer_intent
 
 _DIALOG_STATE_KEY = "dialog_state"
@@ -208,17 +212,6 @@ def _next_state(
     return current if current != DialogState.HANDOFF else DialogState.LISTEN
 
 
-_STATE_PROMPTS: dict[DialogState, str] = {
-    DialogState.GREET: "Поприветствуй по-живому и одной фразой спроси, чем помочь — без официоза.",
-    DialogState.LISTEN: "Ответь по сути разговорным языком; максимум один уточняющий вопрос, если без него нельзя.",
-    DialogState.CLARIFY: "Один короткий вопрос своими словами — как в обычном звонке, не анкета.",
-    DialogState.ACT: "Сделай шаг (запись, CRM) или объясни, что дальше — просто и по делу.",
-    DialogState.CONFIRM: "Своими словами переспроси дату, время или телефон одной фразой («так, на завтра в три — верно?»).",
-    DialogState.CLOSE: "Мягко предложи помощь ещё («что-то ещё подсказать?»); если не нужно — тепло попрощайся.",
-    DialogState.HANDOFF: "Коротко скажи, что переключаешь на живого оператора, без длинных объяснений.",
-}
-
-
 def apply_barge_in(
     ctx: CallDialogContext,
     *,
@@ -283,12 +276,9 @@ def decide_from_context(
         if interrupted:
             runtime["interrupted_agent_text"] = interrupted
 
-    prompt_addon = _STATE_PROMPTS.get(next_state, "")
+    prompt_addon = TELEPHONY_DIALOG_STATE_PROMPTS.get(next_state.value, "")
     if barged_in:
-        prompt_addon = (
-            "Абонент перебил. Начни по-разговорному («да, слышу…», «понял, вы про…») и ответь на новую мысль."
-            + (f" Ты успел сказать: «{interrupted[:200]}»." if interrupted else "")
-        )
+        prompt_addon = telephony_barge_in_addon(interrupted_agent_text=interrupted)
 
     return OrchestratorDecision(
         state=next_state,

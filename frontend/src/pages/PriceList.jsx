@@ -341,7 +341,7 @@ const PriceList = () => {
       <div className="pricing-page">
         <div className="pricing-header">
           <h1>Цены на шаблоны агентов</h1>
-          <p>Выберите шаблон и запустите агента — оплата минимального запуска при активации</p>
+          <p>Выберите шаблон и запустите агента — ежемесячная оплата обслуживания без разового взноса</p>
         </div>
 
         <div className="pricing-grid">
@@ -362,8 +362,8 @@ const PriceList = () => {
                 ) : (
                   <>
                     <span className="price-from">от </span>
-                    {formatRubPrice(plan.setupRub)}
-                    <span className="currency">₽</span>
+                    {formatRubPrice(plan.maintenanceRub)}
+                    <span className="currency">₽/мес</span>
                   </>
                 )}
               </div>
@@ -373,9 +373,7 @@ const PriceList = () => {
               ) : plan.isFree ? (
                 <p className="price-per">пробный запуск</p>
               ) : plan.maintenanceRub > 0 ? (
-                <p className="price-per">
-                  обслуживание от {formatRubPrice(plan.maintenanceRub)} ₽/мес
-                </p>
+                <p className="price-per">первый месяц обслуживания бесплатно</p>
               ) : (
                 <p className="price-per price-per--placeholder" aria-hidden="true">
                   &nbsp;

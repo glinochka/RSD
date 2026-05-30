@@ -244,6 +244,32 @@
   margin-bottom: var(--spacing-base);
 }
 
+.management-hint {
+  margin: 0 0 var(--spacing-base);
+  color: var(--color-text-lighter);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+.management-table-sub {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-lighter);
+  margin-top: 2px;
+}
+
+.management-table-pre {
+  max-width: 220px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: var(--font-size-xs);
+}
+
+.management-table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 @media (max-width: 900px) {
   .management-dashboard {
     grid-template-columns: 1fr;
@@ -262,6 +288,46 @@
   .management-inline-controls-grid {
     grid-template-columns: 1fr;
   }
+}
+
+.management-billing-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-base);
+}
+
+.management-billing-tab {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text-muted);
+  padding: var(--spacing-sm) var(--spacing-base);
+  cursor: pointer;
+  font: inherit;
+}
+
+.management-billing-tab.is-active {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 8%, var(--color-bg));
+}
+
+.management-plan-editor-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.management-plan-editor-card-head h3 {
+  margin: 0;
+}
+
+.management-form-row-inline {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: var(--spacing-lg);
 }
 
 .management-plans-editor {

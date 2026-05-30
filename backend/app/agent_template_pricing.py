@@ -1,17 +1,26 @@
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
-MAINTENANCE_GRACE_DAYS = 30
+MAINTENANCE_GRACE_DAYS = 3
+
+AGENT_CONTRACT_DURATION_MONTHS = (1, 3, 6)
+AGENT_DURATION_DISCOUNT_BY_MONTHS: dict[int, int] = {
+    1: 0,
+    3: 15,
+    6: 25,
+}
 
 # Шаблоны на странице /pricing (без «под ключ» и без content_factory).
 PRICING_PAGE_TEMPLATE_CODES: tuple[str, ...] = ("qa", "crm_admin", "sales_manager")
 
 PRICING_CARD_TITLES: dict[str, str] = {
     "qa": "ИИ консультант",
-    "crm_admin": "ИИ оператор",
+    "crm_admin": "ИИ Администратор",
     "sales_manager": "ИИ МОП",
 }
 
@@ -31,12 +40,14 @@ class AgentTemplatePricing:
         data = asdict(self)
         data["card_title"] = card_title or self.title
         data["llm_tokens_note"] = (
-            "Токены LLM включены в стоимость на этапе запуска — расходы на модели покрывает платформа."
+            "Токены LLM включены в подписку — расходы на модели покрывает платформа."
         )
         return data
 
 
-AGENT_TEMPLATE_PRICING: dict[str, AgentTemplatePricing] = {
+_DEFAULT_PRICING_CARD_TITLES: dict[str, str] = dict(PRICING_CARD_TITLES)
+
+_DEFAULT_AGENT_TEMPLATE_PRICING: dict[str, AgentTemplatePricing] = {
     "qa": AgentTemplatePricing(
         code="qa",
         title="ИИ консультант",
@@ -52,28 +63,28 @@ AGENT_TEMPLATE_PRICING: dict[str, AgentTemplatePricing] = {
     ),
     "crm_admin": AgentTemplatePricing(
         code="crm_admin",
-        title="ИИ оператор",
-        setup_rub_min=25_000,
-        monthly_maintenance_rub_min=3_000,
+        title="ИИ Администратор",
+        setup_rub_min=0,
+        monthly_maintenance_rub_min=990,
         is_free=False,
         selectable=True,
         status="available",
         description=(
-            "Запись, расписание и интеграции с CRM/ERP. Минимальная цена — базовый запуск; "
-            "сложные интеграции и ручная настройка оцениваются отдельно."
+            "Запись, расписание и интеграции с CRM/ERP. Подписка 990 ₽/мес; "
+            "первые 3 дня после создания бесплатно. Сложные интеграции — отдельно."
         ),
     ),
     "sales_manager": AgentTemplatePricing(
         code="sales_manager",
         title="ИИ МОП",
-        setup_rub_min=5_000,
-        monthly_maintenance_rub_min=3_000,
+        setup_rub_min=0,
+        monthly_maintenance_rub_min=1_990,
         is_free=False,
         selectable=True,
         status="available",
         description=(
-            "Исходящие и входящие продажи в мессенджерах. Минимальная цена — стартовая конфигурация; "
-            "доработка сценариев и CRM — по согласованию."
+            "Исходящие и входящие продажи в мессенджерах. Подписка 1 990 ₽/мес; "
+            "первые 3 дня после создания бесплатно."
         ),
     ),
     "content_factory": AgentTemplatePricing(
@@ -109,20 +120,151 @@ AGENT_TEMPLATE_PRICING: dict[str, AgentTemplatePricing] = {
 }
 
 # Legacy alias kept for stored agents; not offered in UI.
-AGENT_TEMPLATE_PRICING["lead_generation"] = AgentTemplatePricing(
+_DEFAULT_AGENT_TEMPLATE_PRICING["lead_generation"] = AgentTemplatePricing(
     code="lead_generation",
     title="Генерация лидов (legacy)",
-    setup_rub_min=5_000,
-    monthly_maintenance_rub_min=3_000,
+    setup_rub_min=0,
+    monthly_maintenance_rub_min=1_990,
     is_free=False,
     selectable=False,
     status="in_development",
-    description="Устаревший шаблон, используйте «Менеджер продаж».",
+    description="Устаревший шаблон, используйте «ИИ МОП».",
 )
 
-TEMPLATE_TYPES_IN_DEVELOPMENT = {
-    code for code, row in AGENT_TEMPLATE_PRICING.items() if row.status == "in_development"
-}
+_ADMIN_EDITABLE_TEMPLATE_CODES = frozenset(
+    code for code in _DEFAULT_AGENT_TEMPLATE_PRICING if code != "lead_generation"
+)
+
+_OVERRIDE_FILE_PATH = Path(__file__).with_name("agent_template_pricing.override.json")
+
+AGENT_TEMPLATE_PRICING: dict[str, AgentTemplatePricing] = {}
+TEMPLATE_TYPES_IN_DEVELOPMENT: set[str] = set()
+
+
+def _read_pricing_overrides() -> dict[str, dict[str, Any]]:
+    if not _OVERRIDE_FILE_PATH.exists():
+        return {}
+    try:
+        raw = json.loads(_OVERRIDE_FILE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    overrides: dict[str, dict[str, Any]] = {}
+    for code, data in raw.items():
+        if code in _ADMIN_EDITABLE_TEMPLATE_CODES and isinstance(data, dict):
+            overrides[str(code)] = data
+    return overrides
+
+
+def _merge_template_pricing(
+    base: AgentTemplatePricing,
+    upd: dict[str, Any],
+    *,
+    card_titles: dict[str, str],
+) -> AgentTemplatePricing:
+    code = base.code
+    title = str(upd.get("title", base.title) or base.title)
+    setup_rub_min = int(upd.get("setup_rub_min", base.setup_rub_min) or 0)
+    monthly_maintenance_rub_min = int(
+        upd.get("monthly_maintenance_rub_min", base.monthly_maintenance_rub_min) or 0
+    )
+    is_free = bool(upd.get("is_free", base.is_free))
+    selectable = bool(upd.get("selectable", base.selectable))
+    status = str(upd.get("status", base.status) or base.status)
+    if status not in ("available", "in_development"):
+        status = base.status
+    description = str(upd.get("description", base.description) or "")
+    if "card_title" in upd:
+        card_title = str(upd.get("card_title") or "").strip()
+        if card_title:
+            card_titles[code] = card_title
+        elif code in card_titles:
+            del card_titles[code]
+    return AgentTemplatePricing(
+        code=code,
+        title=title,
+        setup_rub_min=setup_rub_min,
+        monthly_maintenance_rub_min=monthly_maintenance_rub_min,
+        is_free=is_free,
+        selectable=selectable,
+        status=status,
+        description=description,
+    )
+
+
+def _apply_pricing_overrides(overrides: dict[str, dict[str, Any]]) -> tuple[dict[str, AgentTemplatePricing], dict[str, str]]:
+    card_titles = dict(_DEFAULT_PRICING_CARD_TITLES)
+    pricing: dict[str, AgentTemplatePricing] = {}
+    for code, base in _DEFAULT_AGENT_TEMPLATE_PRICING.items():
+        upd = overrides.get(code, {})
+        if upd:
+            pricing[code] = _merge_template_pricing(base, upd, card_titles=card_titles)
+        else:
+            pricing[code] = base
+    return pricing, card_titles
+
+
+def _reload_agent_template_pricing() -> None:
+    global AGENT_TEMPLATE_PRICING, TEMPLATE_TYPES_IN_DEVELOPMENT, PRICING_CARD_TITLES
+    AGENT_TEMPLATE_PRICING, PRICING_CARD_TITLES = _apply_pricing_overrides(_read_pricing_overrides())
+    TEMPLATE_TYPES_IN_DEVELOPMENT = {
+        code for code, row in AGENT_TEMPLATE_PRICING.items() if row.status == "in_development"
+    }
+
+
+_reload_agent_template_pricing()
+
+
+def get_paid_agent_template_types() -> tuple[str, ...]:
+    return tuple(
+        code
+        for code, pricing in AGENT_TEMPLATE_PRICING.items()
+        if pricing.monthly_maintenance_rub_min > 0
+    )
+
+
+def get_all_agent_template_pricing_admin() -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for code in sorted(_ADMIN_EDITABLE_TEMPLATE_CODES):
+        row = AGENT_TEMPLATE_PRICING.get(code)
+        if not row:
+            continue
+        data = row.to_public_dict(card_title=PRICING_CARD_TITLES.get(code))
+        data["on_pricing_page"] = code in PRICING_PAGE_TEMPLATE_CODES
+        items.append(data)
+    return items
+
+
+def update_agent_template_pricing_overrides(*, template_updates: list[dict[str, Any]]) -> None:
+    overrides = _read_pricing_overrides()
+    for upd in template_updates:
+        code = upd.get("code")
+        if code not in _ADMIN_EDITABLE_TEMPLATE_CODES:
+            continue
+        base = _DEFAULT_AGENT_TEMPLATE_PRICING[code]
+        entry: dict[str, Any] = {
+            "title": str(upd.get("title", base.title) or base.title),
+            "setup_rub_min": int(upd.get("setup_rub_min", base.setup_rub_min) or 0),
+            "monthly_maintenance_rub_min": int(
+                upd.get("monthly_maintenance_rub_min", base.monthly_maintenance_rub_min) or 0
+            ),
+            "is_free": bool(upd.get("is_free", base.is_free)),
+            "selectable": bool(upd.get("selectable", base.selectable)),
+            "status": str(upd.get("status", base.status) or base.status),
+            "description": str(upd.get("description", base.description) or ""),
+        }
+        card_title = upd.get("card_title")
+        if card_title is not None:
+            card_title_str = str(card_title).strip()
+            if card_title_str:
+                entry["card_title"] = card_title_str
+        overrides[str(code)] = entry
+
+    tmp_path = _OVERRIDE_FILE_PATH.with_suffix(".json.tmp")
+    tmp_path.write_text(json.dumps(overrides, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp_path.replace(_OVERRIDE_FILE_PATH)
+    _reload_agent_template_pricing()
 
 PAYMENT_KIND_SUBSCRIPTION = "subscription"
 PAYMENT_KIND_AGENT_ACTIVATION = "agent_activation"
@@ -208,6 +350,27 @@ def is_activation_paid(agent, *, user=None) -> bool:
     return paid_at is not None
 
 
+def round_contract_total_rub(value: int) -> int:
+    normalized = int(value or 0)
+    if normalized <= 0:
+        return 0
+    return max(90, round((normalized - 90) / 100) * 100 + 90)
+
+
+def calculate_contract_total_rub(monthly_rub: int, duration_months: int) -> int:
+    months = int(duration_months or 1)
+    if months not in AGENT_CONTRACT_DURATION_MONTHS:
+        months = 1
+    discount_percent = AGENT_DURATION_DISCOUNT_BY_MONTHS.get(months, 0)
+    base_total = int(monthly_rub) * months
+    discounted = round(base_total * (1 - discount_percent / 100))
+    return round_contract_total_rub(discounted)
+
+
+def calculate_contract_amount_kopecks(monthly_rub: int, duration_months: int) -> int:
+    return calculate_contract_total_rub(monthly_rub, duration_months) * 100
+
+
 def is_maintenance_current(agent, *, today: date | None = None) -> bool:
     pricing = get_agent_template_pricing(getattr(agent, "template_type", None))
     if not pricing or pricing.monthly_maintenance_rub_min <= 0:
@@ -231,20 +394,48 @@ def build_agent_billing_state(agent, *, user=None) -> dict[str, Any]:
     maintenance_current = is_maintenance_current(agent)
     grace_until = maintenance_grace_until(agent)
     grace_active = is_maintenance_grace_active(agent)
+    paid_until = getattr(agent, "maintenance_paid_until", None)
+    if isinstance(paid_until, datetime):
+        paid_until = paid_until.date()
+    requires_subscription = pricing.monthly_maintenance_rub_min > 0
+    can_activate = maintenance_current if requires_subscription else activation_paid
+    today = date.today()
+    trial_days_left = None
+    if grace_active and grace_until is not None:
+        trial_days_left = max(0, (grace_until - today).days)
     return {
         "template_type": template_type,
+        "template_title": pricing.title,
         "setup_rub_min": pricing.setup_rub_min,
         "monthly_maintenance_rub_min": pricing.monthly_maintenance_rub_min,
+        "monthly_price_rub": pricing.monthly_maintenance_rub_min,
         "is_free": pricing.is_free,
+        "requires_subscription": requires_subscription,
         "activation_exempt": activation_exempt,
         "activation_paid": activation_paid,
         "maintenance_current": maintenance_current,
         "maintenance_grace_active": grace_active,
         "maintenance_grace_until": grace_until.isoformat() if grace_until else None,
-        "can_activate": activation_paid,
-        "activation_required_rub": 0 if activation_paid else pricing.setup_rub_min,
+        "maintenance_paid_until": paid_until.isoformat() if paid_until else None,
+        "trial_days_left": trial_days_left,
+        "can_activate": can_activate,
+        "activation_required_rub": 0,
+        "renewal_payment_kind": PAYMENT_KIND_AGENT_MAINTENANCE if requires_subscription else None,
+        "duration_discounts": AGENT_DURATION_DISCOUNT_BY_MONTHS,
         "llm_tokens_included": True,
+        "autopay_enabled": bool(getattr(agent, "autopay_enabled", False)),
+        "autopay_available": requires_subscription,
+        "autopay_has_payment_method": bool(getattr(agent, "yookassa_payment_method_id", None)),
+        "autopay_duration_months": int(getattr(agent, "autopay_duration_months", None) or 1),
+        "autopay_last_error": getattr(agent, "autopay_last_error", None),
+        "yookassa_autopay_available": _yookassa_autopay_available(),
     }
+
+
+def _yookassa_autopay_available() -> bool:
+    from .services.agent_autopay import is_yookassa_autopay_available
+
+    return is_yookassa_autopay_available()
 
 
 def agent_payment_plan_name(*, payment_kind: str, template_type: str) -> str:

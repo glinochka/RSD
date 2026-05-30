@@ -24,6 +24,27 @@ class AdminSubscriptionPlansUpdateRequest(BaseModel):
     plans: list[SubscriptionPlanUpdate] = Field(..., min_length=1)
 
 
+class AgentTemplatePricingUpdate(BaseModel):
+    code: str = Field(..., min_length=1, max_length=64)
+    title: str = Field(..., min_length=1, max_length=256)
+    card_title: str | None = Field(default=None, max_length=256)
+    setup_rub_min: int = Field(..., ge=0, le=10_000_000)
+    monthly_maintenance_rub_min: int = Field(..., ge=0, le=10_000_000)
+    is_free: bool = False
+    selectable: bool = False
+    status: Literal["available", "in_development"] = "available"
+    description: str = Field(default="", max_length=4000)
+
+    @field_validator("code")
+    @classmethod
+    def normalize_code(cls, value: str) -> str:
+        return value.strip().lower()
+
+
+class AdminAgentTemplatePricingUpdateRequest(BaseModel):
+    templates: list[AgentTemplatePricingUpdate] = Field(..., min_length=1)
+
+
 class AdminCreateUserRequest(BaseModel):
     email: str = Field(..., min_length=5, max_length=255)
     password: str = Field(..., min_length=6, max_length=30)
@@ -38,6 +59,19 @@ class AdminGiftSubscriptionRequest(BaseModel):
 
 class AdminFreeAgentActivationRequest(BaseModel):
     enabled: bool = Field(..., description="Бесплатная активация агентов для аккаунта")
+
+
+class AdminPartnerPayoutUpdateRequest(BaseModel):
+    action: Literal["approve", "reject", "mark_paid"]
+    admin_note: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("admin_note", mode="before")
+    @classmethod
+    def strip_admin_note(cls, value: str | None) -> str | None:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
 
 
 class AdminPromoCodeCreateRequest(BaseModel):

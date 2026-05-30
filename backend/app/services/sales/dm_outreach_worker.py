@@ -6,12 +6,27 @@ import json
 import logging
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from ...alembic.database import async_session_maker
-from ...alembic.models import Agent, AgentAnalyticsMessage, AgentChannelConnection, AgentSalesDmQueue
-from ...utils.crypto import decrypt_token
+from ...alembic.models import (
+    Agent,
+    AgentAnalyticsMessage,
+    AgentChannelConnection,
+    AgentSalesDmQueue,
+    AgentSalesImportedContact,
+)
+from .agent_outreach_service import mark_import_contact_sent
 from .dm_queue_service import get_dm_queue_service
+from .outreach_send import send_telegram_userbot_message, send_whatsapp_userbot_message
+from .agent_excel_import import EXCEL_IMPORT_SOURCE_CHAT_ID
+from .fsm import SalesFSMService
+from .sales_followup_service import (
+    COMPOSE_AT_SEND_PLACEHOLDER,
+    compose_follow_up_message,
+    mark_follow_up_sent,
+    should_send_follow_up,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +56,16 @@ async def _latest_telegram_userbot_peer_access_hash(
     return int(row) if row is not None else None
 
 
+def _parse_queue_metadata(item: AgentSalesDmQueue) -> dict[str, Any]:
+    if not item.metadata_json:
+        return {}
+    try:
+        meta = json.loads(item.metadata_json)
+        return meta if isinstance(meta, dict) else {}
+    except json.JSONDecodeError:
+        return {}
+
+
 class DmOutreachWorker:
     """Background worker for sending queued DM messages."""
 
@@ -56,15 +81,15 @@ class DmOutreachWorker:
     async def run_forever(self) -> None:
         """Main worker loop."""
         logger.info("DmOutreachWorker starting")
-        interval_seconds = 2  # Poll every 2 seconds for more responsive processing
-        
+        interval_seconds = 2
+
         try:
             while not self._stop.is_set():
                 try:
                     await self._process_batch()
                 except Exception as exc:
                     logger.exception("DmOutreachWorker batch error: %s", exc)
-                
+
                 try:
                     await asyncio.wait_for(self._stop.wait(), timeout=interval_seconds)
                     break
@@ -80,7 +105,7 @@ class DmOutreachWorker:
         """Process one batch of pending messages."""
         service = get_dm_queue_service()
         pending = await service.get_pending_messages(limit=self.batch_size)
-        
+
         if not pending:
             return
 
@@ -96,33 +121,81 @@ class DmOutreachWorker:
                     item.message_text[:50] if len(item.message_text) > 50 else item.message_text,
                 )
                 await self._send_message(item)
-                # Throttle between sends to avoid rate limiting
                 await asyncio.sleep(self.min_interval_seconds)
             except Exception as exc:
                 logger.exception("Error sending DM queue_id=%d: %s", item.id, exc)
                 await service.mark_failed(queue_id=item.id, error=str(exc)[:500], retry=True)
 
     async def _send_message(self, item: AgentSalesDmQueue) -> None:
-        """Send a single queued message via userbot."""
-        encrypted_credentials: str | None = None
-        peer_access_hash: int | None = None
-        target_external = str(item.target_user_external_id or "").strip()
+        """Send a single queued message via userbot (Telegram or WhatsApp)."""
+        meta = _parse_queue_metadata(item)
+        channel = str(meta.get("channel") or "telegram_userbot").strip().lower()
+        message_text = (item.message_text or "").strip()
+        imported_id = meta.get("imported_contact_id")
+        follow_up_tier = str(meta.get("follow_up_tier") or "").strip().lower()
 
-        if item.metadata_json:
+        if meta.get("compose_at_send") or message_text == COMPOSE_AT_SEND_PLACEHOLDER:
+            if imported_id is None:
+                await get_dm_queue_service().mark_skipped(
+                    queue_id=item.id,
+                    reason="follow_up_missing_imported_contact_id",
+                )
+                return
+            if not await should_send_follow_up(
+                agent_id=item.agent_id,
+                imported_contact_id=int(imported_id),
+            ):
+                await get_dm_queue_service().mark_skipped(
+                    queue_id=item.id,
+                    reason="client_replied_or_not_eligible",
+                )
+                return
+            async with async_session_maker() as session:
+                async with session.begin():
+                    agent = await session.scalar(select(Agent).where(Agent.id == item.agent_id))
+                    row = await session.scalar(
+                        select(AgentSalesImportedContact).where(
+                            AgentSalesImportedContact.id == int(imported_id)
+                        )
+                    )
+            if agent is None or row is None:
+                await get_dm_queue_service().mark_failed(
+                    queue_id=item.id,
+                    error="Agent or imported contact not found",
+                    retry=False,
+                )
+                return
+            message_text = (
+                await compose_follow_up_message(
+                    agent=agent,
+                    row=row,
+                    tier=follow_up_tier or "day",
+                )
+            ).strip()
+            if not message_text:
+                await get_dm_queue_service().mark_failed(
+                    queue_id=item.id,
+                    error="Empty follow-up message",
+                    retry=True,
+                )
+                return
+        peer_access_hash: int | None = None
+        if meta.get("telegram_peer_access_hash") is not None:
             try:
-                meta = json.loads(item.metadata_json)
-                if isinstance(meta, dict) and meta.get("telegram_peer_access_hash") is not None:
-                    mh = int(meta["telegram_peer_access_hash"])
-                    if mh > 0:
-                        peer_access_hash = mh
-            except (json.JSONDecodeError, TypeError, ValueError):
+                mh = int(meta["telegram_peer_access_hash"])
+                if mh > 0:
+                    peer_access_hash = mh
+            except (TypeError, ValueError):
                 pass
+
+        encrypted_credentials: str | None = None
+        connection_id: int | None = None
+        target_external = str(item.target_user_external_id or "").strip()
 
         async with async_session_maker() as session:
             async with session.begin():
                 agent = await session.scalar(select(Agent).where(Agent.id == item.agent_id))
                 if agent is None:
-                    logger.warning("Agent not found for queue_id=%d agent_id=%d", item.id, item.agent_id)
                     await get_dm_queue_service().mark_failed(
                         queue_id=item.id,
                         error="Agent not found",
@@ -130,89 +203,84 @@ class DmOutreachWorker:
                     )
                     return
 
-                channel = await session.scalar(
+                provider = (
+                    "whatsapp_userbot"
+                    if channel == "whatsapp_userbot"
+                    else "telegram_userbot"
+                )
+                ch = await session.scalar(
                     select(AgentChannelConnection).where(
                         AgentChannelConnection.agent_id == agent.id,
-                        AgentChannelConnection.provider == "telegram_userbot",
+                        AgentChannelConnection.provider == provider,
                         AgentChannelConnection.is_active.is_(True),
                     )
                 )
 
-                if channel is None or not channel.encrypted_credentials:
-                    logger.warning("No active userbot channel for agent_id=%d", agent.id)
+                if ch is None or not ch.encrypted_credentials:
                     await get_dm_queue_service().mark_failed(
                         queue_id=item.id,
-                        error="No userbot channel available",
+                        error=f"No active {provider} channel",
                         retry=False,
                     )
                     return
 
-                encrypted_credentials = str(channel.encrypted_credentials)
+                encrypted_credentials = str(ch.encrypted_credentials)
+                connection_id = int(ch.id)
                 analytics_ns = int(agent.bot_id or agent.id)
-                if peer_access_hash is None:
+                if provider == "telegram_userbot" and peer_access_hash is None:
                     peer_access_hash = await _latest_telegram_userbot_peer_access_hash(
                         session,
                         analytics_namespace_id=analytics_ns,
                         user_external_id=target_external,
                     )
 
-        # Send via Telethon userbot (needs InputPeerUser when entity is not in session cache)
         try:
-            from telethon import TelegramClient
-            from telethon.sessions import StringSession
-            from telethon.tl.types import InputPeerUser
-
-            bundle = json.loads(decrypt_token(encrypted_credentials or ""))
-            api_id = int(bundle["api_id"])
-            api_hash = str(bundle["api_hash"])
-            session_str = str(bundle["session_string"])
-
-            client = TelegramClient(StringSession(session_str), api_id, api_hash)
-
-            try:
-                await client.connect()
-                if not await client.is_user_authorized():
-                    raise RuntimeError("Userbot session not authorized")
-
-                try:
-                    target_id = int(target_external)
-                except ValueError as exc:
-                    raise RuntimeError(f"Invalid target_user_external_id (expected numeric Telegram id): {target_external}") from exc
-
-                recipient: Any
-                if peer_access_hash is not None:
-                    recipient = InputPeerUser(user_id=target_id, access_hash=int(peer_access_hash))
-                    logger.debug(
-                        "DM outreach using InputPeerUser user_id=%s access_hash present queue_id=%s",
-                        target_id,
-                        item.id,
-                    )
-                else:
-                    try:
-                        recipient = await client.get_entity(target_id)
-                    except Exception:
-                        recipient = None
-                    if recipient is None:
-                        raise RuntimeError(
-                            "Не удалось отправить DM: нет telegram_peer_access_hash для этого пользователя "
-                            "и не удалось найти peer в кэше Telethon. Нужен хотя бы один контакт с этим "
-                            "аккаунтом userbot: сообщение в ЛС, пост в отслеживаемой группе/канале с этим "
-                            "userbot, или другой способ, чтобы Telegram выдал access_hash."
-                        )
-
-                await client.send_message(recipient, item.message_text)
-
-                logger.info(
-                    "Sent DM via userbot: queue_id=%d agent_id=%d user_id=%s",
-                    item.id,
-                    item.agent_id,
-                    item.target_user_external_id,
+            if channel == "whatsapp_userbot":
+                await send_whatsapp_userbot_message(
+                    connection_id=int(connection_id or 0),
+                    encrypted_credentials=encrypted_credentials or "",
+                    user_external_id=target_external,
+                    text=message_text,
                 )
-                await get_dm_queue_service().mark_sent(queue_id=item.id)
+            else:
+                await send_telegram_userbot_message(
+                    encrypted_credentials=encrypted_credentials or "",
+                    target_external_id=target_external,
+                    text=message_text,
+                    peer_access_hash=peer_access_hash,
+                )
 
-            finally:
-                if client.is_connected():
-                    await client.disconnect()
+            logger.info(
+                "Sent DM: queue_id=%d agent_id=%d channel=%s user_id=%s",
+                item.id,
+                item.agent_id,
+                channel,
+                target_external,
+            )
+            await get_dm_queue_service().mark_sent(queue_id=item.id)
+
+            if imported_id is not None:
+                try:
+                    if meta.get("message_kind") == "follow_up" and follow_up_tier:
+                        await mark_follow_up_sent(
+                            imported_contact_id=int(imported_id),
+                            tier=follow_up_tier,
+                        )
+                    else:
+                        await mark_import_contact_sent(imported_contact_id=int(imported_id))
+                        fsm = SalesFSMService()
+                        try:
+                            await fsm.transition_contact(
+                                agent_id=item.agent_id,
+                                user_external_id=target_external,
+                                source_chat_id=EXCEL_IMPORT_SOURCE_CHAT_ID,
+                                to_state="SENT",
+                                reason="excel_import_first_message_sent",
+                            )
+                        except Exception:
+                            logger.debug("FSM SENT transition skipped queue_id=%s", item.id, exc_info=True)
+                except Exception:
+                    logger.warning("Failed to mark imported contact sent id=%s", imported_id, exc_info=True)
 
         except Exception as exc:
             error_msg = str(exc)[:500]
@@ -221,16 +289,16 @@ class DmOutreachWorker:
                 "could not find the input entity",
                 "не удалось отправить dm",
                 "invalid target_user_external_id",
+                "некорректный номер",
+                "пустой идентификатор",
             )
             is_peer_resolution = any(s in low for s in non_retry_substrings)
-            if isinstance(exc, ValueError) and "input entity" in low:
-                is_peer_resolution = True
             should_retry = (
                 "auth" not in low
                 and "not found" not in low
                 and not is_peer_resolution
             )
-            
+
             logger.warning(
                 "Failed to send DM queue_id=%d: %s (retry=%s)",
                 item.id,

@@ -73,6 +73,24 @@ class DmQueueService:
                 return rows
 
     @staticmethod
+    async def mark_skipped(
+        *,
+        queue_id: int,
+        reason: str | None = None,
+    ) -> None:
+        async with async_session_maker() as session:
+            async with session.begin():
+                await session.execute(
+                    update(AgentSalesDmQueue)
+                    .where(AgentSalesDmQueue.id == queue_id)
+                    .values(
+                        status="skipped",
+                        last_error=reason,
+                        updated_at=_now_utc(),
+                    )
+                )
+
+    @staticmethod
     async def mark_sent(
         *,
         queue_id: int,

@@ -500,6 +500,34 @@ async def test_lead_generation_does_not_enable_owner_handoff(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_sales_runtime_pool_only_rejects_unknown_private_inbound(monkeypatch):
+    service = TemplateRuntimeService()
+    qualify_mock = AsyncMock(side_effect=AssertionError("qualify should not run"))
+    monkeypatch.setattr(service, "_qualify_and_compose_unified", qualify_mock)
+    monkeypatch.setattr(
+        "app.services.sales.contact_pool.is_user_in_agent_contact_pool",
+        AsyncMock(return_value=False),
+    )
+
+    result = await service.execute(
+        template_type="sales_manager",
+        prompt="Ты sales-агент",
+        user_message="Привет, вы тут?",
+        knowledge_scope_id=101,
+        template_config={"mode": "auto", "contacts_pool_only": True},
+        source_channel="telegram_userbot",
+        user_external_id="99999",
+        agent_id=77,
+        runtime_context={"lead_initiated_private_dialog": True, "is_private_chat": True},
+    )
+
+    assert result.discard_message is True
+    assert result.answer == ""
+    assert result.tool_events[0]["tool_status"] == "contact_not_in_pool"
+    assert qualify_mock.await_count == 0
+
+
+@pytest.mark.asyncio
 async def test_sales_runtime_private_inbound_skips_target_check(monkeypatch):
     service = TemplateRuntimeService()
     unified_mock = AsyncMock(side_effect=AssertionError("_qualify_and_compose_unified should not be called"))
@@ -516,17 +544,21 @@ async def test_sales_runtime_private_inbound_skips_target_check(monkeypatch):
         }])),
     )
     monkeypatch.setattr("app.services.template_runtime.get_sales_fsm_service", lambda: _FakeFSMService())
+    monkeypatch.setattr(
+        "app.services.sales.contact_pool.is_user_in_agent_contact_pool",
+        AsyncMock(return_value=True),
+    )
 
     result = await service.execute(
         template_type="sales_manager",
         prompt="Ты sales-агент",
         user_message="Добрый день, занимаетесь автоматизацией?",
         knowledge_scope_id=101,
-        template_config={"mode": "auto", "allowed_tools": ["send_message"]},
+        template_config={"mode": "auto", "allowed_tools": ["send_message"], "contacts_pool_only": True},
         source_channel="telegram_userbot",
         user_external_id="12345",
         agent_id=77,
-        runtime_context={"lead_initiated_private_dialog": True},
+        runtime_context={"lead_initiated_private_dialog": True, "is_private_chat": True},
     )
 
     assert result.answer.startswith("Спасибо за сообщение!")
