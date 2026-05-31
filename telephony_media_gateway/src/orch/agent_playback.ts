@@ -47,7 +47,9 @@ export function handleOrchestratorOutbound(
   const payload = msg.payload || {};
   const callId = String(msg.call_id || payload.call_id || '').trim();
 
-  if (callId && isPlaybackBlocked(callId) && type.startsWith('agent.audio')) {
+  // After barge-in we intentionally drop only stale chunks/end of the interrupted turn.
+  // The next agent.audio.start must pass through to reopen playback for a new reply.
+  if (callId && type !== 'agent.audio.start' && isPlaybackBlocked(callId) && type.startsWith('agent.audio')) {
     return;
   }
 
