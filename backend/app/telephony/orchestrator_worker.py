@@ -55,6 +55,14 @@ from .session_cache import cache_call_mapping, cache_resolve_payload
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_TELEPHONY_WELCOME = "Здравствуйте! Чем могу помочь?"
+TELEPHONY_AGENT_NOT_FOUND_PHRASE = "Агент не найден"
+
+
+def resolve_telephony_welcome_text(raw: str | None) -> str:
+    text = str(raw or "").strip()
+    return text or DEFAULT_TELEPHONY_WELCOME
+
 
 @dataclass
 class CallSlot:
@@ -210,6 +218,63 @@ class OrchestratorWorker:
             slot.routed_by = str(routing.get("routed_by") or "webhook")
             slot.awaiting_extension = slot.routed_by != "did"
 
+    async def _stream_routing_phrase(
+        self,
+        slot: CallSlot,
+        text: str,
+        *,
+        log_label: str,
+        record_agent_turn: bool = False,
+        set_greet_state: bool = False,
+    ) -> None:
+        plain = str(text or "").strip()
+        if not plain:
+            return
+        session_row = await hgetall_session(slot.connection_id)
+        voice_id = str(session_row.get("voice_id") or "default")
+        language = str(session_row.get("language") or "ru-RU")
+        try:
+            assert_stream_tts_configured()
+            await stream_fixed_phrase(
+                call_id=slot.call_id,
+                connection_id=slot.connection_id,
+                call_db_id=slot.call_db_id,
+                text=plain,
+                voice_id=voice_id,
+                language=language,
+            )
+            if record_agent_turn:
+                await append_dialog_turn(
+                    slot.call_id,
+                    role="agent",
+                    text=plain,
+                    max_turns=int(settings.TELEPHONY_DIALOG_MAX_TURNS),
+                    ttl_sec=int(settings.TELEPHONY_REDIS_SESSION_TTL_SEC),
+                )
+            if set_greet_state:
+                slot.ctx.state = DialogState.GREET
+                await set_dialog_meta(
+                    slot.call_id,
+                    slot.ctx.to_meta(),
+                    ttl_sec=settings.TELEPHONY_REDIS_SESSION_TTL_SEC,
+                )
+        except Exception as exc:
+            logger.error(
+                "orchestrator %s TTS failed call_id=%s: %s",
+                log_label,
+                slot.call_id,
+                exc,
+            )
+
+    async def _play_agent_welcome(self, slot: CallSlot, *, welcome_raw: str | None) -> None:
+        await self._stream_routing_phrase(
+            slot,
+            resolve_telephony_welcome_text(welcome_raw),
+            log_label="welcome",
+            record_agent_turn=True,
+            set_greet_state=True,
+        )
+
     async def _apply_routed_agent(self, slot: CallSlot, agent_id: int, *, extension: str) -> None:
         slot.agent_id = int(agent_id)
         slot.awaiting_extension = False
@@ -222,6 +287,11 @@ class OrchestratorWorker:
                 )
                 if agent is None:
                     logger.warning("orchestrator dtmf route agent missing id=%s", agent_id)
+                    await self._stream_routing_phrase(
+                        slot,
+                        TELEPHONY_AGENT_NOT_FOUND_PHRASE,
+                        log_label="route_agent_missing",
+                    )
                     return
                 if slot.call_db_id:
                     call = await session.get(AgentTelephonyCall, int(slot.call_db_id))
@@ -249,41 +319,10 @@ class OrchestratorWorker:
             call_db_id=slot.call_db_id,
         )
         await self._load_postgres_once(slot)
-        welcome = str(resolved.get("welcome_message") or "").strip()
-        if welcome:
-            session_row = await hgetall_session(slot.connection_id)
-            voice_id = str(session_row.get("voice_id") or "default")
-            language = str(session_row.get("language") or "ru-RU")
-            try:
-                assert_stream_tts_configured()
-                await stream_fixed_phrase(
-                    call_id=slot.call_id,
-                    connection_id=slot.connection_id,
-                    call_db_id=slot.call_db_id,
-                    text=welcome,
-                    voice_id=voice_id,
-                    language=language,
-                )
-                await append_dialog_turn(
-                    slot.call_id,
-                    role="agent",
-                    text=welcome,
-                    max_turns=int(settings.TELEPHONY_DIALOG_MAX_TURNS),
-                    ttl_sec=int(settings.TELEPHONY_REDIS_SESSION_TTL_SEC),
-                )
-                slot.ctx.state = DialogState.GREET
-                await set_dialog_meta(
-                    slot.call_id,
-                    slot.ctx.to_meta(),
-                    ttl_sec=settings.TELEPHONY_REDIS_SESSION_TTL_SEC,
-                )
-            except Exception as exc:
-                logger.error(
-                    "orchestrator welcome TTS failed call_id=%s agent_id=%s: %s",
-                    slot.call_id,
-                    agent_id,
-                    exc,
-                )
+        await self._play_agent_welcome(
+            slot,
+            welcome_raw=str(resolved.get("welcome_message") or ""),
+        )
         logger.info(
             "orchestrator dtmf routed call_id=%s extension=%s agent_id=%s",
             slot.call_id,
@@ -314,26 +353,11 @@ class OrchestratorWorker:
             agent_id = await resolve_agent_by_extension(slot.dtmf_buffer)
             if agent_id is None:
                 slot.dtmf_buffer = ""
-                msg = "Добавочный номер не найден. Попробуйте ещё раз."
-                session_row = await hgetall_session(slot.connection_id)
-                voice_id = str(session_row.get("voice_id") or "default")
-                language = str(session_row.get("language") or "ru-RU")
-                try:
-                    assert_stream_tts_configured()
-                    await stream_fixed_phrase(
-                        call_id=slot.call_id,
-                        connection_id=slot.connection_id,
-                        call_db_id=slot.call_db_id,
-                        text=msg,
-                        voice_id=voice_id,
-                        language=language,
-                    )
-                except Exception as exc:
-                    logger.error(
-                        "orchestrator dtmf error TTS failed call_id=%s: %s",
-                        slot.call_id,
-                        exc,
-                    )
+                await self._stream_routing_phrase(
+                    slot,
+                    TELEPHONY_AGENT_NOT_FOUND_PHRASE,
+                    log_label="dtmf_agent_not_found",
+                )
                 return
             await self._apply_routed_agent(slot, int(agent_id), extension=slot.dtmf_buffer)
 
@@ -350,6 +374,12 @@ class OrchestratorWorker:
             await self._warm_session_cache(slot)
             handle_orchestrator_event(slot.ctx, OrchestratorEventType.SESSION_START)
             await set_dialog_meta(slot.call_id, slot.ctx.to_meta(), ttl_sec=settings.TELEPHONY_REDIS_SESSION_TTL_SEC)
+            if not slot.awaiting_extension:
+                session_row = await hgetall_session(connection_id)
+                await self._play_agent_welcome(
+                    slot,
+                    welcome_raw=str(session_row.get("welcome_message") or ""),
+                )
             logger.info(
                 "orchestrator session.start call_id=%s connection_id=%s redis_session=%s awaiting_ext=%s",
                 call_id,
