@@ -6,7 +6,13 @@ import {
   markAgentPlaybackEnd,
   markAgentPlaybackStart,
 } from './agent_playback_tracker';
+import { clearPlaybackPacer, enqueueUlawPlayback, markPlaybackEnd } from './agent_playback_pacer';
 import { BINARY_FRAME_AUDIO_OUT } from '../protocol/events';
+import {
+  buildVoxMediaMessage,
+  buildVoxStartMessage,
+  buildVoxStopMessage,
+} from '../ws/vox_media';
 
 function sendJson(ws: WebSocket, message: Record<string, unknown>): void {
   if (ws.readyState === ws.OPEN) {
@@ -14,17 +20,21 @@ function sendJson(ws: WebSocket, message: Record<string, unknown>): void {
   }
 }
 
-function sendUlawPayload(ws: WebSocket, ulaw: Buffer): void {
-  if (!ulaw.length) return;
-  // VoxEngine webSocket.sendMediaTo(call) plays raw μ-law binary frames (tag rsd_audio_out).
-  // JSON {event:"media"} is what Vox *sends* inbound; it is not auto-played on downlink.
+function sendVoxDownlink(ws: WebSocket, message: string): void {
+  if (ws.readyState === ws.OPEN) {
+    ws.send(message);
+  }
+}
+
+function sendUlawFrame(ws: WebSocket, frame: Buffer): void {
+  if (!frame.length) return;
   if (config.loopbackTransport === 'vox' || config.loopbackTransport === 'both') {
-    ws.send(ulaw);
+    sendVoxDownlink(ws, buildVoxMediaMessage(frame));
   }
   if (config.loopbackTransport === 'binary' || config.loopbackTransport === 'both') {
-    const binaryFrame = Buffer.allocUnsafe(1 + ulaw.length);
+    const binaryFrame = Buffer.allocUnsafe(1 + frame.length);
     binaryFrame[0] = BINARY_FRAME_AUDIO_OUT;
-    ulaw.copy(binaryFrame, 1);
+    frame.copy(binaryFrame, 1);
     ws.send(binaryFrame);
   }
 }
@@ -43,13 +53,19 @@ export function handleOrchestratorOutbound(
 
   switch (type) {
     case 'agent.audio.start':
-      if (callId) markAgentPlaybackStart(callId);
+      if (callId) {
+        clearPlaybackPacer(callId);
+        markAgentPlaybackStart(callId);
+      }
+      if (config.loopbackTransport === 'vox' || config.loopbackTransport === 'both') {
+        sendVoxDownlink(ws, buildVoxStartMessage());
+      }
       sendJson(ws, { type: 'agent.audio.start', payload: { ok: true, codec: payload.codec || 'pcmu' } });
       break;
     case 'agent.audio.chunk': {
       const b64 = String(payload.audio_b64 || '').trim();
-      if (b64) {
-        sendUlawPayload(ws, Buffer.from(b64, 'base64'));
+      if (b64 && callId) {
+        enqueueUlawPlayback(ws, callId, Buffer.from(b64, 'base64'), sendUlawFrame);
       }
       sendJson(ws, {
         type: 'agent.audio.chunk',
@@ -58,13 +74,30 @@ export function handleOrchestratorOutbound(
       break;
     }
     case 'agent.audio.end':
-      if (callId) markAgentPlaybackEnd(callId);
+      if (callId) {
+        markAgentPlaybackEnd(callId);
+        markPlaybackEnd(callId, () => {
+          if (config.loopbackTransport === 'vox' || config.loopbackTransport === 'both') {
+            sendVoxDownlink(ws, buildVoxStopMessage());
+          }
+          clearPlaybackPacer(callId);
+        });
+      }
       sendJson(ws, { type: 'agent.audio.end', payload: { ok: true, reason: payload.reason || 'complete' } });
       break;
     case 'agent.play_filler': {
       const b64 = String(payload.audio_b64 || '').trim();
-      if (b64) {
-        sendUlawPayload(ws, Buffer.from(b64, 'base64'));
+      if (b64 && callId) {
+        if (config.loopbackTransport === 'vox' || config.loopbackTransport === 'both') {
+          sendVoxDownlink(ws, buildVoxStartMessage());
+        }
+        enqueueUlawPlayback(ws, callId, Buffer.from(b64, 'base64'), sendUlawFrame);
+        markPlaybackEnd(callId, () => {
+          if (config.loopbackTransport === 'vox' || config.loopbackTransport === 'both') {
+            sendVoxDownlink(ws, buildVoxStopMessage());
+          }
+          clearPlaybackPacer(callId);
+        });
       }
       sendJson(ws, { type: 'agent.play_filler', payload: { ok: true, text: payload.text } });
       break;

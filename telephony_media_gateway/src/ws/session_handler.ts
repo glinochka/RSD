@@ -17,6 +17,7 @@ import { RtfTracker, expectedFrameBytes, shouldLogRtf } from './rtf_metrics';
 import { emitBargeIn } from '../orch/barge_in_emit';
 import { clearAgentPlayback } from '../orch/agent_playback_tracker';
 import { publishOrchEvent } from '../orch/publisher';
+import { clearPlaybackPacer } from '../orch/agent_playback_pacer';
 import { registerReplySession, unregisterReplySession } from '../orch/reply_hub';
 import { buildVoxMediaMessage, parseVoxMediaMessage } from './vox_media';
 
@@ -219,6 +220,7 @@ export function attachMediaSessionHandler(ws: WebSocket): void {
         payload: { reason: 'ws_close' },
       });
       unregisterReplySession(session.callId);
+      clearPlaybackPacer(session.callId);
       clearAgentPlayback(session.callId);
       if (config.logLevel !== 'silent') {
         console.info(

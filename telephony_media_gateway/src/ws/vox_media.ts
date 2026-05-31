@@ -1,11 +1,11 @@
 /**
- * Voximplant WebSocket media JSON (call.sendMediaTo → gateway).
+ * Voximplant WebSocket media JSON (call.sendMediaTo ↔ gateway).
  * @see https://voximplant.com/docs/guides/media-streams/websocket
  */
 
 export interface VoxMediaMessage {
   event: 'media';
-  media: { payload: string; tag?: string };
+  media: { payload: string };
 }
 
 /** Voximplant may send start/stop before media frames — ignore without error. */
@@ -24,18 +24,27 @@ export function parseVoxMediaMessage(text: string): Buffer | null | 'ignore' {
   }
 }
 
-/** Tag must match VoxEngine `webSocket.sendMediaTo(call, { tag: 'rsd_audio_out' })`. */
-export const VOX_OUTBOUND_MEDIA_TAG = 'rsd_audio_out';
+export function buildVoxStartMessage(): string {
+  return JSON.stringify({
+    event: 'start',
+    start: {
+      mediaFormat: {
+        encoding: 'audio/x-mulaw',
+        sampleRate: 8000,
+      },
+    },
+  });
+}
 
-export function buildVoxMediaMessage(
-  payload: Buffer,
-  tag: string = VOX_OUTBOUND_MEDIA_TAG,
-): string {
+export function buildVoxMediaMessage(payload: Buffer): string {
   return JSON.stringify({
     event: 'media',
     media: {
       payload: payload.toString('base64'),
-      tag,
     },
   });
+}
+
+export function buildVoxStopMessage(): string {
+  return JSON.stringify({ event: 'stop' });
 }
