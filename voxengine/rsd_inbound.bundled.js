@@ -372,6 +372,9 @@ var POOL_GREETING_TEXT =
   'Здравствуйте! Введите добавочный номер из четырёх цифр на клавиатуре телефона.';
 var RECORDING_DISCLAIMER_RU =
   'Разговор может быть записан в целях контроля качества обслуживания.';
+/** Wait for DTMF from dial string (+7...,1234) before pool prompt. */
+var EXTENSION_DIGIT_COUNT = 4;
+var DTMF_PREFILL_MS = 2500;
 
 function parseCustomData() {
   try {
@@ -468,6 +471,11 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, function (e) {
   var operatorTransferE164 = '';
   var playRecordingDisclaimer = false;
   var degradedTransferE164 = '';
+  var dtmfBuffer = '';
+  var pendingDtmfDigits = [];
+  var extensionDialComplete = false;
+  var dtmfPrefillTimer = null;
+  var answered = false;
 
   if (!cfg.connectionId || !cfg.webhookBaseUrl || !cfg.webhookSecret) {
     Logger.write(
@@ -486,7 +494,93 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, function (e) {
     return;
   }
 
+  function enableToneCapture() {
+    try {
+      call.handleTones(true);
+    } catch (toneErr) {
+      Logger.write('[rsd] handleTones: ' + toneErr);
+    }
+  }
+
+  function flushPendingDtmf() {
+    if (!mediaWs || !pendingDtmfDigits.length) {
+      return;
+    }
+    for (var i = 0; i < pendingDtmfDigits.length; i++) {
+      rsdMedia.sendDtmfToGateway(mediaWs, pendingDtmfDigits[i]);
+    }
+    pendingDtmfDigits = [];
+  }
+
+  function pushDtmfDigit(digit) {
+    var d = String(digit || '').trim();
+    if (!/^[0-9]$/.test(d)) {
+      return;
+    }
+    if (cfg.requireExtension) {
+      dtmfBuffer = (dtmfBuffer + d).slice(-EXTENSION_DIGIT_COUNT);
+      if (dtmfBuffer.length >= EXTENSION_DIGIT_COUNT && !extensionDialComplete) {
+        extensionDialComplete = true;
+        Logger.write(
+          '[rsd] extension pre-dial complete ext=' + dtmfBuffer + ' call_id=' + callId,
+        );
+        onExtensionPreDialReady();
+      }
+    }
+    if (mediaWs) {
+      rsdMedia.sendDtmfToGateway(mediaWs, d);
+    } else {
+      pendingDtmfDigits.push(d);
+    }
+  }
+
+  function clearDtmfPrefillTimer() {
+    if (dtmfPrefillTimer) {
+      clearTimeout(dtmfPrefillTimer);
+      dtmfPrefillTimer = null;
+    }
+  }
+
+  function proceedToAnswer() {
+    if (answered) {
+      return;
+    }
+    answered = true;
+    clearDtmfPrefillTimer();
+    call.answer();
+    onAnswered();
+  }
+
+  function completeExtensionFastPath() {
+    if (!cfg.requireExtension || !extensionDialComplete || answered) {
+      return;
+    }
+    clearDtmfPrefillTimer();
+    Logger.write('[rsd] skip pool greeting — extension from dial string call_id=' + callId);
+    if (playRecordingDisclaimer) {
+      call.say(RECORDING_DISCLAIMER_RU, Language.RU_RUSSIAN_FEMALE);
+      call.addEventListener(CallEvents.PlaybackFinished, function onDisclaimerDone() {
+        call.removeEventListener(CallEvents.PlaybackFinished, onDisclaimerDone);
+        proceedToAnswer();
+      });
+      return;
+    }
+    proceedToAnswer();
+  }
+
+  function onExtensionPreDialReady() {
+    if (!cfg.requireExtension || !extensionDialComplete || answered) {
+      return;
+    }
+    if (dtmfPrefillTimer) {
+      completeExtensionFastPath();
+    }
+  }
+
+  enableToneCapture();
+
   call.addEventListener(CallEvents.Disconnected, function () {
+    clearDtmfPrefillTimer();
     rsdMedia.sendSessionEnd(mediaWs, 'hangup');
     rsdControl.postControlEvent(
       {
@@ -510,8 +604,8 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, function (e) {
 
   call.addEventListener(CallEvents.ToneReceived, function (ev) {
     var digit = ev && ev.tone ? String(ev.tone) : '';
-    if (digit && mediaWs) {
-      rsdMedia.sendDtmfToGateway(mediaWs, digit);
+    if (digit) {
+      pushDtmfDigit(digit);
     }
   });
 
@@ -537,11 +631,7 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, function (e) {
       degradedTransferE164 = '';
     }
 
-    try {
-      call.handleTones(true);
-    } catch (toneErr) {
-      Logger.write('[rsd] handleTones: ' + toneErr);
-    }
+    enableToneCapture();
 
     rsdControl.postControlEvent(
       {
@@ -571,6 +661,7 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, function (e) {
       call: call,
       onReady: function () {
         Logger.write('[rsd] media gateway ready call_id=' + callId);
+        flushPendingDtmf();
       },
       onError: function (msg) {
         Logger.write('[rsd] media gateway error: ' + msg);
@@ -605,50 +696,73 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, function (e) {
 
   function playEarlyGreetingThenAnswer() {
     call.startEarlyMedia();
-    var greetText = cfg.requireExtension ? POOL_GREETING_TEXT : cfg.greetingText;
-    var steps = [];
 
-    if (playRecordingDisclaimer) {
+    function runGreetingSteps() {
+      var greetText = cfg.requireExtension ? POOL_GREETING_TEXT : cfg.greetingText;
+      var steps = [];
+
+      if (playRecordingDisclaimer) {
+        steps.push(function (next) {
+          call.say(RECORDING_DISCLAIMER_RU, Language.RU_RUSSIAN_FEMALE);
+          call.addEventListener(CallEvents.PlaybackFinished, function onDisclaimer() {
+            call.removeEventListener(CallEvents.PlaybackFinished, onDisclaimer);
+            next();
+          });
+        });
+      }
+
       steps.push(function (next) {
-        call.say(RECORDING_DISCLAIMER_RU, Language.RU_RUSSIAN_FEMALE);
-        call.addEventListener(CallEvents.PlaybackFinished, function onDisclaimer() {
-          call.removeEventListener(CallEvents.PlaybackFinished, onDisclaimer);
+        if (cfg.requireExtension && extensionDialComplete) {
+          next();
+          return;
+        }
+        if (cfg.greetingUrl && !cfg.requireExtension) {
+          call.startPlayback(cfg.greetingUrl, false);
+          call.addEventListener(CallEvents.PlaybackFinished, function finishPlayback() {
+            call.removeEventListener(CallEvents.PlaybackFinished, finishPlayback);
+            next();
+          });
+          call.addEventListener(CallEvents.PlaybackError, function () {
+            Logger.write('[rsd] greeting playback error, answering anyway');
+            next();
+          });
+          return;
+        }
+        call.say(greetText, Language.RU_RUSSIAN_FEMALE);
+        call.addEventListener(CallEvents.PlaybackFinished, function finishSay() {
+          call.removeEventListener(CallEvents.PlaybackFinished, finishSay);
           next();
         });
       });
+
+      function runStep(i) {
+        if (i >= steps.length) {
+          proceedToAnswer();
+          return;
+        }
+        steps[i](function () {
+          runStep(i + 1);
+        });
+      }
+      runStep(0);
     }
 
-    steps.push(function (next) {
-      if (cfg.greetingUrl && !cfg.requireExtension) {
-        call.startPlayback(cfg.greetingUrl, false);
-        call.addEventListener(CallEvents.PlaybackFinished, function finishPlayback() {
-          call.removeEventListener(CallEvents.PlaybackFinished, finishPlayback);
-          next();
-        });
-        call.addEventListener(CallEvents.PlaybackError, function () {
-          Logger.write('[rsd] greeting playback error, answering anyway');
-          next();
-        });
+    if (cfg.requireExtension) {
+      if (extensionDialComplete) {
+        completeExtensionFastPath();
         return;
       }
-      call.say(greetText, Language.RU_RUSSIAN_FEMALE);
-      call.addEventListener(CallEvents.PlaybackFinished, function finishSay() {
-        call.removeEventListener(CallEvents.PlaybackFinished, finishSay);
-        next();
-      });
-    });
-
-    function runStep(i) {
-      if (i >= steps.length) {
-        call.answer();
-        onAnswered();
-        return;
-      }
-      steps[i](function () {
-        runStep(i + 1);
-      });
+      dtmfPrefillTimer = setTimeout(function () {
+        dtmfPrefillTimer = null;
+        if (!extensionDialComplete && !answered) {
+          Logger.write('[rsd] dtmf prefill timeout, play pool greeting call_id=' + callId);
+          runGreetingSteps();
+        }
+      }, DTMF_PREFILL_MS);
+      return;
     }
-    runStep(0);
+
+    runGreetingSteps();
   }
 
   rsdControl.postControlEvent(
@@ -678,8 +792,7 @@ VoxEngine.addEventListener(AppEvents.CallAlerting, function (e) {
         playRecordingDisclaimer = true;
       }
       if (degradedTransferE164) {
-        call.answer();
-        onAnswered();
+        proceedToAnswer();
         return;
       }
       playEarlyGreetingThenAnswer();

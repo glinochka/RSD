@@ -45,7 +45,7 @@
 
 Опционально: `greeting_text` (если нет `greeting_url` — TTS `call.say`).
 
-Для **общего входящего номера** (DTMF → добавочный): `"require_extension": true` — приветствие «введите 4 цифры», `call.handleTones(true)`.
+Для **общего входящего номера** (DTMF → добавочный): `"require_extension": true` — приветствие «введите 4 цифры», `call.handleTones(true)`. Набор `+7XXXXXXXXXX,1234` (пауза + 4 цифры): сценарий ~2.5 с ждёт DTMF и **пропускает** pool-приветствие, сразу отвечает и шлёт цифры в gateway.
 
 5. На сервере: `TELEPHONY_BRIDGE_CONTROL_ONLY=true` (bridge только сигнальные события).
 

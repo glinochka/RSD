@@ -28,9 +28,9 @@ function sendVoxDownlink(ws: WebSocket, message: string): void {
 
 function sendUlawFrame(ws: WebSocket, frame: Buffer): void {
   if (!frame.length) return;
-  if (config.loopbackTransport === 'vox' || config.loopbackTransport === 'both') {
-    sendVoxDownlink(ws, buildVoxMediaMessage(frame));
-  }
+  // Orchestrator playback targets VoxEngine WebSocket media path in production.
+  // Keep Vox JSON frames always on, regardless of loopback transport test flags.
+  sendVoxDownlink(ws, buildVoxMediaMessage(frame));
   if (config.loopbackTransport === 'binary' || config.loopbackTransport === 'both') {
     const binaryFrame = Buffer.allocUnsafe(1 + frame.length);
     binaryFrame[0] = BINARY_FRAME_AUDIO_OUT;
@@ -57,9 +57,7 @@ export function handleOrchestratorOutbound(
         clearPlaybackPacer(callId);
         markAgentPlaybackStart(callId);
       }
-      if (config.loopbackTransport === 'vox' || config.loopbackTransport === 'both') {
-        sendVoxDownlink(ws, buildVoxStartMessage());
-      }
+      sendVoxDownlink(ws, buildVoxStartMessage());
       sendJson(ws, { type: 'agent.audio.start', payload: { ok: true, codec: payload.codec || 'pcmu' } });
       break;
     case 'agent.audio.chunk': {
@@ -77,9 +75,7 @@ export function handleOrchestratorOutbound(
       if (callId) {
         markAgentPlaybackEnd(callId);
         markPlaybackEnd(callId, () => {
-          if (config.loopbackTransport === 'vox' || config.loopbackTransport === 'both') {
-            sendVoxDownlink(ws, buildVoxStopMessage());
-          }
+          sendVoxDownlink(ws, buildVoxStopMessage());
           clearPlaybackPacer(callId);
         });
       }
@@ -88,14 +84,10 @@ export function handleOrchestratorOutbound(
     case 'agent.play_filler': {
       const b64 = String(payload.audio_b64 || '').trim();
       if (b64 && callId) {
-        if (config.loopbackTransport === 'vox' || config.loopbackTransport === 'both') {
-          sendVoxDownlink(ws, buildVoxStartMessage());
-        }
+        sendVoxDownlink(ws, buildVoxStartMessage());
         enqueueUlawPlayback(ws, callId, Buffer.from(b64, 'base64'), sendUlawFrame);
         markPlaybackEnd(callId, () => {
-          if (config.loopbackTransport === 'vox' || config.loopbackTransport === 'both') {
-            sendVoxDownlink(ws, buildVoxStopMessage());
-          }
+          sendVoxDownlink(ws, buildVoxStopMessage());
           clearPlaybackPacer(callId);
         });
       }
