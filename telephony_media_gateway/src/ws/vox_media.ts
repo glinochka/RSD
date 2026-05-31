@@ -24,12 +24,18 @@ export function parseVoxMediaMessage(text: string): Buffer | null | 'ignore' {
   }
 }
 
-export function buildVoxMediaMessage(payload: Buffer): string {
+/** Tag must match VoxEngine `webSocket.sendMediaTo(call, { tag: 'rsd_audio_out' })`. */
+export const VOX_OUTBOUND_MEDIA_TAG = 'rsd_audio_out';
+
+export function buildVoxMediaMessage(
+  payload: Buffer,
+  tag: string = VOX_OUTBOUND_MEDIA_TAG,
+): string {
   return JSON.stringify({
     event: 'media',
     media: {
       payload: payload.toString('base64'),
-      tag: 'rsd_loopback',
+      tag,
     },
   });
 }

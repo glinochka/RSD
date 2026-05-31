@@ -6,6 +6,7 @@ import {
   markAgentPlaybackEnd,
   markAgentPlaybackStart,
 } from './agent_playback_tracker';
+import { BINARY_FRAME_AUDIO_OUT } from '../protocol/events';
 import { buildVoxMediaMessage } from '../ws/vox_media';
 
 function sendJson(ws: WebSocket, message: Record<string, unknown>): void {
@@ -16,14 +17,14 @@ function sendJson(ws: WebSocket, message: Record<string, unknown>): void {
 
 function sendUlawPayload(ws: WebSocket, ulaw: Buffer): void {
   if (!ulaw.length) return;
+  // Protocol audio.out (0x02) — primary downlink for agent TTS.
+  const binaryFrame = Buffer.allocUnsafe(1 + ulaw.length);
+  binaryFrame[0] = BINARY_FRAME_AUDIO_OUT;
+  ulaw.copy(binaryFrame, 1);
+  ws.send(binaryFrame);
+
   if (config.loopbackTransport === 'vox' || config.loopbackTransport === 'both') {
     ws.send(buildVoxMediaMessage(ulaw));
-  }
-  if (config.loopbackTransport === 'binary' || config.loopbackTransport === 'both') {
-    const frame = Buffer.allocUnsafe(1 + ulaw.length);
-    frame[0] = 0x02;
-    ulaw.copy(frame, 1);
-    ws.send(frame);
   }
 }
 

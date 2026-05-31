@@ -6,6 +6,9 @@ import type { VadFrameResult, VadProcessor } from './types';
 
 const SAMPLE_RATE = 8000;
 const WINDOW_SAMPLES = 256;
+/** Silero ONNX context length @ 8 kHz (see silero-vad OnnxWrapper). */
+const CONTEXT_SAMPLES = 32;
+const STATE_DIM = 128;
 
 /**
  * Silero VAD (ONNX). Model: https://github.com/snakers4/silero-vad
@@ -15,8 +18,8 @@ export class SileroVad implements VadProcessor {
   readonly frameSamples = WINDOW_SAMPLES;
 
   private session: ort.InferenceSession | null = null;
-  private h: ort.Tensor | null = null;
-  private c: ort.Tensor | null = null;
+  private state: ort.Tensor | null = null;
+  private context = new Float32Array(CONTEXT_SAMPLES);
   private pending = new Int16Array(0);
   private lastProbability = 0;
   /** Serialize async ONNX runs (onnxruntime-node ≥1.20 has no runSync). */
@@ -44,12 +47,16 @@ export class SileroVad implements VadProcessor {
   }
 
   private resetStates(): void {
-    this.h = new ort.Tensor('float32', new Float32Array(2 * 1 * 64).fill(0), [2, 1, 64]);
-    this.c = new ort.Tensor('float32', new Float32Array(2 * 1 * 64).fill(0), [2, 1, 64]);
+    this.state = new ort.Tensor(
+      'float32',
+      new Float32Array(2 * 1 * STATE_DIM).fill(0),
+      [2, 1, STATE_DIM],
+    );
+    this.context = new Float32Array(CONTEXT_SAMPLES);
   }
 
   processFrame(pcm: Int16Array): VadFrameResult {
-    if (!this.session || !this.h || !this.c) {
+    if (!this.session || !this.state) {
       return { isSpeech: false, probability: 0 };
     }
 
@@ -86,15 +93,19 @@ export class SileroVad implements VadProcessor {
   }
 
   private async inferWindow(floats: Float32Array): Promise<void> {
-    if (!this.session || !this.h || !this.c) return;
+    if (!this.session || !this.state) return;
 
-    const input = new ort.Tensor('float32', floats, [1, WINDOW_SAMPLES]);
+    const inputLen = CONTEXT_SAMPLES + WINDOW_SAMPLES;
+    const inputData = new Float32Array(inputLen);
+    inputData.set(this.context, 0);
+    inputData.set(floats, CONTEXT_SAMPLES);
+
+    const input = new ort.Tensor('float32', inputData, [1, inputLen]);
     const sr = new ort.Tensor('int64', BigInt64Array.from([BigInt(SAMPLE_RATE)]), []);
     const feeds: Record<string, ort.Tensor> = {
       input,
+      state: this.state,
       sr,
-      h: this.h,
-      c: this.c,
     };
 
     const out =
@@ -104,10 +115,11 @@ export class SileroVad implements VadProcessor {
 
     const probTensor = (out.output ?? out.prob ?? Object.values(out)[0]) as ort.Tensor;
     const prob = Number(probTensor.data[0]);
-    const nextH = (out.hn ?? out.h ?? out._hn) as ort.Tensor | undefined;
-    const nextC = (out.cn ?? out.c ?? out._cn) as ort.Tensor | undefined;
-    if (nextH) this.h = nextH;
-    if (nextC) this.c = nextC;
+    const nextState = (out.stateN ?? out.state_out) as ort.Tensor | undefined;
+    if (nextState) {
+      this.state = nextState;
+    }
+    this.context = inputData.subarray(inputLen - CONTEXT_SAMPLES);
     this.lastProbability = prob;
   }
 
