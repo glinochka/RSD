@@ -254,24 +254,36 @@ class OrchestratorWorker:
             session_row = await hgetall_session(slot.connection_id)
             voice_id = str(session_row.get("voice_id") or "default")
             language = str(session_row.get("language") or "ru-RU")
-            assert_stream_tts_configured()
-            await stream_fixed_phrase(
-                call_id=slot.call_id,
-                connection_id=slot.connection_id,
-                call_db_id=slot.call_db_id,
-                text=welcome,
-                voice_id=voice_id,
-                language=language,
-            )
-            await append_dialog_turn(
-                slot.call_id,
-                role="agent",
-                text=welcome,
-                max_turns=int(settings.TELEPHONY_DIALOG_MAX_TURNS),
-                ttl_sec=int(settings.TELEPHONY_REDIS_SESSION_TTL_SEC),
-            )
-            slot.ctx.state = DialogState.GREET
-            await set_dialog_meta(slot.call_id, slot.ctx.to_meta(), ttl_sec=settings.TELEPHONY_REDIS_SESSION_TTL_SEC)
+            try:
+                assert_stream_tts_configured()
+                await stream_fixed_phrase(
+                    call_id=slot.call_id,
+                    connection_id=slot.connection_id,
+                    call_db_id=slot.call_db_id,
+                    text=welcome,
+                    voice_id=voice_id,
+                    language=language,
+                )
+                await append_dialog_turn(
+                    slot.call_id,
+                    role="agent",
+                    text=welcome,
+                    max_turns=int(settings.TELEPHONY_DIALOG_MAX_TURNS),
+                    ttl_sec=int(settings.TELEPHONY_REDIS_SESSION_TTL_SEC),
+                )
+                slot.ctx.state = DialogState.GREET
+                await set_dialog_meta(
+                    slot.call_id,
+                    slot.ctx.to_meta(),
+                    ttl_sec=settings.TELEPHONY_REDIS_SESSION_TTL_SEC,
+                )
+            except Exception as exc:
+                logger.error(
+                    "orchestrator welcome TTS failed call_id=%s agent_id=%s: %s",
+                    slot.call_id,
+                    agent_id,
+                    exc,
+                )
         logger.info(
             "orchestrator dtmf routed call_id=%s extension=%s agent_id=%s",
             slot.call_id,
@@ -306,15 +318,22 @@ class OrchestratorWorker:
                 session_row = await hgetall_session(slot.connection_id)
                 voice_id = str(session_row.get("voice_id") or "default")
                 language = str(session_row.get("language") or "ru-RU")
-                assert_stream_tts_configured()
-                await stream_fixed_phrase(
-                    call_id=slot.call_id,
-                    connection_id=slot.connection_id,
-                    call_db_id=slot.call_db_id,
-                    text=msg,
-                    voice_id=voice_id,
-                    language=language,
-                )
+                try:
+                    assert_stream_tts_configured()
+                    await stream_fixed_phrase(
+                        call_id=slot.call_id,
+                        connection_id=slot.connection_id,
+                        call_db_id=slot.call_db_id,
+                        text=msg,
+                        voice_id=voice_id,
+                        language=language,
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "orchestrator dtmf error TTS failed call_id=%s: %s",
+                        slot.call_id,
+                        exc,
+                    )
                 return
             await self._apply_routed_agent(slot, int(agent_id), extension=slot.dtmf_buffer)
 
@@ -521,16 +540,19 @@ class OrchestratorWorker:
         if not isinstance(msg, dict):
             return
         event_type = str(msg.get("type") or "").strip()
-        if event_type == OrchestratorEventType.SESSION_START.value:
-            await self.handle_session_start(msg)
-        elif event_type == OrchestratorEventType.STT_FINAL.value:
-            await self.handle_stt_final(msg)
-        elif event_type == OrchestratorEventType.BARGE_IN.value:
-            await self.handle_barge_in(msg)
-        elif event_type == OrchestratorEventType.DTMF.value:
-            await self.handle_dtmf(msg)
-        elif event_type == OrchestratorEventType.SESSION_END.value:
-            await self.handle_session_end(msg)
+        try:
+            if event_type == OrchestratorEventType.SESSION_START.value:
+                await self.handle_session_start(msg)
+            elif event_type == OrchestratorEventType.STT_FINAL.value:
+                await self.handle_stt_final(msg)
+            elif event_type == OrchestratorEventType.BARGE_IN.value:
+                await self.handle_barge_in(msg)
+            elif event_type == OrchestratorEventType.DTMF.value:
+                await self.handle_dtmf(msg)
+            elif event_type == OrchestratorEventType.SESSION_END.value:
+                await self.handle_session_end(msg)
+        except Exception:
+            logger.exception("orchestrator handler failed type=%s", event_type)
 
     async def run_forever(self) -> None:
         if not redis_enabled():

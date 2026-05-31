@@ -13,6 +13,7 @@ declare module 'onnxruntime-node' {
       path: string,
       options?: { executionProviders?: string[] },
     ): Promise<InferenceSession>;
-    runSync(feeds: Record<string, Tensor>): Record<string, Tensor>;
+    runSync?(feeds: Record<string, Tensor>): Record<string, Tensor>;
+    run(feeds: Record<string, Tensor>): Promise<Record<string, Tensor>>;
   }
 }

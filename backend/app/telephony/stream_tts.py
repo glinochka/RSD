@@ -284,9 +284,13 @@ async def _yandex_ulaw_rest(
 
     if response.status_code >= 400:
 
-        logger.warning("yandex stream tts failed status=%s", response.status_code)
+        logger.warning(
+            "yandex stream tts failed status=%s body=%s",
+            response.status_code,
+            (response.text or "")[:200],
+        )
 
-        response.raise_for_status()
+        return b""
 
     return pcm16_to_ulaw(response.content)
 

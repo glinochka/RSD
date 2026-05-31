@@ -44,10 +44,29 @@ function loadLib(name) {
   return `\n// --- lib/${name} ---\n${body}\n`;
 }
 
+function removeFunctionBlock(source, fnName) {
+  const marker = `function ${fnName}`;
+  const start = source.indexOf(marker);
+  if (start === -1) return source;
+  const braceStart = source.indexOf('{', start);
+  if (braceStart === -1) return source;
+  let depth = 0;
+  for (let i = braceStart; i < source.length; i++) {
+    if (source[i] === '{') depth++;
+    else if (source[i] === '}') {
+      depth--;
+      if (depth === 0) {
+        return source.slice(0, start) + source.slice(i + 1).replace(/^\s*\n/, '');
+      }
+    }
+  }
+  return source;
+}
+
 function loadMain() {
   let raw = fs.readFileSync(path.join(root, 'rsd_inbound.js'), 'utf8');
   raw = raw.replace(/^\/\*\*[\s\S]*?\*\/\s*\n/m, '');
-  raw = raw.replace(/function requireRsdModule\(name\)\s*\{[\s\S]*?\}\s*\n/m, '');
+  raw = removeFunctionBlock(raw, 'requireRsdModule');
   raw = raw.replace(
     /var rsdControl = requireRsdModule\('rsd_control'\);\s*\nvar rsdMedia = requireRsdModule\('rsd_media_gateway'\);\s*\nvar rsdTransfer = requireRsdModule\('rsd_transfer'\);\s*\n/m,
     [

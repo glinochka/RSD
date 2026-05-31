@@ -19,6 +19,8 @@ export class SileroVad implements VadProcessor {
   private c: ort.Tensor | null = null;
   private pending = new Int16Array(0);
   private lastProbability = 0;
+  /** Serialize async ONNX runs (onnxruntime-node ≥1.20 has no runSync). */
+  private inferChain: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly modelPath: string,
@@ -63,22 +65,7 @@ export class SileroVad implements VadProcessor {
       for (let i = 0; i < WINDOW_SAMPLES; i += 1) {
         floats[i] = chunk[i]! / 32768;
       }
-      const input = new ort.Tensor('float32', floats, [1, WINDOW_SAMPLES]);
-      const sr = new ort.Tensor('int64', BigInt64Array.from([BigInt(SAMPLE_RATE)]), []);
-      const feeds: Record<string, ort.Tensor> = {
-        input,
-        sr,
-        h: this.h,
-        c: this.c,
-      };
-      const out = this.session.runSync(feeds);
-      const probTensor = (out.output ?? out.prob ?? Object.values(out)[0]) as ort.Tensor;
-      const prob = Number(probTensor.data[0]);
-      const nextH = (out.hn ?? out.h ?? out._hn) as ort.Tensor | undefined;
-      const nextC = (out.cn ?? out.c ?? out._cn) as ort.Tensor | undefined;
-      if (nextH) this.h = nextH;
-      if (nextC) this.c = nextC;
-      this.lastProbability = prob;
+      this.scheduleInfer(floats);
     }
 
     return {
@@ -87,9 +74,47 @@ export class SileroVad implements VadProcessor {
     };
   }
 
+  private scheduleInfer(floats: Float32Array): void {
+    this.inferChain = this.inferChain
+      .then(() => this.inferWindow(floats))
+      .catch((err) => {
+        console.warn(
+          '[media-gateway] Silero infer failed:',
+          err instanceof Error ? err.message : err,
+        );
+      });
+  }
+
+  private async inferWindow(floats: Float32Array): Promise<void> {
+    if (!this.session || !this.h || !this.c) return;
+
+    const input = new ort.Tensor('float32', floats, [1, WINDOW_SAMPLES]);
+    const sr = new ort.Tensor('int64', BigInt64Array.from([BigInt(SAMPLE_RATE)]), []);
+    const feeds: Record<string, ort.Tensor> = {
+      input,
+      sr,
+      h: this.h,
+      c: this.c,
+    };
+
+    const out =
+      typeof this.session.runSync === 'function'
+        ? this.session.runSync(feeds)
+        : await this.session.run(feeds);
+
+    const probTensor = (out.output ?? out.prob ?? Object.values(out)[0]) as ort.Tensor;
+    const prob = Number(probTensor.data[0]);
+    const nextH = (out.hn ?? out.h ?? out._hn) as ort.Tensor | undefined;
+    const nextC = (out.cn ?? out.c ?? out._cn) as ort.Tensor | undefined;
+    if (nextH) this.h = nextH;
+    if (nextC) this.c = nextC;
+    this.lastProbability = prob;
+  }
+
   reset(): void {
     this.pending = new Int16Array(0);
     this.lastProbability = 0;
+    this.inferChain = Promise.resolve();
     this.resetStates();
   }
 }

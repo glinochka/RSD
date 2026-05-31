@@ -324,9 +324,6 @@ function sendSessionEnd(webSocket, reason) {
 
 
 // --- rsd_inbound (main) ---
-  }
-}
-
 var rsdControl = { postControlEvent: postControlEvent };
 var rsdMedia = {
   connectMediaGateway: connectMediaGateway,
