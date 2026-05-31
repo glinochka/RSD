@@ -41,7 +41,7 @@ export const config = {
   ).trim(),
   vadSpeechThreshold: Math.max(
     0.1,
-    Math.min(0.99, Number.parseFloat(process.env.VAD_SPEECH_THRESHOLD || '0.5')),
+    Math.min(0.99, Number.parseFloat(process.env.VAD_SPEECH_THRESHOLD || '0.35')),
   ),
   vadEnergyThreshold: Number.parseFloat(process.env.VAD_ENERGY_THRESHOLD || '0.02'),
   sttPartialLogEvery: Math.max(1, Number.parseInt(process.env.STT_PARTIAL_LOG_EVERY || '5', 10)),
