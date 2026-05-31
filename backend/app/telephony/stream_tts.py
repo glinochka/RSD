@@ -180,45 +180,31 @@ async def _yandex_ulaw_stream(
 
 ) -> AsyncIterator[bytes]:
 
-    """Yandex SpeechKit v3 stream when grpc available; else v1 REST chunked to frames."""
+    """Prefer REST synthesis for stable PSTN; keep v3 as fallback."""
 
     try:
+        ulaw = await _yandex_ulaw_rest(text, voice_id=voice_id, lang=lang, timeout=timeout)
+        if ulaw:
+            for frame in chunk_ulaw_frames(ulaw):
+                yield frame
+            return
+    except Exception as exc:
+        logger.warning("yandex REST tts failed, trying v3 stream fallback: %s", exc)
 
+    try:
         from .yandex_tts_stream import stream_yandex_v3_ulaw_frames
 
-
-
         async for frame in stream_yandex_v3_ulaw_frames(
-
             text,
-
             voice_id=voice_id,
-
             lang=lang,
-
             timeout=timeout,
-
         ):
-
             yield frame
-
-        return
-
     except ImportError:
-
-        pass
-
+        return
     except Exception as exc:
-
-        logger.warning("yandex v3 tts stream failed, falling back to REST: %s", exc)
-
-
-
-    ulaw = await _yandex_ulaw_rest(text, voice_id=voice_id, lang=lang, timeout=timeout)
-
-    for frame in chunk_ulaw_frames(ulaw):
-
-        yield frame
+        logger.warning("yandex v3 tts stream failed: %s", exc)
 
 
 
