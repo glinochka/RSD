@@ -17,14 +17,16 @@ function sendJson(ws: WebSocket, message: Record<string, unknown>): void {
 
 function sendUlawPayload(ws: WebSocket, ulaw: Buffer): void {
   if (!ulaw.length) return;
-  // Protocol audio.out (0x02) — primary downlink for agent TTS.
-  const binaryFrame = Buffer.allocUnsafe(1 + ulaw.length);
-  binaryFrame[0] = BINARY_FRAME_AUDIO_OUT;
-  ulaw.copy(binaryFrame, 1);
-  ws.send(binaryFrame);
-
+  // VoxEngine sendMediaTo expects native {event:"media"} JSON (tag rsd_audio_out).
+  // Do not send 0x02-prefixed binary on vox transport — Vox treats WS bytes as raw μ-law.
   if (config.loopbackTransport === 'vox' || config.loopbackTransport === 'both') {
     ws.send(buildVoxMediaMessage(ulaw));
+  }
+  if (config.loopbackTransport === 'binary' || config.loopbackTransport === 'both') {
+    const binaryFrame = Buffer.allocUnsafe(1 + ulaw.length);
+    binaryFrame[0] = BINARY_FRAME_AUDIO_OUT;
+    ulaw.copy(binaryFrame, 1);
+    ws.send(binaryFrame);
   }
 }
 

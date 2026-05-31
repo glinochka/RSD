@@ -31,7 +31,7 @@ let cachedPackage: grpc.GrpcObject | null = null;
 function loadPackage(): grpc.GrpcObject {
   if (cachedPackage) return cachedPackage;
   const def = protoLoader.loadSync(PROTO_PATH, {
-    keepCase: false,
+    keepCase: true,
     longs: String,
     enums: Number,
     defaults: true,
