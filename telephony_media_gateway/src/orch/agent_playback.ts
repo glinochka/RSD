@@ -8,11 +8,7 @@ import {
 } from './agent_playback_tracker';
 import { clearPlaybackPacer, enqueueUlawPlayback, markPlaybackEnd } from './agent_playback_pacer';
 import { BINARY_FRAME_AUDIO_OUT } from '../protocol/events';
-import {
-  buildVoxMediaMessage,
-  buildVoxStartMessage,
-  buildVoxStopMessage,
-} from '../ws/vox_media';
+import { buildVoxMediaMessage } from '../ws/vox_media';
 
 function sendJson(ws: WebSocket, message: Record<string, unknown>): void {
   if (ws.readyState === ws.OPEN) {
@@ -59,7 +55,8 @@ export function handleOrchestratorOutbound(
         clearPlaybackPacer(callId);
         markAgentPlaybackStart(callId);
       }
-      sendVoxDownlink(ws, buildVoxStartMessage());
+      // We already bind ws<->call media at session start on Vox side.
+      // Extra start control frames can cause downlink glitches on some edges.
       sendJson(ws, { type: 'agent.audio.start', payload: { ok: true, codec: payload.codec || 'pcmu' } });
       break;
     case 'agent.audio.chunk': {
@@ -77,7 +74,6 @@ export function handleOrchestratorOutbound(
       if (callId) {
         markAgentPlaybackEnd(callId);
         markPlaybackEnd(callId, () => {
-          sendVoxDownlink(ws, buildVoxStopMessage());
           clearPlaybackPacer(callId);
         });
       }
@@ -86,10 +82,8 @@ export function handleOrchestratorOutbound(
     case 'agent.play_filler': {
       const b64 = String(payload.audio_b64 || '').trim();
       if (b64 && callId) {
-        sendVoxDownlink(ws, buildVoxStartMessage());
         enqueueUlawPlayback(ws, callId, Buffer.from(b64, 'base64'), sendUlawFrame);
         markPlaybackEnd(callId, () => {
-          sendVoxDownlink(ws, buildVoxStopMessage());
           clearPlaybackPacer(callId);
         });
       }
