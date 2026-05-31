@@ -7,7 +7,6 @@ import {
   markAgentPlaybackStart,
 } from './agent_playback_tracker';
 import { BINARY_FRAME_AUDIO_OUT } from '../protocol/events';
-import { buildVoxMediaMessage } from '../ws/vox_media';
 
 function sendJson(ws: WebSocket, message: Record<string, unknown>): void {
   if (ws.readyState === ws.OPEN) {
@@ -17,10 +16,10 @@ function sendJson(ws: WebSocket, message: Record<string, unknown>): void {
 
 function sendUlawPayload(ws: WebSocket, ulaw: Buffer): void {
   if (!ulaw.length) return;
-  // VoxEngine sendMediaTo expects native {event:"media"} JSON (tag rsd_audio_out).
-  // Do not send 0x02-prefixed binary on vox transport — Vox treats WS bytes as raw μ-law.
+  // VoxEngine webSocket.sendMediaTo(call) plays raw μ-law binary frames (tag rsd_audio_out).
+  // JSON {event:"media"} is what Vox *sends* inbound; it is not auto-played on downlink.
   if (config.loopbackTransport === 'vox' || config.loopbackTransport === 'both') {
-    ws.send(buildVoxMediaMessage(ulaw));
+    ws.send(ulaw);
   }
   if (config.loopbackTransport === 'binary' || config.loopbackTransport === 'both') {
     const binaryFrame = Buffer.allocUnsafe(1 + ulaw.length);
