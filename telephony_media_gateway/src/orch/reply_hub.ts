@@ -15,10 +15,12 @@ function sendJson(ws: WebSocket, message: Record<string, unknown>): void {
 
 export function registerReplySession(callId: string, ws: WebSocket): void {
   sessions.set(callId, ws);
+  console.info('[media-gateway] reply session registered', JSON.stringify({ call_id: callId, total_sessions: sessions.size }));
 }
 
 export function unregisterReplySession(callId: string): void {
-  sessions.delete(callId);
+  const deleted = sessions.delete(callId);
+  console.info('[media-gateway] reply session unregistered', JSON.stringify({ call_id: callId, deleted, remaining_sessions: sessions.size }));
 }
 
 export async function startReplySubscriber(): Promise<void> {
@@ -33,10 +35,17 @@ export async function startReplySubscriber(): Promise<void> {
     try {
       const msg = JSON.parse(raw) as { call_id?: string; type?: string; payload?: Record<string, unknown> };
       const callId = String(msg.call_id || '').trim();
-      if (!callId) return;
-      const ws = sessions.get(callId);
-      if (!ws) return;
       const eventType = String(msg.type || 'agent.turn_ready').trim();
+      console.info('[media-gateway] orch reply received', JSON.stringify({ type: eventType, call_id: callId, has_session: sessions.has(callId), active_sessions: sessions.size }));
+      if (!callId) {
+        console.warn('[media-gateway] orch reply missing call_id');
+        return;
+      }
+      const ws = sessions.get(callId);
+      if (!ws) {
+        console.warn('[media-gateway] orch reply session not found', JSON.stringify({ call_id: callId, type: eventType, registered_calls: Array.from(sessions.keys()) }));
+        return;
+      }
       handleOrchestratorOutbound(ws, {
         type: eventType,
         call_id: callId,
