@@ -228,11 +228,32 @@ class OrchestratorWorker:
         set_greet_state: bool = False,
     ) -> None:
         plain = str(text or "").strip()
+        logger.info(
+            "orchestrator _stream_routing_phrase call_id=%s log_label=%s text=%r plain=%r empty=%s",
+            slot.call_id,
+            log_label,
+            text,
+            plain,
+            not plain,
+        )
         if not plain:
+            logger.warning(
+                "orchestrator %s SKIPPED (empty text) call_id=%s",
+                log_label,
+                slot.call_id,
+            )
             return
         session_row = await hgetall_session(slot.connection_id)
         voice_id = str(session_row.get("voice_id") or "default")
         language = str(session_row.get("language") or "ru-RU")
+        logger.info(
+            "orchestrator %s starting TTS call_id=%s voice=%s lang=%s text_len=%d",
+            log_label,
+            slot.call_id,
+            voice_id,
+            language,
+            len(plain),
+        )
         try:
             assert_stream_tts_configured()
             await stream_fixed_phrase(
@@ -242,6 +263,11 @@ class OrchestratorWorker:
                 text=plain,
                 voice_id=voice_id,
                 language=language,
+            )
+            logger.info(
+                "orchestrator %s TTS completed call_id=%s",
+                log_label,
+                slot.call_id,
             )
             if record_agent_turn:
                 await append_dialog_turn(
@@ -267,9 +293,16 @@ class OrchestratorWorker:
             )
 
     async def _play_agent_welcome(self, slot: CallSlot, *, welcome_raw: str | None) -> None:
+        welcome_text = resolve_telephony_welcome_text(welcome_raw)
+        logger.info(
+            "orchestrator _play_agent_welcome call_id=%s welcome_raw=%r welcome_text=%r",
+            slot.call_id,
+            welcome_raw,
+            welcome_text,
+        )
         await self._stream_routing_phrase(
             slot,
-            resolve_telephony_welcome_text(welcome_raw),
+            welcome_text,
             log_label="welcome",
             record_agent_turn=True,
             set_greet_state=True,
