@@ -43,6 +43,19 @@ export function pcm16ToUlaw(pcm: Int16Array): Buffer {
   return out;
 }
 
+/** PCM16 little-endian bytes → μ-law bytes. */
+export function pcm16BufferToUlaw(pcm16: Buffer): Buffer {
+  if (!pcm16.length) return Buffer.alloc(0);
+  const evenLen = pcm16.length - (pcm16.length % 2);
+  if (evenLen <= 0) return Buffer.alloc(0);
+  const out = Buffer.allocUnsafe(evenLen / 2);
+  for (let i = 0, j = 0; i < evenLen; i += 2, j += 1) {
+    const sample = pcm16.readInt16LE(i);
+    out[j] = linearToUlaw(sample);
+  }
+  return out;
+}
+
 function linearToUlaw(sample: number): number {
   const sign = sample < 0 ? 0x80 : 0;
   if (sample < 0) sample = -sample;

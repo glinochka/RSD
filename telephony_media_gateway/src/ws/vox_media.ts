@@ -29,9 +29,8 @@ export function buildVoxStartMessage(): string {
     event: 'start',
     start: {
       mediaFormat: {
-        // Downlink to VoxEngine call is emitted as PCM16 LE bytes.
-        // This format is consistently decoded by WebSocket->Call media bridge.
-        encoding: 'audio/x-l16',
+        // Downlink media is sent as G.711 μ-law bytes.
+        encoding: 'audio/x-mulaw',
         sampleRate: 8000,
       },
     },

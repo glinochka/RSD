@@ -13,6 +13,7 @@ import {
   buildVoxStartMessage,
   buildVoxStopMessage,
 } from '../ws/vox_media';
+import { pcm16BufferToUlaw } from '../audio/ulaw';
 
 function sendJson(ws: WebSocket, message: Record<string, unknown>): void {
   if (ws.readyState === ws.OPEN) {
@@ -28,9 +29,10 @@ function sendVoxDownlink(ws: WebSocket, message: string): void {
 
 function sendPcm16Frame(ws: WebSocket, frame: Buffer): void {
   if (!frame.length) return;
-  // Orchestrator playback targets VoxEngine WebSocket media path in production.
-  // Keep Vox JSON frames always on, regardless of loopback transport test flags.
-  sendVoxDownlink(ws, buildVoxMediaMessage(frame));
+  // Last hop to Vox call stays in μ-law for reliable PSTN playout.
+  const ulaw = pcm16BufferToUlaw(frame);
+  if (!ulaw.length) return;
+  sendVoxDownlink(ws, buildVoxMediaMessage(ulaw));
   if (config.loopbackTransport === 'binary' || config.loopbackTransport === 'both') {
     const binaryFrame = Buffer.allocUnsafe(1 + Math.floor(frame.length / 2));
     // binary loopback branch still expects μ-law payload for old tooling;
