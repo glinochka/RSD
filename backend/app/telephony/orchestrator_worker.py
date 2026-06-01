@@ -16,8 +16,13 @@ from ..alembic.models import Agent, AgentTelephonyCall
 from ..channels.telephony_dialogue import PhoneTurnResult
 from .stream_cancel import cancel_turn, cancel_turn_by_call_id
 from .stream_pipeline import StreamTurnMetrics, stream_agent_reply, stream_fixed_phrase
-from .outbound_publish import publish_call_transfer
-from .stream_tts import assert_stream_tts_configured
+from .outbound_publish import (
+    publish_agent_audio_chunk,
+    publish_agent_audio_end,
+    publish_agent_audio_start,
+    publish_call_transfer,
+)
+from .stream_tts import assert_stream_tts_configured, batch_fallback_ulaw
 from ..config import settings
 from ..telephony import metrics as telephony_metrics
 from ..telephony.latency_budget import (
@@ -36,7 +41,6 @@ from ..services.telephony_orchestrator import (
     sync_context_to_call,
 )
 from .dialog_batch import PendingTurn, flush_turn_batch
-from .outbound_publish import publish_agent_audio_end
 from .redis_store import (
     append_dialog_turn,
     build_compressed_history,
@@ -52,6 +56,7 @@ from .redis_store import (
     subscribe_orch_events,
 )
 from .session_cache import cache_call_mapping, cache_resolve_payload
+from .ulaw import chunk_ulaw_frames
 
 logger = logging.getLogger(__name__)
 
@@ -254,21 +259,8 @@ class OrchestratorWorker:
             language,
             len(plain),
         )
-        try:
-            assert_stream_tts_configured()
-            await stream_fixed_phrase(
-                call_id=slot.call_id,
-                connection_id=slot.connection_id,
-                call_db_id=slot.call_db_id,
-                text=plain,
-                voice_id=voice_id,
-                language=language,
-            )
-            logger.info(
-                "orchestrator %s TTS completed call_id=%s",
-                log_label,
-                slot.call_id,
-            )
+
+        async def _mark_phrase_delivered() -> None:
             if record_agent_turn:
                 await append_dialog_turn(
                     slot.call_id,
@@ -284,6 +276,57 @@ class OrchestratorWorker:
                     slot.ctx.to_meta(),
                     ttl_sec=settings.TELEPHONY_REDIS_SESSION_TTL_SEC,
                 )
+
+        async def _publish_batch_fallback() -> bool:
+            ulaw = await batch_fallback_ulaw(
+                plain,
+                voice_id=voice_id,
+                language=language,
+            )
+            if not ulaw:
+                return False
+            await publish_agent_audio_start(
+                call_id=slot.call_id,
+                connection_id=slot.connection_id,
+            )
+            for seq, frame in enumerate(chunk_ulaw_frames(ulaw)):
+                await publish_agent_audio_chunk(
+                    call_id=slot.call_id,
+                    connection_id=slot.connection_id,
+                    sequence=seq,
+                    audio_ulaw=frame,
+                )
+            await publish_agent_audio_end(
+                call_id=slot.call_id,
+                connection_id=slot.connection_id,
+                reason="complete",
+            )
+            return True
+
+        try:
+            assert_stream_tts_configured()
+            metrics = await stream_fixed_phrase(
+                call_id=slot.call_id,
+                connection_id=slot.connection_id,
+                call_db_id=slot.call_db_id,
+                text=plain,
+                voice_id=voice_id,
+                language=language,
+            )
+            # If stream TTS path produced no first-byte timestamp, force a batch fallback.
+            if metrics.syntagma_count > 0 and metrics.tts_first_byte_ms is None:
+                raise RuntimeError("stream_tts_no_audio_frames")
+            logger.info(
+                "orchestrator %s TTS completed call_id=%s",
+                log_label,
+                slot.call_id,
+            )
+            if log_label == "welcome":
+                logger.info(
+                    "[orchestrator] welcome guaranteed path=stream call_id=%s",
+                    slot.call_id,
+                )
+            await _mark_phrase_delivered()
         except Exception as exc:
             logger.error(
                 "orchestrator %s TTS failed call_id=%s: %s",
@@ -291,6 +334,32 @@ class OrchestratorWorker:
                 slot.call_id,
                 exc,
             )
+            try:
+                if await _publish_batch_fallback():
+                    logger.info(
+                        "orchestrator %s batch fallback TTS completed call_id=%s",
+                        log_label,
+                        slot.call_id,
+                    )
+                    if log_label == "welcome":
+                        logger.info(
+                            "[orchestrator] welcome guaranteed path=fallback call_id=%s",
+                            slot.call_id,
+                        )
+                    await _mark_phrase_delivered()
+                else:
+                    logger.error(
+                        "orchestrator %s batch fallback produced empty audio call_id=%s",
+                        log_label,
+                        slot.call_id,
+                    )
+            except Exception as fb_exc:
+                logger.error(
+                    "orchestrator %s batch fallback failed call_id=%s: %s",
+                    log_label,
+                    slot.call_id,
+                    fb_exc,
+                )
 
     async def _play_agent_welcome(self, slot: CallSlot, *, welcome_raw: str | None) -> None:
         welcome_text = resolve_telephony_welcome_text(welcome_raw)
@@ -351,11 +420,12 @@ class OrchestratorWorker:
             caller_e164=slot.caller_e164,
             call_db_id=slot.call_db_id,
         )
-        await self._load_postgres_once(slot)
+        # Play greeting as soon as routing is resolved (do not wait for extra DB hydration).
         await self._play_agent_welcome(
             slot,
             welcome_raw=str(resolved.get("welcome_message") or ""),
         )
+        await self._load_postgres_once(slot)
         logger.info(
             "orchestrator dtmf routed call_id=%s extension=%s agent_id=%s",
             slot.call_id,

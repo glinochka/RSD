@@ -69,9 +69,9 @@ openssl rand -hex 32
 | `TELEPHONY_LLM_MODE` | `chat` | `chat` \| `groq` |
 | `TELEPHONY_GROQ_MODEL` | `llama-3.1-8b-instant` | Модель Groq |
 | `GROQ_API_KEY` | при groq | Groq API |
-| `TELEPHONY_LLM_TIMEOUT_SECONDS` | `25` | Таймаут LLM на ход |
-| `TELEPHONY_LLM_RETRY_TIMEOUT_SECONDS` | `15` | Повтор после таймаута |
-| `TELEPHONY_PREVIEW_LLM_TIMEOUT_SECONDS` | `60` | LLM для preview в браузере |
+| `TELEPHONY_LLM_TIMEOUT_SECONDS` | `8` | Таймаут LLM на ход (тестовый профиль) |
+| `TELEPHONY_LLM_RETRY_TIMEOUT_SECONDS` | `5` | Повтор после таймаута |
+| `TELEPHONY_PREVIEW_LLM_TIMEOUT_SECONDS` | `8` | LLM для preview в браузере |
 | `TELEPHONY_SYNTAGMA_MIN_CHARS` | `12` | Мин. длина синтагмы при нарезке |
 | `TELEPHONY_CRM_FILLER_THRESHOLD_MS` | `1500` | `play_filler` при долгих CRM-tools |
 | `TELEPHONY_SSML_ENABLED` | `true` | SSML в ответе |
@@ -80,7 +80,7 @@ openssl rand -hex 32
 | `YANDEX_SPEECHKIT_FOLDER_ID` | рекомендуется | Каталог Yandex Cloud |
 | `ELEVENLABS_API_KEY` | при elevenlabs | ElevenLabs Flash stream |
 | `TELEPHONY_TTS_PROVIDER` | `voximplant` | **Только preview** в браузере: `yandex` \| `openai` \| `voximplant` |
-| `TELEPHONY_TTS_TIMEOUT_SECONDS` | `20` | Таймаут TTS preview |
+| `TELEPHONY_TTS_TIMEOUT_SECONDS` | `10` | Таймаут TTS (preview + stream TTS) |
 | `OPENAI_API_KEY` | при openai preview | Preview TTS/STT |
 | `VOICE_STT_BACKEND` | `auto` | Batch STT для preview `/turn` |
 | `REDIS_URL` | — | Обязателен для orchestrator + bridge sessions |
@@ -89,8 +89,8 @@ openssl rand -hex 32
 | `TELEPHONY_DEDICATED_POOL_ENABLED` | `true` | Pool telephony_worker |
 | `TELEPHONY_DEDICATED_POOL_SIZE` | `8` | Размер pool |
 | `TELEPHONY_WORKER_PORT` | `8001` | Порт worker |
-| `TELEPHONY_TURN_LATENCY_ALERT_P95_MS` | `10000` | Алерт turn latency |
-| `TELEPHONY_E2R_ALERT_P90_MS` | `850` | Алерт p90 E2R |
+| `TELEPHONY_TURN_LATENCY_ALERT_P95_MS` | `3000` | Алерт turn latency |
+| `TELEPHONY_E2R_ALERT_P90_MS` | `3000` | Алерт p90 E2R |
 | `VOXIMPLANT_API_BASE_URL` | Voximplant API | Валидация канала в UI |
 | `TELEPHONY_VOXIMPLANT_API_TIMEOUT_SECONDS` | `15` | Таймаут Voximplant API |
 | `QDRANT_URL` | — | KB для LLM (worker/orchestrator) |

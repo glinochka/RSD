@@ -114,7 +114,7 @@ async def synthesize_preview_speech(
     if not provider:
         raise RuntimeError("preview_tts_not_configured")
 
-    timeout = max(5.0, float(getattr(settings, "TELEPHONY_TTS_TIMEOUT_SECONDS", 20.0) or 20.0))
+    timeout = max(1.0, float(getattr(settings, "TELEPHONY_TTS_TIMEOUT_SECONDS", 10.0) or 10.0))
     mapped_voice = map_voice_for_provider(provider, voice_id)
 
     if provider == "yandex":

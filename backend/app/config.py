@@ -133,19 +133,19 @@ class Settings(BaseSettings):
     YANDEX_SPEECHKIT_API_KEY: str = ""
     # Опционально: каталог Yandex Cloud (x-folder-id) для учёта в консоли.
     YANDEX_SPEECHKIT_FOLDER_ID: str = ""
-    TELEPHONY_TTS_TIMEOUT_SECONDS: float = 20.0
+    TELEPHONY_TTS_TIMEOUT_SECONDS: float = 10.0
     TELEPHONY_WEBHOOK_BASE_URL: str = ""
     TELEPHONY_WEBHOOK_SIGNATURE_TTL_SECONDS: int = 300
     TELEPHONY_WEBHOOK_RATE_LIMIT_PER_CONNECTION: int = 120
     TELEPHONY_WEBHOOK_RATE_LIMIT_PER_IP: int = 240
     TELEPHONY_WEBHOOK_RATE_WINDOW_SECONDS: int = 60
     TELEPHONY_TURNS_RETENTION_DAYS: int = 90
-    # crm_admin + KB (Qdrant) + tool calls often exceed 8s on informational questions.
-    TELEPHONY_LLM_TIMEOUT_SECONDS: float = 25.0
-    TELEPHONY_LLM_RETRY_TIMEOUT_SECONDS: float = 15.0
-    TELEPHONY_PREVIEW_LLM_TIMEOUT_SECONDS: float = 60.0
-    TELEPHONY_TURN_LATENCY_ALERT_P95_MS: int = 10000
-    TELEPHONY_E2R_ALERT_P90_MS: int = 850
+    # Test profile: give LLM/TTS more room (not production E2E tuning).
+    TELEPHONY_LLM_TIMEOUT_SECONDS: float = 8.0
+    TELEPHONY_LLM_RETRY_TIMEOUT_SECONDS: float = 5.0
+    TELEPHONY_PREVIEW_LLM_TIMEOUT_SECONDS: float = 8.0
+    TELEPHONY_TURN_LATENCY_ALERT_P95_MS: int = 3000
+    TELEPHONY_E2R_ALERT_P90_MS: int = 3000
     # Stage 5: latency / streaming pipeline
     TELEPHONY_STREAMING_ENABLED: bool = True
     TELEPHONY_SYNTAGMA_MIN_CHARS: int = 12

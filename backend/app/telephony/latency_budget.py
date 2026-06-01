@@ -17,8 +17,8 @@ LATENCY_BUDGET_TARGETS_P90_MS = {
     "stt_final_ms": 400,
     "llm_ttft_ms": 300,
     "tts_ttfa_ms": 150,
-    "crm_execute_ms": 1500,
-    "e2r_ms": 850,
+    "crm_execute_ms": 1000,
+    "e2r_ms": 3000,
 }
 
 

@@ -146,7 +146,7 @@ async def stream_syntagma_ulaw(
 
 
 
-    timeout = max(5.0, float(settings.TELEPHONY_TTS_TIMEOUT_SECONDS or 20.0))
+    timeout = max(1.0, float(settings.TELEPHONY_TTS_TIMEOUT_SECONDS or 10.0))
 
 
 
