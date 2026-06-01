@@ -375,6 +375,15 @@ function connectMediaGateway(opts) {
 
       var msg = JSON.parse(text);
 
+      // Log ALL incoming messages for debugging
+      if (msg.event) {
+        Logger.write('[rsd] gateway ws event=' + msg.event + ' call_id=' + opts.callId);
+      } else if (msg.type) {
+        Logger.write('[rsd] gateway ws type=' + msg.type + ' call_id=' + opts.callId);
+      } else {
+        Logger.write('[rsd] gateway ws msg=' + text.substring(0, 100) + ' call_id=' + opts.callId);
+      }
+
       if (msg.type === 'session.start' && msg.payload && msg.payload.ok) {
 
         Logger.write('[rsd] gateway session.start ok call_id=' + opts.callId);
