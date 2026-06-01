@@ -30,7 +30,10 @@ function sendJson(ws: WebSocket, message: Record<string, unknown>): void {
 
 function sendVoxDownlink(ws: WebSocket, message: string): void {
   if (ws.readyState === ws.OPEN) {
+    console.info('[media-gateway] vox send', JSON.stringify({ msg: message.slice(0, 100) }));
     ws.send(message);
+  } else {
+    console.warn('[media-gateway] vox send skipped', JSON.stringify({ readyState: ws.readyState }));
   }
 }
 
@@ -39,6 +42,7 @@ function sendPcm16Frame(ws: WebSocket, frame: Buffer): void {
   // Last hop to Vox call stays in μ-law for reliable PSTN playout.
   const ulaw = pcm16BufferToUlaw(frame);
   if (!ulaw.length) return;
+  console.info('[media-gateway] vox frame', JSON.stringify({ len: ulaw.length }));
   sendVoxDownlink(ws, buildVoxMediaMessage(ulaw));
   if (config.loopbackTransport === 'binary' || config.loopbackTransport === 'both') {
     const binaryFrame = Buffer.allocUnsafe(1 + Math.floor(frame.length / 2));

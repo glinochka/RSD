@@ -67,8 +67,12 @@ export function markPlaybackEnd(callId: string, onDrain: () => void): void {
 export function markPlaybackReady(callId: string): void {
   const id = callId.trim();
   const pacer = pacers.get(id);
-  if (!pacer) return;
+  if (!pacer) {
+    console.warn('[media-gateway] pacer ready no pacer', JSON.stringify({ call_id: id }));
+    return;
+  }
   pacer.ready = true;
+  console.info('[media-gateway] pacer ready', JSON.stringify({ call_id: id, queue_len: pacer.queue.length }));
 }
 
 export function isPlaybackReady(callId: string): boolean {
@@ -120,6 +124,9 @@ export function enqueuePcm16Playback(
     }
     if (!active.ready) {
       active.queue.unshift(frame);
+      if (active.queue.length % 10 === 1) {
+        console.warn('[media-gateway] pacer blocked', JSON.stringify({ call_id: id, queue_len: active.queue.length, ready: active.ready }));
+      }
       return;
     }
     if (active.ws.readyState === active.ws.OPEN) {
