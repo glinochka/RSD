@@ -60,6 +60,21 @@ export const config = {
 
   /** Stage 6: barge-in while agent.audio.* is active */
   bargeInEnabled: (process.env.TELEPHONY_BARGE_IN_ENABLED || 'true').trim().toLowerCase() !== 'false',
+  /** Ignore barge-in during the first playback milliseconds after agent.audio.start. */
+  bargeInPlaybackGraceMs: Math.max(
+    0,
+    Math.min(5000, Number.parseInt(process.env.TELEPHONY_BARGE_IN_PLAYBACK_GRACE_MS || '600', 10)),
+  ),
+  /** Ignore barge-in shortly after DTMF to avoid tone-as-speech false positives. */
+  bargeInDtmfSuppressMs: Math.max(
+    0,
+    Math.min(5000, Number.parseInt(process.env.TELEPHONY_BARGE_IN_DTMF_SUPPRESS_MS || '1000', 10)),
+  ),
+  /** Fallback: unblock playout if downlink.ready was not observed in time. */
+  downlinkReadyTimeoutMs: Math.max(
+    0,
+    Math.min(5000, Number.parseInt(process.env.TELEPHONY_DOWNLINK_READY_TIMEOUT_MS || '250', 10)),
+  ),
   /** Consecutive VAD speech frames (~20ms each) before barge_in */
   bargeInSpeechFrames: Math.max(1, Math.min(10, Number.parseInt(process.env.TELEPHONY_BARGE_IN_SPEECH_FRAMES || '2', 10))),
 };

@@ -1,6 +1,7 @@
 import type { WebSocket } from 'ws';
 
 import { config } from '../config';
+import { isDownlinkReady } from './agent_playback_tracker';
 
 const PCM16_FRAME_BYTES = 320;
 
@@ -10,6 +11,7 @@ type Pacer = {
   timer: ReturnType<typeof setInterval> | null;
   endPending: boolean;
   onDrain: (() => void) | null;
+  ready: boolean;
 };
 
 const pacers = new Map<string, Pacer>();
@@ -62,6 +64,20 @@ export function markPlaybackEnd(callId: string, onDrain: () => void): void {
   }
 }
 
+export function markPlaybackReady(callId: string): void {
+  const id = callId.trim();
+  const pacer = pacers.get(id);
+  if (!pacer) return;
+  pacer.ready = true;
+}
+
+export function isPlaybackReady(callId: string): boolean {
+  const id = callId.trim();
+  const pacer = pacers.get(id);
+  if (!pacer) return false;
+  return pacer.ready;
+}
+
 export function enqueuePcm16Playback(
   ws: WebSocket,
   callId: string,
@@ -76,7 +92,14 @@ export function enqueuePcm16Playback(
 
   let pacer = pacers.get(id);
   if (!pacer) {
-    pacer = { ws, queue: [], timer: null, endPending: false, onDrain: null };
+    pacer = {
+      ws,
+      queue: [],
+      timer: null,
+      endPending: false,
+      onDrain: null,
+      ready: isDownlinkReady(id),
+    };
     pacers.set(id, pacer);
   }
   pacer.ws = ws;
@@ -93,6 +116,10 @@ export function enqueuePcm16Playback(
       if (active.timer) clearInterval(active.timer);
       active.timer = null;
       finishDrain(active);
+      return;
+    }
+    if (!active.ready) {
+      active.queue.unshift(frame);
       return;
     }
     if (active.ws.readyState === active.ws.OPEN) {

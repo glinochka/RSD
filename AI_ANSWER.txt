@@ -1,0 +1,118 @@
+Теперь у меня полная картина. Вот мой анализ:
+
+Анализ модуля телефонии
+Обнаруженные проблемы с избыточной сложностью:
+1. Чрезмерно сложная логика bindDownlinkMedia() (rsd_inbound.bundled.js:240-270)
+
+rsd_inbound.bundled.js
+Lines 18-270
+function bindDownlinkMedia() {
+  try {
+    webSocket.sendMediaTo(opts.call, {
+      encoding: WebSocketAudioEncoding.ULAW,
+    });
+    return;
+  } catch (downErr) {
+    Logger.write('[rsd] downlink bind with ULAW failed, retry without encoding: ' + downErr);
+  }
+  try {
+    webSocket.sendMediaTo(opts.call);
+  } catch (fallbackErr) {
+    Logger.write('[rsd] downlink bind fallback failed: ' + fallbackErr);
+  }
+}
+Проблема: Три уровня fallback (ULAW → без encoding → логирование ошибки). Вместо того чтобы понять почему биндинг падает, код маскирует проблему. Эта функция дублируется в 5 местах (246, 280, 498, 528, 538 строки).
+
+2. Избыточное количество слоёв аудио-пайплайна
+Текущий поток:
+
+Python TTS → PCM16 → base64 → JSON → Redis → TypeScript → parse → PCM16 → μ-law → WebSocket JSON → VoxEngine → parse → μ-law → PSTN
+Слишком много конвертаций и промежуточных слоёв.
+
+3. Сложная система отслеживания состояний (agent_playback_tracker.ts + agent_playback_pacer.ts)
+Два отдельных модуля для управления воспроизведением с разными Map, таймерами и состояниями. Можно упростить до одного конечного автомата.
+
+Корневая причина проблемы с аудио после ввода добавочного номера
+Я нашёл race condition между bindDownlinkMedia() и отправкой аудио-чанков:
+
+Проблема в agent_playback.ts:61-69:
+
+
+agent_playback.ts
+Lines 18-69
+case 'agent.audio.start':
+  if (callId) {
+    clearPlaybackPacer(callId);
+    markAgentPlaybackStart(callId);
+  }
+  sendVoxDownlink(ws, buildVoxStartMessage());
+  sendJson(ws, { type: 'agent.audio.start', payload: { ok: true, codec: payload.codec || 'pcmu' } });
+  break;
+Что происходит:
+
+Бэкенд отправляет agent.audio.start
+Медиа-шлюз сразу (синхронно) отправляет event: 'start' в VoxEngine
+НО! VoxEngine обрабатывает это в callback'е (rsd_inbound.bundled.js:473-485), где вызывается bindDownlinkMedia()
+Сразу после этого бэкенд начинает слать agent.audio.chunk
+Пейсер в agent_playback_pacer.ts:88-101 запускает таймер и начинает отправлять фреймы
+Ключевая проблема: Аудио-фреймы могут быть отправлены на WebSocket ДО того, как bindDownlinkMedia() в VoxEngine успеет установить связь между WebSocket и вызовом.
+
+Дополнительная проблема: Нет гарантии успешности bindDownlinkMedia
+В rsd_inbound.bundled.js:246-250 и 280-286:
+
+
+rsd_inbound.bundled.js
+Lines 18-270
+try {
+  webSocket.sendMediaTo(opts.call, {
+    encoding: WebSocketAudioEncoding.ULAW,
+  });
+  return;  // ← Успех? Не факт, просто нет exception
+} catch (downErr) {
+  Logger.write('[rsd] downlink bind with ULAW failed...');
+}
+Проблема: sendMediaTo() не возвращает статус успеха. Отсутствие exception ≠ успешный биндинг. Voximplant может молча не установить медиа-поток.
+
+Рекомендации по исправлению:
+1. Упростить bindDownlinkMedia и добавить подтверждение
+// В agent_playback.ts - ждать подтверждения от VoxEngine
+case 'agent.audio.start':
+  // Не запускать пейсер сразу!
+  sendVoxDownlink(ws, buildVoxStartMessage());
+  // Ответ 'start' будет обработан в rsd_inbound.bundled.js
+  // и отправит подтверждение обратно
+  break;
+2. Добавить явный механизм подтверждения готовности
+В rsd_inbound.bundled.js после успешного биндинга отправлять сообщение обратно:
+
+// После bindDownlinkMedia() в обработчике 'start'
+sendJson(ws, { type: 'downlink.ready' });
+И в agent_playback.ts запускать пейсер только после получения downlink.ready.
+
+3. Упростить архитектуру (опционально)
+Объединить agent_playback_tracker.ts и логику пейсера в один state machine:
+
+// Пример упрощённого конечного автомата
+type PlaybackState = 
+  | { status: 'idle' }
+  | { status: 'starting', startAt: number }
+  | { status: 'playing', queue: Buffer[], timer: NodeJS.Timer }
+  | { status: 'ending', onDrain: () => void };
+4. Критическое исправление для немедленной проверки
+Добавить логирование в rsd_inbound.bundled.js после каждого вызова bindDownlinkMedia():
+
+// После строки 500 (first downlink media)
+Logger.write('[rsd] downlink bound and ready call_id=' + opts.callId);
+И в agent_playback_pacer.ts:98 добавить проверку:
+
+if (active.ws.readyState === active.ws.OPEN) {
+  sendFrame(active.ws, frame);
+  // Логировать первый фрейм для отладки
+  if (active.queue.length === 0) {
+    console.info('[media-gateway] first frame sent');
+  }
+}
+Итог
+Ваша проблема - race condition между установкой медиа-потока и началом отправки аудио. В логах всё выглядит корректно (данные есть, чанки идут), но VoxEngine не успевает привязать WebSocket к вызову до прихода первых аудио-фреймов.
+
+Решение: добавить механизм подтверждения готовности downlink перед отправкой аудио, или добавить небольшую задержку (50-100ms) между agent.audio.start и первым чанком.

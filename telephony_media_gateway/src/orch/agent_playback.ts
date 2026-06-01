@@ -3,10 +3,17 @@ import type { WebSocket } from 'ws';
 import { config } from '../config';
 import {
   isPlaybackBlocked,
+  isDownlinkReady,
   markAgentPlaybackEnd,
   markAgentPlaybackStart,
+  markDownlinkReady,
 } from './agent_playback_tracker';
-import { clearPlaybackPacer, enqueuePcm16Playback, markPlaybackEnd } from './agent_playback_pacer';
+import {
+  clearPlaybackPacer,
+  enqueuePcm16Playback,
+  markPlaybackEnd,
+  markPlaybackReady,
+} from './agent_playback_pacer';
 import { BINARY_FRAME_AUDIO_OUT } from '../protocol/events';
 import {
   buildVoxMediaMessage,
@@ -43,6 +50,21 @@ function sendPcm16Frame(ws: WebSocket, frame: Buffer): void {
   }
 }
 
+function scheduleDownlinkReadyFallback(callId: string): void {
+  setTimeout(() => {
+    if (!isDownlinkReady(callId)) {
+      markDownlinkReady(callId);
+      markPlaybackReady(callId);
+      if (config.logLevel !== 'silent') {
+        console.warn(
+          '[media-gateway] downlink.ready fallback',
+          JSON.stringify({ call_id: callId, timeout_ms: config.downlinkReadyTimeoutMs }),
+        );
+      }
+    }
+  }, config.downlinkReadyTimeoutMs);
+}
+
 export function handleOrchestratorOutbound(
   ws: WebSocket,
   msg: { type?: string; call_id?: string; payload?: Record<string, unknown> },
@@ -66,6 +88,9 @@ export function handleOrchestratorOutbound(
       // Keep explicit start/stop framing for Vox media WS parser.
       // (Barge-in filtering is handled upstream in Vox script side.)
       sendVoxDownlink(ws, buildVoxStartMessage());
+      if (callId) {
+        scheduleDownlinkReadyFallback(callId);
+      }
       sendJson(ws, { type: 'agent.audio.start', payload: { ok: true, codec: payload.codec || 'pcmu' } });
       break;
     case 'agent.audio.chunk': {
@@ -93,6 +118,7 @@ export function handleOrchestratorOutbound(
       const b64 = String(payload.audio_pcm16_b64 || '').trim();
       if (b64 && callId) {
         sendVoxDownlink(ws, buildVoxStartMessage());
+        scheduleDownlinkReadyFallback(callId);
         enqueuePcm16Playback(ws, callId, Buffer.from(b64, 'base64'), sendPcm16Frame);
         markPlaybackEnd(callId, () => {
           sendVoxDownlink(ws, buildVoxStopMessage());

@@ -14,6 +14,9 @@ export type ControlEventType =
   | 'agent.audio.start'
   | 'agent.audio.chunk'
   | 'agent.audio.end'
+  | 'agent.play_filler'
+  | 'agent.turn_ready'
+  | 'downlink.ready'
   | 'barge_in'
   | 'dtmf'
   | 'error'
@@ -64,6 +67,21 @@ export interface AgentAudioEndMessage {
   payload?: { reason?: string };
 }
 
+export interface AgentPlayFillerMessage {
+  type: 'agent.play_filler';
+  payload?: { text?: string };
+}
+
+export interface AgentTurnReadyMessage {
+  type: 'agent.turn_ready';
+  payload?: Record<string, unknown>;
+}
+
+export interface DownlinkReadyMessage {
+  type: 'downlink.ready';
+  payload?: { call_id?: string; ok?: boolean };
+}
+
 export interface BargeInMessage {
   type: 'barge_in';
   payload?: { at_ms?: number };
@@ -87,6 +105,9 @@ export type ControlMessage =
   | AgentAudioStartMessage
   | AgentAudioChunkMessage
   | AgentAudioEndMessage
+  | AgentPlayFillerMessage
+  | AgentTurnReadyMessage
+  | DownlinkReadyMessage
   | BargeInMessage
   | DtmfMessage
   | ErrorMessage;
@@ -108,6 +129,9 @@ export function isControlEventType(value: string): value is ControlEventType {
     'agent.audio.start',
     'agent.audio.chunk',
     'agent.audio.end',
+    'agent.play_filler',
+    'agent.turn_ready',
+    'downlink.ready',
     'barge_in',
     'dtmf',
     'error',

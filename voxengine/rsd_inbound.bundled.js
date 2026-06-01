@@ -476,6 +476,12 @@ function connectMediaGateway(opts) {
         bindDownlinkMedia();
         firstDownlinkMediaLogged = false;
         firstDownlinkMediaAtMs = 0;
+        try {
+          webSocket.send(JSON.stringify({ type: 'downlink.ready', payload: { call_id: opts.callId } }));
+          Logger.write('[rsd] gateway downlink ready call_id=' + opts.callId);
+        } catch (readyErr) {
+          Logger.write('[rsd] gateway downlink ready send failed call_id=' + opts.callId + ' err=' + readyErr);
+        }
 
         Logger.write('[rsd] gateway downlink start call_id=' + opts.callId);
 
@@ -523,8 +529,19 @@ function connectMediaGateway(opts) {
 
         if (msg.type === 'agent.audio.start') {
 
+          // Force downlink rebind right before new playback turn.
+          // This mitigates rare websocket->call media-leg drops.
+          bindDownlinkMedia();
           firstDownlinkMediaLogged = false;
           firstDownlinkMediaAtMs = 0;
+
+        }
+
+        if (msg.type === 'agent.audio.chunk' && !firstDownlinkMediaLogged) {
+
+          // Extra guard for environments where first media arrives before
+          // start/media events are fully observed in JS callback order.
+          bindDownlinkMedia();
 
         }
 

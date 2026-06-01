@@ -15,9 +15,14 @@ import { createVadProcessor } from '../vad/create';
 import type { VadProcessor } from '../vad/types';
 import { RtfTracker, expectedFrameBytes, shouldLogRtf } from './rtf_metrics';
 import { emitBargeIn } from '../orch/barge_in_emit';
-import { clearAgentPlayback } from '../orch/agent_playback_tracker';
+import {
+  clearAgentPlayback,
+  markDownlinkReady,
+} from '../orch/agent_playback_tracker';
+import { markDtmfReceived } from '../orch/agent_playback_tracker';
 import { publishOrchEvent } from '../orch/publisher';
 import { clearPlaybackPacer } from '../orch/agent_playback_pacer';
+import { markPlaybackReady } from '../orch/agent_playback_pacer';
 import { registerReplySession, unregisterReplySession } from '../orch/reply_hub';
 import { buildVoxMediaMessage, parseVoxMediaMessage } from './vox_media';
 
@@ -351,6 +356,7 @@ async function handleControl(
         console.info('[media-gateway] dtmf', JSON.stringify({ call_id: s?.callId, digit }));
       }
       if (s && digit) {
+        markDtmfReceived(s.callId);
         void publishOrchEvent({
           type: 'dtmf',
           call_id: s.callId,
@@ -360,6 +366,27 @@ async function handleControl(
         });
       }
       sendJson(ws, { type: 'dtmf', payload: { ok: true, digit } });
+      break;
+    }
+    case 'downlink.ready': {
+      const s = getSession();
+      const inner =
+        msg.type === 'downlink.ready' && 'payload' in msg && msg.payload ? msg.payload : {};
+      const payloadCallId =
+        inner && typeof inner === 'object' && 'call_id' in inner
+          ? String((inner as { call_id?: string }).call_id || '')
+          : '';
+      const callId = String(payloadCallId || s?.callId || '').trim();
+      if (!callId) {
+        sendError(ws, 'session_not_started', 'No active session for downlink.ready');
+        return;
+      }
+      markDownlinkReady(callId);
+      markPlaybackReady(callId);
+      if (config.logLevel !== 'silent') {
+        console.info('[media-gateway] downlink.ready', JSON.stringify({ call_id: callId }));
+      }
+      sendJson(ws, { type: 'downlink.ready', payload: { ok: true, call_id: callId } });
       break;
     }
     case 'agent.audio.start':
