@@ -23,6 +23,17 @@ export function ulawToPcm16(ulaw: Buffer): Int16Array {
   return out;
 }
 
+/** Decode μ-law to little-endian PCM16 byte buffer. */
+export function ulawToPcm16Buffer(ulaw: Buffer): Buffer {
+  if (!ulaw.length) return Buffer.alloc(0);
+  const samples = ulawToPcm16(ulaw);
+  const out = Buffer.allocUnsafe(samples.length * 2);
+  for (let i = 0; i < samples.length; i += 1) {
+    out.writeInt16LE(samples[i]!, i * 2);
+  }
+  return out;
+}
+
 /** PCM16 → μ-law (for loopback / tests). */
 export function pcm16ToUlaw(pcm: Int16Array): Buffer {
   const out = Buffer.allocUnsafe(pcm.length);

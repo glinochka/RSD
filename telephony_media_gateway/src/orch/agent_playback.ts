@@ -13,6 +13,7 @@ import {
   buildVoxStartMessage,
   buildVoxStopMessage,
 } from '../ws/vox_media';
+import { ulawToPcm16Buffer } from '../audio/ulaw';
 
 function sendJson(ws: WebSocket, message: Record<string, unknown>): void {
   if (ws.readyState === ws.OPEN) {
@@ -28,9 +29,10 @@ function sendVoxDownlink(ws: WebSocket, message: string): void {
 
 function sendUlawFrame(ws: WebSocket, frame: Buffer): void {
   if (!frame.length) return;
+  const pcm16 = ulawToPcm16Buffer(frame);
   // Orchestrator playback targets VoxEngine WebSocket media path in production.
   // Keep Vox JSON frames always on, regardless of loopback transport test flags.
-  sendVoxDownlink(ws, buildVoxMediaMessage(frame));
+  sendVoxDownlink(ws, buildVoxMediaMessage(pcm16));
   if (config.loopbackTransport === 'binary' || config.loopbackTransport === 'both') {
     const binaryFrame = Buffer.allocUnsafe(1 + frame.length);
     binaryFrame[0] = BINARY_FRAME_AUDIO_OUT;
