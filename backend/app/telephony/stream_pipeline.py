@@ -36,7 +36,7 @@ from .outbound_publish import (
 )
 from .redis_store import clear_agent_spoken_text, set_agent_spoken_text
 from .stream_cancel import is_cancelled, is_cancelled_call_id, telephony_turn_scope
-from .stream_tts import assert_stream_tts_configured, stream_syntagma_ulaw
+from .stream_tts import assert_stream_tts_configured, stream_syntagma_pcm16
 from .streaming import split_syntagmas, stream_answer_sentences
 
 logger = logging.getLogger(__name__)
@@ -161,7 +161,7 @@ async def stream_fixed_phrase(
             await publish_agent_audio_start(call_id=call_id, connection_id=connection_id)
             audio_started = True
 
-        async for frame in stream_syntagma_ulaw(chunk, voice_id=voice_id, language=language):
+        async for frame in stream_syntagma_pcm16(chunk, voice_id=voice_id, language=language):
             if metrics.tts_first_byte_ms is None:
                 metrics.tts_first_byte_ms = int((time.perf_counter() - tts_started) * 1000)
             if call_db_id is not None and is_cancelled(call_db_id):
@@ -174,7 +174,7 @@ async def stream_fixed_phrase(
                 call_id=call_id,
                 connection_id=connection_id,
                 sequence=seq,
-                audio_ulaw=frame,
+                audio_pcm16=frame,
             )
             seq += 1
         if metrics.cancelled:
@@ -200,7 +200,7 @@ async def _filler_watch(
     language: str,
     threshold_ms: int,
 ) -> None:
-    from .filler_audio import get_filler_ulaw
+    from .filler_audio import get_filler_pcm16
 
     started = time.perf_counter()
     sent = False
@@ -208,12 +208,12 @@ async def _filler_watch(
         if (time.perf_counter() - started) * 1000 >= threshold_ms:
             if not sent:
                 sent = True
-                ulaw = await get_filler_ulaw(filler_text, voice_id=voice_id, language=language)
+                pcm16 = await get_filler_pcm16(filler_text, voice_id=voice_id, language=language)
                 await publish_play_filler(
                     call_id=call_id,
                     connection_id=connection_id,
                     text=filler_text,
-                    audio_ulaw=ulaw,
+                    audio_pcm16=pcm16,
                 )
             return
         await asyncio.sleep(0.05)
@@ -355,7 +355,7 @@ async def stream_agent_reply(
                 await publish_agent_audio_start(call_id=external_call_id, connection_id=connection_id)
                 audio_started = True
 
-            async for frame in stream_syntagma_ulaw(text, voice_id=voice_id, language=language):
+            async for frame in stream_syntagma_pcm16(text, voice_id=voice_id, language=language):
                 if metrics.tts_first_byte_ms is None:
                     metrics.tts_first_byte_ms = int((time.perf_counter() - tts_started) * 1000)
                 if is_cancelled(call_db_id) or is_cancelled_call_id(external_call_id):
@@ -365,7 +365,7 @@ async def stream_agent_reply(
                     call_id=external_call_id,
                     connection_id=connection_id,
                     sequence=seq,
-                    audio_ulaw=frame,
+                    audio_pcm16=frame,
                 )
                 seq += 1
             if metrics.cancelled:

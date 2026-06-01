@@ -22,7 +22,7 @@ from .outbound_publish import (
     publish_agent_audio_start,
     publish_call_transfer,
 )
-from .stream_tts import assert_stream_tts_configured, batch_fallback_ulaw
+from .stream_tts import assert_stream_tts_configured
 from ..config import settings
 from ..telephony import metrics as telephony_metrics
 from ..telephony.latency_budget import (
@@ -56,7 +56,7 @@ from .redis_store import (
     subscribe_orch_events,
 )
 from .session_cache import cache_call_mapping, cache_resolve_payload
-from .ulaw import chunk_ulaw_frames
+from .stream_tts import stream_syntagma_pcm16
 
 logger = logging.getLogger(__name__)
 
@@ -278,24 +278,27 @@ class OrchestratorWorker:
                 )
 
         async def _publish_batch_fallback() -> bool:
-            ulaw = await batch_fallback_ulaw(
-                plain,
-                voice_id=voice_id,
-                language=language,
-            )
-            if not ulaw:
-                return False
+            sent = False
             await publish_agent_audio_start(
                 call_id=slot.call_id,
                 connection_id=slot.connection_id,
             )
-            for seq, frame in enumerate(chunk_ulaw_frames(ulaw)):
+            seq = 0
+            async for frame in stream_syntagma_pcm16(
+                plain,
+                voice_id=voice_id,
+                language=language,
+            ):
                 await publish_agent_audio_chunk(
                     call_id=slot.call_id,
                     connection_id=slot.connection_id,
                     sequence=seq,
-                    audio_ulaw=frame,
+                    audio_pcm16=frame,
                 )
+                sent = True
+                seq += 1
+            if not sent:
+                return False
             await publish_agent_audio_end(
                 call_id=slot.call_id,
                 connection_id=slot.connection_id,

@@ -6,14 +6,13 @@ import {
   markAgentPlaybackEnd,
   markAgentPlaybackStart,
 } from './agent_playback_tracker';
-import { clearPlaybackPacer, enqueueUlawPlayback, markPlaybackEnd } from './agent_playback_pacer';
+import { clearPlaybackPacer, enqueuePcm16Playback, markPlaybackEnd } from './agent_playback_pacer';
 import { BINARY_FRAME_AUDIO_OUT } from '../protocol/events';
 import {
   buildVoxMediaMessage,
   buildVoxStartMessage,
   buildVoxStopMessage,
 } from '../ws/vox_media';
-import { ulawToPcm16Buffer } from '../audio/ulaw';
 
 function sendJson(ws: WebSocket, message: Record<string, unknown>): void {
   if (ws.readyState === ws.OPEN) {
@@ -27,16 +26,17 @@ function sendVoxDownlink(ws: WebSocket, message: string): void {
   }
 }
 
-function sendUlawFrame(ws: WebSocket, frame: Buffer): void {
+function sendPcm16Frame(ws: WebSocket, frame: Buffer): void {
   if (!frame.length) return;
-  const pcm16 = ulawToPcm16Buffer(frame);
   // Orchestrator playback targets VoxEngine WebSocket media path in production.
   // Keep Vox JSON frames always on, regardless of loopback transport test flags.
-  sendVoxDownlink(ws, buildVoxMediaMessage(pcm16));
+  sendVoxDownlink(ws, buildVoxMediaMessage(frame));
   if (config.loopbackTransport === 'binary' || config.loopbackTransport === 'both') {
-    const binaryFrame = Buffer.allocUnsafe(1 + frame.length);
+    const binaryFrame = Buffer.allocUnsafe(1 + Math.floor(frame.length / 2));
+    // binary loopback branch still expects μ-law payload for old tooling;
+    // fill with silence-equivalent bytes to avoid bogus decoding.
     binaryFrame[0] = BINARY_FRAME_AUDIO_OUT;
-    frame.copy(binaryFrame, 1);
+    binaryFrame.fill(0xff, 1);
     ws.send(binaryFrame);
   }
 }
@@ -67,9 +67,9 @@ export function handleOrchestratorOutbound(
       sendJson(ws, { type: 'agent.audio.start', payload: { ok: true, codec: payload.codec || 'pcmu' } });
       break;
     case 'agent.audio.chunk': {
-      const b64 = String(payload.audio_b64 || '').trim();
+      const b64 = String(payload.audio_pcm16_b64 || '').trim();
       if (b64 && callId) {
-        enqueueUlawPlayback(ws, callId, Buffer.from(b64, 'base64'), sendUlawFrame);
+        enqueuePcm16Playback(ws, callId, Buffer.from(b64, 'base64'), sendPcm16Frame);
       }
       sendJson(ws, {
         type: 'agent.audio.chunk',
@@ -88,10 +88,10 @@ export function handleOrchestratorOutbound(
       sendJson(ws, { type: 'agent.audio.end', payload: { ok: true, reason: payload.reason || 'complete' } });
       break;
     case 'agent.play_filler': {
-      const b64 = String(payload.audio_b64 || '').trim();
+      const b64 = String(payload.audio_pcm16_b64 || '').trim();
       if (b64 && callId) {
         sendVoxDownlink(ws, buildVoxStartMessage());
-        enqueueUlawPlayback(ws, callId, Buffer.from(b64, 'base64'), sendUlawFrame);
+        enqueuePcm16Playback(ws, callId, Buffer.from(b64, 'base64'), sendPcm16Frame);
         markPlaybackEnd(callId, () => {
           sendVoxDownlink(ws, buildVoxStopMessage());
           clearPlaybackPacer(callId);

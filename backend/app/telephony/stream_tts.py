@@ -1,443 +1,129 @@
-"""Streaming TTS → μ-law chunks for media gateway (stage 5)."""
-
-
+"""Streaming TTS -> PCM16 (8 kHz mono) frames for telephony pipeline."""
 
 from __future__ import annotations
 
-
-
+import audioop
 import logging
-
 from collections.abc import AsyncIterator
 
-from typing import Literal
-
-
-
-import audioop
-
-import httpx
-
-
-
 from ..config import settings
-
-from .tts_service import _strip_for_tts, map_voice_for_provider
-
-from .ulaw import chunk_ulaw_frames, pcm16_to_ulaw
-
-
+from .tts_service import _strip_for_tts
 
 logger = logging.getLogger(__name__)
 
-
-
-StreamTtsProvider = Literal["yandex", "elevenlabs", "batch"]
-
-
-
-_YANDEX_TTS_URL = "https://tts.api.cloud.yandex.net/speech/v1/tts:synthesize"
-
-_ELEVEN_STREAM_URL = "https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream"
-
-_ELEVEN_MODEL = "eleven_flash_v2_5"
-
-_ULAW_FRAME_BYTES = 160  # 20 ms @ 8 kHz μ-law
-
-
-
-
-
-def resolve_stream_tts_provider() -> StreamTtsProvider | None:
-
-    preferred = (getattr(settings, "TELEPHONY_STREAM_TTS_PROVIDER", None) or settings.TELEPHONY_TTS_PROVIDER or "").strip().lower()
-
-    has_yandex = bool((settings.YANDEX_SPEECHKIT_API_KEY or "").strip())
-
-    has_eleven = bool((getattr(settings, "ELEVENLABS_API_KEY", None) or "").strip())
-
-
-
-    if preferred == "elevenlabs" and has_eleven:
-
-        return "elevenlabs"
-
-    if preferred == "yandex" and has_yandex:
-
-        return "yandex"
-
-    if preferred in ("voximplant", "batch", ""):
-
-        if has_yandex:
-
-            return "yandex"
-
-        if has_eleven:
-
-            return "elevenlabs"
-
-    if has_yandex:
-
-        return "yandex"
-
-    if has_eleven:
-
-        return "elevenlabs"
-
-    return None
-
-
-
+_PCM16_FRAME_BYTES = 320  # 20 ms @ 8 kHz mono LINEAR16
 
 
 def stream_tts_enabled() -> bool:
-
-    return resolve_stream_tts_provider() is not None
-
-
-
+    # Canonical production path: Yandex SpeechKit v3 stream only.
+    return bool((settings.YANDEX_SPEECHKIT_API_KEY or "").strip())
 
 
 def assert_stream_tts_configured() -> None:
-
     if not stream_tts_enabled():
-
-        raise RuntimeError(
-
-            "Stream TTS is required for telephony orchestrator. "
-
-            "Set YANDEX_SPEECHKIT_API_KEY or ELEVENLABS_API_KEY and TELEPHONY_STREAM_TTS_PROVIDER."
-
-        )
+        raise RuntimeError("Stream TTS requires YANDEX_SPEECHKIT_API_KEY")
 
 
+def _chunk_pcm16_frames(pcm16: bytes, *, frame_bytes: int = _PCM16_FRAME_BYTES) -> list[bytes]:
+    if not pcm16:
+        return []
+    even_len = (len(pcm16) // 2) * 2
+    if even_len <= 0:
+        return []
+    pcm = pcm16[:even_len]
+    out = [pcm[i : i + frame_bytes] for i in range(0, len(pcm), frame_bytes) if pcm[i : i + frame_bytes]]
+    if not out:
+        return []
+    tail = out[-1]
+    if len(tail) < frame_bytes:
+        out[-1] = tail + (b"\x00" * (frame_bytes - len(tail)))
+    return out
 
 
-
-async def stream_syntagma_ulaw(
-
+async def stream_syntagma_pcm16(
     text: str,
-
     *,
-
     voice_id: str = "default",
-
     language: str = "ru-RU",
-
-    provider: StreamTtsProvider | None = None,
-
 ) -> AsyncIterator[bytes]:
-
-    """Yield μ-law frames (~20 ms) for one syntagma."""
-
+    """
+    Yield PCM16 LE frames (~20 ms, 8 kHz mono) for one syntagma.
+    Canonical telephony path: Yandex v3 stream.
+    """
     plain = _strip_for_tts(text)
-
     if not plain:
-
         return
-
-
-
-    resolved = provider or resolve_stream_tts_provider()
-
-    if resolved is None:
-
-        return
-
-
-
     timeout = max(1.0, float(settings.TELEPHONY_TTS_TIMEOUT_SECONDS or 10.0))
+    from .yandex_tts_stream import stream_yandex_v3_pcm16_frames
+
+    async for frame in stream_yandex_v3_pcm16_frames(
+        plain,
+        voice_id=voice_id,
+        lang=language,
+        timeout=timeout,
+    ):
+        yield frame
 
 
-
-    if resolved == "yandex":
-
-        async for frame in _yandex_ulaw_stream(plain, voice_id=voice_id, lang=language, timeout=timeout):
-
-            yield frame
-
-    elif resolved == "elevenlabs":
-
-        async for frame in _elevenlabs_ulaw_stream(plain, voice_id=voice_id, timeout=timeout):
-
-            yield frame
-
-
-
-
-
-async def _yandex_ulaw_stream(
-
+async def batch_fallback_pcm16(
     text: str,
-
     *,
-
-    voice_id: str,
-
-    lang: str,
-
-    timeout: float,
-
-) -> AsyncIterator[bytes]:
-
-    """Prefer REST synthesis for stable PSTN; keep v3 as fallback."""
-
-    try:
-        ulaw = await _yandex_ulaw_rest(text, voice_id=voice_id, lang=lang, timeout=timeout)
-        if ulaw:
-            for frame in chunk_ulaw_frames(ulaw):
-                yield frame
-            return
-    except Exception as exc:
-        logger.warning("yandex REST tts failed, trying v3 stream fallback: %s", exc)
-
-    try:
-        from .yandex_tts_stream import stream_yandex_v3_ulaw_frames
-
-        async for frame in stream_yandex_v3_ulaw_frames(
-            text,
-            voice_id=voice_id,
-            lang=lang,
-            timeout=timeout,
-        ):
-            yield frame
-    except ImportError:
-        return
-    except Exception as exc:
-        logger.warning("yandex v3 tts stream failed: %s", exc)
-
-
-
-
-
-async def _yandex_ulaw_rest(
-
-    text: str,
-
-    *,
-
-    voice_id: str,
-
-    lang: str,
-
-    timeout: float,
-
+    voice_id: str = "default",
+    language: str = "ru-RU",
 ) -> bytes:
+    """
+    Non-streaming fallback: preview TTS audio transcoded to PCM16 mono 8k.
+    Used only as emergency fallback for fixed phrases/fillers.
+    """
+    from .tts_service import synthesize_preview_speech
 
-    api_key = (settings.YANDEX_SPEECHKIT_API_KEY or "").strip()
+    audio, _mime, _provider = await synthesize_preview_speech(text, voice_id=voice_id, language=language)
+    if audio[:4] == b"RIFF":
+        import io
+        import wave
 
-    if not api_key:
+        with wave.open(io.BytesIO(audio), "rb") as wf:
+            pcm = wf.readframes(wf.getnframes())
+            if wf.getnchannels() > 1:
+                pcm = audioop.tomono(pcm, wf.getsampwidth(), 0.5, 0.5)
+            if wf.getframerate() != 8000:
+                pcm, _ = audioop.ratecv(pcm, wf.getsampwidth(), 1, wf.getframerate(), 8000, None)
+            if wf.getsampwidth() != 2:
+                pcm = audioop.lin2lin(pcm, wf.getsampwidth(), 2)
+            return b"".join(_chunk_pcm16_frames(pcm))
 
-        raise RuntimeError("yandex_speechkit_key_missing")
+    try:
+        import io
+        from pydub import AudioSegment
 
-
-
-    voice = map_voice_for_provider("yandex", voice_id)
-
-    folder_id = (settings.YANDEX_SPEECHKIT_FOLDER_ID or "").strip()
-
-    data = {
-
-        "text": text,
-
-        "lang": lang,
-
-        "voice": voice,
-
-        "format": "lpcm",
-
-        "sampleRateHertz": "8000",
-
-        "speed": "1.0",
-
-    }
-
-    if voice in {"alena", "jane", "omazh", "dasha", "marina"}:
-
-        data["emotion"] = "good"
-
-    headers = {"Authorization": f"Api-Key {api_key}"}
-
-    if folder_id:
-
-        headers["x-folder-id"] = folder_id
-
-
-
-    async with httpx.AsyncClient(timeout=timeout) as client:
-
-        response = await client.post(_YANDEX_TTS_URL, data=data, headers=headers)
-
-    if response.status_code >= 400:
-
-        logger.warning(
-            "yandex stream tts failed status=%s body=%s",
-            response.status_code,
-            (response.text or "")[:200],
-        )
-
+        seg = AudioSegment.from_file(io.BytesIO(audio))
+        seg = seg.set_frame_rate(8000).set_channels(1).set_sample_width(2)
+        return b"".join(_chunk_pcm16_frames(seg.raw_data))
+    except Exception:
+        logger.exception("batch_fallback_pcm16 failed")
         return b""
 
-    return pcm16_to_ulaw(response.content)
 
-
-
-
-
-async def _elevenlabs_ulaw_stream(
-
+# Backward-compatible wrappers for callers not migrated yet.
+async def stream_syntagma_ulaw(
     text: str,
-
     *,
+    voice_id: str = "default",
+    language: str = "ru-RU",
+):
+    from .ulaw import pcm16_to_ulaw
 
-    voice_id: str,
-
-    timeout: float,
-
-) -> AsyncIterator[bytes]:
-
-    """Stream ElevenLabs Flash v2.5 — emit μ-law frames as HTTP chunks arrive."""
-
-    api_key = (getattr(settings, "ELEVENLABS_API_KEY", None) or "").strip()
-
-    if not api_key:
-
-        raise RuntimeError("elevenlabs_api_key_missing")
-
-
-
-    voice = (voice_id or "default").strip()
-
-    if voice in {"default", "neutral", "female", "woman"}:
-
-        voice = "21m00Tcm4TlvDq8ikWAM"
-
-    url = _ELEVEN_STREAM_URL.format(voice_id=voice)
-
-    headers = {
-
-        "xi-api-key": api_key,
-
-        "Content-Type": "application/json",
-
-        "Accept": "audio/basic",
-
-    }
-
-    body = {
-
-        "text": text,
-
-        "model_id": _ELEVEN_MODEL,
-
-        "output_format": "ulaw_8000",
-
-        "voice_settings": {"stability": 0.4, "similarity_boost": 0.75},
-
-    }
-
-
-
-    buffer = bytearray()
-
-    async with httpx.AsyncClient(timeout=timeout) as client:
-
-        async with client.stream("POST", url, headers=headers, json=body) as response:
-
-            if response.status_code >= 400:
-
-                raw = await response.aread()
-
-                logger.warning("elevenlabs stream tts failed status=%s body=%s", response.status_code, raw[:200])
-
-                response.raise_for_status()
-
-            async for chunk in response.aiter_bytes():
-
-                if not chunk:
-
-                    continue
-
-                buffer.extend(chunk)
-
-                while len(buffer) >= _ULAW_FRAME_BYTES:
-
-                    frame = bytes(buffer[:_ULAW_FRAME_BYTES])
-
-                    del buffer[:_ULAW_FRAME_BYTES]
-
-                    yield frame
-
-
-
-    if buffer:
-
-        padded = bytes(buffer) + b"\xff" * max(0, _ULAW_FRAME_BYTES - len(buffer))
-
-        yield padded[:_ULAW_FRAME_BYTES]
-
-
-
+    async for pcm in stream_syntagma_pcm16(text, voice_id=voice_id, language=language):
+        yield pcm16_to_ulaw(pcm)
 
 
 async def batch_fallback_ulaw(
-
     text: str,
-
     *,
-
     voice_id: str = "default",
-
     language: str = "ru-RU",
-
 ) -> bytes:
+    from .ulaw import pcm16_to_ulaw
 
-    """Non-streaming fallback using preview TTS service."""
-
-    from .tts_service import synthesize_preview_speech
-
-
-
-    audio, _mime, _provider = await synthesize_preview_speech(text, voice_id=voice_id, language=language)
-
-    if audio[:4] == b"RIFF":
-
-        import io
-
-        import wave
-
-
-
-        with wave.open(io.BytesIO(audio), "rb") as wf:
-
-            pcm = wf.readframes(wf.getnframes())
-
-            if wf.getnchannels() > 1:
-
-                pcm = audioop.tomono(pcm, wf.getsampwidth(), 0.5, 0.5)
-
-            if wf.getframerate() != 8000:
-
-                pcm, _ = audioop.ratecv(pcm, wf.getsampwidth(), 1, wf.getframerate(), 8000, None)
-
-            return pcm16_to_ulaw(pcm)
-
-    try:
-
-        from pydub import AudioSegment
-
-        import io
-
-
-
-        seg = AudioSegment.from_file(io.BytesIO(audio))
-
-        seg = seg.set_frame_rate(8000).set_channels(1)
-
-        return pcm16_to_ulaw(seg.raw_data)
-
-    except Exception:
-
-        return b""
-
-
+    pcm = await batch_fallback_pcm16(text, voice_id=voice_id, language=language)
+    return pcm16_to_ulaw(pcm) if pcm else b""

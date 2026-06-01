@@ -25,7 +25,7 @@ async def publish_agent_event(
     )
 
 
-async def publish_agent_audio_start(*, call_id: str, connection_id: int, codec: str = "pcmu") -> None:
+async def publish_agent_audio_start(*, call_id: str, connection_id: int, codec: str = "l16_8000") -> None:
     await publish_agent_event(
         call_id=call_id,
         connection_id=connection_id,
@@ -39,7 +39,7 @@ async def publish_agent_audio_chunk(
     call_id: str,
     connection_id: int,
     sequence: int,
-    audio_ulaw: bytes,
+    audio_pcm16: bytes,
 ) -> None:
     await publish_agent_event(
         call_id=call_id,
@@ -47,7 +47,7 @@ async def publish_agent_audio_chunk(
         event_type="agent.audio.chunk",
         payload={
             "sequence": sequence,
-            "audio_b64": base64.b64encode(audio_ulaw).decode("ascii"),
+            "audio_pcm16_b64": base64.b64encode(audio_pcm16).decode("ascii"),
         },
     )
 
@@ -71,11 +71,11 @@ async def publish_play_filler(
     call_id: str,
     connection_id: int,
     text: str,
-    audio_ulaw: bytes | None = None,
+    audio_pcm16: bytes | None = None,
 ) -> None:
     payload: dict[str, Any] = {"text": text}
-    if audio_ulaw:
-        payload["audio_b64"] = base64.b64encode(audio_ulaw).decode("ascii")
+    if audio_pcm16:
+        payload["audio_pcm16_b64"] = base64.b64encode(audio_pcm16).decode("ascii")
     await publish_agent_event(
         call_id=call_id,
         connection_id=connection_id,

@@ -2,7 +2,7 @@ import type { WebSocket } from 'ws';
 
 import { config } from '../config';
 
-const ULAW_FRAME_BYTES = 160;
+const PCM16_FRAME_BYTES = 320;
 
 type Pacer = {
   ws: WebSocket;
@@ -14,17 +14,17 @@ type Pacer = {
 
 const pacers = new Map<string, Pacer>();
 
-function splitUlawFrames(ulaw: Buffer): Buffer[] {
-  if (!ulaw.length) return [];
+function splitPcm16Frames(pcm16: Buffer): Buffer[] {
+  if (!pcm16.length) return [];
   const frames: Buffer[] = [];
-  for (let i = 0; i < ulaw.length; i += ULAW_FRAME_BYTES) {
-    const chunk = ulaw.subarray(i, i + ULAW_FRAME_BYTES);
-    if (chunk.length === ULAW_FRAME_BYTES) {
+  for (let i = 0; i < pcm16.length; i += PCM16_FRAME_BYTES) {
+    const chunk = pcm16.subarray(i, i + PCM16_FRAME_BYTES);
+    if (chunk.length === PCM16_FRAME_BYTES) {
       frames.push(chunk);
       continue;
     }
     if (chunk.length > 0) {
-      const padded = Buffer.alloc(ULAW_FRAME_BYTES, 0xff);
+      const padded = Buffer.alloc(PCM16_FRAME_BYTES, 0x00);
       chunk.copy(padded);
       frames.push(padded);
     }
@@ -62,16 +62,16 @@ export function markPlaybackEnd(callId: string, onDrain: () => void): void {
   }
 }
 
-export function enqueueUlawPlayback(
+export function enqueuePcm16Playback(
   ws: WebSocket,
   callId: string,
-  ulaw: Buffer,
+  pcm16: Buffer,
   sendFrame: (ws: WebSocket, frame: Buffer) => void,
 ): void {
   const id = callId.trim();
-  if (!id || !ulaw.length) return;
+  if (!id || !pcm16.length) return;
 
-  const frames = splitUlawFrames(ulaw);
+  const frames = splitPcm16Frames(pcm16);
   if (!frames.length) return;
 
   let pacer = pacers.get(id);

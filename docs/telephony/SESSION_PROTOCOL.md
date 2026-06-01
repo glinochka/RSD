@@ -146,7 +146,7 @@ Gateway принимает это как `audio.in` и на этапе 2 отв�
 | Событие | Назначение |
 |---------|------------|
 | `agent.audio.start` | Начало воспроизведения (сброс буфера) |
-| `agent.audio.chunk` | Метаданные чанка (sequence); **PCM/μ-law** идёт binary `audio.out` |
+| `agent.audio.chunk` | Метаданные чанка (sequence); PCM16 (base64) в payload |
 | `agent.audio.end` | Конец фразы агента |
 
 ```json
@@ -154,7 +154,13 @@ Gateway принимает это как `audio.in` и на этапе 2 отв�
 ```
 
 ```json
-{ "type": "agent.audio.chunk", "payload": { "sequence": 3 } }
+{
+  "type": "agent.audio.chunk",
+  "payload": {
+    "sequence": 3,
+    "audio_pcm16_b64": "<base64 PCM16 8k mono, 20ms frame>"
+  }
+}
 ```
 
 ```json

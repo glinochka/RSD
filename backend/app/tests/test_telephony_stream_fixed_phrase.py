@@ -9,8 +9,8 @@ from app.telephony.stream_pipeline import stream_fixed_phrase
 
 @pytest.mark.asyncio
 async def test_stream_fixed_phrase_publishes_audio():
-    async def fake_ulaw(_text, *, voice_id, language):
-        yield b"\xff\x00"
+    async def fake_pcm16(_text, *, voice_id, language):
+        yield b"\x00\x00" * 160
 
     with (
         patch("app.telephony.stream_pipeline.publish_agent_audio_start", AsyncMock()) as start,
@@ -18,7 +18,7 @@ async def test_stream_fixed_phrase_publishes_audio():
         patch("app.telephony.stream_pipeline.publish_agent_audio_end", AsyncMock()) as end,
         patch("app.telephony.stream_pipeline.set_agent_spoken_text", AsyncMock()),
         patch("app.telephony.stream_pipeline.clear_agent_spoken_text", AsyncMock()),
-        patch("app.telephony.stream_pipeline.stream_syntagma_ulaw", fake_ulaw),
+        patch("app.telephony.stream_pipeline.stream_syntagma_pcm16", fake_pcm16),
         patch("app.telephony.stream_pipeline.is_cancelled", return_value=False),
         patch("app.telephony.stream_pipeline.is_cancelled_call_id", return_value=False),
     ):

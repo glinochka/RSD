@@ -62,7 +62,7 @@ async def test_stt_final_records_latency_budget_in_metadata():
             "app.telephony.orchestrator_worker.stream_agent_reply",
             AsyncMock(return_value=(reply, stream_metrics)),
         ),
-        patch("app.telephony.orchestrator_worker.stream_tts_enabled", return_value=True),
+        patch("app.telephony.orchestrator_worker.assert_stream_tts_configured"),
         patch("app.telephony.orchestrator_worker.append_dialog_turn", AsyncMock()),
         patch("app.telephony.orchestrator_worker.flush_turn_batch", AsyncMock(return_value=2)),
         patch("app.telephony.orchestrator_worker.publish_orch_reply", AsyncMock()),

@@ -1,4 +1,4 @@
-"""Yandex SpeechKit TTS v3 gRPC StreamSynthesis → μ-law frames."""
+"""Yandex SpeechKit TTS v3 gRPC StreamSynthesis → PCM16 frames (8 kHz mono)."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import grpc
 
 from ..config import settings
 from .tts_service import map_voice_for_provider
-from .ulaw import chunk_ulaw_frames, pcm16_to_ulaw
+_PCM16_FRAME_BYTES = 320  # 20 ms @ 8 kHz mono LINEAR16
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +97,7 @@ def _stream_pcm_chunks(text: str, voice: str, timeout: float) -> list[bytes]:
     return pcm_parts
 
 
-async def stream_yandex_v3_ulaw_frames(
+async def stream_yandex_v3_pcm16_frames(
     text: str,
     *,
     voice_id: str,
@@ -112,14 +112,16 @@ async def stream_yandex_v3_ulaw_frames(
     pcm_buf = bytearray()
     for part in pcm_parts:
         pcm_buf.extend(part)
-        while len(pcm_buf) >= _PCM_CHUNK_BYTES:
-            segment = bytes(pcm_buf[:_PCM_CHUNK_BYTES])
-            del pcm_buf[:_PCM_CHUNK_BYTES]
-            ulaw = pcm16_to_ulaw(segment)
-            for frame in chunk_ulaw_frames(ulaw):
-                yield frame
+        while len(pcm_buf) >= _PCM16_FRAME_BYTES:
+            segment = bytes(pcm_buf[:_PCM16_FRAME_BYTES])
+            del pcm_buf[:_PCM16_FRAME_BYTES]
+            yield segment
 
     if pcm_buf:
-        ulaw = pcm16_to_ulaw(bytes(pcm_buf))
-        for frame in chunk_ulaw_frames(ulaw):
-            yield frame
+        tail = bytes(pcm_buf)
+        if len(tail) % 2 == 1:
+            tail = tail[:-1]
+        if tail:
+            if len(tail) < _PCM16_FRAME_BYTES:
+                tail += b"\x00" * (_PCM16_FRAME_BYTES - len(tail))
+            yield tail
