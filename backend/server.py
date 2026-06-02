@@ -8,8 +8,14 @@ from app.logger_config import setup_logger
 setup_logger()
 logger = getLogger(__name__)
 from fastapi.middleware.cors import CORSMiddleware
+from app.middleware import (
+    CSPMiddleware,
+    RateLimitMiddleware,
+    SecurityAuditMiddleware,
+)
 from app.router_users import router as users_router
 from app.router_agents import router as agents_router
+from app.router_agents.public_router import router as agents_public_router
 from app.router_documents import router as documents_router
 from app.router_payments import router as payments_router
 from app.router_referrals import router as referrals_router
@@ -17,6 +23,8 @@ from app.router_admin import router as admin_router
 from app.router_sales import management_router as sales_management_router
 from app.router_sales import router as sales_portal_router
 from app.router_telephony import router as telephony_router
+from app.router_websites import router as websites_router
+from app.router_websites.public_router import router as websites_public_router
 from app.origins import origins
 from app.config import settings
 from app.services.subscription_maintenance import downgrade_expired_subscriptions_once
@@ -234,6 +242,11 @@ app.add_middleware(
     allow_credentials = True
 )
 
+# Security middleware
+app.add_middleware(SecurityAuditMiddleware)
+app.add_middleware(RateLimitMiddleware)
+app.add_middleware(CSPMiddleware)
+
 
 @app.middleware("http")
 async def enforce_secure_transport_for_credentials(request: Request, call_next):
@@ -249,6 +262,7 @@ async def enforce_secure_transport_for_credentials(request: Request, call_next):
 
 app.include_router(users_router.router)
 app.include_router(agents_router.router)
+app.include_router(agents_public_router)
 app.include_router(documents_router.router)
 app.include_router(payments_router.router)
 app.include_router(referrals_router.router)
@@ -256,6 +270,8 @@ app.include_router(admin_router.router)
 app.include_router(sales_portal_router, prefix="/api/sales")
 app.include_router(sales_management_router, prefix="/api/sales/management")
 app.include_router(telephony_router)
+app.include_router(websites_router)
+app.include_router(websites_public_router, prefix="/public-website")
 
 
 if __name__ == "__main__":

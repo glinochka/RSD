@@ -1,0 +1,343 @@
+/**
+ * Website Builder Global Styles
+ * Base styles and utility classes for rendered websites
+ */
+
+/* ========================================
+   Base Styles & Reset
+   ======================================== */
+
+.website-renderer {
+  font-feature-settings: "kern" 1;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.website-renderer * {
+  box-sizing: border-box;
+}
+
+.website-renderer img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+.website-renderer a {
+  text-decoration: none;
+  transition: color 0.2s ease, opacity 0.2s ease;
+}
+
+.website-renderer button {
+  cursor: pointer;
+  border: none;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.website-renderer button:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+.website-renderer input,
+.website-renderer textarea {
+  font-family: inherit;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.website-renderer input:focus,
+.website-renderer textarea:focus {
+  outline: none;
+}
+
+/* ========================================
+   Typography Scale
+   ======================================== */
+
+.website-renderer h1 {
+  font-size: clamp(1.875rem, 5vw, 3.75rem);
+  line-height: 1.1;
+  font-weight: 700;
+}
+
+.website-renderer h2 {
+  font-size: clamp(1.5rem, 4vw, 2.25rem);
+  line-height: 1.2;
+  font-weight: 600;
+}
+
+.website-renderer h3 {
+  font-size: clamp(1.25rem, 3vw, 1.5rem);
+  line-height: 1.3;
+  font-weight: 600;
+}
+
+.website-renderer p {
+  line-height: 1.6;
+}
+
+/* ========================================
+   Section Spacing
+   ======================================== */
+
+.website-renderer section {
+  position: relative;
+}
+
+/* ========================================
+   Animation Classes
+   ======================================== */
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.website-renderer .animate-fade-in {
+  animation: fadeIn 0.6s ease-out forwards;
+}
+
+.website-renderer .animate-slide-in {
+  animation: slideIn 0.6s ease-out forwards;
+}
+
+.website-renderer .animate-pulse {
+  animation: pulse 2s ease-in-out infinite;
+}
+
+/* Staggered animations for lists */
+.website-renderer .stagger-children > * {
+  animation: fadeIn 0.5s ease-out backwards;
+}
+
+.website-renderer .stagger-children > *:nth-child(1) { animation-delay: 0.1s; }
+.website-renderer .stagger-children > *:nth-child(2) { animation-delay: 0.2s; }
+.website-renderer .stagger-children > *:nth-child(3) { animation-delay: 0.3s; }
+.website-renderer .stagger-children > *:nth-child(4) { animation-delay: 0.4s; }
+.website-renderer .stagger-children > *:nth-child(5) { animation-delay: 0.5s; }
+.website-renderer .stagger-children > *:nth-child(6) { animation-delay: 0.6s; }
+
+/* ========================================
+   Hover Effects
+   ======================================== */
+
+.website-renderer .hover-lift {
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.website-renderer .hover-lift:hover {
+  transform: translateY(-4px);
+}
+
+.website-renderer .hover-scale {
+  transition: transform 0.3s ease;
+}
+
+.website-renderer .hover-scale:hover {
+  transform: scale(1.05);
+}
+
+/* ========================================
+   Card Styles
+   ======================================== */
+
+.website-renderer .card {
+  border-radius: 0.75rem;
+  overflow: hidden;
+  transition: all 0.3s ease;
+}
+
+.website-renderer .card-shadow {
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+.website-renderer .card-shadow:hover {
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+}
+
+/* ========================================
+   Button Styles
+   ======================================== */
+
+.website-renderer .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.75rem 1.5rem;
+  font-weight: 600;
+  border-radius: 0.5rem;
+  transition: all 0.2s ease;
+}
+
+.website-renderer .btn-primary {
+  color: white;
+  box-shadow: 0 4px 14px 0 rgba(0, 0, 0, 0.2);
+}
+
+.website-renderer .btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px 0 rgba(0, 0, 0, 0.25);
+}
+
+/* ========================================
+   Form Styles
+   ======================================== */
+
+.website-renderer .form-input {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  border: 2px solid transparent;
+  background-color: white;
+  transition: all 0.2s ease;
+}
+
+.website-renderer .form-input:focus {
+  border-color: currentColor;
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.1);
+}
+
+.website-renderer .form-label {
+  display: block;
+  font-size: 0.875rem;
+  font-weight: 500;
+  margin-bottom: 0.5rem;
+}
+
+/* ========================================
+   Icon Sizes
+   ======================================== */
+
+.website-renderer .icon-sm {
+  width: 1rem;
+  height: 1rem;
+}
+
+.website-renderer .icon-md {
+  width: 1.5rem;
+  height: 1.5rem;
+}
+
+.website-renderer .icon-lg {
+  width: 2rem;
+  height: 2rem;
+}
+
+.website-renderer .icon-xl {
+  width: 3rem;
+  height: 3rem;
+}
+
+/* ========================================
+   Preview Mode Styles
+   ======================================== */
+
+.preview-mode {
+  pointer-events: none;
+}
+
+.preview-mode a,
+.preview-mode button {
+  pointer-events: auto;
+}
+
+/* ========================================
+   Responsive Utilities
+   ======================================== */
+
+@media (max-width: 640px) {
+  .website-renderer .hide-mobile {
+    display: none !important;
+  }
+}
+
+@media (min-width: 641px) and (max-width: 1024px) {
+  .website-renderer .hide-tablet {
+    display: none !important;
+  }
+}
+
+@media (min-width: 1025px) {
+  .website-renderer .hide-desktop {
+    display: none !important;
+  }
+}
+
+/* ========================================
+   Print Styles
+   ======================================== */
+
+@media print {
+  .website-renderer .no-print {
+    display: none !important;
+  }
+  
+  .website-renderer {
+    background: white !important;
+    color: black !important;
+  }
+}
+
+/* ========================================
+   Accessibility
+   ======================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  .website-renderer *,
+  .website-renderer *::before,
+  .website-renderer *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Focus visible styles */
+.website-renderer *:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+/* Skip to main content link */
+.website-renderer .skip-link {
+  position: absolute;
+  top: -40px;
+  left: 0;
+  background: #000;
+  color: white;
+  padding: 8px;
+  text-decoration: none;
+  z-index: 100;
+}
+
+.website-renderer .skip-link:focus {
+  top: 0;
+}

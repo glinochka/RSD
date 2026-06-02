@@ -28,6 +28,9 @@ import UserAgreementPage from './pages/UserAgreementPage';
 import PrivacyPolicyPage from './pages/PrivacyPolicyPage';
 import PartnerPage from './pages/PartnerPage';
 
+// Website Builder Pages
+import { PreviewPage, WebsitePublicPage, ConstructorPage } from './website-builder/pages';
+
 const App = () => {
   return (
     <ErrorBoundary>
@@ -64,6 +67,11 @@ const App = () => {
                   path={`${NAVIGATION_ROUTES.CREATE_AGENT}/:id`}
                   element={<CreateAgent />}
                 />
+
+                {/* Website Builder Routes */}
+                <Route path="/preview/:websiteId" element={<PreviewPage />} />
+                <Route path="/websites/:websiteId/edit" element={<ConstructorPage />} />
+                <Route path="/w/:slug" element={<WebsitePublicPage />} />
 
                 {/* Catch-all - redirect to home */}
                 <Route path="*" element={<Navigate to={NAVIGATION_ROUTES.HOME} replace />} />

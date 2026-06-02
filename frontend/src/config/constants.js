@@ -175,6 +175,41 @@ export const API_ROUTES = {
   SALES_MGMT_TEAM_MEMBER: (id) => `/api/sales/management/team-members/${id}`,
   SALES_MGMT_EXCEL_UPLOAD: '/api/sales/management/contacts/excel-upload',
   SALES_MGMT_CRM_CLEAR: '/api/sales/management/contacts/clear',
+
+  // Website Builder
+  WEBSITES_LIST: '/api/v1/websites',
+  WEBSITE_DETAIL: (id) => `/api/v1/websites/${id}`,
+  WEBSITE_CREATE: '/api/v1/websites',
+  WEBSITE_UPDATE: (id) => `/api/v1/websites/${id}`,
+  WEBSITE_DELETE: (id) => `/api/v1/websites/${id}`,
+  WEBSITE_PUBLISH: (id) => `/api/v1/websites/${id}/publish`,
+  WEBSITE_UNPUBLISH: (id) => `/api/v1/websites/${id}/unpublish`,
+  WEBSITE_GENERATE: (id) => `/api/v1/websites/${id}/generate`,
+  WEBSITE_GENERATE_CREATE: '/api/v1/websites/generate/create-and-generate',
+  WEBSITE_GENERATION_STATUS: (id) => `/api/v1/websites/${id}/generation-status`,
+  WEBSITE_BLOCKS: (id) => `/api/v1/websites/${id}/blocks`,
+  WEBSITE_BLOCK: (websiteId, blockId) => `/api/v1/websites/${websiteId}/blocks/${blockId}`,
+  WEBSITE_BLOCKS_REORDER: (id) => `/api/v1/websites/${id}/blocks/reorder`,
+  WEBSITE_BLOCK_DUPLICATE: (websiteId, blockId) => `/api/v1/websites/${websiteId}/blocks/${blockId}/duplicate`,
+  WEBSITE_BLOCK_EDIT_PROMPT: (websiteId, blockId) =>
+    `/api/v1/websites/${websiteId}/blocks/${blockId}/edit-prompt`,
+  WEBSITE_DOMAINS: (id) => `/api/v1/websites/${id}/domains`,
+  WEBSITE_DOMAIN: (websiteId, domainId) => `/api/v1/websites/${websiteId}/domains/${domainId}`,
+  WEBSITE_DOMAIN_VERIFY: (websiteId, domainId) => `/api/v1/websites/${websiteId}/domains/${domainId}/verify`,
+  WEBSITE_SCHEMA: (id) => `/api/v1/websites/${id}/schema`,
+  WEBSITE_SCHEMA_BY_SLUG: (slug) => `/api/v1/websites/by-slug/${slug}/schema`,
+  WEBSITE_SCHEMA_BY_DOMAIN: (domain) => `/api/v1/websites/by-domain/${domain}/schema`,
+  WEBSITE_PUBLIC_SCHEMA: '/public-website/schema',
+  WEBSITE_TEMPLATES: '/api/v1/websites/templates',
+  WEBSITE_META_UPDATE: (id) => `/api/v1/websites/${id}/meta`,
+  WEBSITE_SEO_META: (id) => `/api/v1/websites/${id}/seo/meta`,
+  WEBSITE_SEO_PREVIEW: (id) => `/api/v1/websites/${id}/seo/preview`,
+  WEBSITE_FAVICON_UPLOAD: (id) => `/api/v1/websites/${id}/favicon`,
+  WEBSITE_OG_IMAGE_UPLOAD: (id) => `/api/v1/websites/${id}/og-image/upload`,
+  WEBSITE_OG_IMAGE_GENERATE: (id) => `/api/v1/websites/${id}/og-image/generate`,
+  AGENT_PUBLIC_DATA: (id) => `/api/v1/agents/${id}/public-data`,
+  AGENT_BOOKING_SLOTS: (id) => `/api/v1/agents/${id}/booking/slots`,
+  AGENT_BOOKING_APPOINTMENTS: (id) => `/api/v1/agents/${id}/booking/appointments`,
 };
 
 export const AGENT_ROLES = {
@@ -206,6 +241,12 @@ export const NAVIGATION_ROUTES = {
   PUBLIC_OFFER: '/public-offer',
   USER_AGREEMENT: '/user-agreement',
   PRIVACY_POLICY: '/privacy',
+  // Website Builder
+  WEBSITE_PREVIEW: (id) => `/preview/${id}`,
+  WEBSITE_PUBLIC: (slug) => `/w/${slug}`,
+  WEBSITE_EDITOR: (id) => `/websites/${id}/edit`,
+  WEBSITES_LIST: '/websites',
+  WEBSITE_CREATE: '/websites/create',
 };
 
 // User-facing messages; backend detail (FastAPI) is preferred when present (see errorUtils).

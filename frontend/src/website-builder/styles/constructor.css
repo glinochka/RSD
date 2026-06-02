@@ -1,0 +1,609 @@
+/**
+ * Visual Constructor UI styles
+ */
+
+.wb-constructor {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: #f3f4f6;
+  overflow: hidden;
+}
+
+.wb-constructor-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 1rem;
+  height: 56px;
+  background: #fff;
+  border-bottom: 1px solid #e5e7eb;
+  flex-shrink: 0;
+}
+
+.wb-constructor-topbar__left {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.wb-constructor-topbar__title {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0;
+  color: #111827;
+}
+
+.wb-constructor-topbar__actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.wb-save-status {
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+.wb-save-status--saved {
+  color: #059669;
+}
+
+.wb-save-status--saving {
+  color: #2563eb;
+}
+
+.wb-save-status--dirty {
+  color: #d97706;
+}
+
+.wb-save-status--error {
+  color: #dc2626;
+}
+
+.wb-constructor__body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.wb-panel {
+  background: #fff;
+  border-right: 1px solid #e5e7eb;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+.wb-panel--left {
+  width: 260px;
+}
+
+.wb-panel--right {
+  width: 300px;
+  border-right: none;
+  border-left: 1px solid #e5e7eb;
+  overflow-y: auto;
+}
+
+.wb-panel__header {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.wb-panel__header h2 {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #6b7280;
+}
+
+.wb-block-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.5rem;
+}
+
+.wb-block-list-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  margin-bottom: 0.25rem;
+  border: 2px solid transparent;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.wb-block-list-item:hover {
+  background: #f9fafb;
+}
+
+.wb-block-list-item--selected {
+  background: #eff6ff;
+  border-color: #3b82f6;
+}
+
+.wb-block-list-item--dragging {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.wb-block-list-item__drag {
+  cursor: grab;
+  background: none;
+  border: none;
+  color: #9ca3af;
+  padding: 0 0.25rem;
+  font-size: 0.75rem;
+}
+
+.wb-block-list-item__label {
+  flex: 1;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.wb-block-list-item__actions {
+  display: flex;
+  gap: 0.25rem;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.wb-block-list-item:hover .wb-block-list-item__actions {
+  opacity: 1;
+}
+
+.wb-block-list-item__actions button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #6b7280;
+  padding: 0.125rem 0.25rem;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.wb-block-list-item__actions button:hover {
+  color: #111827;
+}
+
+.wb-btn--add-block {
+  margin: 0.5rem;
+  width: calc(100% - 1rem);
+}
+
+.wb-constructor__canvas {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.wb-canvas-toolbar {
+  padding: 0.5rem 1rem;
+  background: #fff;
+  border-bottom: 1px solid #e5e7eb;
+  display: flex;
+  justify-content: center;
+}
+
+.wb-canvas-frame {
+  flex: 1;
+  overflow: auto;
+  padding: 1rem;
+  background: #e5e7eb;
+}
+
+.wb-constructor__sidebar-right {
+  width: 300px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-left: 1px solid #e5e7eb;
+  overflow-y: auto;
+}
+
+.wb-constructor__sidebar-right .wb-panel--right {
+  width: 100%;
+  border: none;
+}
+
+.wb-settings-section {
+  padding: 1rem;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.wb-settings-section h3 {
+  margin: 0 0 0.75rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #374151;
+}
+
+.wb-settings-block-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.wb-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.8125rem;
+  color: #4b5563;
+}
+
+.wb-field--row {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.wb-field input[type='color'] {
+  width: 100%;
+  height: 36px;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.375rem;
+  cursor: pointer;
+}
+
+.wb-field select,
+.wb-field input[type='range'] {
+  width: 100%;
+}
+
+.wb-align-buttons {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.wb-align-buttons button {
+  flex: 1;
+  padding: 0.375rem;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  border-radius: 0.375rem;
+  cursor: pointer;
+}
+
+.wb-align-buttons button.active {
+  background: #3b82f6;
+  color: #fff;
+  border-color: #3b82f6;
+}
+
+.wb-ai-panel {
+  padding: 1rem;
+  border-top: 1px solid #e5e7eb;
+}
+
+.wb-ai-panel h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.wb-ai-input {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.5rem;
+  font-family: inherit;
+  font-size: 0.875rem;
+  resize: vertical;
+  margin-bottom: 0.5rem;
+}
+
+.wb-ai-examples {
+  margin-top: 0.75rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  align-items: center;
+}
+
+.wb-ai-examples > span {
+  font-size: 0.75rem;
+  color: #6b7280;
+  width: 100%;
+}
+
+.wb-ai-example-chip {
+  font-size: 0.75rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 999px;
+  background: #f9fafb;
+  cursor: pointer;
+}
+
+.wb-ai-example-chip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.wb-btn {
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.wb-btn--primary {
+  background: #2563eb;
+  color: #fff;
+}
+
+.wb-btn--primary:hover {
+  background: #1d4ed8;
+}
+
+.wb-btn--ghost {
+  background: transparent;
+  color: #374151;
+  border: 1px solid #e5e7eb;
+}
+
+.wb-btn--warning {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.wb-btn--danger {
+  background: #dc2626;
+  color: #fff;
+}
+
+.wb-btn--full {
+  width: 100%;
+}
+
+.wb-btn-icon {
+  background: none;
+  border: none;
+  font-size: 1.25rem;
+  cursor: pointer;
+  padding: 0.25rem 0.5rem;
+  color: #6b7280;
+}
+
+.wb-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.wb-modal {
+  background: #fff;
+  border-radius: 0.75rem;
+  padding: 1.5rem;
+  max-width: 640px;
+  width: 90%;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.wb-modal--sm {
+  max-width: 400px;
+}
+
+.wb-modal__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.wb-modal__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 0.75rem;
+}
+
+.wb-block-type-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.75rem;
+  background: #fff;
+  cursor: pointer;
+  text-align: center;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.wb-block-type-card:hover {
+  border-color: #3b82f6;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
+}
+
+.wb-block-type-card strong {
+  font-size: 0.875rem;
+}
+
+.wb-block-type-card span {
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+.wb-modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.wb-block-wrapper {
+  position: relative;
+  outline: 2px dashed transparent;
+  outline-offset: -2px;
+  transition: outline-color 0.15s;
+}
+
+.wb-block-wrapper:hover {
+  outline-color: #93c5fd;
+}
+
+.wb-block-wrapper--selected {
+  outline-color: #3b82f6;
+  outline-style: solid;
+}
+
+.wb-editable-text {
+  outline: none;
+  min-width: 1ch;
+  cursor: text;
+}
+
+.wb-editable-text:empty::before {
+  content: attr(data-placeholder);
+  color: #9ca3af;
+  pointer-events: none;
+}
+
+.wb-editable-text:focus {
+  background: rgba(59, 130, 246, 0.08);
+  border-radius: 0.25rem;
+}
+
+.wb-rich-text-wrap {
+  position: relative;
+}
+
+.wb-rich-toolbar {
+  position: absolute;
+  top: -2.25rem;
+  left: 0;
+  display: flex;
+  gap: 0.25rem;
+  background: #111827;
+  padding: 0.25rem;
+  border-radius: 0.375rem;
+  z-index: 10;
+}
+
+.wb-rich-toolbar button {
+  color: #fff;
+  background: transparent;
+  border: none;
+  padding: 0.25rem 0.5rem;
+  cursor: pointer;
+  font-size: 0.875rem;
+}
+
+.wb-editable-rich {
+  outline: none;
+  min-height: 1.5em;
+  cursor: text;
+}
+
+.wb-editable-rich:focus {
+  background: rgba(59, 130, 246, 0.08);
+  border-radius: 0.25rem;
+}
+
+.wb-hint-text {
+  font-size: 0.75rem;
+  color: #6b7280;
+  margin: 0 0 0.5rem;
+}
+
+.wb-placeholders-hint code {
+  font-size: 0.7rem;
+  background: #f3f4f6;
+  padding: 0.125rem 0.25rem;
+  border-radius: 0.25rem;
+}
+
+.wb-constructor-loading {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+}
+
+.wb-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid #e5e7eb;
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: wb-spin 0.8s linear infinite;
+}
+
+@keyframes wb-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.wb-error-text {
+  color: #dc2626;
+}
+
+.wb-constructor-alert {
+  background: #fef2f2;
+  color: #b91c1c;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  text-align: center;
+}
+
+/* Right panel tabs */
+.wb-panel-tabs {
+  display: flex;
+  border-bottom: 1px solid #e5e7eb;
+  background: #f9fafb;
+}
+
+.wb-panel-tab {
+  flex: 1;
+  padding: 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #6b7280;
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s;
+  position: relative;
+}
+
+.wb-panel-tab:hover {
+  color: #374151;
+  background: #f3f4f6;
+}
+
+.wb-panel-tab--active {
+  color: #2563eb;
+  background: #fff;
+}
+
+.wb-panel-tab--active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: #2563eb;
+}

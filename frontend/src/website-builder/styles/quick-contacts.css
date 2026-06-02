@@ -1,0 +1,46 @@
+.wb-quick-contacts {
+  position: fixed;
+  left: 1.25rem;
+  bottom: 1.25rem;
+  z-index: 9998;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.wb-quick-contacts__btn {
+  width: 3.25rem;
+  height: 3.25rem;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.wb-quick-contacts__btn svg {
+  width: 1.5rem;
+  height: 1.5rem;
+}
+
+.wb-quick-contacts__btn:hover {
+  transform: scale(1.08);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+}
+
+.wb-quick-contacts__btn--telegram {
+  background: #0088cc;
+}
+
+.wb-quick-contacts__btn--whatsapp {
+  background: #25d366;
+}
+
+@media (max-width: 640px) {
+  .wb-quick-contacts {
+    left: 1rem;
+    bottom: 5.5rem;
+  }
+}

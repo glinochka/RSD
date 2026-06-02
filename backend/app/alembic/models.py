@@ -1366,3 +1366,181 @@ class SalesOutboundContact(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
 
     assignee: Mapped["SalesTeamMember | None"] = relationship(back_populates="outreach_contacts")
+
+
+# ---------------------------------------------------------------------------
+# Website Builder — сайты для владельцев ИИ-агентов
+# ---------------------------------------------------------------------------
+
+class WebsiteStatus:
+    DRAFT = "draft"
+    PUBLISHED = "published"
+    ARCHIVED = "archived"
+
+class WebsiteBlockType:
+    HERO = "hero"
+    SERVICES = "services"
+    ABOUT = "about"
+    CONTACTS = "contacts"
+    CTA = "cta"
+    FOOTER = "footer"
+    CUSTOM = "custom"
+
+class WebsiteDomainVerificationStatus:
+    PENDING = "pending"
+    VERIFIED = "verified"
+    FAILED = "failed"
+
+class WebsiteGenerationStatus:
+    IDLE = "idle"
+    QUEUED = "queued"
+    GENERATING = "generating"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+class WebsiteTemplate(Base):
+    """Предустановленные шаблоны для сайтов."""
+    __tablename__ = "website_templates"
+    __table_args__ = {"extend_existing": True}
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    description: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    thumbnail_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    default_blocks: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    default_styles: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+
+class Website(Base):
+    """Основная модель сайта для ИИ-агента."""
+    __tablename__ = "websites"
+    __table_args__ = (
+        UniqueConstraint("slug", name="uq_website_slug"),
+        Index("ix_website_owner_status", "owner_id", "status"),
+        Index("ix_website_agent", "agent_id"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    agent_id: Mapped[int | None] = mapped_column(ForeignKey("agents.id", ondelete="SET NULL"), nullable=True, index=True)
+    template_id: Mapped[int | None] = mapped_column(ForeignKey("website_templates.id", ondelete="SET NULL"), nullable=True)
+
+    # URL и идентификация
+    slug: Mapped[str] = mapped_column(String(50), nullable=False, unique=True, index=True)
+
+    # SEO мета-данные
+    title: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    meta_description: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    og_title: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    og_description: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    og_image_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    favicon_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+
+    # Статус и публикация
+    status: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default=WebsiteStatus.DRAFT,
+        server_default=WebsiteStatus.DRAFT,
+        index=True,
+    )  # draft | published | archived
+    generation_status: Mapped[str | None] = mapped_column(
+        String(16),
+        nullable=True,
+        default=WebsiteGenerationStatus.IDLE,
+        server_default=WebsiteGenerationStatus.IDLE,
+    )  # idle | queued | generating | completed | failed
+
+    # Стили сайта (переопределение шаблона)
+    custom_styles: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    # Relationships
+    owner: Mapped["User"] = relationship()
+    agent: Mapped["Agent | None"] = relationship()
+    template: Mapped["WebsiteTemplate | None"] = relationship()
+    blocks: Mapped[list["WebsiteBlock"]] = relationship(
+        back_populates="website",
+        cascade="all, delete-orphan",
+        order_by="WebsiteBlock.order",
+    )
+    domains: Mapped[list["WebsiteDomain"]] = relationship(
+        back_populates="website",
+        cascade="all, delete-orphan",
+    )
+
+
+class WebsiteBlock(Base):
+    """Блоки контента сайта (Hero, Services, About, etc.)."""
+    __tablename__ = "website_blocks"
+    __table_args__ = (
+        Index("ix_website_block_website_order", "website_id", "order"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    website_id: Mapped[int] = mapped_column(ForeignKey("websites.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    # Порядок отображения
+    order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+
+    # Тип блока: hero | services | about | contacts | cta | footer | custom
+    type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+
+    # Контент и стили (JSONB для гибкости)
+    content: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    styles: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+
+    # Видимость блока
+    is_visible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    # Relationships
+    website: Mapped["Website"] = relationship(back_populates="blocks")
+
+
+class WebsiteDomain(Base):
+    """Кастомные домены для сайтов."""
+    __tablename__ = "website_domains"
+    __table_args__ = (
+        UniqueConstraint("domain", name="uq_website_domain"),
+        Index("ix_website_domain_website", "website_id"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    website_id: Mapped[int] = mapped_column(ForeignKey("websites.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    # Домен (полное имя, например: example.com)
+    domain: Mapped[str] = mapped_column(String(253), nullable=False, unique=True, index=True)
+
+    # SSL и верификация
+    ssl_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    verification_status: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default=WebsiteDomainVerificationStatus.PENDING,
+        server_default=WebsiteDomainVerificationStatus.PENDING,
+    )  # pending | verified | failed
+    verification_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    # DNS проверка
+    last_dns_check_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    dns_check_error: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    # Relationships
+    website: Mapped["Website"] = relationship(back_populates="domains")
