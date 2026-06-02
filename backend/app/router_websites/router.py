@@ -1009,23 +1009,15 @@ async def _run_website_generation(
                     await website_dao.set_generation_status(website, "completed")
                     logger.info(f"Website generation completed: {website_id}")
                 else:
-                    # Apply fallback template
-                    await service.apply_fallback_template(
-                        website_id,
-                        business_name=request.business_name,
-                        business_description=request.business_description,
-                        services=services if services else None,
-                        contacts=contacts if contacts else None,
-                        primary_color=request.primary_color,
-                        dark_mode=request.dark_mode,
-                    )
                     await website_dao.set_generation_status(
                         website,
                         "failed",
                         error_message=result.error_message or "Unknown generation error"
                     )
                     logger.warning(
-                        f"Website generation failed for {website_id}: {result.error_message}"
+                        "Website generation failed for %s without applying fallback template: %s",
+                        website_id,
+                        result.error_message,
                     )
     except Exception as e:
         logger.exception(f"Website generation task failed: {e}")

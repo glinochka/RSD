@@ -120,246 +120,59 @@ class GeneratedWebsiteSchema(BaseModel):
         return sorted_blocks
 
 
-# ---------------------------------------------------------------------------
-# Default / Fallback Templates
-# ---------------------------------------------------------------------------
-
-DEFAULT_FALLBACK_SCHEMA = GeneratedWebsiteSchema(
-    meta=MetaInfo(
-        title="Мой бизнес",
-        description="Профессиональные услуги для ваших нужд",
-    ),
-    styles=GeneratedStyles(
-        primary_color="#2563EB",
-        secondary_color="#1E40AF",
-        background_color="#FFFFFF",
-        text_color="#1F2937",
-        accent_color="#3B82F6",
-        font_family="Inter",
-        dark_mode=False,
-        border_radius="medium",
-    ),
-    blocks=[
-        GeneratedBlock(
-            type="hero",
-            order=1,
-            content=HeroContent(
-                headline="Добро пожаловать",
-                subheadline="Мы предлагаем качественные услуги",
-                cta_text="Узнать больше",
-            ).model_dump(),
-        ),
-        GeneratedBlock(
-            type="contacts",
-            order=2,
-            content=ContactsContent(
-                title="Свяжитесь с нами",
-                contact_info=ContactInfo(
-                    phone="+7 (XXX) XXX-XX-XX",
-                ),
-            ).model_dump(),
-        ),
-        GeneratedBlock(
-            type="footer",
-            order=3,
-            content=FooterContent(
-                company_name="Моя компания",
-                copyright_text="© 2026 Все права защищены",
-            ).model_dump(),
-        ),
-    ],
-)
-
-REQUIRED_BLOCK_TYPES = ("hero", "services", "about", "contacts", "cta", "footer")
+MIN_REQUIRED_BLOCK_TYPES = ("hero", "footer")
 
 
-def _normalize_contacts_payload(contacts: dict[str, str] | None) -> ContactInfo:
-    contacts = contacts or {}
-    return ContactInfo(
-        phone=contacts.get("phone") or "+7 (999) 999-99-99",
-        email=contacts.get("email") or "hello@example.com",
-        address=contacts.get("address") or "Россия",
-        telegram=contacts.get("telegram"),
-        whatsapp=contacts.get("whatsapp"),
-        working_hours=contacts.get("working_hours") or "Пн-Пт: 09:00-18:00",
-    )
-
-
-def build_fallback_schema(
-    *,
-    business_name: str,
-    business_description: str,
-    services: list[dict] | None = None,
-    contacts: dict[str, str] | None = None,
-    primary_color: str | None = None,
-    dark_mode: bool = False,
-) -> GeneratedWebsiteSchema:
-    """Build robust fallback schema with meaningful starter content."""
-    normalized_services: list[ServiceItem] = []
-    for svc in services or []:
-        name = (svc.get("name") or "").strip()
-        if not name:
-            continue
-        normalized_services.append(
-            ServiceItem(
-                name=name,
-                description=svc.get("description") or "Подробности уточняйте у менеджера.",
-                price=svc.get("price") or "По запросу",
-                icon=svc.get("icon") or "check",
-            )
-        )
-
-    if not normalized_services:
-        normalized_services = [
-            ServiceItem(
-                name="Базовая услуга",
-                description="Закрываем типовой запрос быстро и качественно.",
-                price="от 3 000 ₽",
-                icon="star",
-            ),
-            ServiceItem(
-                name="Расширенное сопровождение",
-                description="Персональная работа с учетом ваших задач и сроков.",
-                price="от 7 500 ₽",
-                icon="users",
-            ),
-            ServiceItem(
-                name="Индивидуальное решение",
-                description="Собираем формат под ваш бизнес и бюджет.",
-                price="По запросу",
-                icon="check",
-            ),
-        ]
-
-    base_contacts = _normalize_contacts_payload(contacts)
-    safe_name = (business_name or "Ваш бизнес").strip()[:100] or "Ваш бизнес"
-    safe_description = (
-        (business_description or "Профессиональные услуги для ваших задач").strip()[:500]
-        or "Профессиональные услуги для ваших задач"
-    )
-    color = primary_color or "#2563EB"
-
-    return GeneratedWebsiteSchema(
-        meta=MetaInfo(
-            title=safe_name,
-            description=safe_description,
-        ),
-        styles=GeneratedStyles(
-            primary_color=color,
-            secondary_color="#1E40AF" if not dark_mode else "#1D4ED8",
-            background_color="#FFFFFF" if not dark_mode else "#0F172A",
-            text_color="#1F2937" if not dark_mode else "#E5E7EB",
-            accent_color="#3B82F6",
-            font_family="Inter",
-            dark_mode=dark_mode,
-            border_radius="medium",
-        ),
-        blocks=[
-            GeneratedBlock(
-                type="hero",
-                order=1,
-                content=HeroContent(
-                    headline=safe_name,
-                    subheadline=safe_description,
-                    cta_text="Получить консультацию",
-                    cta_link="#contacts",
-                    nav_links=[
-                        {"label": "Услуги", "anchor": "#services"},
-                        {"label": "О нас", "anchor": "#about"},
-                        {"label": "Контакты", "anchor": "#contacts"},
-                    ],
-                ).model_dump(exclude_none=True),
-            ),
-            GeneratedBlock(
-                type="services",
-                order=2,
-                content=ServicesContent(
-                    title="Наши услуги",
-                    items=normalized_services,
-                ).model_dump(exclude_none=True),
-            ),
-            GeneratedBlock(
-                type="about",
-                order=3,
-                content=AboutContent(
-                    title="О компании",
-                    text=(
-                        f"{safe_name} помогает клиентам получать результат без лишней сложности. "
-                        "Мы делаем акцент на качестве, сроках и понятной коммуникации."
-                    ),
-                ).model_dump(exclude_none=True),
-            ),
-            GeneratedBlock(
-                type="contacts",
-                order=4,
-                content=ContactsContent(
-                    title="Контакты",
-                    contact_info=base_contacts,
-                    show_form=True,
-                ).model_dump(exclude_none=True),
-            ),
-            GeneratedBlock(
-                type="cta",
-                order=5,
-                content=CTAContent(
-                    title="Готовы обсудить ваш проект?",
-                    subtitle="Оставьте заявку, и мы свяжемся с вами в ближайшее время",
-                    button_text="Оставить заявку",
-                    button_link="#contacts",
-                ).model_dump(exclude_none=True),
-            ),
-            GeneratedBlock(
-                type="footer",
-                order=6,
-                content=FooterContent(
-                    company_name=safe_name,
-                    copyright_text=f"© {datetime.utcnow().year} Все права защищены",
-                ).model_dump(exclude_none=True),
-            ),
-        ],
-    )
-
-
-def ensure_minimum_schema(
+def normalize_generated_schema(
     schema: GeneratedWebsiteSchema,
     *,
     business_name: str,
     business_description: str,
-    services: list[dict] | None = None,
-    contacts: dict[str, str] | None = None,
     primary_color: str | None = None,
     dark_mode: bool = False,
 ) -> GeneratedWebsiteSchema:
-    """Ensure schema always contains all essential blocks with usable content."""
-    fallback = build_fallback_schema(
-        business_name=business_name,
-        business_description=business_description,
-        services=services,
-        contacts=contacts,
-        primary_color=primary_color,
-        dark_mode=dark_mode,
-    )
-    block_by_type = {b.type: b for b in schema.blocks}
-    merged_blocks: list[GeneratedBlock] = []
-
-    for idx, block_type in enumerate(REQUIRED_BLOCK_TYPES, start=1):
-        candidate = block_by_type.get(block_type) or next(
-            (b for b in fallback.blocks if b.type == block_type), None
-        )
-        if not candidate:
-            continue
-        candidate.order = idx
-        merged_blocks.append(candidate)
-
-    schema.blocks = merged_blocks
+    """Normalize AI-generated schema without template substitution."""
     if not schema.meta.title:
-        schema.meta.title = fallback.meta.title
+        schema.meta.title = (business_name or "Сайт компании").strip()[:100]
     if not schema.meta.description:
-        schema.meta.description = fallback.meta.description
+        schema.meta.description = (
+            (business_description or "Профессиональные услуги").strip()[:500]
+        )
 
-    fallback_styles = fallback.styles.model_dump(exclude_none=True)
+    default_styles = {
+        "primary_color": primary_color or "#2563EB",
+        "secondary_color": "#1E40AF" if not dark_mode else "#1D4ED8",
+        "background_color": "#FFFFFF" if not dark_mode else "#0F172A",
+        "text_color": "#1F2937" if not dark_mode else "#E5E7EB",
+        "accent_color": "#3B82F6",
+        "font_family": "Inter",
+        "dark_mode": dark_mode,
+        "border_radius": "medium",
+    }
     current_styles = schema.styles.model_dump(exclude_none=True)
-    schema.styles = GeneratedStyles.model_validate({**fallback_styles, **current_styles})
+    schema.styles = GeneratedStyles.model_validate({**default_styles, **current_styles})
+
+    if not schema.blocks:
+        raise ValueError("Generated schema has no blocks")
+
+    block_types = {block.type for block in schema.blocks}
+    missing_mandatory = [t for t in MIN_REQUIRED_BLOCK_TYPES if t not in block_types]
+    if missing_mandatory:
+        raise ValueError(f"Generated schema missing mandatory blocks: {', '.join(missing_mandatory)}")
+
+    hero_blocks = [b for b in schema.blocks if b.type == "hero"]
+    non_hero_blocks = [b for b in schema.blocks if b.type != "hero"]
+    ordered_blocks = hero_blocks[:1] + non_hero_blocks
+    for idx, block in enumerate(ordered_blocks, start=1):
+        block.order = idx
+    schema.blocks = ordered_blocks
+
+    has_content_between = any(
+        b.type in {"services", "about", "contacts", "cta", "custom"} for b in schema.blocks[1:]
+    )
+    if not has_content_between:
+        raise ValueError("Generated schema is too sparse and has no meaningful content sections")
+
     return schema
 
 
@@ -367,7 +180,7 @@ def ensure_minimum_schema(
 # System Prompt for Website Generation
 # ---------------------------------------------------------------------------
 
-WEBSITE_GENERATION_SYSTEM_PROMPT = """Ты — опытный frontend-разработчик и UX/UI дизайнер. Твоя задача — создать профессиональный одностраничный сайт для бизнеса.
+WEBSITE_GENERATION_SYSTEM_PROMPT = """Ты — senior frontend engineer + UI/UX designer + conversion copywriter. Твоя задача — создать уникальный одностраничный сайт под конкретный бизнес.
 
 ВАЖНО: Ответь ТОЛЬКО в формате JSON. Никаких пояснений до или после JSON.
 
@@ -401,70 +214,10 @@ WEBSITE_GENERATION_SYSTEM_PROMPT = """Ты — опытный frontend-разр�
       },
       "styles": {}
     },
-    {
-      "type": "services",
-      "order": 2,
-      "content": {
-        "title": "Наши услуги",
-        "items": [
-          {
-            "name": "Название услуги",
-            "description": "Описание 1-2 предложения",
-            "price": "Цена (опционально)",
-            "icon": "имя_иконки"
-          }
-        ]
-      },
-      "styles": {}
-    },
-    {
-      "type": "about",
-      "order": 3,
-      "content": {
-        "title": "О нас",
-        "text": "Рассказ о компании (3-5 предложений)",
-        "image_url": null
-      },
-      "styles": {}
-    },
-    {
-      "type": "contacts",
-      "order": 4,
-      "content": {
-        "title": "Контакты",
-        "contact_info": {
-          "phone": "телефон",
-          "email": "email",
-          "address": "адрес",
-          "working_hours": "часы работы"
-        },
-        "show_form": true
-      },
-      "styles": {}
-    },
-    {
-      "type": "cta",
-      "order": 5,
-      "content": {
-        "title": "Призыв к действию",
-        "subtitle": "Подзаголовок",
-        "button_text": "Заказать сейчас",
-        "button_link": "#contacts"
-      },
-      "styles": {}
-    },
-    {
-      "type": "footer",
-      "order": 6,
-      "content": {
-        "company_name": "Название компании",
-        "copyright_text": "© 2026 Все права защищены",
-        "social_links": {},
-        "privacy_policy_url": null,
-        "terms_url": null
-      },
-      "styles": {}
-    }
+    // После hero используй вариативный набор секций:
+    // services/about/contacts/cta/footer и/или custom.
+    // Для нестандартных секций (кейсы, FAQ, отзывы, карусель, этапы, тарифы и т.д.) используй type="custom" и content.html.
+    // Минимум: hero в начале и footer в конце.
   ]
 }
 ```
@@ -473,12 +226,12 @@ WEBSITE_GENERATION_SYSTEM_PROMPT = """Ты — опытный frontend-разр�
 1. Используй цвета из переданной цветовой схемы
 2. Текст должен быть на русском языке, профессиональным, продающим
 3. Для каждого блока создавай осмысленный, качественный контент
-4. Заголовки должны быть цепляющими и конкретными
-5. Описание услуг — с акцентом на выгоды для клиента
-6. ЦТА-кнопки должны быть действием ("Записаться", "Получить консультацию", "Узнать цену")
+4. Заголовки должны быть цепляющими, конкретными, отраслевыми
+5. Не используй повторяющиеся иконки и одинаковые паттерны карточек на всех сайтах
+6. Если формируешь custom-блок, генерируй безопасный семантический HTML без inline script/style
 7. Если информация не предоставлена — используй реалистичные placeholder-значения
-8. Всегда включай все 6 типов блоков (hero, services, about, contacts, cta, footer)
-9. order должен начинаться с 1 и идти последовательно
+8. Структура должна следовать стандарту: navbar + hero + контентные секции + контакты/CTA + footer
+9. hero должен быть первым, footer последним, order строго по возрастанию
 10. Только валидный JSON, без markdown-разметки вне JSON
 """
 
@@ -619,31 +372,37 @@ class WebsiteGenerationService:
         contacts: dict[str, str] | None,
         dark_mode: bool,
     ) -> dict[str, Any]:
-        """Step 1: create strict page structure plan."""
+        """Step 1: create structure plan with unique section architecture."""
         system_prompt = (
-            "Ты senior UX-архитектор лендингов. "
+            "Ты principal UX-архитектор и CRO-стратег лендингов. "
             "Верни ТОЛЬКО валидный JSON. Никакого markdown.\n"
-            "Сконструируй структуру сайта по индустрии бизнеса и входным данным.\n"
+            "Сконструируй УНИКАЛЬНУЮ структуру сайта по индустрии бизнеса и входным данным.\n"
             "Формат:\n"
             "{\n"
             '  "industry": "string",\n'
             '  "tone": "string",\n'
+            '  "positioning": "string",\n'
             '  "sections": [\n'
-            '    {"type":"hero","anchor":"top","goal":"..."},\n'
-            '    {"type":"services","anchor":"services","goal":"..."},\n'
-            '    {"type":"about","anchor":"about","goal":"..."},\n'
-            '    {"type":"cta","anchor":"cta","goal":"..."},\n'
-            '    {"type":"contacts","anchor":"contacts","goal":"..."},\n'
-            '    {"type":"footer","anchor":"footer","goal":"..."}\n'
+            '    {"type":"hero","anchor":"top","goal":"...", "style_hint":"..."},\n'
+            '    {"type":"custom","anchor":"cases","goal":"...", "kind":"cases-grid"},\n'
+            '    {"type":"services","anchor":"services","goal":"...", "style_hint":"..."}\n'
             "  ],\n"
             '  "nav_links": [\n'
             '    {"label":"Услуги","anchor":"#services"},\n'
             '    {"label":"О нас","anchor":"#about"},\n'
             '    {"label":"Контакты","anchor":"#contacts"}\n'
             "  ],\n"
-            '  "image_guidelines": {"max_height_px": 520, "object_fit": "cover"}\n'
+            '  "visual_direction": {"layout":"...", "density":"...", "icon_style":"..."},\n'
+            '  "image_guidelines": {"max_height_px": 520, "object_fit": "cover"},\n'
+            '  "mobile_notes": ["...", "..."]\n'
             "}\n"
-            "Всегда включай стандарт лендинга: nav + hero + контентные секции + финальный CTA + контакты + footer."
+            "Обязательные правила:\n"
+            "- Всегда включай стандарт лендинга: nav + hero + контентные секции + контакты/CTA + footer.\n"
+            "- hero должен быть первым, footer последним.\n"
+            "- Между hero и footer должно быть не менее 3 контентных секций.\n"
+            "- Разрешены стандартные type (services/about/contacts/cta) и custom.\n"
+            "- Для custom указывай kind: faq|testimonials|cases-grid|stats|timeline|pricing|carousel|comparison|team|process.\n"
+            "- Избегай однотипной структуры между разными индустриями."
         )
 
         user_prompt = json.dumps(
@@ -657,6 +416,7 @@ class WebsiteGenerationService:
                     "Не путай индустрию бизнеса",
                     "Если это стоматология/клиника — копирайт и услуги должны быть медицинскими",
                     "Никаких generic-текстов про консалтинг, если это не консалтинг",
+                    "Структура не должна выглядеть как единый шаблон для всех сайтов",
                 ],
             },
             ensure_ascii=False,
@@ -684,7 +444,7 @@ class WebsiteGenerationService:
         primary_color: str | None,
         dark_mode: bool,
     ) -> str:
-        """Step 2: generate primary website schema from structure plan."""
+        """Step 2: generate detailed website schema and content from structure plan."""
         system_prompt = WEBSITE_GENERATION_SYSTEM_PROMPT + (
             "\n\n"
             "Дополнительные требования:\n"
@@ -693,7 +453,10 @@ class WebsiteGenerationService:
             "3) Избегай шаблонных общих формулировок; текст должен быть отраслевым.\n"
             "4) Для секции услуг делай карточки с конкретной пользой и понятной ценностью.\n"
             "5) Для медицинских ниш добавляй маркеры доверия и безопасности.\n"
-            "6) Изображения: учитывай max_height_px=520, object-fit=cover.\n"
+            "6) Для каждого custom блока заполняй content.html качественной, семантической, безопасной разметкой.\n"
+            "7) Не дублируй один и тот же паттерн карточек/иконок в нескольких секциях без причины.\n"
+            "8) Изображения: учитывай max_height_px=520, object-fit=cover.\n"
+            "9) hero должен быть первым блоком, footer последним.\n"
         )
         user_prompt = json.dumps(
             {
@@ -704,7 +467,12 @@ class WebsiteGenerationService:
                 "primary_color": primary_color,
                 "dark_mode": dark_mode,
                 "structure_plan": plan,
-                "required_layout": "navbar -> hero -> content sections -> cta -> contacts -> footer",
+                "required_layout": "navbar -> hero -> content sections -> contacts/cta -> footer",
+                "must_avoid": [
+                    "single universal template look",
+                    "generic repeated icon set",
+                    "identical section rhythm for all niches",
+                ],
             },
             ensure_ascii=False,
         )
@@ -733,6 +501,8 @@ class WebsiteGenerationService:
             "- осмысленные тексты строго в индустрии бизнеса\n"
             "- избегай неуместной лексики (например, консалтинг для клиники)\n"
             "- изображения должны быть безопасного размера для лендинга\n"
+            "- hero в начале и footer в конце, правильная последовательность блоков\n"
+            "- custom-блоки должны быть семантическими и безопасными (без script/style)\n"
         )
         user_prompt = json.dumps(
             {
@@ -748,6 +518,72 @@ class WebsiteGenerationService:
             user_prompt=user_prompt,
             temperature=0.35,
             max_tokens=5500,
+        )
+
+    async def _deep_style_and_variation_pass(
+        self,
+        *,
+        schema_raw: str,
+        plan: dict[str, Any],
+        dark_mode: bool,
+    ) -> str:
+        """Step 4: enforce unique visual language and section diversity."""
+        system_prompt = (
+            "Ты арт-директор digital-продуктов и frontend-дизайнер.\n"
+            "Верни ТОЛЬКО валидный JSON той же схемы сайта.\n"
+            "Сделай сильную стилизацию и вариативность:\n"
+            "- выровняй визуальный язык между секциями\n"
+            "- добавь разные паттерны представления контента (карточки, таймлайн, FAQ, сравнение, карусель через custom html)\n"
+            "- оставь сайт современным и читабельным\n"
+            "- mobile-first: размеры, отступы, длина строк\n"
+            "- не ломай SEO meta и базовые контактные данные\n"
+        )
+        user_prompt = json.dumps(
+            {
+                "theme": "dark" if dark_mode else "light",
+                "structure_plan": plan,
+                "candidate_schema": json.loads(extract_json_from_response(schema_raw)),
+                "goal": "Maximum visual individuality while keeping clean UX conventions",
+            },
+            ensure_ascii=False,
+        )
+        return await self._chat_json(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0.65,
+            max_tokens=6500,
+        )
+
+    async def _final_validation_pass(
+        self,
+        *,
+        schema_raw: str,
+        plan: dict[str, Any],
+    ) -> str:
+        """Step 5: final validation and correction pass."""
+        system_prompt = (
+            "Ты финальный QA-валидатор лендингов.\n"
+            "Верни ТОЛЬКО валидный JSON той же схемы сайта.\n"
+            "Проверь и исправь:\n"
+            "- валидность JSON и обязательных полей\n"
+            "- порядок блоков order\n"
+            "- hero первый, footer последний\n"
+            "- якоря навигации и CTA ссылки\n"
+            "- отсутствие пустых/бессмысленных секций\n"
+            "- корректность custom html (без script/style, семантический контент)\n"
+        )
+        user_prompt = json.dumps(
+            {
+                "structure_plan": plan,
+                "candidate_schema": json.loads(extract_json_from_response(schema_raw)),
+            },
+            ensure_ascii=False,
+        )
+        return await self._chat_json(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0.2,
+            max_tokens=6000,
         )
 
     async def generate_website(
@@ -800,20 +636,27 @@ class WebsiteGenerationService:
                     primary_color=primary_color,
                     dark_mode=dark_mode,
                 )
-                raw_response = await self._refine_schema_for_quality(
+                quality_schema_raw = await self._refine_schema_for_quality(
                     raw_schema=primary_schema_raw,
                     business_name=business_name,
                     business_description=business_description,
                     plan=structure_plan,
                 )
+                styled_schema_raw = await self._deep_style_and_variation_pass(
+                    schema_raw=quality_schema_raw,
+                    plan=structure_plan,
+                    dark_mode=dark_mode,
+                )
+                raw_response = await self._final_validation_pass(
+                    schema_raw=styled_schema_raw,
+                    plan=structure_plan,
+                )
 
                 schema = parse_generated_schema(raw_response)
-                schema = ensure_minimum_schema(
+                schema = normalize_generated_schema(
                     schema,
                     business_name=business_name,
                     business_description=business_description,
-                    services=services,
-                    contacts=contacts,
                     primary_color=primary_color,
                     dark_mode=dark_mode,
                 )
@@ -896,35 +739,6 @@ class WebsiteGenerationService:
                     session.add(block)
 
                 return True
-
-    async def apply_fallback_template(
-        self,
-        website_id: int,
-        *,
-        business_name: str,
-        business_description: str,
-        services: list[dict] | None = None,
-        contacts: dict[str, str] | None = None,
-        primary_color: str | None = None,
-        dark_mode: bool = False,
-    ) -> bool:
-        """Apply default fallback template when generation fails.
-
-        Args:
-            website_id: Website ID to update
-
-        Returns:
-            True if successful
-        """
-        fallback = build_fallback_schema(
-            business_name=business_name,
-            business_description=business_description,
-            services=services,
-            contacts=contacts,
-            primary_color=primary_color,
-            dark_mode=dark_mode,
-        )
-        return await self.apply_generated_schema(website_id, fallback)
 
     async def edit_block_with_prompt(
         self,
