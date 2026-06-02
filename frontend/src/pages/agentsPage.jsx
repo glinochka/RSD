@@ -12,6 +12,7 @@ import AgentContractPaymentModal from '../components/AgentContractPaymentModal';
 import { useAsync } from '../hooks/useAsync';
 import agentService from '../services/agentService';
 import pricingService from '../services/pricingService';
+import websiteService from '../services/websiteService';
 import { formatRubPrice } from '../utils/agentTemplatePricing';
 import { useNotification } from '../context/useNotification';
 import { NAVIGATION_ROUTES } from '../config/constants';
@@ -713,6 +714,10 @@ const AgentsPageContent = () => {
   const [agentAvailTimezone, setAgentAvailTimezone] = useState(() => getBrowserTimezoneSafe());
   const [agentAvailWeekdays, setAgentAvailWeekdays] = useState(buildDefaultAgentAvailabilityWeekdays);
   const [isSavingAgentAvailability, setIsSavingAgentAvailability] = useState(false);
+  const [agentWebsite, setAgentWebsite] = useState(null);
+  const [isWebsiteLoading, setIsWebsiteLoading] = useState(false);
+  const [isWebsiteBuilding, setIsWebsiteBuilding] = useState(false);
+  const websiteGenerationPollRef = useRef(null);
   const detailsRequestIdRef = useRef(0);
   const [contractModalAgent, setContractModalAgent] = useState(null);
   const [contractModalTitle, setContractModalTitle] = useState('');
@@ -793,6 +798,76 @@ const AgentsPageContent = () => {
     return updated || [];
   };
 
+  const clearWebsiteGenerationPoll = () => {
+    if (websiteGenerationPollRef.current) {
+      window.clearInterval(websiteGenerationPollRef.current);
+      websiteGenerationPollRef.current = null;
+    }
+  };
+
+  const loadAgentWebsite = async (agentId) => {
+    if (!agentId) {
+      setAgentWebsite(null);
+      setIsWebsiteBuilding(false);
+      clearWebsiteGenerationPoll();
+      return null;
+    }
+
+    setIsWebsiteLoading(true);
+    try {
+      const response = await websiteService.list({ page: 1, page_size: 100 });
+      const items = Array.isArray(response?.items) ? response.items : [];
+      const websitesForAgent = items.filter((item) => item?.agent_id === agentId);
+      const latestWebsite = websitesForAgent.sort((a, b) => Number(b.id || 0) - Number(a.id || 0))[0] || null;
+      setAgentWebsite(latestWebsite);
+      const generationStatus = String(latestWebsite?.generation_status || '').toLowerCase();
+      const isGenerationRunning = generationStatus === 'queued' || generationStatus === 'generating';
+      setIsWebsiteBuilding(isGenerationRunning);
+      if (isGenerationRunning && latestWebsite?.id) {
+        startWebsiteGenerationPoll(latestWebsite.id);
+      } else {
+        clearWebsiteGenerationPoll();
+      }
+      return latestWebsite;
+    } catch (error) {
+      setAgentWebsite(null);
+      setIsWebsiteBuilding(false);
+      showError(error?.message || 'Не удалось загрузить данные сайта');
+      return null;
+    } finally {
+      setIsWebsiteLoading(false);
+    }
+  };
+
+  const startWebsiteGenerationPoll = (websiteId) => {
+    if (!websiteId) return;
+    clearWebsiteGenerationPoll();
+    websiteGenerationPollRef.current = window.setInterval(async () => {
+      try {
+        const statusData = await websiteService.getGenerationStatus(websiteId);
+        const statusValue = String(statusData?.generation_status || '').toLowerCase();
+        if (statusValue === 'completed') {
+          clearWebsiteGenerationPoll();
+          setIsWebsiteBuilding(false);
+          showSuccess('Сайт успешно собран');
+          if (selectedBotId) {
+            await loadAgentWebsite(selectedBotId);
+          }
+          return;
+        }
+        if (statusValue === 'failed') {
+          clearWebsiteGenerationPoll();
+          setIsWebsiteBuilding(false);
+          showError(statusData?.error || 'Не удалось собрать сайт');
+          return;
+        }
+        setIsWebsiteBuilding(statusValue === 'queued' || statusValue === 'generating');
+      } catch {
+        // Keep polling while generation endpoint is temporarily unavailable.
+      }
+    }, 4000);
+  };
+
   const loadAgentDetails = async (botId) => {
     const requestId = detailsRequestIdRef.current + 1;
     detailsRequestIdRef.current = requestId;
@@ -812,13 +887,69 @@ const AgentsPageContent = () => {
       setWelcomeDraft(agent.welcome_message || '');
       setDocuments(docs || []);
       setChannels(agent.channels || []);
+      await loadAgentWebsite(agent.id);
     } catch (error) {
       if (requestId !== detailsRequestIdRef.current) return;
+      clearWebsiteGenerationPoll();
+      setAgentWebsite(null);
+      setIsWebsiteBuilding(false);
       showError(error?.message || 'Ошибка при загрузке карточки агента');
     } finally {
       if (requestId !== detailsRequestIdRef.current) return;
       setIsLoadingDetails(false);
     }
+  };
+
+  useEffect(() => () => {
+    clearWebsiteGenerationPoll();
+  }, []);
+
+  const handleStartWebsiteBuilder = async () => {
+    if (!selectedAgent || isWebsiteBuilding) return;
+
+    const businessName = String(selectedAgent.bot_username || selectedAgent.name || 'Мой сайт').trim();
+    const rawDescription = String(
+      selectedAgent.description
+      || selectedAgent.welcome_message
+      || selectedAgent.system_prompt
+      || `Сайт для агента ${businessName}`
+    ).trim();
+    const businessDescription = rawDescription.length >= 10
+      ? rawDescription
+      : `${rawDescription}. Это сайт с описанием услуг и выгод для клиентов.`;
+
+    setIsWebsiteBuilding(true);
+    try {
+      const result = await websiteService.createAndGenerate({
+        business_name: businessName,
+        business_description: businessDescription,
+        agent_id: selectedAgent.id,
+      });
+      const websiteId = result?.website_id;
+      if (!websiteId) {
+        throw new Error('Сервис не вернул ID сайта');
+      }
+      showSuccess('Запустили сборку сайта. Обычно это занимает несколько минут.');
+      await loadAgentWebsite(selectedAgent.id);
+      startWebsiteGenerationPoll(websiteId);
+    } catch (error) {
+      setIsWebsiteBuilding(false);
+      showError(error?.message || 'Не удалось запустить сборку сайта');
+    }
+  };
+
+  const handleOpenWebsiteConstructor = () => {
+    if (!agentWebsite?.id) return;
+    navigate(NAVIGATION_ROUTES.WEBSITE_EDITOR(agentWebsite.id));
+  };
+
+  const handleOpenWebsiteView = () => {
+    if (!agentWebsite?.id) return;
+    if (agentWebsite.status === 'published' && agentWebsite.slug) {
+      window.open(NAVIGATION_ROUTES.WEBSITE_PUBLIC(agentWebsite.slug), '_blank', 'noopener,noreferrer');
+      return;
+    }
+    window.open(NAVIGATION_ROUTES.WEBSITE_PREVIEW(agentWebsite.id), '_blank', 'noopener,noreferrer');
   };
 
   const handleDeleteAgent = async (botId) => {
@@ -2927,6 +3058,45 @@ const AgentsPageContent = () => {
                       title="Обработка /start"
                       helpText="ON: /start отправляется в LLM. OFF: отправляется дефолтное/пользовательское приветствие. По умолчанию выключено: команда /start вернет текст приветствия. Включите, чтобы /start обрабатывался как обычное сообщение пользователя."
                     />
+                  </div>
+
+                  <div className="agent-management-block">
+                    <h4 className="agent-form-channel-title">Сайт</h4>
+                    {isWebsiteLoading ? (
+                      <p className="help-text">Загрузка...</p>
+                    ) : !agentWebsite ? (
+                      <>
+                        <p className="help-text">У вас еще нет сайта</p>
+                        <button
+                          type="button"
+                          className="btn btn-black"
+                          onClick={handleStartWebsiteBuilder}
+                          disabled={isWebsiteBuilding}
+                        >
+                          {isWebsiteBuilding ? 'Собираем сайт...' : 'Сайт за 5 минут'}
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        {isWebsiteBuilding ? (
+                          <p className="help-text">Сайт собирается, это может занять до нескольких минут.</p>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="btn btn-black"
+                          onClick={handleOpenWebsiteConstructor}
+                        >
+                          Конструктор
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-outline"
+                          onClick={handleOpenWebsiteView}
+                        >
+                          Посмотреть
+                        </button>
+                      </>
+                    )}
                   </div>
 
                   <div className="agent-management-block">
