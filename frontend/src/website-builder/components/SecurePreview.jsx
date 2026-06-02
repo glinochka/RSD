@@ -49,7 +49,6 @@ function buildIsolatedDocument({
     
     /* Scoped styles */
     .${scopeClass} {
-      all: initial;
       display: block;
       font-family: inherit;
     }
@@ -68,17 +67,6 @@ function buildIsolatedDocument({
   
   <!-- Isolation enforcement -->
   <script>
-    // Prevent access to parent window
-    if (window.parent !== window) {
-      try {
-        // Only allow postMessage communication
-        window.parent = null;
-        window.top = null;
-      } catch (e) {
-        // Already sandboxed
-      }
-    }
-    
     // Disable dangerous APIs
     window.open = function() { 
       console.warn('window.open() is disabled in preview mode');
@@ -327,7 +315,6 @@ export function SecureContentWrapper({
     <div
       className={`${scopeClass} ${className}`}
       style={{
-        all: 'initial',
         fontFamily: 'inherit',
         ...style,
       }}

@@ -382,9 +382,10 @@ export function getSandboxConfig(allowScripts = true) {
   const permissions = [
     'allow-same-origin',
     allowScripts ? 'allow-scripts' : '',
+    'allow-forms',
+    'allow-modals',
     'allow-popups',
     'allow-popups-to-escape-sandbox',
-    'allow-forms',
   ].filter(Boolean);
 
   return permissions.join(' ');
@@ -396,13 +397,13 @@ export function getSandboxConfig(allowScripts = true) {
  */
 export function getPreviewCSP() {
   return [
-    "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
-    "style-src 'self' 'unsafe-inline'",
+    "default-src 'self' https: data: blob:",
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https: blob:",
+    "style-src 'self' 'unsafe-inline' https:",
     "img-src 'self' data: https: blob:",
-    "font-src 'self' data:",
-    "connect-src 'self'",
-    "frame-src 'none'",
+    "font-src 'self' data: https:",
+    "connect-src 'self' https: wss:",
+    "frame-src 'self' https:",
     "object-src 'none'",
     "base-uri 'self'",
   ].join('; ');

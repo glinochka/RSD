@@ -34,6 +34,7 @@ const ConstructorPageContent = () => {
   const [currentDevice, setCurrentDevice] = useState('desktop');
   const [actionError, setActionError] = useState(null);
   const [rightPanelTab, setRightPanelTab] = useState('settings');
+  const [deletingWebsite, setDeletingWebsite] = useState(false);
 
   const [agentData, setAgentData] = useState(null);
 
@@ -60,6 +61,7 @@ const ConstructorPageContent = () => {
     applyAiPrompt,
     publish,
     unpublish,
+    deleteWebsite,
   } = useConstructor(websiteId);
 
   const placeholderVars = useMemo(
@@ -124,6 +126,26 @@ const ConstructorPageContent = () => {
     }
   };
 
+  const handleDeleteWebsite = async () => {
+    const confirmed = window.confirm(
+      'Удалить сайт безвозвратно? Будут удалены все блоки и связанные данные.'
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setActionError(null);
+      setDeletingWebsite(true);
+      await deleteWebsite();
+      navigate(NAVIGATION_ROUTES.WEBSITES_LIST);
+    } catch (e) {
+      setActionError(e.response?.data?.detail || e.message || 'Не удалось удалить сайт');
+    } finally {
+      setDeletingWebsite(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="wb-constructor-loading">
@@ -154,6 +176,8 @@ const ConstructorPageContent = () => {
         onPreview={() => navigate(NAVIGATION_ROUTES.WEBSITE_PREVIEW(websiteId))}
         onPublish={handlePublish}
         onUnpublish={handleUnpublish}
+        onDeleteWebsite={handleDeleteWebsite}
+        deletingWebsite={deletingWebsite}
       />
 
       {actionError && (

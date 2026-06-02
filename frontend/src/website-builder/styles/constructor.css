@@ -394,6 +394,21 @@
   color: #fff;
 }
 
+.wb-btn--danger-outline {
+  background: #fff;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+}
+
+.wb-btn--danger-outline:hover {
+  background: #fef2f2;
+}
+
+.wb-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .wb-btn--full {
   width: 100%;
 }

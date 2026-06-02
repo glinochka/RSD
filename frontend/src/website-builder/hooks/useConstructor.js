@@ -15,6 +15,7 @@ import {
   editBlockWithPromptApi,
   publishWebsite,
   unpublishWebsite,
+  deleteWebsite,
 } from '../utils/api';
 
 const AUTOSAVE_MS = 5000;
@@ -254,6 +255,11 @@ export function useConstructor(websiteId) {
     return data;
   }, [websiteId]);
 
+  const handleDeleteWebsite = useCallback(async () => {
+    await saveNow();
+    await deleteWebsite(websiteId);
+  }, [websiteId, saveNow]);
+
   const selectedBlock = blocks.find((b) => b.id === selectedBlockId) || null;
 
   const schema = website
@@ -292,6 +298,7 @@ export function useConstructor(websiteId) {
     applyAiPrompt,
     publish: handlePublish,
     unpublish: handleUnpublish,
+    deleteWebsite: handleDeleteWebsite,
   };
 }
 

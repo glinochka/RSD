@@ -16,6 +16,8 @@ const ConstructorTopBar = ({
   onPreview,
   onPublish,
   onUnpublish,
+  onDeleteWebsite,
+  deletingWebsite = false,
 }) => {
   const navigate = useNavigate();
 
@@ -49,6 +51,14 @@ const ConstructorTopBar = ({
             Опубликовать
           </button>
         )}
+        <button
+          type="button"
+          className="wb-btn wb-btn--danger-outline"
+          onClick={onDeleteWebsite}
+          disabled={deletingWebsite}
+        >
+          {deletingWebsite ? 'Удаление...' : 'Удалить сайт'}
+        </button>
       </div>
     </header>
   );
@@ -62,6 +72,8 @@ ConstructorTopBar.propTypes = {
   onPreview: PropTypes.func.isRequired,
   onPublish: PropTypes.func.isRequired,
   onUnpublish: PropTypes.func.isRequired,
+  onDeleteWebsite: PropTypes.func.isRequired,
+  deletingWebsite: PropTypes.bool,
 };
 
 export default ConstructorTopBar;

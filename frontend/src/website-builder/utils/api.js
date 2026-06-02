@@ -96,6 +96,12 @@ export async function unpublishWebsite(websiteId) {
   return data;
 }
 
+export async function deleteWebsite(websiteId) {
+  await axios.delete(`${API_BASE_URL}${API_ROUTES.WEBSITE_DELETE(websiteId)}`, {
+    headers: authHeaders(),
+  });
+}
+
 // Domain management
 export async function fetchDomains(websiteId) {
   const { data } = await axios.get(`${API_BASE_URL}${API_ROUTES.WEBSITE_DOMAINS(websiteId)}`, {

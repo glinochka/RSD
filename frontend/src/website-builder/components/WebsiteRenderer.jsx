@@ -393,8 +393,8 @@ const WebsiteRenderer = ({
         </Helmet>
       )}
 
-      {/* CSS Isolation Wrapper */}
-      <div className={scopeClass} style={{ all: 'initial', display: 'contents' }}>
+      {/* CSS isolation wrapper via selector scoping */}
+      <div className={scopeClass} style={{ display: 'contents' }}>
         {/* Website Container */}
         <div
           className={`website-renderer ${className} ${previewMode ? 'preview-mode' : ''}`}

@@ -65,26 +65,23 @@ class CSPMiddleware(BaseHTTPMiddleware):
         # Allow scripts/styles from self and rsd-ai.ru domain
         # Allow images from self, data URIs, and https
         csp_directives = [
-            "default-src 'self'",
-            f"script-src 'self' 'unsafe-inline' 'unsafe-eval' *.{BASE_DOMAIN} {BASE_DOMAIN}",
-            f"style-src 'self' 'unsafe-inline' *.{BASE_DOMAIN} {BASE_DOMAIN} fonts.googleapis.com",
+            "default-src 'self' https: data: blob:",
+            f"script-src 'self' 'unsafe-inline' 'unsafe-eval' https: blob: *.{BASE_DOMAIN} {BASE_DOMAIN}",
+            f"style-src 'self' 'unsafe-inline' https: *.{BASE_DOMAIN} {BASE_DOMAIN}",
             "img-src 'self' data: https: blob:",
-            "font-src 'self' fonts.gstatic.com data:",
-            f"connect-src 'self' *.{BASE_DOMAIN} {BASE_DOMAIN}",
-            "frame-src 'self'",
+            "font-src 'self' data: https:",
+            f"connect-src 'self' https: wss: *.{BASE_DOMAIN} {BASE_DOMAIN}",
+            "frame-src 'self' https:",
             "object-src 'none'",
             "base-uri 'self'",
-            "form-action 'self'",
-            "frame-ancestors 'none'",
-            "upgrade-insecure-requests",
+            "frame-ancestors 'self'",
         ]
         
         response.headers["Content-Security-Policy"] = "; ".join(csp_directives)
         
         # Additional security headers
         response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["X-Frame-Options"] = "SAMEORIGIN"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
         
@@ -109,10 +106,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     
     # Rate limit configurations: (requests, window_seconds)
     RATE_LIMITS = {
-        "website_generate": (10, 3600),    # 10 per hour
-        "website_export": (5, 3600),       # 5 per hour
-        "website_publish": (20, 3600),   # 20 per hour
-        "website_domain_verify": (10, 300),  # 10 per 5 minutes
+        "website_generate": (30, 3600),       # 30 per hour
+        "website_export": (30, 3600),         # 30 per hour
+        "website_publish": (120, 3600),       # 120 per hour
+        "website_domain_verify": (30, 300),   # 30 per 5 minutes
     }
     
     def __init__(self, app):
@@ -159,6 +156,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         """Get client identifier for rate limiting."""
         # Try to get user ID from auth
         user_id = getattr(request.state, 'user_id', None)
+        if not user_id:
+            user = getattr(request.state, 'user', None)
+            user_id = getattr(user, 'id', None) if user else None
         if user_id:
             return f"user:{user_id}"
         
@@ -241,18 +241,14 @@ class SecurityAuditMiddleware(BaseHTTPMiddleware):
     }
     
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        if not self._is_website_endpoint(request.url.path):
+            return await call_next(request)
+
         # Check for suspicious patterns
         suspicious_activity = self._detect_suspicious_activity(request)
         
         if suspicious_activity:
             await self._log_suspicious_activity(request, suspicious_activity)
-            
-            # Block obviously malicious requests
-            if suspicious_activity["severity"] == "high":
-                return JSONResponse(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    content={"detail": "Request blocked due to security policy violation."},
-                )
         
         response = await call_next(request)
         
@@ -261,6 +257,15 @@ class SecurityAuditMiddleware(BaseHTTPMiddleware):
             await self._log_security_event(request, response)
         
         return response
+
+    def _is_website_endpoint(self, path: str) -> bool:
+        website_prefixes = (
+            "/api/v1/websites",
+            "/public-website",
+            "/w/",
+            "/preview/",
+        )
+        return any(path.startswith(prefix) for prefix in website_prefixes)
     
     def _detect_suspicious_activity(self, request: Request) -> Optional[dict]:
         """Detect suspicious patterns in request."""
