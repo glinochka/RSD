@@ -1,11 +1,13 @@
 import axios from 'axios';
 import { API_ROUTES } from '../../config/constants';
+import { ENV_CONFIG } from '../../config/environment';
 import { toApiStyles } from './styleUtils';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+const TOKEN_KEY = ENV_CONFIG.STORAGE_KEYS.TOKEN;
 
 function authHeaders() {
-  const token = localStorage.getItem('accessToken');
+  const token = localStorage.getItem(TOKEN_KEY);
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 

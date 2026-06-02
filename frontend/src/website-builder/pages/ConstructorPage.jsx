@@ -4,6 +4,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import axios from 'axios';
 import { API_ROUTES } from '../../config/constants';
+import { ENV_CONFIG } from '../../config/environment';
 import { useParams, useNavigate } from 'react-router-dom';
 import ProtectedRoute from '../../components/ProtectedRoute';
 import { NAVIGATION_ROUTES } from '../../config/constants';
@@ -75,7 +76,7 @@ const ConstructorPageContent = () => {
       setAgentData(null);
       return;
     }
-    const token = localStorage.getItem('accessToken');
+    const token = localStorage.getItem(ENV_CONFIG.STORAGE_KEYS.TOKEN);
     const embed = website.status === 'published';
     axios
       .get(

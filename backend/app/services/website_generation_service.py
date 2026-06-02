@@ -295,6 +295,7 @@ def build_generation_prompt(
     services: list[dict] | None = None,
     contacts: dict[str, str] | None = None,
     primary_color: str | None = None,
+    dark_mode: bool = False,
 ) -> str:
     """Build the user prompt for website generation."""
     prompt_parts = [
@@ -322,6 +323,11 @@ def build_generation_prompt(
             "Цветовая схема: используй этот цвет как primary_color, "
             "подбери гармоничные secondary, accent и background цвета"
         )
+
+    if dark_mode:
+        prompt_parts.append("Тема: ТЁМНАЯ (dark mode). Используй тёмные фоны и светлый текст.")
+    else:
+        prompt_parts.append("Тема: СВЕТЛАЯ (light mode). Используй светлые фоны и тёмный текст.")
 
     prompt_parts.append("\nСгенерируй полный JSON с сайтом для этого бизнеса.")
 
@@ -394,6 +400,7 @@ class WebsiteGenerationService:
         services: list[dict] | None = None,
         contacts: dict[str, str] | None = None,
         primary_color: str | None = None,
+        dark_mode: bool = False,
     ) -> GenerationResult:
         """Generate a complete website using AI.
 
@@ -403,6 +410,7 @@ class WebsiteGenerationService:
             services: List of services with name, description, price
             contacts: Dict with phone, email, address, etc.
             primary_color: Primary brand color (hex)
+            dark_mode: Whether to use dark mode theme
 
         Returns:
             GenerationResult with success status and schema
@@ -413,6 +421,7 @@ class WebsiteGenerationService:
             services=services,
             contacts=contacts,
             primary_color=primary_color,
+            dark_mode=dark_mode,
         )
 
         last_error = None

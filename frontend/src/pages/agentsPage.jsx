@@ -9,6 +9,7 @@ import MainLayout from '../components/Layout';
 import Loading from '../components/Loading';
 import AgentsEmptyState from '../components/AgentsEmptyState';
 import AgentContractPaymentModal from '../components/AgentContractPaymentModal';
+import { WebsiteBuilderWizard } from '../website-builder/components';
 import { useAsync } from '../hooks/useAsync';
 import agentService from '../services/agentService';
 import pricingService from '../services/pricingService';
@@ -717,6 +718,7 @@ const AgentsPageContent = () => {
   const [agentWebsite, setAgentWebsite] = useState(null);
   const [isWebsiteLoading, setIsWebsiteLoading] = useState(false);
   const [isWebsiteBuilding, setIsWebsiteBuilding] = useState(false);
+  const [isWebsiteWizardOpen, setIsWebsiteWizardOpen] = useState(false);
   const websiteGenerationPollRef = useRef(null);
   const detailsRequestIdRef = useRef(0);
   const [contractModalAgent, setContractModalAgent] = useState(null);
@@ -904,38 +906,21 @@ const AgentsPageContent = () => {
     clearWebsiteGenerationPoll();
   }, []);
 
-  const handleStartWebsiteBuilder = async () => {
+  const handleStartWebsiteBuilder = () => {
     if (!selectedAgent || isWebsiteBuilding) return;
+    setIsWebsiteWizardOpen(true);
+  };
 
-    const businessName = String(selectedAgent.bot_username || selectedAgent.name || 'Мой сайт').trim();
-    const rawDescription = String(
-      selectedAgent.description
-      || selectedAgent.welcome_message
-      || selectedAgent.system_prompt
-      || `Сайт для агента ${businessName}`
-    ).trim();
-    const businessDescription = rawDescription.length >= 10
-      ? rawDescription
-      : `${rawDescription}. Это сайт с описанием услуг и выгод для клиентов.`;
+  const handleWebsiteWizardClose = () => {
+    setIsWebsiteWizardOpen(false);
+  };
 
+  const handleWebsiteWizardSuccess = (websiteId) => {
+    setIsWebsiteWizardOpen(false);
     setIsWebsiteBuilding(true);
-    try {
-      const result = await websiteService.createAndGenerate({
-        business_name: businessName,
-        business_description: businessDescription,
-        agent_id: selectedAgent.id,
-      });
-      const websiteId = result?.website_id;
-      if (!websiteId) {
-        throw new Error('Сервис не вернул ID сайта');
-      }
-      showSuccess('Запустили сборку сайта. Обычно это занимает несколько минут.');
-      await loadAgentWebsite(selectedAgent.id);
-      startWebsiteGenerationPoll(websiteId);
-    } catch (error) {
-      setIsWebsiteBuilding(false);
-      showError(error?.message || 'Не удалось запустить сборку сайта');
-    }
+    showSuccess('Запустили сборку сайта. Обычно это занимает несколько минут.');
+    loadAgentWebsite(selectedAgent?.id);
+    startWebsiteGenerationPoll(websiteId);
   };
 
   const handleOpenWebsiteConstructor = () => {
@@ -3854,6 +3839,13 @@ const AgentsPageContent = () => {
         onClose={closeContractPaymentModal}
         onSubmit={handleContractPaymentSubmit}
         isProcessing={isContractPaymentProcessing}
+      />
+
+      <WebsiteBuilderWizard
+        isOpen={isWebsiteWizardOpen}
+        onClose={handleWebsiteWizardClose}
+        agent={selectedAgent}
+        onSuccess={handleWebsiteWizardSuccess}
       />
     </div>
   );

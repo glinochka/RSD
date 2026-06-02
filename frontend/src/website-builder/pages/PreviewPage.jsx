@@ -12,10 +12,12 @@ import QuickContactButtons from '../components/QuickContactButtons';
 import DeviceSwitcher, { DEVICES } from '../components/DeviceSwitcher';
 import { WebsiteAgentProvider } from '../context/WebsiteAgentContext';
 import { NAVIGATION_ROUTES, API_ROUTES } from '../../config/constants';
+import { ENV_CONFIG } from '../../config/environment';
 import { toRendererStyles } from '../utils/styleUtils';
 import { PreviewMetaTags } from '../components/WebsiteMetaTags';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+const TOKEN_KEY = ENV_CONFIG.STORAGE_KEYS.TOKEN;
 
 const PreviewPage = () => {
   const { websiteId } = useParams();
@@ -30,7 +32,7 @@ const PreviewPage = () => {
   // Fetch website schema
   const fetchSchema = async () => {
     try {
-      const token = localStorage.getItem('accessToken');
+      const token = localStorage.getItem(TOKEN_KEY);
       const response = await axios.get(
         `${API_BASE_URL}/api/v1/websites/${websiteId}`,
         { headers: { Authorization: `Bearer ${token}` } }
@@ -44,7 +46,7 @@ const PreviewPage = () => {
           const embed = website.status === 'published' ? 'true' : 'false';
           const agentRes = await axios.get(
             `${API_BASE_URL}${API_ROUTES.AGENT_PUBLIC_DATA(website.agent_id)}?embed=${embed}`,
-            { headers: { Authorization: `Bearer ${token}` } }
+            { headers: token ? { Authorization: `Bearer ${token}` } : {} }
           );
           agent = agentRes.data;
         } catch (agentErr) {
@@ -85,7 +87,7 @@ const PreviewPage = () => {
   // Handle publish/unpublish
   const handlePublish = async () => {
     try {
-      const token = localStorage.getItem('accessToken');
+      const token = localStorage.getItem(TOKEN_KEY);
       await axios.post(
         `${API_BASE_URL}/api/v1/websites/${websiteId}/publish`,
         {},
@@ -99,7 +101,7 @@ const PreviewPage = () => {
 
   const handleUnpublish = async () => {
     try {
-      const token = localStorage.getItem('accessToken');
+      const token = localStorage.getItem(TOKEN_KEY);
       await axios.post(
         `${API_BASE_URL}/api/v1/websites/${websiteId}/unpublish`,
         {},

@@ -993,6 +993,7 @@ async def _run_website_generation(
             services=services if services else None,
             contacts=contacts if contacts else None,
             primary_color=request.primary_color,
+            dark_mode=request.dark_mode,
         )
 
         async with async_session_maker() as session:
@@ -1089,6 +1090,7 @@ async def create_and_generate_website(
     background_tasks: BackgroundTasks,
     user: Annotated[User, Depends(get_current_user)],
     website_dao: Annotated[WebsiteDAO, Depends(get_website_dao)],
+    template_dao: Annotated[WebsiteTemplateDAO, Depends(get_template_dao)],
 ):
     """Create a new website and immediately start AI generation.
 
@@ -1111,14 +1113,38 @@ async def create_and_generate_website(
                 detail="Could not generate unique slug",
             )
 
+    # Lookup template by string ID (e.g., 'modern-business') - find by name pattern
+    template_id = None
+    if request.template_id:
+        # Try to find template by matching name (case-insensitive)
+        all_templates = await template_dao.list_active()
+        for tmpl in all_templates:
+            if request.template_id.lower() in (tmpl.name or '').lower() or \
+               request.template_id.lower() in (tmpl.description or '').lower():
+                template_id = tmpl.id
+                break
+        # Fallback: if template_id looks like an integer, use it directly
+        if template_id is None and request.template_id.isdigit():
+            template_id = int(request.template_id)
+
+    # Build custom styles with user preferences
+    custom_styles = {}
+    if request.primary_color:
+        custom_styles["primaryColor"] = request.primary_color
+    if request.dark_mode:
+        custom_styles["darkMode"] = True
+        custom_styles["mode"] = "dark"
+
     # Create website
     website_data = {
         "owner_id": user.id,
         "agent_id": request.agent_id,
+        "template_id": template_id,
         "slug": slug,
         "title": request.business_name,
         "status": "draft",
         "generation_status": "queued",
+        "custom_styles": custom_styles,
     }
 
     website = await website_dao.add(website_data)
