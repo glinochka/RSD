@@ -23,7 +23,7 @@ from app.router_admin import router as admin_router
 from app.router_sales import management_router as sales_management_router
 from app.router_sales import router as sales_portal_router
 from app.router_telephony import router as telephony_router
-from app.router_websites import router as websites_router
+from app.router_websites.router import router as websites_router
 from app.router_websites.public_router import router as websites_public_router
 from app.origins import origins
 from app.config import settings
