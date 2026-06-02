@@ -1010,7 +1010,15 @@ async def _run_website_generation(
                     logger.info(f"Website generation completed: {website_id}")
                 else:
                     # Apply fallback template
-                    await service.apply_fallback_template(website_id)
+                    await service.apply_fallback_template(
+                        website_id,
+                        business_name=request.business_name,
+                        business_description=request.business_description,
+                        services=services if services else None,
+                        contacts=contacts if contacts else None,
+                        primary_color=request.primary_color,
+                        dark_mode=request.dark_mode,
+                    )
                     await website_dao.set_generation_status(
                         website,
                         "failed",

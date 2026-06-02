@@ -33,6 +33,8 @@ const BLOCK_COMPONENT_MAP = {
   custom: HeroBlock, // Fallback
 };
 
+const REQUIRED_BLOCK_TYPES = ['hero', 'services', 'about', 'contacts', 'cta', 'footer'];
+
 /**
  * Merge template styles with custom styles
  */
@@ -48,6 +50,163 @@ const mergeStyles = (templateStyles, customStyles) => {
     ...templateStyles,
     ...customStyles,
   };
+};
+
+const defaultContentByType = (type, siteTitle = 'Ваш бизнес') => {
+  switch (type) {
+    case 'hero':
+      return {
+        headline: siteTitle,
+        subheadline: 'Помогаем клиентам получить результат быстро и комфортно',
+        ctaText: 'Получить консультацию',
+        ctaLink: '#contacts',
+      };
+    case 'services':
+      return {
+        title: 'Наши услуги',
+        items: [
+          {
+            name: 'Базовая услуга',
+            description: 'Закрываем ключевую задачу и даем понятный план действий.',
+            price: 'от 3 000 ₽',
+            icon: 'star',
+          },
+          {
+            name: 'Расширенное сопровождение',
+            description: 'Подключаем эксперта и ведем вас до финального результата.',
+            price: 'от 7 500 ₽',
+            icon: 'check',
+          },
+          {
+            name: 'Индивидуальное решение',
+            description: 'Собираем формат под ваш бизнес, сроки и бюджет.',
+            price: 'По запросу',
+            icon: 'users',
+          },
+        ],
+      };
+    case 'about':
+      return {
+        title: 'О компании',
+        text: `${siteTitle} работает на результат: прозрачные условия, понятные этапы и внимание к деталям на каждом шаге.`,
+      };
+    case 'contacts':
+      return {
+        title: 'Контакты',
+        contactInfo: {
+          phone: '+7 (999) 999-99-99',
+          email: 'hello@example.com',
+          address: 'Россия',
+          workingHours: 'Пн-Пт: 09:00-18:00',
+        },
+        showForm: true,
+        formTitle: 'Оставьте заявку',
+      };
+    case 'cta':
+      return {
+        title: 'Готовы обсудить ваш проект?',
+        subtitle: 'Оставьте заявку, и мы свяжемся с вами в ближайшее время',
+        buttonText: 'Оставить заявку',
+        buttonLink: '#contacts',
+      };
+    case 'footer':
+      return {
+        companyName: siteTitle,
+        copyrightText: `© ${new Date().getFullYear()} Все права защищены`,
+      };
+    default:
+      return {};
+  }
+};
+
+const normalizeBlockContent = (type, rawContent = {}, siteTitle = 'Ваш бизнес') => {
+  const content = rawContent || {};
+  const base = defaultContentByType(type, siteTitle);
+
+  if (type === 'hero') {
+    return {
+      ...base,
+      ...content,
+      headline: content.headline || content.title || base.headline,
+      subheadline: content.subheadline || content.description || content.text || base.subheadline,
+      ctaText: content.ctaText || content.cta_text || content.buttonText || content.button_text || base.ctaText,
+      ctaLink: content.ctaLink || content.cta_link || content.buttonLink || content.button_link || base.ctaLink,
+      backgroundImageUrl: content.backgroundImageUrl || content.background_image_url || content.imageUrl || content.image_url || '',
+    };
+  }
+
+  if (type === 'services') {
+    const items = Array.isArray(content.items) ? content.items : [];
+    const normalizedItems = items
+      .map((item, index) => ({
+        id: item.id || `service-${index}`,
+        name: item.name || item.title || `Услуга ${index + 1}`,
+        description: item.description || '',
+        price: item.price || '',
+        icon: item.icon || 'check',
+        imageUrl: item.imageUrl || item.image_url || '',
+      }))
+      .filter((item) => item.name);
+
+    return {
+      ...base,
+      ...content,
+      title: content.title || base.title,
+      items: normalizedItems.length ? normalizedItems : base.items,
+    };
+  }
+
+  if (type === 'about') {
+    return {
+      ...base,
+      ...content,
+      title: content.title || base.title,
+      text: content.text || content.description || base.text,
+      imageUrl: content.imageUrl || content.image_url || '',
+      imagePosition: content.imagePosition || content.image_position || 'right',
+    };
+  }
+
+  if (type === 'contacts') {
+    const info = content.contactInfo || content.contact_info || {};
+    return {
+      ...base,
+      ...content,
+      title: content.title || base.title,
+      showForm: content.showForm ?? content.show_form ?? base.showForm,
+      formTitle: content.formTitle || content.form_title || base.formTitle,
+      contactInfo: {
+        ...base.contactInfo,
+        ...info,
+        workingHours: info.workingHours || info.working_hours || base.contactInfo.workingHours,
+      },
+    };
+  }
+
+  if (type === 'cta') {
+    return {
+      ...base,
+      ...content,
+      title: content.title || base.title,
+      subtitle: content.subtitle || base.subtitle,
+      buttonText: content.buttonText || content.button_text || base.buttonText,
+      buttonLink: content.buttonLink || content.button_link || base.buttonLink,
+    };
+  }
+
+  if (type === 'footer') {
+    return {
+      ...base,
+      ...content,
+      companyName: content.companyName || content.company_name || base.companyName,
+      copyrightText: content.copyrightText || content.copyright_text || base.copyrightText,
+      socialLinks: content.socialLinks || content.social_links || {},
+      privacyPolicyUrl: content.privacyPolicyUrl || content.privacy_policy_url || '',
+      termsUrl: content.termsUrl || content.terms_url || '',
+    };
+  }
+
+  return { ...base, ...content };
 };
 
 /**
@@ -126,6 +285,15 @@ const WebsiteRenderer = ({
 
   // Sort blocks by order
   const sortedBlocks = [...blocks].sort((a, b) => (a.order || 0) - (b.order || 0));
+  const blocksForRender = sortedBlocks.length
+    ? sortedBlocks
+    : REQUIRED_BLOCK_TYPES.map((type, index) => ({
+        id: `fallback-${type}-${index}`,
+        type,
+        order: index + 1,
+        content: defaultContentByType(type, title || 'Ваш бизнес'),
+        styles: {},
+      }));
 
   // Render a single block
   const renderBlock = (block, index) => {
@@ -144,10 +312,9 @@ const WebsiteRenderer = ({
     const inner = (
       <div id={blockWrapperId}>
         <BlockComponent
-          content={block.content}
+          content={normalizeBlockContent(block.type, block.content, title || 'Ваш бизнес')}
           styles={mergedStyles}
           blockStyles={block.styles || {}}
-          {...editProps}
           onContentChange={(patch) => onContentChange?.(block.id, patch)}
           placeholderVars={placeholderVars}
           editMode={editMode}
@@ -231,7 +398,7 @@ const WebsiteRenderer = ({
         >
           {/* Main Content */}
           <main className="flex-grow">
-            {sortedBlocks.map((block, index) => renderBlock(block, index))}
+            {blocksForRender.map((block, index) => renderBlock(block, index))}
           </main>
         </div>
 

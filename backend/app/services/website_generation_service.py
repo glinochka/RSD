@@ -169,6 +169,193 @@ DEFAULT_FALLBACK_SCHEMA = GeneratedWebsiteSchema(
     ],
 )
 
+REQUIRED_BLOCK_TYPES = ("hero", "services", "about", "contacts", "cta", "footer")
+
+
+def _normalize_contacts_payload(contacts: dict[str, str] | None) -> ContactInfo:
+    contacts = contacts or {}
+    return ContactInfo(
+        phone=contacts.get("phone") or "+7 (999) 999-99-99",
+        email=contacts.get("email") or "hello@example.com",
+        address=contacts.get("address") or "Россия",
+        telegram=contacts.get("telegram"),
+        whatsapp=contacts.get("whatsapp"),
+        working_hours=contacts.get("working_hours") or "Пн-Пт: 09:00-18:00",
+    )
+
+
+def build_fallback_schema(
+    *,
+    business_name: str,
+    business_description: str,
+    services: list[dict] | None = None,
+    contacts: dict[str, str] | None = None,
+    primary_color: str | None = None,
+    dark_mode: bool = False,
+) -> GeneratedWebsiteSchema:
+    """Build robust fallback schema with meaningful starter content."""
+    normalized_services: list[ServiceItem] = []
+    for svc in services or []:
+        name = (svc.get("name") or "").strip()
+        if not name:
+            continue
+        normalized_services.append(
+            ServiceItem(
+                name=name,
+                description=svc.get("description") or "Подробности уточняйте у менеджера.",
+                price=svc.get("price") or "По запросу",
+                icon=svc.get("icon") or "check",
+            )
+        )
+
+    if not normalized_services:
+        normalized_services = [
+            ServiceItem(
+                name="Базовая услуга",
+                description="Закрываем типовой запрос быстро и качественно.",
+                price="от 3 000 ₽",
+                icon="star",
+            ),
+            ServiceItem(
+                name="Расширенное сопровождение",
+                description="Персональная работа с учетом ваших задач и сроков.",
+                price="от 7 500 ₽",
+                icon="users",
+            ),
+            ServiceItem(
+                name="Индивидуальное решение",
+                description="Собираем формат под ваш бизнес и бюджет.",
+                price="По запросу",
+                icon="check",
+            ),
+        ]
+
+    base_contacts = _normalize_contacts_payload(contacts)
+    safe_name = (business_name or "Ваш бизнес").strip()[:100] or "Ваш бизнес"
+    safe_description = (
+        (business_description or "Профессиональные услуги для ваших задач").strip()[:500]
+        or "Профессиональные услуги для ваших задач"
+    )
+    color = primary_color or "#2563EB"
+
+    return GeneratedWebsiteSchema(
+        meta=MetaInfo(
+            title=safe_name,
+            description=safe_description,
+        ),
+        styles=GeneratedStyles(
+            primary_color=color,
+            secondary_color="#1E40AF" if not dark_mode else "#1D4ED8",
+            background_color="#FFFFFF" if not dark_mode else "#0F172A",
+            text_color="#1F2937" if not dark_mode else "#E5E7EB",
+            accent_color="#3B82F6",
+            font_family="Inter",
+            dark_mode=dark_mode,
+            border_radius="medium",
+        ),
+        blocks=[
+            GeneratedBlock(
+                type="hero",
+                order=1,
+                content=HeroContent(
+                    headline=safe_name,
+                    subheadline=safe_description,
+                    cta_text="Получить консультацию",
+                    cta_link="#contacts",
+                ).model_dump(exclude_none=True),
+            ),
+            GeneratedBlock(
+                type="services",
+                order=2,
+                content=ServicesContent(
+                    title="Наши услуги",
+                    items=normalized_services,
+                ).model_dump(exclude_none=True),
+            ),
+            GeneratedBlock(
+                type="about",
+                order=3,
+                content=AboutContent(
+                    title="О компании",
+                    text=(
+                        f"{safe_name} помогает клиентам получать результат без лишней сложности. "
+                        "Мы делаем акцент на качестве, сроках и понятной коммуникации."
+                    ),
+                ).model_dump(exclude_none=True),
+            ),
+            GeneratedBlock(
+                type="contacts",
+                order=4,
+                content=ContactsContent(
+                    title="Контакты",
+                    contact_info=base_contacts,
+                    show_form=True,
+                ).model_dump(exclude_none=True),
+            ),
+            GeneratedBlock(
+                type="cta",
+                order=5,
+                content=CTAContent(
+                    title="Готовы обсудить ваш проект?",
+                    subtitle="Оставьте заявку, и мы свяжемся с вами в ближайшее время",
+                    button_text="Оставить заявку",
+                    button_link="#contacts",
+                ).model_dump(exclude_none=True),
+            ),
+            GeneratedBlock(
+                type="footer",
+                order=6,
+                content=FooterContent(
+                    company_name=safe_name,
+                    copyright_text=f"© {datetime.utcnow().year} Все права защищены",
+                ).model_dump(exclude_none=True),
+            ),
+        ],
+    )
+
+
+def ensure_minimum_schema(
+    schema: GeneratedWebsiteSchema,
+    *,
+    business_name: str,
+    business_description: str,
+    services: list[dict] | None = None,
+    contacts: dict[str, str] | None = None,
+    primary_color: str | None = None,
+    dark_mode: bool = False,
+) -> GeneratedWebsiteSchema:
+    """Ensure schema always contains all essential blocks with usable content."""
+    fallback = build_fallback_schema(
+        business_name=business_name,
+        business_description=business_description,
+        services=services,
+        contacts=contacts,
+        primary_color=primary_color,
+        dark_mode=dark_mode,
+    )
+    block_by_type = {b.type: b for b in schema.blocks}
+    merged_blocks: list[GeneratedBlock] = []
+
+    for idx, block_type in enumerate(REQUIRED_BLOCK_TYPES, start=1):
+        candidate = block_by_type.get(block_type) or next(
+            (b for b in fallback.blocks if b.type == block_type), None
+        )
+        if not candidate:
+            continue
+        candidate.order = idx
+        merged_blocks.append(candidate)
+
+    schema.blocks = merged_blocks
+    if not schema.meta.title:
+        schema.meta.title = fallback.meta.title
+    if not schema.meta.description:
+        schema.meta.description = fallback.meta.description
+
+    fallback_styles = fallback.styles.model_dump(exclude_none=True)
+    current_styles = schema.styles.model_dump(exclude_none=True)
+    schema.styles = GeneratedStyles.model_validate({**fallback_styles, **current_styles})
+    return schema
+
 
 # ---------------------------------------------------------------------------
 # System Prompt for Website Generation
@@ -453,6 +640,15 @@ class WebsiteGenerationService:
                     raise ValueError("Empty response from AI")
 
                 schema = parse_generated_schema(raw_response)
+                schema = ensure_minimum_schema(
+                    schema,
+                    business_name=business_name,
+                    business_description=business_description,
+                    services=services,
+                    contacts=contacts,
+                    primary_color=primary_color,
+                    dark_mode=dark_mode,
+                )
 
                 return GenerationResult(
                     success=True,
@@ -533,7 +729,17 @@ class WebsiteGenerationService:
 
                 return True
 
-    async def apply_fallback_template(self, website_id: int) -> bool:
+    async def apply_fallback_template(
+        self,
+        website_id: int,
+        *,
+        business_name: str,
+        business_description: str,
+        services: list[dict] | None = None,
+        contacts: dict[str, str] | None = None,
+        primary_color: str | None = None,
+        dark_mode: bool = False,
+    ) -> bool:
         """Apply default fallback template when generation fails.
 
         Args:
@@ -542,7 +748,15 @@ class WebsiteGenerationService:
         Returns:
             True if successful
         """
-        return await self.apply_generated_schema(website_id, DEFAULT_FALLBACK_SCHEMA)
+        fallback = build_fallback_schema(
+            business_name=business_name,
+            business_description=business_description,
+            services=services,
+            contacts=contacts,
+            primary_color=primary_color,
+            dark_mode=dark_mode,
+        )
+        return await self.apply_generated_schema(website_id, fallback)
 
     async def edit_block_with_prompt(
         self,
