@@ -124,6 +124,15 @@ const normalizeBlockContent = (type, rawContent = {}, siteTitle = 'Ваш биз
   const base = defaultContentByType(type, siteTitle);
 
   if (type === 'hero') {
+    const normalizedNav = Array.isArray(content.navLinks || content.nav_links)
+      ? (content.navLinks || content.nav_links)
+          .map((item) => ({
+            label: item?.label || '',
+            anchor: item?.anchor || '',
+          }))
+          .filter((item) => item.label && item.anchor)
+      : [];
+
     return {
       ...base,
       ...content,
@@ -132,6 +141,7 @@ const normalizeBlockContent = (type, rawContent = {}, siteTitle = 'Ваш биз
       ctaText: content.ctaText || content.cta_text || content.buttonText || content.button_text || base.ctaText,
       ctaLink: content.ctaLink || content.cta_link || content.buttonLink || content.button_link || base.ctaLink,
       backgroundImageUrl: content.backgroundImageUrl || content.background_image_url || content.imageUrl || content.image_url || '',
+      navLinks: normalizedNav,
     };
   }
 
@@ -334,6 +344,8 @@ const WebsiteRenderer = ({
       <div
         key={block.id ?? `${block.type}-${index}`}
         className={`wb-block-wrapper ${isSelected ? 'wb-block-wrapper--selected' : ''}`}
+        data-block-id={block.id}
+        data-block-type={block.type}
         style={wrapperStyle}
         onClick={(e) => {
           e.stopPropagation();

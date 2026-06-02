@@ -31,6 +31,7 @@ const CTABlock = ({
 
   return (
     <section
+      id="cta"
       className="py-12 md:py-16 lg:py-20 relative overflow-hidden"
       style={{ backgroundColor }}
     >

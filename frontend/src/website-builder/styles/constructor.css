@@ -94,6 +94,9 @@
   padding: 0.9rem 1rem;
   border-bottom: 1px solid #e2e8f0;
   background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .wb-panel__header h2 {
@@ -205,6 +208,14 @@
   overflow: auto;
   padding: 1.25rem;
   background: radial-gradient(circle at top, #dbeafe 0%, #e2e8f0 45%, #cbd5e1 100%);
+}
+
+.wb-selection-hint {
+  border-top: 1px solid #cbd5e1;
+  background: #f8fafc;
+  padding: 0.55rem 0.9rem;
+  font-size: 0.8rem;
+  color: #475569;
 }
 
 .wb-constructor__sidebar-right {
@@ -401,6 +412,23 @@
 .wb-btn-icon:hover {
   background: #f8fafc;
   border-color: #93c5fd;
+}
+
+.wb-link-btn {
+  appearance: none;
+  border: 1px solid #d1d5db;
+  background: #fff;
+  color: #334155;
+  border-radius: 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.28rem 0.5rem;
+  cursor: pointer;
+}
+
+.wb-link-btn:hover {
+  border-color: #93c5fd;
+  background: #f8fafc;
 }
 
 .wb-modal-overlay {
@@ -643,4 +671,432 @@
   right: 0;
   height: 2px;
   background: #2563eb;
+}
+
+.wb-device-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.35rem;
+  border-radius: 0.75rem;
+  border: 1px solid #d1d5db;
+  background: #ffffff;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+}
+
+.wb-device-switcher__btn {
+  appearance: none;
+  border: 1px solid transparent;
+  background: #f8fafc;
+  color: #334155;
+  border-radius: 0.55rem;
+  padding: 0.4rem 0.75rem;
+  min-width: 82px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.wb-device-switcher__btn:hover {
+  border-color: #bfdbfe;
+  background: #eef2ff;
+}
+
+.wb-device-switcher__btn--active {
+  color: #ffffff;
+  background: linear-gradient(180deg, #3b82f6 0%, #2563eb 100%);
+  border-color: #2563eb;
+  box-shadow: 0 6px 12px rgba(37, 99, 235, 0.22);
+}
+
+.wb-seo-root {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.95rem;
+}
+
+.wb-seo-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.wb-seo-title {
+  margin: 0;
+  font-size: 1rem;
+  color: #0f172a;
+  font-weight: 700;
+}
+
+.wb-seo-tabs {
+  display: flex;
+  gap: 0.4rem;
+  border-bottom: 1px solid #e2e8f0;
+  padding-bottom: 0.5rem;
+}
+
+.wb-seo-tab {
+  appearance: none;
+  border: 1px solid transparent;
+  background: #f8fafc;
+  color: #475569;
+  border-radius: 0.55rem;
+  padding: 0.38rem 0.62rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+}
+
+.wb-seo-tab:hover {
+  border-color: #cbd5e1;
+}
+
+.wb-seo-tab--active {
+  color: #1d4ed8;
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
+.wb-seo-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.wb-seo-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.wb-seo-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+  color: #334155;
+  font-weight: 600;
+}
+
+.wb-seo-input {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.6rem;
+  padding: 0.52rem 0.65rem;
+  font-size: 0.86rem;
+  color: #0f172a;
+  background: #ffffff;
+}
+
+.wb-seo-input:focus {
+  outline: none;
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.25);
+}
+
+.wb-seo-input--textarea {
+  resize: vertical;
+}
+
+.wb-seo-row-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.wb-seo-muted {
+  font-size: 0.74rem;
+  color: #64748b;
+}
+
+.wb-seo-counter {
+  font-size: 0.74rem;
+}
+
+.wb-seo-info {
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  color: #1e3a8a;
+  border-radius: 0.65rem;
+  padding: 0.58rem 0.7rem;
+  font-size: 0.8rem;
+}
+
+.wb-seo-loading {
+  padding: 1.1rem;
+  text-align: center;
+  color: #64748b;
+}
+
+.wb-seo-preview-card {
+  background: #fff;
+  border: 1px solid #dbe3ef;
+  border-radius: 0.75rem;
+  padding: 0.75rem;
+}
+
+.wb-seo-preview-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.wb-seo-preview-badge {
+  width: 1.7rem;
+  height: 1.7rem;
+  border-radius: 999px;
+  background: #2563eb;
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.wb-seo-preview-domain {
+  font-size: 0.72rem;
+  color: #64748b;
+}
+
+.wb-seo-preview-url {
+  font-size: 0.68rem;
+  color: #94a3b8;
+}
+
+.wb-seo-preview-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #1d4ed8;
+  margin-bottom: 0.25rem;
+}
+
+.wb-seo-preview-desc {
+  font-size: 0.8rem;
+  color: #475569;
+}
+
+.wb-seo-preview-metrics {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  margin-top: 0.4rem;
+}
+
+.wb-seo-uploader {
+  border: 2px dashed #cbd5e1;
+  border-radius: 0.75rem;
+  padding: 0.8rem;
+  text-align: center;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.wb-seo-uploader--drag {
+  border-color: #60a5fa;
+  background: #eff6ff;
+}
+
+.wb-seo-uploader--busy {
+  opacity: 0.6;
+}
+
+.wb-seo-uploader-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.wb-seo-favicon-preview {
+  width: 3rem;
+  height: 3rem;
+  border-radius: 0.5rem;
+  object-fit: contain;
+  background: #f1f5f9;
+}
+
+.wb-seo-text {
+  font-size: 0.83rem;
+  color: #475569;
+}
+
+.wb-seo-link {
+  color: #2563eb;
+  font-size: 0.83rem;
+  cursor: pointer;
+}
+
+.wb-seo-link:hover {
+  text-decoration: underline;
+}
+
+.wb-seo-progress {
+  color: #1d4ed8;
+  font-size: 0.8rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.wb-seo-og-wrap {
+  position: relative;
+}
+
+.wb-seo-og-image {
+  width: 100%;
+  height: 10rem;
+  object-fit: cover;
+  border-radius: 0.7rem;
+  background: #f1f5f9;
+}
+
+.wb-seo-og-delete {
+  position: absolute;
+  top: 0.45rem;
+  right: 0.45rem;
+  border: none;
+  background: #ef4444;
+  color: #fff;
+  border-radius: 999px;
+  width: 1.5rem;
+  height: 1.5rem;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.wb-seo-actions-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.wb-seo-action-card {
+  flex: 1;
+  border: 2px dashed #cbd5e1;
+  border-radius: 0.7rem;
+  padding: 0.6rem;
+  background: #fff;
+  text-align: center;
+  cursor: pointer;
+}
+
+.wb-seo-action-card--primary {
+  border-color: #93c5fd;
+}
+
+.wb-seo-action-card--busy {
+  opacity: 0.6;
+}
+
+.wb-seo-action-label {
+  font-size: 0.78rem;
+  color: #475569;
+}
+
+.wb-seo-action-label--primary {
+  color: #1d4ed8;
+}
+
+.wb-seo-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+  border: 1px solid #fcd34d;
+  background: #fffbeb;
+  color: #92400e;
+  border-radius: 0.65rem;
+  padding: 0.55rem 0.6rem;
+  font-size: 0.78rem;
+}
+
+.wb-seo-success {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid #86efac;
+  background: #f0fdf4;
+  color: #166534;
+  border-radius: 0.65rem;
+  padding: 0.55rem 0.6rem;
+  font-size: 0.8rem;
+}
+
+.wb-seo-subtitle {
+  margin: 0 0 0.35rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #334155;
+}
+
+.wb-seo-mini-badge {
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 999px;
+  background: #2563eb;
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-size: 0.65rem;
+  font-weight: 700;
+}
+
+.wb-seo-mini-badge--alt {
+  background: #0ea5e9;
+}
+
+.wb-seo-tg-preview {
+  background: #17212b;
+  border-radius: 0.75rem;
+  padding: 0.7rem;
+  max-width: 22rem;
+}
+
+.wb-seo-tg-title {
+  color: #fff;
+  font-size: 0.82rem;
+  font-weight: 600;
+  margin-bottom: 0.45rem;
+}
+
+.wb-seo-tg-card {
+  background: #232e3c;
+  border-radius: 0.7rem;
+  overflow: hidden;
+}
+
+.wb-seo-tg-image {
+  width: 100%;
+  height: 8rem;
+  object-fit: cover;
+}
+
+.wb-seo-tg-image--placeholder {
+  display: grid;
+  place-items: center;
+  background: #334155;
+}
+
+.wb-seo-tg-body {
+  padding: 0.55rem 0.6rem;
+}
+
+.wb-seo-tg-domain {
+  color: #8a96a3;
+  font-size: 0.68rem;
+}
+
+.wb-seo-tg-desc {
+  margin-top: 0.2rem;
+  color: #fff;
+  font-size: 0.76rem;
 }

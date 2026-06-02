@@ -91,6 +91,7 @@ const AboutBlock = ({
 
   return (
     <section
+      id="about"
       className="py-12 md:py-16 lg:py-20"
       style={{ backgroundColor: containerBg }}
     >

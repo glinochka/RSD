@@ -66,6 +66,7 @@ const FooterBlock = ({
 
   return (
     <footer
+      id="footer"
       className="py-8 md:py-12"
       style={{ backgroundColor }}
     >

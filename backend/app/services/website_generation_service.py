@@ -28,6 +28,7 @@ class HeroContent(BaseModel):
     cta_text: str | None = Field(default=None, max_length=100)
     cta_link: str | None = Field(default=None, max_length=1024)
     background_image_url: str | None = Field(default=None, max_length=1024)
+    nav_links: list[dict[str, str]] = Field(default_factory=list)
 
 
 class ServiceItem(BaseModel):
@@ -262,6 +263,11 @@ def build_fallback_schema(
                     subheadline=safe_description,
                     cta_text="Получить консультацию",
                     cta_link="#contacts",
+                    nav_links=[
+                        {"label": "Услуги", "anchor": "#services"},
+                        {"label": "О нас", "anchor": "#about"},
+                        {"label": "Контакты", "anchor": "#contacts"},
+                    ],
                 ).model_dump(exclude_none=True),
             ),
             GeneratedBlock(
@@ -580,6 +586,169 @@ class WebsiteGenerationService:
         self.model = (settings.WEBSITE_GENERATION_MODEL or "deepseek-coder").strip()
         self.max_retries = 3
         self.timeout_seconds = 60.0
+        self.max_generation_tokens = 7000
+
+    async def _chat_json(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float,
+        max_tokens: int,
+    ) -> str:
+        response = await self.ai_client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        raw_response = response.choices[0].message.content
+        if not raw_response:
+            raise ValueError("Empty response from AI")
+        return raw_response
+
+    async def _generate_structure_plan(
+        self,
+        *,
+        business_name: str,
+        business_description: str,
+        services: list[dict] | None,
+        contacts: dict[str, str] | None,
+        dark_mode: bool,
+    ) -> dict[str, Any]:
+        """Step 1: create strict page structure plan."""
+        system_prompt = (
+            "Ты senior UX-архитектор лендингов. "
+            "Верни ТОЛЬКО валидный JSON. Никакого markdown.\n"
+            "Сконструируй структуру сайта по индустрии бизнеса и входным данным.\n"
+            "Формат:\n"
+            "{\n"
+            '  "industry": "string",\n'
+            '  "tone": "string",\n'
+            '  "sections": [\n'
+            '    {"type":"hero","anchor":"top","goal":"..."},\n'
+            '    {"type":"services","anchor":"services","goal":"..."},\n'
+            '    {"type":"about","anchor":"about","goal":"..."},\n'
+            '    {"type":"cta","anchor":"cta","goal":"..."},\n'
+            '    {"type":"contacts","anchor":"contacts","goal":"..."},\n'
+            '    {"type":"footer","anchor":"footer","goal":"..."}\n'
+            "  ],\n"
+            '  "nav_links": [\n'
+            '    {"label":"Услуги","anchor":"#services"},\n'
+            '    {"label":"О нас","anchor":"#about"},\n'
+            '    {"label":"Контакты","anchor":"#contacts"}\n'
+            "  ],\n"
+            '  "image_guidelines": {"max_height_px": 520, "object_fit": "cover"}\n'
+            "}\n"
+            "Всегда включай стандарт лендинга: nav + hero + контентные секции + финальный CTA + контакты + footer."
+        )
+
+        user_prompt = json.dumps(
+            {
+                "business_name": business_name,
+                "business_description": business_description,
+                "services": services or [],
+                "contacts": contacts or {},
+                "theme": "dark" if dark_mode else "light",
+                "hard_rules": [
+                    "Не путай индустрию бизнеса",
+                    "Если это стоматология/клиника — копирайт и услуги должны быть медицинскими",
+                    "Никаких generic-текстов про консалтинг, если это не консалтинг",
+                ],
+            },
+            ensure_ascii=False,
+        )
+
+        raw = await self._chat_json(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0.2,
+            max_tokens=1800,
+        )
+        plan = json.loads(extract_json_from_response(raw))
+        if not isinstance(plan, dict):
+            raise ValueError("AI structure plan is invalid")
+        return plan
+
+    async def _generate_schema_from_plan(
+        self,
+        *,
+        plan: dict[str, Any],
+        business_name: str,
+        business_description: str,
+        services: list[dict] | None,
+        contacts: dict[str, str] | None,
+        primary_color: str | None,
+        dark_mode: bool,
+    ) -> str:
+        """Step 2: generate primary website schema from structure plan."""
+        system_prompt = WEBSITE_GENERATION_SYSTEM_PROMPT + (
+            "\n\n"
+            "Дополнительные требования:\n"
+            "1) Сначала сформируй navbar внутри блока hero (nav_links).\n"
+            "2) Строго учитывай индустрию из structure_plan.industry.\n"
+            "3) Избегай шаблонных общих формулировок; текст должен быть отраслевым.\n"
+            "4) Для секции услуг делай карточки с конкретной пользой и понятной ценностью.\n"
+            "5) Для медицинских ниш добавляй маркеры доверия и безопасности.\n"
+            "6) Изображения: учитывай max_height_px=520, object-fit=cover.\n"
+        )
+        user_prompt = json.dumps(
+            {
+                "business_name": business_name,
+                "business_description": business_description,
+                "services": services or [],
+                "contacts": contacts or {},
+                "primary_color": primary_color,
+                "dark_mode": dark_mode,
+                "structure_plan": plan,
+                "required_layout": "navbar -> hero -> content sections -> cta -> contacts -> footer",
+            },
+            ensure_ascii=False,
+        )
+        return await self._chat_json(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0.55,
+            max_tokens=self.max_generation_tokens,
+        )
+
+    async def _refine_schema_for_quality(
+        self,
+        *,
+        raw_schema: str,
+        business_name: str,
+        business_description: str,
+        plan: dict[str, Any],
+    ) -> str:
+        """Step 3: quality pass for mobile-first and style consistency."""
+        system_prompt = (
+            "Ты lead frontend ревьюер. Верни ТОЛЬКО валидный JSON той же схемы сайта.\n"
+            "Сделай финальный pass качества:\n"
+            "- mobile-first читабельность и плотность контента\n"
+            "- единый визуальный ритм секций\n"
+            "- корректные CTA и якорные ссылки\n"
+            "- осмысленные тексты строго в индустрии бизнеса\n"
+            "- избегай неуместной лексики (например, консалтинг для клиники)\n"
+            "- изображения должны быть безопасного размера для лендинга\n"
+        )
+        user_prompt = json.dumps(
+            {
+                "business_name": business_name,
+                "business_description": business_description,
+                "structure_plan": plan,
+                "candidate_schema": json.loads(extract_json_from_response(raw_schema)),
+            },
+            ensure_ascii=False,
+        )
+        return await self._chat_json(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0.35,
+            max_tokens=5500,
+        )
 
     async def generate_website(
         self,
@@ -603,15 +772,6 @@ class WebsiteGenerationService:
         Returns:
             GenerationResult with success status and schema
         """
-        user_prompt = build_generation_prompt(
-            business_name=business_name,
-            business_description=business_description,
-            services=services,
-            contacts=contacts,
-            primary_color=primary_color,
-            dark_mode=dark_mode,
-        )
-
         last_error = None
         raw_response = None
 
@@ -624,20 +784,28 @@ class WebsiteGenerationService:
                     self.model,
                 )
 
-                response = await self.ai_client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": WEBSITE_GENERATION_SYSTEM_PROMPT},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    temperature=0.7,
-                    max_tokens=4000,
+                structure_plan = await self._generate_structure_plan(
+                    business_name=business_name,
+                    business_description=business_description,
+                    services=services,
+                    contacts=contacts,
+                    dark_mode=dark_mode,
                 )
-
-                raw_response = response.choices[0].message.content
-
-                if not raw_response:
-                    raise ValueError("Empty response from AI")
+                primary_schema_raw = await self._generate_schema_from_plan(
+                    plan=structure_plan,
+                    business_name=business_name,
+                    business_description=business_description,
+                    services=services,
+                    contacts=contacts,
+                    primary_color=primary_color,
+                    dark_mode=dark_mode,
+                )
+                raw_response = await self._refine_schema_for_quality(
+                    raw_schema=primary_schema_raw,
+                    business_name=business_name,
+                    business_description=business_description,
+                    plan=structure_plan,
+                )
 
                 schema = parse_generated_schema(raw_response)
                 schema = ensure_minimum_schema(

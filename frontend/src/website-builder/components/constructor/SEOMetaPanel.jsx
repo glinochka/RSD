@@ -19,6 +19,7 @@ import {
   uploadOGImage,
   generateOGImage,
 } from '../../utils/api';
+import '../../styles/constructor.css';
 
 // Character count limits
 const LIMITS = {
@@ -41,7 +42,7 @@ function CharacterCounter({ current, limits, label }) {
   };
 
   return (
-    <span className={`text-xs ${statusColors[status]}`}>
+    <span className={`wb-seo-counter ${statusColors[status]}`}>
       {current}/{max} {label}
     </span>
   );
@@ -57,26 +58,26 @@ function GooglePreview({ preview }) {
   };
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-4 mt-4">
-      <div className="flex items-center gap-2 mb-3">
-        <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center">
-          <span className="text-white text-xs font-bold">G</span>
+    <div className="wb-seo-preview-card">
+      <div className="wb-seo-preview-head">
+        <div className="wb-seo-preview-badge">
+          <span>G</span>
         </div>
         <div>
-          <div className="text-xs text-gray-500">rsd-ai.ru</div>
-          <div className="text-xs text-gray-400">https://rsd-ai.ru/...</div>
+          <div className="wb-seo-preview-domain">rsd-ai.ru</div>
+          <div className="wb-seo-preview-url">https://rsd-ai.ru/...</div>
         </div>
       </div>
 
-      <div className={`text-blue-700 text-lg font-medium hover:underline cursor-pointer truncate ${titleColor[preview.google_title_status]}`}>
+      <div className={`wb-seo-preview-title ${titleColor[preview.google_title_status]}`}>
         {preview.google_title || 'No title set'}
       </div>
 
-      <div className={`text-sm mt-1 ${preview.google_description_status === 'error' ? 'text-red-600' : 'text-gray-600'}`}>
+      <div className={`wb-seo-preview-desc ${preview.google_description_status === 'error' ? 'text-red-600' : 'text-gray-600'}`}>
         {preview.google_description || 'No description set'}
       </div>
 
-      <div className="mt-2 flex items-center gap-4 text-xs">
+      <div className="wb-seo-preview-metrics">
         <CharacterCounter
           current={preview.google_title_length}
           limits={LIMITS.title}
@@ -96,26 +97,26 @@ function TelegramPreview({ preview }) {
   if (!preview) return null;
 
   return (
-    <div className="bg-[#17212b] rounded-lg p-4 mt-4 max-w-sm">
-      <div className="text-white text-sm font-medium mb-2">
+    <div className="wb-seo-tg-preview">
+      <div className="wb-seo-tg-title">
         {preview.telegram_title || 'No title'}
       </div>
 
-      <div className="bg-[#232e3c] rounded-lg overflow-hidden">
+      <div className="wb-seo-tg-card">
         {preview.telegram_image_url ? (
           <img
             src={preview.telegram_image_url}
             alt="OG Preview"
-            className="w-full h-32 object-cover"
+            className="wb-seo-tg-image"
           />
         ) : (
-          <div className="w-full h-32 bg-gray-600 flex items-center justify-center">
-            <ImageIcon className="w-8 h-8 text-gray-400" />
+          <div className="wb-seo-tg-image wb-seo-tg-image--placeholder">
+            <ImageIcon className="w-8 h-8 text-slate-400" />
           </div>
         )}
-        <div className="p-3">
-          <div className="text-[#8a96a3] text-xs">rsd-ai.ru</div>
-          <div className="text-white text-sm mt-1 line-clamp-2">
+        <div className="wb-seo-tg-body">
+          <div className="wb-seo-tg-domain">rsd-ai.ru</div>
+          <div className="wb-seo-tg-desc">
             {preview.telegram_description || 'No description'}
           </div>
         </div>
@@ -163,8 +164,8 @@ function FaviconUploader({ websiteId, currentUrl, onUpdate }) {
   };
 
   return (
-    <div className="space-y-3">
-      <label className="text-sm font-medium text-gray-700 flex items-center gap-2">
+    <div className="wb-seo-section">
+      <label className="wb-seo-label">
         <Globe className="w-4 h-4" />
         Favicon
       </label>
@@ -173,23 +174,19 @@ function FaviconUploader({ websiteId, currentUrl, onUpdate }) {
         onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
         onDragLeave={() => setIsDragging(false)}
         onDrop={handleDrop}
-        className={`
-          border-2 border-dashed rounded-lg p-6 text-center transition-colors
-          ${isDragging ? 'border-blue-500 bg-blue-50' : 'border-gray-300'}
-          ${uploading ? 'opacity-50' : ''}
-        `}
+        className={`wb-seo-uploader ${isDragging ? 'wb-seo-uploader--drag' : ''} ${uploading ? 'wb-seo-uploader--busy' : ''}`}
       >
         {preview ? (
-          <div className="flex flex-col items-center gap-3">
+          <div className="wb-seo-uploader-stack">
             <img
               src={preview}
               alt="Favicon preview"
-              className="w-16 h-16 rounded-lg object-contain bg-gray-100"
+              className="wb-seo-favicon-preview"
             />
-            <div className="text-xs text-gray-500">
+            <div className="wb-seo-muted">
               Recommended: 32x32, 180x180 (Apple touch)
             </div>
-            <label className="cursor-pointer text-sm text-blue-600 hover:text-blue-700">
+            <label className="wb-seo-link">
               <input
                 type="file"
                 accept="image/png,image/svg+xml,image/x-icon,image/vnd.microsoft.icon"
@@ -200,11 +197,11 @@ function FaviconUploader({ websiteId, currentUrl, onUpdate }) {
             </label>
           </div>
         ) : (
-          <div className="flex flex-col items-center gap-3">
-            <Upload className="w-8 h-8 text-gray-400" />
-            <div className="text-sm text-gray-600">
+          <div className="wb-seo-uploader-stack">
+            <Upload className="w-8 h-8 text-slate-400" />
+            <div className="wb-seo-text">
               Drag and drop or{' '}
-              <label className="cursor-pointer text-blue-600 hover:text-blue-700">
+              <label className="wb-seo-link">
                 <input
                   type="file"
                   accept="image/png,image/svg+xml,image/x-icon,image/vnd.microsoft.icon"
@@ -214,7 +211,7 @@ function FaviconUploader({ websiteId, currentUrl, onUpdate }) {
                 browse
               </label>
             </div>
-            <div className="text-xs text-gray-500">
+            <div className="wb-seo-muted">
               PNG, SVG, ICO. Max 5MB. Auto-converts to all sizes.
             </div>
           </div>
@@ -222,7 +219,7 @@ function FaviconUploader({ websiteId, currentUrl, onUpdate }) {
       </div>
 
       {uploading && (
-        <div className="text-sm text-blue-600 flex items-center gap-2">
+        <div className="wb-seo-progress">
           <RefreshCw className="w-4 h-4 animate-spin" />
           Converting favicon...
         </div>
@@ -280,38 +277,34 @@ function OGImageUploader({ websiteId, website, currentUrl, onUpdate }) {
   };
 
   return (
-    <div className="space-y-3">
-      <label className="text-sm font-medium text-gray-700 flex items-center gap-2">
+    <div className="wb-seo-section">
+      <label className="wb-seo-label">
         <ImageIcon className="w-4 h-4" />
         OpenGraph Image
-        <span className="text-xs font-normal text-gray-500">
+        <span className="wb-seo-muted">
           (1200 x 630 for social sharing)
         </span>
       </label>
 
-      <div className="space-y-3">
+      <div className="wb-seo-stack">
         {preview && (
-          <div className="relative">
+          <div className="wb-seo-og-wrap">
             <img
               src={preview}
               alt="OG Preview"
-              className="w-full h-40 object-cover rounded-lg bg-gray-100"
+              className="wb-seo-og-image"
             />
             <button
               onClick={() => { setPreview(null); onUpdate(null); }}
-              className="absolute top-2 right-2 p-1 bg-red-500 text-white rounded-full hover:bg-red-600"
+              className="wb-seo-og-delete"
             >
               <X className="w-4 h-4" />
             </button>
           </div>
         )}
 
-        <div className="flex gap-2">
-          <label className={`
-            flex-1 cursor-pointer border-2 border-dashed border-gray-300 rounded-lg p-3
-            text-center hover:border-gray-400 transition-colors
-            ${uploading ? 'opacity-50' : ''}
-          `}>
+        <div className="wb-seo-actions-row">
+          <label className={`wb-seo-action-card ${uploading ? 'wb-seo-action-card--busy' : ''}`}>
             <input
               type="file"
               accept="image/png,image/jpeg,image/webp"
@@ -319,8 +312,8 @@ function OGImageUploader({ websiteId, website, currentUrl, onUpdate }) {
               onChange={(e) => handleUpload(e.target.files[0])}
               disabled={uploading}
             />
-            <Upload className="w-5 h-5 mx-auto mb-1 text-gray-400" />
-            <span className="text-sm text-gray-600">
+            <Upload className="w-5 h-5 mx-auto mb-1 text-slate-400" />
+            <span className="wb-seo-action-label">
               {uploading ? 'Uploading...' : 'Upload'}
             </span>
           </label>
@@ -328,14 +321,10 @@ function OGImageUploader({ websiteId, website, currentUrl, onUpdate }) {
           <button
             onClick={handleGenerate}
             disabled={generating}
-            className={`
-              flex-1 border-2 border-dashed border-blue-300 rounded-lg p-3
-              text-center hover:border-blue-400 transition-colors
-              ${generating ? 'opacity-50' : ''}
-            `}
+            className={`wb-seo-action-card wb-seo-action-card--primary ${generating ? 'wb-seo-action-card--busy' : ''}`}
           >
             <Wand2 className="w-5 h-5 mx-auto mb-1 text-blue-500" />
-            <span className="text-sm text-blue-600">
+            <span className="wb-seo-action-label wb-seo-action-label--primary">
               {generating ? 'Generating...' : 'Auto-generate'}
             </span>
           </button>
@@ -420,7 +409,7 @@ export function SEOMetaPanel({ websiteId, website, onUpdate }) {
 
   if (loading) {
     return (
-      <div className="p-4 text-center text-gray-500">
+      <div className="wb-seo-loading">
         <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2" />
         Loading SEO settings...
       </div>
@@ -428,20 +417,20 @@ export function SEOMetaPanel({ websiteId, website, onUpdate }) {
   }
 
   return (
-    <div className="space-y-6 p-4">
-      <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold text-gray-900">SEO & Metadata</h3>
+    <div className="wb-seo-root">
+      <div className="wb-seo-header">
+        <h3 className="wb-seo-title">SEO & Metadata</h3>
         <button
           onClick={handleSave}
           disabled={saving}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+          className="wb-btn wb-btn--primary"
         >
           {saving ? 'Saving...' : 'Save Changes'}
         </button>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-2 border-b border-gray-200">
+      <div className="wb-seo-tabs">
         {[
           { id: 'basic', label: 'Basic', icon: Globe },
           { id: 'social', label: 'Social', icon: ImageIcon },
@@ -450,13 +439,7 @@ export function SEOMetaPanel({ websiteId, website, onUpdate }) {
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`
-              flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 transition-colors
-              ${activeTab === tab.id
-                ? 'border-blue-500 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
-              }
-            `}
+            className={`wb-seo-tab ${activeTab === tab.id ? 'wb-seo-tab--active' : ''}`}
           >
             <tab.icon className="w-4 h-4" />
             {tab.label}
@@ -466,12 +449,12 @@ export function SEOMetaPanel({ websiteId, website, onUpdate }) {
 
       {/* Tab Content */}
       {activeTab === 'basic' && (
-        <div className="space-y-4">
+        <div className="wb-seo-stack">
           {/* Title */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-gray-700 flex items-center gap-2">
+          <div className="wb-seo-section">
+            <label className="wb-seo-label">
               Page Title
-              <Info className="w-4 h-4 text-gray-400" title="Appears in browser tab and search results" />
+              <Info className="w-4 h-4 text-slate-400" title="Appears in browser tab and search results" />
             </label>
             <input
               type="text"
@@ -479,23 +462,23 @@ export function SEOMetaPanel({ websiteId, website, onUpdate }) {
               onChange={(e) => updateField('title', e.target.value)}
               placeholder="My Business Name"
               maxLength={100}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              className="wb-seo-input"
             />
-            <div className="flex justify-between items-center">
+            <div className="wb-seo-row-between">
               <CharacterCounter
                 current={meta.title.length}
                 limits={LIMITS.title}
                 label="characters"
               />
-              <span className="text-xs text-gray-500">
+              <span className="wb-seo-muted">
                 Recommended: 30-60 characters
               </span>
             </div>
           </div>
 
           {/* Meta Description */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-gray-700">
+          <div className="wb-seo-section">
+            <label className="wb-seo-label">
               Meta Description
             </label>
             <textarea
@@ -504,15 +487,15 @@ export function SEOMetaPanel({ websiteId, website, onUpdate }) {
               placeholder="Brief description of your business for search engines..."
               maxLength={500}
               rows={3}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
+              className="wb-seo-input wb-seo-input--textarea"
             />
-            <div className="flex justify-between items-center">
+            <div className="wb-seo-row-between">
               <CharacterCounter
                 current={meta.meta_description.length}
                 limits={LIMITS.metaDescription}
                 label="characters"
               />
-              <span className="text-xs text-gray-500">
+              <span className="wb-seo-muted">
                 Recommended: 120-160 characters
               </span>
             </div>
@@ -528,17 +511,17 @@ export function SEOMetaPanel({ websiteId, website, onUpdate }) {
       )}
 
       {activeTab === 'social' && (
-        <div className="space-y-4">
-          <div className="bg-blue-50 p-3 rounded-lg text-sm text-blue-700">
+        <div className="wb-seo-stack">
+          <div className="wb-seo-info">
             These settings control how your site appears when shared on social media
             (Telegram, Facebook, Twitter, etc.)
           </div>
 
           {/* OG Title */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-gray-700">
+          <div className="wb-seo-section">
+            <label className="wb-seo-label">
               Social Title
-              <span className="text-xs font-normal text-gray-500 ml-2">
+              <span className="wb-seo-muted">
                 (defaults to Page Title if empty)
               </span>
             </label>
@@ -548,7 +531,7 @@ export function SEOMetaPanel({ websiteId, website, onUpdate }) {
               onChange={(e) => updateField('og_title', e.target.value)}
               placeholder={meta.title || 'Social sharing title'}
               maxLength={100}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              className="wb-seo-input"
             />
             <CharacterCounter
               current={meta.og_title.length}
@@ -558,8 +541,8 @@ export function SEOMetaPanel({ websiteId, website, onUpdate }) {
           </div>
 
           {/* OG Description */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-gray-700">
+          <div className="wb-seo-section">
+            <label className="wb-seo-label">
               Social Description
             </label>
             <textarea
@@ -568,7 +551,7 @@ export function SEOMetaPanel({ websiteId, website, onUpdate }) {
               placeholder={meta.meta_description || 'Description for social sharing...'}
               maxLength={300}
               rows={3}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
+              className="wb-seo-input wb-seo-input--textarea"
             />
             <CharacterCounter
               current={meta.og_description.length}
@@ -588,14 +571,14 @@ export function SEOMetaPanel({ websiteId, website, onUpdate }) {
       )}
 
       {activeTab === 'preview' && (
-        <div className="space-y-4">
+        <div className="wb-seo-stack">
           {/* Warnings */}
           {preview?.warnings?.length > 0 && (
-            <div className="space-y-2">
+            <div className="wb-seo-stack">
               {preview.warnings.map((warning, idx) => (
                 <div
                   key={idx}
-                  className="flex items-start gap-2 p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-800"
+                  className="wb-seo-warning"
                 >
                   <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
                   {warning}
@@ -605,16 +588,16 @@ export function SEOMetaPanel({ websiteId, website, onUpdate }) {
           )}
 
           {preview?.warnings?.length === 0 && (
-            <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-800">
+            <div className="wb-seo-success">
               <CheckCircle className="w-4 h-4" />
               All SEO settings look good!
             </div>
           )}
 
           {/* Google Preview */}
-          <div>
-            <h4 className="text-sm font-medium text-gray-700 mb-2 flex items-center gap-2">
-              <div className="w-5 h-5 rounded-full bg-blue-500 flex items-center justify-center text-white text-xs font-bold">
+          <div className="wb-seo-section">
+            <h4 className="wb-seo-subtitle">
+              <div className="wb-seo-mini-badge">
                 G
               </div>
               Google Search Preview
@@ -623,9 +606,9 @@ export function SEOMetaPanel({ websiteId, website, onUpdate }) {
           </div>
 
           {/* Telegram Preview */}
-          <div>
-            <h4 className="text-sm font-medium text-gray-700 mb-2 flex items-center gap-2">
-              <div className="w-5 h-5 rounded-full bg-blue-400 flex items-center justify-center text-white text-xs font-bold">
+          <div className="wb-seo-section">
+            <h4 className="wb-seo-subtitle">
+              <div className="wb-seo-mini-badge wb-seo-mini-badge--alt">
                 T
               </div>
               Telegram Link Preview

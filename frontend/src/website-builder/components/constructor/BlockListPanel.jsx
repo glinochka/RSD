@@ -86,6 +86,7 @@ const BlockListPanel = ({
   onAddClick,
   onDuplicate,
   onDelete,
+  onClearSelection,
 }) => {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -104,6 +105,9 @@ const BlockListPanel = ({
     <aside className="wb-panel wb-panel--left">
       <div className="wb-panel__header">
         <h2>Блоки</h2>
+        <button type="button" className="wb-link-btn" onClick={onClearSelection}>
+          Общие настройки
+        </button>
       </div>
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
         <SortableContext items={blocks.map((b) => b.id)} strategy={verticalListSortingStrategy}>
@@ -136,6 +140,7 @@ BlockListPanel.propTypes = {
   onAddClick: PropTypes.func.isRequired,
   onDuplicate: PropTypes.func.isRequired,
   onDelete: PropTypes.func.isRequired,
+  onClearSelection: PropTypes.func,
 };
 
 export default BlockListPanel;

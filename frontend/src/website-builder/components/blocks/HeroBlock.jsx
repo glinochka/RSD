@@ -20,6 +20,7 @@ const HeroBlock = ({
     ctaText = 'Узнать больше',
     ctaLink = '#contacts',
     backgroundImageUrl = '',
+    navLinks = [],
   } = content || {};
 
   const {
@@ -40,9 +41,38 @@ const HeroBlock = ({
 
   return (
     <section
+      id="top"
       className="relative min-h-[60vh] md:min-h-[70vh] lg:min-h-[80vh] flex items-center justify-center py-12 md:py-16 lg:py-20"
       style={bgStyle}
     >
+      {Array.isArray(navLinks) && navLinks.length > 0 && (
+        <nav className="absolute top-0 left-0 right-0 z-20">
+          <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-5">
+            <div
+              className="flex flex-wrap items-center justify-center gap-2 sm:gap-3 rounded-xl px-3 py-2"
+              style={{
+                backgroundColor: darkMode ? 'rgba(15,23,42,0.68)' : 'rgba(255,255,255,0.82)',
+                backdropFilter: 'blur(8px)',
+                border: `1px solid ${darkMode ? 'rgba(148,163,184,0.25)' : 'rgba(203,213,225,0.95)'}`,
+              }}
+            >
+              {navLinks.map((item, idx) => (
+                <a
+                  key={`${item.anchor}-${idx}`}
+                  href={item.anchor}
+                  className="px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors"
+                  style={{
+                    color: darkMode ? '#E2E8F0' : '#0F172A',
+                  }}
+                >
+                  {item.label}
+                </a>
+              ))}
+            </div>
+          </div>
+        </nav>
+      )}
+
       {/* Overlay for background images */}
       {backgroundImageUrl && (
         <div className="absolute inset-0" style={overlayStyle} />
@@ -141,6 +171,12 @@ HeroBlock.propTypes = {
     ctaText: PropTypes.string,
     ctaLink: PropTypes.string,
     backgroundImageUrl: PropTypes.string,
+    navLinks: PropTypes.arrayOf(
+      PropTypes.shape({
+        label: PropTypes.string,
+        anchor: PropTypes.string,
+      })
+    ),
   }),
   styles: PropTypes.shape({
     primaryColor: PropTypes.string,

@@ -90,6 +90,7 @@ const ServicesBlock = ({
 
   return (
     <section
+      id="services"
       className="py-12 md:py-16 lg:py-20"
       style={{ backgroundColor: containerBg }}
     >
@@ -139,7 +140,7 @@ const ServicesBlock = ({
                   <img
                     src={service.imageUrl}
                     alt={service.name}
-                    className="w-16 h-16 md:w-20 md:h-20 object-cover rounded-lg"
+                    className="w-full max-w-[220px] h-32 md:h-36 object-cover rounded-lg"
                   />
                 ) : (
                   getIcon(service.icon)

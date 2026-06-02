@@ -125,6 +125,16 @@ const BlockSettingsPanel = ({
         </section>
       )}
 
+      {!selectedBlock && (
+        <section className="wb-settings-section">
+          <h3>Блок не выбран</h3>
+          <p className="wb-hint-text">
+            Сейчас доступны глобальные настройки сайта. Для редактирования конкретного блока нажмите
+            на него в превью или в списке слева.
+          </p>
+        </section>
+      )}
+
       <section className="wb-settings-section wb-placeholders-hint">
         <h3>Плейсхолдеры</h3>
         <p className="wb-hint-text">

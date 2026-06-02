@@ -172,6 +172,7 @@ const ConstructorPageContent = () => {
             const b = blocks.find((x) => x.id === id);
             setBlockToDelete(b);
           }}
+          onClearSelection={() => setSelectedBlockId(null)}
         />
 
         <main className="wb-constructor__canvas">
@@ -180,26 +181,33 @@ const ConstructorPageContent = () => {
           </div>
           <div className="wb-canvas-frame" style={deviceStyle}>
             {previewSchema && (
-              <WebsiteAgentProvider agent={agentData} agentId={website?.agent_id}>
-                <WebsiteRenderer
-                  schema={previewSchema}
-                  editMode
-                  selectedBlockId={selectedBlockId}
-                  onSelectBlock={setSelectedBlockId}
-                  onContentChange={updateBlockContent}
-                  placeholderVars={placeholderVars}
-                />
-                <AgentWidget
-                  apiKey={agentData?.widget_api_key}
-                  enabled={Boolean(agentData?.widget_api_key)}
-                />
-                <QuickContactButtons
-                  contacts={agentData?.contacts}
-                  primaryColor={globalStyles?.primaryColor}
-                />
-              </WebsiteAgentProvider>
+              <div onClick={() => setSelectedBlockId(null)} role="presentation">
+                <WebsiteAgentProvider agent={agentData} agentId={website?.agent_id}>
+                  <WebsiteRenderer
+                    schema={previewSchema}
+                    editMode
+                    selectedBlockId={selectedBlockId}
+                    onSelectBlock={setSelectedBlockId}
+                    onContentChange={updateBlockContent}
+                    placeholderVars={placeholderVars}
+                  />
+                  <AgentWidget
+                    apiKey={agentData?.widget_api_key}
+                    enabled={Boolean(agentData?.widget_api_key)}
+                  />
+                  <QuickContactButtons
+                    contacts={agentData?.contacts}
+                    primaryColor={globalStyles?.primaryColor}
+                  />
+                </WebsiteAgentProvider>
+              </div>
             )}
           </div>
+          {!selectedBlock && (
+            <div className="wb-selection-hint">
+              <span>Нажмите на любой блок в превью или в списке слева для детальной настройки</span>
+            </div>
+          )}
         </main>
 
         <div className="wb-constructor__sidebar-right">
