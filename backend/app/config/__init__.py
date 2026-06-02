@@ -1,9 +1,11 @@
 from datetime import timedelta
-from pydantic import field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from pathlib import Path
 from typing import Literal
 import os
+
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
 
 class Settings(BaseSettings):
     DB_PORT: int
@@ -24,7 +26,7 @@ class Settings(BaseSettings):
     # Календарный день для архива и лимитов выдачи контактов (IANA timezone).
     SALES_DAY_TIMEZONE: str = "Europe/Moscow"
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
-    QDRANT_API_KEY:str = ''
+    QDRANT_API_KEY: str = ""
     DEEPSEEK_API_KEY: str
     # Fallback STT when local faster-whisper is disabled or returns empty (optional).
     OPENAI_API_KEY: str = ""
@@ -189,22 +191,27 @@ class Settings(BaseSettings):
     EMBEDDING_CHUNK_OVERLAP: int = 100
     # If set, load the SentenceTransformer from this directory (no Hub download). For air-gapped / offline deploys.
     EMBEDDING_LOCAL_MODEL_PATH: str = ""
+
     model_config = SettingsConfigDict(
-        env_file= Path(__file__).parent.parent.parent / '.env',  
-        env_file_encoding='utf-8',
-        extra='ignore'  
+        # Keep parity with previous location of `app/config.py` which loaded repo-root `.env`.
+        env_file=Path(__file__).resolve().parents[3] / ".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
     )
 
+
 settings = Settings()
- 
-if not os.path.exists('/.dockerenv'):
+
+if not os.path.exists("/.dockerenv"):
     settings.DB_HOST = "localhost"
     settings.QDRANT_URL = "http://localhost:6333"
 
 
 def get_db_url():
-    return (f"postgresql+asyncpg://{settings.DB_USER}:{settings.DB_PASSWORD}@"
-            f"{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}")
+    return (
+        f"postgresql+asyncpg://{settings.DB_USER}:{settings.DB_PASSWORD}@"
+        f"{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}"
+    )
 
 
 def get_auth_data(token_kind: Literal["user", "admin", "sales_staff"] = "user"):
