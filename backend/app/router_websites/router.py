@@ -15,6 +15,7 @@ from ..alembic.database import async_session_maker
 from ..alembic.models import AdminService, Agent, AgentChannelConnection, User, Website, WebsiteBlock, WebsiteDomain, WebsiteTemplate
 from ..utils.JWT import get_user_from_access_token
 from ..config import settings
+from ..router_users.dao import UserDAO
 from ..services.website_generation_service import (
     GeneratedBlock,
     GeneratedWebsiteSchema,
@@ -107,21 +108,9 @@ async def get_current_user(credentials: Annotated[HTTPBearer, Depends(http_beare
     if token.lower().startswith("bearer "):
         token = token[7:]
 
-    payload = get_user_from_access_token(token, settings.JWT_SECRET)
-    if not payload or not payload.get("user_id"):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
-        )
-
     async with async_session_maker() as session:
-        dao = WebsiteDAO(session)
-        user = await dao.find_one_by_filter(id=payload["user_id"])
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User not found",
-            )
+        user_dao = UserDAO(session)
+        user = await get_user_from_access_token(token, user_dao)
         return user
 
 
