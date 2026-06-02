@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
+import random
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import select, update
@@ -73,6 +76,52 @@ class DmOutreachWorker:
         self.batch_size = batch_size
         self.min_interval_seconds = min_interval_seconds
         self._stop = asyncio.Event()
+        self._last_send_by_account: dict[tuple[int, str, int], datetime] = {}
+
+    @staticmethod
+    def _now_utc_naive() -> datetime:
+        return datetime.now(timezone.utc).replace(tzinfo=None)
+
+    @staticmethod
+    def _resolve_account_timeout_seconds(meta: dict[str, Any]) -> int:
+        raw = meta.get("account_timeout_seconds")
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = 0
+        if 180 <= value <= 420:
+            return value
+        timeout = random.randint(180, 420)
+        meta["account_timeout_seconds"] = timeout
+        return timeout
+
+    @staticmethod
+    def _pick_deterministic_connection(
+        *,
+        provider: str,
+        target_external: str,
+        available_ids: list[int],
+    ) -> int | None:
+        if not available_ids:
+            return None
+        if len(available_ids) == 1:
+            return available_ids[0]
+        digest = hashlib.sha256(f"{provider}:{target_external}".encode("utf-8")).hexdigest()
+        slot = int(digest[:16], 16) % len(available_ids)
+        return available_ids[slot]
+
+    async def _defer_queue_item(self, *, queue_id: int, scheduled_for: datetime, meta: dict[str, Any]) -> None:
+        async with async_session_maker() as session:
+            async with session.begin():
+                await session.execute(
+                    update(AgentSalesDmQueue)
+                    .where(AgentSalesDmQueue.id == queue_id)
+                    .values(
+                        status="pending",
+                        scheduled_for=scheduled_for,
+                        metadata_json=json.dumps(meta, ensure_ascii=False),
+                    )
+                )
 
     async def shutdown(self) -> None:
         """Stop the worker."""
@@ -191,6 +240,7 @@ class DmOutreachWorker:
         encrypted_credentials: str | None = None
         connection_id: int | None = None
         target_external = str(item.target_user_external_id or "").strip()
+        metadata_changed = False
 
         async with async_session_maker() as session:
             async with session.begin():
@@ -208,10 +258,59 @@ class DmOutreachWorker:
                     if channel == "whatsapp_userbot"
                     else "telegram_userbot"
                 )
+                channels = (
+                    await session.execute(
+                        select(AgentChannelConnection).where(
+                            AgentChannelConnection.agent_id == agent.id,
+                            AgentChannelConnection.provider == provider,
+                            AgentChannelConnection.is_active.is_(True),
+                        )
+                    )
+                ).scalars().all()
+
+                if not channels:
+                    await get_dm_queue_service().mark_failed(
+                        queue_id=item.id,
+                        error=f"No active {provider} channel",
+                        retry=False,
+                    )
+                    return
+
+                available_ids = [int(ch.id) for ch in channels if ch.encrypted_credentials]
+                if not available_ids:
+                    await get_dm_queue_service().mark_failed(
+                        queue_id=item.id,
+                        error=f"No active {provider} channel with credentials",
+                        retry=False,
+                    )
+                    return
+
+                assigned_raw = meta.get("assigned_connection_id")
+                assigned_connection_id: int | None = None
+                try:
+                    assigned_connection_id = int(assigned_raw) if assigned_raw is not None else None
+                except (TypeError, ValueError):
+                    assigned_connection_id = None
+
+                if assigned_connection_id not in available_ids:
+                    # Для sales_manager закрепляем лида за конкретным аккаунтом (по хешу),
+                    # чтобы два аккаунта не вели одного и того же лида.
+                    if str(agent.template_type or "").strip().lower() == "sales_manager":
+                        assigned_connection_id = self._pick_deterministic_connection(
+                            provider=provider,
+                            target_external=target_external,
+                            available_ids=sorted(available_ids),
+                        )
+                    else:
+                        assigned_connection_id = available_ids[0]
+                    meta["assigned_connection_id"] = assigned_connection_id
+                    metadata_changed = True
+
                 ch = await session.scalar(
                     select(AgentChannelConnection).where(
                         AgentChannelConnection.agent_id == agent.id,
                         AgentChannelConnection.provider == provider,
+                        AgentChannelConnection.id == int(assigned_connection_id),
                         AgentChannelConnection.is_active.is_(True),
                     )
                 )
@@ -233,6 +332,32 @@ class DmOutreachWorker:
                         analytics_namespace_id=analytics_ns,
                         user_external_id=target_external,
                     )
+        if metadata_changed:
+            await self._defer_queue_item(
+                queue_id=int(item.id),
+                scheduled_for=item.scheduled_for or self._now_utc_naive(),
+                meta=meta,
+            )
+
+        timeout_seconds = self._resolve_account_timeout_seconds(meta)
+        account_key = (int(item.agent_id), channel, int(connection_id or 0))
+        now = self._now_utc_naive()
+        last_sent_at = self._last_send_by_account.get(account_key)
+        if last_sent_at is not None:
+            next_allowed_at = last_sent_at + timedelta(seconds=timeout_seconds)
+            if next_allowed_at > now:
+                await self._defer_queue_item(
+                    queue_id=int(item.id),
+                    scheduled_for=next_allowed_at,
+                    meta=meta,
+                )
+                logger.info(
+                    "Deferred DM by account cooldown: queue_id=%d connection_id=%d until=%s",
+                    item.id,
+                    int(connection_id or 0),
+                    next_allowed_at.isoformat(),
+                )
+                return
 
         try:
             if channel == "whatsapp_userbot":
@@ -258,6 +383,7 @@ class DmOutreachWorker:
                 target_external,
             )
             await get_dm_queue_service().mark_sent(queue_id=item.id)
+            self._last_send_by_account[account_key] = self._now_utc_naive()
 
             if imported_id is not None:
                 try:

@@ -6,8 +6,9 @@ import random
 from datetime import datetime, timedelta, timezone
 
 # Случайный интервал между контактами при загрузке Excel-базы (минуты).
-EXCEL_STAGGER_MIN_MINUTES = 15.0
-EXCEL_STAGGER_MAX_MINUTES = 20.0
+# Снижено до 3–7 минут для более плотного, но безопасного прогрева.
+EXCEL_STAGGER_MIN_MINUTES = 3.0
+EXCEL_STAGGER_MAX_MINUTES = 7.0
 
 FOLLOW_UP_DELAYS = {
     "day": timedelta(days=1),
@@ -21,7 +22,7 @@ def utc_now_naive() -> datetime:
 
 
 def next_stagger_delay_minutes() -> float:
-    """Случайная пауза 15–20 минут до следующего контакта."""
+    """Случайная пауза 3–7 минут до следующего контакта."""
     return random.uniform(EXCEL_STAGGER_MIN_MINUTES, EXCEL_STAGGER_MAX_MINUTES)
 
 

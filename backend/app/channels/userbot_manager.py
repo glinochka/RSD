@@ -172,6 +172,7 @@ async def _fetch_userbot_configs() -> list[dict[str, Any]]:
                         select(
                             Agent.id.label("agent_id"),
                             Agent.bot_id,
+                            AgentChannelConnection.id.label("connection_id"),
                             Agent.system_prompt,
                             Agent.welcome_message,
                             Agent.template_type,
@@ -195,6 +196,7 @@ async def _fetch_userbot_configs() -> list[dict[str, Any]]:
         {
             "agent_id": int(row["agent_id"]),
             "bot_id": int(row["bot_id"] if row["bot_id"] is not None else row["agent_id"]),
+            "connection_id": int(row["connection_id"]),
             "system_prompt": row["system_prompt"] or "",
             "welcome_message": row["welcome_message"],
             "template_type": str(row["template_type"] or "qa").strip().lower(),
@@ -531,6 +533,7 @@ async def _run_one_client(cfg: dict[str, Any]) -> None:
     session_str = str(bundle["session_string"])
     bot_id = int(cfg["bot_id"])
     agent_id = int(cfg["agent_id"])
+    connection_id = int(cfg["connection_id"])
     system_prompt = cfg.get("system_prompt") or ""
     welcome = cfg.get("welcome_message")
     template_type = cfg.get("template_type") or "qa"
@@ -564,7 +567,12 @@ async def _run_one_client(cfg: dict[str, Any]) -> None:
     client.add_event_handler(chat_msg_handler, events.NewMessage(incoming=True, func=lambda e: not e.is_private))
     
     try:
-        logger.info("userbot: connecting bot_id=%s agent_id=%s", bot_id, agent_id)
+        logger.info(
+            "userbot: connecting bot_id=%s agent_id=%s connection_id=%s",
+            bot_id,
+            agent_id,
+            connection_id,
+        )
         await client.connect()
         if not await client.is_user_authorized():
             logger.error("userbot: session unauthorized bot_id=%s agent_id=%s", bot_id, agent_id)
@@ -579,10 +587,15 @@ async def _run_one_client(cfg: dict[str, Any]) -> None:
         )
         await client.run_until_disconnected()
     except asyncio.CancelledError:
-        logger.info("userbot: stopping bot_id=%s agent_id=%s", bot_id, agent_id)
+        logger.info("userbot: stopping bot_id=%s agent_id=%s connection_id=%s", bot_id, agent_id, connection_id)
         raise
     except Exception:
-        logger.exception("userbot: worker failed bot_id=%s agent_id=%s", bot_id, agent_id)
+        logger.exception(
+            "userbot: worker failed bot_id=%s agent_id=%s connection_id=%s",
+            bot_id,
+            agent_id,
+            connection_id,
+        )
     finally:
         if client.is_connected():
             await client.disconnect()
@@ -621,47 +634,64 @@ class UserbotManager:
                         logger.info("userbot: another replica holds leader lock, waiting")
                     else:
                         configs = await _fetch_userbot_configs()
-                        wanted = {int(c["bot_id"]) for c in configs if c.get("bot_id") is not None}
+                        wanted = {
+                            int(c["connection_id"])
+                            for c in configs
+                            if c.get("connection_id") is not None
+                        }
 
-                        for bot_id in list(self._tasks):
-                            if bot_id not in wanted:
-                                task = self._tasks.pop(bot_id)
-                                self._config_fingerprints.pop(bot_id, None)
+                        for connection_id in list(self._tasks):
+                            if connection_id not in wanted:
+                                task = self._tasks.pop(connection_id)
+                                self._config_fingerprints.pop(connection_id, None)
                                 task.cancel()
                                 try:
                                     await task
                                 except asyncio.CancelledError:
                                     pass
-                                logger.info("userbot: removed bot_id=%s", bot_id)
+                                logger.info("userbot: removed connection_id=%s", connection_id)
 
-                        by_id = {int(c["bot_id"]): c for c in configs if c.get("bot_id") is not None}
-                        for bot_id, cfg in by_id.items():
+                        by_id = {
+                            int(c["connection_id"]): c
+                            for c in configs
+                            if c.get("connection_id") is not None
+                        }
+                        for connection_id, cfg in by_id.items():
                             fingerprint = json.dumps(cfg, sort_keys=True, ensure_ascii=False, default=str)
-                            existing = self._tasks.get(bot_id)
+                            existing = self._tasks.get(connection_id)
                             if existing and existing.done():
-                                self._tasks.pop(bot_id, None)
-                                self._config_fingerprints.pop(bot_id, None)
+                                self._tasks.pop(connection_id, None)
+                                self._config_fingerprints.pop(connection_id, None)
                                 try:
                                     existing.result()
                                 except Exception:
-                                    logger.exception("userbot: previous worker crashed bot_id=%s", bot_id)
+                                    logger.exception(
+                                        "userbot: previous worker crashed connection_id=%s",
+                                        connection_id,
+                                    )
                                 existing = None
-                            previous_fingerprint = self._config_fingerprints.get(bot_id)
+                            previous_fingerprint = self._config_fingerprints.get(connection_id)
                             if existing and previous_fingerprint != fingerprint:
-                                logger.info("userbot: config changed, restarting worker bot_id=%s", bot_id)
+                                logger.info(
+                                    "userbot: config changed, restarting worker connection_id=%s",
+                                    connection_id,
+                                )
                                 existing.cancel()
                                 try:
                                     await existing
                                 except asyncio.CancelledError:
                                     pass
                                 except Exception:
-                                    logger.exception("userbot: worker failed during restart bot_id=%s", bot_id)
-                                self._tasks.pop(bot_id, None)
+                                    logger.exception(
+                                        "userbot: worker failed during restart connection_id=%s",
+                                        connection_id,
+                                    )
+                                self._tasks.pop(connection_id, None)
                                 existing = None
                             if existing is None:
-                                self._tasks[bot_id] = asyncio.create_task(_run_one_client(cfg))
-                                self._config_fingerprints[bot_id] = fingerprint
-                                logger.info("userbot: started worker bot_id=%s", bot_id)
+                                self._tasks[connection_id] = asyncio.create_task(_run_one_client(cfg))
+                                self._config_fingerprints[connection_id] = fingerprint
+                                logger.info("userbot: started worker connection_id=%s", connection_id)
                 except Exception:
                     logger.exception("UserbotManager cycle failed")
 

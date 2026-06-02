@@ -4948,7 +4948,7 @@ async def add_agent_userbot_channel(
                     AgentChannelConnection.connection_type == "userbot",
                 )
             )
-            if existing_userbot_channel:
+            if existing_userbot_channel and str(agent.template_type or "").strip().lower() != "sales_manager":
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="У агента уже подключен Telegram userbot-канал",
@@ -4958,6 +4958,11 @@ async def add_agent_userbot_channel(
                 external_id=str(telegram_user_id),
             )
             if duplicate_connection:
+                if int(duplicate_connection.agent_id) == int(agent.id):
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Этот Telegram userbot уже подключен к текущему агенту",
+                    )
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="Этот Telegram userbot уже подключен к другому агенту",
@@ -5269,7 +5274,7 @@ async def add_agent_whatsapp_userbot_channel(
                     AgentChannelConnection.connection_type == "userbot",
                 )
             )
-            if existing_whatsapp_userbot_channel:
+            if existing_whatsapp_userbot_channel and str(agent.template_type or "").strip().lower() != "sales_manager":
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="У агента уже подключен WhatsApp userbot-канал",
@@ -5279,6 +5284,11 @@ async def add_agent_whatsapp_userbot_channel(
                 external_id=normalized_phone,
             )
             if duplicate_connection:
+                if int(duplicate_connection.agent_id) == int(agent.id):
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Этот WhatsApp userbot уже подключен к текущему агенту",
+                    )
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="Этот WhatsApp userbot уже подключен к другому агенту",
