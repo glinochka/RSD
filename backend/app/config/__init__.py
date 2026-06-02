@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
     QDRANT_API_KEY: str = ""
     DEEPSEEK_API_KEY: str
+    # Website Builder: JSON/layout generation (DeepSeek Coder recommended).
+    WEBSITE_GENERATION_MODEL: str = "deepseek-coder"
     # Fallback STT when local faster-whisper is disabled or returns empty (optional).
     OPENAI_API_KEY: str = ""
     # Speech-to-text: faster_whisper (local), openai (API), auto = try local then API.

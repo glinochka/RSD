@@ -1736,7 +1736,7 @@ async def get_seo_preview(
 
     # Build URL preview
     from ..config.website_domains import BASE_DOMAIN
-    url_preview = f"https://{BASE_DOMAIN}/{website.slug}"
+    url_preview = f"https://{BASE_DOMAIN}/w/{website.slug}"
 
     return SEOPreviewResponse(
         google_title=google_title,

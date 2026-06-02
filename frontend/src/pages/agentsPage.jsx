@@ -929,12 +929,15 @@ const AgentsPageContent = () => {
   };
 
   const handleOpenWebsiteView = () => {
-    if (!agentWebsite?.id) return;
-    if (agentWebsite.status === 'published' && agentWebsite.slug) {
-      window.open(NAVIGATION_ROUTES.WEBSITE_PUBLIC(agentWebsite.slug), '_blank', 'noopener,noreferrer');
+    if (!agentWebsite?.slug) {
+      showError('У сайта ещё нет публичного адреса. Дождитесь завершения сборки.');
       return;
     }
-    window.open(NAVIGATION_ROUTES.WEBSITE_PREVIEW(agentWebsite.id), '_blank', 'noopener,noreferrer');
+    if (agentWebsite.status !== 'published') {
+      showError('Опубликуйте сайт в конструкторе — ссылка для клиентов станет доступна после публикации.');
+      return;
+    }
+    window.open(NAVIGATION_ROUTES.WEBSITE_PUBLIC(agentWebsite.slug), '_blank', 'noopener,noreferrer');
   };
 
   const handleDeleteAgent = async (botId) => {
@@ -3078,7 +3081,7 @@ const AgentsPageContent = () => {
                           className="btn btn-outline"
                           onClick={handleOpenWebsiteView}
                         >
-                          Посмотреть
+                          Перейти
                         </button>
                       </>
                     )}

@@ -1,7 +1,7 @@
 /**
  * Website Public Page
  * Public-facing website accessible via:
- * - /w/{slug} path-based routing
+ * - /w/{slug} path-based routing (client-facing URL)
  * - {slug}.rsd-ai.ru subdomain routing
  * - custom domain (example.com)
  */

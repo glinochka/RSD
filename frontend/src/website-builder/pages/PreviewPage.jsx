@@ -12,12 +12,13 @@ import QuickContactButtons from '../components/QuickContactButtons';
 import DeviceSwitcher, { DEVICES } from '../components/DeviceSwitcher';
 import { WebsiteAgentProvider } from '../context/WebsiteAgentContext';
 import { NAVIGATION_ROUTES, API_ROUTES } from '../../config/constants';
-import { ENV_CONFIG } from '../../config/environment';
+import { getAuthHeaders } from '../../utils/authToken';
+import { fetchWebsiteDetail } from '../utils/api';
 import { toRendererStyles } from '../utils/styleUtils';
 import { PreviewMetaTags } from '../components/WebsiteMetaTags';
+import ProtectedRoute from '../../components/ProtectedRoute';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
-const TOKEN_KEY = ENV_CONFIG.STORAGE_KEYS.TOKEN;
 
 const PreviewPage = () => {
   const { websiteId } = useParams();
@@ -32,21 +33,14 @@ const PreviewPage = () => {
   // Fetch website schema
   const fetchSchema = async () => {
     try {
-      const token = localStorage.getItem(TOKEN_KEY);
-      const response = await axios.get(
-        `${API_BASE_URL}/api/v1/websites/${websiteId}`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-
-      // Merge blocks with the schema for rendering
-      const website = response.data;
+      const website = await fetchWebsiteDetail(websiteId);
       let agent = null;
       if (website.agent_id) {
         try {
           const embed = website.status === 'published' ? 'true' : 'false';
           const agentRes = await axios.get(
             `${API_BASE_URL}${API_ROUTES.AGENT_PUBLIC_DATA(website.agent_id)}?embed=${embed}`,
-            { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+            { headers: getAuthHeaders() }
           );
           agent = agentRes.data;
         } catch (agentErr) {
@@ -87,11 +81,10 @@ const PreviewPage = () => {
   // Handle publish/unpublish
   const handlePublish = async () => {
     try {
-      const token = localStorage.getItem(TOKEN_KEY);
       await axios.post(
         `${API_BASE_URL}/api/v1/websites/${websiteId}/publish`,
         {},
-        { headers: { Authorization: `Bearer ${token}` } }
+        { headers: getAuthHeaders() }
       );
       fetchSchema();
     } catch (err) {
@@ -101,11 +94,10 @@ const PreviewPage = () => {
 
   const handleUnpublish = async () => {
     try {
-      const token = localStorage.getItem(TOKEN_KEY);
       await axios.post(
         `${API_BASE_URL}/api/v1/websites/${websiteId}/unpublish`,
         {},
-        { headers: { Authorization: `Bearer ${token}` } }
+        { headers: getAuthHeaders() }
       );
       fetchSchema();
     } catch (err) {
@@ -115,7 +107,7 @@ const PreviewPage = () => {
 
   const handleOpenPublic = () => {
     if (schema?.slug) {
-      window.open(`/w/${schema.slug}`, '_blank');
+      window.open(NAVIGATION_ROUTES.WEBSITE_PUBLIC(schema.slug), '_blank', 'noopener,noreferrer');
     }
   };
 
@@ -327,4 +319,10 @@ const PreviewPage = () => {
   );
 };
 
-export default PreviewPage;
+const PreviewPageWithAuth = () => (
+  <ProtectedRoute>
+    <PreviewPage />
+  </ProtectedRoute>
+);
+
+export default PreviewPageWithAuth;

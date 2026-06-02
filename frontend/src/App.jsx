@@ -30,7 +30,6 @@ import PartnerPage from './pages/PartnerPage';
 
 // Website Builder Pages
 import { PreviewPage, WebsitePublicPage, ConstructorPage } from './website-builder/pages';
-
 const App = () => {
   return (
     <ErrorBoundary>

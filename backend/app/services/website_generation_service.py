@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 from ..alembic.database import async_session_maker
 from ..alembic.models import AdminService, Agent, AgentChannelConnection, Website, WebsiteBlock
 from ..router_websites.dao import WebsiteBlockDAO, WebsiteDAO
+from ..config import settings
 from .ai_authoring import ai_client
 
 logger = logging.getLogger(__name__)
@@ -389,7 +390,7 @@ class WebsiteGenerationService:
 
     def __init__(self):
         self.ai_client = ai_client
-        self.model = "deepseek-chat"
+        self.model = (settings.WEBSITE_GENERATION_MODEL or "deepseek-coder").strip()
         self.max_retries = 3
         self.timeout_seconds = 60.0
 
@@ -429,7 +430,12 @@ class WebsiteGenerationService:
 
         for attempt in range(1, self.max_retries + 1):
             try:
-                logger.info(f"Generation attempt {attempt}/{self.max_retries}")
+                logger.info(
+                    "Generation attempt %s/%s (model=%s)",
+                    attempt,
+                    self.max_retries,
+                    self.model,
+                )
 
                 response = await self.ai_client.chat.completions.create(
                     model=self.model,

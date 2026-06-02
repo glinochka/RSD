@@ -4,7 +4,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import axios from 'axios';
 import { API_ROUTES } from '../../config/constants';
-import { ENV_CONFIG } from '../../config/environment';
+import { getAuthHeaders } from '../../utils/authToken';
 import { useParams, useNavigate } from 'react-router-dom';
 import ProtectedRoute from '../../components/ProtectedRoute';
 import { NAVIGATION_ROUTES } from '../../config/constants';
@@ -76,12 +76,11 @@ const ConstructorPageContent = () => {
       setAgentData(null);
       return;
     }
-    const token = localStorage.getItem(ENV_CONFIG.STORAGE_KEYS.TOKEN);
     const embed = website.status === 'published';
     axios
       .get(
         `${import.meta.env.VITE_API_URL || ''}${API_ROUTES.AGENT_PUBLIC_DATA(website.agent_id)}?embed=${embed}`,
-        { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+        { headers: getAuthHeaders() }
       )
       .then((res) => setAgentData(res.data))
       .catch(() => setAgentData(null));
