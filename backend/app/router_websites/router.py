@@ -212,6 +212,9 @@ async def create_website(
     try:
         website = await website_dao.add(website_data)
 
+        # Flush to get the website ID before creating blocks
+        await website_dao._session.flush()
+
         # Create default blocks from template if provided
         if template and template.default_blocks:
             from ..alembic.database import async_session_maker
@@ -1119,6 +1122,9 @@ async def create_and_generate_website(
     }
 
     website = await website_dao.add(website_data)
+
+    # Flush to get the website ID before returning
+    await website_dao._session.flush()
 
     # Start background generation
     service = get_website_generation_service()
