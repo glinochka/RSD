@@ -9,17 +9,16 @@ RUN apt-get update && apt-get install -y \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-
 # Large wheels (torch, etc.) often exceed pip's default 15s read timeout on slow links.
 ENV PIP_DEFAULT_TIMEOUT=600 \
     PIP_RETRIES=10 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-RUN pip install --no-cache-dir -r requirements.txt \
+# Layer 1: heavy / stable deps (torch, whisper, playwright, …)
+COPY requirements-base.txt .
+RUN pip install --no-cache-dir -r requirements-base.txt \
     && python -c "import telethon; print('telethon', telethon.__version__)" \
     && (python -c "import opentele; print('opentele ok')" || echo "WARNING: opentele not installed (tdata import unavailable; QR/SMS use Telethon fallback)")
-
 
 # Принудительно скачиваем модель при сборке (best-effort).
 # Любые ошибки (например, CPU/NumPy несовместимость на хосте сборки)
@@ -37,4 +36,9 @@ try:
 except Exception as exc:
     print(f"WARNING: model preload skipped: {exc}")
 PY
+
+# Layer 2: app deps — invalidates only this step when you add a new library
+COPY requirements-app.txt .
+RUN pip install --no-cache-dir -r requirements-app.txt
+
 COPY . .

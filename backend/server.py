@@ -3,10 +3,12 @@ import asyncio
 
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import HTTPException
 from logging import getLogger
 from app.logger_config import setup_logger
 setup_logger()
 logger = getLogger(__name__)
+from app.services.error_log_service import record_error_log
 from fastapi.middleware.cors import CORSMiddleware
 from app.middleware import (
     CSPMiddleware,
@@ -71,8 +73,14 @@ async def lifespan(app: FastAPI):
                 await process_agent_autopay_renewals_once()
                 await deactivate_expired_agent_maintenance_once()
                 await send_onboarding_inactive_user_reminders_once()
-            except Exception:
+            except Exception as exc:
                 logger.exception("Subscription cron failed")
+                await record_error_log(
+                    exc=exc,
+                    source="cron",
+                    scenario="subscription maintenance cron",
+                    level="error",
+                )
             await asyncio.sleep(3600)
 
     client = QdrantClient(url=settings.QDRANT_URL, api_key=settings.QDRANT_API_KEY)
@@ -222,6 +230,35 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    if exc.status_code >= 500:
+        await record_error_log(
+            exc=exc,
+            source="api",
+            status_code=exc.status_code,
+            request=request,
+        )
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    await record_error_log(
+        exc=exc,
+        source="api",
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        request=request,
+        level="critical",
+    )
+    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "Internal server error"},
+    )
+
 
 app.add_middleware(
     CORSMiddleware,

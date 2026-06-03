@@ -874,31 +874,35 @@ class WebsiteExportService:
         base_path: Path,
     ) -> tuple[str, int, list[str]]:
         """Create ZIP archive with all website files."""
+        logger.info(f"[WebsiteExport] Creating ZIP archive for website: {website_slug}")
         files_included = []
-        
+
         # Create directories
         css_path = base_path / "css"
         js_path = base_path / "js"
         assets_path = base_path / "assets"
         favicon_path = assets_path / "favicon"
-        
+
         css_path.mkdir(parents=True, exist_ok=True)
         js_path.mkdir(parents=True, exist_ok=True)
         assets_path.mkdir(parents=True, exist_ok=True)
         favicon_path.mkdir(parents=True, exist_ok=True)
-        
+        logger.info(f"[WebsiteExport] Created directory structure at: {base_path}")
+
         # Write index.html
         index_path = base_path / "index.html"
         async with aiofiles.open(index_path, "w", encoding="utf-8") as f:
             await f.write(html_content)
         files_included.append("index.html")
-        
+        logger.info(f"[WebsiteExport] Created file: index.html ({len(html_content)} chars)")
+
         # Write main.js
         js_file_path = js_path / "main.js"
         async with aiofiles.open(js_file_path, "w", encoding="utf-8") as f:
             await f.write(MAIN_JS_TEMPLATE)
         files_included.append("js/main.js")
-        
+        logger.info(f"[WebsiteExport] Created file: js/main.js ({len(MAIN_JS_TEMPLATE)} chars)")
+
         # Write README.txt
         readme_path = base_path / "README.txt"
         readme_content = README_TEMPLATE.format(
@@ -909,20 +913,26 @@ class WebsiteExportService:
         async with aiofiles.open(readme_path, "w", encoding="utf-8") as f:
             await f.write(readme_content)
         files_included.append("README.txt")
-        
+        logger.info(f"[WebsiteExport] Created file: README.txt ({len(readme_content)} chars)")
+
         # Create ZIP archive
         zip_filename = f"website-{website_slug}-{int(datetime.now(timezone.utc).timestamp())}.zip"
         zip_path = self.temp_dir / zip_filename
-        
+        logger.info(f"[WebsiteExport] Creating ZIP file: {zip_filename}")
+
+        file_count = 0
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
             for root, dirs, files in os.walk(base_path):
                 for file in files:
                     file_path = Path(root) / file
                     arc_name = str(file_path.relative_to(base_path))
                     zf.write(file_path, arc_name)
-        
+                    file_count += 1
+
         archive_size = zip_path.stat().st_size
-        
+        logger.info(f"[WebsiteExport] ZIP archive created: {zip_filename}")
+        logger.info(f"[WebsiteExport] Archive size: {archive_size} bytes, files: {file_count}")
+
         return str(zip_path), archive_size, files_included
 
     async def export_website(
@@ -933,47 +943,59 @@ class WebsiteExportService:
         widget_config: dict | None = None,
     ) -> ExportResult:
         """Export a website to a ZIP archive.
-        
+
         Args:
             website_id: The website ID
             website_data: Dict containing website metadata, styles, blocks
             agent_contacts: Optional dict with agent contact information
             widget_config: Optional dict with widget configuration
-            
+
         Returns:
             ExportResult with archive details
         """
         website_slug = website_data.get("slug", f"site-{website_id}")
         export_id = f"{website_slug}-{int(datetime.now(timezone.utc).timestamp())}"
-        
+
         base_path = self.temp_dir / export_id
         base_path.mkdir(parents=True, exist_ok=True)
-        
+
+        logger.info(f"[WebsiteExport] Starting export for website_id={website_id}, slug={website_slug}")
+        logger.info(f"[WebsiteExport] Export working directory: {base_path}")
+
         try:
             # Create aiohttp session for downloading images
             async with aiohttp.ClientSession() as session:
                 image_processor = ImageProcessor(session, base_path)
-                
+
                 # Render blocks
                 blocks = website_data.get("blocks", [])
+                logger.info(f"[WebsiteExport] Rendering {len(blocks)} blocks")
                 blocks_html = self._render_blocks(blocks, agent_contacts)
-                
+                logger.info(f"[WebsiteExport] Blocks rendered, HTML size: {len(blocks_html)} chars")
+
                 # Process images in HTML
+                logger.info(f"[WebsiteExport] Processing images in HTML")
                 blocks_html = await image_processor.process_html_images(blocks_html)
-                
+                logger.info(f"[WebsiteExport] Images processed. Downloaded: {image_processor.downloaded_count}, Base64: {image_processor.base64_count}")
+
                 # Build complete HTML
+                logger.info(f"[WebsiteExport] Building final HTML document")
                 html_content = self._build_html(website_data, blocks_html, widget_config)
-                
+                logger.info(f"[WebsiteExport] Final HTML built, size: {len(html_content)} chars")
+
                 # Create ZIP archive
                 archive_path, archive_size, files_included = await self._create_zip_archive(
                     website_slug, html_content, base_path
                 )
-                
+
                 # Generate download URL
                 download_token = generate_download_token(website_id)
                 base_url = settings.BASE_URL or "https://rsd-ai.ru"
                 download_url = f"{base_url}/api/v1/websites/{website_id}/download?token={download_token}"
-                
+
+                logger.info(f"[WebsiteExport] Export completed successfully for website_id={website_id}")
+                logger.info(f"[WebsiteExport] Archive: {archive_path}, size: {archive_size} bytes, files: {len(files_included)}")
+
                 return ExportResult(
                     success=True,
                     archive_path=archive_path,
@@ -981,9 +1003,9 @@ class WebsiteExportService:
                     files_included=files_included,
                     download_url=download_url,
                 )
-                
+
         except Exception as e:
-            logger.exception(f"Export failed for website {website_id}: {e}")
+            logger.exception(f"[WebsiteExport] Export failed for website {website_id}: {e}")
             return ExportResult(
                 success=False,
                 error_message=str(e),
@@ -993,6 +1015,7 @@ class WebsiteExportService:
             import shutil
             if base_path.exists():
                 shutil.rmtree(base_path, ignore_errors=True)
+                logger.info(f"[WebsiteExport] Cleaned up temp directory: {base_path}")
 
     async def cleanup_old_exports(self) -> int:
         """Clean up export archives older than EXPORT_TTL_HOURS.

@@ -1187,6 +1187,34 @@ class UserErrorReport(Base):
     user: Mapped["User"] = relationship(back_populates="error_reports")
 
 
+class ApplicationErrorLog(Base):
+    """Automatic server-side error log for admin bug tracking."""
+    __tablename__ = "application_error_logs"
+    __table_args__ = (
+        Index("ix_application_error_logs_source_created", "source", "created_at"),
+        Index("ix_application_error_logs_resolved_created", "is_resolved", "created_at"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    level: Mapped[str] = mapped_column(String(20), nullable=False, default="error", server_default="error")
+    source: Mapped[str] = mapped_column(String(64), nullable=False, default="api", server_default="api")
+    scenario: Mapped[str] = mapped_column(String(512), nullable=False)
+    error_type: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    traceback: Mapped[str | None] = mapped_column(Text, nullable=True)
+    context_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True
+    )
+    status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_resolved: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+
+    user: Mapped["User | None"] = relationship()
+
+
 # ---------------------------------------------------------------------------
 # Article Publisher — private automation template for vc.ru / Yandex Zen
 # ---------------------------------------------------------------------------

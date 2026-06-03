@@ -51,6 +51,7 @@ from ..services.partner_payouts import (
 )
 from ..router_payments.router import _calculate_new_end_date
 from ..router_users.dao import UserDAO, UserErrorReportDAO
+from .dao import ApplicationErrorLogDAO
 from ..router_users.router import _build_unique_username, _validate_email_or_422
 from ..agent_template_pricing import (
     AGENT_DURATION_DISCOUNT_BY_MONTHS,
@@ -898,6 +899,119 @@ async def admin_error_reports(
         },
         status_code=status.HTTP_200_OK,
     )
+
+
+def _serialize_error_log_row(row) -> dict:
+    user = row.user
+    return {
+        "id": row.id,
+        "level": row.level,
+        "source": row.source,
+        "scenario": row.scenario,
+        "error_type": row.error_type,
+        "message": row.message,
+        "traceback": row.traceback,
+        "context": row.context_json,
+        "status_code": row.status_code,
+        "is_resolved": row.is_resolved,
+        "resolved_at": row.resolved_at.isoformat() if row.resolved_at else None,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "user": (
+            {
+                "id": user.id,
+                "name": user.name,
+                "email": user.email,
+            }
+            if user
+            else None
+        ),
+    }
+
+
+@router.get("/logs")
+async def admin_application_logs(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    search: str | None = Query(default=None),
+    level: str | None = Query(default=None),
+    source: str | None = Query(default=None),
+    is_resolved: bool | None = Query(default=None),
+    _admin=Depends(get_current_admin),
+):
+    search_value = (search or "").strip()
+    level_value = (level or "").strip() or None
+    source_value = (source or "").strip() or None
+
+    async with async_session_maker() as session:
+        log_dao = ApplicationErrorLogDAO(session)
+        async with session.begin():
+            total = await log_dao.count_for_admin(
+                search_value=search_value or None,
+                level=level_value,
+                source=source_value,
+                is_resolved=is_resolved,
+            )
+            rows = await log_dao.list_for_admin(
+                page=page,
+                page_size=page_size,
+                search_value=search_value or None,
+                level=level_value,
+                source=source_value,
+                is_resolved=is_resolved,
+            )
+
+    items = [_serialize_error_log_row(row) for row in rows]
+
+    return JSONResponse(
+        content={
+            "items": items,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": total or 0,
+                "total_pages": max(1, ((total or 0) + page_size - 1) // page_size),
+            },
+        },
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@router.get("/logs/{log_id}")
+async def admin_application_log_detail(
+    log_id: int = Path(..., ge=1),
+    _admin=Depends(get_current_admin),
+):
+    async with async_session_maker() as session:
+        log_dao = ApplicationErrorLogDAO(session)
+        async with session.begin():
+            row = await log_dao.get_by_id(log_id)
+
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Log entry not found")
+
+    return JSONResponse(content=_serialize_error_log_row(row), status_code=status.HTTP_200_OK)
+
+
+@router.patch("/logs/{log_id}/resolve")
+async def admin_application_log_resolve(
+    log_id: int = Path(..., ge=1),
+    _admin=Depends(get_current_admin),
+):
+    async with async_session_maker() as session:
+        log_dao = ApplicationErrorLogDAO(session)
+        async with session.begin():
+            row = await log_dao.get_by_id(log_id)
+            if not row:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Log entry not found")
+            await log_dao.update(
+                row,
+                {
+                    "is_resolved": True,
+                    "resolved_at": datetime.now(timezone.utc).replace(tzinfo=None),
+                },
+            )
+
+    return JSONResponse(content={"ok": True}, status_code=status.HTTP_200_OK)
 
 
 @router.get("/plans")

@@ -125,6 +125,46 @@ const adminService = {
     return response.data;
   },
 
+  async getApplicationLogs(
+    token,
+    {
+      page = 1,
+      pageSize = 20,
+      search = '',
+      level = '',
+      source = '',
+      isResolved = null,
+    } = {}
+  ) {
+    const response = await adminClient.get(API_ROUTES.ADMIN_LOGS, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      params: {
+        page,
+        page_size: pageSize,
+        search: search || undefined,
+        level: level || undefined,
+        source: source || undefined,
+        is_resolved: isResolved === null ? undefined : isResolved,
+      },
+    });
+    return response.data;
+  },
+
+  async resolveApplicationLog(token, logId) {
+    const response = await adminClient.patch(
+      API_ROUTES.ADMIN_LOG_RESOLVE(logId),
+      {},
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+    return response.data;
+  },
+
   async getPlans(token) {
     const response = await adminClient.get(API_ROUTES.ADMIN_PLANS, {
       headers: {

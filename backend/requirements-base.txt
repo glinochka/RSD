@@ -1,0 +1,13 @@
+# Heavy / rarely changing deps — copied first in Dockerfile for layer cache.
+numpy>=2.1.0,<3; python_version >= "3.13"
+numpy>=1.26.4,<2; python_version < "3.13"
+qdrant-client>=1.8.0
+sentence-transformers>=3.0.0
+langchain-text-splitters>=0.0.1
+openai>=1.14.0
+faster-whisper>=1.1.0
+telethon>=1.36.0
+opentele>=1.15
+grpcio>=1.60.0
+grpcio-tools>=1.60.0
+playwright>=1.54.0

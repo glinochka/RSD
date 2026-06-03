@@ -234,9 +234,13 @@ class WebsiteGenerationService:
 
     def __init__(self):
         self.ai_client = ai_client
-        self.model = (settings.WEBSITE_GENERATION_MODEL or "deepseek-coder").strip()
+        # Use deepseek-chat for HTML generation (better creative/design capabilities)
+        # deepseek-coder is optimized for code completion, not full page design
+        configured_model = settings.WEBSITE_GENERATION_MODEL or "deepseek-chat"
+        self.model = configured_model.strip()
         self.max_retries = 2
         self.max_generation_tokens = 16000
+        logger.info(f"[WebsiteGenService] Initialized with model: {self.model}")
 
     async def _call_ai(
         self,
@@ -278,10 +282,14 @@ class WebsiteGenerationService:
         last_error = None
         raw_response = None
 
+        logger.info(f"[WebsiteGen] Starting generate_website for '{business_name}' (model={self.model})")
+        logger.info(f"[WebsiteGen] Params: dark_mode={dark_mode}, style={style_direction}, color={primary_color}")
+        logger.info(f"[WebsiteGen] Services count: {len(services) if services else 0}")
+
         for attempt in range(1, self.max_retries + 1):
             try:
                 logger.info(
-                    "Website generation attempt %s/%s (model=%s)",
+                    "[WebsiteGen] Generation attempt %s/%s (model=%s)",
                     attempt, self.max_retries, self.model,
                 )
 
@@ -295,6 +303,7 @@ class WebsiteGenerationService:
                     dark_mode=dark_mode,
                     style_direction=style_direction,
                 )
+                logger.debug(f"[WebsiteGen] User prompt length: {len(user_prompt)} chars")
 
                 raw_response = await self._call_ai(
                     system_prompt=WEBSITE_CODER_SYSTEM_PROMPT,
@@ -302,8 +311,10 @@ class WebsiteGenerationService:
                     temperature=0.75,
                     max_tokens=self.max_generation_tokens,
                 )
+                logger.info(f"[WebsiteGen] AI response received, length: {len(raw_response or '')} chars")
 
                 html_content = _extract_html_from_response(raw_response)
+                logger.info(f"[WebsiteGen] Extracted HTML length: {len(html_content)} chars")
 
                 # Validate minimum quality
                 if len(html_content) < 500:
@@ -312,7 +323,10 @@ class WebsiteGenerationService:
                 if "<section" not in html_content and "<div" not in html_content:
                     raise ValueError("Generated content doesn't contain valid HTML sections")
 
+                logger.info("[WebsiteGen] HTML validation passed")
+
                 # Step 2: Quality refinement pass
+                logger.info("[WebsiteGen] Starting refinement pass")
                 refine_prompt = (
                     f"Business: {business_name}\n"
                     f"Theme: {'dark' if dark_mode else 'light'}\n"
@@ -328,17 +342,23 @@ class WebsiteGenerationService:
                 )
 
                 refined_html = _extract_html_from_response(refined_raw)
+                logger.info(f"[WebsiteGen] Refined HTML length: {len(refined_html)} chars")
 
                 # Use refined version if it's valid, otherwise keep original
                 if len(refined_html) >= len(html_content) * 0.7:
                     html_content = refined_html
+                    logger.info("[WebsiteGen] Using refined HTML")
+                else:
+                    logger.info("[WebsiteGen] Refined HTML too short, using original")
 
                 # Apply brand color safety net
                 html_content = _inject_tailwind_color(html_content, primary_color)
 
                 # Extract meta
                 meta = _build_meta_from_html(html_content, business_name, business_description)
+                logger.info(f"[WebsiteGen] Meta extracted: title='{meta.get('title', '')[:50]}...'")
 
+                logger.info("[WebsiteGen] Generation completed successfully")
                 return GenerationResult(
                     success=True,
                     html_content=html_content,
@@ -349,10 +369,10 @@ class WebsiteGenerationService:
 
             except Exception as e:
                 last_error = str(e)
-                logger.warning(f"Generation attempt {attempt} failed: {e}")
+                logger.warning(f"[WebsiteGen] Generation attempt {attempt} failed: {e}")
                 continue
 
-        logger.error(f"All website generation attempts failed: {last_error}")
+        logger.error(f"[WebsiteGen] All website generation attempts failed: {last_error}")
         return GenerationResult(
             success=False,
             html_content=None,
@@ -368,50 +388,68 @@ class WebsiteGenerationService:
         meta: dict,
     ) -> bool:
         """Save generated HTML to the website as a fullpage block."""
-        async with async_session_maker() as session:
-            async with session.begin():
-                website_dao = WebsiteDAO(session)
-                block_dao = WebsiteBlockDAO(session)
+        logger.info(f"[WebsiteGenService] apply_generated_html called for website_id={website_id}")
+        logger.info(f"[WebsiteGenService] HTML content size: {len(html_content)} chars")
+        logger.info(f"[WebsiteGenService] Meta: title='{meta.get('title', 'N/A')[:50]}...'")
 
-                website = await website_dao.find_one_by_filter(id=website_id)
-                if not website:
-                    logger.error(f"Website not found: {website_id}")
-                    return False
+        try:
+            async with async_session_maker() as session:
+                async with session.begin():
+                    website_dao = WebsiteDAO(session)
+                    block_dao = WebsiteBlockDAO(session)
 
-                # Update website metadata
-                updates = {
-                    "title": meta.get("title", ""),
-                    "meta_description": meta.get("description", ""),
-                    "og_title": meta.get("title", ""),
-                    "og_description": meta.get("description", ""),
-                    "custom_styles": {
-                        **(website.custom_styles or {}),
-                        "rendering_mode": "fullpage",
-                    },
-                    "generation_status": "completed",
-                    "updated_at": datetime.utcnow(),
-                }
-                await website_dao.update(website, updates)
+                    website = await website_dao.find_one_by_filter(id=website_id)
+                    if not website:
+                        logger.error(f"[WebsiteGenService] Website not found: {website_id}")
+                        return False
 
-                # Clear existing blocks
-                existing_blocks = await block_dao.list_by_website(
-                    website_id, only_visible=False
-                )
-                for block in existing_blocks:
-                    await block_dao.delete(block)
+                    logger.info(f"[WebsiteGenService] Found website '{website.title}', updating metadata")
 
-                # Create single fullpage block
-                block = WebsiteBlock(
-                    website_id=website_id,
-                    type="fullpage",
-                    order=1,
-                    content={"html": html_content},
-                    styles={},
-                    is_visible=True,
-                )
-                session.add(block)
+                    # Update website metadata
+                    updates = {
+                        "title": meta.get("title", ""),
+                        "meta_description": meta.get("description", ""),
+                        "og_title": meta.get("title", ""),
+                        "og_description": meta.get("description", ""),
+                        "custom_styles": {
+                            **(website.custom_styles or {}),
+                            "rendering_mode": "fullpage",
+                        },
+                        "generation_status": "completed",
+                        "updated_at": datetime.utcnow(),
+                    }
+                    await website_dao.update(website, updates)
+                    logger.info(f"[WebsiteGenService] Website metadata updated for website_id={website_id}")
 
-                return True
+                    # Clear existing blocks
+                    existing_blocks = await block_dao.list_by_website(
+                        website_id, only_visible=False
+                    )
+                    blocks_count = len(existing_blocks)
+                    logger.info(f"[WebsiteGenService] Clearing {blocks_count} existing blocks")
+                    for block in existing_blocks:
+                        await block_dao.delete(block)
+                    logger.info(f"[WebsiteGenService] Cleared {blocks_count} existing blocks")
+
+                    # Create single fullpage block
+                    logger.info(f"[WebsiteGenService] Creating fullpage block for website_id={website_id}")
+                    block = WebsiteBlock(
+                        website_id=website_id,
+                        type="fullpage",
+                        order=1,
+                        content={"html": html_content},
+                        styles={},
+                        is_visible=True,
+                    )
+                    session.add(block)
+                    logger.info(f"[WebsiteGenService] Fullpage block added to session for website_id={website_id}")
+
+                    # File creation is logged at the DB level
+                    logger.info(f"[WebsiteGenService] apply_generated_html completed successfully for website_id={website_id}")
+                    return True
+        except Exception as e:
+            logger.exception(f"[WebsiteGenService] Error in apply_generated_html for website_id={website_id}: {e}")
+            return False
 
     async def edit_website_with_prompt(
         self,

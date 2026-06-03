@@ -669,6 +669,7 @@ const MENU_ITEMS = [
   { id: 'chats', label: 'Чаты' },
   { id: 'turnkeyRequests', label: 'Заявки под ключ' },
   { id: 'errorReports', label: 'Сообщения об ошибках' },
+  { id: 'logs', label: 'Логи' },
   { id: 'billing', label: 'Тарифы' },
   { id: 'promoCodes', label: 'Промокоды' },
   { id: 'partnerPayouts', label: 'Выплаты партнёрам' },
@@ -808,6 +809,18 @@ const ManagementPortal = () => {
     total: 0,
     search: '',
   });
+  const [logsState, setLogsState] = useState({
+    items: [],
+    page: 1,
+    pageSize: 20,
+    totalPages: 1,
+    total: 0,
+    search: '',
+    level: '',
+    source: '',
+    isResolved: '',
+    expandedId: null,
+  });
   const [chatsState, setChatsState] = useState({
     items: [],
     page: 1,
@@ -937,6 +950,7 @@ const ManagementPortal = () => {
         && activeSection !== 'chats'
         && activeSection !== 'turnkeyRequests'
         && activeSection !== 'errorReports'
+        && activeSection !== 'logs'
       ) return;
 
       try {
@@ -990,6 +1004,24 @@ const ManagementPortal = () => {
             total: data.pagination?.total ?? 0,
             totalPages: data.pagination?.total_pages ?? 1,
           }));
+        } else if (activeSection === 'logs') {
+          const isResolvedFilter = logsState.isResolved === ''
+            ? null
+            : logsState.isResolved === 'resolved';
+          const data = await adminService.getApplicationLogs(adminToken, {
+            page: logsState.page,
+            pageSize: logsState.pageSize,
+            search: logsState.search,
+            level: logsState.level,
+            source: logsState.source,
+            isResolved: isResolvedFilter,
+          });
+          setLogsState((prev) => ({
+            ...prev,
+            items: data.items ?? [],
+            total: data.pagination?.total ?? 0,
+            totalPages: data.pagination?.total_pages ?? 1,
+          }));
         } else if (activeSection === 'chats') {
           const data = await adminService.getChats(adminToken, {
             page: chatsState.page,
@@ -1032,6 +1064,12 @@ const ManagementPortal = () => {
     errorReportsState.page,
     errorReportsState.pageSize,
     errorReportsState.search,
+    logsState.page,
+    logsState.pageSize,
+    logsState.search,
+    logsState.level,
+    logsState.source,
+    logsState.isResolved,
     chatsState.page,
     chatsState.pageSize,
     chatsState.search,
@@ -2557,6 +2595,190 @@ const ManagementPortal = () => {
               className="btn btn-outline"
               disabled={errorReportsState.page >= errorReportsState.totalPages}
               onClick={() => setErrorReportsState((prev) => ({ ...prev, page: prev.page + 1 }))}
+            >
+              Вперед
+            </button>
+          </div>
+        </>
+      )}
+    </>
+  );
+
+  const handleResolveLog = async (logId) => {
+    if (!adminToken) return;
+    try {
+      setActionInProgress(`resolve-log-${logId}`);
+      await adminService.resolveApplicationLog(adminToken, logId);
+      setLogsState((prev) => ({
+        ...prev,
+        items: prev.items.map((item) => (
+          item.id === logId
+            ? { ...item, is_resolved: true, resolved_at: new Date().toISOString() }
+            : item
+        )),
+      }));
+    } catch (err) {
+      setError(err?.response?.data?.detail || err.message || 'Не удалось отметить лог как исправленный');
+    } finally {
+      setActionInProgress(null);
+    }
+  };
+
+  const renderLogs = () => (
+    <>
+      <div className="management-content-head">
+        <h2>Логи ошибок</h2>
+        <div className="management-inline-controls">
+          <input
+            type="text"
+            placeholder="Поиск по сценарию, тексту ошибки, пользователю"
+            value={logsState.search}
+            onChange={(e) => setLogsState((prev) => ({ ...prev, page: 1, search: e.target.value }))}
+          />
+          <select
+            value={logsState.level}
+            onChange={(e) => setLogsState((prev) => ({ ...prev, page: 1, level: e.target.value }))}
+          >
+            <option value="">Все уровни</option>
+            <option value="error">error</option>
+            <option value="critical">critical</option>
+          </select>
+          <select
+            value={logsState.source}
+            onChange={(e) => setLogsState((prev) => ({ ...prev, page: 1, source: e.target.value }))}
+          >
+            <option value="">Все источники</option>
+            <option value="api">api</option>
+            <option value="cron">cron</option>
+            <option value="worker">worker</option>
+            <option value="service">service</option>
+          </select>
+          <select
+            value={logsState.isResolved}
+            onChange={(e) => setLogsState((prev) => ({ ...prev, page: 1, isResolved: e.target.value }))}
+          >
+            <option value="">Все статусы</option>
+            <option value="open">Открытые</option>
+            <option value="resolved">Исправленные</option>
+          </select>
+        </div>
+      </div>
+      {error && <div className="management-error">{error}</div>}
+      {isLoadingTable ? <p>Загрузка логов...</p> : (
+        <>
+          <div className="management-table-wrap">
+            <table className="management-table management-table-wrap-text">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Дата</th>
+                  <th>Уровень</th>
+                  <th>Источник</th>
+                  <th>Сценарий</th>
+                  <th>Ошибка</th>
+                  <th>Пользователь</th>
+                  <th>Статус</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {logsState.items.map((row) => {
+                  const isExpanded = logsState.expandedId === row.id;
+                  return (
+                    <React.Fragment key={row.id}>
+                      <tr>
+                        <td>{row.id}</td>
+                        <td>{row.created_at ? new Date(row.created_at).toLocaleString() : '-'}</td>
+                        <td>{row.level || '—'}</td>
+                        <td>{row.source || '—'}</td>
+                        <td>{row.scenario}</td>
+                        <td>
+                          <div className="management-cell-stack">
+                            <span>{row.error_type || '—'}</span>
+                            <span className="management-cell-muted">{row.message}</span>
+                          </div>
+                        </td>
+                        <td>
+                          {row.user ? (
+                            <div className="management-cell-stack">
+                              <span>{row.user.name}</span>
+                              <span className="management-cell-muted">{row.user.email || '—'}</span>
+                            </div>
+                          ) : '—'}
+                        </td>
+                        <td>{row.is_resolved ? 'Исправлено' : 'Открыто'}</td>
+                        <td>
+                          <div className="management-cell-stack">
+                            <button
+                              type="button"
+                              className="btn btn-outline btn-sm"
+                              onClick={() => setLogsState((prev) => ({
+                                ...prev,
+                                expandedId: isExpanded ? null : row.id,
+                              }))}
+                            >
+                              {isExpanded ? 'Скрыть' : 'Подробнее'}
+                            </button>
+                            {!row.is_resolved && (
+                              <button
+                                type="button"
+                                className="btn btn-outline btn-sm"
+                                disabled={actionInProgress === `resolve-log-${row.id}`}
+                                onClick={() => handleResolveLog(row.id)}
+                              >
+                                Исправлено
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                      {isExpanded && (
+                        <tr key={`${row.id}-details`}>
+                          <td colSpan={9}>
+                            <div className="management-cell-stack">
+                              {row.status_code != null && (
+                                <div><strong>HTTP:</strong> {row.status_code}</div>
+                              )}
+                              {row.context && (
+                                <div>
+                                  <strong>Контекст запроса:</strong>
+                                  <pre className="management-log-pre">{JSON.stringify(row.context, null, 2)}</pre>
+                                </div>
+                              )}
+                              {row.traceback && (
+                                <div>
+                                  <strong>Traceback:</strong>
+                                  <pre className="management-log-pre">{row.traceback}</pre>
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+                {logsState.items.length === 0 && (
+                  <tr><td colSpan={9}>Ошибок пока не зафиксировано</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <div className="management-pagination">
+            <button
+              type="button"
+              className="btn btn-outline"
+              disabled={logsState.page <= 1}
+              onClick={() => setLogsState((prev) => ({ ...prev, page: prev.page - 1 }))}
+            >
+              Назад
+            </button>
+            <span>Стр. {logsState.page} из {logsState.totalPages} (всего: {logsState.total})</span>
+            <button
+              type="button"
+              className="btn btn-outline"
+              disabled={logsState.page >= logsState.totalPages}
+              onClick={() => setLogsState((prev) => ({ ...prev, page: prev.page + 1 }))}
             >
               Вперед
             </button>
@@ -5312,6 +5534,7 @@ const ManagementPortal = () => {
             {activeSection === 'chats' && renderChats()}
             {activeSection === 'turnkeyRequests' && renderTurnkeyRequests()}
             {activeSection === 'errorReports' && renderErrorReports()}
+            {activeSection === 'logs' && renderLogs()}
             {activeSection === 'billing' && renderBilling()}
             {activeSection === 'promoCodes' && renderPromoCodes()}
             {activeSection === 'partnerPayouts' && renderPartnerPayouts()}
