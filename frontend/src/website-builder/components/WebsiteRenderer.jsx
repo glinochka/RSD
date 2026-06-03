@@ -1,12 +1,16 @@
 /**
  * Website Renderer Component
- * Renders a complete website from schema with all blocks
+ * Renders a complete website from schema with all blocks.
+ * Supports two modes:
+ * - "fullpage": AI-generated HTML rendered in a sandboxed iframe
+ * - Legacy block-based rendering via React components
  */
 import React from 'react';
 import PropTypes from 'prop-types';
 import { Helmet } from 'react-helmet-async';
 import { blockStylesToCss } from '../utils/styleUtils';
 import { scopeCSS, generateScopedClass } from '../utils/security';
+import FullpageRenderer from './FullpageRenderer';
 
 // Import all block components
 import {
@@ -246,6 +250,36 @@ const WebsiteRenderer = ({
     styles = {},
     blocks = [],
   } = schema || {};
+
+  // Detect fullpage rendering mode (AI-generated HTML sites)
+  const isFullpage = styles?.rendering_mode === 'fullpage' ||
+    blocks?.some((b) => b.type === 'fullpage');
+
+  if (isFullpage) {
+    const fullpageBlock = blocks?.find((b) => b.type === 'fullpage');
+    const htmlContent = fullpageBlock?.content?.html || '';
+
+    return (
+      <>
+        <Helmet>
+          <title>{title || 'Мой сайт'}</title>
+          <meta name="description" content={meta_description || ''} />
+          <meta property="og:title" content={og_title || title || ''} />
+          <meta property="og:description" content={og_description || meta_description || ''} />
+          {og_image_url && <meta property="og:image" content={og_image_url} />}
+          {favicon_url && <link rel="icon" href={favicon_url} />}
+        </Helmet>
+        <FullpageRenderer
+          htmlContent={htmlContent}
+          websiteId={id}
+          title={title}
+          editMode={editMode}
+          previewMode={previewMode}
+          className={className}
+        />
+      </>
+    );
+  }
 
   // Merge all styles
   const mergedStyles = mergeStyles(templateStyles, styles);

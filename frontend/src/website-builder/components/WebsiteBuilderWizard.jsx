@@ -8,10 +8,10 @@ import { websiteService } from '../../services/websiteService';
 import '../styles/website-builder-wizard.css';
 
 const WEBSITE_TEMPLATES = [
-  { id: 'modern-business', name: 'Современный бизнес', description: 'Градиенты, крупная типографика', color: '#3B82F6' },
-  { id: 'minimal-portfolio', name: 'Минималистичный', description: 'Много whitespace, чёрно-белый', color: '#1F2937' },
-  { id: 'vibrant-service', name: 'Яркий сервис', description: 'Цветные карточки, подходит для услуг', color: '#8B5CF6' },
-  { id: 'elegant-professional', name: 'Элегантный', description: 'Serif-шрифты, для консалтинга', color: '#059669' },
+  { id: 'modern-business', name: 'Современный', description: 'Градиенты, glassmorphism, bold', color: '#3B82F6' },
+  { id: 'minimal-portfolio', name: 'Минималистичный', description: 'Чистый, много воздуха, лаконичный', color: '#1F2937' },
+  { id: 'vibrant-service', name: 'Яркий и дерзкий', description: 'Насыщенные цвета, карточки, динамика', color: '#8B5CF6' },
+  { id: 'elegant-professional', name: 'Премиальный', description: 'Утончённый, для серьёзных ниш', color: '#059669' },
 ];
 
 const PRESET_COLORS = [
@@ -263,8 +263,8 @@ const WebsiteBuilderWizard = ({ isOpen, onClose, agent, onSuccess }) => {
                 <div className="wb-wizard__icon-wrap wb-wizard__icon-wrap--accent">
                   <LayoutIcon />
                 </div>
-                <h3 className="wb-wizard__subtitle">Выберите стиль сайта</h3>
-                <p className="wb-wizard__hint">Шаблон определяет базовую структуру и дизайн</p>
+                <h3 className="wb-wizard__subtitle">Выберите стиль</h3>
+                <p className="wb-wizard__hint">ИИ учтёт выбранное направление при создании уникального дизайна</p>
               </div>
 
               <div className="wb-wizard__templates">
@@ -354,7 +354,7 @@ const WebsiteBuilderWizard = ({ isOpen, onClose, agent, onSuccess }) => {
                     Название: <strong>{businessName}</strong>
                   </li>
                   <li>
-                    Шаблон: <strong>{selectedTemplateName}</strong>
+                    Стиль: <strong>{selectedTemplateName}</strong>
                   </li>
                   <li>
                     Цвет:{' '}

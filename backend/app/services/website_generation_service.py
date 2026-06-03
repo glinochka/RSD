@@ -1,4 +1,9 @@
-"""Website Generation Service — AI-powered website generation via DeepSeek API."""
+"""Website Generation Service — AI-powered website code generation.
+
+Instead of generating structured JSON that feeds into fixed templates,
+this service acts as an AI frontend coder that produces complete,
+unique HTML+CSS pages with Tailwind CSS.
+"""
 from __future__ import annotations
 
 import json
@@ -8,10 +13,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field, ValidationError, field_validator
-
 from ..alembic.database import async_session_maker
-from ..alembic.models import AdminService, Agent, AgentChannelConnection, Website, WebsiteBlock
+from ..alembic.models import WebsiteBlock
 from ..router_websites.dao import WebsiteBlockDAO, WebsiteDAO
 from ..config import settings
 from .ai_authoring import ai_client
@@ -19,335 +22,229 @@ from .ai_authoring import ai_client
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Pydantic Models for AI Response Parsing
+# System Prompts
 # ---------------------------------------------------------------------------
 
-class HeroContent(BaseModel):
-    headline: str = Field(..., max_length=200)
-    subheadline: str | None = Field(default=None, max_length=500)
-    cta_text: str | None = Field(default=None, max_length=100)
-    cta_link: str | None = Field(default=None, max_length=1024)
-    background_image_url: str | None = Field(default=None, max_length=1024)
-    nav_links: list[dict[str, str]] = Field(default_factory=list)
+WEBSITE_CODER_SYSTEM_PROMPT = """\
+You are an elite frontend developer and UI/UX designer who creates stunning, \
+modern single-page websites. You write production-quality HTML with Tailwind CSS.
 
+TASK: Generate a COMPLETE, UNIQUE, BEAUTIFUL single-page website as raw HTML.
 
-class ServiceItem(BaseModel):
-    name: str = Field(..., max_length=100)
-    description: str | None = Field(default=None, max_length=500)
-    price: str | None = Field(default=None, max_length=100)
-    icon: str | None = Field(default=None, max_length=100)
-    image_url: str | None = Field(default=None, max_length=1024)
+CRITICAL RULES:
+1. Output ONLY the HTML code inside <body>. No <!DOCTYPE>, <html>, <head>, or <body> tags.
+2. Use Tailwind CSS classes exclusively for styling (CDN is already loaded).
+3. The design must be UNIQUE and INDIVIDUAL — not a generic template.
+4. Use modern design patterns: glassmorphism, gradients, subtle animations, asymmetric layouts.
+5. Language: ALL visible text must be in RUSSIAN.
+6. Mobile-first responsive design (sm:, md:, lg: breakpoints).
+7. Include smooth scroll behavior via anchor links.
+8. No <script> tags, no inline JavaScript, no external resources except Tailwind.
+9. Use semantic HTML5 elements (header, nav, main, section, footer).
+10. Include proper id attributes on sections for navigation anchors.
 
+DESIGN PRINCIPLES:
+- Hero section: bold, eye-catching, with a strong value proposition
+- Typography: use font-weight variety (font-light, font-bold, font-extrabold)
+- Spacing: generous whitespace, don't cram content
+- Colors: harmonious palette, use gradients where appropriate
+- Cards/blocks: rounded corners, subtle shadows, hover effects via Tailwind
+- Icons: use inline SVG icons (simple, clean) or Unicode symbols where appropriate
+- Sections: each section should have a DIFFERENT visual rhythm and layout
+- CTA buttons: prominent, with hover/focus states
+- Footer: clean, organized, with social links
 
-class ServicesContent(BaseModel):
-    title: str = Field(default="Наши услуги", max_length=100)
-    items: list[ServiceItem] = Field(default_factory=list)
+STRUCTURE (adapt creatively per industry):
+1. Navigation bar (sticky, with backdrop-blur)
+2. Hero section (full-width, impactful)
+3. 3-5 content sections (services/features, about, testimonials/cases, process/FAQ, etc.)
+4. Call-to-action section
+5. Contact section
+6. Footer
 
+AVOID:
+- Generic "Lorem ipsum" text
+- Identical card layouts repeated across all sections
+- Plain white backgrounds for everything
+- Boring symmetric grids without variation
+- Cookie-cutter template look
+"""
 
-class AboutContent(BaseModel):
-    title: str = Field(default="О нас", max_length=100)
-    text: str = Field(..., max_length=5000)
-    image_url: str | None = Field(default=None, max_length=1024)
+WEBSITE_EDIT_SYSTEM_PROMPT = """\
+You are an expert frontend developer editing an existing website's HTML code.
 
+The user will describe desired changes in natural language.
+You receive the current HTML and must return the MODIFIED HTML with the requested changes applied.
 
-class ContactInfo(BaseModel):
-    phone: str | None = Field(default=None, max_length=50)
-    email: str | None = Field(default=None, max_length=255)
-    address: str | None = Field(default=None, max_length=500)
-    telegram: str | None = Field(default=None, max_length=100)
-    whatsapp: str | None = Field(default=None, max_length=100)
-    working_hours: str | None = Field(default=None, max_length=200)
+RULES:
+1. Output ONLY the modified HTML (the body content, no DOCTYPE/html/head/body wrappers).
+2. Keep all existing Tailwind CSS classes and structure intact unless the change requires modification.
+3. Maintain responsive design (sm:, md:, lg: breakpoints).
+4. All text must remain in RUSSIAN.
+5. No <script> tags, no inline JavaScript.
+6. Preserve section id attributes for navigation.
+7. Make ONLY the changes the user requested. Don't redesign the whole page unnecessarily.
+8. If the user asks to change colors/theme, update Tailwind color classes consistently.
+9. If adding new sections, match the existing design language.
+"""
 
+WEBSITE_REFINE_SYSTEM_PROMPT = """\
+You are a senior frontend code reviewer. You receive HTML of a landing page and must \
+improve it for production quality.
 
-class ContactsContent(BaseModel):
-    title: str = Field(default="Контакты", max_length=100)
-    contact_info: ContactInfo = Field(default_factory=ContactInfo)
-    show_form: bool = True
+Output ONLY the improved HTML (body content only, no wrappers).
 
+CHECK AND FIX:
+- Mobile responsiveness (ensure all sections work on small screens)
+- Consistent color palette usage across all sections
+- Proper hover/focus states on interactive elements
+- Adequate spacing and padding (especially on mobile with px-4, py-8, etc.)
+- Section variety (different layouts for different sections)
+- Accessibility basics (alt attributes, semantic structure, contrast)
+- Remove any empty or placeholder content
+- Ensure navigation anchors work correctly
+- Fix any Tailwind class typos or conflicts
+- Make CTAs stand out visually
 
-class CTAContent(BaseModel):
-    title: str = Field(..., max_length=200)
-    subtitle: str | None = Field(default=None, max_length=500)
-    button_text: str = Field(default="Связаться", max_length=100)
-    button_link: str | None = Field(default=None, max_length=1024)
-
-
-class FooterContent(BaseModel):
-    company_name: str | None = Field(default=None, max_length=100)
-    copyright_text: str | None = Field(default=None, max_length=500)
-    social_links: dict[str, str] = Field(default_factory=dict)
-    privacy_policy_url: str | None = Field(default=None, max_length=1024)
-    terms_url: str | None = Field(default=None, max_length=1024)
-
-
-class MetaInfo(BaseModel):
-    title: str = Field(..., max_length=100)
-    description: str = Field(..., max_length=500)
-
-
-class GeneratedStyles(BaseModel):
-    primary_color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
-    secondary_color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
-    background_color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
-    text_color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
-    accent_color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
-    font_family: str | None = Field(default=None, max_length=64)
-    dark_mode: bool = False
-    border_radius: str | None = Field(default=None, max_length=20)
-
-
-class GeneratedBlock(BaseModel):
-    type: str = Field(..., pattern=r"^(hero|services|about|contacts|cta|footer|custom)$")
-    order: int = Field(..., ge=0)
-    content: dict[str, Any] = Field(default_factory=dict)
-    styles: dict[str, Any] = Field(default_factory=dict)
-
-
-class GeneratedWebsiteSchema(BaseModel):
-    meta: MetaInfo
-    styles: GeneratedStyles
-    blocks: list[GeneratedBlock]
-
-    @field_validator("blocks")
-    @classmethod
-    def validate_block_orders(cls, blocks: list[GeneratedBlock]) -> list[GeneratedBlock]:
-        """Ensure block orders are sequential starting from 1."""
-        if not blocks:
-            return blocks
-        sorted_blocks = sorted(blocks, key=lambda b: b.order)
-        for i, block in enumerate(sorted_blocks, 1):
-            block.order = i
-        return sorted_blocks
-
-
-MIN_REQUIRED_BLOCK_TYPES = ("hero", "footer")
-
-
-def normalize_generated_schema(
-    schema: GeneratedWebsiteSchema,
-    *,
-    business_name: str,
-    business_description: str,
-    primary_color: str | None = None,
-    dark_mode: bool = False,
-) -> GeneratedWebsiteSchema:
-    """Normalize AI-generated schema without template substitution."""
-    if not schema.meta.title:
-        schema.meta.title = (business_name or "Сайт компании").strip()[:100]
-    if not schema.meta.description:
-        schema.meta.description = (
-            (business_description or "Профессиональные услуги").strip()[:500]
-        )
-
-    default_styles = {
-        "primary_color": primary_color or "#2563EB",
-        "secondary_color": "#1E40AF" if not dark_mode else "#1D4ED8",
-        "background_color": "#FFFFFF" if not dark_mode else "#0F172A",
-        "text_color": "#1F2937" if not dark_mode else "#E5E7EB",
-        "accent_color": "#3B82F6",
-        "font_family": "Inter",
-        "dark_mode": dark_mode,
-        "border_radius": "medium",
-    }
-    current_styles = schema.styles.model_dump(exclude_none=True)
-    schema.styles = GeneratedStyles.model_validate({**default_styles, **current_styles})
-
-    if not schema.blocks:
-        raise ValueError("Generated schema has no blocks")
-
-    block_types = {block.type for block in schema.blocks}
-    missing_mandatory = [t for t in MIN_REQUIRED_BLOCK_TYPES if t not in block_types]
-    if missing_mandatory:
-        raise ValueError(f"Generated schema missing mandatory blocks: {', '.join(missing_mandatory)}")
-
-    hero_blocks = [b for b in schema.blocks if b.type == "hero"]
-    non_hero_blocks = [b for b in schema.blocks if b.type != "hero"]
-    ordered_blocks = hero_blocks[:1] + non_hero_blocks
-    for idx, block in enumerate(ordered_blocks, start=1):
-        block.order = idx
-    schema.blocks = ordered_blocks
-
-    has_content_between = any(
-        b.type in {"services", "about", "contacts", "cta", "custom"} for b in schema.blocks[1:]
-    )
-    if not has_content_between:
-        raise ValueError("Generated schema is too sparse and has no meaningful content sections")
-
-    return schema
-
-
-# ---------------------------------------------------------------------------
-# System Prompt for Website Generation
-# ---------------------------------------------------------------------------
-
-WEBSITE_GENERATION_SYSTEM_PROMPT = """Ты — senior frontend engineer + UI/UX designer + conversion copywriter. Твоя задача — создать уникальный одностраничный сайт под конкретный бизнес.
-
-ВАЖНО: Ответь ТОЛЬКО в формате JSON. Никаких пояснений до или после JSON.
-
-Структура ответа должна соответствовать следующей схеме:
-
-```json
-{
-  "meta": {
-    "title": "Заголовок сайта (до 60 символов, SEO-оптимизированный)",
-    "description": "Описание для SEO (до 160 символов)"
-  },
-  "styles": {
-    "primary_color": "#XXXXXX",
-    "secondary_color": "#XXXXXX",
-    "background_color": "#FFFFFF",
-    "text_color": "#1F2937",
-    "accent_color": "#XXXXXX",
-    "font_family": "Inter",
-    "dark_mode": false,
-    "border_radius": "medium"
-  },
-  "blocks": [
-    {
-      "type": "hero",
-      "order": 1,
-      "content": {
-        "headline": "Главный заголовок (убедительный, яркий)",
-        "subheadline": "Подзаголовок (ценностное предложение)",
-        "cta_text": "Текст кнопки (2-3 слова)",
-        "cta_link": "#contacts"
-      },
-      "styles": {}
-    },
-    // После hero используй вариативный набор секций:
-    // services/about/contacts/cta/footer и/или custom.
-    // Для нестандартных секций (кейсы, FAQ, отзывы, карусель, этапы, тарифы и т.д.) используй type="custom" и content.html.
-    // Минимум: hero в начале и footer в конце.
-  ]
-}
-```
-
-ПРАВИЛА:
-1. Используй цвета из переданной цветовой схемы
-2. Текст должен быть на русском языке, профессиональным, продающим
-3. Для каждого блока создавай осмысленный, качественный контент
-4. Заголовки должны быть цепляющими, конкретными, отраслевыми
-5. Не используй повторяющиеся иконки и одинаковые паттерны карточек на всех сайтах
-6. Если формируешь custom-блок, генерируй безопасный семантический HTML без inline script/style
-7. Если информация не предоставлена — используй реалистичные placeholder-значения
-8. Структура должна следовать стандарту: navbar + hero + контентные секции + контакты/CTA + footer
-9. hero должен быть первым, footer последним, order строго по возрастанию
-10. Только валидный JSON, без markdown-разметки вне JSON
+DO NOT:
+- Add scripts
+- Change the overall design direction
+- Remove content sections
+- Change language from Russian
 """
 
 
-def build_generation_prompt(
+STYLE_DIRECTION_MAP = {
+    "modern-business": "Modern bold style: use gradients, glassmorphism effects (backdrop-blur, semi-transparent bg), large typography, rounded-2xl cards with shadow-xl",
+    "minimal-portfolio": "Minimalist clean style: lots of whitespace, monochrome palette with one accent, thin fonts, simple geometric layouts, subtle borders",
+    "vibrant-service": "Vibrant energetic style: saturated colors, colorful cards with hover animations, dynamic asymmetric layouts, bold icons, playful yet professional",
+    "elegant-professional": "Premium elegant style: refined typography, dark accents, gold/emerald hints, sophisticated spacing, subtle luxury feel, trust-building elements",
+}
+
+
+def _build_generation_user_prompt(
     business_name: str,
     business_description: str,
     services: list[dict] | None = None,
     contacts: dict[str, str] | None = None,
     primary_color: str | None = None,
     dark_mode: bool = False,
+    style_direction: str | None = None,
 ) -> str:
-    """Build the user prompt for website generation."""
-    prompt_parts = [
-        f"Название бизнеса: {business_name}",
-        f"Описание: {business_description}",
+    """Build the detailed user prompt for website generation."""
+    parts = [
+        f"Create a stunning landing page for this business:\n",
+        f"BUSINESS NAME: {business_name}",
+        f"DESCRIPTION: {business_description}",
     ]
 
     if services:
-        prompt_parts.append("Услуги:")
+        parts.append("\nSERVICES:")
         for svc in services:
             name = svc.get("name", "")
             desc = svc.get("description", "")
             price = svc.get("price", "")
-            prompt_parts.append(f"  - {name}: {desc} (Цена: {price})")
+            line = f"  - {name}"
+            if desc:
+                line += f": {desc}"
+            if price:
+                line += f" ({price})"
+            parts.append(line)
 
     if contacts:
-        prompt_parts.append("Контакты:")
+        parts.append("\nCONTACT INFO (include on the page):")
         for key, value in contacts.items():
             if value:
-                prompt_parts.append(f"  {key}: {value}")
+                parts.append(f"  {key}: {value}")
+
+    parts.append(f"\nTHEME: {'DARK (use dark backgrounds like slate-900/gray-900, light text)' if dark_mode else 'LIGHT (use white/light backgrounds, dark text)'}")
 
     if primary_color:
-        prompt_parts.append(f"Основной цвет бренда: {primary_color}")
-        prompt_parts.append(
-            "Цветовая схема: используй этот цвет как primary_color, "
-            "подбери гармоничные secondary, accent и background цвета"
-        )
-
-    if dark_mode:
-        prompt_parts.append("Тема: ТЁМНАЯ (dark mode). Используй тёмные фоны и светлый текст.")
+        parts.append(f"BRAND COLOR: {primary_color} — use this as the accent/primary color throughout.")
+        parts.append("Build a harmonious color scheme around this brand color.")
     else:
-        prompt_parts.append("Тема: СВЕТЛАЯ (light mode). Используй светлые фоны и тёмный текст.")
+        parts.append("Choose a modern, appropriate color scheme for this industry.")
 
-    prompt_parts.append("\nСгенерируй полный JSON с сайтом для этого бизнеса.")
+    if style_direction and style_direction in STYLE_DIRECTION_MAP:
+        parts.append(f"\nDESIGN DIRECTION: {STYLE_DIRECTION_MAP[style_direction]}")
 
-    return "\n".join(prompt_parts)
+    parts.append("\nREMEMBER: All visible text on the page must be in RUSSIAN. Make it professional, compelling, and conversion-focused.")
+    parts.append("The design must feel CUSTOM-MADE for this specific business, not a generic template.")
+    parts.append("\nOutput ONLY the HTML code (body content). No markdown fences, no explanations.")
+
+    return "\n".join(parts)
 
 
-# ---------------------------------------------------------------------------
-# Response Parsing
-# ---------------------------------------------------------------------------
-
-def extract_json_from_response(raw_response: str) -> str:
-    """Extract JSON from markdown code blocks or raw text."""
-    if not raw_response:
+def _extract_html_from_response(raw: str) -> str:
+    """Extract HTML from AI response, handling markdown fences."""
+    if not raw:
         raise ValueError("Empty response from AI")
 
-    # Try to find JSON in code blocks
-    json_block_pattern = r"```(?:json)?\s*\n?(.*?)\n?```"
-    matches = re.findall(json_block_pattern, raw_response, re.DOTALL)
+    # Remove markdown code fences if present
+    html_block = re.search(r"```(?:html)?\s*\n(.*?)```", raw, re.DOTALL)
+    if html_block:
+        return html_block.group(1).strip()
 
-    if matches:
-        # Return the longest match (most likely to be the full JSON)
-        return max(matches, key=len).strip()
+    # If it starts with a tag, it's raw HTML
+    stripped = raw.strip()
+    if stripped.startswith("<"):
+        return stripped
 
-    # If no code blocks, try to find JSON object directly
-    json_start = raw_response.find("{")
-    json_end = raw_response.rfind("}")
+    # Try to find the first HTML tag
+    first_tag = re.search(r"<(?:header|nav|div|section|main|!--)", stripped)
+    if first_tag:
+        return stripped[first_tag.start():].strip()
 
-    if json_start != -1 and json_end != -1 and json_end > json_start:
-        return raw_response[json_start : json_end + 1].strip()
-
-    raise ValueError("No JSON found in response")
+    return stripped
 
 
-def parse_generated_schema(raw_response: str) -> GeneratedWebsiteSchema:
-    """Parse and validate AI response into GeneratedWebsiteSchema."""
-    try:
-        json_str = extract_json_from_response(raw_response)
-        data = json.loads(json_str)
-        return GeneratedWebsiteSchema.model_validate(data)
-    except (json.JSONDecodeError, ValidationError) as e:
-        logger.warning(f"Failed to parse AI response: {e}")
-        raise
+def _inject_tailwind_color(html: str, primary_color: str | None) -> str:
+    """If a brand color is specified but AI used generic colors, this is a safety net."""
+    if not primary_color:
+        return html
+    return html
+
+
+def _build_meta_from_html(html: str, business_name: str, business_description: str) -> dict:
+    """Extract meta info from the generated HTML content."""
+    title = business_name[:100]
+    description = business_description[:500]
+    return {"title": title, "description": description}
 
 
 # ---------------------------------------------------------------------------
-# Generation Service
+# Generation Result
 # ---------------------------------------------------------------------------
 
 @dataclass
 class GenerationResult:
     success: bool
-    schema: GeneratedWebsiteSchema | None
+    html_content: str | None
+    meta: dict | None
     error_message: str | None
     raw_response: str | None
 
 
+# ---------------------------------------------------------------------------
+# Main Service
+# ---------------------------------------------------------------------------
+
 class WebsiteGenerationService:
-    """Service for AI-powered website generation using DeepSeek API."""
+    """AI-powered website code generator — produces complete HTML pages."""
 
     def __init__(self):
         self.ai_client = ai_client
         self.model = (settings.WEBSITE_GENERATION_MODEL or "deepseek-coder").strip()
-        self.max_retries = 3
-        self.timeout_seconds = 60.0
-        self.max_generation_tokens = 7000
+        self.max_retries = 2
+        self.max_generation_tokens = 16000
 
-    async def _chat_json(
+    async def _call_ai(
         self,
         *,
         system_prompt: str,
         user_prompt: str,
-        temperature: float,
-        max_tokens: int,
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
     ) -> str:
         response = await self.ai_client.chat.completions.create(
             model=self.model,
@@ -356,235 +253,12 @@ class WebsiteGenerationService:
                 {"role": "user", "content": user_prompt},
             ],
             temperature=temperature,
-            max_tokens=max_tokens,
+            max_tokens=max_tokens or self.max_generation_tokens,
         )
-        raw_response = response.choices[0].message.content
-        if not raw_response:
+        content = response.choices[0].message.content
+        if not content:
             raise ValueError("Empty response from AI")
-        return raw_response
-
-    async def _generate_structure_plan(
-        self,
-        *,
-        business_name: str,
-        business_description: str,
-        services: list[dict] | None,
-        contacts: dict[str, str] | None,
-        dark_mode: bool,
-    ) -> dict[str, Any]:
-        """Step 1: create structure plan with unique section architecture."""
-        system_prompt = (
-            "Ты principal UX-архитектор и CRO-стратег лендингов. "
-            "Верни ТОЛЬКО валидный JSON. Никакого markdown.\n"
-            "Сконструируй УНИКАЛЬНУЮ структуру сайта по индустрии бизнеса и входным данным.\n"
-            "Формат:\n"
-            "{\n"
-            '  "industry": "string",\n'
-            '  "tone": "string",\n'
-            '  "positioning": "string",\n'
-            '  "sections": [\n'
-            '    {"type":"hero","anchor":"top","goal":"...", "style_hint":"..."},\n'
-            '    {"type":"custom","anchor":"cases","goal":"...", "kind":"cases-grid"},\n'
-            '    {"type":"services","anchor":"services","goal":"...", "style_hint":"..."}\n'
-            "  ],\n"
-            '  "nav_links": [\n'
-            '    {"label":"Услуги","anchor":"#services"},\n'
-            '    {"label":"О нас","anchor":"#about"},\n'
-            '    {"label":"Контакты","anchor":"#contacts"}\n'
-            "  ],\n"
-            '  "visual_direction": {"layout":"...", "density":"...", "icon_style":"..."},\n'
-            '  "image_guidelines": {"max_height_px": 520, "object_fit": "cover"},\n'
-            '  "mobile_notes": ["...", "..."]\n'
-            "}\n"
-            "Обязательные правила:\n"
-            "- Всегда включай стандарт лендинга: nav + hero + контентные секции + контакты/CTA + footer.\n"
-            "- hero должен быть первым, footer последним.\n"
-            "- Между hero и footer должно быть не менее 3 контентных секций.\n"
-            "- Разрешены стандартные type (services/about/contacts/cta) и custom.\n"
-            "- Для custom указывай kind: faq|testimonials|cases-grid|stats|timeline|pricing|carousel|comparison|team|process.\n"
-            "- Избегай однотипной структуры между разными индустриями."
-        )
-
-        user_prompt = json.dumps(
-            {
-                "business_name": business_name,
-                "business_description": business_description,
-                "services": services or [],
-                "contacts": contacts or {},
-                "theme": "dark" if dark_mode else "light",
-                "hard_rules": [
-                    "Не путай индустрию бизнеса",
-                    "Если это стоматология/клиника — копирайт и услуги должны быть медицинскими",
-                    "Никаких generic-текстов про консалтинг, если это не консалтинг",
-                    "Структура не должна выглядеть как единый шаблон для всех сайтов",
-                ],
-            },
-            ensure_ascii=False,
-        )
-
-        raw = await self._chat_json(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            temperature=0.2,
-            max_tokens=1800,
-        )
-        plan = json.loads(extract_json_from_response(raw))
-        if not isinstance(plan, dict):
-            raise ValueError("AI structure plan is invalid")
-        return plan
-
-    async def _generate_schema_from_plan(
-        self,
-        *,
-        plan: dict[str, Any],
-        business_name: str,
-        business_description: str,
-        services: list[dict] | None,
-        contacts: dict[str, str] | None,
-        primary_color: str | None,
-        dark_mode: bool,
-    ) -> str:
-        """Step 2: generate detailed website schema and content from structure plan."""
-        system_prompt = WEBSITE_GENERATION_SYSTEM_PROMPT + (
-            "\n\n"
-            "Дополнительные требования:\n"
-            "1) Сначала сформируй navbar внутри блока hero (nav_links).\n"
-            "2) Строго учитывай индустрию из structure_plan.industry.\n"
-            "3) Избегай шаблонных общих формулировок; текст должен быть отраслевым.\n"
-            "4) Для секции услуг делай карточки с конкретной пользой и понятной ценностью.\n"
-            "5) Для медицинских ниш добавляй маркеры доверия и безопасности.\n"
-            "6) Для каждого custom блока заполняй content.html качественной, семантической, безопасной разметкой.\n"
-            "7) Не дублируй один и тот же паттерн карточек/иконок в нескольких секциях без причины.\n"
-            "8) Изображения: учитывай max_height_px=520, object-fit=cover.\n"
-            "9) hero должен быть первым блоком, footer последним.\n"
-        )
-        user_prompt = json.dumps(
-            {
-                "business_name": business_name,
-                "business_description": business_description,
-                "services": services or [],
-                "contacts": contacts or {},
-                "primary_color": primary_color,
-                "dark_mode": dark_mode,
-                "structure_plan": plan,
-                "required_layout": "navbar -> hero -> content sections -> contacts/cta -> footer",
-                "must_avoid": [
-                    "single universal template look",
-                    "generic repeated icon set",
-                    "identical section rhythm for all niches",
-                ],
-            },
-            ensure_ascii=False,
-        )
-        return await self._chat_json(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            temperature=0.55,
-            max_tokens=self.max_generation_tokens,
-        )
-
-    async def _refine_schema_for_quality(
-        self,
-        *,
-        raw_schema: str,
-        business_name: str,
-        business_description: str,
-        plan: dict[str, Any],
-    ) -> str:
-        """Step 3: quality pass for mobile-first and style consistency."""
-        system_prompt = (
-            "Ты lead frontend ревьюер. Верни ТОЛЬКО валидный JSON той же схемы сайта.\n"
-            "Сделай финальный pass качества:\n"
-            "- mobile-first читабельность и плотность контента\n"
-            "- единый визуальный ритм секций\n"
-            "- корректные CTA и якорные ссылки\n"
-            "- осмысленные тексты строго в индустрии бизнеса\n"
-            "- избегай неуместной лексики (например, консалтинг для клиники)\n"
-            "- изображения должны быть безопасного размера для лендинга\n"
-            "- hero в начале и footer в конце, правильная последовательность блоков\n"
-            "- custom-блоки должны быть семантическими и безопасными (без script/style)\n"
-        )
-        user_prompt = json.dumps(
-            {
-                "business_name": business_name,
-                "business_description": business_description,
-                "structure_plan": plan,
-                "candidate_schema": json.loads(extract_json_from_response(raw_schema)),
-            },
-            ensure_ascii=False,
-        )
-        return await self._chat_json(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            temperature=0.35,
-            max_tokens=5500,
-        )
-
-    async def _deep_style_and_variation_pass(
-        self,
-        *,
-        schema_raw: str,
-        plan: dict[str, Any],
-        dark_mode: bool,
-    ) -> str:
-        """Step 4: enforce unique visual language and section diversity."""
-        system_prompt = (
-            "Ты арт-директор digital-продуктов и frontend-дизайнер.\n"
-            "Верни ТОЛЬКО валидный JSON той же схемы сайта.\n"
-            "Сделай сильную стилизацию и вариативность:\n"
-            "- выровняй визуальный язык между секциями\n"
-            "- добавь разные паттерны представления контента (карточки, таймлайн, FAQ, сравнение, карусель через custom html)\n"
-            "- оставь сайт современным и читабельным\n"
-            "- mobile-first: размеры, отступы, длина строк\n"
-            "- не ломай SEO meta и базовые контактные данные\n"
-        )
-        user_prompt = json.dumps(
-            {
-                "theme": "dark" if dark_mode else "light",
-                "structure_plan": plan,
-                "candidate_schema": json.loads(extract_json_from_response(schema_raw)),
-                "goal": "Maximum visual individuality while keeping clean UX conventions",
-            },
-            ensure_ascii=False,
-        )
-        return await self._chat_json(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            temperature=0.65,
-            max_tokens=6500,
-        )
-
-    async def _final_validation_pass(
-        self,
-        *,
-        schema_raw: str,
-        plan: dict[str, Any],
-    ) -> str:
-        """Step 5: final validation and correction pass."""
-        system_prompt = (
-            "Ты финальный QA-валидатор лендингов.\n"
-            "Верни ТОЛЬКО валидный JSON той же схемы сайта.\n"
-            "Проверь и исправь:\n"
-            "- валидность JSON и обязательных полей\n"
-            "- порядок блоков order\n"
-            "- hero первый, footer последний\n"
-            "- якоря навигации и CTA ссылки\n"
-            "- отсутствие пустых/бессмысленных секций\n"
-            "- корректность custom html (без script/style, семантический контент)\n"
-        )
-        user_prompt = json.dumps(
-            {
-                "structure_plan": plan,
-                "candidate_schema": json.loads(extract_json_from_response(schema_raw)),
-            },
-            ensure_ascii=False,
-        )
-        return await self._chat_json(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            temperature=0.2,
-            max_tokens=6000,
-        )
+        return content
 
     async def generate_website(
         self,
@@ -594,19 +268,12 @@ class WebsiteGenerationService:
         contacts: dict[str, str] | None = None,
         primary_color: str | None = None,
         dark_mode: bool = False,
+        style_direction: str | None = None,
     ) -> GenerationResult:
-        """Generate a complete website using AI.
+        """Generate a complete website as HTML code.
 
-        Args:
-            business_name: Name of the business
-            business_description: Business description
-            services: List of services with name, description, price
-            contacts: Dict with phone, email, address, etc.
-            primary_color: Primary brand color (hex)
-            dark_mode: Whether to use dark mode theme
-
-        Returns:
-            GenerationResult with success status and schema
+        The AI acts as a frontend coder, producing unique HTML+Tailwind
+        that is rendered in a sandboxed iframe on the frontend.
         """
         last_error = None
         raw_response = None
@@ -614,131 +281,175 @@ class WebsiteGenerationService:
         for attempt in range(1, self.max_retries + 1):
             try:
                 logger.info(
-                    "Generation attempt %s/%s (model=%s)",
-                    attempt,
-                    self.max_retries,
-                    self.model,
+                    "Website generation attempt %s/%s (model=%s)",
+                    attempt, self.max_retries, self.model,
                 )
 
-                structure_plan = await self._generate_structure_plan(
-                    business_name=business_name,
-                    business_description=business_description,
-                    services=services,
-                    contacts=contacts,
-                    dark_mode=dark_mode,
-                )
-                primary_schema_raw = await self._generate_schema_from_plan(
-                    plan=structure_plan,
+                # Step 1: Generate the website HTML
+                user_prompt = _build_generation_user_prompt(
                     business_name=business_name,
                     business_description=business_description,
                     services=services,
                     contacts=contacts,
                     primary_color=primary_color,
                     dark_mode=dark_mode,
-                )
-                quality_schema_raw = await self._refine_schema_for_quality(
-                    raw_schema=primary_schema_raw,
-                    business_name=business_name,
-                    business_description=business_description,
-                    plan=structure_plan,
-                )
-                styled_schema_raw = await self._deep_style_and_variation_pass(
-                    schema_raw=quality_schema_raw,
-                    plan=structure_plan,
-                    dark_mode=dark_mode,
-                )
-                raw_response = await self._final_validation_pass(
-                    schema_raw=styled_schema_raw,
-                    plan=structure_plan,
+                    style_direction=style_direction,
                 )
 
-                schema = parse_generated_schema(raw_response)
-                schema = normalize_generated_schema(
-                    schema,
-                    business_name=business_name,
-                    business_description=business_description,
-                    primary_color=primary_color,
-                    dark_mode=dark_mode,
+                raw_response = await self._call_ai(
+                    system_prompt=WEBSITE_CODER_SYSTEM_PROMPT,
+                    user_prompt=user_prompt,
+                    temperature=0.75,
+                    max_tokens=self.max_generation_tokens,
                 )
+
+                html_content = _extract_html_from_response(raw_response)
+
+                # Validate minimum quality
+                if len(html_content) < 500:
+                    raise ValueError(f"Generated HTML too short ({len(html_content)} chars)")
+
+                if "<section" not in html_content and "<div" not in html_content:
+                    raise ValueError("Generated content doesn't contain valid HTML sections")
+
+                # Step 2: Quality refinement pass
+                refine_prompt = (
+                    f"Business: {business_name}\n"
+                    f"Theme: {'dark' if dark_mode else 'light'}\n"
+                    f"Brand color: {primary_color or 'auto'}\n\n"
+                    f"Review and improve this HTML:\n\n{html_content}"
+                )
+
+                refined_raw = await self._call_ai(
+                    system_prompt=WEBSITE_REFINE_SYSTEM_PROMPT,
+                    user_prompt=refine_prompt,
+                    temperature=0.3,
+                    max_tokens=self.max_generation_tokens,
+                )
+
+                refined_html = _extract_html_from_response(refined_raw)
+
+                # Use refined version if it's valid, otherwise keep original
+                if len(refined_html) >= len(html_content) * 0.7:
+                    html_content = refined_html
+
+                # Apply brand color safety net
+                html_content = _inject_tailwind_color(html_content, primary_color)
+
+                # Extract meta
+                meta = _build_meta_from_html(html_content, business_name, business_description)
 
                 return GenerationResult(
                     success=True,
-                    schema=schema,
+                    html_content=html_content,
+                    meta=meta,
                     error_message=None,
                     raw_response=raw_response,
                 )
 
             except Exception as e:
                 last_error = str(e)
-                logger.warning(f"Attempt {attempt} failed: {e}")
+                logger.warning(f"Generation attempt {attempt} failed: {e}")
                 continue
 
-        # All retries failed
-        logger.error(f"All generation attempts failed: {last_error}")
+        logger.error(f"All website generation attempts failed: {last_error}")
         return GenerationResult(
             success=False,
-            schema=None,
+            html_content=None,
+            meta=None,
             error_message=last_error,
             raw_response=raw_response,
         )
 
-    async def apply_generated_schema(
+    async def apply_generated_html(
         self,
         website_id: int,
-        schema: GeneratedWebsiteSchema,
+        html_content: str,
+        meta: dict,
     ) -> bool:
-        """Apply generated schema to a website in the database.
-
-        Args:
-            website_id: Website ID to update
-            schema: Generated website schema
-
-        Returns:
-            True if successful
-        """
+        """Save generated HTML to the website as a fullpage block."""
         async with async_session_maker() as session:
             async with session.begin():
                 website_dao = WebsiteDAO(session)
                 block_dao = WebsiteBlockDAO(session)
 
-                # Get website
                 website = await website_dao.find_one_by_filter(id=website_id)
                 if not website:
                     logger.error(f"Website not found: {website_id}")
                     return False
 
-                # Update website metadata and styles
+                # Update website metadata
                 updates = {
-                    "title": schema.meta.title,
-                    "meta_description": schema.meta.description,
-                    "og_title": schema.meta.title,
-                    "og_description": schema.meta.description,
-                    "custom_styles": schema.styles.model_dump(exclude_none=True),
+                    "title": meta.get("title", ""),
+                    "meta_description": meta.get("description", ""),
+                    "og_title": meta.get("title", ""),
+                    "og_description": meta.get("description", ""),
+                    "custom_styles": {
+                        **(website.custom_styles or {}),
+                        "rendering_mode": "fullpage",
+                    },
                     "generation_status": "completed",
                     "updated_at": datetime.utcnow(),
                 }
                 await website_dao.update(website, updates)
 
-                # Clear existing blocks (if regenerating)
+                # Clear existing blocks
                 existing_blocks = await block_dao.list_by_website(
                     website_id, only_visible=False
                 )
                 for block in existing_blocks:
                     await block_dao.delete(block)
 
-                # Create new blocks
-                for block_data in schema.blocks:
-                    block = WebsiteBlock(
-                        website_id=website_id,
-                        type=block_data.type,
-                        order=block_data.order,
-                        content=block_data.content,
-                        styles=block_data.styles,
-                        is_visible=True,
-                    )
-                    session.add(block)
+                # Create single fullpage block
+                block = WebsiteBlock(
+                    website_id=website_id,
+                    type="fullpage",
+                    order=1,
+                    content={"html": html_content},
+                    styles={},
+                    is_visible=True,
+                )
+                session.add(block)
 
                 return True
+
+    async def edit_website_with_prompt(
+        self,
+        *,
+        current_html: str,
+        prompt: str,
+        business_name: str = "",
+    ) -> str:
+        """Edit the website HTML based on a natural-language prompt.
+
+        This is the core editing capability — the AI modifies existing HTML
+        according to user instructions, similar to how Cursor edits code.
+        """
+        user_message = (
+            f"CURRENT WEBSITE HTML:\n\n{current_html}\n\n"
+            f"---\n\n"
+            f"USER REQUEST: {prompt}\n\n"
+            f"Apply the requested changes and output the COMPLETE modified HTML. "
+            f"No markdown fences, no explanations — only the HTML code."
+        )
+
+        raw = await self._call_ai(
+            system_prompt=WEBSITE_EDIT_SYSTEM_PROMPT,
+            user_prompt=user_message,
+            temperature=0.4,
+            max_tokens=self.max_generation_tokens,
+        )
+
+        edited_html = _extract_html_from_response(raw)
+
+        if len(edited_html) < 200:
+            raise ValueError("AI returned too short HTML after editing")
+
+        return edited_html
+
+    # -----------------------------------------------------------------------
+    # Legacy compatibility: edit_block_with_prompt for old block-based sites
+    # -----------------------------------------------------------------------
 
     async def edit_block_with_prompt(
         self,
@@ -749,7 +460,10 @@ class WebsiteGenerationService:
         global_styles: dict[str, Any],
         prompt: str,
     ) -> dict[str, Any]:
-        """Edit a single block's content/styles via natural-language prompt."""
+        """Edit a single block's content/styles via natural-language prompt.
+
+        Legacy method for backward compatibility with old JSON-based sites.
+        """
         system_prompt = (
             "Ты — редактор блоков одностраничного сайта. "
             "Пользователь описывает желаемые изменения. "
@@ -783,7 +497,7 @@ class WebsiteGenerationService:
         if not raw:
             raise ValueError("Пустой ответ от AI")
 
-        json_str = extract_json_from_response(raw)
+        json_str = self._extract_json(raw)
         data = json.loads(json_str)
 
         if not isinstance(data.get("content"), dict):
@@ -794,8 +508,25 @@ class WebsiteGenerationService:
             "styles": data.get("styles") if isinstance(data.get("styles"), dict) else block_styles,
         }
 
+    @staticmethod
+    def _extract_json(raw: str) -> str:
+        """Extract JSON from AI response."""
+        json_block = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", raw, re.DOTALL)
+        if json_block:
+            return json_block.group(1).strip()
 
-# Singleton instance
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start != -1 and end > start:
+            return raw[start:end + 1]
+
+        raise ValueError("No JSON found in response")
+
+
+# ---------------------------------------------------------------------------
+# Singleton
+# ---------------------------------------------------------------------------
+
 _website_generation_service: WebsiteGenerationService | None = None
 
 

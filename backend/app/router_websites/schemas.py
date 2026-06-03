@@ -19,6 +19,7 @@ WebsiteBlockTypeLiteral = Literal[
     "agent-widget",
     "booking",
     "custom",
+    "fullpage",
 ]
 WebsiteDomainVerificationStatusLiteral = Literal["pending", "verified", "failed"]
 WebsiteGenerationStatusLiteral = Literal["idle", "queued", "generating", "completed", "failed"]

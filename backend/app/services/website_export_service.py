@@ -766,6 +766,15 @@ class WebsiteExportService:
         
         for block in blocks:
             block_type = block.get("type", "custom")
+
+            # Fullpage blocks contain complete pre-rendered HTML
+            if block_type == "fullpage":
+                content = block.get("content", {})
+                html = content.get("html", "")
+                if html:
+                    html_parts.append(html)
+                continue
+
             renderer = BLOCK_RENDERERS.get(block_type, render_custom_block)
             
             try:
@@ -776,7 +785,6 @@ class WebsiteExportService:
                 html_parts.append(html)
             except Exception as e:
                 logger.error(f"Failed to render block {block_type}: {e}")
-                # Render empty section as fallback
                 html_parts.append(f'<!-- Failed to render {block_type} block -->')
         
         return "\n".join(html_parts)

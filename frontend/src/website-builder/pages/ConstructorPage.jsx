@@ -185,19 +185,21 @@ const ConstructorPageContent = () => {
       )}
 
       <div className="wb-constructor__body">
-        <BlockListPanel
-          blocks={blocks}
-          selectedBlockId={selectedBlockId}
-          onSelect={setSelectedBlockId}
-          onReorder={reorderBlocks}
-          onAddClick={() => setAddModalOpen(true)}
-          onDuplicate={duplicateBlock}
-          onDelete={(id) => {
-            const b = blocks.find((x) => x.id === id);
-            setBlockToDelete(b);
-          }}
-          onClearSelection={() => setSelectedBlockId(null)}
-        />
+        {!blocks?.some((b) => b.type === 'fullpage') && (
+          <BlockListPanel
+            blocks={blocks}
+            selectedBlockId={selectedBlockId}
+            onSelect={setSelectedBlockId}
+            onReorder={reorderBlocks}
+            onAddClick={() => setAddModalOpen(true)}
+            onDuplicate={duplicateBlock}
+            onDelete={(id) => {
+              const b = blocks.find((x) => x.id === id);
+              setBlockToDelete(b);
+            }}
+            onClearSelection={() => setSelectedBlockId(null)}
+          />
+        )}
 
         <main className="wb-constructor__canvas">
           <div className="wb-canvas-toolbar">
@@ -242,7 +244,7 @@ const ConstructorPageContent = () => {
               className={`wb-panel-tab ${rightPanelTab === 'settings' ? 'wb-panel-tab--active' : ''}`}
               onClick={() => setRightPanelTab('settings')}
             >
-              Styles
+              {blocks?.some((b) => b.type === 'fullpage') ? 'AI' : 'Styles'}
             </button>
             <button
               type="button"
@@ -255,14 +257,17 @@ const ConstructorPageContent = () => {
 
           {rightPanelTab === 'settings' && (
             <>
-              <BlockSettingsPanel
-                selectedBlock={selectedBlock}
-                globalStyles={globalStyles}
-                onGlobalStylesChange={updateGlobalStyles}
-                onBlockStylesChange={updateBlockStyles}
-              />
+              {!blocks?.some((b) => b.type === 'fullpage') && (
+                <BlockSettingsPanel
+                  selectedBlock={selectedBlock}
+                  globalStyles={globalStyles}
+                  onGlobalStylesChange={updateGlobalStyles}
+                  onBlockStylesChange={updateBlockStyles}
+                />
+              )}
               <AiPromptPanel
                 selectedBlock={selectedBlock}
+                blocks={blocks}
                 loading={aiLoading}
                 onSubmit={async (blockId, prompt) => {
                   try {

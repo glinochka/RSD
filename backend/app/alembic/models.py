@@ -1385,6 +1385,7 @@ class WebsiteBlockType:
     CTA = "cta"
     FOOTER = "footer"
     CUSTOM = "custom"
+    FULLPAGE = "fullpage"
 
 class WebsiteDomainVerificationStatus:
     PENDING = "pending"

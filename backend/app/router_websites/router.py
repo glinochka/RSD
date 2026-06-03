@@ -17,8 +17,6 @@ from ..utils.JWT import get_user_from_access_token
 from ..config import settings
 from ..router_users.dao import UserDAO
 from ..services.website_generation_service import (
-    GeneratedBlock,
-    GeneratedWebsiteSchema,
     WebsiteGenerationService,
     get_website_generation_service,
 )
@@ -652,13 +650,30 @@ async def edit_block_with_prompt(
 
     service = get_website_generation_service()
     try:
-        edited = await service.edit_block_with_prompt(
-            block_type=block.type,
-            content=block.content or {},
-            block_styles=block.styles or {},
-            global_styles=website.custom_styles or {},
-            prompt=request.prompt,
-        )
+        if block.type == "fullpage":
+            # AI-coder mode: edit the raw HTML
+            current_html = (block.content or {}).get("html", "")
+            if not current_html:
+                raise ValueError("Fullpage block has no HTML content")
+
+            edited_html = await service.edit_website_with_prompt(
+                current_html=current_html,
+                prompt=request.prompt,
+                business_name=website.title or "",
+            )
+            edited = {
+                "content": {"html": edited_html},
+                "styles": block.styles or {},
+            }
+        else:
+            # Legacy JSON-based block editing
+            edited = await service.edit_block_with_prompt(
+                block_type=block.type,
+                content=block.content or {},
+                block_styles=block.styles or {},
+                global_styles=website.custom_styles or {},
+                prompt=request.prompt,
+            )
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -994,6 +1009,7 @@ async def _run_website_generation(
             contacts=contacts if contacts else None,
             primary_color=request.primary_color,
             dark_mode=request.dark_mode,
+            style_direction=request.template_id,
         )
 
         async with async_session_maker() as session:
@@ -1003,9 +1019,11 @@ async def _run_website_generation(
                 if not website:
                     return
 
-                if result.success and result.schema:
-                    # Apply generated schema
-                    await service.apply_generated_schema(website_id, result.schema)
+                if result.success and result.html_content:
+                    # Apply generated HTML
+                    await service.apply_generated_html(
+                        website_id, result.html_content, result.meta or {}
+                    )
                     await website_dao.set_generation_status(website, "completed")
                     logger.info(f"Website generation completed: {website_id}")
                 else:
@@ -1015,7 +1033,7 @@ async def _run_website_generation(
                         error_message=result.error_message or "Unknown generation error"
                     )
                     logger.warning(
-                        "Website generation failed for %s without applying fallback template: %s",
+                        "Website generation failed for %s: %s",
                         website_id,
                         result.error_message,
                     )

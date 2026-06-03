@@ -2,6 +2,7 @@
 
 // Renderers
 export { default as WebsiteRenderer } from './WebsiteRenderer';
+export { default as FullpageRenderer } from './FullpageRenderer';
 export { default as WebsiteMetaTags, PreviewMetaTags } from './WebsiteMetaTags';
 export { default as DeviceSwitcher } from './DeviceSwitcher';
 export { default as AgentWidget } from './AgentWidget';
