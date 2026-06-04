@@ -315,17 +315,21 @@ const WebsiteRenderer = ({
 
   if (!blocksForRender.length) {
     const isGenerating = generation_status === 'queued' || generation_status === 'generating';
+    const isFailed = generation_status === 'failed';
+    const generationError = styles?._generation_error;
     return (
       <div className={`website-renderer ${className}`} data-website-id={id}>
         <main className="min-h-[50vh] flex items-center justify-center px-6">
-          <div className="text-center text-gray-500 max-w-xl">
-            <h2 className="text-xl font-semibold text-gray-700 mb-2">
-              {isGenerating ? 'Сайт генерируется' : 'Сайт пока пустой'}
+          <div className={`text-center max-w-xl ${isFailed ? 'text-red-600' : 'text-gray-500'}`}>
+            <h2 className={`text-xl font-semibold mb-2 ${isFailed ? 'text-red-700' : 'text-gray-700'}`}>
+              {isGenerating ? 'Сайт генерируется' : isFailed ? 'Ошибка генерации сайта' : 'Сайт пока пустой'}
             </h2>
             <p className="text-sm">
               {isGenerating
                 ? 'ИИ формирует индивидуальный контент по данным вашего бизнеса.'
-                : 'Добавьте контент или запустите генерацию сайта.'}
+                : isFailed
+                  ? (generationError || 'Генерация не завершилась. Попробуйте снова с более подробным описанием бизнеса и брифом.')
+                  : 'Добавьте контент или запустите генерацию сайта.'}
             </p>
           </div>
         </main>
