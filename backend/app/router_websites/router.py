@@ -1250,13 +1250,18 @@ async def create_and_generate_website(
 
     # Flush to get the website ID before returning
     await website_dao._session.flush()
+    website_id = website.id
+
+    # Ensure the newly created website is committed before background generation starts.
+    # Otherwise the background task may run in another session and not see this row yet.
+    await website_dao._session.commit()
 
     # Start background generation
     service = get_website_generation_service()
-    background_tasks.add_task(_run_website_generation, website.id, request, service)
+    background_tasks.add_task(_run_website_generation, website_id, request, service)
 
     return WebsiteGenerationStartResponse(
-        website_id=website.id,
+        website_id=website_id,
         message=f"Website created and generation queued. Slug: {slug}",
         generation_status="queued",
     )
