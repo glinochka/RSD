@@ -16,6 +16,17 @@ type Pacer = {
 
 const pacers = new Map<string, Pacer>();
 
+function emitDebugLog(
+  hypothesisId: string,
+  location: string,
+  message: string,
+  data: Record<string, unknown>,
+): void {
+  // #region agent log
+  fetch('http://127.0.0.1:7864/ingest/9be3daa2-4225-4125-a8ee-f3740536c567',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'4e89a4'},body:JSON.stringify({sessionId:'4e89a4',runId:'pre-fix',hypothesisId,location,message,data,timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
+}
+
 function splitPcm16Frames(pcm16: Buffer): Buffer[] {
   if (!pcm16.length) return [];
   const frames: Buffer[] = [];
@@ -108,6 +119,13 @@ export function enqueuePcm16Playback(
   }
   pacer.ws = ws;
   pacer.queue.push(...frames);
+  emitDebugLog('H2', 'agent_playback_pacer.ts:enqueuePcm16Playback', 'pacer_enqueued_frames', {
+    callId: id,
+    pcm16Bytes: pcm16.length,
+    framesAdded: frames.length,
+    queueLen: pacer.queue.length,
+    ready: pacer.ready,
+  });
 
   if (pacer.timer) return;
 
@@ -126,6 +144,11 @@ export function enqueuePcm16Playback(
       active.queue.unshift(frame);
       if (active.queue.length % 10 === 1) {
         console.warn('[media-gateway] pacer blocked', JSON.stringify({ call_id: id, queue_len: active.queue.length, ready: active.ready }));
+        emitDebugLog('H2', 'agent_playback_pacer.ts:tick', 'pacer_blocked_not_ready', {
+          callId: id,
+          queueLen: active.queue.length,
+          ready: active.ready,
+        });
       }
       return;
     }

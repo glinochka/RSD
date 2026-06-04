@@ -22,6 +22,17 @@ import {
 } from '../ws/vox_media';
 import { pcm16BufferToUlaw } from '../audio/ulaw';
 
+function emitDebugLog(
+  hypothesisId: string,
+  location: string,
+  message: string,
+  data: Record<string, unknown>,
+): void {
+  // #region agent log
+  fetch('http://127.0.0.1:7864/ingest/9be3daa2-4225-4125-a8ee-f3740536c567',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'4e89a4'},body:JSON.stringify({sessionId:'4e89a4',runId:'pre-fix',hypothesisId,location,message,data,timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
+}
+
 function sendJson(ws: WebSocket, message: Record<string, unknown>): void {
   if (ws.readyState === ws.OPEN) {
     ws.send(JSON.stringify(message));
@@ -31,9 +42,18 @@ function sendJson(ws: WebSocket, message: Record<string, unknown>): void {
 function sendVoxDownlink(ws: WebSocket, message: string): void {
   if (ws.readyState === ws.OPEN) {
     console.info('[media-gateway] vox send', JSON.stringify({ msg: message.slice(0, 100) }));
+    emitDebugLog('H4', 'agent_playback.ts:sendVoxDownlink', 'sending_vox_message', {
+      readyState: ws.readyState,
+      preview: message.slice(0, 80),
+      messageLength: message.length,
+    });
     ws.send(message);
   } else {
     console.warn('[media-gateway] vox send skipped', JSON.stringify({ readyState: ws.readyState }));
+    emitDebugLog('H4', 'agent_playback.ts:sendVoxDownlink', 'vox_send_skipped_socket_not_open', {
+      readyState: ws.readyState,
+      messageLength: message.length,
+    });
   }
 }
 
@@ -42,6 +62,18 @@ function sendPcm16Frame(ws: WebSocket, frame: Buffer): void {
   // Last hop to Vox call stays in μ-law for reliable PSTN playout.
   const ulaw = pcm16BufferToUlaw(frame);
   if (!ulaw.length) return;
+  let absSum = 0;
+  const sampleCount = Math.floor(frame.length / 2);
+  for (let i = 0; i + 1 < frame.length; i += 2) {
+    absSum += Math.abs(frame.readInt16LE(i));
+  }
+  const meanAbs = sampleCount > 0 ? Math.round(absSum / sampleCount) : 0;
+  emitDebugLog('H3', 'agent_playback.ts:sendPcm16Frame', 'pcm16_to_ulaw_converted', {
+    pcm16Bytes: frame.length,
+    ulawBytes: ulaw.length,
+    meanAbs,
+    firstUlawByte: ulaw[0] ?? null,
+  });
   console.info('[media-gateway] vox frame', JSON.stringify({ len: ulaw.length }));
   sendVoxDownlink(ws, buildVoxMediaMessage(ulaw));
   if (config.loopbackTransport === 'binary' || config.loopbackTransport === 'both') {
@@ -85,6 +117,10 @@ export function handleOrchestratorOutbound(
 
   switch (type) {
     case 'agent.audio.start':
+      emitDebugLog('H2', 'agent_playback.ts:handleOrchestratorOutbound:start', 'agent_audio_start_received', {
+        callId,
+        codec: payload.codec || 'pcmu',
+      });
       if (callId) {
         clearPlaybackPacer(callId);
         markAgentPlaybackStart(callId);
@@ -99,6 +135,12 @@ export function handleOrchestratorOutbound(
       break;
     case 'agent.audio.chunk': {
       const b64 = String(payload.audio_pcm16_b64 || '').trim();
+      emitDebugLog('H1', 'agent_playback.ts:handleOrchestratorOutbound:chunk', 'agent_audio_chunk_received', {
+        callId,
+        hasB64: Boolean(b64),
+        b64Length: b64.length,
+        sequence: payload.sequence ?? 0,
+      });
       if (b64 && callId) {
         enqueuePcm16Playback(ws, callId, Buffer.from(b64, 'base64'), sendPcm16Frame);
       }
