@@ -22,6 +22,8 @@ import {
 } from '../ws/vox_media';
 import { pcm16BufferToUlaw } from '../audio/ulaw';
 
+const debugFrameLogByCall = new Map<string, number>();
+
 function emitDebugLog(
   hypothesisId: string,
   location: string,
@@ -62,18 +64,39 @@ function sendPcm16Frame(ws: WebSocket, frame: Buffer): void {
   // Last hop to Vox call stays in μ-law for reliable PSTN playout.
   const ulaw = pcm16BufferToUlaw(frame);
   if (!ulaw.length) return;
-  let absSum = 0;
+  let absSumLe = 0;
+  let absSumBe = 0;
   const sampleCount = Math.floor(frame.length / 2);
   for (let i = 0; i + 1 < frame.length; i += 2) {
-    absSum += Math.abs(frame.readInt16LE(i));
+    absSumLe += Math.abs(frame.readInt16LE(i));
+    absSumBe += Math.abs(frame.readInt16BE(i));
   }
-  const meanAbs = sampleCount > 0 ? Math.round(absSum / sampleCount) : 0;
+  const meanAbsLe = sampleCount > 0 ? Math.round(absSumLe / sampleCount) : 0;
+  const meanAbsBe = sampleCount > 0 ? Math.round(absSumBe / sampleCount) : 0;
   emitDebugLog('H3', 'agent_playback.ts:sendPcm16Frame', 'pcm16_to_ulaw_converted', {
     pcm16Bytes: frame.length,
     ulawBytes: ulaw.length,
-    meanAbs,
+    meanAbsLe,
+    meanAbsBe,
     firstUlawByte: ulaw[0] ?? null,
   });
+  const callIdForLog = String((ws as unknown as { __callId?: string }).__callId || '');
+  const prevLogged = debugFrameLogByCall.get(callIdForLog) || 0;
+  if (config.logLevel !== 'silent' && prevLogged < 5) {
+    debugFrameLogByCall.set(callIdForLog, prevLogged + 1);
+    console.info(
+      '[media-gateway] debug pcm16 stats',
+      JSON.stringify({
+        hypothesis: 'H3',
+        call_id: callIdForLog || null,
+        frame_index: prevLogged,
+        pcm16_bytes: frame.length,
+        ulaw_bytes: ulaw.length,
+        mean_abs_le: meanAbsLe,
+        mean_abs_be: meanAbsBe,
+      }),
+    );
+  }
   console.info('[media-gateway] vox frame', JSON.stringify({ len: ulaw.length }));
   sendVoxDownlink(ws, buildVoxMediaMessage(ulaw));
   if (config.loopbackTransport === 'binary' || config.loopbackTransport === 'both') {
@@ -108,6 +131,9 @@ export function handleOrchestratorOutbound(
   const type = String(msg.type || '').trim();
   const payload = msg.payload || {};
   const callId = String(msg.call_id || payload.call_id || '').trim();
+  if (callId) {
+    (ws as unknown as { __callId?: string }).__callId = callId;
+  }
 
   // After barge-in we intentionally drop only stale chunks/end of the interrupted turn.
   // The next agent.audio.start must pass through to reopen playback for a new reply.
@@ -135,6 +161,19 @@ export function handleOrchestratorOutbound(
       break;
     case 'agent.audio.chunk': {
       const b64 = String(payload.audio_pcm16_b64 || '').trim();
+      const payloadKeys = Object.keys(payload);
+      if (config.logLevel !== 'silent' && (payload.sequence ?? 0) < 3) {
+        console.info(
+          '[media-gateway] debug orch chunk payload',
+          JSON.stringify({
+            hypothesis: 'H1',
+            call_id: callId,
+            sequence: payload.sequence ?? 0,
+            payload_keys: payloadKeys,
+            b64_len: b64.length,
+          }),
+        );
+      }
       emitDebugLog('H1', 'agent_playback.ts:handleOrchestratorOutbound:chunk', 'agent_audio_chunk_received', {
         callId,
         hasB64: Boolean(b64),
