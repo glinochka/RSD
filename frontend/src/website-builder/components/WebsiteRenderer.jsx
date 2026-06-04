@@ -37,8 +37,6 @@ const BLOCK_COMPONENT_MAP = {
   custom: HeroBlock, // Fallback
 };
 
-const REQUIRED_BLOCK_TYPES = ['hero', 'services', 'about', 'contacts', 'cta', 'footer'];
-
 /**
  * Merge template styles with custom styles
  */
@@ -60,62 +58,43 @@ const defaultContentByType = (type, siteTitle = 'Ваш бизнес') => {
   switch (type) {
     case 'hero':
       return {
-        headline: siteTitle,
-        subheadline: 'Помогаем клиентам получить результат быстро и комфортно',
-        ctaText: 'Получить консультацию',
-        ctaLink: '#contacts',
+        headline: siteTitle || '',
+        subheadline: '',
+        ctaText: '',
+        ctaLink: '',
       };
     case 'services':
       return {
-        title: 'Наши услуги',
-        items: [
-          {
-            name: 'Базовая услуга',
-            description: 'Закрываем ключевую задачу и даем понятный план действий.',
-            price: 'от 3 000 ₽',
-            icon: 'star',
-          },
-          {
-            name: 'Расширенное сопровождение',
-            description: 'Подключаем эксперта и ведем вас до финального результата.',
-            price: 'от 7 500 ₽',
-            icon: 'check',
-          },
-          {
-            name: 'Индивидуальное решение',
-            description: 'Собираем формат под ваш бизнес, сроки и бюджет.',
-            price: 'По запросу',
-            icon: 'users',
-          },
-        ],
+        title: '',
+        items: [],
       };
     case 'about':
       return {
-        title: 'О компании',
-        text: `${siteTitle} работает на результат: прозрачные условия, понятные этапы и внимание к деталям на каждом шаге.`,
+        title: '',
+        text: '',
       };
     case 'contacts':
       return {
-        title: 'Контакты',
+        title: '',
         contactInfo: {
-          phone: '+7 (999) 999-99-99',
-          email: 'hello@example.com',
-          address: 'Россия',
-          workingHours: 'Пн-Пт: 09:00-18:00',
+          phone: '',
+          email: '',
+          address: '',
+          workingHours: '',
         },
         showForm: true,
-        formTitle: 'Оставьте заявку',
+        formTitle: '',
       };
     case 'cta':
       return {
-        title: 'Готовы обсудить ваш проект?',
-        subtitle: 'Оставьте заявку, и мы свяжемся с вами в ближайшее время',
-        buttonText: 'Оставить заявку',
-        buttonLink: '#contacts',
+        title: '',
+        subtitle: '',
+        buttonText: '',
+        buttonLink: '',
       };
     case 'footer':
       return {
-        companyName: siteTitle,
+        companyName: siteTitle || '',
         copyrightText: `© ${new Date().getFullYear()} Все права защищены`,
       };
     default:
@@ -247,6 +226,7 @@ const WebsiteRenderer = ({
     og_image_url,
     favicon_url,
     status,
+    generation_status,
     styles = {},
     blocks = [],
   } = schema || {};
@@ -329,15 +309,29 @@ const WebsiteRenderer = ({
 
   // Sort blocks by order
   const sortedBlocks = [...blocks].sort((a, b) => (a.order || 0) - (b.order || 0));
-  const blocksForRender = sortedBlocks.length
-    ? sortedBlocks
-    : REQUIRED_BLOCK_TYPES.map((type, index) => ({
-        id: `fallback-${type}-${index}`,
-        type,
-        order: index + 1,
-        content: defaultContentByType(type, title || 'Ваш бизнес'),
-        styles: {},
-      }));
+  // Intentionally no auto-fallback blocks: if backend has no blocks yet, render nothing.
+  // This prevents accidental display of generic template-like demo content.
+  const blocksForRender = sortedBlocks;
+
+  if (!blocksForRender.length) {
+    const isGenerating = generation_status === 'queued' || generation_status === 'generating';
+    return (
+      <div className={`website-renderer ${className}`} data-website-id={id}>
+        <main className="min-h-[50vh] flex items-center justify-center px-6">
+          <div className="text-center text-gray-500 max-w-xl">
+            <h2 className="text-xl font-semibold text-gray-700 mb-2">
+              {isGenerating ? 'Сайт генерируется' : 'Сайт пока пустой'}
+            </h2>
+            <p className="text-sm">
+              {isGenerating
+                ? 'ИИ формирует индивидуальный контент по данным вашего бизнеса.'
+                : 'Добавьте контент или запустите генерацию сайта.'}
+            </p>
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   // Render a single block
   const renderBlock = (block, index) => {

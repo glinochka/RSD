@@ -7,13 +7,6 @@ import { createPortal } from 'react-dom';
 import { websiteService } from '../../services/websiteService';
 import '../styles/website-builder-wizard.css';
 
-const WEBSITE_TEMPLATES = [
-  { id: 'modern-business', name: 'Современный', description: 'Градиенты, glassmorphism, bold', color: '#3B82F6' },
-  { id: 'minimal-portfolio', name: 'Минималистичный', description: 'Чистый, много воздуха, лаконичный', color: '#1F2937' },
-  { id: 'vibrant-service', name: 'Яркий и дерзкий', description: 'Насыщенные цвета, карточки, динамика', color: '#8B5CF6' },
-  { id: 'elegant-professional', name: 'Премиальный', description: 'Утончённый, для серьёзных ниш', color: '#059669' },
-];
-
 const PRESET_COLORS = [
   { name: 'Синий', value: '#3B82F6' },
   { name: 'Фиолетовый', value: '#8B5CF6' },
@@ -37,21 +30,15 @@ const InfoIcon = () => (
   </svg>
 );
 
-const LayoutIcon = () => (
+const BriefIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" />
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h8M8 14h6M8 6h8M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H8l-4 4v10a2 2 0 002 2z" />
   </svg>
 );
 
 const PaletteIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />
-  </svg>
-);
-
-const CheckIcon = () => (
-  <svg className="wb-wizard__template-check" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
   </svg>
 );
 
@@ -62,7 +49,7 @@ const WebsiteBuilderWizard = ({ isOpen, onClose, agent, onSuccess }) => {
 
   const [businessName, setBusinessName] = useState('');
   const [businessDescription, setBusinessDescription] = useState('');
-  const [selectedTemplate, setSelectedTemplate] = useState('modern-business');
+  const [generationBrief, setGenerationBrief] = useState('');
   const [primaryColor, setPrimaryColor] = useState('#3B82F6');
   const [darkMode, setDarkMode] = useState(false);
 
@@ -74,6 +61,7 @@ const WebsiteBuilderWizard = ({ isOpen, onClose, agent, onSuccess }) => {
       setBusinessDescription(
         desc.length >= 10 ? desc : `${desc}. Сайт с описанием услуг и выгод для клиентов.`
       );
+      setGenerationBrief('');
     }
   }, [agent, isOpen]);
 
@@ -128,7 +116,7 @@ const WebsiteBuilderWizard = ({ isOpen, onClose, agent, onSuccess }) => {
         business_description:
           businessDescription.trim() || 'Сайт с описанием услуг и выгод для клиентов.',
         agent_id: agent?.id,
-        template_id: selectedTemplate,
+        generation_brief: generationBrief.trim() || undefined,
         primary_color: primaryColor,
         dark_mode: darkMode,
       });
@@ -152,15 +140,13 @@ const WebsiteBuilderWizard = ({ isOpen, onClose, agent, onSuccess }) => {
           businessName.trim().length >= 2 && businessDescription.trim().length >= 10
         );
       case 2:
+        return generationBrief.trim().length >= 20;
       case 3:
         return true;
       default:
         return false;
     }
   };
-
-  const selectedTemplateName =
-    WEBSITE_TEMPLATES.find((t) => t.id === selectedTemplate)?.name || '';
 
   const modal = (
     <div
@@ -261,35 +247,28 @@ const WebsiteBuilderWizard = ({ isOpen, onClose, agent, onSuccess }) => {
             <>
               <div className="wb-wizard__intro">
                 <div className="wb-wizard__icon-wrap wb-wizard__icon-wrap--accent">
-                  <LayoutIcon />
+                  <BriefIcon />
                 </div>
-                <h3 className="wb-wizard__subtitle">Выберите стиль</h3>
-                <p className="wb-wizard__hint">ИИ учтёт выбранное направление при создании уникального дизайна</p>
+                <h3 className="wb-wizard__subtitle">Индивидуальный бриф</h3>
+                <p className="wb-wizard__hint">Опишите стиль, аудиторию и характер сайта своими словами</p>
               </div>
 
-              <div className="wb-wizard__templates">
-                {WEBSITE_TEMPLATES.map((template) => (
-                  <button
-                    key={template.id}
-                    type="button"
-                    className={`wb-wizard__template-card${
-                      selectedTemplate === template.id ? ' wb-wizard__template-card--selected' : ''
-                    }`}
-                    onClick={() => setSelectedTemplate(template.id)}
-                  >
-                    <div className="wb-wizard__template-inner">
-                      <span
-                        className="wb-wizard__template-swatch"
-                        style={{ backgroundColor: template.color }}
-                      />
-                      <div>
-                        <p className="wb-wizard__template-name">{template.name}</p>
-                        <p className="wb-wizard__template-desc">{template.description}</p>
-                      </div>
-                      {selectedTemplate === template.id && <CheckIcon />}
-                    </div>
-                  </button>
-                ))}
+              <div className="wb-wizard__field">
+                <label className="wb-wizard__label" htmlFor="wb-generation-brief">
+                  Бриф для ИИ <span className="wb-wizard__required">*</span>
+                </label>
+                <textarea
+                  id="wb-generation-brief"
+                  className="wb-wizard__textarea"
+                  value={generationBrief}
+                  onChange={(e) => setGenerationBrief(e.target.value)}
+                  placeholder="Например: строгий B2B стиль для владельцев клиник, акцент на доверии, кейсах и цифрах. Минимум маркетинговой воды, максимум конкретики и выгоды."
+                  rows={5}
+                  maxLength={1200}
+                />
+                <p className="wb-wizard__counter">
+                  Минимум 20 символов • {generationBrief.length}/1200
+                </p>
               </div>
             </>
           )}
@@ -354,7 +333,7 @@ const WebsiteBuilderWizard = ({ isOpen, onClose, agent, onSuccess }) => {
                     Название: <strong>{businessName}</strong>
                   </li>
                   <li>
-                    Стиль: <strong>{selectedTemplateName}</strong>
+                    Бриф: <strong>{generationBrief.trim() ? 'Индивидуальный' : 'Не указан'}</strong>
                   </li>
                   <li>
                     Цвет:{' '}

@@ -68,6 +68,9 @@ AVOID:
 - Plain white backgrounds for everything
 - Boring symmetric grids without variation
 - Cookie-cutter template look
+- Placeholder contacts and fake data (e.g., +7 (999) 999-99-99, hello@example.com, "Иван Иванов")
+- Generic service names ("Услуга 1", "Базовая услуга") when business context is available
+- Branding that does not match provided business name/description
 """
 
 WEBSITE_EDIT_SYSTEM_PROMPT = """\
@@ -114,14 +117,6 @@ DO NOT:
 """
 
 
-STYLE_DIRECTION_MAP = {
-    "modern-business": "Modern bold style: use gradients, glassmorphism effects (backdrop-blur, semi-transparent bg), large typography, rounded-2xl cards with shadow-xl",
-    "minimal-portfolio": "Minimalist clean style: lots of whitespace, monochrome palette with one accent, thin fonts, simple geometric layouts, subtle borders",
-    "vibrant-service": "Vibrant energetic style: saturated colors, colorful cards with hover animations, dynamic asymmetric layouts, bold icons, playful yet professional",
-    "elegant-professional": "Premium elegant style: refined typography, dark accents, gold/emerald hints, sophisticated spacing, subtle luxury feel, trust-building elements",
-}
-
-
 def _build_generation_user_prompt(
     business_name: str,
     business_description: str,
@@ -129,7 +124,7 @@ def _build_generation_user_prompt(
     contacts: dict[str, str] | None = None,
     primary_color: str | None = None,
     dark_mode: bool = False,
-    style_direction: str | None = None,
+    generation_brief: str | None = None,
 ) -> str:
     """Build the detailed user prompt for website generation."""
     parts = [
@@ -165,8 +160,16 @@ def _build_generation_user_prompt(
     else:
         parts.append("Choose a modern, appropriate color scheme for this industry.")
 
-    if style_direction and style_direction in STYLE_DIRECTION_MAP:
-        parts.append(f"\nDESIGN DIRECTION: {STYLE_DIRECTION_MAP[style_direction]}")
+    if generation_brief:
+        parts.append(f"\nINDIVIDUAL BRIEF (must be reflected in design and copy): {generation_brief}")
+
+    parts.append(
+        "\nPAGE STRUCTURE REQUIREMENT: Build clear structure as "
+        "Navbar -> Header (hero) -> multiple content sections -> contact section -> footer."
+    )
+    parts.append(
+        "Sections must be tailored to this exact business context (problem, offer, process, trust, CTA)."
+    )
 
     parts.append("\nREMEMBER: All visible text on the page must be in RUSSIAN. Make it professional, compelling, and conversion-focused.")
     parts.append("The design must feel CUSTOM-MADE for this specific business, not a generic template.")
@@ -196,6 +199,29 @@ def _extract_html_from_response(raw: str) -> str:
         return stripped[first_tag.start():].strip()
 
     return stripped
+
+
+def _contains_generic_placeholder_content(html: str) -> bool:
+    """Detect obvious template/placeholder content that should be rejected."""
+    text = (html or "").lower()
+    generic_markers = (
+        "hello@example.com",
+        "+7 (999) 999-99-99",
+        "иван иванов",
+        "ваше имя",
+        "опишите ваш вопрос",
+        "базовая услуга",
+        "расширенное сопровождение",
+        "индивидуальное решение",
+        "наши услуги",
+        "создано с помощью rsd ai",
+        "ваш бизнес",
+        "заголовок вашего сайта",
+        "краткое описание предложения",
+        "услуга 1",
+        "услуга 2",
+    )
+    return any(marker in text for marker in generic_markers)
 
 
 def _inject_tailwind_color(html: str, primary_color: str | None) -> str:
@@ -272,7 +298,7 @@ class WebsiteGenerationService:
         contacts: dict[str, str] | None = None,
         primary_color: str | None = None,
         dark_mode: bool = False,
-        style_direction: str | None = None,
+        generation_brief: str | None = None,
     ) -> GenerationResult:
         """Generate a complete website as HTML code.
 
@@ -283,7 +309,7 @@ class WebsiteGenerationService:
         raw_response = None
 
         logger.info(f"[WebsiteGen] Starting generate_website for '{business_name}' (model={self.model})")
-        logger.info(f"[WebsiteGen] Params: dark_mode={dark_mode}, style={style_direction}, color={primary_color}")
+        logger.info(f"[WebsiteGen] Params: dark_mode={dark_mode}, color={primary_color}")
         logger.info(f"[WebsiteGen] Services count: {len(services) if services else 0}")
 
         for attempt in range(1, self.max_retries + 1):
@@ -301,7 +327,7 @@ class WebsiteGenerationService:
                     contacts=contacts,
                     primary_color=primary_color,
                     dark_mode=dark_mode,
-                    style_direction=style_direction,
+                    generation_brief=generation_brief,
                 )
                 logger.debug(f"[WebsiteGen] User prompt length: {len(user_prompt)} chars")
 
@@ -323,6 +349,12 @@ class WebsiteGenerationService:
                 if "<section" not in html_content and "<div" not in html_content:
                     raise ValueError("Generated content doesn't contain valid HTML sections")
 
+                if "<nav" not in html_content or "<header" not in html_content:
+                    raise ValueError("Generated HTML must include nav and header structure")
+
+                if _contains_generic_placeholder_content(html_content):
+                    raise ValueError("Generated HTML contains generic placeholder/template content")
+
                 logger.info("[WebsiteGen] HTML validation passed")
 
                 # Step 2: Quality refinement pass
@@ -343,6 +375,9 @@ class WebsiteGenerationService:
 
                 refined_html = _extract_html_from_response(refined_raw)
                 logger.info(f"[WebsiteGen] Refined HTML length: {len(refined_html)} chars")
+
+                if _contains_generic_placeholder_content(refined_html):
+                    raise ValueError("Refined HTML contains generic placeholder/template content")
 
                 # Use refined version if it's valid, otherwise keep original
                 if len(refined_html) >= len(html_content) * 0.7:
