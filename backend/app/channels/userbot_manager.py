@@ -371,8 +371,9 @@ async def _handle_private_message(
     except Exception:
         logger.exception("userbot: failed to process private message bot_id=%s agent_id=%s", bot_id, agent_id)
         raise
-    if response.status != ProcessingStatus.DISCARDED:
-        await event.respond(response.text)
+    if not response.delivers_reply():
+        return
+    await event.respond(response.text)
 
 
 async def _handle_chat_message(

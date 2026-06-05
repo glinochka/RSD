@@ -115,7 +115,7 @@ async def handle_agent_message(message: types.Message, agent_config: dict):
     processor = get_message_processor()
     response = await processor.process(request)
 
-    if response.status == ProcessingStatus.DISCARDED:
+    if not response.delivers_reply():
         return
 
     await message.answer(response.text)

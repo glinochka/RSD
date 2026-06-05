@@ -255,7 +255,7 @@ async def _process_event(client: MaxWsClient, cfg: dict[str, Any], raw_event: st
         user_display_name=sender_name,
     )
     response = await get_message_processor().process(request)
-    if response.status == ProcessingStatus.DISCARDED:
+    if not response.delivers_reply():
         return
     await asyncio.to_thread(client.send_message, chat_id, response.text)
 

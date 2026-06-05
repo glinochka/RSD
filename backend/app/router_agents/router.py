@@ -531,7 +531,10 @@ WIDGET_JS = """
       });
       if (!response.ok) throw new Error("HTTP " + response.status);
       var payload = await response.json();
-      pushMessage("agent", payload.answer || "Нет ответа");
+      if (payload.reply === false) return;
+      var answer = (payload.answer || "").trim();
+      if (!answer) return;
+      pushMessage("agent", answer);
     } catch (err) {
       pushMessage("error", "Не удалось отправить сообщение. Попробуйте еще раз.");
     } finally {
@@ -3284,6 +3287,7 @@ async def internal_process_message(
         content={
             "text": response.text,
             "status": response.status.value,
+            "reply": response.delivers_reply(),
         },
         status_code=status.HTTP_200_OK,
     )
@@ -7748,7 +7752,7 @@ async def external_chat(
                     "bot_id": agent.bot_id,
                     "bot_username": agent.bot_username,
                     "external_user_id": external_user_id,
-                    "answer": "",
+                    "reply": False,
                     "sources": [],
                 },
                 status_code=status.HTTP_200_OK,
@@ -7889,12 +7893,14 @@ async def external_chat(
                     tool_status=tool_status,
                 )
 
+    answer_text = (answer or "").strip()
     return JSONResponse(
         content={
             "bot_id": agent.bot_id,
             "bot_username": agent.bot_username,
             "external_user_id": external_user_id,
-            "answer": answer,
+            "answer": answer_text,
+            "reply": bool(answer_text),
             "sources": sources,
         },
         status_code=status.HTTP_200_OK,

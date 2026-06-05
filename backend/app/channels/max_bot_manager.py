@@ -225,7 +225,7 @@ async def _process_update(cfg: dict[str, Any], access_token: str, update: dict[s
         user_display_name=user_display_name,
     )
     response = await get_message_processor().process(request)
-    if response.status == ProcessingStatus.DISCARDED or not response.text.strip():
+    if not response.delivers_reply():
         return
     await _send_max_message(access_token=access_token, chat_id=chat_id, text=response.text)
 

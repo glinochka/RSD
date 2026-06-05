@@ -48,6 +48,14 @@ class MessageResponse:
     """Unified message response."""
     text: str
     status: ProcessingStatus
+    reply: bool = True
+
+    def delivers_reply(self) -> bool:
+        if not self.reply:
+            return False
+        if self.status == ProcessingStatus.DISCARDED:
+            return False
+        return bool((self.text or "").strip())
 
 
 class MessageProcessor:
@@ -100,11 +108,15 @@ class MessageProcessor:
             except ValueError:
                 response_status = ProcessingStatus.ERROR
 
+            delivers_reply = payload.get("reply")
+            if delivers_reply is False:
+                return MessageResponse(text="", status=ProcessingStatus.DISCARDED, reply=False)
+
             if response_status in (
                 ProcessingStatus.DISCARDED,
                 ProcessingStatus.BLOCKED_USER,
             ):
-                return MessageResponse(text="", status=ProcessingStatus.DISCARDED)
+                return MessageResponse(text="", status=ProcessingStatus.DISCARDED, reply=False)
 
             if not answer:
                 answer = "⚠️ Произошла ошибка при обработке вашего сообщения. Попробуйте позже."

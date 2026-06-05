@@ -55,6 +55,14 @@ class MessageRequest:
 class MessageResponse:
     text: str
     status: ProcessingStatus
+    reply: bool = True
+
+    def delivers_reply(self) -> bool:
+        if not self.reply:
+            return False
+        if self.status == ProcessingStatus.DISCARDED:
+            return False
+        return bool((self.text or "").strip())
 
 
 class MessageProcessor:
@@ -127,7 +135,11 @@ class MessageProcessor:
                 )
 
             if await self._is_user_frozen(resolved_agent.id, normalized_user_external_id):
-                return MessageResponse(text="", status=ProcessingStatus.DISCARDED)
+                return MessageResponse(
+                    text="",
+                    status=ProcessingStatus.DISCARDED,
+                    reply=False,
+                )
 
             template_config = self._parse_template_config(resolved_agent.template_config)
             if not agent_availability_allows_now(template_config):

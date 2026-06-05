@@ -353,7 +353,7 @@ async def _process_incoming(cfg: dict[str, Any], incoming: dict[str, Any]) -> No
     )
     try:
         response = await get_message_processor().process(request)
-        if response.status == ProcessingStatus.DISCARDED:
+        if not response.delivers_reply():
             return
         await _bridge_post(
             "session/send",
