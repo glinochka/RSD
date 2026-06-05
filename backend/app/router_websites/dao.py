@@ -25,6 +25,7 @@ class WebsiteTemplateDAO(BaseDAO):
 
 class WebsiteDAO(BaseDAO):
     model = Website
+    _GENERATION_LOGS_KEY = "_generation_runtime_logs"
 
     async def get_by_id_with_relations(self, website_id: int) -> Website | None:
         query = (
@@ -131,13 +132,19 @@ class WebsiteDAO(BaseDAO):
             "generation_status": website.generation_status,
             "status": website.status,
             "updated_at": website.updated_at.isoformat() if website.updated_at else None,
+            "runtime_logs": [],
         }
 
-        # Include error if present
-        if website.generation_status == "failed" and website.custom_styles:
-            error = website.custom_styles.get("_generation_error")
-            if error:
-                result["error"] = error
+        if website.custom_styles:
+            logs = website.custom_styles.get(self._GENERATION_LOGS_KEY)
+            if isinstance(logs, list):
+                result["runtime_logs"] = [str(line) for line in logs if isinstance(line, str)]
+
+            # Include error if present
+            if website.generation_status == "failed":
+                error = website.custom_styles.get("_generation_error")
+                if error:
+                    result["error"] = error
 
         return result
 

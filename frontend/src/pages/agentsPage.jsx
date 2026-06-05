@@ -846,8 +846,12 @@ const AgentsPageContent = () => {
     clearWebsiteGenerationPoll();
     websiteGenerationPollRef.current = window.setInterval(async () => {
       try {
-        const statusData = await websiteService.getGenerationStatus(websiteId);
+        const [statusData, websiteData] = await Promise.all([
+          websiteService.getGenerationStatus(websiteId),
+          websiteService.getById(websiteId),
+        ]);
         const statusValue = String(statusData?.generation_status || '').toLowerCase();
+        setAgentWebsite(websiteData || null);
         if (statusValue === 'completed') {
           clearWebsiteGenerationPoll();
           setIsWebsiteBuilding(false);

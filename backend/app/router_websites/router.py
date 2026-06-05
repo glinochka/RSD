@@ -1006,6 +1006,28 @@ async def _run_website_generation(
     """
     logger.info(f"[WebsiteGen] Starting generation for website_id={website_id}")
 
+    async def _append_runtime_log(message: str) -> None:
+        timestamp = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        line = f"[{timestamp}] {message}"
+        try:
+            async with async_session_maker() as log_session:
+                async with log_session.begin():
+                    log_website = await WebsiteDAO(log_session).find_one_by_filter(id=website_id)
+                    if not log_website:
+                        return
+                    styles = dict(log_website.custom_styles or {})
+                    logs = styles.get("_generation_runtime_logs")
+                    if not isinstance(logs, list):
+                        logs = []
+                    logs.append(line)
+                    # Keep only the most recent lines to prevent unbounded growth.
+                    styles["_generation_runtime_logs"] = logs[-300:]
+                    log_website.custom_styles = styles
+        except Exception:
+            logger.exception("[WebsiteGen] Failed to append runtime log for website_id=%s", website_id)
+
+    await _append_runtime_log("Запуск генерации сайта")
+
     # Step 1: Set generating status
     try:
         async with async_session_maker() as session:
@@ -1014,11 +1036,17 @@ async def _run_website_generation(
                 website = await website_dao.find_one_by_filter(id=website_id)
                 if not website:
                     logger.error(f"[WebsiteGen] Website not found: {website_id}")
+                    await _append_runtime_log("Сайт не найден в БД на старте генерации")
                     return
                 await website_dao.set_generation_status(website, "generating")
+                styles = dict(website.custom_styles or {})
+                styles["_generation_runtime_logs"] = []
+                website.custom_styles = styles
                 logger.info(f"[WebsiteGen] Status set to 'generating' for website_id={website_id}")
+                await _append_runtime_log("Статус: generating")
     except Exception as e:
         logger.exception(f"[WebsiteGen] Failed to set generating status: {e}")
+        await _append_runtime_log(f"Ошибка при установке статуса generating: {e}")
         await _log_website_builder_failure(
             scenario=f"Website AI generation: failed to start (website_id={website_id})",
             message=str(e),
@@ -1035,20 +1063,25 @@ async def _run_website_generation(
         try:
             services = await _get_agent_services(request.agent_id)
             logger.info(f"[WebsiteGen] Fetched {len(services)} services for agent_id={request.agent_id}")
+            await _append_runtime_log(f"Загружены услуги агента: {len(services)}")
         except Exception as e:
             logger.warning(f"[WebsiteGen] Failed to fetch agent services: {e}")
+            await _append_runtime_log(f"Не удалось загрузить услуги агента: {e}")
 
         try:
             contacts = await _get_agent_contacts(request.agent_id)
             logger.info(f"[WebsiteGen] Fetched contacts for agent_id={request.agent_id}: {list(contacts.keys())}")
+            await _append_runtime_log(f"Загружены контакты агента: {', '.join(list(contacts.keys())) or 'нет'}")
         except Exception as e:
             logger.warning(f"[WebsiteGen] Failed to fetch agent contacts: {e}")
+            await _append_runtime_log(f"Не удалось загрузить контакты агента: {e}")
 
     # Step 3: Run AI generation
     result = None
     generation_exc: Exception | None = None
     try:
         logger.info(f"[WebsiteGen] Calling AI generation for website_id={website_id}")
+        await _append_runtime_log("Запрос к AI: генерация HTML")
         result = await service.generate_website(
             business_name=request.business_name,
             business_description=request.business_description,
@@ -1059,9 +1092,13 @@ async def _run_website_generation(
             generation_brief=request.generation_brief,
         )
         logger.info(f"[WebsiteGen] AI generation completed. Success={result.success if result else False}")
+        await _append_runtime_log(
+            f"AI генерация завершена: success={bool(result and result.success)}"
+        )
     except Exception as e:
         generation_exc = e
         logger.exception(f"[WebsiteGen] AI generation threw exception: {e}")
+        await _append_runtime_log(f"Исключение при генерации AI: {e}")
 
     # Step 4: Apply results or mark as failed
     try:
@@ -1071,18 +1108,21 @@ async def _run_website_generation(
                 website = await website_dao.find_one_by_filter(id=website_id)
                 if not website:
                     logger.error(f"[WebsiteGen] Website not found after generation: {website_id}")
+                    await _append_runtime_log("Сайт не найден в БД при применении результата")
                     return
 
                 # Check if generation was successful
                 if result and result.success and result.html_content:
                     # Apply generated HTML
                     logger.info(f"[WebsiteGen] Applying generated HTML for website_id={website_id}")
+                    await _append_runtime_log("Сохранение сгенерированного HTML в сайт")
                     success = await service.apply_generated_html(
                         website_id, result.html_content, result.meta or {}
                     )
                     if success:
                         await website_dao.set_generation_status(website, "completed")
                         logger.info(f"[WebsiteGen] Generation completed successfully for website_id={website_id}")
+                        await _append_runtime_log("Генерация завершена успешно (completed)")
                     else:
                         # apply_generated_html failed - mark as failed
                         error_msg = "AI generated HTML but failed to save to database"
@@ -1101,6 +1141,7 @@ async def _run_website_generation(
                             website, "failed",
                             error_message=error_msg
                         )
+                        await _append_runtime_log(f"Ошибка при сохранении HTML: {error_msg}")
                 else:
                     # AI generation failed - mark as failed (no fallback)
                     if generation_exc is not None:
@@ -1124,8 +1165,10 @@ async def _run_website_generation(
                         error_message=f"AI generation failed: {error_msg}"
                     )
                     logger.info(f"[WebsiteGen] Website marked as failed for website_id={website_id}")
+                    await _append_runtime_log(f"Генерация завершилась ошибкой: {error_msg}")
     except Exception as e:
         logger.exception(f"[WebsiteGen] Failed to apply results: {e}")
+        await _append_runtime_log(f"Критическая ошибка применения результата: {e}")
         await _log_website_builder_failure(
             scenario=f"Website AI generation: apply results failed (website_id={website_id})",
             message=str(e),
@@ -1143,6 +1186,7 @@ async def _run_website_generation(
                         await website_dao.set_generation_status(
                             website, "failed", error_message=str(e)[:500]
                         )
+                        await _append_runtime_log("Статус переключен в failed после критической ошибки")
         except Exception:
             logger.exception(f"[WebsiteGen] Critical: Failed to update status after all retries for {website_id}")
 

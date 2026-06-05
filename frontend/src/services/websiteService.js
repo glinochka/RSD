@@ -16,6 +16,11 @@ export const websiteService = {
     const response = await apiClient.get(API_ROUTES.WEBSITE_GENERATION_STATUS(websiteId));
     return response.data;
   },
+
+  getById: async (websiteId) => {
+    const response = await apiClient.get(API_ROUTES.WEBSITE_DETAIL(websiteId));
+    return response.data;
+  },
 };
 
 export default websiteService;

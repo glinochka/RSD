@@ -317,6 +317,9 @@ const WebsiteRenderer = ({
     const isGenerating = generation_status === 'queued' || generation_status === 'generating';
     const isFailed = generation_status === 'failed';
     const generationError = styles?._generation_error;
+    const runtimeLogs = Array.isArray(styles?._generation_runtime_logs)
+      ? styles._generation_runtime_logs
+      : [];
     return (
       <div className={`website-renderer ${className}`} data-website-id={id}>
         <main className="min-h-[50vh] flex items-center justify-center px-6">
@@ -331,6 +334,16 @@ const WebsiteRenderer = ({
                   ? (generationError || 'Генерация не завершилась. Попробуйте снова с более подробным описанием бизнеса и брифом.')
                   : 'Добавьте контент или запустите генерацию сайта.'}
             </p>
+            {(isGenerating || isFailed) && runtimeLogs.length > 0 && (
+              <div className="mt-4 text-left rounded-lg border border-gray-200 bg-gray-50 p-3 max-h-72 overflow-y-auto">
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
+                  Runtime logs
+                </p>
+                <pre className="text-xs leading-5 whitespace-pre-wrap text-gray-700 m-0">
+                  {runtimeLogs.join('\n')}
+                </pre>
+              </div>
+            )}
           </div>
         </main>
       </div>

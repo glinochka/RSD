@@ -339,6 +339,7 @@ class WebsiteGenerationStatusResponse(BaseModel):
     status: WebsiteStatusLiteral
     updated_at: datetime | None
     error: str | None = None
+    runtime_logs: list[str] = Field(default_factory=list)
 
 
 class WebsiteGenerationStartResponse(BaseModel):

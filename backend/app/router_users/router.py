@@ -57,6 +57,7 @@ GOOGLE_OIDC_CERTS_URL = "https://www.googleapis.com/oauth2/v3/certs"
 GOOGLE_OIDC_ISSUERS = {"accounts.google.com", "https://accounts.google.com"}
 _GOOGLE_JWKS_CACHE: dict = {}
 _GOOGLE_JWKS_EXPIRES_AT: datetime | None = None
+_REGISTRATION_FAIL_OPEN_TOTAL = 0
 
 
 def _render_mailopost_card_html(*, title: str, paragraphs: list[str], accent_block_html: str = "") -> str:
@@ -478,8 +479,24 @@ async def _send_registration_email_code(email: str, code: str) -> None:
         )
 
 
-async def _complete_registration_without_email_verification(normalized_email: str) -> JSONResponse:
+def _log_registration_fail_open(*, email: str, reason: str) -> None:
+    global _REGISTRATION_FAIL_OPEN_TOTAL
+    _REGISTRATION_FAIL_OPEN_TOTAL += 1
+    logger.info(
+        "registration_completed_without_email_verification email=%s reason=%s total=%s",
+        email,
+        reason,
+        _REGISTRATION_FAIL_OPEN_TOTAL,
+    )
+
+
+async def _complete_registration_without_email_verification(
+    normalized_email: str,
+    *,
+    reason: str,
+) -> JSONResponse:
     """Finish registration when MailoPost cannot deliver the verification code."""
+    _log_registration_fail_open(email=normalized_email, reason=reason)
     async with async_session_maker() as session:
         user_dao = UserDAO(session)
         async with session.begin():
@@ -870,10 +887,16 @@ async def user_registration(new_user: NewUser):
             exc.status_code,
             exc.detail,
         )
-        return await _complete_registration_without_email_verification(normalized_email)
+        return await _complete_registration_without_email_verification(
+            normalized_email,
+            reason=f"registration_send_http_{exc.status_code}",
+        )
     except httpx.HTTPError as exc:
         logger.error("Registration verification email transport error: %s", exc)
-        return await _complete_registration_without_email_verification(normalized_email)
+        return await _complete_registration_without_email_verification(
+            normalized_email,
+            reason="registration_send_transport_error",
+        )
 
     logger.info("Код подтверждения регистрации отправлен на email %s", normalized_email)
 
@@ -944,14 +967,21 @@ async def resend_registration_code(payload: RegistrationResendCodeRequest):
     try:
         await _send_registration_email_code(normalized_email, code)
     except HTTPException as exc:
-        if exc.status_code == status.HTTP_502_BAD_GATEWAY:
-            async with async_session_maker() as session:
-                user_dao = UserDAO(session)
-                async with session.begin():
-                    user = await user_dao.find_one_by_filter(email=normalized_email)
-                    if user and not user.email_verified:
-                        await user_dao.update(user, {"email_verification_last_sent_at": None})
-        raise
+        logger.warning(
+            "Registration resend email failed (status=%s): %s",
+            exc.status_code,
+            exc.detail,
+        )
+        return await _complete_registration_without_email_verification(
+            normalized_email,
+            reason=f"registration_resend_http_{exc.status_code}",
+        )
+    except httpx.HTTPError as exc:
+        logger.error("Registration resend transport error: %s", exc)
+        return await _complete_registration_without_email_verification(
+            normalized_email,
+            reason="registration_resend_transport_error",
+        )
 
     return JSONResponse(
         content={
@@ -1409,14 +1439,6 @@ async def user_google_oauth_login(payload: GoogleOAuthLoginRequest):
                         user = await user_dao.find_one_by_filter(email=normalized_email)
 
                     if user is None:
-                        if not payload.consent_personal_data or not payload.consent_terms:
-                            raise HTTPException(
-                                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                                detail=(
-                                    "Для регистрации через Google необходимо принять согласие на обработку "
-                                    "персональных данных и условия оферты/пользовательского соглашения"
-                                ),
-                            )
                         generated_name = await _build_unique_username(user_dao, normalized_email)
                         await user_dao.add(
                             {

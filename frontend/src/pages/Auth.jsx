@@ -57,8 +57,6 @@ const AUTH_FORM_INITIAL = {
   resetToken: '',
   newPassword: '',
   confirmNewPassword: '',
-  consentPersonal: false,
-  consentTerms: false,
 };
 
 const GOOGLE_IDENTITY_SCRIPT_URL = 'https://accounts.google.com/gsi/client';
@@ -181,18 +179,6 @@ const Auth = () => {
     return {
       email: { required: true, type: 'email', label: 'Email' },
       password: { required: true, type: 'password', label: 'Пароль' },
-      consentPersonal: {
-        type: 'checkbox',
-        required: true,
-        label: 'Согласие на обработку персональных данных',
-        message: 'Отметьте согласие на обработку персональных данных',
-      },
-      consentTerms: {
-        type: 'checkbox',
-        required: true,
-        label: 'Принятие условий оферты и соглашения',
-        message: 'Примите условия Публичной оферты и Пользовательского соглашения',
-      },
     };
   }, [isAwaitingEmailCode, isLogin, isRecoveryMode, recoveryStep]);
 
@@ -284,14 +270,70 @@ const Auth = () => {
               showSuccess('Аккаунт не найден. Мы перевели вас на регистрацию и отправили код на email.', 5000);
               return;
             } catch (registerError) {
-              // If registration says user already exists, keep original login error semantics.
               if (registerError?.status === 409) {
-                showError(getAuthErrorMessage(error));
+                const registerDetail = `${registerError?.message ?? ''} ${registerError?.data?.detail ?? ''}`.toLowerCase();
+                const isExistingUnverifiedAccount =
+                  registerDetail.includes('аккаунт уже создан') ||
+                  registerDetail.includes('используйте подтверждение кода');
+                if (isExistingUnverifiedAccount) {
+                  setIsLogin(false);
+                  setIsAwaitingEmailCode(true);
+                  form.setFieldValue('email', loginValue);
+                  form.setFieldValue('password', values.password);
+                  try {
+                    await authService.resendRegistrationCode(loginValue);
+                    setResendCooldownUntil(
+                      Date.now() + VALIDATION.EMAIL_RESEND_COOLDOWN_SECONDS * 1000
+                    );
+                    showSuccess('Аккаунт уже создан. Мы отправили новый код подтверждения.', 5000);
+                  } catch (resendError) {
+                    const retryAfter = Number(
+                      resendError?.data?.retry_after ?? resendError?.headers?.['retry-after'] ?? 0
+                    );
+                    if (retryAfter > 0) {
+                      setResendCooldownUntil(Date.now() + retryAfter * 1000);
+                    }
+                    showError('Аккаунт уже создан. Введите код из письма или запросите новый.');
+                  }
+                  return;
+                }
+                showError(getAuthErrorMessage(registerError));
                 return;
               }
               showError(getAuthErrorMessage(registerError));
               return;
             }
+          }
+        }
+        if (isLogin) {
+          const detail = `${error?.message ?? ''} ${error?.data?.detail ?? ''}`.toLowerCase();
+          const isEmailNotVerified =
+            error?.status === 403 &&
+            (detail.includes('подтвердите email') || detail.includes('email') && detail.includes('подтверд'));
+          const loginValue = values.name?.trim() ?? '';
+          const looksLikeEmail = VALIDATION.EMAIL_PATTERN.test(loginValue);
+
+          if (isEmailNotVerified && looksLikeEmail) {
+            setIsLogin(false);
+            setIsAwaitingEmailCode(true);
+            form.setFieldValue('email', loginValue);
+            form.setFieldValue('password', values.password);
+            try {
+              await authService.resendRegistrationCode(loginValue);
+              setResendCooldownUntil(
+                Date.now() + VALIDATION.EMAIL_RESEND_COOLDOWN_SECONDS * 1000
+              );
+              showSuccess('Email не подтвержден. Мы отправили новый код подтверждения.', 5000);
+            } catch (resendError) {
+              const retryAfter = Number(
+                resendError?.data?.retry_after ?? resendError?.headers?.['retry-after'] ?? 0
+              );
+              if (retryAfter > 0) {
+                setResendCooldownUntil(Date.now() + retryAfter * 1000);
+              }
+              showError('Email не подтвержден. Введите код из письма или запросите новый.');
+            }
+            return;
           }
         }
         showError(getAuthErrorMessage(error));
@@ -339,16 +381,6 @@ const Auth = () => {
     if (isRecoveryMode || isAwaitingEmailCode || form.isSubmitting) {
       return;
     }
-    if (isRegister && (!form.values.consentPersonal || !form.values.consentTerms)) {
-      if (!form.values.consentPersonal) {
-        form.setFieldError('consentPersonal', 'Отметьте согласие на обработку персональных данных');
-      }
-      if (!form.values.consentTerms) {
-        form.setFieldError('consentTerms', 'Примите условия Публичной оферты и Пользовательского соглашения');
-      }
-      showError('Для регистрации через Google необходимо принять все обязательные соглашения');
-      return;
-    }
     if (!ENV_CONFIG.APP.GOOGLE_CLIENT_ID) {
       showError('Google OAuth не настроен на клиенте (VITE_GOOGLE_CLIENT_ID)');
       return;
@@ -388,8 +420,8 @@ const Auth = () => {
               }
               console.log('Google credential received, attempting login with nonce:', nonce);
               await loginWithGoogle(response.credential, nonce, {
-                consentPersonalData: Boolean(form.values.consentPersonal),
-                consentTerms: Boolean(form.values.consentTerms),
+                consentPersonalData: true,
+                consentTerms: true,
               });
               showSuccess(SUCCESS_MESSAGES.LOGIN_SUCCESS, 3000);
               navigate(NAVIGATION_ROUTES.AGENTS);
@@ -632,80 +664,6 @@ const Auth = () => {
                 </>
               )}
 
-              {isRegister && !isAwaitingEmailCode && (
-                <div className="auth-consents" role="group" aria-label="Согласия при регистрации">
-                  <div className="auth-consent-block">
-                    <div className="auth-checkbox-row auth-checkbox-row--terms">
-                      <input
-                        id="consentPersonal"
-                        type="checkbox"
-                        name="consentPersonal"
-                        checked={form.values.consentPersonal}
-                        onChange={form.handleChange}
-                        onBlur={form.handleBlur}
-                        disabled={form.isSubmitting}
-                        aria-invalid={!!form.errors.consentPersonal}
-                        aria-describedby="consent-personal-text"
-                      />
-                      <p className="auth-consent-text" id="consent-personal-text">
-                        <label htmlFor="consentPersonal" className="auth-consent-label-inline">
-                          Я согласен на{' '}
-                        </label>
-                        <Link
-                          className="auth-legal-link"
-                          to={NAVIGATION_ROUTES.PRIVACY_POLICY}
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          обработку персональных данных
-                        </Link>
-                      </p>
-                    </div>
-                    {form.errors.consentPersonal && (
-                      <span className="error-message auth-consent-error">{form.errors.consentPersonal}</span>
-                    )}
-                  </div>
-
-                  <div className="auth-consent-block">
-                    <div className="auth-checkbox-row auth-checkbox-row--terms">
-                      <input
-                        id="consentTerms"
-                        type="checkbox"
-                        name="consentTerms"
-                        checked={form.values.consentTerms}
-                        onChange={form.handleChange}
-                        onBlur={form.handleBlur}
-                        disabled={form.isSubmitting}
-                        aria-invalid={!!form.errors.consentTerms}
-                        aria-describedby="consent-terms-text"
-                      />
-                      <p className="auth-consent-text" id="consent-terms-text">
-                        <label htmlFor="consentTerms" className="auth-consent-label-inline">
-                          Я принимаю условия{' '}
-                        </label>
-                        <Link
-                          className="auth-legal-link"
-                          to={NAVIGATION_ROUTES.PUBLIC_OFFER}
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          Публичной оферты
-                        </Link>
-                        <span> и </span>
-                        <Link
-                          className="auth-legal-link"
-                          to={NAVIGATION_ROUTES.USER_AGREEMENT}
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          Пользовательского соглашения
-                        </Link>
-                      </p>
-                    </div>
-                    {form.errors.consentTerms && (
-                      <span className="error-message auth-consent-error">{form.errors.consentTerms}</span>
-                    )}
-                  </div>
-                </div>
-              )}
-
               <button
                 type="submit"
                 className="btn btn-continue"
@@ -778,7 +736,7 @@ const Auth = () => {
               </div>
               )}
 
-              {isLogin && !isRecoveryMode && (
+              {!isRecoveryMode && (
                 <p className="terms">
                   Продолжая, вы подтверждаете ознакомление с{' '}
                   <Link className="auth-legal-link" to={NAVIGATION_ROUTES.PUBLIC_OFFER}>
