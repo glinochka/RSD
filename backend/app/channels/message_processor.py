@@ -127,13 +127,7 @@ class MessageProcessor:
                 )
 
             if await self._is_user_frozen(resolved_agent.id, normalized_user_external_id):
-                return MessageResponse(
-                    text=(
-                        "Доступ к этому агенту для вас временно ограничен владельцем. "
-                        "Если это ошибка, обратитесь в поддержку."
-                    ),
-                    status=ProcessingStatus.BLOCKED_USER,
-                )
+                return MessageResponse(text="", status=ProcessingStatus.DISCARDED)
 
             template_config = self._parse_template_config(resolved_agent.template_config)
             if not agent_availability_allows_now(template_config):

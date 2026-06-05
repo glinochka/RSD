@@ -61,6 +61,7 @@ from ..services.http_integration.errors import HttpIntegrationValidationError
 from ..services.http_integration.tool_registry import validate_integration_config_dict
 from ..services.qa_handoff_service import EscalationType as QAEscalationType, get_qa_handoff_service
 from ..services.template_runtime import EscalationType, get_template_runtime
+from ..telephony.agent_guards import is_user_frozen
 from ..services.telegram_userbot_auth import (
     TelegramUserbotAuthError,
     complete_qr_2fa,
@@ -7739,6 +7740,19 @@ async def external_chat(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="external_user_id (or chat_id) is required for dashboard chat tracking",
         )
+
+    async with async_session_maker() as session:
+        if await is_user_frozen(session, agent.id, external_user_id):
+            return JSONResponse(
+                content={
+                    "bot_id": agent.bot_id,
+                    "bot_username": agent.bot_username,
+                    "external_user_id": external_user_id,
+                    "answer": "",
+                    "sources": [],
+                },
+                status_code=status.HTTP_200_OK,
+            )
 
     knowledge_scope_id = agent.bot_id if agent.bot_id is not None else agent.id
     template_config = _decode_template_config(

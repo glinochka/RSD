@@ -100,8 +100,11 @@ class MessageProcessor:
             except ValueError:
                 response_status = ProcessingStatus.ERROR
 
-            if response_status == ProcessingStatus.DISCARDED:
-                return MessageResponse(text="", status=response_status)
+            if response_status in (
+                ProcessingStatus.DISCARDED,
+                ProcessingStatus.BLOCKED_USER,
+            ):
+                return MessageResponse(text="", status=ProcessingStatus.DISCARDED)
 
             if not answer:
                 answer = "⚠️ Произошла ошибка при обработке вашего сообщения. Попробуйте позже."
