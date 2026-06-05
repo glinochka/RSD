@@ -2013,7 +2013,6 @@ const AgentDetailedAnalyticsPageContent = () => {
                       </button>
                       );
                     })
-                    )
                   )}
                 </aside>
 
