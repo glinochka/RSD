@@ -171,6 +171,31 @@ const channelLabel = (channel) => {
   return channel || 'unknown';
 };
 
+const normalizeLeadStatus = (status) => String(status || '').trim().toUpperCase();
+
+const leadStatusMeta = (status) => {
+  const key = normalizeLeadStatus(status);
+  if (key === 'REPLIED_NEGATIVE' || key === 'SKIPPED') {
+    return { key, label: 'Отказ', warmth: 'rejected' };
+  }
+  if (key === 'HANDOFF_CRM') {
+    return { key, label: 'Успешно закрыт', warmth: 'closed' };
+  }
+  if (key === 'REPLIED_POSITIVE') {
+    return { key, label: 'Прогрет', warmth: 'warmed' };
+  }
+  if (key === 'DISCOVERED' || key === 'QUALIFIED' || key === 'QUEUED' || key === 'SENT') {
+    return { key, label: 'В работе', warmth: 'in_work' };
+  }
+  if (key === 'NO_REPLY') {
+    return { key, label: 'Без ответа', warmth: 'in_work' };
+  }
+  if (!key) {
+    return { key: 'UNKNOWN', label: 'Статус не определен', warmth: 'unknown' };
+  }
+  return { key, label: key, warmth: 'unknown' };
+};
+
 const formatCallDuration = (sec) => {
   if (sec == null || Number.isNaN(Number(sec))) return '—';
   const total = Math.max(0, Number(sec));
@@ -500,6 +525,7 @@ const mapChatsPayload = (payload) => {
     questions: Number(user.questions_count || 0),
     lastMessageAt: formatDateTime(user.last_message_at),
     isFrozen: Boolean(user.is_frozen),
+    leadStatus: normalizeLeadStatus(user.lead_status),
     chatPortrait: (Array.isArray(user.messages) ? user.messages : [])
       .filter((item) => item?.role === 'portrait' && String(item?.text || '').trim())
       .sort((a, b) => new Date(a?.created_at || 0).getTime() - new Date(b?.created_at || 0).getTime())
@@ -1008,6 +1034,10 @@ const AgentDetailedAnalyticsPageContent = () => {
   const selectedUser = useMemo(
     () => filteredChatUsers.find((user) => user.id === selectedUserId) || null,
     [filteredChatUsers, selectedUserId]
+  );
+  const selectedLeadStatusMeta = useMemo(
+    () => leadStatusMeta(selectedUser?.leadStatus),
+    [selectedUser?.leadStatus]
   );
 
   const canSendOwnerToUser = Boolean(
@@ -1961,20 +1991,29 @@ const AgentDetailedAnalyticsPageContent = () => {
                   {filteredChatUsers.length === 0 ? (
                     <p className="analytics-chat-empty">Пока нет сообщений от пользователей</p>
                   ) : (
-                    filteredChatUsers.map((user) => (
+                    filteredChatUsers.map((user) => {
+                      const statusMeta = leadStatusMeta(user.leadStatus);
+                      return (
                       <button
                         key={user.id}
                         type="button"
                         className={`analytics-user-item ${selectedUserId === user.id ? 'analytics-user-item--active' : ''} ${user.isFrozen ? 'analytics-user-item--frozen' : ''}`}
                         onClick={() => setSelectedUserId(user.id)}
                       >
+                        <span
+                          className={`analytics-user-item-status-dot analytics-user-item-status-dot--${statusMeta.warmth}`}
+                          aria-label={`Статус лида: ${statusMeta.label}`}
+                          title={`Статус лида: ${statusMeta.label}`}
+                        />
                         <strong>{user.name}</strong>
                         <span>{channelLabel(user.channel)}</span>
                         <span>{user.questions} вопросов</span>
                         <span>{user.lastMessageAt}</span>
                         {user.isFrozen ? <span className="analytics-user-frozen-badge">Заморожен</span> : null}
                       </button>
-                    ))
+                      );
+                    })
+                    )
                   )}
                 </aside>
 
@@ -1989,6 +2028,9 @@ const AgentDetailedAnalyticsPageContent = () => {
                           <p>
                             Вопросов: {selectedUser.questions} · {channelLabel(selectedUser.channel)}
                           </p>
+                          <span className={`analytics-lead-status-badge analytics-lead-status-badge--${selectedLeadStatusMeta.warmth}`}>
+                            {selectedLeadStatusMeta.label}
+                          </span>
                         </div>
                         <div className="analytics-chat-thread-header-actions">
                           {portraitFeatureEnabled ? (

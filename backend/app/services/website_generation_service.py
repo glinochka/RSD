@@ -116,6 +116,53 @@ DO NOT:
 - Change language from Russian
 """
 
+WEBSITE_ADAPTIVE_SYSTEM_PROMPT = """\
+You are a frontend specialist focused on responsive adaptation.
+
+You receive already refined HTML for a landing page.
+Your task is to improve rendering for tablets and mobile devices without breaking desktop.
+
+Output ONLY adapted HTML (body content only, no wrappers).
+
+ADAPTATION GOALS:
+- Improve layout for mobile (<=640px) and tablet (641-1024px) viewports
+- Ensure typography scales properly (avoid oversized headings on small screens)
+- Improve spacing on smaller viewports (px-4/px-5, sensible vertical rhythm)
+- Prevent horizontal scrolling and content overflow
+- Make cards/sections stack naturally where needed
+- Keep tap targets comfortable on touch devices
+- Ensure navigation remains usable on small screens
+
+DESKTOP SAFETY RULES (CRITICAL):
+- Do not degrade desktop layout (lg/xl) visual hierarchy
+- Keep desktop spacing and section composition close to the original
+- Avoid drastic redesign or section reordering
+- Preserve business copy and CTA intent
+
+DO NOT:
+- Add scripts
+- Change language from Russian
+- Remove major sections
+"""
+
+WEBSITE_FINAL_QA_SYSTEM_PROMPT = """\
+You are a strict frontend QA reviewer for a production landing page.
+
+Output ONLY final HTML (body content only, no wrappers).
+
+CHECKLIST:
+- Desktop layout quality remains strong (no regressions after adaptation)
+- Tablet and mobile layouts are clean and readable
+- No horizontal overflow on common breakpoints
+- Navigation anchors still work and ids are preserved
+- CTA buttons are visible and accessible on all viewports
+- No placeholder/template text or fake contacts
+- Tailwind classes look valid and consistent
+
+Apply only minimal, targeted fixes needed to pass the checklist.
+Do not redesign the page.
+"""
+
 
 def _build_generation_user_prompt(
     business_name: str,
@@ -382,6 +429,58 @@ class WebsiteGenerationService:
                     logger.info("[WebsiteGen] Using refined HTML")
                 else:
                     logger.info("[WebsiteGen] Refined HTML too short, using original")
+
+                # Step 3: Adaptive pass for mobile/tablet (desktop-safe)
+                logger.info("[WebsiteGen] Starting adaptive pass")
+                adaptive_prompt = (
+                    f"Business: {business_name}\n"
+                    f"Theme: {'dark' if dark_mode else 'light'}\n"
+                    f"Brand color: {primary_color or 'auto'}\n\n"
+                    f"Adapt this HTML for mobile/tablet without breaking desktop:\n\n{html_content}"
+                )
+                adaptive_raw = await self._call_ai(
+                    system_prompt=WEBSITE_ADAPTIVE_SYSTEM_PROMPT,
+                    user_prompt=adaptive_prompt,
+                    temperature=0.2,
+                    max_tokens=self.max_generation_tokens,
+                )
+                adaptive_html = _extract_html_from_response(adaptive_raw)
+                logger.info(f"[WebsiteGen] Adaptive HTML length: {len(adaptive_html)} chars")
+
+                if _contains_generic_placeholder_content(adaptive_html):
+                    raise ValueError("Adaptive HTML contains generic placeholder/template content")
+
+                if len(adaptive_html) >= len(html_content) * 0.75:
+                    html_content = adaptive_html
+                    logger.info("[WebsiteGen] Using adaptive HTML")
+                else:
+                    logger.info("[WebsiteGen] Adaptive HTML too short, keeping previous version")
+
+                # Step 4: Final QA pass
+                logger.info("[WebsiteGen] Starting final QA pass")
+                final_qa_prompt = (
+                    f"Business: {business_name}\n"
+                    f"Theme: {'dark' if dark_mode else 'light'}\n"
+                    f"Brand color: {primary_color or 'auto'}\n\n"
+                    f"Run final QA and apply minimal fixes to this HTML:\n\n{html_content}"
+                )
+                final_qa_raw = await self._call_ai(
+                    system_prompt=WEBSITE_FINAL_QA_SYSTEM_PROMPT,
+                    user_prompt=final_qa_prompt,
+                    temperature=0.15,
+                    max_tokens=self.max_generation_tokens,
+                )
+                final_qa_html = _extract_html_from_response(final_qa_raw)
+                logger.info(f"[WebsiteGen] Final QA HTML length: {len(final_qa_html)} chars")
+
+                if _contains_generic_placeholder_content(final_qa_html):
+                    raise ValueError("Final QA HTML contains generic placeholder/template content")
+
+                if len(final_qa_html) >= len(html_content) * 0.75:
+                    html_content = final_qa_html
+                    logger.info("[WebsiteGen] Using final QA HTML")
+                else:
+                    logger.info("[WebsiteGen] Final QA HTML too short, keeping previous version")
 
                 # Apply brand color safety net
                 html_content = _inject_tailwind_color(html_content, primary_color)

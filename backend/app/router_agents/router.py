@@ -39,6 +39,7 @@ from ..alembic.models import (
     AgentCrmConnection,
     AgentFrozenUser,
     AgentHttpIntegration,
+    AgentSalesContact,
     AgentSalesImportedContact,
 )
 from ..config import settings
@@ -7644,6 +7645,34 @@ async def read_analytics_chats(
                 )
             )
             frozen_ids = set(frozen_result.all())
+            contact_status_by_uid: dict[str, str] = {}
+            if user_ids:
+                contact_rows = (
+                    (
+                        await session.execute(
+                            select(
+                                AgentSalesContact.user_external_id.label("uid"),
+                                AgentSalesContact.state.label("state"),
+                                AgentSalesContact.updated_at.label("updated_at"),
+                            )
+                            .where(
+                                AgentSalesContact.agent_id == agent.id,
+                                AgentSalesContact.user_external_id.in_(user_ids),
+                            )
+                            .order_by(AgentSalesContact.updated_at.desc(), AgentSalesContact.id.desc())
+                        )
+                    )
+                    .mappings()
+                    .all()
+                )
+                for item in contact_rows:
+                    uid = str(item.get("uid") or "").strip()
+                    state = str(item.get("state") or "").strip().upper()
+                    if not uid or not state:
+                        continue
+                    if uid in contact_status_by_uid:
+                        continue
+                    contact_status_by_uid[uid] = state
 
             message_rows = (
                 (
@@ -7700,6 +7729,7 @@ async def read_analytics_chats(
                         "questions_count": int(row["questions"] or 0),
                         "last_message_at": _safe_iso(row["last_message_at"]),
                         "is_frozen": uid in frozen_ids,
+                        "lead_status": contact_status_by_uid.get(str(uid), None),
                         "messages": [
                             {
                                 "role": item["role"],
