@@ -52,16 +52,6 @@ export function useWebsite(websiteId, slug = null, domain = null) {
     fetchSchema();
   }, [fetchSchema]);
 
-  useEffect(() => {
-    if (!schema) return;
-
-    const interval = setInterval(() => {
-      fetchSchema();
-    }, 30000);
-
-    return () => clearInterval(interval);
-  }, [schema, fetchSchema]);
-
   return {
     schema,
     loading,

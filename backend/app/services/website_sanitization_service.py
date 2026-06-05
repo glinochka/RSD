@@ -10,7 +10,7 @@ import bleach
 from bleach.css_sanitizer import CSSSanitizer
 
 
-# Allowed HTML tags for user content
+# Allowed HTML tags for user content (block-level editing)
 ALLOWED_TAGS: Set[str] = {
     'p', 'br', 'span', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
     'strong', 'b', 'em', 'i', 'u', 'strike', 'del', 's',
@@ -18,6 +18,30 @@ ALLOWED_TAGS: Set[str] = {
     'ul', 'ol', 'li',
     'blockquote', 'code', 'pre', 'hr',
     'table', 'thead', 'tbody', 'tr', 'td', 'th',
+}
+
+# Extended tags for fullpage AI-generated HTML (includes interactive elements)
+FULLPAGE_ALLOWED_TAGS: Set[str] = {
+    # Standard content
+    'p', 'br', 'span', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+    'strong', 'b', 'em', 'i', 'u', 'strike', 'del', 's',
+    'a', 'img',
+    'ul', 'ol', 'li',
+    'blockquote', 'code', 'pre', 'hr',
+    'table', 'thead', 'tbody', 'tr', 'td', 'th',
+    # Semantic structure
+    'header', 'nav', 'main', 'section', 'article', 'aside', 'footer',
+    'figure', 'figcaption', 'details', 'summary',
+    # Forms (for contact forms)
+    'form', 'input', 'textarea', 'button', 'label', 'select', 'option',
+    # Interactive elements
+    'script', 'style', 'svg', 'path', 'circle', 'rect', 'line', 'polyline',
+    'polygon', 'ellipse', 'g', 'defs', 'use', 'text', 'tspan',
+    # Media
+    'video', 'audio', 'source', 'track',
+    # Other
+    'iframe', 'embed', 'object', 'param',
+    'canvas', 'progress', 'meter',
 }
 
 # Allowed HTML attributes
@@ -140,6 +164,130 @@ class WebsiteSanitizationService:
         sanitized = self._clean_remaining_dangers(sanitized)
         
         return sanitized
+
+    def sanitize_fullpage_html(
+        self,
+        content: str,
+        strip_disallowed: bool = True,
+    ) -> str:
+        """Sanitize AI-generated fullpage HTML content.
+        
+        Allows more tags including script and style for interactive elements,
+        but removes dangerous patterns like event handlers and javascript: URLs.
+        
+        Args:
+            content: Raw HTML content from AI generation
+            strip_disallowed: If True, remove disallowed tags; if False, escape them
+            
+        Returns:
+            Sanitized HTML string safe for rendering in iframe
+        """
+        if not content:
+            return ""
+        
+        # Extended attributes for fullpage content
+        fullpage_attrs = {
+            **ALLOWED_ATTRIBUTES,
+            'script': ['src', 'type', 'async', 'defer'],
+            'style': ['type', 'media', 'scoped'],
+            'svg': ['viewBox', 'fill', 'stroke', 'stroke-width', 'xmlns'],
+            'path': ['d', 'fill', 'stroke', 'stroke-width'],
+            'input': ['type', 'name', 'placeholder', 'value', 'required', 'disabled', 'readonly', 'maxlength'],
+            'textarea': ['name', 'placeholder', 'rows', 'cols', 'required', 'disabled', 'readonly', 'maxlength'],
+            'button': ['type', 'disabled'],
+            'form': ['action', 'method', 'enctype'],
+            'video': ['src', 'controls', 'autoplay', 'loop', 'muted', 'poster', 'width', 'height'],
+            'audio': ['src', 'controls', 'autoplay', 'loop', 'muted'],
+            'source': ['src', 'type'],
+            'iframe': ['src', 'width', 'height', 'frameborder', 'allow', 'allowfullscreen'],
+        }
+        
+        # First pass: Use bleach with extended tags
+        sanitized = bleach.clean(
+            content,
+            tags=list(FULLPAGE_ALLOWED_TAGS),
+            attributes=fullpage_attrs,
+            strip=strip_disallowed,
+            css_sanitizer=self.css_sanitizer,
+        )
+        
+        # Second pass: Clean dangerous patterns (event handlers, JS URLs)
+        sanitized = self._clean_fullpage_dangers(sanitized)
+        
+        return sanitized
+
+    def _clean_fullpage_dangers(self, html: str) -> str:
+        """Clean dangerous patterns from fullpage HTML while preserving safe scripts."""
+        if not html:
+            return html
+        
+        # Remove event handlers (onclick, onload, onerror, etc.)
+        # Use regex to match on* attributes
+        html = re.sub(
+            r'\s+on\w+\s*=\s*(["\'][^"\']*["\']|[^\s>]+)',
+            '',
+            html,
+            flags=re.IGNORECASE
+        )
+        
+        # Remove javascript: URLs in href/src
+        html = re.sub(
+            r'\s(href|src|action)\s*=\s*["\']\s*javascript:[^"\']*["\']',
+            r' \1="#"',
+            html,
+            flags=re.IGNORECASE
+        )
+        
+        # Remove vbscript: URLs
+        html = re.sub(
+            r'\s(href|src|action)\s*=\s*["\']\s*vbscript:[^"\']*["\']',
+            r' \1="#"',
+            html,
+            flags=re.IGNORECASE
+        )
+        
+        # Remove data:text/html URLs
+        html = re.sub(
+            r'\s(href|src|action)\s*=\s*["\']\s*data:text/html[^"\']*["\']',
+            r' \1="#"',
+            html,
+            flags=re.IGNORECASE
+        )
+        
+        # Check for dangerous script patterns
+        # Block document.write, eval, and dynamic script injection
+        dangerous_js_patterns = [
+            r'document\.write\s*\(',
+            r'document\.writeln\s*\(',
+            r'eval\s*\(',
+            r'Function\s*\(\s*["\']',
+            r'setTimeout\s*\(\s*["\']',
+            r'setInterval\s*\(\s*["\']',
+            r'new\s+Function\s*\(',
+            r'importScripts\s*\(',
+            r'XMLHttpRequest',
+            r'fetch\s*\(',
+            r'WebSocket',
+        ]
+        
+        # If dangerous patterns found in inline scripts, escape the script content
+        def escape_dangerous_scripts(match):
+            script_content = match.group(1)
+            for pattern in dangerous_js_patterns:
+                if re.search(pattern, script_content, re.IGNORECASE):
+                    # Escape the entire script tag
+                    return f'<!-- Script blocked due to dangerous pattern: {match.group(0)[:100]}... -->'
+            return match.group(0)
+        
+        # Check script tags for dangerous patterns
+        html = re.sub(
+            r'<script[^>]*>(.*?)</script>',
+            escape_dangerous_scripts,
+            html,
+            flags=re.DOTALL | re.IGNORECASE
+        )
+        
+        return html
     
     def sanitize_css(self, css: str) -> str:
         """Sanitize CSS content.
@@ -168,7 +316,8 @@ class WebsiteSanitizationService:
         
         # Remove forbidden properties
         for prop in FORBIDDEN_CSS_PROPERTIES:
-            css = re.sub(rf'[;\s]{{}}{\s*:', ':', css, flags=re.IGNORECASE)
+            pattern = r'[;\s]' + re.escape(prop) + r'\s*:'
+            css = re.sub(pattern, ':', css, flags=re.IGNORECASE)
         
         return css.strip()
     

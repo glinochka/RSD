@@ -30,6 +30,10 @@ from ..services.website_seo_service import (
     get_website_seo_service,
     FAVICON_SIZES,
 )
+from ..services.website_sanitization_service import (
+    get_website_sanitization_service,
+    WebsiteSanitizationService,
+)
 
 from .dao import WebsiteDAO, WebsiteBlockDAO, WebsiteDomainDAO, WebsiteTemplateDAO
 from .schemas import (
@@ -499,11 +503,27 @@ async def create_block(
         max_order = await website_dao.get_max_order_for_website(website_id)
         order = max_order + 1
 
+    # Sanitize content based on block type
+    sanitized_content = request.content
+    if request.type == "fullpage" and request.content:
+        # For AI-generated fullpage HTML, use extended sanitization that allows scripts
+        sanitization_service = get_website_sanitization_service()
+        html_content = request.content.get("html", "") if isinstance(request.content, dict) else str(request.content)
+        sanitized_html = sanitization_service.sanitize_fullpage_html(html_content)
+        if isinstance(request.content, dict):
+            sanitized_content = {**request.content, "html": sanitized_html}
+        else:
+            sanitized_content = {"html": sanitized_html}
+    elif request.content and isinstance(request.content, dict):
+        # For regular blocks, sanitize individual text fields
+        sanitization_service = get_website_sanitization_service()
+        sanitized_content = sanitization_service.sanitize_json_content(request.content)
+
     block_data = {
         "website_id": website_id,
         "type": request.type,
         "order": order,
-        "content": request.content,
+        "content": sanitized_content,
         "styles": request.styles,
         "is_visible": request.is_visible,
     }
@@ -544,6 +564,24 @@ async def update_block(
         )
 
     updates = request.model_dump(exclude_none=True)
+    
+    # Sanitize content based on block type
+    if "content" in updates:
+        if block.type == "fullpage" and updates["content"]:
+            # For AI-generated fullpage HTML, use extended sanitization that allows scripts
+            sanitization_service = get_website_sanitization_service()
+            content = updates["content"]
+            html_content = content.get("html", "") if isinstance(content, dict) else str(content)
+            sanitized_html = sanitization_service.sanitize_fullpage_html(html_content)
+            if isinstance(content, dict):
+                updates["content"] = {**content, "html": sanitized_html}
+            else:
+                updates["content"] = {"html": sanitized_html}
+        elif updates["content"] and isinstance(updates["content"], dict):
+            # For regular blocks, sanitize individual text fields
+            sanitization_service = get_website_sanitization_service()
+            updates["content"] = sanitization_service.sanitize_json_content(updates["content"])
+    
     if updates:
         updates["updated_at"] = datetime.now(timezone.utc).replace(tzinfo=None)
         await block_dao.update(block, updates)
@@ -650,6 +688,7 @@ async def edit_block_with_prompt(
         )
 
     service = get_website_generation_service()
+    sanitization_service = get_website_sanitization_service()
     try:
         if block.type == "fullpage":
             # AI-coder mode: edit the raw HTML
@@ -662,8 +701,10 @@ async def edit_block_with_prompt(
                 prompt=request.prompt,
                 business_name=website.title or "",
             )
+            # Sanitize the AI-edited HTML while preserving safe scripts
+            sanitized_html = sanitization_service.sanitize_fullpage_html(edited_html)
             edited = {
-                "content": {"html": edited_html},
+                "content": {"html": sanitized_html},
                 "styles": block.styles or {},
             }
         else:
@@ -675,6 +716,8 @@ async def edit_block_with_prompt(
                 global_styles=website.custom_styles or {},
                 prompt=request.prompt,
             )
+            # Sanitize JSON content
+            edited["content"] = sanitization_service.sanitize_json_content(edited["content"])
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

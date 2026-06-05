@@ -18,6 +18,7 @@ from ..alembic.models import WebsiteBlock
 from ..router_websites.dao import WebsiteBlockDAO, WebsiteDAO
 from ..config import settings
 from .ai_authoring import ai_client
+from .website_sanitization_service import get_website_sanitization_service
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +40,20 @@ CRITICAL RULES:
 5. Language: ALL visible text must be in RUSSIAN.
 6. Mobile-first responsive design (sm:, md:, lg: breakpoints).
 7. Include smooth scroll behavior via anchor links.
-8. No <script> tags, no inline JavaScript, no external resources except Tailwind.
-9. Use semantic HTML5 elements (header, nav, main, section, footer).
-10. Include proper id attributes on sections for navigation anchors.
+8. Use semantic HTML5 elements (header, nav, main, section, footer).
+9. Include proper id attributes on sections for navigation anchors.
+10. JAVASCRIPT FOR UI ANIMATIONS IS ALLOWED: You may include inline <script> tags for interactive elements like:
+    - Carousels/sliders (touch-friendly, with prev/next buttons)
+    - Mobile navigation menu toggle (hamburger menu)
+    - Smooth scroll animations on scroll
+    - Accordion/FAQ toggles
+    - Tab switching
+    - Simple hover effects that require JS
+    - Counter animations
+    IMPORTANT: Keep JavaScript minimal, clean, and self-contained. No external JS libraries.
+    NEVER use document.write, eval, or dynamic script injection.
+    All JS must be inside the returned HTML body content (at the end, before </body>).
+11. CSS animations via Tailwind are preferred where possible (transition, animate-, hover:).
 
 DESIGN PRINCIPLES:
 - Hero section: bold, eye-catching, with a strong value proposition
@@ -79,16 +91,26 @@ You are an expert frontend developer editing an existing website's HTML code.
 The user will describe desired changes in natural language.
 You receive the current HTML and must return the MODIFIED HTML with the requested changes applied.
 
-RULES:
+CRITICAL RULES - PRESERVATION IS KEY:
 1. Output ONLY the modified HTML (the body content, no DOCTYPE/html/head/body wrappers).
-2. Keep all existing Tailwind CSS classes and structure intact unless the change requires modification.
-3. Maintain responsive design (sm:, md:, lg: breakpoints).
-4. All text must remain in RUSSIAN.
-5. No <script> tags, no inline JavaScript.
-6. Preserve section id attributes for navigation.
-7. Make ONLY the changes the user requested. Don't redesign the whole page unnecessarily.
-8. If the user asks to change colors/theme, update Tailwind color classes consistently.
-9. If adding new sections, match the existing design language.
+2. Keep ALL existing structure, sections, and content unless EXPLICITLY asked to remove them.
+3. NEVER remove existing sections like footer, navigation, header, contact sections, etc.
+4. NEVER modify sections that the user didn't ask to change.
+5. Maintain responsive design (sm:, md:, lg: breakpoints).
+6. All text must remain in RUSSIAN.
+7. Preserve existing <script> tags for animations/interactivity - keep them intact.
+8. Preserve section id attributes for navigation.
+9. Make ONLY the specific changes the user requested. Don't redesign the whole page.
+10. If the user asks to change colors/theme, update Tailwind color classes consistently.
+11. If adding new sections, match the existing design language and place them appropriately.
+12. When adding a new section, ensure it integrates with existing layout (e.g., footer stays at bottom).
+
+EXAMPLE SCENARIOS:
+- User says "add testimonials section" → Add the section but keep ALL existing content including footer.
+- User says "change hero color to blue" → Only update hero background color, preserve everything else.
+- User says "make text larger" → Only update font sizes in appropriate sections, preserve all sections.
+
+OUTPUT: Complete HTML body content with ALL original sections + requested modifications.
 """
 
 WEBSITE_REFINE_SYSTEM_PROMPT = """\
@@ -108,12 +130,19 @@ CHECK AND FIX:
 - Ensure navigation anchors work correctly
 - Fix any Tailwind class typos or conflicts
 - Make CTAs stand out visually
+- Preserve any existing <script> tags for carousels, animations, interactivity
+
+PRESERVATION RULES:
+- Keep ALL existing content sections
+- Keep ALL existing JavaScript for animations/interactivity
+- Only apply visual/layout improvements
+- Do not remove footer, navigation, or any other sections
 
 DO NOT:
-- Add scripts
 - Change the overall design direction
 - Remove content sections
 - Change language from Russian
+- Remove or modify existing scripts unless they are broken
 """
 
 WEBSITE_ADAPTIVE_SYSTEM_PROMPT = """\
@@ -138,11 +167,17 @@ DESKTOP SAFETY RULES (CRITICAL):
 - Keep desktop spacing and section composition close to the original
 - Avoid drastic redesign or section reordering
 - Preserve business copy and CTA intent
+- Preserve ALL existing JavaScript for carousels and interactivity
+
+PRESERVATION RULES:
+- Keep ALL content sections exactly as provided
+- Keep ALL <script> tags for existing functionality
+- Only modify CSS classes for responsive behavior
 
 DO NOT:
-- Add scripts
 - Change language from Russian
 - Remove major sections
+- Remove or modify existing scripts
 """
 
 WEBSITE_FINAL_QA_SYSTEM_PROMPT = """\
@@ -158,6 +193,13 @@ CHECKLIST:
 - CTA buttons are visible and accessible on all viewports
 - No placeholder/template text or fake contacts
 - Tailwind classes look valid and consistent
+- ALL content sections from original are present (header, nav, sections, footer)
+- Any existing JavaScript for carousels/interactivity is preserved and functional
+
+CRITICAL PRESERVATION:
+- Keep ALL content sections exactly as in the input
+- Keep ALL <script> tags for carousels, mobile menus, animations
+- Do not remove footer, navigation, or any other section
 
 Apply only minimal, targeted fixes needed to pass the checklist.
 Do not redesign the page.
@@ -393,8 +435,14 @@ class WebsiteGenerationService:
                 if "<section" not in html_content and "<div" not in html_content:
                     raise ValueError("Generated content doesn't contain valid HTML sections")
 
-                if "<nav" not in html_content or "<header" not in html_content:
-                    raise ValueError("Generated HTML must include nav and header structure")
+                # Soft warning for nav/header - AI sometimes uses div-based navigation
+                if "<nav" not in html_content and "<header" not in html_content:
+                    logger.warning("[WebsiteGen] Generated HTML missing explicit nav/header tags, checking for navigation patterns")
+                    # Check for navigation-like patterns (menu, navbar classes, etc.)
+                    nav_patterns = ['navbar', 'menu', 'navigation', 'nav-', 'role="navigation"']
+                    has_nav_pattern = any(p in html_content.lower() for p in nav_patterns)
+                    if not has_nav_pattern:
+                        raise ValueError("Generated HTML must include navigation structure (nav, header, or navbar pattern)")
 
                 if _contains_generic_placeholder_content(html_content):
                     raise ValueError("Generated HTML contains generic placeholder/template content")
@@ -562,13 +610,18 @@ class WebsiteGenerationService:
                         await block_dao.delete(block)
                     logger.info(f"[WebsiteGenService] Cleared {blocks_count} existing blocks")
 
+                    # Sanitize HTML while preserving safe scripts for carousels/animations
+                    sanitization_service = get_website_sanitization_service()
+                    sanitized_html = sanitization_service.sanitize_fullpage_html(html_content)
+                    logger.info(f"[WebsiteGenService] HTML sanitized: {len(html_content)} -> {len(sanitized_html)} chars")
+
                     # Create single fullpage block
                     logger.info(f"[WebsiteGenService] Creating fullpage block for website_id={website_id}")
                     block = WebsiteBlock(
                         website_id=website_id,
                         type="fullpage",
                         order=1,
-                        content={"html": html_content},
+                        content={"html": sanitized_html},
                         styles={},
                         is_visible=True,
                     )

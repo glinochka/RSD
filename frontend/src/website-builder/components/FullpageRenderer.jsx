@@ -156,6 +156,7 @@ const FullpageRenderer = ({
         ref={iframeRef}
         title={`website-${websiteId || 'preview'}`}
         sandbox="allow-same-origin allow-scripts allow-popups allow-forms"
+        allow="autoplay; encrypted-media; fullscreen"
         style={{
           width: '100%',
           height: previewMode ? iframeHeight : '100vh',
