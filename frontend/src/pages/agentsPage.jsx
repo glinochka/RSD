@@ -2514,6 +2514,32 @@ const AgentsPageContent = () => {
                     >
                      Дашборд агента
                     </button>
+                    {showExtendContractButton ? (
+                      <button
+                        type="button"
+                        className="btn btn-outline agent-extend-contract-btn"
+                        onClick={() => openContractPaymentModal(selectedAgent, 'Продление подписки')}
+                      >
+                        Продлить контракт
+                      </button>
+                    ) : null}
+                    {selectedAgentBilling?.requires_subscription ? (
+                      <p className="agent-billing-status">
+                        {selectedAgentBilling.maintenance_grace_active
+                          ? `Пробный период${typeof selectedAgentBilling.trial_days_left === 'number' ? ` (${selectedAgentBilling.trial_days_left} дн.)` : ''}`
+                          : selectedAgentBilling.maintenance_current
+                            ? selectedAgentBilling.maintenance_paid_until
+                              ? `Подписка до ${new Date(selectedAgentBilling.maintenance_paid_until).toLocaleDateString('ru-RU')}`
+                              : 'Подписка активна'
+                            : 'Подписка не оплачена — агент будет отключён'}
+                        {selectedAgentBilling.autopay_enabled
+                          ? ` · автопродление на ${selectedAgentBilling.autopay_duration_months} мес.`
+                          : ''}
+                        {selectedAgentBilling.autopay_last_error
+                          ? ` · ${selectedAgentBilling.autopay_last_error}`
+                          : ''}
+                      </p>
+                    ) : null}
                   </div>
 
                   {/* Website block - moved to top for visibility */}
@@ -2556,33 +2582,6 @@ const AgentsPageContent = () => {
                         </div>
                       </>
                     )}
-                  </div>
-                    {showExtendContractButton ? (
-                      <button
-                        type="button"
-                        className="btn btn-outline agent-extend-contract-btn"
-                        onClick={() => openContractPaymentModal(selectedAgent, 'Продление подписки')}
-                      >
-                        Продлить контракт
-                      </button>
-                    ) : null}
-                    {selectedAgentBilling?.requires_subscription ? (
-                      <p className="agent-billing-status">
-                        {selectedAgentBilling.maintenance_grace_active
-                          ? `Пробный период${typeof selectedAgentBilling.trial_days_left === 'number' ? ` (${selectedAgentBilling.trial_days_left} дн.)` : ''}`
-                          : selectedAgentBilling.maintenance_current
-                            ? selectedAgentBilling.maintenance_paid_until
-                              ? `Подписка до ${new Date(selectedAgentBilling.maintenance_paid_until).toLocaleDateString('ru-RU')}`
-                              : 'Подписка активна'
-                            : 'Подписка не оплачена — агент будет отключён'}
-                        {selectedAgentBilling.autopay_enabled
-                          ? ` · автопродление на ${selectedAgentBilling.autopay_duration_months} мес.`
-                          : ''}
-                        {selectedAgentBilling.autopay_last_error
-                          ? ` · ${selectedAgentBilling.autopay_last_error}`
-                          : ''}
-                      </p>
-                    ) : null}
                   </div>
 
                   <div className="agent-management-block">
