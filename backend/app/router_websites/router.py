@@ -660,12 +660,12 @@ async def reorder_blocks(
 async def edit_block_with_prompt(
     website_id: int,
     block_id: int,
-    prompt: str = Form(..., min_length=3, max_length=2000),
-    image_count: int = Form(default=0, ge=0, le=5),
     user: Annotated[User, Depends(get_current_user)],
     website_dao: Annotated[WebsiteDAO, Depends(get_website_dao)],
     block_dao: Annotated[WebsiteBlockDAO, Depends(get_block_dao)],
-    request: Request,  # FastAPI request for file access
+    request: Request,
+    prompt: str = Form(..., min_length=3, max_length=2000),
+    image_count: int = Form(default=0, ge=0, le=5),
 ):
     """Apply AI-assisted edits to a block based on a natural-language prompt.
     
