@@ -222,10 +222,10 @@ export function useConstructor(websiteId) {
   );
 
   const applyAiPrompt = useCallback(
-    async (blockId, prompt) => {
+    async (blockId, prompt, images = []) => {
       setAiLoading(true);
       try {
-        const result = await editBlockWithPromptApi(websiteId, blockId, prompt);
+        const result = await editBlockWithPromptApi(websiteId, blockId, prompt, images);
         setBlocks((prev) =>
           prev.map((b) =>
             b.id === blockId

@@ -35,6 +35,7 @@ const ConstructorPageContent = () => {
   const [actionError, setActionError] = useState(null);
   const [rightPanelTab, setRightPanelTab] = useState('settings');
   const [deletingWebsite, setDeletingWebsite] = useState(false);
+  const [aiFeedback, setAiFeedback] = useState(null);
 
   const [agentData, setAgentData] = useState(null);
 
@@ -269,15 +270,54 @@ const ConstructorPageContent = () => {
                 selectedBlock={selectedBlock}
                 blocks={blocks}
                 loading={aiLoading}
-                onSubmit={async (blockId, prompt) => {
+                onSubmit={async (blockId, prompt, images) => {
                   try {
                     setActionError(null);
-                    await applyAiPrompt(blockId, prompt);
+                    const result = await applyAiPrompt(blockId, prompt, images);
+                    // Show success feedback with change summary if available
+                    if (result?.change_summary) {
+                      setAiFeedback({
+                        type: 'success',
+                        message: result.change_summary,
+                        timestamp: Date.now(),
+                      });
+                    }
                   } catch (e) {
                     setActionError(e.response?.data?.detail || e.message || 'Ошибка AI');
+                    setAiFeedback({
+                      type: 'error',
+                      message: e.response?.data?.detail || e.message || 'Ошибка AI',
+                      timestamp: Date.now(),
+                    });
                   }
                 }}
               />
+              {/* AI Feedback */}
+              {aiFeedback && (
+                <div className={`wb-ai-feedback wb-ai-feedback--${aiFeedback.type}`}>
+                  <div className="wb-ai-feedback-content">
+                    {aiFeedback.type === 'success' ? (
+                      <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                    ) : (
+                      <svg className="w-4 h-4 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    )}
+                    <span>{aiFeedback.message}</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="wb-ai-feedback-close"
+                    onClick={() => setAiFeedback(null)}
+                  >
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              )}
             </>
           )}
 

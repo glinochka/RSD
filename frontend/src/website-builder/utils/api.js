@@ -69,7 +69,30 @@ export async function reorderBlocksApi(websiteId, blocks) {
   return data;
 }
 
-export async function editBlockWithPromptApi(websiteId, blockId, prompt) {
+export async function editBlockWithPromptApi(websiteId, blockId, prompt, images = []) {
+  // If images provided, use FormData for multipart upload
+  if (images && images.length > 0) {
+    const formData = new FormData();
+    formData.append('prompt', prompt);
+    images.forEach((img, idx) => {
+      formData.append(`image_${idx}`, img.file);
+    });
+    formData.append('image_count', images.length.toString());
+
+    const { data } = await axios.post(
+      `${API_BASE_URL}${API_ROUTES.WEBSITE_BLOCK_EDIT_PROMPT(websiteId, blockId)}`,
+      formData,
+      {
+        headers: {
+          ...authHeaders(),
+          'Content-Type': 'multipart/form-data',
+        },
+      }
+    );
+    return data;
+  }
+
+  // Simple prompt without images
   const { data } = await axios.post(
     `${API_BASE_URL}${API_ROUTES.WEBSITE_BLOCK_EDIT_PROMPT(websiteId, blockId)}`,
     { prompt },

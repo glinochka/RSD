@@ -2514,6 +2514,49 @@ const AgentsPageContent = () => {
                     >
                      Дашборд агента
                     </button>
+                  </div>
+
+                  {/* Website block - moved to top for visibility */}
+                  <div className="agent-management-block agent-website-block">
+                    <h4 className="agent-form-channel-title">Сайт</h4>
+                    {isWebsiteLoading ? (
+                      <p className="help-text">Загрузка...</p>
+                    ) : !agentWebsite ? (
+                      <>
+                        <p className="help-text">У вас еще нет сайта</p>
+                        <button
+                          type="button"
+                          className="btn btn-black"
+                          onClick={handleStartWebsiteBuilder}
+                          disabled={isWebsiteBuilding}
+                        >
+                          {isWebsiteBuilding ? 'Собираем сайт...' : 'Сайт за 5 минут'}
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        {isWebsiteBuilding ? (
+                          <p className="help-text">Сайт собирается, это может занять до нескольких минут.</p>
+                        ) : null}
+                        <div className="agent-website-actions">
+                          <button
+                            type="button"
+                            className="btn btn-black"
+                            onClick={handleOpenWebsiteConstructor}
+                          >
+                            Конструктор
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-outline"
+                            onClick={handleOpenWebsiteView}
+                          >
+                            Перейти
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
                     {showExtendContractButton ? (
                       <button
                         type="button"
@@ -3050,45 +3093,6 @@ const AgentsPageContent = () => {
                       title="Обработка /start"
                       helpText="ON: /start отправляется в LLM. OFF: отправляется дефолтное/пользовательское приветствие. По умолчанию выключено: команда /start вернет текст приветствия. Включите, чтобы /start обрабатывался как обычное сообщение пользователя."
                     />
-                  </div>
-
-                  <div className="agent-management-block">
-                    <h4 className="agent-form-channel-title">Сайт</h4>
-                    {isWebsiteLoading ? (
-                      <p className="help-text">Загрузка...</p>
-                    ) : !agentWebsite ? (
-                      <>
-                        <p className="help-text">У вас еще нет сайта</p>
-                        <button
-                          type="button"
-                          className="btn btn-black"
-                          onClick={handleStartWebsiteBuilder}
-                          disabled={isWebsiteBuilding}
-                        >
-                          {isWebsiteBuilding ? 'Собираем сайт...' : 'Сайт за 5 минут'}
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        {isWebsiteBuilding ? (
-                          <p className="help-text">Сайт собирается, это может занять до нескольких минут.</p>
-                        ) : null}
-                        <button
-                          type="button"
-                          className="btn btn-black"
-                          onClick={handleOpenWebsiteConstructor}
-                        >
-                          Конструктор
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-outline"
-                          onClick={handleOpenWebsiteView}
-                        >
-                          Перейти
-                        </button>
-                      </>
-                    )}
                   </div>
 
                   <div className="agent-management-block">

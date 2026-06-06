@@ -105,12 +105,113 @@ CRITICAL RULES - PRESERVATION IS KEY:
 11. If adding new sections, match the existing design language and place them appropriately.
 12. When adding a new section, ensure it integrates with existing layout (e.g., footer stays at bottom).
 
+IMAGES AND MEDIA:
+- If user references uploaded images, insert them using proper <img> tags with the image as base64 data URL.
+- Replace placeholder images/gray boxes with actual images when provided.
+- Use object-fit: cover for consistent image sizing with Tailwind's object-cover class.
+- Add proper alt attributes to all images in Russian.
+
+YANDEX MAPS INTEGRATION:
+- When user asks to add a map, use the official Yandex Maps Embed API:
+  <iframe src="https://yandex.ru/map-widget/v1/?ll=LONGITUDE%2CLATITUDE&z=16&pt=LONGITUDE%2CLATITUDE" 
+         width="100%" height="400" frameborder="0" allowfullscreen></iframe>
+- Or for JavaScript API (more control), use:
+  <div id="map" style="width:100%;height:400px;"></div>
+  <script src="https://api-maps.yandex.ru/2.1/?lang=ru_RU"></script>
+  <script>
+    ymaps.ready(function() {
+      var myMap = new ymaps.Map("map", { center: [LATITUDE, LONGITUDE], zoom: 16 });
+      var placemark = new ymaps.Placemark([LATITUDE, LONGITUDE], { hintContent: "COMPANY_NAME" });
+      myMap.geoObjects.add(placemark);
+    });
+  </script>
+- If address is provided but not coordinates, use descriptive placeholder with the address text.
+
 EXAMPLE SCENARIOS:
 - User says "add testimonials section" → Add the section but keep ALL existing content including footer.
 - User says "change hero color to blue" → Only update hero background color, preserve everything else.
 - User says "make text larger" → Only update font sizes in appropriate sections, preserve all sections.
+- User says "add this image to hero" → Replace hero background or add image with the provided image data.
+- User says "add Yandex map with our address" → Add map section with iframe or JS API before footer.
 
 OUTPUT: Complete HTML body content with ALL original sections + requested modifications.
+"""
+
+WEBSITE_EDIT_SMART_MERGE_PROMPT = """\
+You are an expert frontend developer performing surgical edits to website HTML.
+
+TASK: Apply the user's requested changes using SEARCH/REPLACE blocks. This is similar to how modern IDEs like Cursor or Copilot apply code changes.
+
+CRITICAL RULES:
+1. Identify the EXACT sections of HTML that need to be modified.
+2. For each change, provide a SEARCH/REPLACE block.
+3. SEARCH must match the original HTML exactly (including whitespace, but you can use flexible matching for class order).
+4. If creating NEW content, use SEARCH with a nearby anchor element and REPLACE with the anchor + new content.
+5. NEVER omit sections - if you're unsure about a section, leave it unchanged (don't include in any SEARCH/REPLACE).
+6. All text must remain in RUSSIAN unless adding new content.
+7. Preserve all <script> tags, event handlers (but you can modify their content), and interactive elements.
+8. Maintain responsive design classes (sm:, md:, lg:).
+
+SEARCH/REPLACE FORMAT:
+```html
+<<<<<<< SEARCH
+[exact original HTML to find]
+=======
+[new/modified HTML to replace with]
+>>>>>>> REPLACE
+```
+
+EXAMPLES:
+
+Example 1 - Adding a testimonials section after services:
+```html
+<<<<<<< SEARCH
+  </section>
+  <!-- End Services -->
+  
+  <footer class="bg-gray-900">
+=======
+  </section>
+  <!-- End Services -->
+  
+  <!-- Testimonials Section -->
+  <section id="testimonials" class="py-20 bg-white">
+    <div class="container mx-auto px-4">
+      <h2 class="text-3xl font-bold text-center mb-12">Отзывы клиентов</h2>
+      <!-- testimonials content -->
+    </div>
+  </section>
+  
+  <footer class="bg-gray-900">
+>>>>>>> REPLACE
+```
+
+Example 2 - Changing hero background color:
+```html
+<<<<<<< SEARCH
+  <section id="hero" class="relative bg-blue-600 text-white">
+=======
+  <section id="hero" class="relative bg-green-600 text-white">
+>>>>>>> REPLACE
+```
+
+Example 3 - Modifying navigation text:
+```html
+<<<<<<< SEARCH
+      <a href="#services" class="text-white hover:text-blue-200">Услуги</a>
+=======
+      <a href="#services" class="text-white hover:text-blue-200">Наши услуги</a>
+>>>>>>> REPLACE
+```
+
+GUIDANCE:
+- Use multiple SEARCH/REPLACE blocks for multiple independent changes
+- Each SEARCH should find enough context to be unique (include parent element or siblings)
+- If adding new section, place it logically (e.g., after hero, before footer)
+- Keep all original sections unless explicitly asked to remove them
+
+OUTPUT FORMAT:
+Provide ONLY the SEARCH/REPLACE blocks, no other text or explanations.
 """
 
 WEBSITE_REFINE_SYSTEM_PROMPT = """\
@@ -288,6 +389,192 @@ def _extract_html_from_response(raw: str) -> str:
         return stripped[first_tag.start():].strip()
 
     return stripped
+
+
+def _parse_search_replace_blocks(response: str) -> list[dict]:
+    """Parse SEARCH/REPLACE blocks from AI response.
+    
+    Returns list of dicts with 'search' and 'replace' keys.
+    Format:
+    <<<<<<< SEARCH
+    [original]
+    =======
+    [replacement]
+    >>>>>>> REPLACE
+    """
+    blocks = []
+    # Pattern to match search/replace blocks
+    pattern = r'<<<<<<<\s*SEARCH\s*\n(.*?)\n=======\s*\n(.*?)\n>>>>>>>\s*REPLACE'
+    
+    for match in re.finditer(pattern, response, re.DOTALL):
+        search_content = match.group(1).strip()
+        replace_content = match.group(2).strip()
+        if search_content:  # Only add if search is not empty
+            blocks.append({
+                'search': search_content,
+                'replace': replace_content,
+            })
+    
+    return blocks
+
+
+def _apply_search_replace_blocks(original_html: str, blocks: list[dict]) -> str:
+    """Apply search/replace blocks to HTML.
+    
+    Args:
+        original_html: The original HTML content
+        blocks: List of search/replace blocks from AI
+        
+    Returns:
+        Modified HTML with all replacements applied
+        
+    Raises:
+        ValueError: If a search block cannot be found in the original
+    """
+    result = original_html
+    applied_count = 0
+    failed_searches = []
+    
+    for i, block in enumerate(blocks):
+        search = block['search']
+        replace = block['replace']
+        
+        # Try exact match first
+        if search in result:
+            result = result.replace(search, replace, 1)
+            applied_count += 1
+            continue
+        
+        # Try flexible matching (normalize whitespace)
+        # Create a pattern that allows for variable whitespace
+        search_normalized = re.sub(r'\s+', r'\\s+', re.escape(search))
+        
+        # Try to find a match with flexible whitespace
+        match = re.search(search_normalized, result, re.DOTALL)
+        if match:
+            result = result[:match.start()] + replace + result[match.end():]
+            applied_count += 1
+        else:
+            failed_searches.append({
+                'index': i,
+                'search_preview': search[:100] + '...' if len(search) > 100 else search
+            })
+    
+    if failed_searches:
+        logger.warning(f"[SmartMerge] {len(failed_searches)} search blocks could not be applied")
+        for f in failed_searches:
+            logger.warning(f"  - Block {f['index']}: {f['search_preview']}")
+    
+    logger.info(f"[SmartMerge] Applied {applied_count}/{len(blocks)} changes")
+    return result
+
+
+def _validate_html_preservation(original: str, modified: str, threshold: float = 0.5) -> dict:
+    """Validate that the modified HTML preserves the structure of the original.
+    
+    Args:
+        original: Original HTML
+        modified: Modified HTML
+        threshold: Minimum acceptable similarity ratio (0-1)
+        
+    Returns:
+        Dict with validation results
+    """
+    import difflib
+    
+    # Calculate similarity ratio
+    similarity = difflib.SequenceMatcher(None, original, modified).ratio()
+    
+    # Count sections in both
+    original_sections = len(re.findall(r'<section', original, re.IGNORECASE))
+    modified_sections = len(re.findall(r'<section', modified, re.IGNORECASE))
+    
+    original_headers = len(re.findall(r'<header', original, re.IGNORECASE))
+    modified_headers = len(re.findall(r'<header', modified, re.IGNORECASE))
+    
+    original_footers = len(re.findall(r'<footer', original, re.IGNORECASE))
+    modified_footers = len(re.findall(r'<footer', modified, re.IGNORECASE))
+    
+    issues = []
+    
+    if modified_sections < original_sections:
+        issues.append(f"Lost {original_sections - modified_sections} section(s)")
+    
+    if modified_headers < original_headers:
+        issues.append(f"Lost {original_headers - modified_headers} header(s)")
+    
+    if modified_footers < original_footers:
+        issues.append(f"Lost {original_footers - modified_footers} footer(s)")
+    
+    # Check if similarity is too low
+    if similarity < threshold:
+        issues.append(f"High divergence detected (similarity: {similarity:.2f})")
+    
+    return {
+        'is_valid': len(issues) == 0,
+        'similarity': similarity,
+        'sections_original': original_sections,
+        'sections_modified': modified_sections,
+        'issues': issues,
+        'suspicious_change': similarity < 0.3,  # Very different - likely complete rewrite
+    }
+
+
+def _smart_merge_html(original_html: str, ai_modified_html: str) -> str:
+    """Intelligently merge AI changes with original HTML.
+    
+    This function implements a hybrid approach:
+    1. If AI returned SEARCH/REPLACE blocks → apply them
+    2. If AI returned complete HTML with high similarity → use AI version
+    3. If AI returned complete HTML with low similarity → merge carefully
+    
+    Args:
+        original_html: Original HTML content
+        ai_modified_html: AI's response (may be complete HTML or search/replace blocks)
+        
+    Returns:
+        Best merged result
+    """
+    # First, try to parse as search/replace blocks
+    search_replace_blocks = _parse_search_replace_blocks(ai_modified_html)
+    
+    if search_replace_blocks:
+        logger.info(f"[SmartMerge] Found {len(search_replace_blocks)} SEARCH/REPLACE blocks")
+        
+        # Apply the search/replace blocks
+        result = _apply_search_replace_blocks(original_html, search_replace_blocks)
+        
+        # Validate the result
+        validation = _validate_html_preservation(original_html, result)
+        
+        if validation['is_valid']:
+            logger.info("[SmartMerge] Changes applied successfully via search/replace")
+            return result
+        else:
+            logger.warning(f"[SmartMerge] Validation issues after search/replace: {validation['issues']}")
+            # Fall through to check if AI also provided complete HTML
+    
+    # Check if AI returned complete HTML
+    extracted_html = _extract_html_from_response(ai_modified_html)
+    
+    if len(extracted_html) > 500 and '<section' in extracted_html:
+        # AI returned complete HTML
+        validation = _validate_html_preservation(original_html, extracted_html)
+        
+        if validation['is_valid']:
+            logger.info(f"[SmartMerge] Using AI complete HTML (similarity: {validation['similarity']:.2f})")
+            return extracted_html
+        elif validation['similarity'] > 0.7:
+            # High similarity but some issues - trust AI with warning
+            logger.warning(f"[SmartMerge] Using AI HTML despite minor issues: {validation['issues']}")
+            return extracted_html
+        else:
+            # Low similarity - AI may have rewritten too much
+            logger.error(f"[SmartMerge] AI HTML too different, rejecting: {validation['issues']}")
+            raise ValueError(f"AI made too many changes. Issues: {', '.join(validation['issues'])}")
+    
+    # No valid output found
+    raise ValueError("AI did not return valid HTML or search/replace blocks")
 
 
 def _contains_generic_placeholder_content(html: str) -> bool:
@@ -644,14 +931,73 @@ class WebsiteGenerationService:
     ) -> str:
         """Edit the website HTML based on a natural-language prompt.
 
-        This is the core editing capability — the AI modifies existing HTML
-        according to user instructions, similar to how Cursor edits code.
+        Uses a hybrid approach for reliability:
+        1. First attempt: Smart merge with SEARCH/REPLACE blocks (like Cursor/Codex)
+        2. Fallback: Complete HTML regeneration with validation
+        
+        This ensures that even if AI's context is limited, we preserve existing content.
         """
+        logger.info(f"[EditWebsite] Starting edit with prompt: {prompt[:100]}...")
+        logger.info(f"[EditWebsite] Original HTML length: {len(current_html)} chars")
+        
+        # Calculate complexity score to decide on approach
+        # Simple changes: color, text, minor class changes → use smart merge
+        # Complex changes: add sections, redesign → use complete HTML
+        complexity_indicators = [
+            'добавь', 'добавить', 'add', 'new section', 'новая секция',
+            'создай', 'создать', 'create', 'переделай', 'redesign',
+            'перемести', 'move', 'удали', 'remove', 'delete'
+        ]
+        prompt_lower = prompt.lower()
+        is_complex_change = any(ind in prompt_lower for ind in complexity_indicators)
+        
+        # For simple changes, try smart merge with search/replace
+        if not is_complex_change and len(current_html) < 10000:
+            logger.info("[EditWebsite] Using SMART MERGE approach (search/replace blocks)")
+            
+            user_message_smart = (
+                f"CURRENT WEBSITE HTML (length: {len(current_html)} chars):\n\n"
+                f"```html\n{current_html}\n```\n\n"
+                f"---\n\n"
+                f"USER REQUEST: {prompt}\n\n"
+                f"Apply the requested changes using SEARCH/REPLACE blocks. "
+                f"Each SEARCH must match the original HTML exactly. "
+                f"Provide ONLY the SEARCH/REPLACE blocks, no explanations."
+            )
+            
+            try:
+                raw_smart = await self._call_ai(
+                    system_prompt=WEBSITE_EDIT_SMART_MERGE_PROMPT,
+                    user_prompt=user_message_smart,
+                    temperature=0.2,  # Lower temperature for precise edits
+                    max_tokens=self.max_generation_tokens,
+                )
+                
+                # Try to apply smart merge
+                merged_html = _smart_merge_html(current_html, raw_smart)
+                
+                # Validate the result
+                validation = _validate_html_preservation(current_html, merged_html)
+                
+                if validation['is_valid']:
+                    logger.info(f"[EditWebsite] Smart merge successful (similarity: {validation['similarity']:.2f})")
+                    return merged_html
+                else:
+                    logger.warning(f"[EditWebsite] Smart merge validation issues: {validation['issues']}")
+                    # Fall through to complete HTML approach
+            except Exception as e:
+                logger.warning(f"[EditWebsite] Smart merge failed: {e}, trying complete HTML")
+                # Fall through to complete HTML approach
+        
+        # For complex changes or if smart merge failed: use complete HTML approach
+        logger.info("[EditWebsite] Using COMPLETE HTML approach")
+        
         user_message = (
             f"CURRENT WEBSITE HTML:\n\n{current_html}\n\n"
             f"---\n\n"
             f"USER REQUEST: {prompt}\n\n"
             f"Apply the requested changes and output the COMPLETE modified HTML. "
+            f"Keep ALL existing sections unless explicitly asked to remove them. "
             f"No markdown fences, no explanations — only the HTML code."
         )
 
@@ -662,12 +1008,34 @@ class WebsiteGenerationService:
             max_tokens=self.max_generation_tokens,
         )
 
-        edited_html = _extract_html_from_response(raw)
-
-        if len(edited_html) < 200:
-            raise ValueError("AI returned too short HTML after editing")
-
-        return edited_html
+        # Use smart merge to validate and potentially fix the AI output
+        try:
+            final_html = _smart_merge_html(current_html, raw)
+            
+            # Additional validation
+            validation = _validate_html_preservation(current_html, final_html)
+            
+            if len(final_html) < 200:
+                raise ValueError("AI returned too short HTML after editing")
+            
+            if validation['suspicious_change']:
+                logger.warning(f"[EditWebsite] AI made suspicious changes: {validation['issues']}")
+                # Still return but log the issue for monitoring
+            
+            logger.info(f"[EditWebsite] Edit complete. Similarity: {validation['similarity']:.2f}, "
+                       f"Original sections: {validation['sections_original']}, "
+                       f"Modified sections: {validation['sections_modified']}")
+            
+            return final_html
+            
+        except ValueError as e:
+            logger.error(f"[EditWebsite] Smart merge rejected AI output: {e}")
+            # As last resort, try to extract HTML directly
+            edited_html = _extract_html_from_response(raw)
+            if len(edited_html) >= 200:
+                logger.warning("[EditWebsite] Falling back to direct extraction (may have issues)")
+                return edited_html
+            raise
 
     # -----------------------------------------------------------------------
     # Legacy compatibility: edit_block_with_prompt for old block-based sites

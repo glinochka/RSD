@@ -5,7 +5,7 @@ from datetime import datetime, timezone, timedelta
 from logging import getLogger
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, status, Response, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, status, Response, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.security import HTTPBearer
 from sqlalchemy import select
@@ -660,12 +660,17 @@ async def reorder_blocks(
 async def edit_block_with_prompt(
     website_id: int,
     block_id: int,
-    request: BlockPromptEditRequest,
+    prompt: str = Form(..., min_length=3, max_length=2000),
+    image_count: int = Form(default=0, ge=0, le=5),
     user: Annotated[User, Depends(get_current_user)],
     website_dao: Annotated[WebsiteDAO, Depends(get_website_dao)],
     block_dao: Annotated[WebsiteBlockDAO, Depends(get_block_dao)],
+    request: Request,  # FastAPI request for file access
 ):
-    """Apply AI-assisted edits to a block based on a natural-language prompt."""
+    """Apply AI-assisted edits to a block based on a natural-language prompt.
+    
+    Supports multipart/form-data for image uploads. Images can be attached to guide AI edits.
+    """
     website = await website_dao.get_by_id_with_relations(website_id)
 
     if not website:
@@ -687,8 +692,35 @@ async def edit_block_with_prompt(
             detail="Block not found",
         )
 
+    # Collect uploaded images from form data
+    uploaded_images = []
+    if image_count > 0:
+        form = await request.form()
+        for i in range(image_count):
+            field_name = f"image_{i}"
+            if field_name in form:
+                file = form[field_name]
+                if file and isinstance(file, UploadFile):
+                    # Validate image type
+                    content_type = file.content_type or ""
+                    if content_type.startswith("image/"):
+                        # Read and encode image to base64 for AI processing
+                        content = await file.read()
+                        import base64
+                        encoded = base64.b64encode(content).decode("utf-8")
+                        uploaded_images.append({
+                            "filename": file.filename,
+                            "content_type": content_type,
+                            "data": f"data:{content_type};base64,{encoded}",
+                            "size": len(content),
+                        })
+
     service = get_website_generation_service()
     sanitization_service = get_website_sanitization_service()
+    
+    # Prepare change summary for feedback
+    change_summary = "Изменения применены"
+    
     try:
         if block.type == "fullpage":
             # AI-coder mode: edit the raw HTML
@@ -696,11 +728,24 @@ async def edit_block_with_prompt(
             if not current_html:
                 raise ValueError("Fullpage block has no HTML content")
 
+            # Enhance prompt with image context if images uploaded
+            enhanced_prompt = prompt
+            if uploaded_images:
+                image_context = "\n\n[Загруженные изображения:\n"
+                for idx, img in enumerate(uploaded_images, 1):
+                    image_context += f"{idx}. {img['filename']} ({img['content_type']})\n"
+                image_context += "\nИспользуй эти изображения как референс или вставь их в соответствующие места на сайте."
+                enhanced_prompt += image_context
+
             edited_html = await service.edit_website_with_prompt(
                 current_html=current_html,
-                prompt=request.prompt,
+                prompt=enhanced_prompt,
                 business_name=website.title or "",
             )
+            
+            # Generate change summary based on prompt
+            change_summary = _generate_change_summary(prompt)
+            
             # Sanitize the AI-edited HTML while preserving safe scripts
             sanitized_html = sanitization_service.sanitize_fullpage_html(edited_html)
             edited = {
@@ -714,7 +759,7 @@ async def edit_block_with_prompt(
                 content=block.content or {},
                 block_styles=block.styles or {},
                 global_styles=website.custom_styles or {},
-                prompt=request.prompt,
+                prompt=prompt,
             )
             # Sanitize JSON content
             edited["content"] = sanitization_service.sanitize_json_content(edited["content"])
@@ -734,8 +779,32 @@ async def edit_block_with_prompt(
     return BlockPromptEditResponse(
         content=edited["content"],
         styles=edited["styles"],
-        message="Изменения применены",
+        message=change_summary,
     )
+
+
+def _generate_change_summary(prompt: str) -> str:
+    """Generate a brief summary of what was changed based on the prompt."""
+    prompt_lower = prompt.lower()
+    
+    if any(word in prompt_lower for word in ["цвет", "фон", "background", "color"]):
+        return "Обновлены цвета и фон"
+    elif any(word in prompt_lower for word in ["текст", "заголовок", "надпись", "text", "title", "headline"]):
+        return "Обновлен текст"
+    elif any(word in prompt_lower for word in ["кнопк", "button"]):
+        return "Обновлены кнопки"
+    elif any(word in prompt_lower for word in ["изображение", "фото", "картинк", "image", "photo", "picture"]):
+        return "Добавлены/обновлены изображения"
+    elif any(word in prompt_lower for word in ["карта", "map", "яндекс", "google maps"]):
+        return "Добавлена карта"
+    elif any(word in prompt_lower for word in ["секция", "section", "блок", "block"]):
+        return "Добавлена новая секция"
+    elif any(word in prompt_lower for word in ["шрифт", "размер", "font", "size"]):
+        return "Обновлены шрифты и размеры"
+    elif any(word in prompt_lower for word in ["анимаци", "animation", "эффект", "effect"]):
+        return "Добавлены анимации"
+    else:
+        return "Изменения применены"
 
 
 @router.post("/{website_id}/blocks/{block_id}/duplicate", response_model=WebsiteBlockResponse)

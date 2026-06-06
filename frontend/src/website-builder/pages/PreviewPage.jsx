@@ -5,11 +5,12 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { HelmetProvider } from 'react-helmet-async';
+import { ArrowLeft, Monitor, Smartphone, Tablet, ExternalLink, Edit2 } from 'lucide-react';
 import axios from 'axios';
 import WebsiteRenderer from '../components/WebsiteRenderer';
 import AgentWidget from '../components/AgentWidget';
 import QuickContactButtons from '../components/QuickContactButtons';
-import DeviceSwitcher, { DEVICES } from '../components/DeviceSwitcher';
+import { DEVICES } from '../components/DeviceSwitcher';
 import { WebsiteAgentProvider } from '../context/WebsiteAgentContext';
 import { NAVIGATION_ROUTES, API_ROUTES } from '../../config/constants';
 import { getAuthHeaders } from '../../utils/authToken';
@@ -17,8 +18,22 @@ import { fetchWebsiteDetail } from '../utils/api';
 import { toRendererStyles } from '../utils/styleUtils';
 import { PreviewMetaTags } from '../components/WebsiteMetaTags';
 import ProtectedRoute from '../../components/ProtectedRoute';
+import '../styles/preview.css';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+
+// Device icons mapping
+const DeviceIcon = ({ device }) => {
+  switch (device) {
+    case 'mobile':
+      return <Smartphone className="w-4 h-4" />;
+    case 'tablet':
+      return <Tablet className="w-4 h-4" />;
+    case 'desktop':
+    default:
+      return <Monitor className="w-4 h-4" />;
+  }
+};
 
 const PreviewPage = () => {
   const { websiteId } = useParams();
@@ -109,37 +124,28 @@ const PreviewPage = () => {
   // Get device dimensions
   const deviceStyle = {
     width: DEVICES[currentDevice].width,
-    height: DEVICES[currentDevice].height,
     maxWidth: '100%',
-    margin: '0 auto',
   };
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100">
-        <div className="text-center">
-          <div className="animate-spin w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-4"></div>
-          <p className="text-gray-600">Загрузка превью...</p>
-        </div>
+      <div className="preview-loading">
+        <div className="preview-loading-spinner"></div>
+        <p className="preview-loading-text">Загрузка превью...</p>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100">
-        <div className="bg-white p-8 rounded-lg shadow-lg max-w-md text-center">
-          <div className="text-red-500 mb-4">
-            <svg className="w-10 h-10 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-          </div>
-          <h2 className="text-xl font-semibold mb-2 text-gray-800">Ошибка загрузки</h2>
-          <p className="text-gray-600 mb-4">{error}</p>
-          <button
-            onClick={fetchSchema}
-            className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
-          >
+      <div className="preview-error">
+        <div className="preview-error-card">
+          <svg className="preview-error-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          <h2 className="preview-error-title">Ошибка загрузки</h2>
+          <p className="preview-error-message">{error}</p>
+          <button onClick={fetchSchema} className="preview-error-btn">
             Попробовать снова
           </button>
         </div>
@@ -150,147 +156,149 @@ const PreviewPage = () => {
   return (
     <HelmetProvider>
       <PreviewMetaTags title={schema?.title} description="Preview mode" />
-      <div className="min-h-screen bg-gray-100">
-        {/* Preview Toolbar */}
-        <div className="sticky top-0 z-50 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
+      <div className="preview-page">
+        {/* Toolbar */}
+        <div className="preview-toolbar">
+          <div className="preview-toolbar-content">
             {/* Left: Back & Info */}
-            <div className="flex items-center gap-4">
+            <div className="preview-info">
               <button
                 onClick={() => navigate(-1)}
-                className="p-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                className="preview-back-btn"
                 title="Назад"
               >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-                </svg>
+                <ArrowLeft className="w-5 h-5" />
               </button>
 
-              <div className="hidden sm:block">
-                <h1 className="text-lg font-semibold text-gray-800 dark:text-white">
-                  {schema?.title || 'Превью сайта'}
-                </h1>
-                <p className="text-xs text-gray-500">
-                  {schema?.status === 'published' ? (
-                    <span className="inline-flex items-center gap-1 text-green-600">
-                      <span className="w-2 h-2 rounded-full bg-green-500"></span>
-                      Опубликован
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 text-gray-500">
-                      <span className="w-2 h-2 rounded-full bg-gray-400"></span>
-                      Черновик
+              <div className="preview-title-group">
+                <h1 className="preview-title">{schema?.title || 'Превью сайта'}</h1>
+                <div className="preview-status">
+                  <span
+                    className={`preview-status-dot ${
+                      schema?.status === 'published'
+                        ? 'preview-status-dot--published'
+                        : 'preview-status-dot--draft'
+                    }`}
+                  />
+                  <span
+                    className={
+                      schema?.status === 'published'
+                        ? 'preview-status-text--published'
+                        : ''
+                    }
+                  >
+                    {schema?.status === 'published' ? 'Опубликован' : 'Черновик'}
+                  </span>
+                  {lastUpdated && (
+                    <span className="preview-updated">
+                      • Обновлено: {lastUpdated.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
                     </span>
                   )}
-                  {lastUpdated && ` • Обновлено: ${lastUpdated.toLocaleTimeString()}`}
-                </p>
+                </div>
               </div>
             </div>
 
             {/* Center: Device Switcher */}
-            <div className="flex-1 flex justify-center">
-              <DeviceSwitcher
-                currentDevice={currentDevice}
-                onDeviceChange={setCurrentDevice}
-              />
+            <div className="preview-device-switcher">
+              {Object.entries(DEVICES).map(([key, { label }]) => (
+                <button
+                  key={key}
+                  onClick={() => setCurrentDevice(key)}
+                  className={`preview-device-btn ${
+                    currentDevice === key ? 'preview-device-btn--active' : ''
+                  }`}
+                  title={label}
+                >
+                  <DeviceIcon device={key} />
+                  <span>{label}</span>
+                </button>
+              ))}
             </div>
 
             {/* Right: Actions */}
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handleEdit}
-                className="hidden sm:flex items-center gap-2 px-4 py-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                </svg>
-                <span className="text-sm font-medium">Редактировать</span>
+            <div className="preview-actions">
+              <button onClick={handleEdit} className="preview-action-btn">
+                <Edit2 className="w-4 h-4" />
+                <span className="hidden sm:inline">Редактировать</span>
               </button>
 
               {schema?.status === 'published' ? (
                 <button
                   onClick={handleUnpublish}
-                  className="px-4 py-2 text-sm font-medium text-yellow-600 bg-yellow-50 hover:bg-yellow-100 rounded-lg transition-colors"
+                  className="preview-action-btn preview-action-btn--warning"
                 >
-                  Снять с публикации
+                  <span>Снять с публикации</span>
                 </button>
               ) : (
                 <button
                   onClick={handlePublish}
-                  className="px-4 py-2 text-sm font-medium text-white bg-green-500 hover:bg-green-600 rounded-lg transition-colors"
+                  className="preview-action-btn preview-action-btn--success"
                 >
-                  Опубликовать
+                  <span>Опубликовать</span>
                 </button>
               )}
 
               {schema?.status === 'published' && (
                 <button
                   onClick={handleOpenPublic}
-                  className="hidden md:flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 rounded-lg transition-colors"
+                  className="preview-action-btn preview-action-btn--primary"
                 >
-                  <span>Открыть сайт</span>
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                  </svg>
+                  <span className="hidden md:inline">Открыть сайт</span>
+                  <ExternalLink className="w-4 h-4 md:hidden" />
                 </button>
               )}
             </div>
           </div>
         </div>
-      </div>
 
-      {/* Preview Container */}
-      <div className="p-4 sm:p-6 lg:p-8">
-        <div className="bg-white rounded-lg shadow-lg overflow-hidden">
-          {/* Device Frame */}
-          <div
-            className={`
-              relative mx-auto transition-all duration-300 ease-in-out
-              ${currentDevice !== 'desktop' ? 'border-x border-gray-300' : ''}
-            `}
-            style={deviceStyle}
-          >
-            {/* Device Header (for mobile/tablet simulation) */}
-            {currentDevice !== 'desktop' && (
-              <div className="bg-gray-800 text-white text-center py-2 text-xs font-medium">
-                {DEVICES[currentDevice].label} Preview ({DEVICES[currentDevice].width})
+        {/* Preview Container */}
+        <div className="preview-container">
+          <div className="preview-frame-wrapper">
+            {/* Device Frame */}
+            <div
+              className={`preview-device-frame preview-device-frame--${currentDevice}`}
+              style={deviceStyle}
+            >
+              {/* Device Header (for mobile/tablet simulation) */}
+              {currentDevice !== 'desktop' && (
+                <div className="preview-device-header">
+                  {DEVICES[currentDevice].label} • {DEVICES[currentDevice].width}
+                </div>
+              )}
+
+              {/* Website Content */}
+              <div className="preview-device-content">
+                <WebsiteAgentProvider agent={schema?.agent} agentId={schema?.agent_id}>
+                  <WebsiteRenderer
+                    schema={schema}
+                    previewMode={true}
+                    templateStyles={schema?.styles}
+                  />
+                  <AgentWidget
+                    apiKey={schema?.agent?.widget_api_key}
+                    enabled={Boolean(schema?.agent?.widget_api_key)}
+                  />
+                  <QuickContactButtons
+                    contacts={schema?.agent?.contacts}
+                    primaryColor={schema?.styles?.primaryColor}
+                  />
+                </WebsiteAgentProvider>
               </div>
-            )}
-
-            {/* Website Content */}
-            <div className="bg-white">
-              <WebsiteAgentProvider agent={schema?.agent} agentId={schema?.agent_id}>
-                <WebsiteRenderer
-                  schema={schema}
-                  previewMode={true}
-                  templateStyles={schema?.styles}
-                />
-                <AgentWidget
-                  apiKey={schema?.agent?.widget_api_key}
-                  enabled={Boolean(schema?.agent?.widget_api_key)}
-                />
-                <QuickContactButtons
-                  contacts={schema?.agent?.contacts}
-                  primaryColor={schema?.styles?.primaryColor}
-                />
-              </WebsiteAgentProvider>
             </div>
           </div>
-        </div>
 
-        {/* Dimensions Info */}
-        <div className="mt-4 text-center text-sm text-gray-500">
-          {currentDevice === 'desktop' ? (
-            <span>100% (Desktop)</span>
-          ) : (
-            <span>
-              {DEVICES[currentDevice].width} × 100% — {DEVICES[currentDevice].label}
-            </span>
-          )}
+          {/* Dimensions indicator */}
+          <div className="preview-dimensions">
+            {currentDevice === 'desktop' ? (
+              <span>Desktop • Адаптивная ширина</span>
+            ) : (
+              <span>
+                {DEVICES[currentDevice].label} • {DEVICES[currentDevice].width}
+              </span>
+            )}
+          </div>
         </div>
       </div>
-    </div>
     </HelmetProvider>
   );
 };

@@ -1115,3 +1115,241 @@
   color: #fff;
   font-size: 0.76rem;
 }
+
+/* AI Image Upload */
+.wb-ai-upload-area {
+  border: 2px dashed #cbd5e1;
+  border-radius: 0.75rem;
+  padding: 0.75rem;
+  margin-bottom: 0.75rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  background: #f8fafc;
+}
+
+.wb-ai-upload-area:hover {
+  border-color: #93c5fd;
+  background: #f1f5f9;
+}
+
+.wb-ai-upload-area--dragging {
+  border-color: #3b82f6;
+  background: #eff6ff;
+}
+
+.wb-ai-upload-area--has-images {
+  cursor: default;
+}
+
+.wb-ai-file-input {
+  display: none;
+}
+
+.wb-ai-upload-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.5rem;
+}
+
+.wb-ai-upload-icon {
+  width: 1.5rem;
+  height: 1.5rem;
+  color: #94a3b8;
+}
+
+.wb-ai-upload-text {
+  font-size: 0.8rem;
+  color: #475569;
+  text-align: center;
+}
+
+.wb-ai-upload-link {
+  color: #2563eb;
+  font-weight: 500;
+}
+
+.wb-ai-upload-link:hover {
+  text-decoration: underline;
+}
+
+.wb-ai-upload-hint {
+  font-size: 0.7rem;
+  color: #94a3b8;
+  text-align: center;
+}
+
+.wb-ai-images-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.wb-ai-image-thumb {
+  position: relative;
+  width: 3.5rem;
+  height: 3.5rem;
+  border-radius: 0.5rem;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+}
+
+.wb-ai-image-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.wb-ai-image-remove {
+  position: absolute;
+  top: 0.15rem;
+  right: 0.15rem;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 999px;
+  background: rgba(239, 68, 68, 0.9);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.wb-ai-image-thumb:hover .wb-ai-image-remove {
+  opacity: 1;
+}
+
+.wb-ai-image-add {
+  width: 3.5rem;
+  height: 3.5rem;
+  border-radius: 0.5rem;
+  border: 2px dashed #cbd5e1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #94a3b8;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.wb-ai-image-add:hover {
+  border-color: #93c5fd;
+  color: #64748b;
+}
+
+.wb-ai-hints {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.wb-ai-hint-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.75rem;
+  color: #2563eb;
+  background: #eff6ff;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.wb-ai-hint-item:hover {
+  background: #dbeafe;
+}
+
+/* AI Spinner */
+.wb-ai-spinner {
+  display: inline-block;
+  width: 0.875rem;
+  height: 0.875rem;
+  border: 2px solid #e5e7eb;
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: wb-spin 0.8s linear infinite;
+}
+
+/* AI Feedback */
+.wb-ai-feedback {
+  margin-top: 0.75rem;
+  padding: 0.625rem 0.75rem;
+  border-radius: 0.5rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  animation: wb-fade-in 0.2s ease;
+}
+
+.wb-ai-feedback--success {
+  background: #f0fdf4;
+  border: 1px solid #86efac;
+  color: #166534;
+}
+
+.wb-ai-feedback--error {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #dc2626;
+}
+
+.wb-ai-feedback-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  flex: 1;
+}
+
+.wb-ai-feedback-close {
+  background: none;
+  border: none;
+  color: currentColor;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.wb-ai-feedback-close:hover {
+  opacity: 1;
+}
+
+@keyframes wb-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Fix SEO file upload text */
+.wb-seo-uploader .wb-seo-text {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.wb-seo-uploader .wb-seo-text label {
+  cursor: pointer;
+  color: #2563eb;
+  font-weight: 500;
+}
+
+.wb-seo-uploader .wb-seo-text label:hover {
+  text-decoration: underline;
+}
