@@ -196,6 +196,8 @@ export const API_ROUTES = {
   WEBSITE_BLOCK_DUPLICATE: (websiteId, blockId) => `/api/v1/websites/${websiteId}/blocks/${blockId}/duplicate`,
   WEBSITE_BLOCK_EDIT_PROMPT: (websiteId, blockId) =>
     `/api/v1/websites/${websiteId}/blocks/${blockId}/edit-prompt`,
+  WEBSITE_BLOCK_EDIT_PROMPT_TASK: (websiteId, taskId) =>
+    `/api/v1/websites/${websiteId}/edit-prompt/tasks/${taskId}`,
   WEBSITE_DOMAINS: (id) => `/api/v1/websites/${id}/domains`,
   WEBSITE_DOMAIN: (websiteId, domainId) => `/api/v1/websites/${websiteId}/domains/${domainId}`,
   WEBSITE_DOMAIN_VERIFY: (websiteId, domainId) => `/api/v1/websites/${websiteId}/domains/${domainId}/verify`,

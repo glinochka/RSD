@@ -107,7 +107,7 @@ async function waitForEditTask(websiteId, taskId, timeoutMs = 180000) {
 
   while (Date.now() - startedAt < timeoutMs) {
     const { data } = await axios.get(
-      `${API_BASE_URL}/api/v1/websites/${websiteId}/edit-prompt/tasks/${taskId}`,
+      `${API_BASE_URL}${API_ROUTES.WEBSITE_BLOCK_EDIT_PROMPT_TASK(websiteId, taskId)}`,
       { headers: authHeaders() }
     );
 

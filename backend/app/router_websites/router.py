@@ -849,6 +849,8 @@ async def edit_block_with_prompt(
         "error": None,
         "content": None,
         "styles": None,
+        "website_id": website_id,
+        "user_id": user.id,
         "created_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
     }
 
@@ -895,6 +897,45 @@ def _generate_change_summary(prompt: str) -> str:
 
 
 @router.get(
+    "/{website_id}/edit-prompt/tasks/{task_id}",
+    response_model=BlockPromptEditTaskStatusResponse,
+)
+async def get_edit_prompt_task_status_by_website(
+    website_id: int,
+    task_id: str,
+    user: Annotated[User, Depends(get_current_user)],
+):
+    """Poll status of async block edit task (website-scoped route)."""
+    task = _BLOCK_EDIT_TASKS.get(task_id)
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+
+    if task.get("user_id") != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied",
+        )
+
+    if task.get("website_id") != website_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found for this website",
+        )
+
+    return BlockPromptEditTaskStatusResponse(
+        task_id=task_id,
+        status=task.get("status", "failed"),
+        message=task.get("message"),
+        error=task.get("error"),
+        content=task.get("content"),
+        styles=task.get("styles"),
+    )
+
+
+@router.get(
     "/edit-prompt/tasks/{task_id}",
     response_model=BlockPromptEditTaskStatusResponse,
 )
@@ -902,12 +943,18 @@ async def get_edit_prompt_task_status(
     task_id: str,
     user: Annotated[User, Depends(get_current_user)],
 ):
-    """Poll status of async block edit task."""
+    """Poll status of async block edit task (legacy global route)."""
     task = _BLOCK_EDIT_TASKS.get(task_id)
     if not task:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Task not found",
+        )
+
+    if task.get("user_id") != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied",
         )
 
     return BlockPromptEditTaskStatusResponse(

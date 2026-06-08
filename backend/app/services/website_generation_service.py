@@ -633,24 +633,37 @@ class WebsiteGenerationService:
 
     def __init__(self):
         self.ai_client = ai_client
-        # Use deepseek-chat for HTML generation (better creative/design capabilities)
-        # deepseek-coder is optimized for code completion, not full page design
-        configured_model = settings.WEBSITE_GENERATION_MODEL or "deepseek-chat"
-        self.model = configured_model.strip()
+        # Use separate models for generation and editing:
+        # - generation: creative full-page layout synthesis
+        # - editing: precise surgical HTML modifications
+        configured_generation_model = settings.WEBSITE_GENERATION_MODEL or "deepseek-chat"
+        configured_edit_model = (
+            settings.WEBSITE_EDIT_MODEL
+            or configured_generation_model
+            or "deepseek-chat"
+        )
+        self.generation_model = configured_generation_model.strip()
+        self.edit_model = configured_edit_model.strip()
         self.max_retries = 2
         self.max_generation_tokens = 16000
-        logger.info(f"[WebsiteGenService] Initialized with model: {self.model}")
+        logger.info(
+            "[WebsiteGenService] Initialized models: generation=%s, edit=%s",
+            self.generation_model,
+            self.edit_model,
+        )
 
     async def _call_ai(
         self,
         *,
         system_prompt: str,
         user_prompt: str,
+        model: str | None = None,
         temperature: float = 0.7,
         max_tokens: int | None = None,
     ) -> str:
+        target_model = (model or self.generation_model).strip()
         response = await self.ai_client.chat.completions.create(
-            model=self.model,
+            model=target_model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -681,7 +694,11 @@ class WebsiteGenerationService:
         last_error = None
         raw_response = None
 
-        logger.info(f"[WebsiteGen] Starting generate_website for '{business_name}' (model={self.model})")
+        logger.info(
+            "[WebsiteGen] Starting generate_website for '%s' (model=%s)",
+            business_name,
+            self.generation_model,
+        )
         logger.info(f"[WebsiteGen] Params: dark_mode={dark_mode}, color={primary_color}")
         logger.info(f"[WebsiteGen] Services count: {len(services) if services else 0}")
 
@@ -689,7 +706,7 @@ class WebsiteGenerationService:
             try:
                 logger.info(
                     "[WebsiteGen] Generation attempt %s/%s (model=%s)",
-                    attempt, self.max_retries, self.model,
+                    attempt, self.max_retries, self.generation_model,
                 )
 
                 # Step 1: Generate the website HTML
@@ -707,6 +724,7 @@ class WebsiteGenerationService:
                 raw_response = await self._call_ai(
                     system_prompt=WEBSITE_CODER_SYSTEM_PROMPT,
                     user_prompt=user_prompt,
+                    model=self.generation_model,
                     temperature=0.75,
                     max_tokens=self.max_generation_tokens,
                 )
@@ -748,6 +766,7 @@ class WebsiteGenerationService:
                 refined_raw = await self._call_ai(
                     system_prompt=WEBSITE_REFINE_SYSTEM_PROMPT,
                     user_prompt=refine_prompt,
+                    model=self.generation_model,
                     temperature=0.3,
                     max_tokens=self.max_generation_tokens,
                 )
@@ -776,6 +795,7 @@ class WebsiteGenerationService:
                 adaptive_raw = await self._call_ai(
                     system_prompt=WEBSITE_ADAPTIVE_SYSTEM_PROMPT,
                     user_prompt=adaptive_prompt,
+                    model=self.generation_model,
                     temperature=0.2,
                     max_tokens=self.max_generation_tokens,
                 )
@@ -802,6 +822,7 @@ class WebsiteGenerationService:
                 final_qa_raw = await self._call_ai(
                     system_prompt=WEBSITE_FINAL_QA_SYSTEM_PROMPT,
                     user_prompt=final_qa_prompt,
+                    model=self.generation_model,
                     temperature=0.15,
                     max_tokens=self.max_generation_tokens,
                 )
@@ -969,6 +990,7 @@ class WebsiteGenerationService:
                 raw_smart = await self._call_ai(
                     system_prompt=WEBSITE_EDIT_SMART_MERGE_PROMPT,
                     user_prompt=user_message_smart,
+                    model=self.edit_model,
                     temperature=0.2,  # Lower temperature for precise edits
                     max_tokens=self.max_generation_tokens,
                 )
@@ -1004,6 +1026,7 @@ class WebsiteGenerationService:
         raw = await self._call_ai(
             system_prompt=WEBSITE_EDIT_SYSTEM_PROMPT,
             user_prompt=user_message,
+            model=self.edit_model,
             temperature=0.4,
             max_tokens=self.max_generation_tokens,
         )
@@ -1074,7 +1097,7 @@ class WebsiteGenerationService:
         )
 
         response = await self.ai_client.chat.completions.create(
-            model=self.model,
+            model=self.edit_model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
