@@ -578,23 +578,8 @@ def _smart_merge_html(original_html: str, ai_modified_html: str) -> str:
 
 
 def _contains_generic_placeholder_content(html: str) -> bool:
-    """Detect obvious template/placeholder content that should be rejected."""
-    text = (html or "").lower()
-    generic_markers = (
-        "hello@example.com",
-        "+7 (999) 999-99-99",
-        "иван иванов",
-        "базовая услуга",
-        "расширенное сопровождение",
-        "индивидуальное решение",
-        "создано с помощью rsd ai",
-        "ваш бизнес",
-        "заголовок вашего сайта",
-        "краткое описание предложения",
-        "услуга 1",
-        "услуга 2",
-    )
-    return any(marker in text for marker in generic_markers)
+    """Placeholder filtering is intentionally disabled by product decision."""
+    return False
 
 
 def _inject_tailwind_color(html: str, primary_color: str | None) -> str:
