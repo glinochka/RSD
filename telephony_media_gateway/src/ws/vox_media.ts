@@ -66,8 +66,8 @@ export function buildVoxStartMessage(ws?: unknown): string {
     sequenceNumber: counter.nextSeq(),
     start: {
       mediaFormat: {
-        // Downlink media is sent as G.711 μ-law bytes.
-        encoding: 'audio/x-mulaw',
+        // Voximplant expects PCM16 (16-bit signed integer, 8kHz, mono)
+        encoding: 'audio/l16',
         sampleRate: 8000,
         channels: 1,
       },

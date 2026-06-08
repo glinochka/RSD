@@ -20,7 +20,6 @@ import {
   buildVoxStartMessage,
   buildVoxStopMessage,
 } from '../ws/vox_media';
-import { pcm16BufferToUlaw } from '../audio/ulaw';
 
 const debugFrameLogByCall = new Map<string, number>();
 
@@ -61,9 +60,8 @@ function sendVoxDownlink(ws: WebSocket, message: string): void {
 
 function sendPcm16Frame(ws: WebSocket, frame: Buffer): void {
   if (!frame.length) return;
-  // Last hop to Vox call stays in μ-law for reliable PSTN playout.
-  const ulaw = pcm16BufferToUlaw(frame);
-  if (!ulaw.length) return;
+  // Voximplant expects PCM16 (16-bit signed integer, little-endian, 8kHz, mono)
+  // frame is already in PCM16 format from the orchestrator (audio_pcm16_b64)
   let absSumLe = 0;
   let absSumBe = 0;
   const sampleCount = Math.floor(frame.length / 2);
@@ -73,12 +71,12 @@ function sendPcm16Frame(ws: WebSocket, frame: Buffer): void {
   }
   const meanAbsLe = sampleCount > 0 ? Math.round(absSumLe / sampleCount) : 0;
   const meanAbsBe = sampleCount > 0 ? Math.round(absSumBe / sampleCount) : 0;
-  emitDebugLog('H3', 'agent_playback.ts:sendPcm16Frame', 'pcm16_to_ulaw_converted', {
+  emitDebugLog('H3', 'agent_playback.ts:sendPcm16Frame', 'pcm16_frame_ready', {
     pcm16Bytes: frame.length,
-    ulawBytes: ulaw.length,
     meanAbsLe,
     meanAbsBe,
-    firstUlawByte: ulaw[0] ?? null,
+    firstByte: frame[0] ?? null,
+    lastByte: frame[frame.length - 1] ?? null,
   });
   const callIdForLog = String((ws as unknown as { __callId?: string }).__callId || '');
   const prevLogged = debugFrameLogByCall.get(callIdForLog) || 0;
@@ -91,20 +89,17 @@ function sendPcm16Frame(ws: WebSocket, frame: Buffer): void {
         call_id: callIdForLog || null,
         frame_index: prevLogged,
         pcm16_bytes: frame.length,
-        ulaw_bytes: ulaw.length,
         mean_abs_le: meanAbsLe,
         mean_abs_be: meanAbsBe,
       }),
     );
   }
-  console.info('[media-gateway] vox frame', JSON.stringify({ len: ulaw.length }));
-  sendVoxDownlink(ws, buildVoxMediaMessage(ulaw, ws));
+  console.info('[media-gateway] vox frame', JSON.stringify({ len: frame.length }));
+  sendVoxDownlink(ws, buildVoxMediaMessage(frame, ws));
   if (config.loopbackTransport === 'binary' || config.loopbackTransport === 'both') {
-    const binaryFrame = Buffer.allocUnsafe(1 + Math.floor(frame.length / 2));
-    // binary loopback branch still expects μ-law payload for old tooling;
-    // fill with silence-equivalent bytes to avoid bogus decoding.
+    const binaryFrame = Buffer.allocUnsafe(1 + frame.length);
     binaryFrame[0] = BINARY_FRAME_AUDIO_OUT;
-    binaryFrame.fill(0xff, 1);
+    frame.copy(binaryFrame, 1);
     ws.send(binaryFrame);
   }
 }

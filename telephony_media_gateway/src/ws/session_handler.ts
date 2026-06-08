@@ -25,6 +25,7 @@ import { clearPlaybackPacer } from '../orch/agent_playback_pacer';
 import { markPlaybackReady } from '../orch/agent_playback_pacer';
 import { registerReplySession, unregisterReplySession } from '../orch/reply_hub';
 import { buildVoxMediaMessage, parseVoxMediaMessage } from './vox_media';
+import { ulawToPcm16Buffer } from '../audio/ulaw';
 
 export interface MediaSession {
   callId: string;
@@ -77,11 +78,18 @@ function emitLoopback(ws: WebSocket, session: MediaSession, payload: Buffer): vo
   const out = loopbackPayload(payload);
   if (out.length === 0) return;
 
+  // Convert μ-law (from Voximplant) to PCM16 for Voximplant WebSocket media
+  const pcm16 = ulawToPcm16Buffer(out);
+
   if (config.loopbackTransport === 'vox' || config.loopbackTransport === 'both') {
-    ws.send(buildVoxMediaMessage(out, ws));
+    ws.send(buildVoxMediaMessage(pcm16, ws));
   }
   if (config.loopbackTransport === 'binary' || config.loopbackTransport === 'both') {
-    ws.send(buildBinaryOut(out));
+    // Binary frame: prefix byte + PCM16 data
+    const binaryFrame = Buffer.allocUnsafe(1 + pcm16.length);
+    binaryFrame[0] = BINARY_FRAME_AUDIO_OUT;
+    pcm16.copy(binaryFrame, 1);
+    ws.send(binaryFrame);
   }
   session.audioOutFrames += 1;
 }
