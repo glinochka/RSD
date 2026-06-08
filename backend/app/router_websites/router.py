@@ -1,5 +1,6 @@
 """Website Builder API Router."""
 import asyncio
+import uuid
 import os
 from datetime import datetime, timezone, timedelta
 from logging import getLogger
@@ -60,6 +61,8 @@ from .schemas import (
     WebsiteBlocksReorderRequest,
     BlockPromptEditRequest,
     BlockPromptEditResponse,
+    BlockPromptEditStartResponse,
+    BlockPromptEditTaskStatusResponse,
     WebsiteExportStartRequest,
     WebsiteExportStartResponse,
     WebsiteExportStatusResponse,
@@ -92,6 +95,103 @@ async def _build_schema_agent_payload(website: Website, *, include_widget_key: b
     return data
 
 logger = getLogger(__name__)
+
+# In-memory task store for async block prompt edits.
+# NOTE: This is per-process. For multi-instance deployments use Redis/DB.
+_BLOCK_EDIT_TASKS: dict[str, dict] = {}
+
+
+async def _run_block_edit_task(
+    *,
+    task_id: str,
+    website_id: int,
+    block_id: int,
+    user_id: int,
+    prompt: str,
+    uploaded_images: list[dict],
+) -> None:
+    """Background worker for block prompt edit."""
+    _BLOCK_EDIT_TASKS[task_id]["status"] = "processing"
+    _BLOCK_EDIT_TASKS[task_id]["message"] = "ИИ редактирует сайт..."
+
+    try:
+        async with async_session_maker() as session:
+            website_dao = WebsiteDAO(session)
+            block_dao = WebsiteBlockDAO(session)
+
+            website = await website_dao.get_by_id_with_relations(website_id)
+            if not website:
+                raise ValueError("Website not found")
+            if website.owner_id != user_id:
+                raise ValueError("Access denied")
+
+            block = await block_dao.find_one_by_filter(id=block_id, website_id=website_id)
+            if not block:
+                raise ValueError("Block not found")
+
+            service = get_website_generation_service()
+            sanitization_service = get_website_sanitization_service()
+            change_summary = "Изменения применены"
+
+            if block.type == "fullpage":
+                current_html = (block.content or {}).get("html", "")
+                if not current_html:
+                    raise ValueError("Fullpage block has no HTML content")
+
+                enhanced_prompt = prompt
+                if uploaded_images:
+                    image_context = "\n\n[Загруженные изображения:\n"
+                    for idx, img in enumerate(uploaded_images, 1):
+                        image_context += f"{idx}. {img['filename']} ({img['content_type']})\n"
+                    image_context += "\nИспользуй эти изображения как референс или вставь их в соответствующие места на сайте."
+                    enhanced_prompt += image_context
+
+                edited_html = await service.edit_website_with_prompt(
+                    current_html=current_html,
+                    prompt=enhanced_prompt,
+                    business_name=website.title or "",
+                )
+                change_summary = _generate_change_summary(prompt)
+                sanitized_html = sanitization_service.sanitize_fullpage_html(edited_html)
+                edited = {
+                    "content": {"html": sanitized_html},
+                    "styles": block.styles or {},
+                }
+            else:
+                edited = await service.edit_block_with_prompt(
+                    block_type=block.type,
+                    content=block.content or {},
+                    block_styles=block.styles or {},
+                    global_styles=website.custom_styles or {},
+                    prompt=prompt,
+                )
+                edited["content"] = sanitization_service.sanitize_json_content(edited["content"])
+
+            updates = {
+                "content": edited["content"],
+                "styles": edited["styles"],
+                "updated_at": datetime.now(timezone.utc).replace(tzinfo=None),
+            }
+            await block_dao.update(block, updates)
+            await session.commit()
+
+            _BLOCK_EDIT_TASKS[task_id].update(
+                {
+                    "status": "completed",
+                    "message": change_summary,
+                    "content": edited["content"],
+                    "styles": edited["styles"],
+                }
+            )
+    except Exception as e:
+        logger.exception("[BlockEditTask] task_id=%s failed: %s", task_id, e)
+        _BLOCK_EDIT_TASKS[task_id].update(
+            {
+                "status": "failed",
+                "error": str(e),
+                "message": "Ошибка редактирования",
+            }
+        )
 
 router = APIRouter(prefix="/api/v1/websites")
 http_bearer = HTTPBearer(auto_error=False)
@@ -655,7 +755,8 @@ async def reorder_blocks(
 
 @router.post(
     "/{website_id}/blocks/{block_id}/edit-prompt",
-    response_model=BlockPromptEditResponse,
+    response_model=BlockPromptEditStartResponse,
+    status_code=status.HTTP_202_ACCEPTED,
 )
 async def edit_block_with_prompt(
     website_id: int,
@@ -740,71 +841,32 @@ async def edit_block_with_prompt(
                             "size": len(content),
                         })
 
-    service = get_website_generation_service()
-    sanitization_service = get_website_sanitization_service()
-    
-    # Prepare change summary for feedback
-    change_summary = "Изменения применены"
-    
-    try:
-        if block.type == "fullpage":
-            # AI-coder mode: edit the raw HTML
-            current_html = (block.content or {}).get("html", "")
-            if not current_html:
-                raise ValueError("Fullpage block has no HTML content")
-
-            # Enhance prompt with image context if images uploaded
-            enhanced_prompt = prompt
-            if uploaded_images:
-                image_context = "\n\n[Загруженные изображения:\n"
-                for idx, img in enumerate(uploaded_images, 1):
-                    image_context += f"{idx}. {img['filename']} ({img['content_type']})\n"
-                image_context += "\nИспользуй эти изображения как референс или вставь их в соответствующие места на сайте."
-                enhanced_prompt += image_context
-
-            edited_html = await service.edit_website_with_prompt(
-                current_html=current_html,
-                prompt=enhanced_prompt,
-                business_name=website.title or "",
-            )
-            
-            # Generate change summary based on prompt
-            change_summary = _generate_change_summary(prompt)
-            
-            # Sanitize the AI-edited HTML while preserving safe scripts
-            sanitized_html = sanitization_service.sanitize_fullpage_html(edited_html)
-            edited = {
-                "content": {"html": sanitized_html},
-                "styles": block.styles or {},
-            }
-        else:
-            # Legacy JSON-based block editing
-            edited = await service.edit_block_with_prompt(
-                block_type=block.type,
-                content=block.content or {},
-                block_styles=block.styles or {},
-                global_styles=website.custom_styles or {},
-                prompt=prompt,
-            )
-            # Sanitize JSON content
-            edited["content"] = sanitization_service.sanitize_json_content(edited["content"])
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        ) from e
-
-    updates = {
-        "content": edited["content"],
-        "styles": edited["styles"],
-        "updated_at": datetime.now(timezone.utc).replace(tzinfo=None),
+    task_id = str(uuid.uuid4())
+    _BLOCK_EDIT_TASKS[task_id] = {
+        "task_id": task_id,
+        "status": "queued",
+        "message": "Задача поставлена в очередь",
+        "error": None,
+        "content": None,
+        "styles": None,
+        "created_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
     }
-    await block_dao.update(block, updates)
 
-    return BlockPromptEditResponse(
-        content=edited["content"],
-        styles=edited["styles"],
-        message=change_summary,
+    asyncio.create_task(
+        _run_block_edit_task(
+            task_id=task_id,
+            website_id=website_id,
+            block_id=block_id,
+            user_id=user.id,
+            prompt=prompt,
+            uploaded_images=uploaded_images,
+        )
+    )
+
+    return BlockPromptEditStartResponse(
+        task_id=task_id,
+        status="queued",
+        message="Редактирование запущено",
     )
 
 
@@ -830,6 +892,32 @@ def _generate_change_summary(prompt: str) -> str:
         return "Добавлены анимации"
     else:
         return "Изменения применены"
+
+
+@router.get(
+    "/edit-prompt/tasks/{task_id}",
+    response_model=BlockPromptEditTaskStatusResponse,
+)
+async def get_edit_prompt_task_status(
+    task_id: str,
+    user: Annotated[User, Depends(get_current_user)],
+):
+    """Poll status of async block edit task."""
+    task = _BLOCK_EDIT_TASKS.get(task_id)
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+
+    return BlockPromptEditTaskStatusResponse(
+        task_id=task_id,
+        status=task.get("status", "failed"),
+        message=task.get("message"),
+        error=task.get("error"),
+        content=task.get("content"),
+        styles=task.get("styles"),
+    )
 
 
 @router.post("/{website_id}/blocks/{block_id}/duplicate", response_model=WebsiteBlockResponse)

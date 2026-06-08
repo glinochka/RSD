@@ -89,7 +89,7 @@ export async function editBlockWithPromptApi(websiteId, blockId, prompt, images 
         },
       }
     );
-    return data;
+    return waitForEditTask(websiteId, data.task_id);
   }
 
   // Simple prompt without images
@@ -98,7 +98,35 @@ export async function editBlockWithPromptApi(websiteId, blockId, prompt, images 
     { prompt },
     { headers: authHeaders() }
   );
-  return data;
+  return waitForEditTask(websiteId, data.task_id);
+}
+
+async function waitForEditTask(websiteId, taskId, timeoutMs = 180000) {
+  const startedAt = Date.now();
+  const pollIntervalMs = 1500;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const { data } = await axios.get(
+      `${API_BASE_URL}/api/v1/websites/${websiteId}/edit-prompt/tasks/${taskId}`,
+      { headers: authHeaders() }
+    );
+
+    if (data.status === 'completed') {
+      return {
+        content: data.content || {},
+        styles: data.styles || {},
+        change_summary: data.message || 'Изменения применены',
+      };
+    }
+
+    if (data.status === 'failed') {
+      throw new Error(data.error || data.message || 'AI edit failed');
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+
+  throw new Error('Превышено время ожидания результата редактирования');
 }
 
 export async function publishWebsite(websiteId) {

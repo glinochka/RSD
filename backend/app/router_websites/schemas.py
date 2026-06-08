@@ -380,6 +380,21 @@ class BlockPromptEditResponse(BaseModel):
     message: str | None = None
 
 
+class BlockPromptEditStartResponse(BaseModel):
+    task_id: str
+    status: Literal["queued", "processing", "completed", "failed"] = "queued"
+    message: str = "Задача редактирования запущена"
+
+
+class BlockPromptEditTaskStatusResponse(BaseModel):
+    task_id: str
+    status: Literal["queued", "processing", "completed", "failed"]
+    message: str | None = None
+    error: str | None = None
+    content: dict | None = None
+    styles: dict | None = None
+
+
 # ---------------------------------------------------------------------------
 # Website Export Schemas
 # ---------------------------------------------------------------------------
