@@ -2543,7 +2543,7 @@ const AgentsPageContent = () => {
                   </div>
 
                   {/* Website block - moved to top for visibility */}
-                  <div className="agent-management-block agent-website-block">
+                  <div className="agent-management-block">
                     <h4 className="agent-form-channel-title">Сайт</h4>
                     {isWebsiteLoading ? (
                       <p className="help-text">Загрузка...</p>
@@ -2564,22 +2564,20 @@ const AgentsPageContent = () => {
                         {isWebsiteBuilding ? (
                           <p className="help-text">Сайт собирается, это может занять до нескольких минут.</p>
                         ) : null}
-                        <div className="agent-website-actions">
-                          <button
-                            type="button"
-                            className="btn btn-black"
-                            onClick={handleOpenWebsiteConstructor}
-                          >
-                            Конструктор
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn-outline"
-                            onClick={handleOpenWebsiteView}
-                          >
-                            Перейти
-                          </button>
-                        </div>
+                        <button
+                          type="button"
+                          className="btn btn-black"
+                          onClick={handleOpenWebsiteConstructor}
+                        >
+                          Конструктор
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-outline"
+                          onClick={handleOpenWebsiteView}
+                        >
+                          Перейти
+                        </button>
                       </>
                     )}
                   </div>

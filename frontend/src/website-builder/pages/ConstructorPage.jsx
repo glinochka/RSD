@@ -24,6 +24,7 @@ import {
   SEOMetaPanel,
 } from '../components/constructor';
 import { buildPlaceholderVars } from '../utils/placeholders';
+import { normalizeDetail } from '../../utils/errorUtils';
 import '../styles/constructor.css';
 
 const ConstructorPageContent = () => {
@@ -141,7 +142,9 @@ const ConstructorPageContent = () => {
       await deleteWebsite();
       navigate(NAVIGATION_ROUTES.AGENTS);
     } catch (e) {
-      setActionError(e.response?.data?.detail || e.message || 'Не удалось удалить сайт');
+      setActionError(
+        normalizeDetail(e.response?.data?.detail) || e.message || 'Не удалось удалить сайт'
+      );
     } finally {
       setDeletingWebsite(false);
     }
@@ -275,18 +278,20 @@ const ConstructorPageContent = () => {
                     setActionError(null);
                     const result = await applyAiPrompt(blockId, prompt, images);
                     // Show success feedback with change summary if available
-                    if (result?.change_summary) {
+                    if (result?.message) {
                       setAiFeedback({
                         type: 'success',
-                        message: result.change_summary,
+                        message: result.message,
                         timestamp: Date.now(),
                       });
                     }
                   } catch (e) {
-                    setActionError(e.response?.data?.detail || e.message || 'Ошибка AI');
+                    const errorMessage =
+                      normalizeDetail(e.response?.data?.detail) || e.message || 'Ошибка AI';
+                    setActionError(errorMessage);
                     setAiFeedback({
                       type: 'error',
-                      message: e.response?.data?.detail || e.message || 'Ошибка AI',
+                      message: errorMessage,
                       timestamp: Date.now(),
                     });
                   }

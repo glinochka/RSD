@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef } from 'react';
 import PropTypes from 'prop-types';
-import { Upload, X, Image as ImageIcon, MapPin } from 'lucide-react';
+import { Upload, X, Image as ImageIcon } from 'lucide-react';
 
 const EXAMPLE_PROMPTS_BLOCK = [
   'Сделай заголовок крупнее',
@@ -173,14 +173,6 @@ const AiPromptPanel = ({ selectedBlock, blocks, loading, onSubmit }) => {
           )}
         </button>
       </form>
-      
-      {/* Quick hints */}
-      <div className="wb-ai-hints">
-        <span className="wb-ai-hint-item" onClick={() => setPrompt('Добавь Яндекс Карту по адресу: ')}>
-          <MapPin className="w-3 h-3" />
-          Добавить карту
-        </span>
-      </div>
       
       <div className="wb-ai-examples">
         <span>Примеры:</span>

@@ -190,7 +190,7 @@ function FaviconUploader({ websiteId, currentUrl, onUpdate }) {
               <input
                 type="file"
                 accept="image/png,image/svg+xml,image/x-icon,image/vnd.microsoft.icon"
-                className="hidden"
+                className="wb-seo-file-input"
                 onChange={(e) => handleUpload(e.target.files[0])}
               />
               Change favicon
@@ -205,7 +205,7 @@ function FaviconUploader({ websiteId, currentUrl, onUpdate }) {
                 <input
                   type="file"
                   accept="image/png,image/svg+xml,image/x-icon,image/vnd.microsoft.icon"
-                  className="hidden"
+                  className="wb-seo-file-input"
                   onChange={(e) => handleUpload(e.target.files[0])}
                 />
                 browse
@@ -308,7 +308,7 @@ function OGImageUploader({ websiteId, website, currentUrl, onUpdate }) {
             <input
               type="file"
               accept="image/png,image/jpeg,image/webp"
-              className="hidden"
+              className="wb-seo-file-input"
               onChange={(e) => handleUpload(e.target.files[0])}
               disabled={uploading}
             />
