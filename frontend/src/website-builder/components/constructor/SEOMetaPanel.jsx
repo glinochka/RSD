@@ -3,7 +3,6 @@ import {
   Globe,
   Image as ImageIcon,
   Upload,
-  Wand2,
   AlertTriangle,
   CheckCircle,
   Info,
@@ -17,7 +16,6 @@ import {
   fetchSEOPreview,
   uploadFavicon,
   uploadOGImage,
-  generateOGImage,
 } from '../../utils/api';
 import '../../styles/constructor.css';
 
@@ -230,7 +228,6 @@ function FaviconUploader({ websiteId, currentUrl, onUpdate }) {
 
 function OGImageUploader({ websiteId, website, currentUrl, onUpdate }) {
   const [uploading, setUploading] = useState(false);
-  const [generating, setGenerating] = useState(false);
   const [preview, setPreview] = useState(currentUrl);
 
   const handleUpload = async (file) => {
@@ -251,28 +248,6 @@ function OGImageUploader({ websiteId, website, currentUrl, onUpdate }) {
       alert('Failed to upload image');
     } finally {
       setUploading(false);
-    }
-  };
-
-  const handleGenerate = async () => {
-    setGenerating(true);
-    try {
-      const result = await generateOGImage(websiteId, {
-        title: website?.title || 'My Website',
-        description: website?.meta_description || '',
-        background_color: website?.custom_styles?.primaryColor || '#3B82F6',
-        text_color: '#FFFFFF',
-      });
-
-      if (result.success) {
-        onUpdate(result.og_image_url);
-        setPreview(result.og_image_url);
-      }
-    } catch (error) {
-      console.error('OG image generation failed:', error);
-      alert('Failed to generate image');
-    } finally {
-      setGenerating(false);
     }
   };
 
@@ -317,17 +292,6 @@ function OGImageUploader({ websiteId, website, currentUrl, onUpdate }) {
               {uploading ? 'Uploading...' : 'Upload'}
             </span>
           </label>
-
-          <button
-            onClick={handleGenerate}
-            disabled={generating}
-            className={`wb-seo-action-card wb-seo-action-card--primary ${generating ? 'wb-seo-action-card--busy' : ''}`}
-          >
-            <Wand2 className="w-5 h-5 mx-auto mb-1 text-blue-500" />
-            <span className="wb-seo-action-label wb-seo-action-label--primary">
-              {generating ? 'Generating...' : 'Auto-generate'}
-            </span>
-          </button>
         </div>
       </div>
     </div>

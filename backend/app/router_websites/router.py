@@ -664,8 +664,6 @@ async def edit_block_with_prompt(
     website_dao: Annotated[WebsiteDAO, Depends(get_website_dao)],
     block_dao: Annotated[WebsiteBlockDAO, Depends(get_block_dao)],
     request: Request,
-    prompt: str = Form(..., min_length=3, max_length=2000),
-    image_count: int = Form(default=0, ge=0, le=5),
 ):
     """Apply AI-assisted edits to a block based on a natural-language prompt.
     
@@ -692,9 +690,36 @@ async def edit_block_with_prompt(
             detail="Block not found",
         )
 
-    # Collect uploaded images from form data
+    # Accept both JSON ({prompt}) and multipart/form-data (prompt + images)
+    content_type = (request.headers.get("content-type") or "").lower()
+    prompt: str = ""
+    image_count: int = 0
+
+    if "application/json" in content_type:
+        payload = await request.json()
+        prompt = str(payload.get("prompt") or "").strip()
+        if not prompt:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Field required: prompt",
+            )
+    else:
+        form = await request.form()
+        prompt = str(form.get("prompt") or "").strip()
+        if not prompt:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Field required: prompt",
+            )
+        try:
+            image_count = int(form.get("image_count") or 0)
+        except (TypeError, ValueError):
+            image_count = 0
+        image_count = max(0, min(image_count, 5))
+
+    # Collect uploaded images from form data (multipart only)
     uploaded_images = []
-    if image_count > 0:
+    if image_count > 0 and "multipart/form-data" in content_type:
         form = await request.form()
         for i in range(image_count):
             field_name = f"image_{i}"
