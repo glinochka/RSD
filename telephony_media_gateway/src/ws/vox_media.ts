@@ -5,7 +5,39 @@
 
 export interface VoxMediaMessage {
   event: 'media';
-  media: { payload: string };
+  sequenceNumber: number;
+  media: { chunk: number; timestamp: number; payload: string };
+}
+
+/** Per-session sequence counter for Voximplant media messages. */
+class VoxSequenceCounter {
+  private seq = 0;
+  private chunk = 0;
+
+  nextSeq(): number {
+    return this.seq++;
+  }
+
+  nextChunk(): number {
+    return this.chunk++;
+  }
+
+  reset(): void {
+    this.seq = 0;
+    this.chunk = 0;
+  }
+}
+
+/** Map to track sequence counters per WebSocket connection. */
+const wsSequenceCounters = new WeakMap<object, VoxSequenceCounter>();
+
+function getCounter(ws: unknown): VoxSequenceCounter {
+  let counter = wsSequenceCounters.get(ws as object);
+  if (!counter) {
+    counter = new VoxSequenceCounter();
+    wsSequenceCounters.set(ws as object, counter);
+  }
+  return counter;
 }
 
 /** Voximplant may send start/stop before media frames — ignore without error. */
@@ -24,28 +56,43 @@ export function parseVoxMediaMessage(text: string): Buffer | null | 'ignore' {
   }
 }
 
-export function buildVoxStartMessage(): string {
+export function buildVoxStartMessage(ws?: unknown): string {
+  const counter = ws ? getCounter(ws) : new VoxSequenceCounter();
+  if (ws) {
+    counter.reset();
+  }
   return JSON.stringify({
     event: 'start',
+    sequenceNumber: counter.nextSeq(),
     start: {
       mediaFormat: {
         // Downlink media is sent as G.711 μ-law bytes.
         encoding: 'audio/x-mulaw',
         sampleRate: 8000,
+        channels: 1,
       },
     },
   });
 }
 
-export function buildVoxMediaMessage(payload: Buffer): string {
+export function buildVoxMediaMessage(payload: Buffer, ws?: unknown): string {
+  const counter = ws ? getCounter(ws) : new VoxSequenceCounter();
+  const timestamp = Date.now();
   return JSON.stringify({
     event: 'media',
+    sequenceNumber: counter.nextSeq(),
     media: {
+      chunk: counter.nextChunk(),
+      timestamp,
       payload: payload.toString('base64'),
     },
   });
 }
 
-export function buildVoxStopMessage(): string {
-  return JSON.stringify({ event: 'stop' });
+export function buildVoxStopMessage(ws?: unknown): string {
+  const counter = ws ? getCounter(ws) : new VoxSequenceCounter();
+  return JSON.stringify({
+    event: 'stop',
+    sequenceNumber: counter.nextSeq(),
+  });
 }

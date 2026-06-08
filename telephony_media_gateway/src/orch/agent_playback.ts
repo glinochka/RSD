@@ -98,7 +98,7 @@ function sendPcm16Frame(ws: WebSocket, frame: Buffer): void {
     );
   }
   console.info('[media-gateway] vox frame', JSON.stringify({ len: ulaw.length }));
-  sendVoxDownlink(ws, buildVoxMediaMessage(ulaw));
+  sendVoxDownlink(ws, buildVoxMediaMessage(ulaw, ws));
   if (config.loopbackTransport === 'binary' || config.loopbackTransport === 'both') {
     const binaryFrame = Buffer.allocUnsafe(1 + Math.floor(frame.length / 2));
     // binary loopback branch still expects μ-law payload for old tooling;
@@ -153,7 +153,7 @@ export function handleOrchestratorOutbound(
       }
       // Keep explicit start/stop framing for Vox media WS parser.
       // (Barge-in filtering is handled upstream in Vox script side.)
-      sendVoxDownlink(ws, buildVoxStartMessage());
+      sendVoxDownlink(ws, buildVoxStartMessage(ws));
       if (callId) {
         scheduleDownlinkReadyFallback(callId);
       }
@@ -193,7 +193,7 @@ export function handleOrchestratorOutbound(
       if (callId) {
         markAgentPlaybackEnd(callId);
         markPlaybackEnd(callId, () => {
-          sendVoxDownlink(ws, buildVoxStopMessage());
+          sendVoxDownlink(ws, buildVoxStopMessage(ws));
           clearPlaybackPacer(callId);
         });
       }
@@ -202,11 +202,11 @@ export function handleOrchestratorOutbound(
     case 'agent.play_filler': {
       const b64 = String(payload.audio_pcm16_b64 || '').trim();
       if (b64 && callId) {
-        sendVoxDownlink(ws, buildVoxStartMessage());
+        sendVoxDownlink(ws, buildVoxStartMessage(ws));
         scheduleDownlinkReadyFallback(callId);
         enqueuePcm16Playback(ws, callId, Buffer.from(b64, 'base64'), sendPcm16Frame);
         markPlaybackEnd(callId, () => {
-          sendVoxDownlink(ws, buildVoxStopMessage());
+          sendVoxDownlink(ws, buildVoxStopMessage(ws));
           clearPlaybackPacer(callId);
         });
       }

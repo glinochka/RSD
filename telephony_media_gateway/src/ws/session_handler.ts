@@ -78,7 +78,7 @@ function emitLoopback(ws: WebSocket, session: MediaSession, payload: Buffer): vo
   if (out.length === 0) return;
 
   if (config.loopbackTransport === 'vox' || config.loopbackTransport === 'both') {
-    ws.send(buildVoxMediaMessage(out));
+    ws.send(buildVoxMediaMessage(out, ws));
   }
   if (config.loopbackTransport === 'binary' || config.loopbackTransport === 'both') {
     ws.send(buildBinaryOut(out));
