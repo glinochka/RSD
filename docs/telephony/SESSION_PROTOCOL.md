@@ -8,6 +8,13 @@
 
 Версия протокола: `protocol_version: "1"` в `session.start`.
 
+> ⚠️ **Важно**: Формат медиа-сообщений Voximplant критически важен для работы звука!
+> См. подробную документацию: [VOXIMPLANT_MEDIA_FORMAT.md](./VOXIMPLANT_MEDIA_FORMAT.md)
+>
+> История: Ранее была проблема, когда звук агента не воспроизводился абоненту.
+> Причина: медиа передавалось в неверном формате. Исправлено строгим
+> следованием документации Voximplant.
+
 ---
 
 ## 1. Установление сессии
@@ -167,6 +174,56 @@ Gateway принимает это как `audio.in` и на этапе 2 отв�
 { "type": "agent.audio.end", "payload": { "reason": "complete" } }
 ```
 
+### 4.1. Voximplant WebSocket Media Format (Критически важно)
+
+При отправке аудио агента в Voximplant через WebSocket, gateway преобразует
+внутренние события в формат, требуемый Voximplant:
+
+**Порядок событий (строго обязателен):**
+
+1. **Сначала** `event: "start"` с описанием формата:
+```json
+{
+  "event": "start",
+  "sequenceNumber": 0,
+  "start": {
+    "mediaFormat": {
+      "encoding": "audio/l16",
+      "sampleRate": 8000,
+      "channels": 1
+    }
+  }
+}
+```
+
+2. **Затем** `event: "media"` с аудио-данными:
+```json
+{
+  "event": "media",
+  "sequenceNumber": 1,
+  "media": {
+    "chunk": 1,
+    "timestamp": 1623456789000,
+    "payload": "<base64 PCM16 audio>"
+  }
+}
+```
+
+3. **В конце** `event: "stop"`:
+```json
+{
+  "event": "stop",
+  "sequenceNumber": 100
+}
+```
+
+> ⚠️ **Критично**: Без события `"start"` Voximplant не распознает сообщения как медиа,
+> и звук агента **не будет слышен** абоненту!
+>
+> См. полную документацию: [VOXIMPLANT_MEDIA_FORMAT.md](./VOXIMPLANT_MEDIA_FORMAT.md)
+>
+> Реализация: `telephony_media_gateway/src/ws/vox_media.ts`
+
 ---
 
 ## 5. Barge-in
@@ -259,3 +316,7 @@ sequenceDiagram
 
 - JSON Schema (черновик): [../../schemas/telephony/media_session.v1.schema.json](../../schemas/telephony/media_session.v1.schema.json)
 - Архитектура: [STREAMING_ARCHITECTURE.md](./STREAMING_ARCHITECTURE.md)
+- Формат Voximplant Media: [VOXIMPLANT_MEDIA_FORMAT.md](./VOXIMPLANT_MEDIA_FORMAT.md)
+- Реализация: `telephony_media_gateway/src/ws/vox_media.ts`
+- Реализация: `telephony_media_gateway/src/orch/agent_playback.ts`
+- VoxEngine: `voxengine/lib/rsd_media_gateway.js`

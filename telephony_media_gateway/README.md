@@ -2,6 +2,9 @@
 
 Media plane для потоковой телефонии RSD: WebSocket μ-law, VAD, streaming STT, turn-taking (этап 3+).
 
+> ⚠️ **Важно**: Формат медиа-сообщений Voximplant критически важен для работы звука!
+> Подробности: [VOXIMPLANT_MEDIA_FORMAT.md](../docs/telephony/VOXIMPLANT_MEDIA_FORMAT.md)
+
 ## Этап 3 (VAD + streaming STT)
 
 - **Silero VAD** (ONNX Runtime, 8 kHz, окна 256 samples) или energy fallback

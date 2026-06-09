@@ -40,6 +40,20 @@ function sendJson(ws: WebSocket, message: Record<string, unknown>): void {
   }
 }
 
+/**
+ * Отправляет сообщение в Voximplant WebSocket.
+ *
+ * ⚠️ КРИТИЧЕСКИ ВАЖНО: Порядок отправки сообщений строго определен:
+ * 1. Сначала отправляется buildVoxStartMessage() - это ОБЯЗАТЕЛЬНО!
+ * 2. Затем отправляются buildVoxMediaMessage() с аудио-данными
+ * 3. В конце отправляется buildVoxStopMessage()
+ *
+ * Без события 'start' Voximplant не распознает сообщения как медиа,
+ * и звук агента не будет слышен абоненту!
+ *
+ * @see ../ws/vox_media.ts
+ * @see ../../../docs/telephony/VOXIMPLANT_MEDIA_FORMAT.md
+ */
 function sendVoxDownlink(ws: WebSocket, message: string): void {
   if (ws.readyState === ws.OPEN) {
     console.info('[media-gateway] vox send', JSON.stringify({ msg: message.slice(0, 100) }));
@@ -137,6 +151,23 @@ export function handleOrchestratorOutbound(
   }
 
   switch (type) {
+    /**
+     * Начало воспроизведения аудио агента.
+     *
+     * ⚠️ КРИТИЧЕСКИ ВАЖНО: Порядок событий для Voximplant:
+     * 1. buildVoxStartMessage() - устанавливает формат медиа (audio/l16, 8000Hz, mono)
+     * 2. Затем buildVoxMediaMessage() с аудио-чанками
+     * 3. В конце buildVoxStopMessage()
+     *
+     * Без события 'start' Voximplant не распознает последующие сообщения как медиа,
+     * и звук агента НЕ БУДЕТ слышен абоненту!
+     *
+     * История: Была проблема, когда звук не воспроизводился из-за
+     * неправильного формата медиа-сообщений. Исправлено строгим
+     * следованием документации Voximplant.
+     *
+     * @see ../../../docs/telephony/VOXIMPLANT_MEDIA_FORMAT.md
+     */
     case 'agent.audio.start':
       emitDebugLog('H2', 'agent_playback.ts:handleOrchestratorOutbound:start', 'agent_audio_start_received', {
         callId,
@@ -146,8 +177,8 @@ export function handleOrchestratorOutbound(
         clearPlaybackPacer(callId);
         markAgentPlaybackStart(callId);
       }
-      // Keep explicit start/stop framing for Vox media WS parser.
-      // (Barge-in filtering is handled upstream in Vox script side.)
+      // Явная отправка start/stop framing для Vox media WS parser.
+      // ⚠️ НЕ УДАЛЯЙТЕ эту строку! Без buildVoxStartMessage звук не будет работать!
       sendVoxDownlink(ws, buildVoxStartMessage(ws));
       if (callId) {
         scheduleDownlinkReadyFallback(callId);
@@ -184,19 +215,36 @@ export function handleOrchestratorOutbound(
       });
       break;
     }
+    /**
+     * Завершение воспроизведения аудио агента.
+     *
+     * Отправляет buildVoxStopMessage() для корректного завершения
+     * медиа-потока в Voximplant.
+     *
+     * @see ../../../docs/telephony/VOXIMPLANT_MEDIA_FORMAT.md
+     */
     case 'agent.audio.end':
       if (callId) {
         markAgentPlaybackEnd(callId);
         markPlaybackEnd(callId, () => {
+          // Отправляем stop для корректного завершения потока
           sendVoxDownlink(ws, buildVoxStopMessage(ws));
           clearPlaybackPacer(callId);
         });
       }
       sendJson(ws, { type: 'agent.audio.end', payload: { ok: true, reason: payload.reason || 'complete' } });
       break;
+    /**
+     * Воспроизведение filler-аудио (удерживающее сообщение).
+     *
+     * ⚠️ Также требует отправки buildVoxStartMessage перед аудио!
+     *
+     * @see ../../../docs/telephony/VOXIMPLANT_MEDIA_FORMAT.md
+     */
     case 'agent.play_filler': {
       const b64 = String(payload.audio_pcm16_b64 || '').trim();
       if (b64 && callId) {
+        // ⚠️ ОБЯЗАТЕЛЬНО сначала start, затем media, затем stop!
         sendVoxDownlink(ws, buildVoxStartMessage(ws));
         scheduleDownlinkReadyFallback(callId);
         enqueuePcm16Playback(ws, callId, Buffer.from(b64, 'base64'), sendPcm16Frame);

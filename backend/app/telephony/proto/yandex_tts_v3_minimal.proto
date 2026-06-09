@@ -2,8 +2,7 @@ syntax = "proto3";
 
 package speechkit.tts.v3;
 
-// Extended subset for Synthesizer.StreamSynthesis (Yandex SpeechKit TTS v3).
-// Includes hints for better voice quality.
+// Minimal subset for Synthesizer.StreamSynthesis (Yandex SpeechKit TTS v3).
 
 message RawAudio {
   enum AudioEncoding {
@@ -18,19 +17,10 @@ message AudioFormatOptions {
   RawAudio raw_audio = 1;
 }
 
-// Hint to improve synthesis quality
-message Hints {
-  oneof hint {
-    string voice = 1;
-    // Other hints can be added here
-  }
-}
-
 message SynthesisOptions {
   string voice = 2;
   double speed = 4;
   AudioFormatOptions output_audio_spec = 7;
-  repeated Hints hints = 8;  // Hints for better voice quality
 }
 
 message SynthesisInput {

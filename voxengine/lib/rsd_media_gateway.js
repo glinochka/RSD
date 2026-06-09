@@ -1,9 +1,22 @@
 /**
-
  * Media WebSocket client: session.start + Voximplant ULAW stream ↔ gateway.
-
- * Gateway sends Vox native JSON: start → media → stop (see media-streams/websocket).
-
+ *
+ * ⚠️ КРИТИЧЕСКИ ВАЖНО: Формат медиа- сообщений строго определен документацией Voximplant.
+ * Любые изменения могут привести к потере звука агента для абонента!
+ *
+ * Gateway отправляет в Voximplant native JSON в строгом порядке:
+ *   1. { event: "start", sequenceNumber: 0, start: { mediaFormat: {...} } }
+ *   2. { event: "media", sequenceNumber: N, media: { chunk: N, timestamp: T, payload: "..." } }
+ *   3. { event: "stop", sequenceNumber: M }
+ *
+ * Без события "start" Voximplant не распознает медиа как аудио!
+ *
+ * История исправления: Ранее звук агента не воспроизводился абоненту
+ * из-за неправильного формата медиа-сообщений. Исправлено строгим
+ * следованием документации Voximplant.
+ *
+ * @see https://voximplant.com/docs/guides/media-streams/websocket
+ * @see ../../docs/telephony/VOXIMPLANT_MEDIA_FORMAT.md
  */
 
 
@@ -54,6 +67,19 @@ function connectMediaGateway(opts) {
 
 
 
+  /**
+   * Привязывает WebSocket к call для downlink медиа (аудио агента → абонент).
+   *
+   * ⚠️ КРИТИЧЕСКИ ВАЖНО: Эта функция должна вызываться:
+   * 1. При получении события 'start' от gateway
+   * 2. При получении первого 'media' события
+   * 3. При событии 'agent.audio.start' от orchestrator
+   *
+   * Без вызова sendMediaTo аудио от gateway не будет направлено на звонок!
+   *
+   * Некоторые Voximplant runtime могут сбрасывать downlink соединение
+   * после перехода early media → answer, поэтому делаем rebind.
+   */
   function bindDownlinkMedia() {
 
     // Re-bind websocket -> call explicitly when playback starts.
@@ -287,6 +313,18 @@ function connectMediaGateway(opts) {
 
       }
 
+      /**
+       * Обработка события 'start' от gateway — начало медиа-потока.
+       *
+       * ⚠️ КРИТИЧЕСКИ ВАЖНО: Это событие означает, что gateway начинает
+       * передачу аудио агента. Оно ДОЛЖНО быть первым в последовательности:
+       * start → media → stop
+       *
+       * При получении 'start':
+       * 1. Перепривязываем websocket->call media routing
+       * 2. Отправляем downlink.ready подтверждение в gateway
+       * 3. Сбрасываем флаги firstDownlinkMedia
+       */
       if (msg.event === 'start' && msg.start) {
 
         // Guard against lost websocket->call media routing before first chunk.
@@ -314,6 +352,16 @@ function connectMediaGateway(opts) {
 
       }
 
+      /**
+       * Обработка события 'media' от gateway — аудио-данные агента.
+       *
+       * Событие media содержит base64-закодированные аудио-чанки в формате PCM16.
+       * Данные автоматически направляются на call через webSocket.sendMediaTo().
+       *
+       * При первом media-событии:
+       * 1. Дополнительно привязываем downlink media routing
+       * 2. Логируем получение первого аудио-чанка
+       */
       if (msg.event === 'media' && msg.media && msg.media.payload) {
 
         if (!firstDownlinkMediaLogged) {
