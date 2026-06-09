@@ -74,8 +74,10 @@ function sendVoxDownlink(ws: WebSocket, message: string): void {
 
 function sendPcm16Frame(ws: WebSocket, frame: Buffer): void {
   if (!frame.length) return;
-  // frame arrives in PCM16 LE from the orchestrator (audio_pcm16_b64).
-  // buildVoxMediaMessage handles PCM16 LE → MULAW conversion internally.
+  // frame приходит из оркестратора как PCM16 little-endian (audio_pcm16_b64).
+  // НЕ конвертируем здесь endianness/кодек: Voximplant WebSocket media ожидает PCM16 LE
+  // и буфер передаётся в buildVoxMediaMessage как есть (см. ../ws/vox_media.ts и
+  // docs/telephony/VOXIMPLANT_MEDIA_FORMAT.md). Конверсия LE→BE или μ-law даёт шум.
   let absSumLe = 0;
   let absSumBe = 0;
   const sampleCount = Math.floor(frame.length / 2);

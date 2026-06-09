@@ -4,14 +4,52 @@
 > Нарушение порядка событий или формата приведет к тому, что звук агента не будет слышен абоненту!
 > Поддержка Voximplant: https://voximplant.com/docs/guides/media-streams/websocket
 
+## TL;DR — рабочий формат downlink-аудио (агент → абонент)
+
+| Параметр | Значение |
+|----------|----------|
+| `mediaFormat.encoding` | `audio/l16` (PCM16) |
+| Разрядность | 16-bit signed |
+| Порядок байт (endianness) | **little-endian (LE), отправляется КАК ЕСТЬ** |
+| Частота дискретизации | 8000 Hz |
+| Каналы | 1 (mono) |
+| Размер кадра | 320 байт (20 мс @ 8 кГц PCM16) |
+
+Оркестратор (Python) отдаёт PCM16 LE в `audio_pcm16_b64`. Gateway передаёт эти байты
+в `media.payload` **без конверсии endianness**. Управляется через `AUDIO_FORMAT=l16`
+(значение по умолчанию).
+
 ## История исправления
 
-**Проблема**: Ранее звук агента не воспроизводился абоненту после подключения WebSocket.
+### 1. Звук не воспроизводился вообще
 
-**Причина**: Медиа передавалось в неверном формате — сообщения обрабатывались как обычный JavaScript,
-вместо определения их как медиа-сообщений Voximplant.
+**Причина**: медиа передавалось в неверном формате — сообщения обрабатывались как обычный
+JavaScript, вместо определения их как медиа-сообщений Voximplant.
 
-**Решение**: Строгое следование документации Voximplant для WebSocket media streaming.
+**Решение**: строгое следование протоколу `start → media → stop` с корректным `mediaFormat`.
+
+### 2. Шум и треск вместо речи (endianness / кодек)
+
+**Симптом**: вместо речи слышен шум/треск. Проявлялось на всех TTS-провайдерах (Yandex, ElevenLabs).
+
+**Ключевая улика в логах**: `WebSocket.MediaEventStarted ; encoding = PCM16` — Voximplant
+интерпретирует payload WebSocket-медиа как **PCM16 little-endian**, независимо от того, что
+объявлено в `mediaFormat.encoding`.
+
+**Две независимые причины шума (обе были последовательно внесены и исправлены):**
+
+1. **`AUDIO_FORMAT=mulaw`** (коммит `99580a8`). Объявление `audio/x-mulaw` в `mediaFormat`
+   НЕ заставляет Voximplant декодировать payload как μ-law — он всё равно читает его как PCM16.
+   В результате μ-law-байты проигрываются как PCM16 → шум.
+2. **Конверсия PCM16 LE → BE** (коммит `4aba41a`, по мотивам RFC 3551 «L16 = big-endian»).
+   Voximplant WebSocket media ожидает **little-endian**, поэтому перестановка байт LE→BE
+   также даёт шум.
+
+**Решение**: отправлять PCM16 **little-endian как есть** (`AUDIO_FORMAT=l16`, без конверсии
+endianness). Это восстанавливает разборчивую речь.
+
+> ⚠️ RFC 3551 определяет `L16` как big-endian, но Voximplant в этом WebSocket-протоколе
+> ожидает little-endian. Не доверяйте RFC здесь — ориентируйтесь на поведение Voximplant.
 
 ## Порядок событий (строго обязателен)
 
@@ -25,12 +63,9 @@
   "sequenceNumber": 0,
   "start": {
     "mediaFormat": {
-      "encoding": "audio/x-mulaw",
+      "encoding": "audio/l16",
       "sampleRate": 8000,
       "channels": 1
-    },
-    "customParameters": {
-      "text1": "12312"
     }
   }
 }
@@ -40,9 +75,12 @@
 |------|----------|------------|
 | `event` | Тип события | Должно быть строго `"start"` |
 | `sequenceNumber` | Счетчик сообщений | Начинается с 0 |
-| `start.mediaFormat.encoding` | Кодек | `audio/x-mulaw` для μ-law или `audio/l16` для PCM16 |
+| `start.mediaFormat.encoding` | Кодек | **`audio/l16`** (PCM16) — рабочее значение. `audio/x-mulaw` НЕ работает: payload всё равно читается как PCM16 |
 | `start.mediaFormat.sampleRate` | Частота дискретизации | 8000 Hz для телефонии |
 | `start.mediaFormat.channels` | Количество каналов | 1 (mono) |
+
+> ⚠️ `media.payload` всегда трактуется Voximplant как **PCM16 little-endian**. Передавайте
+> PCM16 LE как есть (без перестановки байт и без μ-law-кодирования).
 
 ### 2. Затем события `media`
 
@@ -161,7 +199,24 @@ buildVoxStopMessage(ws)
 
 ✅ Правильно:
 ```json
-{ "event": "start", "start": { "mediaFormat": { "encoding": "audio/x-mulaw" } } }
+{ "event": "start", "start": { "mediaFormat": { "encoding": "audio/l16" } } }
+```
+
+### 5. μ-law payload или конверсия LE → BE (шум вместо речи)
+
+❌ Неправильно — payload в μ-law (Voximplant читает его как PCM16 → шум):
+```text
+AUDIO_FORMAT=mulaw  # pcm16LeToMulaw(payload)
+```
+
+❌ Неправильно — перестановка байт LE → BE (Voximplant ждёт little-endian → шум):
+```text
+FORCE_ENDIAN_BE=true  # pcm16LeToBe(payload)
+```
+
+✅ Правильно — PCM16 little-endian как есть:
+```text
+AUDIO_FORMAT=l16   # (по умолчанию), без конверсии endianness
 ```
 
 ## Проверка вручную

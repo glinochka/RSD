@@ -92,13 +92,25 @@ export function parseVoxMediaMessage(text: string): Buffer | null | 'ignore' {
   }
 }
 
-// Определяем формат аудио через переменную окружения.
+// =====================================================================================
+// ФОРМАТ АУДИО ДЛЯ VOXIMPLANT WEBSOCKET MEDIA (рабочее решение, не менять без тестов!)
+// =====================================================================================
 // Voximplant WebSocket media JSON-протокол интерпретирует payload как PCM16/L16
-// (см. WebSocket.MediaEventStarted encoding=PCM16 в логах). Объявление
-// audio/x-mulaw в mediaFormat не меняет интерпретацию payload, поэтому
-// mulaw-байты проигрываются как PCM16 → шум/треск. Рабочий формат — l16.
-// AUDIO_FORMAT=l16 (по умолчанию) - PCM16 (16-bit), конвертация LE → BE по RFC 3551.
-// AUDIO_FORMAT=mulaw - μ-law (только если поддержка Voximplant подтвердит прием mulaw payload).
+// в порядке байт LITTLE-ENDIAN (подтверждено: WebSocket.MediaEventStarted encoding=PCM16
+// + успешный звонок при отправке PCM16 LE как есть).
+//
+// ❌ Что НЕ работает (приводит к шуму/треску вместо речи):
+//   - AUDIO_FORMAT=mulaw: объявление audio/x-mulaw в mediaFormat НЕ меняет интерпретацию
+//     payload — Voximplant всё равно читает его как PCM16, и mulaw-байты звучат как шум.
+//   - Конверсия PCM16 LE → BE (RFC 3551): Voximplant ждёт little-endian, BE даёт шум.
+//
+// ✅ Что работает: AUDIO_FORMAT=l16 (по умолчанию) + PCM16 LE БЕЗ конверсии endianness.
+//
+// История: формат уже ломали дважды (LE→BE в коммите 4aba41a, mulaw в 99580a8).
+// Подробности: docs/telephony/VOXIMPLANT_MEDIA_FORMAT.md
+//
+// AUDIO_FORMAT=l16 (по умолчанию) - PCM16 (16-bit) little-endian, отправляется как есть.
+// AUDIO_FORMAT=mulaw - μ-law (НЕ использовать, пока поддержка Voximplant не подтвердит прием mulaw payload).
 const AUDIO_FORMAT = process.env.AUDIO_FORMAT || 'l16';
 
 /**
