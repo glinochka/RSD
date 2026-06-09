@@ -231,6 +231,8 @@ class OrchestratorWorker:
         log_label: str,
         record_agent_turn: bool = False,
         set_greet_state: bool = False,
+        voice_id: str | None = None,
+        language: str | None = None,
     ) -> None:
         plain = str(text or "").strip()
         logger.info(
@@ -248,9 +250,10 @@ class OrchestratorWorker:
                 slot.call_id,
             )
             return
-        session_row = await hgetall_session(slot.connection_id)
-        voice_id = str(session_row.get("voice_id") or "default")
-        language = str(session_row.get("language") or "ru-RU")
+        if voice_id is None or language is None:
+            session_row = await hgetall_session(slot.connection_id)
+            voice_id = voice_id or str(session_row.get("voice_id") or "default")
+            language = language or str(session_row.get("language") or "ru-RU")
         logger.info(
             "orchestrator %s starting TTS call_id=%s voice=%s lang=%s text_len=%d",
             log_label,
@@ -364,11 +367,19 @@ class OrchestratorWorker:
                     fb_exc,
                 )
 
-    async def _play_agent_welcome(self, slot: CallSlot, *, welcome_raw: str | None) -> None:
+    async def _play_agent_welcome(
+        self,
+        slot: CallSlot,
+        *,
+        welcome_raw: str | None,
+        voice_id: str | None = None,
+        language: str | None = None,
+    ) -> None:
         welcome_text = resolve_telephony_welcome_text(welcome_raw)
         logger.info(
-            "orchestrator _play_agent_welcome call_id=%s welcome_raw=%r welcome_text=%r",
+            "orchestrator _play_agent_welcome call_id=%s agent_id=%s welcome_raw=%r welcome_text=%r",
             slot.call_id,
+            slot.agent_id,
             welcome_raw,
             welcome_text,
         )
@@ -378,6 +389,8 @@ class OrchestratorWorker:
             log_label="welcome",
             record_agent_turn=True,
             set_greet_state=True,
+            voice_id=voice_id,
+            language=language,
         )
 
     async def _apply_routed_agent(self, slot: CallSlot, agent_id: int, *, extension: str) -> None:
@@ -385,6 +398,7 @@ class OrchestratorWorker:
         slot.awaiting_extension = False
         slot.dtmf_buffer = ""
         slot.postgres_loaded = False
+        routed_welcome = ""
         async with async_session_maker() as session:
             async with session.begin():
                 agent = await session.scalar(
@@ -398,6 +412,7 @@ class OrchestratorWorker:
                         log_label="route_agent_missing",
                     )
                     return
+                routed_welcome = str(agent.welcome_message or "")
                 if slot.call_db_id:
                     call = await session.get(AgentTelephonyCall, int(slot.call_db_id))
                     if call is not None:
@@ -426,7 +441,9 @@ class OrchestratorWorker:
         # Play greeting as soon as routing is resolved (do not wait for extra DB hydration).
         await self._play_agent_welcome(
             slot,
-            welcome_raw=str(resolved.get("welcome_message") or ""),
+            welcome_raw=routed_welcome if routed_welcome.strip() else str(resolved.get("welcome_message") or ""),
+            voice_id=str(resolved.get("voice_id") or "default"),
+            language=str(resolved.get("language") or "ru-RU"),
         )
         await self._load_postgres_once(slot)
         logger.info(

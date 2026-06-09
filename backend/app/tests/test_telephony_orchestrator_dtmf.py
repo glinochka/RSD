@@ -78,6 +78,7 @@ async def test_apply_routed_agent_streams_default_welcome():
     agent = MagicMock()
     agent.id = 37
     agent.is_active = True
+    agent.welcome_message = "Добро пожаловать в тестового агента."
 
     session = AsyncMock()
     session.begin.return_value.__aenter__ = AsyncMock(return_value=None)
@@ -99,4 +100,9 @@ async def test_apply_routed_agent_streams_default_welcome():
         session_maker.return_value.__aexit__ = AsyncMock(return_value=None)
         await worker._apply_routed_agent(slot, 37, extension="1234")
 
-    play_welcome.assert_awaited_once_with(slot, welcome_raw="")
+    play_welcome.assert_awaited_once_with(
+        slot,
+        welcome_raw="Добро пожаловать в тестового агента.",
+        voice_id="default",
+        language="ru-RU",
+    )
