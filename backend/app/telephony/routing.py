@@ -150,34 +150,52 @@ async def resolve_connection_by_called_number(
 async def resolve_agent_by_extension(extension: str) -> int | None:
     ext = normalize_extension(extension)
     if not ext:
+        logger.warning("dtmf_resolve failed: invalid extension format: %r", extension)
         return None
     if redis_enabled():
         cached = await get_route_dtmf(ext)
         if cached is not None:
+            logger.info("dtmf_resolve cached hit: ext=%s agent_id=%s", ext, cached)
             return cached
     # Redis route cache can be empty after restart; fallback to DB-backed lookup.
+    logger.info("dtmf_resolve cache miss, querying db: ext=%s", ext)
     async with async_session_maker() as session:
+        from ..alembic.models import Agent
         rows = await session.scalars(
-            select(AgentChannelConnection).where(
+            select(AgentChannelConnection).join(Agent).where(
                 AgentChannelConnection.provider == TELEPHONY_CHANNEL_PROVIDER,
                 AgentChannelConnection.is_active.is_(True),
+                Agent.is_active.is_(True),
             )
         )
+        found_count = 0
         for row in rows:
             if not row.encrypted_credentials:
                 continue
             try:
                 creds = parse_telephony_credentials(decrypt_token(row.encrypted_credentials))
-            except Exception:
+            except Exception as exc:
+                logger.warning("dtmf_resolve decrypt failed connection_id=%s: %s", row.id, exc)
                 continue
-            if normalize_extension(creds.routing_extension) != ext:
+            creds_ext = normalize_extension(creds.routing_extension)
+            if creds_ext != ext:
                 continue
+            found_count += 1
             agent_id = int(row.agent_id)
+            logger.info(
+                "dtmf_resolve db hit: ext=%s agent_id=%s connection_id=%s",
+                ext, agent_id, row.id
+            )
             if redis_enabled():
                 # Best-effort write-through to speed up next DTMF routing.
                 await set_route_dtmf(ext, agent_id)
                 await set_route_dtmf_owner(ext, int(row.id))
+                logger.info("dtmf_resolve cached write: ext=%s agent_id=%s", ext, agent_id)
             return agent_id
+        logger.warning(
+            "dtmf_resolve not found: ext=%s checked_rows=%s",
+            ext, found_count
+        )
     return None
 
 

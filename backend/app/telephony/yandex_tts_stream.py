@@ -64,12 +64,44 @@ def _metadata() -> list[tuple[str, str]]:
     return meta
 
 
+# Premium voice mapping for better quality synthesis
+_PREMIUM_VOICES: dict[str, str] = {
+    # Map standard voices to premium equivalents for better quality
+    "alena": "alena:rc",
+    "jane": "jane:rc",
+    "omazh": "omazh:rc",
+    "dasha": "dasha:rc",
+    "marina": "marina:rc",
+    "filipp": "filipp:rc",
+    "ermil": "ermil:rc",
+    "zahar": "zahar:rc",
+    "alexander": "alexander:rc",
+    "anton": "anton:rc",
+    "kirill": "kirill:rc",
+    "madi": "madi:rc",
+}
+
+
+def _get_premium_voice(voice: str) -> str:
+    """Map voice to premium version for better quality."""
+    normalized = voice.strip().lower()
+    # Remove :rc suffix if already present to get base voice
+    base_voice = normalized.replace(":rc", "").replace(":premium", "")
+    return _PREMIUM_VOICES.get(base_voice, normalized)
+
+
 def _request_iter(pb2, text: str, voice: str):
     raw = pb2.RawAudio(audio_encoding=pb2.RawAudio.LINEAR16_PCM, sample_rate_hertz=8000)
+    # Use premium voice for better quality
+    premium_voice = _get_premium_voice(voice)
+    # Create hints for better quality (using premium voice)
+    hint = pb2.Hints()
+    hint.voice = premium_voice
     opts = pb2.SynthesisOptions(
-        voice=voice,
+        voice=premium_voice,
         speed=1.0,
         output_audio_spec=pb2.AudioFormatOptions(raw_audio=raw),
+        hints=[hint],  # Add hints for better synthesis quality
     )
     yield pb2.StreamSynthesisRequest(options=opts)
     yield pb2.StreamSynthesisRequest(synthesis_input=pb2.SynthesisInput(text=text))
@@ -105,8 +137,13 @@ async def stream_yandex_v3_pcm16_frames(
     timeout: float,
 ) -> AsyncIterator[bytes]:
     del lang
+    voice = map_voice_for_provider("yandex", voice_id)
+    premium_voice = _get_premium_voice(voice)
+    logger.info(
+        "yandex_tts_stream: text_len=%d voice_id=%s mapped=%s premium=%s timeout=%.1f",
+        len(text), voice_id, voice, premium_voice, timeout
+    )
     async with _stub_lock:
-        voice = map_voice_for_provider("yandex", voice_id)
         pcm_parts = await asyncio.to_thread(_stream_pcm_chunks, text, voice, timeout)
 
     pcm_buf = bytearray()

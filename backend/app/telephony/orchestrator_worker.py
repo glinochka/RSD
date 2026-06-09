@@ -460,21 +460,34 @@ class OrchestratorWorker:
         inner = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
         digit = str(inner.get("digit") or "").strip()
         if not call_id or not digit or not digit.isdigit():
+            logger.warning("dtmf_handler invalid payload: call_id=%s digit=%s", call_id, digit)
             return
         slot = self._slots.get(call_id) or self._slot(call_id, connection_id, caller_e164)
         async with self._lock_for(call_id):
             await self._ensure_call_mapping(slot)
+            logger.info(
+                "dtmf_handler digit=%s call_id=%s buffer_before=%s awaiting=%s routed_by=%s",
+                digit, call_id, slot.dtmf_buffer, slot.awaiting_extension, slot.routed_by
+            )
             if not slot.awaiting_extension and slot.routed_by == "did":
+                logger.info("dtmf_handler skipped: already routed by DID call_id=%s", call_id)
                 return
             if not slot.awaiting_extension:
                 await self._routing_flags_from_call(slot)
             if not slot.awaiting_extension:
+                logger.info("dtmf_handler not awaiting extension call_id=%s routed_by=%s", call_id, slot.routed_by)
                 return
             slot.dtmf_buffer = f"{slot.dtmf_buffer}{digit}"[-4:]
+            logger.info("dtmf_handler buffer=%s call_id=%s", slot.dtmf_buffer, call_id)
             if len(slot.dtmf_buffer) < 4:
                 return
+            logger.info("dtmf_handler resolving extension=%s call_id=%s", slot.dtmf_buffer, call_id)
             agent_id = await resolve_agent_by_extension(slot.dtmf_buffer)
             if agent_id is None:
+                logger.error(
+                    "dtmf_handler AGENT NOT FOUND: extension=%s call_id=%s connection_id=%s",
+                    slot.dtmf_buffer, call_id, connection_id
+                )
                 slot.dtmf_buffer = ""
                 await self._stream_routing_phrase(
                     slot,
@@ -482,6 +495,7 @@ class OrchestratorWorker:
                     log_label="dtmf_agent_not_found",
                 )
                 return
+            logger.info("dtmf_handler agent found: extension=%s agent_id=%s call_id=%s", slot.dtmf_buffer, agent_id, call_id)
             await self._apply_routed_agent(slot, int(agent_id), extension=slot.dtmf_buffer)
 
     async def handle_session_start(self, payload: dict[str, Any]) -> None:

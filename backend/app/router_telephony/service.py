@@ -146,6 +146,7 @@ async def resolve_telephony_channel(
         routed_by = "did"
     else:
         routed_by = "webhook"
+    voice_id = str(creds.voice_id or "alena").strip() or "alena"
     payload = {
         "agent_id": int(agent.id),
         "connection_id": int(connection.id),
@@ -154,7 +155,7 @@ async def resolve_telephony_channel(
         "welcome_message": agent.welcome_message,
         "template_type": str(agent.template_type or "qa"),
         "template_config": template_config,
-        "voice_id": creds.voice_id,
+        "voice_id": voice_id,
         "language": creds.language,
         "record_calls": bool(creds.record_calls),
         "disclaimer_played": bool(creds.disclaimer_played),
@@ -162,6 +163,10 @@ async def resolve_telephony_channel(
         "phone_number_e164": creds.phone_number_e164,
         "caller_e164": caller_e164.strip(),
     }
+    logger.info(
+        "resolve_telephony_channel: agent_id=%s connection_id=%s voice_id=%s lang=%s routed_by=%s",
+        agent.id, connection.id, voice_id, creds.language, routed_by
+    )
     await cache_resolve_payload(
         connection_id=int(connection.id),
         agent_id=int(agent.id),

@@ -32,9 +32,10 @@ export const config = {
     ? sttProviderRaw
     : 'mock') as 'yandex' | 'deepgram' | 'mock',
   sttLanguage: (process.env.TELEPHONY_STT_LANGUAGE || 'ru-RU').trim(),
+  /** Turn silence detection - reduced for faster response. */
   turnSilenceMs: Math.max(
     200,
-    Math.min(2000, Number.parseInt(process.env.TURN_SILENCE_MS || '400', 10)),
+    Math.min(2000, Number.parseInt(process.env.TURN_SILENCE_MS || '350', 10)),
   ),
   vadModelPath: (
     process.env.VAD_MODEL_PATH || path.join(process.cwd(), 'models', 'silero_vad.onnx')
@@ -45,8 +46,8 @@ export const config = {
   ),
   vadEnergyThreshold: Number.parseFloat(process.env.VAD_ENERGY_THRESHOLD || '0.02'),
   sttPartialLogEvery: Math.max(1, Number.parseInt(process.env.STT_PARTIAL_LOG_EVERY || '5', 10)),
-  /** Wait for provider final after VAD utterance end (ms). */
-  sttFinalWaitMs: Math.max(20, Number.parseInt(process.env.STT_FINAL_WAIT_MS || '80', 10)),
+  /** Wait for provider final after VAD utterance end (ms). Reduced for lower latency. */
+  sttFinalWaitMs: Math.max(20, Number.parseInt(process.env.STT_FINAL_WAIT_MS || '50', 10)),
 
   yandexSpeechkitApiKey: (process.env.YANDEX_SPEECHKIT_API_KEY || '').trim(),
   yandexSpeechkitFolderId: (process.env.YANDEX_SPEECHKIT_FOLDER_ID || '').trim(),
@@ -60,10 +61,11 @@ export const config = {
 
   /** Stage 6: barge-in while agent.audio.* is active */
   bargeInEnabled: (process.env.TELEPHONY_BARGE_IN_ENABLED || 'true').trim().toLowerCase() !== 'false',
-  /** Ignore barge-in during the first playback milliseconds after agent.audio.start. */
+  /** Ignore barge-in during the first playback milliseconds after agent.audio.start.
+   *  Reduced from 600ms to 300ms for lower latency (target 1.5-2s response time). */
   bargeInPlaybackGraceMs: Math.max(
     0,
-    Math.min(5000, Number.parseInt(process.env.TELEPHONY_BARGE_IN_PLAYBACK_GRACE_MS || '600', 10)),
+    Math.min(5000, Number.parseInt(process.env.TELEPHONY_BARGE_IN_PLAYBACK_GRACE_MS || '300', 10)),
   ),
   /** Ignore barge-in shortly after DTMF to avoid tone-as-speech false positives. */
   bargeInDtmfSuppressMs: Math.max(

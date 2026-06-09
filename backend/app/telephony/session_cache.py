@@ -40,6 +40,12 @@ async def cache_resolve_payload(
         return
 
     ttl = _ttl_sec()
+    voice_id = resolved.get("voice_id") or "alena"
+    language = resolved.get("language") or "ru-RU"
+    logger.info(
+        "cache_resolve_payload: connection_id=%s agent_id=%s voice_id=%s language=%s",
+        connection_id, agent_id, voice_id, language
+    )
     await hmset_session(
         connection_id,
         {
@@ -49,8 +55,8 @@ async def cache_resolve_payload(
             "welcome_message": resolved.get("welcome_message") or "",
             "template_type": resolved.get("template_type") or "qa",
             "template_config": _template_config_json(resolved.get("template_config")),
-            "voice_id": resolved.get("voice_id") or "",
-            "language": resolved.get("language") or "ru-RU",
+            "voice_id": voice_id,
+            "language": language,
             "record_calls": "1" if resolved.get("record_calls") else "0",
             "disclaimer_played": "1" if resolved.get("disclaimer_played") else "0",
             "operator_transfer_e164": resolved.get("operator_transfer_e164") or "",
