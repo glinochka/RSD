@@ -161,6 +161,54 @@ def _convert_be_to_le(pcm16_be: bytes) -> bytes:
     return bytes(le)
 
 
+def _pcm16_stats_as_le(buf: bytes) -> tuple[float, float]:
+    """Return (mean_abs, clipped_ratio) for PCM16 interpreted as LE."""
+    if len(buf) < 2:
+        return 0.0, 0.0
+    sample_count = len(buf) // 2
+    if sample_count <= 0:
+        return 0.0, 0.0
+    abs_sum = 0
+    clipped = 0
+    for i in range(0, sample_count * 2, 2):
+        s = int.from_bytes(buf[i : i + 2], byteorder="little", signed=True)
+        a = abs(s)
+        abs_sum += a
+        if a >= 28000:
+            clipped += 1
+    return abs_sum / sample_count, clipped / sample_count
+
+
+def _normalize_pcm16_to_le(part: bytes) -> bytes:
+    """
+    Normalize incoming PCM16 chunk to little-endian.
+
+    Some providers/environments may deliver LINEAR16 either in LE or BE.
+    We score both interpretations and pick the one with less clipping/noise.
+    """
+    if not part or len(part) < 2:
+        return part
+    even = part[: (len(part) // 2) * 2]
+    if not even:
+        return even
+
+    # Candidate A: keep as-is (assume LE)
+    le_buf = even
+    le_mean_abs, le_clipped_ratio = _pcm16_stats_as_le(le_buf)
+
+    # Candidate B: byte-swap (assume source BE)
+    swapped = _convert_be_to_le(even)
+    be_mean_abs, be_clipped_ratio = _pcm16_stats_as_le(swapped)
+
+    # Prefer the candidate with lower clipping ratio; tie-breaker by mean abs.
+    # Wrong endianness typically shows very high amplitude/clipping and sounds like crackle.
+    if be_clipped_ratio + 1e-9 < le_clipped_ratio:
+        return swapped
+    if le_clipped_ratio + 1e-9 < be_clipped_ratio:
+        return le_buf
+    return swapped if be_mean_abs < le_mean_abs else le_buf
+
+
 async def stream_yandex_v3_pcm16_frames(
     text: str,
     *,
@@ -179,10 +227,26 @@ async def stream_yandex_v3_pcm16_frames(
         pcm_parts = await asyncio.to_thread(_stream_pcm_chunks, text, effective_voice, timeout)
 
     pcm_buf = bytearray()
+    endian_logged = False
     for part in pcm_parts:
-        # Yandex SpeechKit returns PCM16 in big-endian format
-        # Convert to little-endian for proper playback
-        part_le = _convert_be_to_le(part)
+        part_le = _normalize_pcm16_to_le(part)
+        if not endian_logged and part and len(part) >= 2:
+            raw_even = part[: (len(part) // 2) * 2]
+            le_mean_abs_raw, le_clip_raw = _pcm16_stats_as_le(raw_even)
+            swapped = _convert_be_to_le(raw_even)
+            le_mean_abs_swapped, le_clip_swapped = _pcm16_stats_as_le(swapped)
+            chosen = "swapped_be_to_le" if part_le == swapped else "as_is_le"
+            logger.info(
+                "yandex_tts_stream endian normalize: chosen=%s raw_mean=%.1f raw_clip=%.3f "
+                "swap_mean=%.1f swap_clip=%.3f bytes=%d",
+                chosen,
+                le_mean_abs_raw,
+                le_clip_raw,
+                le_mean_abs_swapped,
+                le_clip_swapped,
+                len(raw_even),
+            )
+            endian_logged = True
         pcm_buf.extend(part_le)
         while len(pcm_buf) >= _PCM16_FRAME_BYTES:
             segment = bytes(pcm_buf[:_PCM16_FRAME_BYTES])

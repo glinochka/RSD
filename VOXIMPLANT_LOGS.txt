@@ -1,518 +1,312 @@
-2026-06-09 09:22:09.524 Loading scenario rsd_inbound
-2026-06-09 09:22:09.537 Sent event to JS onPhoneEvent with params [{name = Application.Started ; accountId = 11010465 ; domainName = rsd.salihmizipow.voximplant.com ; dialplanName = RSD ; dialplanId = 8939311 ; userId = -1 ; applicationId = 55467323 ; accessURL = http://185.164.150.20:12092/request/C01309D745E50D8D.1780996929.30751527_185.164.150.20/0DB2DE0283E53F83 ; accessSecureURL = https://www-ru-54-20.voximplant.com:12093/request/C01309D745E50D8D.1780996929.30751527_185.164.150.20/0DB2DE0283E53F83 ; logURL = https://storage-gw-ru-02.voximplant.com/voximplant-logs-secure/2026/06/09/MDI2N2YyMjg0OWExMTU2NzA4MjJiYTE5M2Y3YWFmZjgvaHR0cDovL3d3dy1ydS01NC0yMC52b3hpbXBsYW50LmNvbTo4MDgwL2xvZ3MvMjAyNi8wNi8wOS8wOTIyMDlfQzAxMzA5RDc0NUU1MEQ4RC4xNzgwOTk2OTI5LjMwNzUxNTI3XzE4NS4xNjQuMTUwLjIwLmxvZw--?sessionid=4755123394 ; initiatorCountry = RU ; sessionId = 4755123394 ; nluAddresses = [https://ai-a1-1.voximplant.com/ ;  ] ; config = {acceptReInviteByDefault = true ; } ; } ;  ]
-2026-06-09 09:22:09.537 Sent event to JS onPhoneEvent with params [{id = DC5A435E102E4A3C.1780996929.30751526 ; name = Application.CallAlerting ; callerid = 79179156670 ; sipCallId = SDvtvgd01-4d779002880fbe24ebeabded686dcccd-v300g00030 ; sipTransport = true ; destination = 78432070517 ; toURI = sip:78432070517@rsd.salihmizipow.voximplant.com ; displayName = 79179156670 ; headers = {VI-Client-Device = SIP ; VI-Client-Type = pstn ; } ; } ;  ]
-2026-06-09 09:22:09.625 [rsd] scenario loaded (bundled rsd_inbound)
-2026-06-09 09:22:09.626 VoxEngine version: 7.48.0
-2026-06-09 09:22:09.626 [rsd] Application.Started customData=
-2026-06-09 09:22:09.626 Executing JS command: EnableMediaStatistics with params [{id = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:09.626 WARNING! The valid 'supportedDtmfTypes' parameter value is not provided, the default 'ALL' value will be used.
-2026-06-09 09:22:09.626 Executing JS command: HandleTones with params [{handle = true ; id = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:09.626 HTTP request (RrbH2B9ZTS6YlS3UlVNe4Wgmu_bke0XFsM4UGAHNnDI ID) is sent.
-2026-06-09 09:22:09.626 CallId=DC5A435E102E4A3C.1780996929.30751526: Enable media statistics for DC5A435E102E4A3C.1780996929.30751526 : https://storage-gw-ru-02.voximplant.com/voximplant-logs-secure/2026/06/09/NGFhMmU1ZWEyNjE0Y2ExN2JlZjQ5ZWRkMmZmNWMxNGQvaHR0cDovL3d3dy1ydS01NC0yMC52b3hpbXBsYW50LmNvbTo4MDgwL2xvZ3MvMjAyNi8wNi8wOS9DMDEzMDlENzQ1RTUwRDhELjE3ODA5OTY5MjkuMzA3NTE1MjdfMTg1LjE2NC4xNTAuMjBfREM1QTQzNUUxMDJFNEEzQy4xNzgwOTk2OTI5LjMwNzUxNTI2LmNzdg--?sessionid=4755123394
-2026-06-09 09:22:10.425 HTTP response (RrbH2B9ZTS6YlS3UlVNe4Wgmu_bke0XFsM4UGAHNnDI ID) is received.
-2026-06-09 09:22:10.426 Executing JS command: StartAudio with params [{headers = NULL ; id = DC5A435E102E4A3C.1780996929.30751526 ; scheme = NULL ; } ;  ]
-2026-06-09 09:22:12.933 [rsd] dtmf prefill timeout, play pool greeting call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:12.933 Executing JS command: CreatePlayer with params [{id = o-Wk_RwoRtGHplGSxFoyFU5IWeKej0zxtrFAerxisls ; } ;  {addSpeak = true ; extparams = NULL ; isGrpc = false ; language = ru-RU ; provider = freemium_ru ; say = Здравствуйте! Введите добавочный номер из четырёх цифр на клавиатуре телефона. ; voice = female ; } ;  ]
-2026-06-09 09:22:12.937 Sent event to JS onPhoneEvent with params [{id = o-Wk_RwoRtGHplGSxFoyFU5IWeKej0zxtrFAerxisls ; name = Player.Created ; } ;  ]
-2026-06-09 09:22:12.937 Executing JS command: SendMedia with params [{from = o-Wk_RwoRtGHplGSxFoyFU5IWeKej0zxtrFAerxisls ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:13.083 Sent event to JS onPhoneEvent with params [{id = o-Wk_RwoRtGHplGSxFoyFU5IWeKej0zxtrFAerxisls ; name = Player.PlaybackReady ; serverRequestId = 81d414cf021dac8fac192e598009dfe1 ; } ;  ]
-2026-06-09 09:22:13.100 Sent event to JS onPhoneEvent with params [{id = o-Wk_RwoRtGHplGSxFoyFU5IWeKej0zxtrFAerxisls ; name = Player.Started ; duration = 0 ; } ;  ]
-2026-06-09 09:22:13.110 Sent event from JS onPhoneEvent with params {"name":"Call.PlaybackReady","id":"DC5A435E102E4A3C.1780996929.30751526","call":{"rism":{}}}
-2026-06-09 09:22:13.119 Sent event from JS onPhoneEvent with params {"duration":0,"name":"Call.PlaybackStarted","id":"DC5A435E102E4A3C.1780996929.30751526","call":{"rism":{}}}
-2026-06-09 09:22:18.381 Sent event to JS onPhoneEvent with params [{id = o-Wk_RwoRtGHplGSxFoyFU5IWeKej0zxtrFAerxisls ; name = Player.PlaybackFinished ; serverRequestId = 81d414cf021dac8fac192e598009dfe1 ; } ;  ]
-2026-06-09 09:22:18.422 Sent event from JS onPhoneEvent with params {"name":"Call.PlaybackFinished","id":"DC5A435E102E4A3C.1780996929.30751526","call":{"rism":{}}}
-2026-06-09 09:22:18.422 Executing JS command: AcceptCall with params [{headers = NULL ; id = DC5A435E102E4A3C.1780996929.30751526 ; parameters = {} ; } ;  ]
-2026-06-09 09:22:18.422 WARNING! The valid 'supportedDtmfTypes' parameter value is not provided, the default 'ALL' value will be used.
-2026-06-09 09:22:18.422 Executing JS command: HandleTones with params [{handle = true ; id = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:18.423 HTTP request (iW1aORyuT0_cG0r-uROjsh_mygqq6knmpf0ijR4vfl4 ID) is sent.
-2026-06-09 09:22:18.423 Executing JS command: CreateWebSocket with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; } ;  wss://rsd-ai.ru/ws ;  NULL ;  ]
-2026-06-09 09:22:18.513 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Created ; } ;  ]
-2026-06-09 09:22:18.513 {"url":"wss://rsd-ai.ru/ws","onclose":null,"onerror":null,"onmessage":null,"onopen":null,"oncreated":null,"onmediastarted":null,"onmediaended":null,"readyState":"connecting","connectionPrivacyEnabled":false,"_id":"tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ"}
-2026-06-09 09:22:18.514 Sent event to JS onPhoneEvent with params [{id = DC5A435E102E4A3C.1780996929.30751526 ; name = Call.FirstAudioPacketReceived ; } ;  ]
-2026-06-09 09:22:18.520 Sent event to JS onPhoneEvent with params [{id = DC5A435E102E4A3C.1780996929.30751526 ; name = Call.Connected ; sipCallId = SDvtvgd01-4d779002880fbe24ebeabded686dcccd-v300g00030 ; sipTransport = UDP ; headers = {} ; displayName =  ; encrypted = false ; } ;  ]
-2026-06-09 09:22:18.561 Sent event to JS onPhoneEvent with params [{id = DC5A435E102E4A3C.1780996929.30751526 ; name = Call.AudioQualityDetected ; quality = Standard ; } ;  ]
-2026-06-09 09:22:18.591 HTTP response (iW1aORyuT0_cG0r-uROjsh_mygqq6knmpf0ijR4vfl4 ID) is received.
-2026-06-09 09:22:18.664 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Open ; } ;  ]
-2026-06-09 09:22:18.705 Executing JS command: SendMessageWebSocket with params [tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ;  {"type":"session.start","payload":{"call_id":"DC5A435E102E4A3C.1780996929.30751526","connection_id":47,"caller_e164":"79179156670","codec":"pcmu","called_number":"78432070517","protocol_version":"1"}} ;  ]
-2026-06-09 09:22:18.705 Executing JS command: SendMedia with params [{encoding = ULAW ; from = DC5A435E102E4A3C.1780996929.30751526 ; to = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; } ;  ]
-2026-06-09 09:22:18.705 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:18.705 [rsd] gateway duplex ULAW ready call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:18.705 [rsd] media gateway ready call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:19.022 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"session.start","payload":{"ok":true,"call_id":"DC5A435E102E4A3C.1780996929.30751526","protocol_version":"1","audio_frame_ms":20,"loopback_transport":null,"pipeline":true,"stt_provider":"yandex","turn_silence_ms":600}} ; } ;  ]
-2026-06-09 09:22:19.046 [rsd] gateway ws type=session.start call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:19.046 [rsd] gateway session.start ok call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:19.901 Sent event to JS onPhoneEvent with params [{id = DC5A435E102E4A3C.1780996929.30751526 ; name = Call.ToneReceived ; type = 1 ; tone = 1 ; } ;  ]
-2026-06-09 09:22:19.901 CallId=DC5A435E102E4A3C.1780996929.30751526: Warning: Has received an RFC 2833 outband DTMF event and ceased detecting inband DTMF for the duration of the call
-2026-06-09 09:22:19.942 Executing JS command: SendMessageWebSocket with params [tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ;  {"type":"dtmf","payload":{"digit":"1"}} ;  ]
-2026-06-09 09:22:19.974 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"dtmf","payload":{"ok":true,"digit":"1"}} ; } ;  ]
-2026-06-09 09:22:20.057 [rsd] gateway ws type=dtmf call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:20.221 Sent event to JS onPhoneEvent with params [{id = DC5A435E102E4A3C.1780996929.30751526 ; name = Call.ToneReceived ; type = 1 ; tone = 2 ; } ;  ]
-2026-06-09 09:22:20.262 Executing JS command: SendMessageWebSocket with params [tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ;  {"type":"dtmf","payload":{"digit":"2"}} ;  ]
-2026-06-09 09:22:20.295 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"dtmf","payload":{"ok":true,"digit":"2"}} ; } ;  ]
-2026-06-09 09:22:20.295 [rsd] gateway ws type=dtmf call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:20.461 Sent event to JS onPhoneEvent with params [{id = DC5A435E102E4A3C.1780996929.30751526 ; name = Call.ToneReceived ; type = 1 ; tone = 3 ; } ;  ]
-2026-06-09 09:22:20.502 Executing JS command: SendMessageWebSocket with params [tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ;  {"type":"dtmf","payload":{"digit":"3"}} ;  ]
-2026-06-09 09:22:20.538 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"dtmf","payload":{"ok":true,"digit":"3"}} ; } ;  ]
-2026-06-09 09:22:20.579 [rsd] gateway ws type=dtmf call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:20.742 Sent event to JS onPhoneEvent with params [{id = DC5A435E102E4A3C.1780996929.30751526 ; name = Call.ToneReceived ; type = 1 ; tone = 4 ; } ;  ]
-2026-06-09 09:22:20.784 [rsd] extension pre-dial complete ext=1234 call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:20.784 Executing JS command: SendMessageWebSocket with params [tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ;  {"type":"dtmf","payload":{"digit":"4"}} ;  ]
-2026-06-09 09:22:20.827 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"dtmf","payload":{"ok":true,"digit":"4"}} ; } ;  ]
-2026-06-09 09:22:20.869 [rsd] gateway ws type=dtmf call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:20.945 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.start","payload":{"ok":true,"codec":"l16_8000"}} ; } ;  ]
-2026-06-09 09:22:20.987 [rsd] gateway ws type=agent.audio.start call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:20.987 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.381 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":0}} ; } ;  ]
-2026-06-09 09:22:21.384 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.386 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.395 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":1}} ; } ;  ]
-2026-06-09 09:22:21.401 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.403 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":2}} ; } ;  ]
-2026-06-09 09:22:21.403 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.404 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.404 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.421 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":3}} ; } ;  ]
-2026-06-09 09:22:21.422 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.425 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":4}} ; } ;  ]
-2026-06-09 09:22:21.425 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.425 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.426 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":5}} ; } ;  ]
-2026-06-09 09:22:21.427 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.427 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.429 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":6}} ; } ;  ]
-2026-06-09 09:22:21.429 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.429 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.432 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":7}} ; } ;  ]
-2026-06-09 09:22:21.433 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.433 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.434 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":8}} ; } ;  ]
-2026-06-09 09:22:21.434 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.434 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.436 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":9}} ; } ;  ]
-2026-06-09 09:22:21.436 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.436 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.439 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":10}} ; } ;  ]
-2026-06-09 09:22:21.439 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.439 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.442 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":11}} ; } ;  ]
-2026-06-09 09:22:21.442 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.443 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.445 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":12}} ; } ;  ]
-2026-06-09 09:22:21.445 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.445 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.448 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":13}} ; } ;  ]
-2026-06-09 09:22:21.448 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.448 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.450 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":14}} ; } ;  ]
-2026-06-09 09:22:21.450 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.454 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.454 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":15}} ; } ;  ]
-2026-06-09 09:22:21.455 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.455 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":16}} ; } ;  ]
-2026-06-09 09:22:21.455 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.455 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.455 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.458 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":17}} ; } ;  ]
-2026-06-09 09:22:21.458 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.460 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":18}} ; } ;  ]
-2026-06-09 09:22:21.460 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.460 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.462 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":19}} ; } ;  ]
-2026-06-09 09:22:21.462 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.462 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.465 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":20}} ; } ;  ]
-2026-06-09 09:22:21.465 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.465 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.465 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.466 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.467 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":21}} ; } ;  ]
-2026-06-09 09:22:21.470 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":22}} ; } ;  ]
-2026-06-09 09:22:21.501 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":23}} ; } ;  ]
-2026-06-09 09:22:21.501 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":24}} ; } ;  ]
-2026-06-09 09:22:21.501 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":25}} ; } ;  ]
-2026-06-09 09:22:21.509 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.524 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":26}} ; } ;  ]
-2026-06-09 09:22:21.524 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":27}} ; } ;  ]
-2026-06-09 09:22:21.524 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.524 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.524 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.524 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.524 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.524 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.524 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.524 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.524 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.525 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.525 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.528 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":28}} ; } ;  ]
-2026-06-09 09:22:21.528 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.528 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.529 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.530 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":29}} ; } ;  ]
-2026-06-09 09:22:21.530 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.530 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.531 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":30}} ; } ;  ]
-2026-06-09 09:22:21.532 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.532 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.534 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":31}} ; } ;  ]
-2026-06-09 09:22:21.534 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.534 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.535 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":32}} ; } ;  ]
-2026-06-09 09:22:21.535 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.536 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.537 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":33}} ; } ;  ]
-2026-06-09 09:22:21.537 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.537 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.538 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":34}} ; } ;  ]
-2026-06-09 09:22:21.538 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.538 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.539 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":35}} ; } ;  ]
-2026-06-09 09:22:21.539 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.539 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.540 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":36}} ; } ;  ]
-2026-06-09 09:22:21.540 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.540 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.542 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":37}} ; } ;  ]
-2026-06-09 09:22:21.542 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.542 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.543 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":38}} ; } ;  ]
-2026-06-09 09:22:21.543 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.543 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.546 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":39}} ; } ;  ]
-2026-06-09 09:22:21.546 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.546 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.546 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":40}} ; } ;  ]
-2026-06-09 09:22:21.546 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.547 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.547 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":41}} ; } ;  ]
-2026-06-09 09:22:21.547 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.548 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.554 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":42}} ; } ;  ]
-2026-06-09 09:22:21.554 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":43}} ; } ;  ]
-2026-06-09 09:22:21.554 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":44}} ; } ;  ]
-2026-06-09 09:22:21.554 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.554 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.554 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":45}} ; } ;  ]
-2026-06-09 09:22:21.554 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.555 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.555 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.559 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":46}} ; } ;  ]
-2026-06-09 09:22:21.559 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":47}} ; } ;  ]
-2026-06-09 09:22:21.559 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":48}} ; } ;  ]
-2026-06-09 09:22:21.559 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.559 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.559 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.559 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.559 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.559 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.560 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":49}} ; } ;  ]
-2026-06-09 09:22:21.560 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.560 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.560 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.560 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.572 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":50}} ; } ;  ]
-2026-06-09 09:22:21.572 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.572 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.573 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.575 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":51}} ; } ;  ]
-2026-06-09 09:22:21.575 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.575 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.576 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":52}} ; } ;  ]
-2026-06-09 09:22:21.576 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.576 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.577 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":53}} ; } ;  ]
-2026-06-09 09:22:21.577 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.577 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.578 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":54}} ; } ;  ]
-2026-06-09 09:22:21.579 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.579 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.582 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.609 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":55}} ; } ;  ]
-2026-06-09 09:22:21.609 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":56}} ; } ;  ]
-2026-06-09 09:22:21.609 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":57}} ; } ;  ]
-2026-06-09 09:22:21.609 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":58}} ; } ;  ]
-2026-06-09 09:22:21.609 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":59}} ; } ;  ]
-2026-06-09 09:22:21.609 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":60}} ; } ;  ]
-2026-06-09 09:22:21.609 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":61}} ; } ;  ]
-2026-06-09 09:22:21.609 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":62}} ; } ;  ]
-2026-06-09 09:22:21.609 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":63}} ; } ;  ]
-2026-06-09 09:22:21.609 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":64}} ; } ;  ]
-2026-06-09 09:22:21.609 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":65}} ; } ;  ]
-2026-06-09 09:22:21.609 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":66}} ; } ;  ]
-2026-06-09 09:22:21.609 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":67}} ; } ;  ]
-2026-06-09 09:22:21.609 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":68}} ; } ;  ]
-2026-06-09 09:22:21.624 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.MediaEventStarted ; tag =  ; encoding = PCM16 ; customParameters = void ; } ;  ]
-2026-06-09 09:22:21.625 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.665 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.666 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.666 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.666 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.666 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.666 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.666 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.666 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.666 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.666 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.666 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.666 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.666 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.666 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.666 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.666 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.666 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.666 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.666 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.666 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.666 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.666 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.666 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.666 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.666 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.666 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.666 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.666 [rsd] gateway WS MEDIA_STARTED encoding=PCM16 tag= call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.891 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":69}} ; } ;  ]
-2026-06-09 09:22:21.892 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.895 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":70}} ; } ;  ]
-2026-06-09 09:22:21.895 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.895 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.897 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":71}} ; } ;  ]
-2026-06-09 09:22:21.897 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.897 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.899 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":72}} ; } ;  ]
-2026-06-09 09:22:21.900 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.900 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.927 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":73}} ; } ;  ]
-2026-06-09 09:22:21.927 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":74}} ; } ;  ]
-2026-06-09 09:22:21.927 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":75}} ; } ;  ]
-2026-06-09 09:22:21.927 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":76}} ; } ;  ]
-2026-06-09 09:22:21.927 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":77}} ; } ;  ]
-2026-06-09 09:22:21.927 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.927 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":78}} ; } ;  ]
-2026-06-09 09:22:21.927 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":79}} ; } ;  ]
-2026-06-09 09:22:21.927 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":80}} ; } ;  ]
-2026-06-09 09:22:21.927 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":81}} ; } ;  ]
-2026-06-09 09:22:21.927 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.927 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.930 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":82}} ; } ;  ]
-2026-06-09 09:22:21.931 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":83}} ; } ;  ]
-2026-06-09 09:22:21.931 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.931 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.931 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.931 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.931 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.931 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.931 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.931 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.931 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.931 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.931 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.931 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.931 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.931 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.931 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.931 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.931 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.931 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.932 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":84}} ; } ;  ]
-2026-06-09 09:22:21.932 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.932 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.932 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.963 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":85}} ; } ;  ]
-2026-06-09 09:22:21.963 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":86}} ; } ;  ]
-2026-06-09 09:22:21.963 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":87}} ; } ;  ]
-2026-06-09 09:22:21.963 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":88}} ; } ;  ]
-2026-06-09 09:22:21.963 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":89}} ; } ;  ]
-2026-06-09 09:22:21.963 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":90}} ; } ;  ]
-2026-06-09 09:22:21.963 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":91}} ; } ;  ]
-2026-06-09 09:22:21.963 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":92}} ; } ;  ]
-2026-06-09 09:22:21.963 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":93}} ; } ;  ]
-2026-06-09 09:22:21.963 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":94}} ; } ;  ]
-2026-06-09 09:22:21.963 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":95}} ; } ;  ]
-2026-06-09 09:22:21.963 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.963 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":96}} ; } ;  ]
-2026-06-09 09:22:21.963 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":97}} ; } ;  ]
-2026-06-09 09:22:21.963 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":98}} ; } ;  ]
-2026-06-09 09:22:21.964 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":99}} ; } ;  ]
-2026-06-09 09:22:21.964 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.964 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":100}} ; } ;  ]
-2026-06-09 09:22:21.964 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":101}} ; } ;  ]
-2026-06-09 09:22:21.964 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":102}} ; } ;  ]
-2026-06-09 09:22:21.964 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.964 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.964 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.974 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":103}} ; } ;  ]
-2026-06-09 09:22:21.974 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.974 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.974 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.974 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.974 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.974 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.974 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.974 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.974 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.974 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.974 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.974 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.974 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.974 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.974 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.974 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.974 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.974 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.974 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.974 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.974 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.974 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.974 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.974 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.974 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.974 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.974 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.974 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.974 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.974 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.974 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.974 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.974 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.978 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":104}} ; } ;  ]
-2026-06-09 09:22:21.978 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":105}} ; } ;  ]
-2026-06-09 09:22:21.978 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":106}} ; } ;  ]
-2026-06-09 09:22:21.978 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.978 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.979 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.980 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":107}} ; } ;  ]
-2026-06-09 09:22:21.981 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.981 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.981 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.981 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.981 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.981 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":108}} ; } ;  ]
-2026-06-09 09:22:21.981 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.981 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.996 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":109}} ; } ;  ]
-2026-06-09 09:22:21.996 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":110}} ; } ;  ]
-2026-06-09 09:22:21.996 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":111}} ; } ;  ]
-2026-06-09 09:22:21.996 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":112}} ; } ;  ]
-2026-06-09 09:22:21.996 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:21.996 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":113}} ; } ;  ]
-2026-06-09 09:22:21.996 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:21.996 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:22.005 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:22.005 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:22.005 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:22.005 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:22.005 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:22.005 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:22.005 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:22.005 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:22.028 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":114}} ; } ;  ]
-2026-06-09 09:22:22.030 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":115}} ; } ;  ]
-2026-06-09 09:22:22.030 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":116}} ; } ;  ]
-2026-06-09 09:22:22.032 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":117}} ; } ;  ]
-2026-06-09 09:22:22.036 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":118}} ; } ;  ]
-2026-06-09 09:22:22.036 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":119}} ; } ;  ]
-2026-06-09 09:22:22.051 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":120}} ; } ;  ]
-2026-06-09 09:22:22.053 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":121}} ; } ;  ]
-2026-06-09 09:22:22.055 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":122}} ; } ;  ]
-2026-06-09 09:22:22.056 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":123}} ; } ;  ]
-2026-06-09 09:22:22.058 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":124}} ; } ;  ]
-2026-06-09 09:22:22.069 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:22.070 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":125}} ; } ;  ]
-2026-06-09 09:22:22.070 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":126}} ; } ;  ]
-2026-06-09 09:22:22.070 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":127}} ; } ;  ]
-2026-06-09 09:22:22.070 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":128}} ; } ;  ]
-2026-06-09 09:22:22.070 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:22.070 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":129}} ; } ;  ]
-2026-06-09 09:22:22.070 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:22.070 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:22.070 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":130}} ; } ;  ]
-2026-06-09 09:22:22.070 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":131}} ; } ;  ]
-2026-06-09 09:22:22.071 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":132}} ; } ;  ]
-2026-06-09 09:22:22.071 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:22.071 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:22.073 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":133}} ; } ;  ]
-2026-06-09 09:22:22.073 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:22.073 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:22.073 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:22.073 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:22.073 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:22.073 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:22.073 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:22.073 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:22.073 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:22.073 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:22.075 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":134}} ; } ;  ]
-2026-06-09 09:22:22.075 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:22.075 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:22.075 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:22.075 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:22.075 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:22.075 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:22.075 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:22.075 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:22.075 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:22.075 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:22.075 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:22.075 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:22.075 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:22.075 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:22.075 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:22.076 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":135}} ; } ;  ]
-2026-06-09 09:22:22.076 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:22.076 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:22.076 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:22.076 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:22.076 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:22.076 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:22.076 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:22.088 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":136}} ; } ;  ]
-2026-06-09 09:22:22.088 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":137}} ; } ;  ]
-2026-06-09 09:22:22.088 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":138}} ; } ;  ]
-2026-06-09 09:22:22.088 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:22.088 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":139}} ; } ;  ]
-2026-06-09 09:22:22.088 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:22.088 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:22.088 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":140}} ; } ;  ]
-2026-06-09 09:22:22.088 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:22.088 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:22.088 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":141}} ; } ;  ]
-2026-06-09 09:22:22.088 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:22.088 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":142}} ; } ;  ]
-2026-06-09 09:22:22.088 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"type":"agent.audio.end","payload":{"ok":true,"reason":"complete"}} ; } ;  ]
-2026-06-09 09:22:22.088 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:22.088 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:22.129 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:22.129 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:22.129 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:22.129 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:22.129 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:22.129 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:22.129 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:22.129 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:22.129 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:22.129 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:22.129 [rsd] gateway ws type=agent.audio.chunk call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:22.129 Executing JS command: SendMedia with params [{from = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; to = DC5A435E102E4A3C.1780996929.30751526 ; } ;  ]
-2026-06-09 09:22:22.129 [rsd] gateway ws type=agent.audio.end call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:25.002 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Message ; text = {"event":"stop","sequenceNumber":144} ; } ;  ]
-2026-06-09 09:22:25.070 [rsd] gateway ws event=stop call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:25.070 [rsd] gateway downlink stop call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:26.245 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.MediaEventEnded ; tag =  ; mediaInfo = {duration = 2 ; } ; } ;  ]
-2026-06-09 09:22:26.286 [rsd] gateway WS MEDIA_ENDED call_id=DC5A435E102E4A3C.1780996929.30751526
-2026-06-09 09:22:28.138 Sent event to JS onPhoneEvent with params [{id = DC5A435E102E4A3C.1780996929.30751526 ; name = Call.Disconnected ; headers = {Reason = Q.850 ;text="Normal call clearing";cause=16 ; } ; direction = All numbers ; duration = 10 ; cost = 0.268148 ; internalCode = 16 ; reason = Normal call clearing ; } ;  ]
-2026-06-09 09:22:28.143 Executing JS command: SendMessageWebSocket with params [tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ;  {"type":"session.end","payload":{"reason":"hangup"}} ;  ]
-2026-06-09 09:22:28.143 Executing JS command: DestroyWebSocket with params [tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ;  ]
-2026-06-09 09:22:28.143 HTTP request (PGgc-3ZrRdSwwt8Xpg40ZXs2lFxZeEWcikEkp3HXPiQ ID) is sent.
-2026-06-09 09:22:28.169 Sent event to JS onPhoneEvent with params [{id = tbyQ8dPfQQeRrBpwTpIiwJq3ZyTOO0RiuIKJGcA3PJQ ; name = WebSocket.Close ; code = 1000 ; wasClean = true ; reason = session.end ; } ;  ]
-2026-06-09 09:22:28.211 [rsd] gateway ws close: session.end
-2026-06-09 09:22:28.282 HTTP response (PGgc-3ZrRdSwwt8Xpg40ZXs2lFxZeEWcikEkp3HXPiQ ID) is received.
-2026-06-09 09:22:28.282 Terminating request..., stack=VoxEngine.terminate@/voxengine.js:73:51
+2026-06-09 12:24:56.715 Loading scenario rsd_inbound
+2026-06-09 12:24:56.729 Sent event to JS onPhoneEvent with params [{name = Application.Started ; accountId = 11010465 ; domainName = rsd.salihmizipow.voximplant.com ; dialplanName = RSD ; dialplanId = 8939311 ; userId = -1 ; applicationId = 55467323 ; accessURL = http://185.164.150.18:12092/request/C4FE392D78FB544E.1781007896.36652683_185.164.150.18/16278C70532ADFEC ; accessSecureURL = https://www-ru-52-18.voximplant.com:12093/request/C4FE392D78FB544E.1781007896.36652683_185.164.150.18/16278C70532ADFEC ; logURL = https://storage-gw-ru-02.voximplant.com/voximplant-logs-secure/2026/06/09/MWVjMDliZTFhNjVmZGVmNDlhZWVlMzBlODY5MjdkYzcvaHR0cDovL3d3dy1ydS01Mi0xOC52b3hpbXBsYW50LmNvbTo4MDgwL2xvZ3MvMjAyNi8wNi8wOS8xMjI0NTZfQzRGRTM5MkQ3OEZCNTQ0RS4xNzgxMDA3ODk2LjM2NjUyNjgzXzE4NS4xNjQuMTUwLjE4LmxvZw--?sessionid=4756248738 ; initiatorCountry = RU ; sessionId = 4756248738 ; nluAddresses = [https://ai-a1-1.voximplant.com/ ;  ] ; config = {acceptReInviteByDefault = true ; } ; } ;  ]
+2026-06-09 12:24:56.729 Sent event to JS onPhoneEvent with params [{id = 99429A62AF78C25A.1781007896.36652682 ; name = Application.CallAlerting ; callerid = 79179156670 ; sipCallId = SD8hsha01-a13230d9ce13227e98f198b9f127eeb9-v300g00010 ; sipTransport = true ; destination = 78432070517 ; toURI = sip:78432070517@rsd.salihmizipow.voximplant.com ; displayName = 79179156670 ; headers = {VI-Client-Device = SIP ; VI-Client-Type = pstn ; } ; } ;  ]
+2026-06-09 12:24:56.767 [rsd] scenario loaded (bundled rsd_inbound)
+2026-06-09 12:24:56.768 VoxEngine version: 7.48.0
+2026-06-09 12:24:56.768 [rsd] Application.Started customData=
+2026-06-09 12:24:56.768 Executing JS command: EnableMediaStatistics with params [{id = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:24:56.768 WARNING! The valid 'supportedDtmfTypes' parameter value is not provided, the default 'ALL' value will be used.
+2026-06-09 12:24:56.768 Executing JS command: HandleTones with params [{handle = true ; id = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:24:56.769 HTTP request (BE5MjE5hQmWeHrJmWm8BnnGIybyiQEQ8mRhLKEoCkh4 ID) is sent.
+2026-06-09 12:24:56.775 CallId=99429A62AF78C25A.1781007896.36652682: Enable media statistics for 99429A62AF78C25A.1781007896.36652682 : https://storage-gw-ru-02.voximplant.com/voximplant-logs-secure/2026/06/09/ZTBmMmIwNDcwY2FjZDk0OTgwOWRhMmIwZGY5NDJkMGYvaHR0cDovL3d3dy1ydS01Mi0xOC52b3hpbXBsYW50LmNvbTo4MDgwL2xvZ3MvMjAyNi8wNi8wOS9DNEZFMzkyRDc4RkI1NDRFLjE3ODEwMDc4OTYuMzY2NTI2ODNfMTg1LjE2NC4xNTAuMThfOTk0MjlBNjJBRjc4QzI1QS4xNzgxMDA3ODk2LjM2NjUyNjgyLmNzdg--?sessionid=4756248738
+2026-06-09 12:24:56.995 HTTP response (BE5MjE5hQmWeHrJmWm8BnnGIybyiQEQ8mRhLKEoCkh4 ID) is received.
+2026-06-09 12:24:56.995 Executing JS command: StartAudio with params [{headers = NULL ; id = 99429A62AF78C25A.1781007896.36652682 ; scheme = NULL ; } ;  ]
+2026-06-09 12:24:59.496 [rsd] dtmf prefill timeout, play pool greeting call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:24:59.536 Executing JS command: CreatePlayer with params [{id = RxTEw1RbTLKxyV-lglEPp15wjaUL-EsSpo7-QzNF9ok ; } ;  {addSpeak = true ; extparams = NULL ; isGrpc = false ; language = ru-RU ; provider = freemium_ru ; say = Здравствуйте! Введите добавочный номер из четырёх цифр на клавиатуре телефона. ; voice = female ; } ;  ]
+2026-06-09 12:24:59.537 Sent event to JS onPhoneEvent with params [{id = RxTEw1RbTLKxyV-lglEPp15wjaUL-EsSpo7-QzNF9ok ; name = Player.Created ; } ;  ]
+2026-06-09 12:24:59.537 Executing JS command: SendMedia with params [{from = RxTEw1RbTLKxyV-lglEPp15wjaUL-EsSpo7-QzNF9ok ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:24:59.537 Sent event to JS onPhoneEvent with params [{id = RxTEw1RbTLKxyV-lglEPp15wjaUL-EsSpo7-QzNF9ok ; name = Player.PlaybackReady ; serverRequestId = 114913b4ee202b5ea2fe8b6ebf5c5fa2 ; } ;  ]
+2026-06-09 12:24:59.554 Sent event to JS onPhoneEvent with params [{id = RxTEw1RbTLKxyV-lglEPp15wjaUL-EsSpo7-QzNF9ok ; name = Player.Started ; duration = 4937 ; } ;  ]
+2026-06-09 12:24:59.602 Sent event from JS onPhoneEvent with params {"name":"Call.PlaybackReady","id":"99429A62AF78C25A.1781007896.36652682","call":{"rism":{}}}
+2026-06-09 12:24:59.603 Sent event from JS onPhoneEvent with params {"duration":4937,"name":"Call.PlaybackStarted","id":"99429A62AF78C25A.1781007896.36652682","call":{"rism":{}}}
+2026-06-09 12:25:04.794 Sent event to JS onPhoneEvent with params [{id = RxTEw1RbTLKxyV-lglEPp15wjaUL-EsSpo7-QzNF9ok ; name = Player.PlaybackFinished ; serverRequestId = 114913b4ee202b5ea2fe8b6ebf5c5fa2 ; } ;  ]
+2026-06-09 12:25:04.823 Sent event from JS onPhoneEvent with params {"name":"Call.PlaybackFinished","id":"99429A62AF78C25A.1781007896.36652682","call":{"rism":{}}}
+2026-06-09 12:25:04.823 Executing JS command: AcceptCall with params [{headers = NULL ; id = 99429A62AF78C25A.1781007896.36652682 ; parameters = {} ; } ;  ]
+2026-06-09 12:25:04.823 WARNING! The valid 'supportedDtmfTypes' parameter value is not provided, the default 'ALL' value will be used.
+2026-06-09 12:25:04.823 Executing JS command: HandleTones with params [{handle = true ; id = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:04.823 HTTP request (f45nowJ9QP66tbJXvpS8aFdMqORFvErLpACACMC7adE ID) is sent.
+2026-06-09 12:25:04.824 Executing JS command: CreateWebSocket with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; } ;  wss://rsd-ai.ru/ws ;  NULL ;  ]
+2026-06-09 12:25:04.826 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Created ; } ;  ]
+2026-06-09 12:25:04.826 {"url":"wss://rsd-ai.ru/ws","onclose":null,"onerror":null,"onmessage":null,"onopen":null,"oncreated":null,"onmediastarted":null,"onmediaended":null,"readyState":"connecting","connectionPrivacyEnabled":false,"_id":"-DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU"}
+2026-06-09 12:25:04.854 Sent event to JS onPhoneEvent with params [{id = 99429A62AF78C25A.1781007896.36652682 ; name = Call.FirstAudioPacketReceived ; } ;  ]
+2026-06-09 12:25:04.909 Sent event to JS onPhoneEvent with params [{id = 99429A62AF78C25A.1781007896.36652682 ; name = Call.Connected ; sipCallId = SD8hsha01-a13230d9ce13227e98f198b9f127eeb9-v300g00010 ; sipTransport = UDP ; headers = {} ; displayName =  ; encrypted = false ; } ;  ]
+2026-06-09 12:25:04.954 Sent event to JS onPhoneEvent with params [{id = 99429A62AF78C25A.1781007896.36652682 ; name = Call.AudioQualityDetected ; quality = Standard ; } ;  ]
+2026-06-09 12:25:04.971 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Open ; } ;  ]
+2026-06-09 12:25:05.035 Executing JS command: SendMessageWebSocket with params [-DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ;  {"type":"session.start","payload":{"call_id":"99429A62AF78C25A.1781007896.36652682","connection_id":47,"caller_e164":"79179156670","codec":"pcmu","called_number":"78432070517","protocol_version":"1"}} ;  ]
+2026-06-09 12:25:05.035 Executing JS command: SendMedia with params [{encoding = ULAW ; from = 99429A62AF78C25A.1781007896.36652682 ; to = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; } ;  ]
+2026-06-09 12:25:05.035 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:05.036 [rsd] gateway duplex ULAW ready call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:05.036 [rsd] media gateway ready call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:05.363 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"session.start","payload":{"ok":true,"call_id":"99429A62AF78C25A.1781007896.36652682","protocol_version":"1","audio_frame_ms":20,"loopback_transport":null,"pipeline":true,"stt_provider":"yandex","turn_silence_ms":600}} ; } ;  ]
+2026-06-09 12:25:05.405 [rsd] gateway ws type=session.start call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:05.406 [rsd] gateway session.start ok call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:05.952 HTTP response (f45nowJ9QP66tbJXvpS8aFdMqORFvErLpACACMC7adE ID) is received.
+2026-06-09 12:25:07.034 Sent event to JS onPhoneEvent with params [{id = 99429A62AF78C25A.1781007896.36652682 ; name = Call.ToneReceived ; type = 1 ; tone = 1 ; } ;  ]
+2026-06-09 12:25:07.054 CallId=99429A62AF78C25A.1781007896.36652682: Warning: Has received an RFC 2833 outband DTMF event and ceased detecting inband DTMF for the duration of the call
+2026-06-09 12:25:07.095 Executing JS command: SendMessageWebSocket with params [-DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ;  {"type":"dtmf","payload":{"digit":"1"}} ;  ]
+2026-06-09 12:25:07.135 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"dtmf","payload":{"ok":true,"digit":"1"}} ; } ;  ]
+2026-06-09 12:25:07.213 [rsd] gateway ws type=dtmf call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:07.414 Sent event to JS onPhoneEvent with params [{id = 99429A62AF78C25A.1781007896.36652682 ; name = Call.ToneReceived ; type = 1 ; tone = 2 ; } ;  ]
+2026-06-09 12:25:07.445 Executing JS command: SendMessageWebSocket with params [-DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ;  {"type":"dtmf","payload":{"digit":"2"}} ;  ]
+2026-06-09 12:25:07.484 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"dtmf","payload":{"ok":true,"digit":"2"}} ; } ;  ]
+2026-06-09 12:25:07.525 [rsd] gateway ws type=dtmf call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:07.833 Sent event to JS onPhoneEvent with params [{id = 99429A62AF78C25A.1781007896.36652682 ; name = Call.ToneReceived ; type = 1 ; tone = 3 ; } ;  ]
+2026-06-09 12:25:07.842 Executing JS command: SendMessageWebSocket with params [-DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ;  {"type":"dtmf","payload":{"digit":"3"}} ;  ]
+2026-06-09 12:25:07.865 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"dtmf","payload":{"ok":true,"digit":"3"}} ; } ;  ]
+2026-06-09 12:25:07.899 [rsd] gateway ws type=dtmf call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:08.214 Sent event to JS onPhoneEvent with params [{id = 99429A62AF78C25A.1781007896.36652682 ; name = Call.ToneReceived ; type = 1 ; tone = 4 ; } ;  ]
+2026-06-09 12:25:08.256 [rsd] extension pre-dial complete ext=1234 call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:08.296 Executing JS command: SendMessageWebSocket with params [-DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ;  {"type":"dtmf","payload":{"digit":"4"}} ;  ]
+2026-06-09 12:25:08.336 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"dtmf","payload":{"ok":true,"digit":"4"}} ; } ;  ]
+2026-06-09 12:25:08.377 [rsd] gateway ws type=dtmf call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:08.586 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.start","payload":{"ok":true,"codec":"l16_8000"}} ; } ;  ]
+2026-06-09 12:25:08.627 [rsd] gateway ws type=agent.audio.start call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:08.630 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:09.454 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":0}} ; } ;  ]
+2026-06-09 12:25:09.455 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:09.469 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":1}} ; } ;  ]
+2026-06-09 12:25:09.469 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:09.469 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:09.496 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":2}} ; } ;  ]
+2026-06-09 12:25:09.496 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":3}} ; } ;  ]
+2026-06-09 12:25:09.496 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":4}} ; } ;  ]
+2026-06-09 12:25:09.496 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":5}} ; } ;  ]
+2026-06-09 12:25:09.496 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":6}} ; } ;  ]
+2026-06-09 12:25:09.496 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":7}} ; } ;  ]
+2026-06-09 12:25:09.496 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:09.496 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":8}} ; } ;  ]
+2026-06-09 12:25:09.496 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":9}} ; } ;  ]
+2026-06-09 12:25:09.497 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:09.497 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:09.500 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:09.500 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:09.500 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:09.500 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:09.500 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:09.500 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:09.500 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:09.500 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:09.500 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:09.500 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:09.500 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:09.500 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:09.500 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:09.500 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:09.512 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":10}} ; } ;  ]
+2026-06-09 12:25:09.512 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":11}} ; } ;  ]
+2026-06-09 12:25:09.512 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":12}} ; } ;  ]
+2026-06-09 12:25:09.512 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":13}} ; } ;  ]
+2026-06-09 12:25:09.512 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":14}} ; } ;  ]
+2026-06-09 12:25:09.512 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":15}} ; } ;  ]
+2026-06-09 12:25:09.513 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":16}} ; } ;  ]
+2026-06-09 12:25:09.513 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":17}} ; } ;  ]
+2026-06-09 12:25:09.513 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":18}} ; } ;  ]
+2026-06-09 12:25:09.515 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":19}} ; } ;  ]
+2026-06-09 12:25:09.517 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":20}} ; } ;  ]
+2026-06-09 12:25:09.521 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":21}} ; } ;  ]
+2026-06-09 12:25:09.524 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":22}} ; } ;  ]
+2026-06-09 12:25:09.529 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:09.529 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:09.529 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:09.529 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:09.529 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:09.529 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:09.529 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:09.529 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:09.529 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:09.529 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:09.533 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:09.533 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:09.533 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:09.533 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:09.533 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:09.533 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:09.533 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:09.533 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:09.533 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:09.533 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:09.533 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:09.533 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:09.533 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:09.533 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:09.533 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:09.533 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:09.586 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":23}} ; } ;  ]
+2026-06-09 12:25:09.586 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":24}} ; } ;  ]
+2026-06-09 12:25:09.588 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":25}} ; } ;  ]
+2026-06-09 12:25:09.588 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":26}} ; } ;  ]
+2026-06-09 12:25:09.588 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":27}} ; } ;  ]
+2026-06-09 12:25:09.588 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":28}} ; } ;  ]
+2026-06-09 12:25:09.588 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":29}} ; } ;  ]
+2026-06-09 12:25:09.588 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":30}} ; } ;  ]
+2026-06-09 12:25:09.588 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":31}} ; } ;  ]
+2026-06-09 12:25:09.588 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":32}} ; } ;  ]
+2026-06-09 12:25:09.627 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:09.629 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:09.629 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:09.629 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:09.629 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:09.629 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:09.629 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:09.629 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:09.629 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:09.629 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:09.629 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:09.629 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:09.629 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:09.629 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:09.629 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:09.629 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:09.629 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:09.630 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:09.630 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:09.630 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:09.773 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.MediaEventStarted ; tag =  ; encoding = PCM16 ; customParameters = void ; } ;  ]
+2026-06-09 12:25:09.814 [rsd] gateway WS MEDIA_STARTED encoding=PCM16 tag= call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.451 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":33}} ; } ;  ]
+2026-06-09 12:25:10.456 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":34}} ; } ;  ]
+2026-06-09 12:25:10.456 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.456 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.457 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.461 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.474 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":35}} ; } ;  ]
+2026-06-09 12:25:10.474 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.477 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":36}} ; } ;  ]
+2026-06-09 12:25:10.477 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.477 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.506 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":37}} ; } ;  ]
+2026-06-09 12:25:10.506 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.506 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.509 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":38}} ; } ;  ]
+2026-06-09 12:25:10.509 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.509 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.517 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":39}} ; } ;  ]
+2026-06-09 12:25:10.517 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.518 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.530 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":40}} ; } ;  ]
+2026-06-09 12:25:10.530 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.530 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.534 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.534 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":41}} ; } ;  ]
+2026-06-09 12:25:10.541 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":42}} ; } ;  ]
+2026-06-09 12:25:10.546 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":43}} ; } ;  ]
+2026-06-09 12:25:10.546 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.546 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.546 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.546 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.546 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.550 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":44}} ; } ;  ]
+2026-06-09 12:25:10.550 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.555 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":45}} ; } ;  ]
+2026-06-09 12:25:10.555 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.555 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.555 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.560 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.563 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":46}} ; } ;  ]
+2026-06-09 12:25:10.563 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":47}} ; } ;  ]
+2026-06-09 12:25:10.563 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.563 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.567 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":48}} ; } ;  ]
+2026-06-09 12:25:10.567 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.567 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.567 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.573 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":49}} ; } ;  ]
+2026-06-09 12:25:10.573 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.573 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.573 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.574 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":50}} ; } ;  ]
+2026-06-09 12:25:10.579 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":51}} ; } ;  ]
+2026-06-09 12:25:10.591 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":52}} ; } ;  ]
+2026-06-09 12:25:10.591 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":53}} ; } ;  ]
+2026-06-09 12:25:10.594 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":54}} ; } ;  ]
+2026-06-09 12:25:10.598 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":55}} ; } ;  ]
+2026-06-09 12:25:10.600 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":56}} ; } ;  ]
+2026-06-09 12:25:10.604 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":57}} ; } ;  ]
+2026-06-09 12:25:10.616 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.618 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":58}} ; } ;  ]
+2026-06-09 12:25:10.618 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":59}} ; } ;  ]
+2026-06-09 12:25:10.618 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":60}} ; } ;  ]
+2026-06-09 12:25:10.618 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":61}} ; } ;  ]
+2026-06-09 12:25:10.618 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.618 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.618 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.618 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.618 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.618 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.618 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.618 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.618 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.618 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.618 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.618 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.618 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.618 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.618 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.618 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.618 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.619 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":62}} ; } ;  ]
+2026-06-09 12:25:10.619 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.619 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.619 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.619 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.619 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.619 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.619 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.623 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":63}} ; } ;  ]
+2026-06-09 12:25:10.623 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.623 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.630 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.651 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":64}} ; } ;  ]
+2026-06-09 12:25:10.652 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.653 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":65}} ; } ;  ]
+2026-06-09 12:25:10.653 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.654 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.655 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":66}} ; } ;  ]
+2026-06-09 12:25:10.656 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.657 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":67}} ; } ;  ]
+2026-06-09 12:25:10.657 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.657 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.657 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.671 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":68}} ; } ;  ]
+2026-06-09 12:25:10.671 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.671 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.672 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":69}} ; } ;  ]
+2026-06-09 12:25:10.672 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.672 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.674 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":70}} ; } ;  ]
+2026-06-09 12:25:10.674 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.675 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.676 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":71}} ; } ;  ]
+2026-06-09 12:25:10.676 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.676 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.679 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":72}} ; } ;  ]
+2026-06-09 12:25:10.679 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.680 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.687 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.chunk","payload":{"ok":true,"sequence":73}} ; } ;  ]
+2026-06-09 12:25:10.687 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.688 [rsd] gateway ws type=agent.audio.chunk call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:10.689 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"type":"agent.audio.end","payload":{"ok":true,"reason":"complete"}} ; } ;  ]
+2026-06-09 12:25:10.689 Executing JS command: SendMedia with params [{from = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; to = 99429A62AF78C25A.1781007896.36652682 ; } ;  ]
+2026-06-09 12:25:10.689 [rsd] gateway ws type=agent.audio.end call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:11.548 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Message ; text = {"event":"stop","sequenceNumber":75} ; } ;  ]
+2026-06-09 12:25:11.592 [rsd] gateway ws event=stop call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:11.592 [rsd] gateway downlink stop call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:12.773 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.MediaEventEnded ; tag =  ; mediaInfo = {duration = 1 ; } ; } ;  ]
+2026-06-09 12:25:12.835 [rsd] gateway WS MEDIA_ENDED call_id=99429A62AF78C25A.1781007896.36652682
+2026-06-09 12:25:14.014 Sent event to JS onPhoneEvent with params [{id = 99429A62AF78C25A.1781007896.36652682 ; name = Call.Disconnected ; headers = {Reason = Q.850 ;text="Normal call clearing";cause=16 ; } ; direction = All numbers ; duration = 10 ; cost = 0.268148 ; internalCode = 16 ; reason = Normal call clearing ; } ;  ]
+2026-06-09 12:25:14.031 Executing JS command: SendMessageWebSocket with params [-DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ;  {"type":"session.end","payload":{"reason":"hangup"}} ;  ]
+2026-06-09 12:25:14.031 Executing JS command: DestroyWebSocket with params [-DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ;  ]
+2026-06-09 12:25:14.032 HTTP request (Iwo_AdtHTIeXYtfHoHatjov2m8QewUpwsNcsvu0lh2s ID) is sent.
+2026-06-09 12:25:14.073 Sent event to JS onPhoneEvent with params [{id = -DJeTRizSV2jz5yZeCMwdlIxbAGgbEiSi4nfXua8GCU ; name = WebSocket.Close ; code = 1000 ; wasClean = true ; reason = session.end ; } ;  ]
+2026-06-09 12:25:14.118 [rsd] gateway ws close: session.end
+2026-06-09 12:25:14.179 HTTP response (Iwo_AdtHTIeXYtfHoHatjov2m8QewUpwsNcsvu0lh2s ID) is received.
+2026-06-09 12:25:14.179 Terminating request..., stack=VoxEngine.terminate@/voxengine.js:73:51
 @rsd_inbound:870:19
 postControlEvent/<@rsd_inbound:90:11
 callbackWrapper@/net.js:136:31
-2026-06-09 09:22:28.282 Executing JS command: terminating with params []
-2026-06-09 09:22:28.282 Terminating (onClose)
-2026-06-09 09:22:28.282 Executing JS command: close with params {CpuMillis = 120 ; }
-2026-06-09 09:22:28.282 Normal termination
-2026-06-09 09:22:28.282 Session terminated
+2026-06-09 12:25:14.179 Executing JS command: terminating with params []
+2026-06-09 12:25:14.179 Sent event to JS onPhoneEvent with params [{id = RxTEw1RbTLKxyV-lglEPp15wjaUL-EsSpo7-QzNF9ok ; name = Player.Stopped ; } ;  ]
+2026-06-09 12:25:14.179 Terminating (onClose)
+2026-06-09 12:25:14.181 Executing JS command: close with params {CpuMillis = 60 ; }
+2026-06-09 12:25:14.181 Normal termination
+2026-06-09 12:25:14.181 Session terminated

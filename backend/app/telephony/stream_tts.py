@@ -166,54 +166,57 @@ async def _stream_elevenlabs_pcm16(
         voice = RUSSIAN_VOICES[mapped]
         logger.info("elevenlabs_tts: mapped voice_id=%s -> %s -> voice=%s", voice_id, mapped, voice[:8] + "...")
 
-    # ElevenLabs supports streaming with output_format=pcm_16000
-    # We'll then resample to 8000 Hz
+    # ElevenLabs стриминг: запрашиваем MP3 (наиболее совместимый формат),
+    # декодируем в PCM и ресемплируем до 8kHz.
+    # Параметр output_format=pcm_16000 не всегда работает для всех voice/model.
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice}/stream"
     headers = {
         "xi-api-key": api_key,
-        "Accept": "audio/pcm",
+        "Accept": "audio/mpeg",
     }
     data = {
         "text": text,
         "model_id": "eleven_multilingual_v2",
-        "output_format": "pcm_16000",
+        "output_format": "mp3_22050",  # 22.05kHz MP3 - оптимальный баланс качества и задержки
     }
 
-    logger.info("elevenlabs_tts: text_len=%d voice=%s", len(text), voice[:8])
+    logger.info("elevenlabs_tts: text_len=%d voice=%s format=mp3_22050", len(text), voice[:8])
 
-    # Collect all PCM data
-    pcm_16k = b""
+    # Collect MP3 data
+    mp3_data = b""
 
     async with httpx.AsyncClient(timeout=timeout) as client:
         async with client.stream("POST", url, json=data, headers=headers) as response:
             if response.status_code >= 400:
                 error_text = await response.aread()
                 raise RuntimeError(f"elevenlabs_api_error: {response.status_code} {error_text[:200]}")
-            content_type = str(response.headers.get("content-type", "")).lower()
-            # ElevenLabs PCM stream должен приходить как аудио-поток (audio/pcm или application/octet-stream).
-            # Если приходит container/compressed формат (например, mp3), нельзя трактовать как raw PCM.
-            if ("audio/pcm" not in content_type) and ("application/octet-stream" not in content_type):
-                raise RuntimeError(f"elevenlabs_unexpected_content_type: {content_type or 'unknown'}")
 
             async for chunk in response.aiter_bytes():
-                pcm_16k += chunk
+                mp3_data += chunk
 
-    if not pcm_16k:
+    if not mp3_data:
         raise RuntimeError("elevenlabs_tts_empty_response")
 
-    # Быстрый guard от container/compressed payload (не raw PCM),
-    # чтобы не отправлять в телефонный тракт шум вместо речи.
-    first4 = pcm_16k[:4]
-    if first4 == b"RIFF" or pcm_16k.startswith(b"ID3") or first4 in (b"OggS", b"fLaC"):
-        raise RuntimeError("elevenlabs_non_pcm_payload_detected")
+    # Декодируем MP3 в PCM16 через pydub
+    try:
+        from pydub import AudioSegment
+        import io
 
-    # Convert PCM 16-bit 16kHz mono to 8kHz mono
-    # First ensure even length for 16-bit samples
-    if len(pcm_16k) % 2 == 1:
-        pcm_16k = pcm_16k[:-1]
+        audio = AudioSegment.from_mp3(io.BytesIO(mp3_data))
+        # Конвертируем в mono 16-bit если нужно
+        if audio.channels > 1:
+            audio = audio.set_channels(1)
+        if audio.sample_width != 2:
+            audio = audio.set_sample_width(2)
 
-    # Resample from 16000 to 8000 Hz
-    pcm_8k, _ = audioop.ratecv(pcm_16k, 2, 1, 16000, 8000, None)
+        # Ресемплируем до 8kHz
+        if audio.frame_rate != 8000:
+            audio = audio.set_frame_rate(8000)
+
+        pcm_8k = audio.raw_data
+    except Exception as e:
+        logger.exception("elevenlabs_tts_mp3_decode_failed")
+        raise RuntimeError(f"elevenlabs_tts_mp3_decode_failed: {e}") from e
 
     # Yield frames
     for frame in _chunk_pcm16_frames(pcm_8k):
