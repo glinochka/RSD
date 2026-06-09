@@ -20,6 +20,7 @@ import {
   buildVoxStartMessage,
   buildVoxStopMessage,
 } from '../ws/vox_media';
+import { pcm16BufferToUlaw } from '../audio/ulaw';
 
 const debugFrameLogByCall = new Map<string, number>();
 
@@ -74,8 +75,9 @@ function sendVoxDownlink(ws: WebSocket, message: string): void {
 
 function sendPcm16Frame(ws: WebSocket, frame: Buffer): void {
   if (!frame.length) return;
-  // Voximplant expects PCM16 (16-bit signed integer, little-endian, 8kHz, mono)
-  // frame is already in PCM16 format from the orchestrator (audio_pcm16_b64)
+  // Voximplant expects G.711 μ-law (MULAW) format as declared in buildVoxStartMessage
+  // frame arrives in PCM16 format from the orchestrator (audio_pcm16_b64)
+  // We must convert PCM16 → MULAW before sending to Voximplant
   let absSumLe = 0;
   let absSumBe = 0;
   const sampleCount = Math.floor(frame.length / 2);
@@ -108,8 +110,10 @@ function sendPcm16Frame(ws: WebSocket, frame: Buffer): void {
       }),
     );
   }
-  console.info('[media-gateway] vox frame', JSON.stringify({ len: frame.length }));
-  sendVoxDownlink(ws, buildVoxMediaMessage(frame, ws));
+  // Convert PCM16 to MULAW - Voximplant expects μ-law format
+  const ulawFrame = pcm16BufferToUlaw(frame);
+  console.info('[media-gateway] vox frame', JSON.stringify({ pcm16_len: frame.length, ulaw_len: ulawFrame.length }));
+  sendVoxDownlink(ws, buildVoxMediaMessage(ulawFrame, ws));
   if (config.loopbackTransport === 'binary' || config.loopbackTransport === 'both') {
     const binaryFrame = Buffer.allocUnsafe(1 + frame.length);
     binaryFrame[0] = BINARY_FRAME_AUDIO_OUT;
