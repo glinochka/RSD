@@ -149,9 +149,36 @@ async def resolve_connection_by_called_number(
 
 async def resolve_agent_by_extension(extension: str) -> int | None:
     ext = normalize_extension(extension)
-    if not ext or not redis_enabled():
+    if not ext:
         return None
-    return await get_route_dtmf(ext)
+    if redis_enabled():
+        cached = await get_route_dtmf(ext)
+        if cached is not None:
+            return cached
+    # Redis route cache can be empty after restart; fallback to DB-backed lookup.
+    async with async_session_maker() as session:
+        rows = await session.scalars(
+            select(AgentChannelConnection).where(
+                AgentChannelConnection.provider == TELEPHONY_CHANNEL_PROVIDER,
+                AgentChannelConnection.is_active.is_(True),
+            )
+        )
+        for row in rows:
+            if not row.encrypted_credentials:
+                continue
+            try:
+                creds = parse_telephony_credentials(decrypt_token(row.encrypted_credentials))
+            except Exception:
+                continue
+            if normalize_extension(creds.routing_extension) != ext:
+                continue
+            agent_id = int(row.agent_id)
+            if redis_enabled():
+                # Best-effort write-through to speed up next DTMF routing.
+                await set_route_dtmf(ext, agent_id)
+                await set_route_dtmf_owner(ext, int(row.id))
+            return agent_id
+    return None
 
 
 async def find_extension_owner(extension: str) -> int | None:

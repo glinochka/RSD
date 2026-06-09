@@ -8,6 +8,7 @@ from app.telephony.routing import (
     normalize_extension,
     normalize_inbound_numbers,
     pool_line_e164,
+    resolve_agent_by_extension,
     telephony_routing_public_fields,
 )
 
@@ -66,3 +67,31 @@ def test_routing_public_fields():
 def test_rejects_invalid_extension_in_credentials():
     with pytest.raises(Exception):
         _creds(routing_extension="12")
+
+
+@pytest.mark.asyncio
+async def test_resolve_agent_by_extension_falls_back_to_db_when_redis_miss(test_session):
+    from app.alembic.models import AgentChannelConnection
+    from app.utils.crypto import encrypt_token
+
+    agent_id = 77
+    connection_id = 501
+    creds = _creds(routing_extension="1234")
+    encrypted = encrypt_token(creds.to_encrypted_payload())
+
+    async with test_session.begin():
+        test_session.add(
+            AgentChannelConnection(
+                id=connection_id,
+                agent_id=agent_id,
+                provider="telephony_voximplant",
+                connection_type="api",
+                external_id="pool:1234",
+                encrypted_credentials=encrypted,
+                is_primary=False,
+                is_active=True,
+            )
+        )
+
+    resolved = await resolve_agent_by_extension("1234")
+    assert resolved == agent_id
