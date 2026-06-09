@@ -164,16 +164,33 @@ export function buildVoxStartMessage(ws?: unknown): string {
  * @param ws - WebSocket соединение (для отслеживания sequence)
  * @returns JSON-строка события media
  */
+/**
+ * Конвертирует PCM16 little-endian в big-endian (network byte order).
+ * RFC 3551 определяет L16 как big-endian.
+ * ElevenLabs и большинство систем отдают PCM16 в little-endian.
+ */
+function pcm16LeToBe(leBuffer: Buffer): Buffer {
+  const beBuffer = Buffer.alloc(leBuffer.length);
+  for (let i = 0; i < leBuffer.length; i += 2) {
+    // Меняем порядок байт: [low, high] → [high, low]
+    beBuffer[i] = leBuffer[i + 1];
+    beBuffer[i + 1] = leBuffer[i];
+  }
+  return beBuffer;
+}
+
 export function buildVoxMediaMessage(payload: Buffer, ws?: unknown): string {
   const counter = ws ? getCounter(ws) : new VoxSequenceCounter();
   const timestamp = Date.now();
+  // Конвертируем LE → BE, т.к. audio/l16 требует big-endian (RFC 3551)
+  const bePayload = pcm16LeToBe(payload);
   return JSON.stringify({
     event: 'media',
     sequenceNumber: counter.nextSeq(),
     media: {
       chunk: counter.nextChunk(),
       timestamp,
-      payload: payload.toString('base64'),
+      payload: bePayload.toString('base64'),
     },
   });
 }
