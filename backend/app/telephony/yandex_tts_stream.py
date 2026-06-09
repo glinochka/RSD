@@ -187,11 +187,10 @@ async def stream_yandex_v3_pcm16_frames(
 
     pcm_buf = bytearray()
     for part in pcm_parts:
-        # Yandex returns big-endian PCM16, convert to little-endian
-        part_le = _convert_be_to_le(part)
-        # Normalize volume for telephone clarity
-        part_le = _normalize_pcm16_volume(part_le, target_db=-14.0)
-        pcm_buf.extend(part_le)
+        # Yandex SpeechKit returns PCM16 in native format (little-endian on most systems)
+        # Just normalize volume for telephone clarity
+        part_normalized = _normalize_pcm16_volume(part, target_db=-14.0)
+        pcm_buf.extend(part_normalized)
         while len(pcm_buf) >= _PCM16_FRAME_BYTES:
             segment = bytes(pcm_buf[:_PCM16_FRAME_BYTES])
             del pcm_buf[:_PCM16_FRAME_BYTES]
