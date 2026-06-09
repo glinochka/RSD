@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import array
 import audioop
 import io
 import logging
-import math
 import wave
 from collections.abc import AsyncIterator
 
@@ -16,34 +14,6 @@ from .tts_service import _strip_for_tts
 logger = logging.getLogger(__name__)
 
 _PCM16_FRAME_BYTES = 320  # 20 ms @ 8 kHz mono LINEAR16
-
-
-def _normalize_pcm16_volume(pcm16: bytes, target_db: float = -14.0) -> bytes:
-    """Normalize PCM16 audio to target dB level for telephone clarity."""
-    if not pcm16 or len(pcm16) < 2:
-        return pcm16
-    
-    samples = array.array('h', pcm16)
-    if len(samples) == 0:
-        return pcm16
-    
-    peak = max(abs(s) for s in samples)
-    if peak == 0:
-        return pcm16
-    
-    current_db = 20 * math.log10(peak / 32768.0)
-    gain_db = target_db - current_db
-    gain = math.pow(10, gain_db / 20)
-    max_gain = 32767.0 / peak
-    gain = min(gain, max_gain, 10.0)
-    
-    if gain > 1.0 or gain < 1.0:
-        for i in range(len(samples)):
-            sample = int(samples[i] * gain)
-            sample = max(-32768, min(32767, sample))
-            samples[i] = sample
-    
-    return samples.tobytes()
 
 
 def stream_tts_enabled() -> bool:
@@ -125,9 +95,6 @@ async def _stream_openai_pcm16(
                 # Convert to 16-bit if needed
                 if wf.getsampwidth() != 2:
                     pcm = audioop.lin2lin(pcm, wf.getsampwidth(), 2)
-
-            # Normalize volume for telephone clarity
-            pcm = _normalize_pcm16_volume(pcm, target_db=-14.0)
 
             # Yield frames
             for frame in _chunk_pcm16_frames(pcm):
@@ -237,9 +204,6 @@ async def _stream_elevenlabs_pcm16(
 
     # Resample from 16000 to 8000 Hz
     pcm_8k, _ = audioop.ratecv(pcm_16k, 2, 1, 16000, 8000, None)
-
-    # Normalize volume for telephone clarity
-    pcm_8k = _normalize_pcm16_volume(pcm_8k, target_db=-14.0)
 
     # Yield frames
     for frame in _chunk_pcm16_frames(pcm_8k):
@@ -393,8 +357,6 @@ async def batch_fallback_pcm16(
                 pcm, _ = audioop.ratecv(pcm, wf.getsampwidth(), 1, wf.getframerate(), 8000, None)
             if wf.getsampwidth() != 2:
                 pcm = audioop.lin2lin(pcm, wf.getsampwidth(), 2)
-            # Normalize volume for telephone clarity
-            pcm = _normalize_pcm16_volume(pcm, target_db=-14.0)
             return b"".join(_chunk_pcm16_frames(pcm))
 
     try:
@@ -404,8 +366,6 @@ async def batch_fallback_pcm16(
         seg = AudioSegment.from_file(io.BytesIO(audio))
         seg = seg.set_frame_rate(8000).set_channels(1).set_sample_width(2)
         pcm = seg.raw_data
-        # Normalize volume for telephone clarity
-        pcm = _normalize_pcm16_volume(pcm, target_db=-14.0)
         return b"".join(_chunk_pcm16_frames(pcm))
     except Exception:
         logger.exception("batch_fallback_pcm16 failed")
