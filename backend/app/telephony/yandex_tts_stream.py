@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import array
 import asyncio
 import logging
+import math
 import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -118,6 +120,54 @@ def _stream_pcm_chunks(text: str, voice: str, timeout: float) -> list[bytes]:
     return pcm_parts
 
 
+def _convert_be_to_le(pcm16_be: bytes) -> bytes:
+    """Convert big-endian PCM16 to little-endian. Yandex SpeechKit returns BE."""
+    if not pcm16_be or len(pcm16_be) < 2:
+        return pcm16_be
+    # Swap every 2 bytes: ABCD -> BADC
+    le = bytearray(pcm16_be)
+    for i in range(0, len(le) - 1, 2):
+        le[i], le[i + 1] = le[i + 1], le[i]
+    return bytes(le)
+
+
+def _normalize_pcm16_volume(pcm16_le: bytes, target_db: float = -14.0) -> bytes:
+    """
+    Normalize PCM16 audio to target dB level.
+    Prevents quiet/robotic sound on telephone lines.
+    """
+    if not pcm16_le or len(pcm16_le) < 2:
+        return pcm16_le
+    
+    # Convert bytes to array of int16 samples (signed short = 'h')
+    samples = array.array('h', pcm16_le)
+    if len(samples) == 0:
+        return pcm16_le
+    
+    # Find peak amplitude
+    peak = max(abs(s) for s in samples)
+    if peak == 0:
+        return pcm16_le
+    
+    # Calculate current dB and gain needed
+    current_db = 20 * math.log10(peak / 32768.0)
+    gain_db = target_db - current_db
+    gain = math.pow(10, gain_db / 20)
+    
+    # Limit gain to prevent clipping
+    max_gain = 32767.0 / peak
+    gain = min(gain, max_gain, 10.0)  # Cap at 10x (20dB)
+    
+    if gain > 1.0 or gain < 1.0:
+        # Apply gain
+        for i in range(len(samples)):
+            sample = int(samples[i] * gain)
+            sample = max(-32768, min(32767, sample))  # Clip
+            samples[i] = sample
+    
+    return samples.tobytes()
+
+
 async def stream_yandex_v3_pcm16_frames(
     text: str,
     *,
@@ -137,7 +187,11 @@ async def stream_yandex_v3_pcm16_frames(
 
     pcm_buf = bytearray()
     for part in pcm_parts:
-        pcm_buf.extend(part)
+        # Yandex returns big-endian PCM16, convert to little-endian
+        part_le = _convert_be_to_le(part)
+        # Normalize volume for telephone clarity
+        part_le = _normalize_pcm16_volume(part_le, target_db=-14.0)
+        pcm_buf.extend(part_le)
         while len(pcm_buf) >= _PCM16_FRAME_BYTES:
             segment = bytes(pcm_buf[:_PCM16_FRAME_BYTES])
             del pcm_buf[:_PCM16_FRAME_BYTES]
