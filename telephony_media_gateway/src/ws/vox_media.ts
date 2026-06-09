@@ -92,6 +92,11 @@ export function parseVoxMediaMessage(text: string): Buffer | null | 'ignore' {
   }
 }
 
+// Определяем формат аудио через переменную окружения
+// AUDIO_FORMAT=mulaw - использовать μ-law (8-bit, как рекомендовала поддержка)
+// AUDIO_FORMAT=l16 (или не задано) - использовать PCM16 (16-bit)
+const AUDIO_FORMAT = process.env.AUDIO_FORMAT || 'l16';
+
 /**
  * Строит событие `start` для Voximplant WebSocket media.
  *
@@ -124,14 +129,21 @@ export function buildVoxStartMessage(ws?: unknown): string {
   if (ws) {
     counter.reset();
   }
+
+  const isMulaw = AUDIO_FORMAT === 'mulaw';
+  const encoding = isMulaw ? 'audio/x-mulaw' : 'audio/l16';
+
+  console.info(
+    '[media-gateway] buildVoxStartMessage:',
+    JSON.stringify({ format: AUDIO_FORMAT, encoding }),
+  );
+
   return JSON.stringify({
     event: 'start',
     sequenceNumber: counter.nextSeq(),
     start: {
       mediaFormat: {
-        // Voximplant ожидает PCM16 (16-bit signed integer, 8kHz, mono)
-        // НЕ ИЗМЕНЯЙТЕ этот формат без консультации с поддержкой Voximplant!
-        encoding: 'audio/l16',
+        encoding,
         sampleRate: 8000,
         channels: 1,
       },
@@ -179,18 +191,99 @@ function pcm16LeToBe(leBuffer: Buffer): Buffer {
   return beBuffer;
 }
 
+// Отладка: логируем первые 16 байт как hex для анализа
+function logPayloadBytes(label: string, buf: Buffer): void {
+  if (buf.length === 0) return;
+  const hexBytes = Array.from(buf.slice(0, 16))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join(' ');
+  const leValues: number[] = [];
+  const beValues: number[] = [];
+  for (let i = 0; i + 1 < Math.min(buf.length, 16); i += 2) {
+    leValues.push(buf.readInt16LE(i));
+    beValues.push(buf.readInt16BE(i));
+  }
+  console.info(
+    `[media-gateway] payload debug ${label}:`,
+    JSON.stringify({
+      hex: hexBytes,
+      leSamples: leValues.slice(0, 4),
+      beSamples: beValues.slice(0, 4),
+    }),
+  );
+}
+
+// Проверяем переменную окружения для отключения конвертации
+const DISABLE_ENDIAN_CONV = process.env.DISABLE_ENDIAN_CONV === 'true';
+
+// Таблица линейного преобразования PCM16 → MULAW
+// Based on ITU-T G.711
+const MULAW_BIAS = 0x84;
+const MULAW_CLIP = 32635;
+
+function pcm16ToMulaw(sample: number): number {
+  // Convert to signed 16-bit
+  let sign = 0;
+  if (sample < 0) {
+    sign = 0x80;
+    sample = -sample;
+  }
+  sample += MULAW_BIAS;
+  if (sample > MULAW_CLIP) sample = MULAW_CLIP;
+
+  let exponent = 7;
+  for (let expMask = 0x4000; (sample & expMask) === 0 && exponent > 0; expMask >>= 1) {
+    exponent--;
+  }
+
+  const mantissa = (sample >> (exponent + 3)) & 0x0f;
+  const compressedByte = ~(sign | (exponent << 4) | mantissa) & 0xff;
+  return compressedByte;
+}
+
+function pcm16LeToMulaw(leBuffer: Buffer): Buffer {
+  const mulawBuffer = Buffer.alloc(leBuffer.length / 2);
+  for (let i = 0, j = 0; i < leBuffer.length; i += 2, j++) {
+    const sample = leBuffer.readInt16LE(i);
+    mulawBuffer[j] = pcm16ToMulaw(sample);
+  }
+  return mulawBuffer;
+}
+
 export function buildVoxMediaMessage(payload: Buffer, ws?: unknown): string {
   const counter = ws ? getCounter(ws) : new VoxSequenceCounter();
   const timestamp = Date.now();
-  // Конвертируем LE → BE, т.к. audio/l16 требует big-endian (RFC 3551)
-  const bePayload = pcm16LeToBe(payload);
+
+  // Отладка: смотрим входные данные
+  logPayloadBytes('input', payload);
+
+  let finalPayload: Buffer;
+  const isMulaw = AUDIO_FORMAT === 'mulaw';
+
+  if (isMulaw) {
+    // Конвертируем PCM16 LE → MULAW (8-bit, 8kHz)
+    finalPayload = pcm16LeToMulaw(payload);
+    console.info('[media-gateway] format conv: PCM16 LE → MULAW');
+  } else if (DISABLE_ENDIAN_CONV) {
+    // Режим тестирования PCM16: без конвертации endianness
+    finalPayload = payload;
+    console.info('[media-gateway] format conv: PCM16 LE (no endian conv)');
+  } else {
+    // Стандартный режим PCM16: конвертируем LE → BE
+    finalPayload = pcm16LeToBe(payload);
+    console.info('[media-gateway] format conv: PCM16 LE → BE');
+  }
+
+  // Отладка: смотрим выходные данные
+  logPayloadBytes('output', finalPayload);
+
   return JSON.stringify({
     event: 'media',
     sequenceNumber: counter.nextSeq(),
     media: {
       chunk: counter.nextChunk(),
       timestamp,
-      payload: bePayload.toString('base64'),
+      payload: finalPayload.toString('base64'),
     },
   });
 }
