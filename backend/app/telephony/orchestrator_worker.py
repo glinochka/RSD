@@ -252,7 +252,9 @@ class OrchestratorWorker:
             return
         if voice_id is None or language is None:
             session_row = await hgetall_session(slot.connection_id)
-            voice_id = voice_id or str(session_row.get("voice_id") or "default")
+            # Use TELEPHONY_VOICE_ID from settings as fallback before "default"
+            default_voice = str(settings.TELEPHONY_VOICE_ID or "default").strip() or "default"
+            voice_id = voice_id or str(session_row.get("voice_id") or default_voice)
             language = language or str(session_row.get("language") or "ru-RU")
         logger.info(
             "orchestrator %s starting TTS call_id=%s voice=%s lang=%s text_len=%d",
@@ -442,7 +444,7 @@ class OrchestratorWorker:
         await self._play_agent_welcome(
             slot,
             welcome_raw=routed_welcome if routed_welcome.strip() else str(resolved.get("welcome_message") or ""),
-            voice_id=str(resolved.get("voice_id") or "default"),
+            voice_id=str(resolved.get("voice_id") or settings.TELEPHONY_VOICE_ID or "default"),
             language=str(resolved.get("language") or "ru-RU"),
         )
         await self._load_postgres_once(slot)
@@ -595,7 +597,7 @@ class OrchestratorWorker:
             if decision.suggest_dtmf_menu and not transcript:
                 msg = "Не расслышал. Наберите добавочный номер на клавиатуре."
                 session_row = await hgetall_session(connection_id)
-                voice_id = str(session_row.get("voice_id") or "default")
+                voice_id = str(session_row.get("voice_id") or settings.TELEPHONY_VOICE_ID or "default")
                 language = str(session_row.get("language") or "ru-RU")
                 assert_stream_tts_configured()
                 stream_metrics = await stream_fixed_phrase(
@@ -613,7 +615,7 @@ class OrchestratorWorker:
                 )
             else:
                 session_row = await hgetall_session(connection_id)
-                voice_id = str(session_row.get("voice_id") or "default")
+                voice_id = str(session_row.get("voice_id") or settings.TELEPHONY_VOICE_ID or "default")
                 language = str(session_row.get("language") or "ru-RU")
                 async with async_session_maker() as session:
                     async with session.begin():

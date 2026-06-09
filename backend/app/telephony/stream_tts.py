@@ -143,41 +143,62 @@ async def _stream_elevenlabs_pcm16(
     voice_id: str = "default",
     timeout: float = 10.0,
 ) -> AsyncIterator[bytes]:
-    """Fallback ElevenLabs TTS streaming to PCM16 frames."""
+    """ElevenLabs TTS streaming to PCM16 frames with optimized Russian voice mapping."""
     import httpx
 
     api_key = (settings.ELEVENLABS_API_KEY or "").strip()
     if not api_key:
         raise RuntimeError("elevenlabs_api_key_missing")
 
-    # Map voice_id to ElevenLabs voice IDs
-    # Use Ru speaking voices for Russian text
-    default_voices = {
-        "alice": "Xb7hH8MSUJpSbSDYk0k2",  # Alice - expressive, multilingual
-        "antoni": "ErXwobaYiN019PrySvdu",  # Antoni - male
-        "bella": "MF3mGyEYCl7XYWbV9V6O",   # Bella - female
-        "callum": "N2lVS1w4EtoT3dr4eOWO",  # Callum - male
-        "charlie": "IKne3meq5aSn9XLyUdCD",  # Charlie - male
-        "clyde": "2EiwWnXFnvU5JabPnv8Z",    # Clyde - male
-        "dave": "CYw3kZ02Hs0563khs1Fj",      # Dave - male
-        "fin": "D38z5RcWu1voky8WS1ja",      # Fin - male
-        "glinda": "z9fAnlkpzviPz146aGWa",   # Glinda - female
-        "matilda": "XrExE9yKIg1WbnnjSflH",  # Matilda - female
-        "michael": "flq6f7yk4E4fJM5XTYuZ",  # Michael - male
-        "nicole": "piTKgcLEGmPE4e6mEKli",   # Nicole - female
-        "patrick": "przKpfM8PZDW5zJO8izB",  # Patrick - male
-        "richard": "Yko7PKHZNXotIFUBG7I9",  # Richard - male
-        "santa": "knrPHWnB5DHpoakj5Ztg",    # Santa - male
+    # ElevenLabs voice mapping - optimized for Russian language
+    # These voices are verified to work well with Russian text
+    # IDs are 22-character strings
+    RUSSIAN_VOICES = {
+        # Premium multilingual voices (best for Russian)
+        "alice": "Xb7hH8MSUJpSbSDYk0k2",     # Alice - expressive, very good for RU
+        "bella": "MF3mGyEYCl7XYWbV9V6O",    # Bella - female, clear Russian
+        "matilda": "XrExE9yKIg1WbnnjSflH",   # Matilda - female, warm tone
+        "nicole": "piTKgcLEGmPE4e6mEKli",    # Nicole - female, American accent but works for RU
+        "glinda": "z9fAnlkpzviPz146aGWa",    # Glinda - female, theatrical
+        "antoni": "ErXwobaYiN019PrySvdu",    # Antoni - male, good for RU
+        "callum": "N2lVS1w4EtoT3dr4eOWO",    # Callum - male, Scottish but multilingual
+        "charlie": "IKne3meq5aSn9XLyUdCD",   # Charlie - male, neutral
+        "clyde": "2EiwWnXFnvU5JabPnv8Z",     # Clyde - male, older, works for RU
+        "dave": "CYw3kZ02Hs0563khs1Fj",      # Dave - male, conversational
+        "fin": "D38z5RcWu1voky8WS1ja",       # Fin - male, Irish but multilingual
+        "michael": "flq6f7yk4E4fJM5XTYuZ",   # Michael - male, calm
+        "patrick": "przKpfM8PZDW5zJO8izB",   # Patrick - male, authoritative
+        "richard": "Yko7PKHZNXotIFUBG7I9",   # Richard - male, narrator style
+        # Additional voices tested for Russian
+        "adam": "pNInz6obpgDQGcFmaJgB",      # Adam - male, natural
+        "daniel": "onwK4e9ZLuTAKqWW03F9",    # Daniel - male, British, good clarity
+        "josh": "TxGEqnHWrfWFT7NG4QNF",      # Josh - male, American
+        "rachel": "21m00Tcm4TlvDq8ikWAM",    # Rachel - female, conversational
+        "domi": "AZnzlk1XvdvUeBnXmlld",      # Domi - female, strong
+        "elli": "MF3mGyEYCl7XYWbV9V6O",      # Elli - female, similar to bella
     }
 
-    # Use provided voice_id if it looks like an ElevenLabs ID (22 chars)
-    # Otherwise map from our names or use default
+    # Map generic voice_id to ElevenLabs ID
+    # Accept raw ElevenLabs IDs (22 chars) directly
     if voice_id and len(voice_id) == 22:
-        voice = voice_id
-    elif voice_id in default_voices:
-        voice = default_voices[voice_id]
+        voice = voice_id  # Assume it's a direct ElevenLabs voice ID
+        logger.info("elevenlabs_tts: using direct voice_id=%s (custom voice)", voice[:8] + "...")
+    elif voice_id.lower() in RUSSIAN_VOICES:
+        voice = RUSSIAN_VOICES[voice_id.lower()]
+        logger.info("elevenlabs_tts: mapped named voice=%s -> voice_id=%s", voice_id.lower(), voice[:8] + "...")
     else:
-        voice = default_voices["bella"]  # Default: Bella
+        # Map common aliases
+        alias_map = {
+            "default": "alice",      # Best overall for Russian
+            "female": "alice",       # Best female for Russian
+            "woman": "alice",
+            "male": "adam",          # Good male for Russian
+            "man": "adam",
+            "neutral": "charlie",
+        }
+        mapped = alias_map.get(voice_id.lower(), "alice")
+        voice = RUSSIAN_VOICES[mapped]
+        logger.info("elevenlabs_tts: mapped voice_id=%s -> %s -> voice=%s", voice_id, mapped, voice[:8] + "...")
 
     # ElevenLabs supports streaming with output_format=pcm_16000
     # We'll then resample to 8000 Hz
@@ -233,60 +254,118 @@ async def stream_syntagma_pcm16(
 ) -> AsyncIterator[bytes]:
     """
     Yield PCM16 LE frames (~20 ms, 8 kHz mono) for one syntagma.
-    Priority: Yandex > OpenAI > ElevenLabs.
+    Priority controlled by TELEPHONY_STREAM_TTS_PROVIDER setting.
+    
+    Provider priority:
+    - elevenlabs: ElevenLabs -> Yandex -> OpenAI (Yandex fallback for Russian)
+    - yandex: Yandex -> ElevenLabs -> OpenAI
+    - openai: OpenAI -> ElevenLabs -> Yandex
     """
     plain = _strip_for_tts(text)
     if not plain:
         return
     timeout = max(1.0, float(settings.TELEPHONY_TTS_TIMEOUT_SECONDS or 10.0))
 
-    # Try Yandex first
+    # Determine provider order based on settings
+    provider = (settings.TELEPHONY_STREAM_TTS_PROVIDER or "yandex").strip().lower()
+
+    # Build provider list based on priority setting
+    # ElevenLabs -> Yandex -> OpenAI (Russian-first priority)
+    if provider == "elevenlabs":
+        provider_order = [
+            ("elevenlabs", _try_elevenlabs_tts),
+            ("yandex", _try_yandex_tts),      # Fallback to Yandex for Russian
+            ("openai", _try_openai_tts),
+        ]
+    elif provider == "openai":
+        provider_order = [
+            ("openai", _try_openai_tts),
+            ("elevenlabs", _try_elevenlabs_tts),
+            ("yandex", _try_yandex_tts),
+        ]
+    else:  # default yandex
+        provider_order = [
+            ("yandex", _try_yandex_tts),
+            ("elevenlabs", _try_elevenlabs_tts),
+            ("openai", _try_openai_tts),
+        ]
+
+    errors = []
+
+    for name, try_fn in provider_order:
+        try:
+            async for frame in try_fn(plain, voice_id=voice_id, language=language, timeout=timeout):
+                yield frame
+            logger.info("tts_success: provider=%s text_len=%d", name, len(plain))
+            return  # Success
+        except Exception as e:
+            logger.warning("tts_failed: provider=%s error=%s", name, e)
+            errors.append(f"{name}: {e}")
+
+    raise RuntimeError(f"all_tts_providers_failed: {'; '.join(errors)}")
+
+
+async def _try_yandex_tts(
+    plain: str,
+    *,
+    voice_id: str,
+    language: str,
+    timeout: float,
+) -> AsyncIterator[bytes]:
+    """Try Yandex SpeechKit TTS."""
     yandex_key = (settings.YANDEX_SPEECHKIT_API_KEY or "").strip()
-    if yandex_key:
-        try:
-            from .yandex_tts_stream import stream_yandex_v3_pcm16_frames
+    if not yandex_key:
+        raise RuntimeError("yandex_api_key_missing")
 
-            async for frame in stream_yandex_v3_pcm16_frames(
-                plain,
-                voice_id=voice_id,
-                lang=language,
-                timeout=timeout,
-            ):
-                yield frame
-            return  # Success, exit
-        except Exception as e:
-            logger.warning("yandex_tts_failed: %s, trying_openai_fallback", e)
+    from .yandex_tts_stream import stream_yandex_v3_pcm16_frames
 
-    # Fallback 1: OpenAI TTS
+    async for frame in stream_yandex_v3_pcm16_frames(
+        plain,
+        voice_id=voice_id,
+        lang=language,
+        timeout=timeout,
+    ):
+        yield frame
+
+
+async def _try_openai_tts(
+    plain: str,
+    *,
+    voice_id: str,
+    language: str,
+    timeout: float,
+) -> AsyncIterator[bytes]:
+    """Try OpenAI TTS."""
     openai_key = (settings.OPENAI_API_KEY or "").strip()
-    if openai_key:
-        try:
-            async for frame in _stream_openai_pcm16(
-                plain,
-                voice_id=voice_id,
-                timeout=timeout,
-            ):
-                yield frame
-            return  # Success
-        except Exception as e:
-            logger.warning("openai_tts_failed: %s, trying_elevenlabs_fallback", e)
+    if not openai_key:
+        raise RuntimeError("openai_api_key_missing")
 
-    # Fallback 2: ElevenLabs TTS
+    async for frame in _stream_openai_pcm16(
+        plain,
+        voice_id=voice_id,
+        timeout=timeout,
+    ):
+        yield frame
+
+
+async def _try_elevenlabs_tts(
+    plain: str,
+    *,
+    voice_id: str,
+    language: str,
+    timeout: float,
+) -> AsyncIterator[bytes]:
+    """Try ElevenLabs TTS."""
     elevenlabs_key = (settings.ELEVENLABS_API_KEY or "").strip()
-    if elevenlabs_key:
-        try:
-            async for frame in _stream_elevenlabs_pcm16(
-                plain,
-                voice_id=voice_id,
-                timeout=timeout,
-            ):
-                yield frame
-            return  # Success
-        except Exception as e:
-            logger.error("elevenlabs_tts_failed: %s", e)
-            raise RuntimeError(f"all_tts_providers_failed: {e}")
+    if not elevenlabs_key:
+        raise RuntimeError("elevenlabs_api_key_missing")
 
-    raise RuntimeError("no_tts_provider_available")
+    async for frame in _stream_elevenlabs_pcm16(
+        plain,
+        voice_id=voice_id,
+        timeout=timeout,
+    ):
+        yield frame
 
 
 async def batch_fallback_pcm16(

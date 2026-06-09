@@ -66,22 +66,54 @@ def _metadata() -> list[tuple[str, str]]:
     return meta
 
 
-# Voice mapping - using standard voices (premium :rc voices require special access)
-# Standard voices work with regular Yandex SpeechKit API access
+# Voice mapping - supports both standard and premium :rc voices
 def _get_effective_voice(voice: str) -> str:
-    """Return effective voice name for Yandex TTS."""
+    """Return effective voice name for Yandex TTS.
+    
+    Supports premium realistic conversation voices with :rc suffix:
+    - alena:rc, jane:rc, omazh:rc, dasha:rc, marina:rc (female)
+    - filipp:rc, ermil:rc, zahar:rc, alexander:rc, anton:rc, kirill:rc (male)
+    
+    Standard voices work without :rc suffix.
+    """
     normalized = voice.strip().lower()
-    # Remove :rc or :premium suffix if present - we use standard voices
-    base_voice = normalized.replace(":rc", "").replace(":premium", "")
-    # Valid standard voices for Yandex SpeechKit
-    valid_voices = {
+    
+    # Check if premium :rc voice requested
+    is_premium_rc = ":rc" in normalized
+    
+    # Extract base voice name
+    base_voice = normalized.replace(":rc", "").replace(":premium", "").strip()
+    
+    # Valid voices for Yandex SpeechKit
+    valid_standard_voices = {
         "alena", "jane", "omazh", "dasha", "marina",
         "filipp", "ermil", "zahar", "alexander", "anton", "kirill", "madi"
     }
-    if base_voice in valid_voices:
-        return base_voice
-    # Default fallback
-    return "alena"
+    
+    # Premium voices that support :rc mode
+    premium_voices = {
+        "alena", "jane", "omazh", "dasha", "marina",
+        "filipp", "ermil", "zahar", "alexander", "anton", "kirill"
+    }
+    
+    if base_voice not in valid_standard_voices:
+        # Map common aliases
+        voice_aliases = {
+            "default": "alena",
+            "neutral": "jane",
+            "neutral-friendly": "alena",
+            "female": "alena",
+            "woman": "alena",
+            "male": "filipp",
+            "man": "filipp",
+        }
+        base_voice = voice_aliases.get(base_voice, "alena")
+    
+    # Return premium voice if requested and available
+    if is_premium_rc and base_voice in premium_voices:
+        return f"{base_voice}:rc"
+    
+    return base_voice
 
 
 def _request_iter(pb2, text: str, voice: str):

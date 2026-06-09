@@ -1,4 +1,4 @@
-# Переменные окружения: телефония
+﻿# Переменные окружения: телефония
 
 Шаблон для копирования в корневой `.env`: [.env.telephony.example](../../.env.telephony.example).
 
@@ -75,7 +75,8 @@ openssl rand -hex 32
 | `TELEPHONY_SYNTAGMA_MIN_CHARS` | `12` | Мин. длина синтагмы при нарезке |
 | `TELEPHONY_CRM_FILLER_THRESHOLD_MS` | `1500` | `play_filler` при долгих CRM-tools |
 | `TELEPHONY_SSML_ENABLED` | `true` | SSML в ответе |
-| `TELEPHONY_STREAM_TTS_PROVIDER` | `yandex` | PSTN stream TTS: `yandex` \| `elevenlabs` |
+| `TELEPHONY_STREAM_TTS_PROVIDER` | `yandex` | PSTN stream TTS: `yandex` \| `elevenlabs` \| `openai` |
+| `TELEPHONY_VOICE_ID` | `default` | Голос TTS: `alice` (ElevenLabs), `alena:rc` (Yandex RC), `filipp` |
 | `YANDEX_SPEECHKIT_API_KEY` | при yandex | STT (gateway) + stream TTS + preview |
 | `YANDEX_SPEECHKIT_FOLDER_ID` | рекомендуется | Каталог Yandex Cloud |
 | `ELEVENLABS_API_KEY` | при elevenlabs | ElevenLabs Flash stream |
