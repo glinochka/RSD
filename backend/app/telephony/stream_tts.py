@@ -7,6 +7,7 @@ import io
 import logging
 import wave
 from collections.abc import AsyncIterator
+import httpx
 
 from ..config import settings
 from .tts_service import _strip_for_tts
@@ -111,8 +112,6 @@ async def _stream_elevenlabs_pcm16(
     timeout: float = 10.0,
 ) -> AsyncIterator[bytes]:
     """ElevenLabs TTS streaming to PCM16 frames with optimized Russian voice mapping."""
-    import httpx
-
     api_key = (settings.ELEVENLABS_API_KEY or "").strip()
     if not api_key:
         raise RuntimeError("elevenlabs_api_key_missing")
@@ -190,12 +189,23 @@ async def _stream_elevenlabs_pcm16(
             if response.status_code >= 400:
                 error_text = await response.aread()
                 raise RuntimeError(f"elevenlabs_api_error: {response.status_code} {error_text[:200]}")
+            content_type = str(response.headers.get("content-type", "")).lower()
+            # ElevenLabs PCM stream должен приходить как аудио-поток (audio/pcm или application/octet-stream).
+            # Если приходит container/compressed формат (например, mp3), нельзя трактовать как raw PCM.
+            if ("audio/pcm" not in content_type) and ("application/octet-stream" not in content_type):
+                raise RuntimeError(f"elevenlabs_unexpected_content_type: {content_type or 'unknown'}")
 
             async for chunk in response.aiter_bytes():
                 pcm_16k += chunk
 
     if not pcm_16k:
         raise RuntimeError("elevenlabs_tts_empty_response")
+
+    # Быстрый guard от container/compressed payload (не raw PCM),
+    # чтобы не отправлять в телефонный тракт шум вместо речи.
+    first4 = pcm_16k[:4]
+    if first4 == b"RIFF" or pcm_16k.startswith(b"ID3") or first4 in (b"OggS", b"fLaC"):
+        raise RuntimeError("elevenlabs_non_pcm_payload_detected")
 
     # Convert PCM 16-bit 16kHz mono to 8kHz mono
     # First ensure even length for 16-bit samples
