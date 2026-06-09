@@ -217,8 +217,11 @@ function logPayloadBytes(label: string, buf: Buffer): void {
   );
 }
 
-// Проверяем переменную окружения для отключения конвертации
-const DISABLE_ENDIAN_CONV = process.env.DISABLE_ENDIAN_CONV === 'true';
+// Voximplant WebSocket media L16 payload интерпретируется как little-endian.
+// Поэтому по умолчанию PCM16 LE отправляется КАК ЕСТЬ (рабочее поведение до коммита 4aba41a).
+// Конверсию LE → BE (RFC 3551) можно включить только явно через FORCE_ENDIAN_BE=true,
+// если поддержка Voximplant подтвердит, что нужен big-endian.
+const FORCE_ENDIAN_BE = process.env.FORCE_ENDIAN_BE === 'true';
 
 // Таблица линейного преобразования PCM16 → MULAW
 // Based on ITU-T G.711
@@ -268,14 +271,14 @@ export function buildVoxMediaMessage(payload: Buffer, ws?: unknown): string {
     // Конвертируем PCM16 LE → MULAW (8-bit, 8kHz)
     finalPayload = pcm16LeToMulaw(payload);
     console.info('[media-gateway] format conv: PCM16 LE → MULAW');
-  } else if (DISABLE_ENDIAN_CONV) {
-    // Режим тестирования PCM16: без конвертации endianness
-    finalPayload = payload;
-    console.info('[media-gateway] format conv: PCM16 LE (no endian conv)');
-  } else {
-    // Стандартный режим PCM16: конвертируем LE → BE
+  } else if (FORCE_ENDIAN_BE) {
+    // Опционально: конвертируем LE → BE (только при FORCE_ENDIAN_BE=true)
     finalPayload = pcm16LeToBe(payload);
     console.info('[media-gateway] format conv: PCM16 LE → BE');
+  } else {
+    // Дефолт для l16: PCM16 LE как есть — Voximplant ожидает little-endian
+    finalPayload = payload;
+    console.info('[media-gateway] format conv: PCM16 LE (as-is)');
   }
 
   // Отладка: смотрим выходные данные
