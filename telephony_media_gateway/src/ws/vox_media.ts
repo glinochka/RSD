@@ -92,10 +92,14 @@ export function parseVoxMediaMessage(text: string): Buffer | null | 'ignore' {
   }
 }
 
-// Определяем формат аудио через переменную окружения
-// AUDIO_FORMAT=mulaw - использовать μ-law (8-bit, безопасный дефолт для PSTN/Vox)
-// AUDIO_FORMAT=l16 - использовать PCM16 (16-bit), только при осознанной необходимости
-const AUDIO_FORMAT = process.env.AUDIO_FORMAT || 'mulaw';
+// Определяем формат аудио через переменную окружения.
+// Voximplant WebSocket media JSON-протокол интерпретирует payload как PCM16/L16
+// (см. WebSocket.MediaEventStarted encoding=PCM16 в логах). Объявление
+// audio/x-mulaw в mediaFormat не меняет интерпретацию payload, поэтому
+// mulaw-байты проигрываются как PCM16 → шум/треск. Рабочий формат — l16.
+// AUDIO_FORMAT=l16 (по умолчанию) - PCM16 (16-bit), конвертация LE → BE по RFC 3551.
+// AUDIO_FORMAT=mulaw - μ-law (только если поддержка Voximplant подтвердит прием mulaw payload).
+const AUDIO_FORMAT = process.env.AUDIO_FORMAT || 'l16';
 
 /**
  * Строит событие `start` для Voximplant WebSocket media.
