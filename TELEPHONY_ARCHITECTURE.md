@@ -1,293 +1,406 @@
-# Архитектура модуля телефонии RSD (streaming PSTN)
+# Архитектура модуля телефонии RSD
 
-Документ описывает **текущую** реализацию после рефакторинга на потоковый pipeline. Детали протокола и env — в [docs/telephony/SESSION_PROTOCOL.md](docs/telephony/SESSION_PROTOCOL.md), [docs/telephony/STREAMING_ARCHITECTURE.md](docs/telephony/STREAMING_ARCHITECTURE.md), [.env.telephony.example](.env.telephony.example).
+## Обзор
+
+Модуль телефонии реализует голосового AI-агента, принимающего входящие PSTN-звонки через Voximplant. Система работает в режиме реального времени: распознаёт речь абонента (STT), генерирует ответ (LLM), синтезирует голос (TTS) и воспроизводит через телефонную линию.
 
 ---
 
-## 1. Обзор: три контура
+## Компоненты системы
 
-Звонок разделён на независимые слои, которые масштабируются отдельно:
-
-```mermaid
-flowchart LR
-  subgraph signal["Сигнальный контур"]
-    PSTN["PSTN / SIP"]
-    VE["VoxEngine\nrsd_inbound.js"]
-    BR["telephony_bridge\n:8100"]
-    PSTN --> VE
-    VE -->|"HTTP webhook\nHMAC"| BR
-  end
-
-  subgraph media["Media-контур"]
-    GW["telephony_media_gateway\n:8200 WSS"]
-    VE <-->|"μ-law 20 ms\nJSON + binary"| GW
-  end
-
-  subgraph dialog["Диалоговый контур"]
-    ORCH["telephony_orchestrator\nstateful worker"]
-    RD["Redis\nsession / dialog / pubsub"]
-    GW <-->|"telephony:orch:*"| RD
-    ORCH <-->|"telephony:orch:*"| RD
-  end
-
-  subgraph control["Control plane"]
-    API["backend + telephony_worker\n:8000 / :8001"]
-    PG["PostgreSQL"]
-    BR --> API
-    ORCH --> API
-    ORCH --> PG
-    API --> PG
-  end
+```
+┌──────────────┐     PSTN      ┌──────────────────┐
+│   Абонент    │ ◄────────────►│   Voximplant     │
+│  (телефон)   │               │   (SIP/RTP)      │
+└──────────────┘               └────────┬─────────┘
+                                        │ WebSocket (µ-law 8kHz)
+                                        ▼
+                               ┌──────────────────┐
+                               │  VoxEngine       │
+                               │  (rsd_inbound)   │
+                               └──┬──────────┬────┘
+                      HTTP webhook │          │ WebSocket (µ-law)
+                                   ▼          ▼
+                    ┌───────────────────┐  ┌─────────────────────┐
+                    │ Telephony Bridge  │  │ Telephony Media      │
+                    │ (Node.js :8100)   │  │ Gateway (Node.js     │
+                    │ signal events     │  │ :8200) audio+STT     │
+                    └────────┬──────────┘  └──────────┬───────────┘
+                             │ HTTP                    │ Redis pub/sub
+                             ▼                        ▼
+                    ┌──────────────────────────────────────────────┐
+                    │           Backend (Python/FastAPI)            │
+                    │                                              │
+                    │  ┌─────────────────────────────────────────┐ │
+                    │  │  Orchestrator Worker (Redis subscriber)  │ │
+                    │  │  - dialog state machine                  │ │
+                    │  │  - LLM streaming                         │ │
+                    │  │  - TTS streaming                         │ │
+                    │  └─────────────────────────────────────────┘ │
+                    │                                              │
+                    │  ┌────────────┐  ┌──────────┐  ┌──────────┐ │
+                    │  │ PostgreSQL │  │  Redis   │  │  Qdrant  │ │
+                    │  │ (calls,    │  │ (pubsub, │  │ (RAG KB) │ │
+                    │  │  turns)    │  │  cache)  │  │          │ │
+                    │  └────────────┘  └──────────┘  └──────────┘ │
+                    └──────────────────────────────────────────────┘
 ```
 
-| Контур | Компоненты | Транспорт | Задача |
-|--------|------------|-----------|--------|
-| **Сигнальный** | Voximplant VoxEngine, `telephony_bridge` | HTTPS webhook (RFC-001) | Early Media, answer, hangup, resolve DID/SIP, метаданные звонка в БД |
-| **Media** | `telephony_media_gateway` | WebSocket (μ-law) | VAD, streaming STT, turn-taking, приём/отдача TTS, barge-in |
-| **Диалог** | `telephony_orchestrator` | Redis pub/sub | LLM stream, нарезка синтагм, stream TTS, CRM/tools, маршрутизация DTMF |
-| **Control** | `backend`, `telephony_worker` | REST internal | Credentials, resolve, аналитика, **preview в браузере** (отдельный путь) |
+### 1. VoxEngine Script (`voxengine/rsd_inbound.bundled.js`)
 
-**Не используется в PSTN:** HTTP `POST /internal/telephony/turn` с записью и batch STT — для prod-звонка bridge отвечает `410` на legacy-события.
+Сценарий Voximplant Cloud IDE — точка входа для входящих PSTN-звонков.
 
----
+**Ответственность:**
+- Приём входящего вызова (`CallEvents.Incoming`)
+- Отправка control-событий (call.inbound, call.answered, call.hangup) на Telephony Bridge через HTTP webhook
+- Установка WebSocket-соединения с Media Gateway для передачи аудио
+- Дуплексный медиа-мост: аудио абонента → WS, аудио агента ← WS
+- Обработка DTMF-тонов и перенаправление на оператора
 
-## 2. Карта репозитория
+**Конфигурация (Application Secrets):**
+- `RSD_CONNECTION_ID` — ID телефонного подключения
+- `RSD_WEBHOOK_SECRET` — HMAC-секрет для подписи вебхуков
+- `RSD_WEBHOOK_BASE_URL` — URL Telephony Bridge
+- `TELEPHONY_MEDIA_WS_URL` — WSS-адрес Media Gateway
+- `RSD_REQUIRE_EXTENSION` — режим IVR с вводом добавочного номера
 
-| Путь | Роль |
-|------|------|
-| `voxengine/rsd_inbound.js` | Сценарий входящего: Early Media, greeting, answer, WS к gateway, DTMF → WS |
-| `voxengine/lib/rsd_control.js` | Подписанные webhook → bridge |
-| `voxengine/lib/rsd_media_gateway.js` | `session.start`, `sendMediaTo`, barge-in → `clearMediaBuffer` |
-| `telephony_bridge/` | Control-only: `call.inbound` / `call.answered` / `call.hangup` |
-| `telephony_media_gateway/` | Media plane: VAD (Silero), STT (Yandex/Deepgram), WS-сессия |
-| `backend/app/telephony/orchestrator_main.py` | Точка входа воркера |
-| `backend/app/telephony/orchestrator_worker.py` | Affinity по `call_id`, обработка Redis-событий |
-| `backend/app/telephony/stream_pipeline.py` | LLM → синтагмы → stream TTS → Redis replies |
-| `backend/app/telephony/routing.py` | DTMF / DID / SIP → Redis keys |
-| `backend/app/router_telephony/` | Internal API, resolve, call-event |
-| `frontend` + preview API | Тест агента в браузере **без** gateway |
+### 2. Telephony Bridge (`telephony_bridge/`, Node.js, порт 8100)
 
----
+Принимает HTTP-вебхуки от VoxEngine и маршрутизирует управляющие события.
 
-## 3. Пайплайн звонка (фазы)
+**Ответственность:**
+- Верификация HMAC-подписей вебхуков
+- Rate limiting (120 req/connection/min, 240 req/IP/min)
+- Проксирование signal-событий в Backend API
+- Resolve входящего номера (DID/SIP-маршрутизация)
+- Управление сессиями звонков (in-memory или Redis)
 
-### Фаза 0 — До звонка (control plane)
+**Ключевые endpoints (проксирует в Backend):**
+- `/api/internal/telephony/webhook-auth`
+- `/api/internal/telephony/resolve-inbound`
+- `/api/internal/telephony/resolve`
+- `/api/internal/telephony/call-event`
 
-1. В UI подключается канал Voximplant → `connection_id`, `webhook_secret`, номер(а).
-2. Опционально: `routing_extension` (DTMF), `inbound_numbers[]` (DID), SIP routes → Redis.
-3. В Voximplant загружается сценарий + secrets (`RSD_WEBHOOK_*`, `TELEPHONY_MEDIA_WS_URL`).
+### 3. Telephony Media Gateway (`telephony_media_gateway/`, Node.js, порт 8200)
 
-### Фаза I — Инициация (сигнал + Early Media)
+Real-time аудио-процессинг: приём µ-law аудио от Voximplant, VAD, STT, воспроизведение ответа.
 
-```text
-Абонент набирает номер
-  → VoxEngine CallAlerting
-  → POST call.inbound → bridge → backend (resolve-inbound, call-event, ringing)
-  → startEarlyMedia() + приветствие (greeting_url / TTS / disclaimer)
-  → call.answer()
-  → POST call.answered → bridge → backend (status active)
-  → WebSocket к media gateway + session.start
-  → call.sendMediaTo(ws, ULAW) — RTP μ-law в приложение
+**Ответственность:**
+- WebSocket-сервер для приёма/отправки аудио
+- VAD (Voice Activity Detection) — Silero ONNX или energy-based
+- Turn-taking — определение конца реплики по тишине
+- Streaming STT (Yandex SpeechKit v3 / Deepgram)
+- Barge-in detection — прерывание агента абонентом
+- Playback pacer — потактовая отправка PCM16 аудио (20ms фреймы)
+- Redis pub/sub: отправка событий оркестратору, приём ответов
+
+**Audio pipeline:**
+```
+µ-law frame (160 bytes, 20ms)
+    → PCM16 conversion
+    → VAD (Silero/Energy, threshold 0.35)
+    → TurnTaking (silence >= 350ms → utterance_end)
+    → STT stream (Yandex/Deepgram)
+    → stt.final event → Redis publish
 ```
 
-Параллельно с проигрыванием приветствия backend уже может положить resolve в Redis (`telephony:session:{connection_id}`).
-
-### Фаза II — Входящий поток (пока абонент говорит)
-
-На **каждые ~20 ms** (кадр μ-law):
-
-```text
-VoxEngine → gateway: audio.in (binary 0x01)
-  → Silero VAD (речь / тишина)
-  → если речь: кадры в streaming STT (Yandex gRPC v3 REAL_TIME или Deepgram)
-  → stt.partial → Redis → orchestrator (логика / будущий early intent; не блокирует ответ)
+**Playback pipeline (ответ агента):**
+```
+Redis reply (agent.audio.start)
+    → buildVoxStartMessage (обязательно!)
+    → agent.audio.chunk (PCM16 base64)
+    → enqueuePcm16Playback → pacer (20ms interval)
+    → buildVoxMediaMessage → WS → Voximplant → абонент
+    → agent.audio.end → buildVoxStopMessage
 ```
 
-**Turn-taking:** после конца фразы VAD фиксирует тишину ≥ `TURN_SILENCE_MS` (default 400 ms) → один `stt.final` → Redis → orchestrator начинает ход.
+### 4. Backend Orchestrator Worker (`backend/app/telephony/orchestrator_worker.py`)
 
-### Фаза III — Исходящий поток (ответ агента)
+Главный мозг системы — подписывается на Redis-события от Media Gateway и координирует генерацию ответа.
 
-После `stt.final` orchestrator (один asyncio-task на `call_id`):
+**Ответственность:**
+- Подписка на `telephony:orch:events` (Redis pub/sub)
+- Dialog State Machine (GREET → LISTEN → CLARIFY → ACT → CONFIRM → CLOSE → HANDOFF)
+- Маршрутизация по DTMF-добавочному номеру
+- Вызов LLM для генерации ответа (streaming)
+- Streaming TTS для синтеза голоса
+- Публикация аудио-чанков в `telephony:orch:replies`
+- Управление barge-in (отмена текущего ответа)
+- Filler-фразы при длительных CRM-операциях
 
-```text
-1. Загрузка контекста из Redis (prompt, history) — минимум Postgres
-2. template_runtime / LLM stream (chat или Groq)
-3. Нарезка токенов по , . ! ? → синтагмы (min TELEPHONY_SYNTAGMA_MIN_CHARS)
-4. На каждую синтагму: stream TTS (Yandex gRPC / ElevenLabs) → μ-law chunks
-5. Redis telephony:orch:replies → gateway → WS audio.out → VoxEngine → абонент
-6. Батч-запись turn в Postgres на stt.final / hangup
-```
+### 5. Backend API (`backend/app/router_telephony/`)
 
-Пока LLM дописывает хвост фразы, абонент уже слышит **первые синтагмы** (потоковый TTS).
+REST API для телефонных операций.
 
-### Фаза IV — Barge-in (опционально, во время речи бота)
-
-```text
-VAD видит речь абонента при активном agent.audio.*
-  → gateway: barge_in (WS → VoxEngine clearMediaBuffer)
-  → gateway: barge_in (Redis → orchestrator)
-  → orchestrator: stream_cancel, agent.audio.end (reason barge_in)
-  → озвученный текст → telephony:spoken:{call_id}
-  → следующий stt.final уходит с interrupted_agent_text
-```
-
-### Фаза V — Завершение
-
-```text
-Абонент кладёт трубку
-  → VoxEngine: session.end + POST call.hangup
-  → orchestrator: flush turns, purge_hot_dialog в Redis
-  → Postgres: финальный status звонка
-```
-
-### Маршрутизация (параллельно с фазой I–II)
-
-| Вариант | Триггер | Действие |
-|---------|---------|----------|
-| **A — DTMF** | `require_extension` + 4 цифры на WS | Redis `telephony:route:dtmf:{ext}` → `agent_id`, смена промпта |
-| **B — DID** | `called_e164` на inbound | Redis `telephony:route:did:{e164}` → `connection_id` |
-| **C — SIP trunk** | Заголовки From/To | `telephony_sip_routes` → `connection_id` |
-
-DTMF идёт в gateway (`type: dtmf`), не отдельным HTTP на каждую цифру.
+**Endpoints:**
+- `POST /api/internal/telephony/webhook-auth` — аутентификация вебхука
+- `POST /api/internal/telephony/resolve-inbound` — маршрутизация по DID/SIP
+- `POST /api/internal/telephony/resolve` — получение конфигурации агента
+- `POST /api/internal/telephony/call-event` — создание/обновление записи звонка
+- `POST /api/internal/telephony/turn` — preview turn shim (не для PSTN)
+- `POST /api/internal/telephony/cancel` — отмена текущего turn
+- `GET /api/internal/telephony/metrics` — метрики задержек
 
 ---
 
-## 4. Транспорты и каналы Redis
+## Жизненный цикл входящего звонка
 
-| Канал / ключ | Направление | Содержимое |
-|--------------|-------------|------------|
-| `telephony:orch:events` | gateway → orchestrator | `session.start`, `stt.partial`, `stt.final`, `barge_in`, `session.end`, `dtmf` |
-| `telephony:orch:replies` | orchestrator → gateway | `agent.audio.*`, `agent.play_filler`, `call.transfer` |
-| `telephony:session:{connection_id}` | backend → Redis | resolve, agent_id, credentials snapshot |
-| `telephony:dialog:{call_id}` | orchestrator | последние N реплик |
-| `telephony:spoken:{call_id}` | orchestrator | текст до barge-in |
-| `telephony:route:dtmf:*` / `did:*` | API / inbound | маршрутизация |
-
-WebSocket VoxEngine ↔ gateway: control JSON + binary `audio.in` / `audio.out` — см. [SESSION_PROTOCOL.md](docs/telephony/SESSION_PROTOCOL.md).
-
----
-
-## 5. Пример живого диалога
-
-**Сценарий:** входящий на выделенный DID, агент «запись на услугу», без DTMF.
-
-| Время | Абонент слышит / делает | Система (упрощённо) |
-|-------|-------------------------|---------------------|
-| T+0 s | Гудки | PSTN → Voximplant |
-| T+0.3 s | «Здравствуйте, слушаю вас» (Early Media) | `startEarlyMedia` + greeting |
-| T+0.5 s | — | `call.inbound` → resolve → Redis session |
-| T+1.2 s | Соединение установлено | `answer`, `call.answered`, WS `session.start` |
-| T+2 s | «Хочу записаться на завтра на десять утра» | Поток `audio.in` → VAD+STT |
-| T+2.1–4 s | (говорит) | `stt.partial`: «хочу запис» → «хочу записаться на завтра» |
-| T+4.5 s | Пауза ~400 ms | `stt.final`: полная фраза → orchestrator |
-| T+4.7 s | — | LLM TTFT, первая синтагма «Хорошо, записываю вас на завтра.» |
-| T+5.0 s | Начало ответа агента | `agent.audio.start` + первые `audio.out` |
-| T+5.0–8 s | Полный ответ + уточнение | LLM дописывает; TTS стримит 2–3 синтагмы подряд |
-| T+9 s | «А какой адрес у вас?» | Снова partial → final → новый ход |
-| T+9.5–12 s | Ответ с адресом | Тот же pipeline фазы III |
-| T+15 s | Кладёт трубку | `session.end`, `call.hangup`, purge Redis, turns в Postgres |
-
-**Реплика в БД:** после каждого `stt.final` — user text; после завершения ответа агента — agent text (батч, не на каждый partial).
+| Шаг | Событие | Описание |
+|-----|---------|----------|
+| 1 | PSTN → Voximplant | Абонент набирает номер |
+| 2 | VoxEngine: CallEvents.Incoming | Сценарий принимает вызов |
+| 3 | HTTP: `call.inbound` → Bridge → Backend | Регистрация звонка в БД |
+| 4 | VoxEngine: answer() | Вызов принят |
+| 5 | HTTP: `call.answered` → Bridge → Backend | Обновление статуса |
+| 6 | WS: `session.start` → Media Gateway | Открытие медиа-сессии |
+| 7 | Redis: `session.start` → Orchestrator | Инициализация диалога |
+| 8 | TTS: Welcome message → абонент | Приветствие агента |
+| 9 | Абонент говорит → µ-law → Media GW | Захват аудио |
+| 10 | VAD + STT → `stt.final` → Redis | Распознавание речи |
+| 11 | Orchestrator: LLM streaming | Генерация ответа |
+| 12 | TTS streaming → Redis → Media GW → Vox | Озвучка ответа |
+| 13 | (повтор шагов 9-12) | Диалоговый цикл |
+| 14 | Hangup / transfer | Завершение звонка |
 
 ---
 
-## 6. Что происходит параллельно (один ход абонента)
+## Бюджет задержек (Latency Budget)
 
-Ниже — момент **с T+4.0 s** (абонент договорил фразу) **до T+8 s** (агент почти закончил ответ). Это главный «живой» участок pipeline.
+### End-to-Response (E2R) — от конца речи абонента до первых звуков ответа
 
-```mermaid
-gantt
-    title Параллельные процессы одного хода (после конца речи абонента)
-    dateFormat X
-    axisFormat %Ls
+| Этап | Описание | Целевой P90 | Типичное значение |
+|------|----------|-------------|-------------------|
+| **VAD silence** | Детекция конца реплики (тишина) | 450 ms | 350 ms (настройка `TURN_SILENCE_MS`) |
+| **STT final wait** | Ожидание финала от STT-провайдера | — | 50 ms (`STT_FINAL_WAIT_MS`) |
+| **STT processing** | Полное время STT от начала utterance | 400 ms | 200–600 ms |
+| **LLM TTFT** | Time-to-first-token от LLM | 300 ms | 150–500 ms (DeepSeek/Groq) |
+| **TTS TTFA** | Time-to-first-audio от TTS | 150 ms | 80–200 ms (Yandex stream) |
+| **CRM execute** | Вызов внешних API (если есть) | 1000 ms | 300–2000 ms |
+| **SIP overhead** | Сетевые задержки SIP/RTP | 1200 ms | — (один раз при setup) |
+| **E2R total** | **Суммарная задержка** | **3000 ms** | **800–1500 ms** (QA), **1200–2500 ms** (CRM) |
 
-    section Media GW
-    VAD тишина → stt.final           :a1, 0, 400
-    STT final wait                   :a2, 400, 480
-    Приём audio.in (фон)             :a3, 0, 4000
+### Разбивка по типу шаблона
 
-    section Orchestrator
-    Redis stt.final → lock call_id   :b1, 480, 520
-    LLM stream токены                :b2, 520, 3500
-    Синтагма 1 готова                :milestone, 900, 0
-    Синтагма 2 готова                :milestone, 1800, 0
-    CRM/tools (если есть)            :b3, 520, 2000
-    Postgres batch turn              :b4, 3500, 3600
-
-    section TTS (per syntagma)
-  TTS синтагма 1                   :c1, 900, 1400
-    TTS синтагма 2 (overlap LLM)     :c2, 1800, 2300
-    TTS синтагма 3                   :c3, 2600, 3100
-
-    section Gateway → Phone
-    audio.out синтагма 1             :d1, 1100, 2000
-    audio.out синтагма 2             :d2, 2000, 2900
-    audio.out синтагма 3             :d3, 2900, 3800
-
-    section VoxEngine
-    RTP → абонент                    :e1, 1100, 3800
+#### QA-агент (база знаний)
+```
+Абонент замолчал
+  → 350ms VAD silence (ожидание конца реплики)
+  → 50ms STT final wait
+  → ~200ms RAG-поиск в Qdrant
+  → ~200ms LLM streaming first token (DeepSeek/Groq)
+  → ~100ms TTS first audio frame (Yandex SpeechKit v3)
+  ─────────────────────────────────────
+  ≈ 900 ms до первых звуков ответа (оптимальный)
+  ≈ 1200–1500 ms (типичный)
 ```
 
-### Таблица параллелизма
+#### CRM-агент (function calling)
+```
+Абонент замолчал
+  → 350ms VAD silence
+  → 50ms STT final wait
+  → ~500ms CRM execute (внешние API)
+  → ~300ms LLM processing (с tool calls)
+  → ~100ms TTS first audio frame
+  ─────────────────────────────────────
+  ≈ 1300 ms до первых звуков (оптимальный)
+  ≈ 2000–2500 ms (типичный)
+  
+  * Если CRM > 500ms — воспроизводится filler: "Секунду, гляну в расписании."
+```
 
-| Поток | Действие | Параллельно с |
-|-------|----------|----------------|
-| **VoxEngine** | Шлёт `audio.in` каждые 20 ms | Всё время звонка |
-| **Gateway VAD** | Анализ кадра | Каждый `audio.in` |
-| **Gateway STT** | Partial transcripts | Пока VAD = speech |
-| **Gateway** | Ждёт `TURN_SILENCE_MS` | STT ещё может слать partial |
-| **Orchestrator** | Ждёт только **`stt.final`** | Partial не запускают новый LLM-ход |
-| **LLM** | Стримит токены | После `stt.final`; синтагма 2 режется пока идёт TTS-1 |
-| **TTS** | Синтез синтагмы N | LLM уже пишет синтагму N+1 |
-| **Gateway** | Публикует `audio.out` | Как только есть байты TTS |
-| **Абонент** | Слышит начало ответа | LLM ещё не закончил полный текст |
-| **Barge-in** | VAD + cancel | Прерывает LLM, TTS и буфер VoxEngine одновременно |
+### Filler-фразы (удержание внимания)
 
-**Последовательные зависимости (нельзя распараллелить):**
+При превышении порога `TELEPHONY_CRM_FILLER_THRESHOLD_MS` (по умолчанию 500 ms) автоматически воспроизводится удерживающая фраза:
+- CRM-запросы: *"Секунду, гляну в расписании."*
+- RAG-запросы: *"Сейчас уточню по базе, минутку."*
+- Общая: *"Секунду, сейчас посмотрю."*
 
-1. `stt.final` только после тишины VAD.  
-2. Первая синтагма TTS — после первых токенов LLM (и после CRM, если шаблон с tools).  
-3. Запись user-turn в Postgres — после принятого `stt.final` (батч с agent-turn позже).
-
-**Намеренный параллелизм (latency):**
-
-- LLM синтагма *k+1* формируется, пока TTS и RTP отдают синтагму *k*.  
-- `stt.partial` идут в orchestrator для наблюдаемости; prod-ответ стартует на `stt.final`.  
-- Early Media и `call.inbound` resolve идут до полного поднятия media WS.
+Filler-аудио кешируется в RAM как PCM16 для мгновенного воспроизведения.
 
 ---
 
-## 7. Сравнение: PSTN vs preview в браузере
+## Barge-in (прерывание агента)
 
-| | PSTN (звонок) | Preview (кабинет) |
-|--|---------------|-------------------|
-| Вход | Микрофон PSTN → Voximplant | WebRTC / upload / Web Speech |
-| Media | `telephony_media_gateway` | Нет |
-| STT | Streaming Yandex/Deepgram | Batch / браузер |
-| LLM/TTS | Orchestrator + stream TTS | `POST /internal/telephony/turn` или preview API |
-| Bridge | Только сигнальные события | Не используется |
+Абонент может прервать ответ агента. Механизм:
+
+1. **Media Gateway** отслеживает VAD-фреймы во время playback
+2. **Grace period** — первые 300 ms после `agent.audio.start` barge-in игнорируется
+3. **Speech frames** — минимум 2 последовательных VAD-фрейма (~40 ms речи)
+4. **DTMF suppress** — 1000 ms после DTMF barge-in подавляется
+5. При срабатывании:
+   - Публикуется `barge_in` событие в Redis
+   - Orchestrator отменяет текущий LLM/TTS stream
+   - Отправляется `agent.audio.end` с reason=barge_in
+   - Прерванный текст сохраняется для контекста следующего ответа
 
 ---
 
-## 8. Запуск стека (напоминание)
+## Dialog State Machine
+
+```
+GREET → LISTEN → CLARIFY (если < 3 слов)
+                → ACT (запись/бронь)
+                → CONFIRM (дата/телефон)
+                → CLOSE (прощание)
+                → HANDOFF (оператор)
+```
+
+Переходы определяются regex-паттернами + intent detection. Каждое состояние модифицирует system prompt для LLM.
+
+---
+
+## Streaming TTS Pipeline
+
+Текст LLM разбивается на синтагмы (по знакам препинания, минимум `TELEPHONY_SYNTAGMA_MIN_CHARS` символов) и каждая синтагма синтезируется параллельно с генерацией следующей:
+
+```
+LLM token stream
+  → buffer → extract_complete_syntagmas (≥ min_chars, на , . ! ? …)
+  → syntagma → TTS stream (Yandex/ElevenLabs/OpenAI fallback)
+  → PCM16 frames (320 bytes = 20ms @ 8kHz mono)
+  → Redis publish → Media Gateway → Voximplant → абонент
+```
+
+**Провайдеры TTS (с fallback):**
+1. Yandex SpeechKit v3 (primary, streaming, ru-RU оптимизирован)
+2. ElevenLabs (multilingual v2, MP3 → PCM16 resample)
+3. OpenAI TTS-1 (WAV → PCM16 resample)
+
+---
+
+## Redis-каналы
+
+| Канал | Направление | Содержимое |
+|-------|-------------|------------|
+| `telephony:orch:events` | Media GW → Orchestrator | `session.start`, `stt.final`, `barge_in`, `dtmf`, `session.end` |
+| `telephony:orch:replies` | Orchestrator → Media GW | `agent.audio.start`, `agent.audio.chunk`, `agent.audio.end`, `agent.play_filler`, `call.transfer` |
+
+---
+
+## Аудио формат
+
+| Параметр | Значение |
+|----------|----------|
+| Codec (uplink) | µ-law (PCMU) 8 kHz mono |
+| Codec (downlink) | PCM16 LE 8 kHz mono |
+| Frame size | 320 bytes (20 ms) |
+| Voximplant WS format | JSON с base64 media или start/media/stop events |
+
+**Критически важно:** Для воспроизведения аудио в Voximplant необходимо строго соблюдать порядок:
+1. `start` event (устанавливает формат `audio/l16`, 8000 Hz, mono)
+2. `media` events (base64 PCM16 данные)
+3. `stop` event
+
+Без `start` event аудио **не будет** воспроизведено абоненту.
+
+---
+
+## Конфигурация (ключевые env-переменные)
+
+### Media Gateway
+| Переменная | Значение по умолчанию | Описание |
+|------------|----------------------|----------|
+| `TURN_SILENCE_MS` | 350 | Тишина для определения конца реплики |
+| `STT_FINAL_WAIT_MS` | 50 | Ожидание final от STT после utterance_end |
+| `STT_PROVIDER` | yandex | STT провайдер (yandex/deepgram/mock) |
+| `VAD_SPEECH_THRESHOLD` | 0.35 | Порог VAD для определения речи |
+| `TELEPHONY_BARGE_IN_PLAYBACK_GRACE_MS` | 300 | Grace period barge-in после начала playback |
+| `TELEPHONY_BARGE_IN_SPEECH_FRAMES` | 2 | Мин. VAD-фреймов для barge-in |
+| `TELEPHONY_DOWNLINK_READY_TIMEOUT_MS` | 250 | Fallback timeout для готовности downlink |
+| `TELEPHONY_MEDIA_AUDIO_FRAME_MS` | 20 | Интервал отправки фреймов (ms) |
+
+### Backend/Orchestrator
+| Переменная | Описание |
+|------------|----------|
+| `TELEPHONY_ENABLED` | Включение модуля телефонии |
+| `TELEPHONY_STREAMING_ENABLED` | Streaming mode (обязательно для PSTN) |
+| `TELEPHONY_SSML_ENABLED` | SSML-обёртка для просодии |
+| `TELEPHONY_CRM_FILLER_THRESHOLD_MS` | Порог для filler-фразы (500 ms) |
+| `TELEPHONY_SYNTAGMA_MIN_CHARS` | Мин. длина синтагмы для TTS |
+| `TELEPHONY_STREAM_TTS_PROVIDER` | Провайдер TTS (yandex/elevenlabs/openai) |
+| `TELEPHONY_TTS_TIMEOUT_SECONDS` | Таймаут TTS-синтеза (10s) |
+| `TELEPHONY_VOICE_ID` | Голос по умолчанию |
+| `TELEPHONY_LLM_MODE` | LLM провайдер (chat/groq) |
+| `TELEPHONY_GROQ_MODEL` | Модель Groq (llama-3.1-8b-instant) |
+| `TELEPHONY_DIALOG_MAX_TURNS` | Макс. реплик в истории |
+| `TELEPHONY_REDIS_SESSION_TTL_SEC` | TTL Redis-сессии |
+| `TELEPHONY_TURN_LATENCY_ALERT_P95_MS` | Порог алерта P95 |
+| `TELEPHONY_E2R_ALERT_P90_MS` | Порог E2R алерта P90 |
+
+### Telephony Bridge
+| Переменная | Описание |
+|------------|----------|
+| `TELEPHONY_BRIDGE_API_KEY` | API ключ бриджа |
+| `TELEPHONY_BACKEND_URL` | URL бэкенда |
+| `TELEPHONY_BACKEND_INTERNAL_KEY` | Ключ для internal API |
+| `TELEPHONY_BACKEND_REQUEST_TIMEOUT_MS` | Таймаут запросов (15s) |
+| `TELEPHONY_BRIDGE_CONTROL_ONLY` | Только signal-события (true для streaming) |
+
+---
+
+## Маршрутизация входящих звонков
+
+Поддерживается три режима маршрутизации:
+1. **DID** — по вызываемому номеру (called_e164)
+2. **SIP** — по SIP-заголовкам (sip_from, sip_to)
+3. **DTMF IVR** — абонент вводит 4-значный добавочный номер
+
+При `RSD_REQUIRE_EXTENSION=true` абоненту воспроизводится приглашение ввести добавочный номер, и до ввода 4 цифр основной агент не подключается.
+
+---
+
+## Хранение данных
+
+| Таблица | Содержимое |
+|---------|-----------|
+| `agent_telephony_calls` | Записи звонков (status, duration, recording_url, metadata) |
+| `agent_telephony_turns` | Реплики (role, transcript, latency_ms) |
+| `agent_channel_connections` | Телефонные подключения (credentials, phone_number) |
+
+**Redis-ключи (горячие данные):**
+- `telephony:session:{connection_id}` — кеш resolve-конфига
+- `telephony:call:{external_call_id}` — маппинг call_id → db_id
+- `telephony:dialog:{call_id}` — состояние FSM + последние реплики
+- `telephony:agent_text:{call_id}` — текущий озвучиваемый текст (для barge-in)
+
+---
+
+## Отказоустойчивость
+
+- **Backend недоступен при inbound:** Bridge возвращает degraded-ответ, VoxEngine переводит на оператора
+- **TTS-провайдер упал:** автоматический fallback (Yandex → ElevenLabs → OpenAI)
+- **LLM timeout:** filler-фраза + retry, при повторном сбое — перевод на оператора
+- **STT empty (тишина):** после 2 пустых utterances предлагается DTMF-меню
+- **Stream cancelled (barge-in):** немедленная отмена LLM + TTS stream через cancel scope
+
+---
+
+## Метрики и мониторинг
+
+Endpoint `GET /api/internal/telephony/metrics` возвращает:
+- P50/P90/P95 для каждого этапа latency budget
+- Количество звонков (started, completed, transferred)
+- Prometheus-формат на `/api/internal/telephony/metrics/prometheus`
+
+---
+
+---
+
+## Сборка VoxEngine-сценария
 
 ```bash
-docker compose up -d redis postgres backend telephony_worker \
-  telephony_bridge telephony_orchestrator telephony_media_gateway
+node voxengine/scripts/bundle.mjs
 ```
 
-Проверка: `curl http://127.0.0.1:8100/health` и `curl http://127.0.0.1:8200/health`.
-
-Voximplant должен видеть публичные `https://` (bridge) и `wss://` (gateway) — не `localhost`.
+Собирает `rsd_inbound.js` + `lib/rsd_control.js` + `lib/rsd_media_gateway.js` + `lib/rsd_transfer.js` в единый файл `rsd_inbound.bundled.js` для загрузки в Voximplant Cloud IDE.
 
 ---
 
-## 9. Связанные документы
+## Docker-сервисы
 
-| Документ | Содержание |
-|----------|------------|
-| [TELEPHONY_STREAMING_REFACTOR.md](TELEPHONY_STREAMING_REFACTOR.md) | План рефакторинга, этапы |
-| [TELEPHONY_COMPLETION_CHECKLIST.md](TELEPHONY_COMPLETION_CHECKLIST.md) | Что осталось до полной приёмки |
-| [docs/telephony/ROUTING.md](docs/telephony/ROUTING.md) | DTMF / DID / SIP |
-| [docs/telephony/RUNBOOK.md](docs/telephony/RUNBOOK.md) | Эксплуатация |
-| [voxengine/README.md](voxengine/README.md) | Деплой сценария |
+В `docker-compose.yml` телефония представлена отдельными сервисами:
+- `telephony_bridge` (порт 8100)
+- `telephony_media_gateway` (порт 8200)
+- `telephony_orchestrator` (Redis subscriber, без порта)
+- `telephony_worker` (порт 8001, выделенный FastAPI для internal API)

@@ -47,7 +47,6 @@ from .service import (
     upsert_call_event,
 )
 from .turn_handler import handle_telephony_turn
-from .webhooks import router as webhooks_router
 
 
 
@@ -57,8 +56,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/internal/telephony", tags=["telephony-internal"])
 
-# Include simplified webhooks (Voximplant native TTS + ASR)
-router.include_router(webhooks_router, prefix="/simplified")
 
 
 
