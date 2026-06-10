@@ -16,6 +16,13 @@ from ..alembic.models import Agent, AgentChannelConnection
 from ..config import settings
 from ..utils.crypto import decrypt_token
 from .leader_lock import PgLeaderLock
+from ..services.human_delay import (
+    get_online_delay,
+    get_read_delay,
+    get_typing_delay,
+    mark_activity,
+    is_human_delay_enabled,
+)
 from .message_processor import Channel, MessageRequest, ProcessingStatus, get_message_processor
 
 logger = logging.getLogger(__name__)
@@ -176,6 +183,7 @@ async def _fetch_max_configs() -> list[dict[str, Any]]:
                             Agent.bot_id,
                             Agent.system_prompt,
                             Agent.welcome_message,
+                            Agent.template_config,
                             AgentChannelConnection.id.label("connection_id"),
                             AgentChannelConnection.encrypted_credentials,
                         )
@@ -192,17 +200,29 @@ async def _fetch_max_configs() -> list[dict[str, Any]]:
                 .mappings()
                 .all()
             )
-    return [
-        {
-            "agent_id": int(row["agent_id"]),
-            "bot_id": int(row["bot_id"] if row["bot_id"] is not None else row["agent_id"]),
-            "connection_id": int(row["connection_id"]),
-            "system_prompt": row["system_prompt"] or "",
-            "welcome_message": row["welcome_message"],
-            "encrypted_credentials": row["encrypted_credentials"],
-        }
-        for row in rows
-    ]
+    configs: list[dict[str, Any]] = []
+    for row in rows:
+        template_config: dict[str, Any] = {}
+        raw_cfg = row.get("template_config")
+        if raw_cfg:
+            try:
+                loaded = json.loads(raw_cfg) if isinstance(raw_cfg, str) else raw_cfg
+                if isinstance(loaded, dict):
+                    template_config = loaded
+            except Exception:
+                template_config = {}
+        configs.append(
+            {
+                "agent_id": int(row["agent_id"]),
+                "bot_id": int(row["bot_id"] if row["bot_id"] is not None else row["agent_id"]),
+                "connection_id": int(row["connection_id"]),
+                "system_prompt": row["system_prompt"] or "",
+                "welcome_message": row["welcome_message"],
+                "template_config": template_config,
+                "encrypted_credentials": row["encrypted_credentials"],
+            }
+        )
+    return configs
 
 
 def _extract_sender_name(user_payload: dict[str, Any]) -> str | None:
@@ -245,8 +265,24 @@ async def _process_event(client: MaxWsClient, cfg: dict[str, Any], raw_event: st
 
     sender_profile = await asyncio.to_thread(client.get_user, sender)
     sender_name = _extract_sender_name(sender_profile)
+
+    bot_id = int(cfg["bot_id"])
+    agent_id = int(cfg.get("agent_id") or bot_id)
+    template_config: dict[str, Any] = cfg.get("template_config") or {}
+    human_delay = is_human_delay_enabled(template_config, Channel.MAX_USERBOT.value)
+
+    # Phase 1: "come online" delay — skip for first-ever message in this conversation.
+    if human_delay:
+        online_wait = await get_online_delay(agent_id, chat_id, Channel.MAX_USERBOT.value)
+        if online_wait > 0:
+            await asyncio.sleep(online_wait)
+
+    # Phase 2: reading pause proportional to incoming message length.
+    if human_delay:
+        await asyncio.sleep(get_read_delay(len(text)))
+
     request = MessageRequest(
-        bot_id=int(cfg["bot_id"]),
+        bot_id=bot_id,
         query=text,
         user_external_id=chat_id,
         channel=Channel.MAX_USERBOT,
@@ -255,8 +291,15 @@ async def _process_event(client: MaxWsClient, cfg: dict[str, Any], raw_event: st
         user_display_name=sender_name,
     )
     response = await get_message_processor().process(request)
+
+    # Phase 3: extra typing delay proportional to response length.
+    if human_delay and response.delivers_reply():
+        await asyncio.sleep(get_typing_delay(len(response.text or "")))
+
     if not response.delivers_reply():
         return
+    if human_delay:
+        mark_activity(agent_id, chat_id, Channel.MAX_USERBOT.value)
     await asyncio.to_thread(client.send_message, chat_id, response.text)
 
 

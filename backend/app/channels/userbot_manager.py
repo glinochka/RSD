@@ -19,6 +19,13 @@ from ..alembic.models import Agent, AgentChannelConnection
 from ..config import settings
 from ..utils.crypto import decrypt_token
 from ..services.voice_transcription import is_voice_stt_configured, transcribe_voice_bytes
+from ..services.human_delay import (
+    get_online_delay,
+    get_read_delay,
+    get_typing_delay,
+    mark_activity,
+    is_human_delay_enabled,
+)
 from .leader_lock import PgLeaderLock
 from .message_processor import Channel, MessageRequest, ProcessingStatus, get_message_processor
 
@@ -339,11 +346,23 @@ async def _handle_private_message(
         await event.respond("Не удалось получить текст сообщения.")
         return
 
-    # Mark incoming message as read for better DM UX.
+    human_delay = is_human_delay_enabled(template_config, Channel.TELEGRAM_USERBOT.value)
+
+    # Phase 1: "come online" delay — skip for first-ever message in this conversation.
+    if human_delay:
+        online_wait = await get_online_delay(agent_id, user_external_id, Channel.TELEGRAM_USERBOT.value)
+        if online_wait > 0:
+            await asyncio.sleep(online_wait)
+
+    # Mark incoming message as read (agent is now "online").
     try:
         await event.client.send_read_acknowledge(event.chat_id, max_id=event.message.id)
     except Exception:
         logger.debug("userbot: failed to mark message as read bot_id=%s", bot_id, exc_info=True)
+
+    # Phase 2: reading pause proportional to incoming message length.
+    if human_delay:
+        await asyncio.sleep(get_read_delay(len(query)))
 
     request = MessageRequest(
         bot_id=bot_id,
@@ -358,8 +377,11 @@ async def _handle_private_message(
     )
     try:
         try:
+            # Phase 3: LLM processing + post-response typing delay inside typing action.
             async with event.client.action(event.chat_id, "typing"):
                 response = await get_message_processor().process(request)
+                if human_delay and response.delivers_reply():
+                    await asyncio.sleep(get_typing_delay(len(response.text or "")))
         except Exception:
             logger.debug(
                 "userbot: typing action unavailable bot_id=%s agent_id=%s, fallback without typing",
@@ -373,6 +395,8 @@ async def _handle_private_message(
         raise
     if not response.delivers_reply():
         return
+    if human_delay:
+        mark_activity(agent_id, user_external_id, Channel.TELEGRAM_USERBOT.value)
     await event.respond(response.text)
 
 

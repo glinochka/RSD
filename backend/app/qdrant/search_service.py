@@ -133,6 +133,7 @@ async def search_knowledge_base(
     max_queries: int = 3,
     max_chunks_per_query: int = 2,
     use_smart_search: bool = True,
+    min_score: float | None = None,
 ) -> List[Dict[str, Any]]:
     """Поиск по базе знаний с использованием актуального API query_points."""
     try:
@@ -200,6 +201,8 @@ async def search_knowledge_base(
                 )
 
             for hit in response.points:
+                if min_score is not None and (hit.score or 0.0) < min_score:
+                    continue
                 text = hit.payload.get("text", "")
                 source = hit.payload.get("source", "Unknown")
                 dedupe_key = (str(source), str(text))

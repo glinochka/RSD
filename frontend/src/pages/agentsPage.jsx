@@ -38,6 +38,16 @@ const isPortraitFeatureEnabled = (agent) => {
   if (!cfg || typeof cfg !== 'object') return true;
   return cfg.enable_chat_portrait !== false;
 };
+const isHumanDelayEnabled = (agent) => {
+  const cfg = agent?.template_config;
+  if (!cfg || typeof cfg !== 'object') return true;
+  return cfg.enable_human_delay !== false;
+};
+const isChatHistoryEnabled = (agent) => {
+  const cfg = agent?.template_config;
+  if (!cfg || typeof cfg !== 'object') return true;
+  return cfg.enable_chat_history !== false;
+};
 const isSmartSearchEnabled = (agent) => {
   const cfg = agent?.template_config;
   if (!cfg || typeof cfg !== 'object') return true;
@@ -632,6 +642,8 @@ const AgentsPageContent = () => {
   const [isSavingSmartSearch, setIsSavingSmartSearch] = useState(false);
   const [isSavingChatFreeze, setIsSavingChatFreeze] = useState(false);
   const [isSavingStartProcessing, setIsSavingStartProcessing] = useState(false);
+  const [isSavingHumanDelay, setIsSavingHumanDelay] = useState(false);
+  const [isSavingChatHistory, setIsSavingChatHistory] = useState(false);
   const [isSavingTemplateConfig, setIsSavingTemplateConfig] = useState(false);
   const [isGeneratingPrompt, setIsGeneratingPrompt] = useState(false);
   const [isGeneratingWelcome, setIsGeneratingWelcome] = useState(false);
@@ -1256,6 +1268,44 @@ const AgentsPageContent = () => {
       showError(error?.message || 'Не удалось обновить настройку обработки /start');
     } finally {
       setIsSavingStartProcessing(false);
+    }
+  };
+
+  const handleToggleHumanDelay = async (enabled) => {
+    if (!selectedBotId || !selectedAgent) return;
+    const currentConfig =
+      selectedAgent.template_config && typeof selectedAgent.template_config === 'object'
+        ? selectedAgent.template_config
+        : {};
+    const nextConfig = { ...currentConfig, enable_human_delay: Boolean(enabled) };
+    setIsSavingHumanDelay(true);
+    try {
+      await agentService.update(selectedBotId, { template_config: nextConfig });
+      setSelectedAgent((prev) => (prev ? { ...prev, template_config: nextConfig } : prev));
+      showSuccess(enabled ? 'Имитация присутствия включена' : 'Имитация присутствия отключена');
+    } catch (error) {
+      showError(error?.message || 'Не удалось обновить настройку имитации присутствия');
+    } finally {
+      setIsSavingHumanDelay(false);
+    }
+  };
+
+  const handleToggleChatHistory = async (enabled) => {
+    if (!selectedBotId || !selectedAgent) return;
+    const currentConfig =
+      selectedAgent.template_config && typeof selectedAgent.template_config === 'object'
+        ? selectedAgent.template_config
+        : {};
+    const nextConfig = { ...currentConfig, enable_chat_history: Boolean(enabled) };
+    setIsSavingChatHistory(true);
+    try {
+      await agentService.update(selectedBotId, { template_config: nextConfig });
+      setSelectedAgent((prev) => (prev ? { ...prev, template_config: nextConfig } : prev));
+      showSuccess(enabled ? 'История чата включена' : 'История чата отключена');
+    } catch (error) {
+      showError(error?.message || 'Не удалось обновить настройку истории чата');
+    } finally {
+      setIsSavingChatHistory(false);
     }
   };
 
@@ -3089,6 +3139,20 @@ const AgentsPageContent = () => {
                       disabled={isSavingStartProcessing}
                       title="Обработка /start"
                       helpText="ON: /start отправляется в LLM. OFF: отправляется дефолтное/пользовательское приветствие. По умолчанию выключено: команда /start вернет текст приветствия. Включите, чтобы /start обрабатывался как обычное сообщение пользователя."
+                    />
+                    <FeatureToggle
+                      checked={isHumanDelayEnabled(selectedAgent)}
+                      onChange={handleToggleHumanDelay}
+                      disabled={isSavingHumanDelay}
+                      title="Имитация присутствия"
+                      helpText="Агент ведёт себя как живой человек: на первое сообщение отвечает сразу, а при возобновлении неактивного диалога выдерживает паузу 1–3 минуты перед тем, как «зайти в сеть». Затем имитирует чтение входящего и набор ответа — с задержкой, пропорциональной длине текста. В пределах одного активного диалога паузы на вход-выход из сети нет. Не влияет на телефонию. По умолчанию включено для Telegram-, MAX- и WhatsApp-юзерботов."
+                    />
+                    <FeatureToggle
+                      checked={isChatHistoryEnabled(selectedAgent)}
+                      onChange={handleToggleChatHistory}
+                      disabled={isSavingChatHistory}
+                      title="История чата в запросе"
+                      helpText="При каждом обращении в LLM передаётся полная история переписки с меткой времени и указанием кто написал — клиент или агент. Модель видит контекст всего диалога и не повторяет приветствие, помнит сказанное ранее и отвечает связно. По умолчанию включено для всех каналов, включая телефонию."
                     />
                   </div>
 

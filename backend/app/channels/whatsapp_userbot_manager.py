@@ -14,6 +14,13 @@ from ..alembic.database import async_session_maker
 from ..alembic.models import Agent, AgentChannelConnection
 from ..config import settings
 from ..services.voice_transcription import is_voice_stt_configured, transcribe_voice_bytes
+from ..services.human_delay import (
+    get_online_delay,
+    get_read_delay,
+    get_typing_delay,
+    mark_activity,
+    is_human_delay_enabled,
+)
 from ..utils.crypto import decrypt_token
 from .leader_lock import PgLeaderLock
 from .message_processor import Channel, MessageRequest, ProcessingStatus, get_message_processor
@@ -323,6 +330,19 @@ async def _process_incoming(cfg: dict[str, Any], incoming: dict[str, Any]) -> No
     if not query:
         return
 
+    template_config: dict[str, Any] = cfg.get("template_config") or {}
+    bot_id = int(cfg["bot_id"])
+    agent_id = int(cfg.get("agent_id") or bot_id)
+    user_ext_id = _user_external_id_for_whatsapp_analytics(remote_jid)
+    human_delay = is_human_delay_enabled(template_config, Channel.WHATSAPP_USERBOT.value)
+
+    # Phase 1: "come online" delay — skip for first-ever message in this conversation.
+    if human_delay:
+        online_wait = await get_online_delay(agent_id, user_ext_id, Channel.WHATSAPP_USERBOT.value)
+        if online_wait > 0:
+            await asyncio.sleep(online_wait)
+
+    # Mark message as read (agent is now "online").
     await _bridge_post_best_effort(
         "session/read",
         {
@@ -331,6 +351,12 @@ async def _process_incoming(cfg: dict[str, Any], incoming: dict[str, Any]) -> No
             "message_id": incoming.get("id"),
         },
     )
+
+    # Phase 2: reading pause proportional to incoming message length.
+    if human_delay:
+        await asyncio.sleep(get_read_delay(len(query)))
+
+    # Phase 3: start typing indicator.
     await _bridge_post_best_effort(
         "session/typing",
         {
@@ -340,11 +366,10 @@ async def _process_incoming(cfg: dict[str, Any], incoming: dict[str, Any]) -> No
         },
     )
 
-    bot_id = int(cfg["bot_id"])
     request = MessageRequest(
         bot_id=bot_id,
         query=query,
-        user_external_id=_user_external_id_for_whatsapp_analytics(remote_jid),
+        user_external_id=user_ext_id,
         channel=Channel.WHATSAPP_USERBOT,
         system_prompt=cfg.get("system_prompt") or "",
         welcome_message=cfg.get("welcome_message"),
@@ -353,6 +378,9 @@ async def _process_incoming(cfg: dict[str, Any], incoming: dict[str, Any]) -> No
     )
     try:
         response = await get_message_processor().process(request)
+        # Phase 4: extra typing delay proportional to response length.
+        if human_delay and response.delivers_reply():
+            await asyncio.sleep(get_typing_delay(len(response.text or "")))
         if not response.delivers_reply():
             return
         await _bridge_post(
@@ -363,6 +391,8 @@ async def _process_incoming(cfg: dict[str, Any], incoming: dict[str, Any]) -> No
                 "text": response.text,
             },
         )
+        if human_delay:
+            mark_activity(agent_id, user_ext_id, Channel.WHATSAPP_USERBOT.value)
     finally:
         await _bridge_post_best_effort(
             "session/typing",

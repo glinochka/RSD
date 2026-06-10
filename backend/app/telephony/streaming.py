@@ -99,7 +99,8 @@ def _llm_model(chat_model: str | None = None) -> str:
     mode = (getattr(settings, "TELEPHONY_LLM_MODE", None) or "chat").strip().lower()
     if mode == "groq":
         return (getattr(settings, "TELEPHONY_GROQ_MODEL", None) or "llama-3.1-8b-instant").strip()
-    return (chat_model or "deepseek-chat").strip() or "deepseek-chat"
+    default_model = (getattr(settings, "TELEPHONY_LLM_DEEPSEEK_MODEL", None) or "deepseek-v4-flash").strip()
+    return (chat_model or default_model).strip() or default_model
 
 
 async def stream_answer_sentences(
@@ -111,6 +112,7 @@ async def stream_answer_sentences(
     min_chunk_chars: int | None = None,
     call_db_id: int | None = None,
     external_call_id: str | None = None,
+    max_tokens: int | None = None,
 ) -> AsyncIterator[str]:
     """Stream LLM completion and yield text chunks at syntagma boundaries."""
     if not context_list:
@@ -129,15 +131,18 @@ async def stream_answer_sentences(
     min_len = max(1, int(min_chunk_chars or settings.TELEPHONY_SYNTAGMA_MIN_CHARS))
 
     client = _llm_client()
-    stream = await client.chat.completions.create(
-        model=model,
-        messages=[
+    create_kwargs: dict = {
+        "model": model,
+        "messages": [
             {"role": "system", "content": base_system},
             {"role": "user", "content": user_prompt},
         ],
-        temperature=0.3,
-        stream=True,
-    )
+        "temperature": 0.3,
+        "stream": True,
+    }
+    if max_tokens is not None:
+        create_kwargs["max_tokens"] = max_tokens
+    stream = await client.chat.completions.create(**create_kwargs)
 
     from .stream_cancel import is_cancelled, is_cancelled_call_id
 

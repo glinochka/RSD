@@ -76,6 +76,7 @@ async def generate_answer_with_context(
     *,
     chat_model: str | None = None,
     temperature: float = 0.3,
+    chat_history: list[dict] | None = None,
 ) -> str:
     if not context_list:
         context_text = "Информации в базе знаний не найдено."
@@ -88,12 +89,14 @@ async def generate_answer_with_context(
     user_prompt = f"КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ:\n{context_text}\n\nВОПРОС ПОЛЬЗОВАТЕЛЯ: {question}"
     model = (chat_model or "deepseek-chat").strip() or "deepseek-chat"
 
+    messages: list[dict] = [{"role": "system", "content": base_system}]
+    if chat_history:
+        messages.extend(chat_history)
+    messages.append({"role": "user", "content": user_prompt})
+
     response = await ai_client.chat.completions.create(
         model=model,
-        messages=[
-            {"role": "system", "content": base_system},
-            {"role": "user", "content": user_prompt},
-        ],
+        messages=messages,
         temperature=max(0.0, min(1.0, float(temperature))),
     )
     return _polish_answer(response.choices[0].message.content)

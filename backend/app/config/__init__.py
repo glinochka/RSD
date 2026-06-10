@@ -159,7 +159,9 @@ class Settings(BaseSettings):
     TELEPHONY_STREAMING_ENABLED: bool = True
     TELEPHONY_SYNTAGMA_MIN_CHARS: int = 12
     TELEPHONY_LLM_MODE: Literal["chat", "groq"] = "chat"
+    TELEPHONY_LLM_DEEPSEEK_MODEL: str = "deepseek-v4-flash"
     TELEPHONY_GROQ_MODEL: str = "llama-3.1-8b-instant"
+    TELEPHONY_RAG_MIN_SCORE: float = 0.55
     GROQ_API_KEY: str = ""
     TELEPHONY_STREAM_TTS_PROVIDER: Literal["yandex", "elevenlabs", "voximplant", "openai"] = "yandex"
     # Default voice ID for telephony TTS. Examples:

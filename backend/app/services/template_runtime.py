@@ -121,6 +121,12 @@ class TemplateRuntimeService:
         return bool(template_config.get("enable_chat_freeze", True))
 
     @staticmethod
+    def _is_chat_history_enabled(template_config: dict[str, Any] | None) -> bool:
+        if not isinstance(template_config, dict):
+            return True
+        return bool(template_config.get("enable_chat_history", True))
+
+    @staticmethod
     def _sales_workflow_completion_mode(template_config: dict[str, Any] | None) -> str:
         if not isinstance(template_config, dict):
             return "auto_finish_on_signal"
@@ -295,7 +301,11 @@ class TemplateRuntimeService:
                 prompt=prompt,
                 user_message=user_message,
                 knowledge_scope_id=knowledge_scope_id,
+                agent_id=agent_id,
+                user_external_id=user_external_id,
+                source_channel=source_channel,
                 chat_portrait=chat_portrait,
+                enable_chat_history=self._is_chat_history_enabled(template_config),
                 runtime_context=runtime_context or {},
                 template_config=template_config or {},
             )
@@ -322,6 +332,9 @@ class TemplateRuntimeService:
                 prompt=prompt,
                 user_message=user_message,
                 knowledge_scope_id=knowledge_scope_id,
+                agent_id=agent_id,
+                user_external_id=user_external_id,
+                source_channel=source_channel,
                 chat_portrait=chat_portrait,
                 runtime_context=runtime_context or {},
                 template_config=template_config or {},
@@ -333,9 +346,13 @@ class TemplateRuntimeService:
                 prompt=prompt,
                 user_message=user_message,
                 knowledge_scope_id=knowledge_scope_id,
+                agent_id=agent_id,
+                user_external_id=user_external_id,
+                source_channel=source_channel,
                 chat_portrait=chat_portrait,
                 enable_owner_handoff=self._is_chat_freeze_enabled(template_config),
                 enable_smart_search=self._is_smart_search_enabled(template_config),
+                enable_chat_history=self._is_chat_history_enabled(template_config),
                 runtime_context=runtime_context or {},
                 template_config=template_config or {},
             )
@@ -346,8 +363,12 @@ class TemplateRuntimeService:
                 prompt=prompt,
                 user_message=user_message,
                 knowledge_scope_id=knowledge_scope_id,
+                agent_id=agent_id,
+                user_external_id=user_external_id,
+                source_channel=source_channel,
                 chat_portrait=chat_portrait,
                 enable_smart_search=self._is_smart_search_enabled(template_config),
+                enable_chat_history=self._is_chat_history_enabled(template_config),
                 runtime_context=runtime_context or {},
                 template_config=template_config or {},
             )
@@ -359,8 +380,12 @@ class TemplateRuntimeService:
             prompt=prompt,
             user_message=user_message,
             knowledge_scope_id=knowledge_scope_id,
+            agent_id=agent_id,
+            user_external_id=user_external_id,
+            source_channel=source_channel,
             chat_portrait=chat_portrait,
             enable_smart_search=self._is_smart_search_enabled(template_config),
+            enable_chat_history=self._is_chat_history_enabled(template_config),
             runtime_context=runtime_context or {},
             template_config=template_config or {},
         )
@@ -1152,6 +1177,8 @@ class TemplateRuntimeService:
         agent_id: int,
         user_external_id: str | None,
         source_channel: str,
+        include_timestamps: bool = False,
+        limit: int = 20,
     ) -> list[dict[str, Any]]:
         uid = (user_external_id or "").strip()
         channel = (source_channel or "").strip().lower()
@@ -1166,6 +1193,7 @@ class TemplateRuntimeService:
                                 select(
                                     AgentAnalyticsMessage.role,
                                     AgentAnalyticsMessage.message_text,
+                                    AgentAnalyticsMessage.created_at,
                                 )
                                 .where(
                                     AgentAnalyticsMessage.agent_id == agent_id,
@@ -1174,14 +1202,14 @@ class TemplateRuntimeService:
                                     AgentAnalyticsMessage.role.in_(["user", "agent"]),
                                 )
                                 .order_by(AgentAnalyticsMessage.created_at.desc())
-                                .limit(8)
+                                .limit(limit)
                             )
                         )
                         .mappings()
                         .all()
                     )
         except Exception:
-            logger.warning("Failed to load recent channel history for sales context")
+            logger.warning("Failed to load recent channel history")
             return []
 
         history: list[dict[str, Any]] = []
@@ -1190,7 +1218,13 @@ class TemplateRuntimeService:
             text = (row.get("message_text") or "").strip()
             if role not in {"user", "agent"} or not text:
                 continue
-            history.append({"role": "assistant" if role == "agent" else "user", "content": text})
+            if include_timestamps:
+                ts = row.get("created_at")
+                ts_str = ts.strftime("%Y-%m-%d %H:%M") if ts else ""
+                content = f"[{ts_str}] {text}" if ts_str else text
+            else:
+                content = text
+            history.append({"role": "assistant" if role == "agent" else "user", "content": content})
         return history
 
     async def _execute_qa_like(
@@ -1199,9 +1233,13 @@ class TemplateRuntimeService:
         prompt: str,
         user_message: str,
         knowledge_scope_id: int,
+        agent_id: int | None = None,
+        user_external_id: str | None = None,
+        source_channel: str | None = None,
         chat_portrait: str | None = None,
         enable_owner_handoff: bool = False,
         enable_smart_search: bool = True,
+        enable_chat_history: bool = True,
         runtime_context: dict[str, Any] | None = None,
         template_config: dict[str, Any] | None = None,
     ) -> TemplateExecutionResult:
@@ -1226,12 +1264,25 @@ class TemplateRuntimeService:
             effective_prompt = f"{effective_prompt}\n\n{portrait_block}" if effective_prompt else portrait_block
         is_phone = bool((runtime_context or {}).get("phone_channel"))
         llm_temperature = 0.48 if is_phone else 0.3
+
+        chat_history: list[dict[str, Any]] | None = None
+        if enable_chat_history and agent_id and user_external_id and source_channel:
+            loaded = await self._load_recent_channel_history(
+                agent_id=agent_id,
+                user_external_id=user_external_id,
+                source_channel=source_channel,
+                include_timestamps=True,
+            )
+            if loaded:
+                chat_history = loaded
+
         answer = await generate_answer_with_context(
             user_message,
             context_list,
             effective_prompt,
             chat_model=chat_model,
             temperature=llm_temperature,
+            chat_history=chat_history,
         )
         requires_owner_handoff = False
         owner_handoff_reason: str | None = None
@@ -1319,6 +1370,9 @@ class TemplateRuntimeService:
         prompt: str,
         user_message: str,
         knowledge_scope_id: int,
+        agent_id: int | None = None,
+        user_external_id: str | None = None,
+        source_channel: str | None = None,
         chat_portrait: str | None = None,
         runtime_context: dict[str, Any] | None = None,
         template_config: dict[str, Any] | None = None,
@@ -1329,7 +1383,11 @@ class TemplateRuntimeService:
                 prompt=prompt,
                 user_message=user_message,
                 knowledge_scope_id=knowledge_scope_id,
+                agent_id=agent_id,
+                user_external_id=user_external_id,
+                source_channel=source_channel,
                 chat_portrait=chat_portrait,
+                enable_chat_history=self._is_chat_history_enabled(template_config),
                 runtime_context=runtime_context or {},
                 template_config=template_config or {},
             )
@@ -1709,8 +1767,12 @@ class TemplateRuntimeService:
                     prompt=prompt,
                     user_message=user_message,
                     knowledge_scope_id=knowledge_scope_id,
+                    agent_id=agent_id,
+                    user_external_id=user_external_id,
+                    source_channel=source_channel,
                     chat_portrait=chat_portrait,
                     enable_smart_search=self._is_smart_search_enabled(template_config),
+                    enable_chat_history=self._is_chat_history_enabled(template_config),
                     runtime_context=runtime_context,
                     template_config=template_config,
                 )

@@ -24,7 +24,7 @@ from ..channels.telephony_dialogue import (
     process_phone_turn,
 )
 from ..config import settings
-from ..qdrant.search_service import search_knowledge_base
+from ..qdrant.search_service import _looks_like_small_talk, search_knowledge_base
 from ..services.telephony_orchestrator import OrchestratorDecision
 from ..services.template_runtime import get_template_runtime
 from .agent_guards import parse_template_config
@@ -77,7 +77,20 @@ async def _iter_qa_syntagmas(
     external_call_id: str,
     metrics: StreamTurnMetrics,
 ) -> AsyncIterator[str]:
-    context = await search_knowledge_base(transcript, agent_id=knowledge_scope_id, limit=6)
+    # Small-talk fast path: skip Qdrant entirely (saves ~100ms embedding round-trip)
+    if _looks_like_small_talk(transcript):
+        context: list = []
+    else:
+        # use_smart_search=False: bypass plan_rag_queries (the extra LLM call),
+        # go straight to Qdrant with the raw transcript — strictly 1 LLM request total.
+        # min_score filters out irrelevant chunks before they enter the LLM prompt.
+        context = await search_knowledge_base(
+            transcript,
+            agent_id=knowledge_scope_id,
+            limit=4,
+            use_smart_search=False,
+            min_score=float(settings.TELEPHONY_RAG_MIN_SCORE),
+        )
     llm_started = time.perf_counter()
     first = True
     async for syntagma in stream_answer_sentences(
