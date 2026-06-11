@@ -148,9 +148,9 @@ async def _stream_elevenlabs_pcm16(
     # Force default voice for all agents (temporary - single voice policy)
     # All voice_id values are overridden to DEFAULT_ELEVENLABS_VOICE
     raw_voice = (voice_id or "").strip()
-    if raw_voice and len(raw_voice) >= 20 and raw_voice == DEFAULT_ELEVENLABS_VOICE:
-        # Allow only the default voice ID
-        voice = raw_voice
+    if raw_voice and len(raw_voice) >= 20 and raw_voice.lower() == DEFAULT_ELEVENLABS_VOICE.lower():
+        # Allow only the default voice ID (case-insensitive match)
+        voice = DEFAULT_ELEVENLABS_VOICE
         logger.info("elevenlabs_tts: using default voice_id=%s", voice[:8] + "...")
     else:
         # Override any other voice with default
@@ -168,16 +168,20 @@ async def _stream_elevenlabs_pcm16(
         "xi-api-key": api_key,
         "Accept": "audio/mpeg",
     }
+    # Use PCM streaming for lower latency (no MP3 decode overhead)
     data = {
         "text": text,
         "model_id": "eleven_multilingual_v2",
-        "output_format": "mp3_22050",  # 22.05kHz MP3 - оптимальный баланс качества и задержки
+        "output_format": "pcm_16000",  # 16kHz PCM16 LE - no MP3 decode needed
     }
 
-    logger.info("elevenlabs_tts: text_len=%d voice=%s format=mp3_22050", len(text), voice[:8])
+    logger.info("elevenlabs_tts: text_len=%d voice=%s format=pcm_16000", len(text), voice[:8])
 
-    # Collect MP3 data
-    mp3_data = b""
+    # Stream PCM data and yield frames immediately for lower latency
+    # Accumulate 40ms of 16kHz PCM (1280 bytes), resample to 20ms of 8kHz (320 bytes)
+    buffer = bytearray()
+    _PCM16_16K_CHUNK_BYTES = 1280  # 40ms @ 16kHz mono (2 bytes per sample)
+    _RATECV_STATE = None  # State for audioop.ratecv
 
     async with httpx.AsyncClient(timeout=timeout) as client:
         async with client.stream("POST", url, json=data, headers=headers) as response:
@@ -185,36 +189,50 @@ async def _stream_elevenlabs_pcm16(
                 error_text = await response.aread()
                 raise RuntimeError(f"elevenlabs_api_error: {response.status_code} {error_text[:200]}")
 
+            first_chunk = True
             async for chunk in response.aiter_bytes():
-                mp3_data += chunk
+                buffer.extend(chunk)
 
-    if not mp3_data:
-        raise RuntimeError("elevenlabs_tts_empty_response")
+                # Process when we have enough data for resampling
+                while len(buffer) >= _PCM16_16K_CHUNK_BYTES:
+                    pcm_16k = bytes(buffer[:_PCM16_16K_CHUNK_BYTES])
+                    buffer[:] = buffer[_PCM16_16K_CHUNK_BYTES:]
 
-    # Декодируем MP3 в PCM16 через pydub
-    try:
-        from pydub import AudioSegment
-        import io
+                    # Resample 16kHz -> 8kHz using audioop (proper quality)
+                    pcm_8k, _RATECV_STATE = audioop.ratecv(
+                        pcm_16k,  # input
+                        2,        # sample width (2 bytes = 16-bit)
+                        1,        # channels (mono)
+                        16000,    # input rate
+                        8000,     # output rate
+                        _RATECV_STATE,  # state for continuity
+                    )
 
-        audio = AudioSegment.from_mp3(io.BytesIO(mp3_data))
-        # Конвертируем в mono 16-bit если нужно
-        if audio.channels > 1:
-            audio = audio.set_channels(1)
-        if audio.sample_width != 2:
-            audio = audio.set_sample_width(2)
+                    # Yield 20ms frames (320 bytes each)
+                    for i in range(0, len(pcm_8k), _PCM16_FRAME_BYTES):
+                        frame = pcm_8k[i:i + _PCM16_FRAME_BYTES]
+                        if len(frame) == _PCM16_FRAME_BYTES:
+                            yield frame
 
-        # Ресемплируем до 8kHz
-        if audio.frame_rate != 8000:
-            audio = audio.set_frame_rate(8000)
+                    if first_chunk:
+                        logger.info("elevenlabs_tts: first_pcm_chunk_sent")
+                        first_chunk = False
 
-        pcm_8k = audio.raw_data
-    except Exception as e:
-        logger.exception("elevenlabs_tts_mp3_decode_failed")
-        raise RuntimeError(f"elevenlabs_tts_mp3_decode_failed: {e}") from e
+    # Process any remaining buffer
+    if buffer:
+        # Pad to complete chunk for resampling
+        padding = _PCM16_16K_CHUNK_BYTES - len(buffer)
+        if padding > 0:
+            buffer.extend(b"\x00" * padding)
+        pcm_16k = bytes(buffer[:_PCM16_16K_CHUNK_BYTES])
 
-    # Yield frames
-    for frame in _chunk_pcm16_frames(pcm_8k):
-        yield frame
+        pcm_8k, _ = audioop.ratecv(pcm_16k, 2, 1, 16000, 8000, None)
+
+        # Yield final frames
+        for i in range(0, len(pcm_8k), _PCM16_FRAME_BYTES):
+            frame = pcm_8k[i:i + _PCM16_FRAME_BYTES]
+            if len(frame) == _PCM16_FRAME_BYTES:
+                yield frame
 
 
 async def stream_syntagma_pcm16(
