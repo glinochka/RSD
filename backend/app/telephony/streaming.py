@@ -89,6 +89,14 @@ def _llm_client() -> AsyncOpenAI:
         api_key = (getattr(settings, "GROQ_API_KEY", None) or "").strip()
         if api_key:
             return AsyncOpenAI(api_key=api_key, base_url="https://api.groq.com/openai/v1")
+    if mode == "xai":
+        api_key = (getattr(settings, "XAI_API_KEY", None) or "").strip()
+        if api_key:
+            return AsyncOpenAI(api_key=api_key, base_url="https://api.x.ai/v1")
+    if mode == "openrouter":
+        api_key = (getattr(settings, "OPENROUTER_API_KEY", None) or "").strip()
+        if api_key:
+            return AsyncOpenAI(api_key=api_key, base_url="https://openrouter.ai/api/v1")
     return AsyncOpenAI(
         api_key=settings.DEEPSEEK_API_KEY,
         base_url="https://api.deepseek.com",
@@ -99,9 +107,18 @@ def _llm_model(chat_model: str | None = None) -> str:
     mode = (getattr(settings, "TELEPHONY_LLM_MODE", None) or "chat").strip().lower()
     if mode == "groq":
         return (getattr(settings, "TELEPHONY_GROQ_MODEL", None) or "llama-3.1-8b-instant").strip()
+    if mode == "xai":
+        return (getattr(settings, "TELEPHONY_XAI_MODEL", None) or "grok-2-latest").strip()
+    if mode == "openrouter":
+        return (getattr(settings, "TELEPHONY_OPENROUTER_MODEL", None) or "groq/llama-3.3-70b-versatile").strip()
     default_model = (getattr(settings, "TELEPHONY_LLM_DEEPSEEK_MODEL", None) or "deepseek-v4-flash").strip()
     return (chat_model or default_model).strip() or default_model
 
+
+import logging
+import time
+
+logger = logging.getLogger(__name__)
 
 async def stream_answer_sentences(
     *,
@@ -115,6 +132,7 @@ async def stream_answer_sentences(
     max_tokens: int | None = None,
 ) -> AsyncIterator[str]:
     """Stream LLM completion and yield text chunks at syntagma boundaries."""
+    llm_start = time.perf_counter()
     if not context_list:
         context_text = "Информации в базе знаний не найдено."
     else:
@@ -128,9 +146,11 @@ async def stream_answer_sentences(
     base_system = f"{system_prompt}\n\n{PLAIN_TEXT_RESPONSE_RULES_STREAMING}"
     user_prompt = f"КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ:\n{context_text}\n\nВОПРОС ПОЛЬЗОВАТЕЛЯ: {question}"
     model = _llm_model(chat_model)
+    mode = (getattr(settings, "TELEPHONY_LLM_MODE", None) or "chat").strip().lower()
     min_len = max(1, int(min_chunk_chars or settings.TELEPHONY_SYNTAGMA_MIN_CHARS))
 
     client = _llm_client()
+    logger.info("llm_stream_start: mode=%s model=%s text_len=%d", mode, model, len(user_prompt))
     create_kwargs: dict = {
         "model": model,
         "messages": [
@@ -147,6 +167,7 @@ async def stream_answer_sentences(
     from .stream_cancel import is_cancelled, is_cancelled_call_id
 
     buffer = ""
+    first_token = True
     async for chunk in stream:
         if external_call_id and is_cancelled_call_id(external_call_id):
             break
@@ -155,6 +176,10 @@ async def stream_answer_sentences(
         delta = chunk.choices[0].delta.content if chunk.choices else None
         if not delta:
             continue
+        if first_token:
+            ttft_ms = int((time.perf_counter() - llm_start) * 1000)
+            logger.info("llm_first_token: mode=%s model=%s ttft_ms=%d", mode, model, ttft_ms)
+            first_token = False
         buffer += delta
         complete, buffer = extract_complete_syntagmas(buffer, min_chars=min_len)
         for syntagma in complete:

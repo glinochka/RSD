@@ -158,11 +158,15 @@ class Settings(BaseSettings):
     # Stage 5: latency / streaming pipeline
     TELEPHONY_STREAMING_ENABLED: bool = True
     TELEPHONY_SYNTAGMA_MIN_CHARS: int = 12
-    TELEPHONY_LLM_MODE: Literal["chat", "groq"] = "chat"
+    TELEPHONY_LLM_MODE: Literal["chat", "groq", "xai", "openrouter"] = "openrouter"
     TELEPHONY_LLM_DEEPSEEK_MODEL: str = "deepseek-v4-flash"
-    TELEPHONY_GROQ_MODEL: str = "llama-3.1-8b-instant"
+    TELEPHONY_GROQ_MODEL: str = "llama-3.3-70b-versatile"
+    TELEPHONY_XAI_MODEL: str = "grok-2-latest"
+    TELEPHONY_OPENROUTER_MODEL: str = "groq/llama-3.3-70b-versatile"
     TELEPHONY_RAG_MIN_SCORE: float = 0.55
     GROQ_API_KEY: str = ""
+    XAI_API_KEY: str = ""
+    OPENROUTER_API_KEY: str = ""
     TELEPHONY_STREAM_TTS_PROVIDER: Literal["yandex", "elevenlabs", "voximplant", "openai"] = "yandex"
     # Default voice ID for telephony TTS - locked to ElevenLabs Mila (AB9XsbSA4eLG12t2myjN)
     TELEPHONY_VOICE_ID: str = "AB9XsbSA4eLG12t2myjN"
