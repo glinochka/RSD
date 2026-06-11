@@ -160,19 +160,16 @@ async def _stream_elevenlabs_pcm16(
         else:
             logger.info("elevenlabs_tts: using default voice")
 
-    # ElevenLabs стриминг: запрашиваем MP3 (наиболее совместимый формат),
-    # декодируем в PCM и ресемплируем до 8kHz.
-    # Параметр output_format=pcm_16000 не всегда работает для всех voice/model.
-    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice}/stream"
+    # ElevenLabs стриминг: PCM напрямую (без MP3-декодирования) для низкой задержки.
+    # ВАЖНО: output_format - это query-параметр, а не поле тела запроса.
+    # Если передать его в теле, API вернёт дефолтный MP3 и аудио превратится в шум.
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice}/stream?output_format=pcm_16000"
     headers = {
         "xi-api-key": api_key,
-        "Accept": "audio/mpeg",
     }
-    # Use PCM streaming for lower latency (no MP3 decode overhead)
     data = {
         "text": text,
         "model_id": "eleven_multilingual_v2",
-        "output_format": "pcm_16000",  # 16kHz PCM16 LE - no MP3 decode needed
     }
 
     logger.info("elevenlabs_tts: text_len=%d voice=%s format=pcm_16000", len(text), voice[:8])
@@ -188,6 +185,12 @@ async def _stream_elevenlabs_pcm16(
             if response.status_code >= 400:
                 error_text = await response.aread()
                 raise RuntimeError(f"elevenlabs_api_error: {response.status_code} {error_text[:200]}")
+
+            # Safety: if the API returned compressed audio instead of raw PCM,
+            # treating it as PCM would produce loud noise on the line.
+            content_type = (response.headers.get("content-type") or "").lower()
+            if "mpeg" in content_type or "mp3" in content_type:
+                raise RuntimeError(f"elevenlabs_unexpected_format: {content_type} (expected raw PCM)")
 
             first_chunk = True
             async for chunk in response.aiter_bytes():
