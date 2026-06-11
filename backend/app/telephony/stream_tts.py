@@ -169,7 +169,9 @@ async def _stream_elevenlabs_pcm16(
     }
     data = {
         "text": text,
-        "model_id": "eleven_multilingual_v2",
+        # eleven_turbo_v2_5: faster, cheaper, matches the voice sound tested in ElevenLabs lab
+        "model_id": "eleven_turbo_v2_5",
+        "language_code": "ru",
     }
 
     logger.info("elevenlabs_tts: text_len=%d voice=%s format=pcm_16000", len(text), voice[:8])
