@@ -162,7 +162,7 @@ class Settings(BaseSettings):
     TELEPHONY_LLM_DEEPSEEK_MODEL: str = "deepseek-v4-flash"
     TELEPHONY_GROQ_MODEL: str = "llama-3.3-70b-versatile"
     TELEPHONY_XAI_MODEL: str = "grok-2-latest"
-    TELEPHONY_OPENROUTER_MODEL: str = "groq/llama-3.3-70b-versatile"
+    TELEPHONY_OPENROUTER_MODEL: str = "meta-llama/llama-3.3-70b-instruct"
     TELEPHONY_RAG_MIN_SCORE: float = 0.55
     GROQ_API_KEY: str = ""
     XAI_API_KEY: str = ""

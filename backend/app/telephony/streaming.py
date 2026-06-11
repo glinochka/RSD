@@ -110,7 +110,7 @@ def _llm_model(chat_model: str | None = None) -> str:
     if mode == "xai":
         return (getattr(settings, "TELEPHONY_XAI_MODEL", None) or "grok-2-latest").strip()
     if mode == "openrouter":
-        return (getattr(settings, "TELEPHONY_OPENROUTER_MODEL", None) or "groq/llama-3.3-70b-versatile").strip()
+        return (getattr(settings, "TELEPHONY_OPENROUTER_MODEL", None) or "meta-llama/llama-3.3-70b-instruct").strip()
     default_model = (getattr(settings, "TELEPHONY_LLM_DEEPSEEK_MODEL", None) or "deepseek-v4-flash").strip()
     return (chat_model or default_model).strip() or default_model
 
@@ -162,6 +162,9 @@ async def stream_answer_sentences(
     }
     if max_tokens is not None:
         create_kwargs["max_tokens"] = max_tokens
+    # OpenRouter: route to Groq for lowest latency (model slug is OpenRouter's, not Groq's)
+    if mode == "openrouter":
+        create_kwargs["extra_body"] = {"provider": {"only": ["groq"]}}
     stream = await client.chat.completions.create(**create_kwargs)
 
     from .stream_cancel import is_cancelled, is_cancelled_call_id
