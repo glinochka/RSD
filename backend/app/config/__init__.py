@@ -164,10 +164,8 @@ class Settings(BaseSettings):
     TELEPHONY_RAG_MIN_SCORE: float = 0.55
     GROQ_API_KEY: str = ""
     TELEPHONY_STREAM_TTS_PROVIDER: Literal["yandex", "elevenlabs", "voximplant", "openai"] = "yandex"
-    # Default voice ID for telephony TTS. Examples:
-    # - Yandex: "alena", "alena:rc" (premium), "filipp", "dasha:rc"
-    # - ElevenLabs: "alice", "bella", "adam" (mapped), or raw 22-char ID
-    TELEPHONY_VOICE_ID: str = "default"
+    # Default voice ID for telephony TTS - locked to ElevenLabs Mila (AB9XsbSA4eLG12t2myjN)
+    TELEPHONY_VOICE_ID: str = "AB9XsbSA4eLG12t2myjN"
     ELEVENLABS_API_KEY: str = ""
     TELEPHONY_CRM_FILLER_THRESHOLD_MS: int = 1500
     TELEPHONY_DEDICATED_POOL_ENABLED: bool = True

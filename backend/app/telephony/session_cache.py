@@ -40,7 +40,8 @@ async def cache_resolve_payload(
         return
 
     ttl = _ttl_sec()
-    voice_id = resolved.get("voice_id") or "alena"
+    # Locked to single voice: AB9XsbSA4eLG12t2myjN (ElevenLabs Mila)
+    voice_id = "AB9XsbSA4eLG12t2myjN"
     language = resolved.get("language") or "ru-RU"
     logger.info(
         "cache_resolve_payload: connection_id=%s agent_id=%s voice_id=%s language=%s",

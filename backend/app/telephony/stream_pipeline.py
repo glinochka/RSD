@@ -49,6 +49,10 @@ class StreamTurnMetrics:
     crm_execute_ms: int | None = None
     syntagma_count: int = 0
     cancelled: bool = False
+    # Additional timing for detailed latency logging
+    total_latency_ms: int | None = None
+    user_transcript: str = ""
+    template_type: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -57,7 +61,51 @@ class StreamTurnMetrics:
             "crm_execute_ms": self.crm_execute_ms,
             "syntagma_count": self.syntagma_count,
             "cancelled": self.cancelled,
+            "total_latency_ms": self.total_latency_ms,
         }
+
+    def log_latency_report(self) -> None:
+        """Log detailed latency breakdown for the turn."""
+        llm_time = self.llm_first_token_ms or 0
+        tts_time = self.tts_first_byte_ms or 0
+        crm_time = self.crm_execute_ms or 0
+        total = self.total_latency_ms or 0
+        transcript = (self.user_transcript or "")[:60]  # truncate for log readability
+
+        # Build latency pipeline description
+        modules: list[str] = []
+        if self.template_type == "qa":
+            modules.append(f"LLM streaming: {llm_time}ms (first token)")
+        else:
+            modules.append(f"CRM execute: {crm_time}ms")
+            if llm_time > 0:
+                modules.append(f"LLM first token: {llm_time}ms")
+
+        if tts_time > 0:
+            modules.append(f"TTS first byte: {tts_time}ms")
+
+        modules_str = " -> ".join(modules) if modules else "N/A"
+
+        # Latency status indicator
+        status = "✅ GOOD" if total <= 2500 else "⚠️ SLOW" if total <= 4000 else "❌ HIGH"
+        target_info = f"Target: 2000-3000ms | Current: {total}ms {status}"
+
+        logger.info(
+            "=== LATENCY REPORT ===\n"
+            "  User phrase: '%s...'\n"
+            "  Template: %s | Syntagmas: %d | Cancelled: %s\n"
+            "  Pipeline: %s\n"
+            "  %s\n"
+            "  First audio chunk: %sms (from user speech end)\n"
+            "======================",
+            transcript,
+            self.template_type or "qa",
+            self.syntagma_count,
+            "YES" if self.cancelled else "NO",
+            modules_str,
+            target_info,
+            tts_time,
+        )
 
 
 @dataclass
@@ -200,6 +248,19 @@ async def stream_fixed_phrase(
             reason="cancelled" if metrics.cancelled else "complete",
         )
     await clear_agent_spoken_text(call_id)
+
+    # Log latency for fixed phrases (DTMF prompts, routing messages)
+    total_time = metrics.tts_first_byte_ms or 0
+    phrase_snippet = plain[:50] if plain else ""
+    status = "✅" if total_time <= 1500 else "⚠️" if total_time <= 2500 else "❌"
+    logger.info(
+        "=== FIXED PHRASE LATENCY === phrase='%s...' tts_first_byte=%sms syntagmas=%d %s",
+        phrase_snippet,
+        total_time,
+        metrics.syntagma_count,
+        status,
+    )
+
     return metrics
 
 
@@ -267,8 +328,11 @@ async def stream_agent_reply(
         return prep, StreamTurnMetrics()
 
     started = time.perf_counter()
-    metrics = StreamTurnMetrics()
-    template_type = str(agent.template_type or "qa").strip().lower()
+    metrics = StreamTurnMetrics(
+        user_transcript=transcript[:200],  # store for logging
+        template_type=str(agent.template_type or "qa").strip().lower(),
+    )
+    template_type = metrics.template_type
     if template_type == "function_calling":
         template_type = "crm_admin"
 
@@ -397,6 +461,10 @@ async def stream_agent_reply(
     reply_chunks = _apply_prosody_to_chunks(chunks_plain, use_ssml=use_ssml)
     reply_chunks = _prepend_opening_ack(reply_chunks, call_id=call_db_id)
 
+    # Calculate total latency and log detailed report
+    metrics.total_latency_ms = int((time.perf_counter() - started) * 1000)
+    metrics.log_latency_report()
+
     result = PhoneTurnResult(
         reply_text=answer,
         reply_chunks=reply_chunks,
@@ -405,7 +473,7 @@ async def stream_agent_reply(
         play_filler=False,
         dialog_state=prep.dialog_state,
         use_ssml=use_ssml,
-        latency_ms=int((time.perf_counter() - started) * 1000),
+        latency_ms=metrics.total_latency_ms,
     )
 
     return result, metrics

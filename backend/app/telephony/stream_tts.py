@@ -108,7 +108,7 @@ async def _stream_openai_pcm16(
 async def _stream_elevenlabs_pcm16(
     text: str,
     *,
-    voice_id: str = "default",
+    voice_id: str = "AB9XsbSA4eLG12t2myjN",
     timeout: float = 10.0,
 ) -> AsyncIterator[bytes]:
     """ElevenLabs TTS streaming to PCM16 frames with optimized Russian voice mapping."""
@@ -116,55 +116,49 @@ async def _stream_elevenlabs_pcm16(
     if not api_key:
         raise RuntimeError("elevenlabs_api_key_missing")
 
-    # ElevenLabs voice mapping - optimized for Russian language
-    # These voices are verified to work well with Russian text
-    # IDs are 22-character strings
+    # ElevenLabs voice - hardcoded default for all agents
+    # Temporarily locked to AB9XsbSA4eLG12t2myjN (Mila - Russian voice)
+    DEFAULT_ELEVENLABS_VOICE = "AB9XsbSA4eLG12t2myjN"
+
+    # Legacy mapping (kept for compatibility, but all map to default)
     RUSSIAN_VOICES = {
-        # Premium multilingual voices (best for Russian)
-        "alice": "Xb7hH8MSUJpSbSDYk0k2",     # Alice - expressive, very good for RU
-        "bella": "MF3mGyEYCl7XYWbV9V6O",    # Bella - female, clear Russian
-        "matilda": "XrExE9yKIg1WbnnjSflH",   # Matilda - female, warm tone
-        "nicole": "piTKgcLEGmPE4e6mEKli",    # Nicole - female, American accent but works for RU
-        "glinda": "z9fAnlkpzviPz146aGWa",    # Glinda - female, theatrical
-        "antoni": "ErXwobaYiN019PrySvdu",    # Antoni - male, good for RU
-        "callum": "N2lVS1w4EtoT3dr4eOWO",    # Callum - male, Scottish but multilingual
-        "charlie": "IKne3meq5aSn9XLyUdCD",   # Charlie - male, neutral
-        "clyde": "2EiwWnXFnvU5JabPnv8Z",     # Clyde - male, older, works for RU
-        "dave": "CYw3kZ02Hs0563khs1Fj",      # Dave - male, conversational
-        "fin": "D38z5RcWu1voky8WS1ja",       # Fin - male, Irish but multilingual
-        "michael": "flq6f7yk4E4fJM5XTYuZ",   # Michael - male, calm
-        "patrick": "przKpfM8PZDW5zJO8izB",   # Patrick - male, authoritative
-        "richard": "Yko7PKHZNXotIFUBG7I9",   # Richard - male, narrator style
-        # Additional voices tested for Russian
-        "adam": "pNInz6obpgDQGcFmaJgB",      # Adam - male, natural
-        "daniel": "onwK4e9ZLuTAKqWW03F9",    # Daniel - male, British, good clarity
-        "josh": "TxGEqnHWrfWFT7NG4QNF",      # Josh - male, American
-        "rachel": "21m00Tcm4TlvDq8ikWAM",    # Rachel - female, conversational
-        "domi": "AZnzlk1XvdvUeBnXmlld",      # Domi - female, strong
-        "elli": "MF3mGyEYCl7XYWbV9V6O",      # Elli - female, similar to bella
+        "default": DEFAULT_ELEVENLABS_VOICE,
+        "alice": DEFAULT_ELEVENLABS_VOICE,
+        "bella": DEFAULT_ELEVENLABS_VOICE,
+        "matilda": DEFAULT_ELEVENLABS_VOICE,
+        "nicole": DEFAULT_ELEVENLABS_VOICE,
+        "glinda": DEFAULT_ELEVENLABS_VOICE,
+        "antoni": DEFAULT_ELEVENLABS_VOICE,
+        "callum": DEFAULT_ELEVENLABS_VOICE,
+        "charlie": DEFAULT_ELEVENLABS_VOICE,
+        "clyde": DEFAULT_ELEVENLABS_VOICE,
+        "dave": DEFAULT_ELEVENLABS_VOICE,
+        "fin": DEFAULT_ELEVENLABS_VOICE,
+        "michael": DEFAULT_ELEVENLABS_VOICE,
+        "patrick": DEFAULT_ELEVENLABS_VOICE,
+        "richard": DEFAULT_ELEVENLABS_VOICE,
+        "adam": DEFAULT_ELEVENLABS_VOICE,
+        "daniel": DEFAULT_ELEVENLABS_VOICE,
+        "josh": DEFAULT_ELEVENLABS_VOICE,
+        "rachel": DEFAULT_ELEVENLABS_VOICE,
+        "domi": DEFAULT_ELEVENLABS_VOICE,
+        "elli": DEFAULT_ELEVENLABS_VOICE,
     }
 
-    # Map generic voice_id to ElevenLabs ID
-    # Accept raw ElevenLabs IDs (22 chars) directly
-    if voice_id and len(voice_id) == 22:
-        voice = voice_id  # Assume it's a direct ElevenLabs voice ID
-        logger.info("elevenlabs_tts: using direct voice_id=%s (custom voice)", voice[:8] + "...")
-    elif voice_id.lower() in RUSSIAN_VOICES:
-        voice = RUSSIAN_VOICES[voice_id.lower()]
-        logger.info("elevenlabs_tts: mapped named voice=%s -> voice_id=%s", voice_id.lower(), voice[:8] + "...")
+    # Force default voice for all agents (temporary - single voice policy)
+    # All voice_id values are overridden to DEFAULT_ELEVENLABS_VOICE
+    raw_voice = (voice_id or "").strip()
+    if raw_voice and len(raw_voice) >= 20 and raw_voice == DEFAULT_ELEVENLABS_VOICE:
+        # Allow only the default voice ID
+        voice = raw_voice
+        logger.info("elevenlabs_tts: using default voice_id=%s", voice[:8] + "...")
     else:
-        # Map common aliases
-        alias_map = {
-            "default": "alice",      # Best overall for Russian
-            "female": "alice",       # Best female for Russian
-            "woman": "alice",
-            "male": "adam",          # Good male for Russian
-            "man": "adam",
-            "neutral": "charlie",
-        }
-        mapped = alias_map.get(voice_id.lower(), "alice")
-        voice = RUSSIAN_VOICES[mapped]
-        logger.info("elevenlabs_tts: mapped voice_id=%s -> %s -> voice=%s", voice_id, mapped, voice[:8] + "...")
+        # Override any other voice with default
+        voice = DEFAULT_ELEVENLABS_VOICE
+        if raw_voice:
+            logger.info("elevenlabs_tts: voice_id=%s overridden to default voice", raw_voice)
+        else:
+            logger.info("elevenlabs_tts: using default voice")
 
     # ElevenLabs стриминг: запрашиваем MP3 (наиболее совместимый формат),
     # декодируем в PCM и ресемплируем до 8kHz.
@@ -226,7 +220,7 @@ async def _stream_elevenlabs_pcm16(
 async def stream_syntagma_pcm16(
     text: str,
     *,
-    voice_id: str = "default",
+    voice_id: str = "AB9XsbSA4eLG12t2myjN",
     language: str = "ru-RU",
 ) -> AsyncIterator[bytes]:
     """
@@ -348,7 +342,7 @@ async def _try_elevenlabs_tts(
 async def batch_fallback_pcm16(
     text: str,
     *,
-    voice_id: str = "default",
+    voice_id: str = "AB9XsbSA4eLG12t2myjN",
     language: str = "ru-RU",
 ) -> bytes:
     """
@@ -389,7 +383,7 @@ async def batch_fallback_pcm16(
 async def stream_syntagma_ulaw(
     text: str,
     *,
-    voice_id: str = "default",
+    voice_id: str = "AB9XsbSA4eLG12t2myjN",
     language: str = "ru-RU",
 ):
     from .ulaw import pcm16_to_ulaw
@@ -401,7 +395,7 @@ async def stream_syntagma_ulaw(
 async def batch_fallback_ulaw(
     text: str,
     *,
-    voice_id: str = "default",
+    voice_id: str = "AB9XsbSA4eLG12t2myjN",
     language: str = "ru-RU",
 ) -> bytes:
     from .ulaw import pcm16_to_ulaw

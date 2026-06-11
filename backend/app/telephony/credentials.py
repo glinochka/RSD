@@ -28,7 +28,7 @@ class TelephonyCredentialsV1(BaseModel):
     phone_number_e164: str
     webhook_secret: str = Field(min_length=32)
     operator_transfer_e164: str
-    voice_id: str = Field(min_length=1)
+    voice_id: str = Field(default="AB9XsbSA4eLG12t2myjN", min_length=1)
     language: str = "ru-RU"
     record_calls: bool = True
     disclaimer_played: bool = True

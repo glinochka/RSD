@@ -17,7 +17,7 @@ _lock = asyncio.Lock()
 async def get_filler_pcm16(
     text: str,
     *,
-    voice_id: str = "default",
+    voice_id: str = "AB9XsbSA4eLG12t2myjN",
     language: str = "ru-RU",
 ) -> bytes | None:
     key = f"{voice_id}:{language}:{text.strip()}"
@@ -42,7 +42,7 @@ async def get_filler_pcm16(
             return None
 
 
-async def warm_default_fillers(*, voice_id: str = "default", language: str = "ru-RU") -> None:
+async def warm_default_fillers(*, voice_id: str = "AB9XsbSA4eLG12t2myjN", language: str = "ru-RU") -> None:
     for text in (MSG_CRM_FILLER, MSG_RAG_FILLER):
         await get_filler_pcm16(text, voice_id=voice_id, language=language)
 
@@ -51,7 +51,7 @@ async def warm_default_fillers(*, voice_id: str = "default", language: str = "ru
 async def get_filler_ulaw(
     text: str,
     *,
-    voice_id: str = "default",
+    voice_id: str = "AB9XsbSA4eLG12t2myjN",
     language: str = "ru-RU",
 ) -> bytes | None:
     from .ulaw import pcm16_to_ulaw

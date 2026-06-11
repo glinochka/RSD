@@ -250,12 +250,12 @@ class OrchestratorWorker:
                 slot.call_id,
             )
             return
+        # Locked to single voice: AB9XsbSA4eLG12t2myjN (ElevenLabs Mila)
         if voice_id is None or language is None:
             session_row = await hgetall_session(slot.connection_id)
-            # Use TELEPHONY_VOICE_ID from settings as fallback before "default"
-            default_voice = str(settings.TELEPHONY_VOICE_ID or "default").strip() or "default"
-            voice_id = voice_id or str(session_row.get("voice_id") or default_voice)
             language = language or str(session_row.get("language") or "ru-RU")
+        # Force default voice regardless of session/settings
+        voice_id = "AB9XsbSA4eLG12t2myjN"
         logger.info(
             "orchestrator %s starting TTS call_id=%s voice=%s lang=%s text_len=%d",
             log_label,
@@ -441,10 +441,11 @@ class OrchestratorWorker:
             call_db_id=slot.call_db_id,
         )
         # Play greeting as soon as routing is resolved (do not wait for extra DB hydration).
+        # Locked to single voice: AB9XsbSA4eLG12t2myjN (ElevenLabs Mila)
         await self._play_agent_welcome(
             slot,
             welcome_raw=routed_welcome if routed_welcome.strip() else str(resolved.get("welcome_message") or ""),
-            voice_id=str(resolved.get("voice_id") or settings.TELEPHONY_VOICE_ID or "default"),
+            voice_id="AB9XsbSA4eLG12t2myjN",
             language=str(resolved.get("language") or "ru-RU"),
         )
         await self._load_postgres_once(slot)
@@ -597,7 +598,8 @@ class OrchestratorWorker:
             if decision.suggest_dtmf_menu and not transcript:
                 msg = "Не расслышал. Наберите добавочный номер на клавиатуре."
                 session_row = await hgetall_session(connection_id)
-                voice_id = str(session_row.get("voice_id") or settings.TELEPHONY_VOICE_ID or "default")
+                # Locked to single voice: AB9XsbSA4eLG12t2myjN (ElevenLabs Mila)
+                voice_id = "AB9XsbSA4eLG12t2myjN"
                 language = str(session_row.get("language") or "ru-RU")
                 assert_stream_tts_configured()
                 stream_metrics = await stream_fixed_phrase(
@@ -615,7 +617,8 @@ class OrchestratorWorker:
                 )
             else:
                 session_row = await hgetall_session(connection_id)
-                voice_id = str(session_row.get("voice_id") or settings.TELEPHONY_VOICE_ID or "default")
+                # Locked to single voice: AB9XsbSA4eLG12t2myjN (ElevenLabs Mila)
+                voice_id = "AB9XsbSA4eLG12t2myjN"
                 language = str(session_row.get("language") or "ru-RU")
                 async with async_session_maker() as session:
                     async with session.begin():
@@ -679,13 +682,39 @@ class OrchestratorWorker:
                     e164=operator_e164,
                 )
 
-            logger.info(
-                "orchestrator stt.final ok call_id=%s db_id=%s latency_ms=%s redis_history_len=%s",
-                call_id,
-                slot.call_db_id,
-                int((time.perf_counter() - started) * 1000),
-                len(compressed.splitlines()) if compressed else 0,
-            )
+            # Log turn completion with latency details
+            wall_ms = int((time.perf_counter() - started) * 1000)
+            if stream_metrics:
+                llm_ms = stream_metrics.llm_first_token_ms or 0
+                tts_ms = stream_metrics.tts_first_byte_ms or 0
+                crm_ms = stream_metrics.crm_execute_ms or 0
+
+                latency_parts = [f"wall={wall_ms}ms"]
+                if llm_ms:
+                    latency_parts.append(f"llm_first_token={llm_ms}ms")
+                if tts_ms:
+                    latency_parts.append(f"tts_first_byte={tts_ms}ms")
+                if crm_ms:
+                    latency_parts.append(f"crm={crm_ms}ms")
+
+                status = "✅" if wall_ms <= 2500 else "⚠️" if wall_ms <= 4000 else "❌"
+                logger.info(
+                    "orchestrator stt.final ok call_id=%s db_id=%s transcript='%s...' %s [syntagmas=%s] | %s",
+                    call_id,
+                    slot.call_db_id,
+                    transcript[:50],
+                    " ".join(latency_parts),
+                    stream_metrics.syntagma_count,
+                    status,
+                )
+            else:
+                logger.info(
+                    "orchestrator stt.final ok call_id=%s db_id=%s transcript='%s...' wall=%sms (no metrics)",
+                    call_id,
+                    slot.call_db_id,
+                    transcript[:50],
+                    wall_ms,
+                )
 
     async def handle_session_end(self, payload: dict[str, Any]) -> None:
         call_id = str(payload.get("call_id") or "").strip()

@@ -97,7 +97,7 @@ def map_voice_for_provider(provider: TtsProvider, voice_id: str) -> str:
 async def synthesize_preview_speech(
     text: str,
     *,
-    voice_id: str = "default",
+    voice_id: str = "AB9XsbSA4eLG12t2myjN",
     language: str = "ru-RU",
 ) -> tuple[bytes, str, TtsProvider]:
     """

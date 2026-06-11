@@ -146,7 +146,11 @@ async def resolve_telephony_channel(
         routed_by = "did"
     else:
         routed_by = "webhook"
-    voice_id = str(creds.voice_id or "alena").strip() or "alena"
+    # Locked to single voice: AB9XsbSA4eLG12t2myjN (ElevenLabs Mila)
+    raw_voice = str(creds.voice_id or "").strip()
+    voice_id = "AB9XsbSA4eLG12t2myjN"
+    if raw_voice and raw_voice != voice_id:
+        logger.info("telephony_channel: voice_id=%s overridden to default", raw_voice)
     payload = {
         "agent_id": int(agent.id),
         "connection_id": int(connection.id),
