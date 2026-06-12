@@ -53,7 +53,7 @@ def opentele_available() -> bool:
         import opentele  # noqa: F401
 
         return True
-    except Exception:
+    except BaseException:
         return False
 
 
