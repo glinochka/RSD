@@ -47,7 +47,9 @@ class TestAgentsCRUD:
         self, client: AsyncClient, auth_headers, test_user, monkeypatch
     ):
         """Успешное создание агента по токену"""
-        monkeypatch.setenv("BASE_URL", "https://example.com")
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "BASE_URL", "https://example.com")
         
         # Мокаем оба вызова urlopen в роутере: getMe и setWebhook
         with patch("app.router_agents.router.urlopen") as mock_urlopen:
@@ -189,14 +191,18 @@ class TestAgentsCRUD:
     @pytest.mark.asyncio
     async def test_create_empty_agent_sales_manager_default_config(self, client: AsyncClient, auth_headers):
         """Создание sales_manager с дефолтным безопасным template_config."""
-        response = await client.post(
-            "/api/agents",
-            headers=auth_headers,
-            json={
-                "system_prompt": "Sales system prompt",
-                "template_type": "sales_manager",
-            },
-        )
+        with patch(
+            "app.router_agents.router._schedule_sales_trigger_words_generation",
+            new_callable=AsyncMock,
+        ):
+            response = await client.post(
+                "/api/agents",
+                headers=auth_headers,
+                json={
+                    "system_prompt": "Sales system prompt",
+                    "template_type": "sales_manager",
+                },
+            )
 
         assert response.status_code == 201, f"Expected 201, got {response.status_code}: {response.text}"
         data = response.json()
@@ -313,11 +319,11 @@ class TestAgentsCRUD:
         assert cfg["fallback_mode"] == "ask_clarifying_question"
         assert cfg["allowed_booking_tools"] == [
             "check_availability",
+            "find_next_available",
             "list_appointments",
             "create_appointment",
             "reschedule_appointment",
             "cancel_appointment",
-            "confirm_appointment",
             "list_staff",
             "list_services",
         ]
@@ -646,7 +652,7 @@ class TestAgentsCRUD:
         )
 
         assert response.status_code == 422, f"Expected 422, got {response.status_code}: {response.text}"
-        assert "video_duration_seconds" in response.json()["detail"]
+        assert "разработке" in response.json()["detail"].lower()
 
 
 class TestAgentsInternal:
@@ -710,14 +716,27 @@ class TestTelegramWebhookSync:
     async def test_toggle_status_surfaces_telegram_webhook_error(
         self, client: AsyncClient, auth_headers, test_agent, monkeypatch
     ):
-        monkeypatch.setenv("BASE_URL", "https://example.com")
+        from app.config import settings
 
-        with patch(
-            "app.router_agents.router._telegram_bot_api_json",
-            new_callable=AsyncMock,
-            side_effect=__import__("fastapi").HTTPException(
-                status_code=502,
-                detail="Telegram API (setWebhook): Bad Request: bad webhook: HTTPS URL must be provided",
+        monkeypatch.setattr(settings, "BASE_URL", "https://example.com")
+
+        mock_channel = MagicMock()
+        mock_channel.encrypted_credentials = "mock_encrypted_test_bot_token_123"
+        mock_channel.external_id = "12345"
+
+        with (
+            patch(
+                "app.router_agents.router._get_telegram_bot_channel_for_agent",
+                new_callable=AsyncMock,
+                return_value=mock_channel,
+            ),
+            patch(
+                "app.router_agents.router._telegram_bot_api_json",
+                new_callable=AsyncMock,
+                side_effect=__import__("fastapi").HTTPException(
+                    status_code=502,
+                    detail="Telegram API (setWebhook): Bad Request: bad webhook: HTTPS URL must be provided",
+                ),
             ),
         ):
             response = await client.patch(

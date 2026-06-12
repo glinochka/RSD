@@ -8,6 +8,9 @@ from app.services.admin_booking.tool_registry import AdminBookingToolRegistry
 
 @pytest.mark.asyncio
 async def test_admin_booking_tool_registry_idempotency_replay(monkeypatch):
+    from app.services.admin_booking.tool_registry import _IDEMPOTENCY_CACHE
+
+    _IDEMPOTENCY_CACHE.clear()
     calls = {"create_appointment": 0}
     future_day = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
 

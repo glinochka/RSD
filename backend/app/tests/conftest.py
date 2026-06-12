@@ -1,6 +1,7 @@
 import asyncio
 import os
 import sys
+from contextlib import ExitStack
 from pathlib import Path
 from typing import AsyncGenerator, Generator
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -20,9 +21,9 @@ from sqlalchemy.pool import StaticPool
 def _compile_jsonb_sqlite(type_, compiler, **kw):
     return "JSON"
 
- 
+
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
- 
+
 # --- ЗАГРУЗКА ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ---
 # Ищем .env: backend/app/.env, app/tests/.env, корень репозитория (часто один общий .env)
 _env_candidates = [
@@ -33,7 +34,15 @@ _env_candidates = [
 env_path = next((p for p in _env_candidates if p.exists()), _env_candidates[0])
 load_dotenv(env_path, override=True)
 
-# Проверка критических переменных
+_TEST_ENV_DEFAULTS = {
+    "SECRET_KEY": "test-jwt-secret-key-for-ci-min-32-chars-long",
+    "INTERNAL_API_KEY": "test-internal-api-key",
+    "ENCRYPTION_KEY": "test-encryption-key-for-fernet-ci",
+    "USER_JWT_SECRET_KEY": "798cd1b6cb25d52ce4e49824b01b5b22a117325ad327161c50ad5a8c2898fc89",
+}
+for _key, _value in _TEST_ENV_DEFAULTS.items():
+    os.environ.setdefault(_key, _value)
+
 required_vars = ["SECRET_KEY", "INTERNAL_API_KEY", "ENCRYPTION_KEY"]
 for var in required_vars:
     if not os.getenv(var):
@@ -43,20 +52,76 @@ for var in required_vars:
 from app.alembic.database import Base
 
 
-@event.listens_for(Base.metadata, "before_create")
-def _prepare_sqlite_schema(target, connection, **kw):
-    if connection.dialect.name != "sqlite":
-        return
-    for table in target.tables.values():
+def _sqlite_tables_from_ddl_target(target):
+    if hasattr(target, "columns"):
+        return [target]
+    if hasattr(target, "tables"):
+        return list(target.tables.values())
+    return []
+
+
+def _replace_jsonb_columns_for_sqlite(tables) -> None:
+    for table in tables:
         for column in table.columns:
             if isinstance(column.type, JSONB):
                 column.type = JSON()
             server_default = column.server_default
-            if server_default is not None and "::jsonb" in str(getattr(server_default, "arg", server_default)):
+            if server_default is not None and "::jsonb" in str(
+                getattr(server_default, "arg", server_default)
+            ):
                 column.server_default = text("'{}'")
+
+
+@event.listens_for(Base.metadata, "before_create")
+def _prepare_sqlite_schema(target, connection, **kw):
+    if connection.dialect.name != "sqlite":
+        return
+    _replace_jsonb_columns_for_sqlite(_sqlite_tables_from_ddl_target(target))
+
 
 # ВАЖНО: Импортируем модели здесь, чтобы они зарегистрировались в Base.metadata
 from app.alembic import models  # noqa: F401
+
+_replace_jsonb_columns_for_sqlite(Base.metadata.tables.values())
+
+_ASYNC_SESSION_MAKER_PATCH_TARGETS = (
+    "app.alembic.database.async_session_maker",
+    "app.services.error_log_service.async_session_maker",
+    "app.services.sales.contact_pool.async_session_maker",
+    "app.services.sales.dm_queue_service.async_session_maker",
+    "app.services.sales.fsm.async_session_maker",
+    "app.services.sales.sales_followup_service.async_session_maker",
+    "app.services.admin_booking.service.async_session_maker",
+    "app.services.admin_booking.payment_service.async_session_maker",
+    "app.services.admin_booking.client_notify.async_session_maker",
+)
+
+
+def _make_sqlite_async_session_maker(test_engine):
+    return async_sessionmaker(test_engine, expire_on_commit=False, class_=AsyncSession)
+
+
+def _patch_async_session_makers(stack: ExitStack, test_engine):
+    factory = _make_sqlite_async_session_maker(test_engine)
+
+    def maker():
+        return factory()
+
+    for target in _ASYNC_SESSION_MAKER_PATCH_TARGETS:
+        stack.enter_context(patch(target, maker))
+    return maker
+
+
+@pytest.fixture(autouse=True)
+def _reset_booking_service_singletons():
+    import app.services.admin_booking.payment_service as payment_module
+    import app.services.admin_booking.service as booking_module
+
+    booking_module._admin_booking_service = None
+    payment_module._payment_service = None
+    yield
+    booking_module._admin_booking_service = None
+    payment_module._payment_service = None
 
 
 @pytest.fixture(scope="session")
@@ -146,9 +211,8 @@ async def client(test_engine, test_session) -> AsyncGenerator[AsyncClient, None]
             with patch('app.utils.crypto.decrypt_token', side_effect=mock_decrypt_token):
                 with patch('app.utils.crypto.encrypt_crm_credentials', side_effect=mock_encrypt_crm_credentials):
                     # --- 4. ПАТЧИНГ БАЗЫ ДАННЫХ ---
-                    with patch('app.alembic.database.async_session_maker') as mock_factory:
-                        mock_factory.return_value.__aenter__.return_value = test_session
-                        mock_factory.return_value.__aexit__.return_value = None
+                    with ExitStack() as stack:
+                        _patch_async_session_makers(stack, test_engine)
 
                         from fastapi import FastAPI
                         from fastapi.middleware.cors import CORSMiddleware
@@ -347,24 +411,13 @@ def mock_httpx_client():
 
 
 @pytest_asyncio.fixture(scope="function")
-async def mock_db_session(test_session):
+async def mock_db_session(test_engine):
     """
     Fixtures that provides mocked async_session_maker for database services.
     This allows tests to use DmQueueService, SalesFSMService, etc. without connecting to PostgreSQL.
     """
-    class MockAsyncContextManager:
-        async def __aenter__(self):
-            return test_session
-
-        async def __aexit__(self, exc_type, exc_val, exc_tb):
-            return None
-
-    def mock_async_session_maker():
-        return MockAsyncContextManager()
-
-    with (
-        patch('app.alembic.database.async_session_maker', mock_async_session_maker),
-        patch('app.services.sales.dm_queue_service.async_session_maker', mock_async_session_maker),
-        patch('app.services.sales.fsm.async_session_maker', mock_async_session_maker),
-    ):
-        yield test_session
+    with ExitStack() as stack:
+        _patch_async_session_makers(stack, test_engine)
+        factory = _make_sqlite_async_session_maker(test_engine)
+        async with factory() as session:
+            yield session

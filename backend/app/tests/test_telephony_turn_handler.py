@@ -16,6 +16,7 @@ async def test_turn_handler_stt_empty_without_transcript():
 
     call = MagicMock()
     call.id = 10
+    call.started_at = None
     agent = MagicMock()
     agent.id = 3
     agent.is_active = True

@@ -81,13 +81,19 @@ async def test_apply_routed_agent_streams_default_welcome():
     agent.welcome_message = "Добро пожаловать в тестового агента."
 
     session = AsyncMock()
-    session.begin.return_value.__aenter__ = AsyncMock(return_value=None)
-    session.begin.return_value.__aexit__ = AsyncMock(return_value=None)
+    begin_cm = MagicMock()
+    begin_cm.__aenter__ = AsyncMock(return_value=None)
+    begin_cm.__aexit__ = AsyncMock(return_value=None)
+    session.begin = MagicMock(return_value=begin_cm)
     session.scalar = AsyncMock(return_value=agent)
     session.get = AsyncMock(return_value=None)
 
+    session_cm = MagicMock()
+    session_cm.__aenter__ = AsyncMock(return_value=session)
+    session_cm.__aexit__ = AsyncMock(return_value=None)
+
     with (
-        patch("app.telephony.orchestrator_worker.async_session_maker") as session_maker,
+        patch("app.telephony.orchestrator_worker.async_session_maker", return_value=session_cm),
         patch(
             "app.telephony.orchestrator_worker.resolve_telephony_channel",
             AsyncMock(return_value={"welcome_message": None}),
@@ -96,8 +102,6 @@ async def test_apply_routed_agent_streams_default_welcome():
         patch.object(worker, "_load_postgres_once", AsyncMock()),
         patch.object(worker, "_play_agent_welcome", AsyncMock()) as play_welcome,
     ):
-        session_maker.return_value.__aenter__ = AsyncMock(return_value=session)
-        session_maker.return_value.__aexit__ = AsyncMock(return_value=None)
         await worker._apply_routed_agent(slot, 37, extension="1234")
 
     play_welcome.assert_awaited_once_with(

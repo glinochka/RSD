@@ -306,7 +306,6 @@ class TestAdminCreateUser:
                 "email_verified": False,
                 "password": get_password_hash("oldpass1"),
             })
-            await test_session.commit()
 
         response = await client.post(
             "/api/admin/users",

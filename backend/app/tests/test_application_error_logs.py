@@ -73,7 +73,7 @@ async def test_admin_logs_resolve(client, test_session):
 
 
 @pytest.mark.asyncio
-async def test_record_error_log_persists(test_session):
+async def test_record_error_log_persists(mock_db_session):
     exc = RuntimeError("unit test failure")
     await record_error_log(
         exc=exc,
@@ -84,8 +84,8 @@ async def test_record_error_log_persists(test_session):
         context={"step": "unit-test"},
     )
 
-    async with test_session.begin():
-        row = await test_session.scalar(
+    async with mock_db_session.begin():
+        row = await mock_db_session.scalar(
             select(ApplicationErrorLog).where(ApplicationErrorLog.scenario == "test scenario")
         )
     assert row is not None

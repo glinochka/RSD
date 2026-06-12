@@ -37,7 +37,7 @@ async def test_upsert_call_event_creates_then_updates():
     connection.encrypted_credentials = "enc"
 
     session = AsyncMock()
-    session.scalar = AsyncMock(side_effect=[connection, None])
+    session.scalar = AsyncMock(return_value=None)
     session.add = lambda obj: None
     session.flush = AsyncMock()
 

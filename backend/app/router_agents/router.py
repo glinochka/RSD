@@ -62,6 +62,7 @@ from ..services.http_integration.errors import HttpIntegrationValidationError
 from ..services.http_integration.tool_registry import validate_integration_config_dict
 from ..services.qa_handoff_service import EscalationType as QAEscalationType, get_qa_handoff_service
 from ..services.template_runtime import EscalationType, get_template_runtime
+from ..services.crm import build_provider
 from ..telephony.agent_guards import is_user_frozen
 from ..services.telegram_userbot_auth import (
     TelegramUserbotAuthError,

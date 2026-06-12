@@ -476,13 +476,13 @@ class AdminBookingService:
         require_refund_contact: bool = False,
     ) -> dict[str, Any]:
         from .payment_service import (
+            AdminBookingPaymentService,
             RefundContactDetailsRequired,
             _is_auto_refund_eligible,
             _normalize_phone,
-            get_admin_booking_payment_service,
         )
 
-        payment_svc = get_admin_booking_payment_service()
+        payment_svc = AdminBookingPaymentService(session_factory=self._session_factory)
         snapshot = await self._get_appointment_snapshot(
             agent_id=agent_id,
             appointment_id=appointment_id,

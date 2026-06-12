@@ -560,7 +560,7 @@ async def test_sales_runtime_pool_only_rejects_unknown_private_inbound(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_sales_runtime_private_inbound_skips_target_check(monkeypatch):
+async def test_sales_runtime_private_inbound_skips_target_check(monkeypatch, mock_db_session):
     service = TemplateRuntimeService()
     _patch_sales_userbot_db(monkeypatch)
     unified_mock = AsyncMock(side_effect=AssertionError("_qualify_and_compose_unified should not be called"))
@@ -599,7 +599,7 @@ async def test_sales_runtime_private_inbound_skips_target_check(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_sales_runtime_mark_contacted_returns_human_text(monkeypatch):
+async def test_sales_runtime_mark_contacted_returns_human_text(monkeypatch, mock_db_session):
     service = TemplateRuntimeService()
     _patch_sales_userbot_db(monkeypatch)
     human_dm = "Здравствуйте! Да, занимаемся автоматизацией бизнес-процессов. Подскажите ваш кейс?"
@@ -653,7 +653,7 @@ async def test_sales_runtime_mark_contacted_returns_human_text(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_sales_runtime_stops_when_contact_already_terminal(monkeypatch):
+async def test_sales_runtime_stops_when_contact_already_terminal(monkeypatch, mock_db_session):
     service = TemplateRuntimeService()
     _patch_sales_userbot_db(monkeypatch)
     qualify_mock = AsyncMock(side_effect=AssertionError("qualify_message should not be called"))
@@ -680,7 +680,7 @@ async def test_sales_runtime_stops_when_contact_already_terminal(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_sales_runtime_finish_workflow_signal(monkeypatch):
+async def test_sales_runtime_finish_workflow_signal(monkeypatch, mock_db_session):
     service = TemplateRuntimeService()
     _patch_sales_userbot_db(monkeypatch)
     monkeypatch.setattr(

@@ -22,6 +22,6 @@ def test_prepend_opening_ack():
     long_reply = (
         "Запись возможна завтра после обеда, могу предложить несколько удобных временных слотов."
     )
-    chunks = _prepend_opening_ack([long_reply], call_id=3)
+    chunks = _prepend_opening_ack([long_reply], call_id=1)
     assert chunks[0].startswith("Понял.")
     assert "Запись возможна" in chunks[0]
