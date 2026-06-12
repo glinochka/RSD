@@ -26,3 +26,4 @@ aiohttp>=3.9.0
 pillow>=10.0.0
 bleach[css]>=6.1.0
 pydub>=0.25.1
+audioop-lts>=0.2.1; python_version >= "3.13"
