@@ -17,6 +17,7 @@ from ..utils.crypto import decrypt_booking_payment_secret, decrypt_crm_credentia
 from ..utils.pii import mask_external_id, redact_pii_text
 from .admin_booking import AdminBookingNeedsConfirmationError, AdminBookingToolRegistry
 from .admin_booking.catalog_prompt import load_booking_catalog_knowledge
+from .agent_memory import build_client_memory_block, build_client_memory_system_section
 from .ai_authoring import ai_client, generate_answer_with_context
 from .content_factory_runtime import get_content_factory_orchestrator
 from .crm import build_provider
@@ -390,13 +391,6 @@ class TemplateRuntimeService:
             template_config=template_config or {},
         )
         return self._sanitize_result(fallback_result)
-
-    @staticmethod
-    def _format_portrait_block(chat_portrait: str | None) -> str:
-        portrait = (chat_portrait or "").strip()
-        if not portrait:
-            return ""
-        return f"Портрет текущего клиента/чата:\n{portrait}"
 
     @staticmethod
     def _strip_dsml_tool_markup(text: str) -> str:
@@ -838,8 +832,10 @@ class TemplateRuntimeService:
             user_external_id=user_external_id,
             source_channel=source_channel,
         )
-
-        portrait_block = self._format_portrait_block(chat_portrait)
+        client_memory_section = build_client_memory_system_section(
+            portrait=chat_portrait,
+            history=chat_history,
+        )
         domain_instruction = self._crm_admin_domain_instruction(
             domain_type=domain_type,
             custom_domain_instruction=custom_domain_instruction,
@@ -869,15 +865,15 @@ class TemplateRuntimeService:
             agent_prompt=prompt,
             context_tail=context_tail,
             today_date=now_local.strftime("%Y-%m-%d"),
-            portrait_block=portrait_block,
             knowledge_catalog_block=knowledge_catalog_block,
         )
+        if client_memory_section:
+            system_prompt = f"{system_prompt}\n\n{client_memory_section}"
 
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
         ]
-        messages.extend(chat_history)
-        messages.append({"role": "user", "content": user_message})
         tool_events: list[dict[str, Any]] = []
         pending_payment_url: str | None = None
         max_iterations = 15
@@ -1177,7 +1173,6 @@ class TemplateRuntimeService:
         agent_id: int,
         user_external_id: str | None,
         source_channel: str,
-        include_timestamps: bool = False,
         limit: int = 20,
     ) -> list[dict[str, Any]]:
         uid = (user_external_id or "").strip()
@@ -1218,13 +1213,13 @@ class TemplateRuntimeService:
             text = (row.get("message_text") or "").strip()
             if role not in {"user", "agent"} or not text:
                 continue
-            if include_timestamps:
-                ts = row.get("created_at")
-                ts_str = ts.strftime("%Y-%m-%d %H:%M") if ts else ""
-                content = f"[{ts_str}] {text}" if ts_str else text
-            else:
-                content = text
-            history.append({"role": "assistant" if role == "agent" else "user", "content": content})
+            history.append(
+                {
+                    "role": "assistant" if role == "agent" else "user",
+                    "content": text,
+                    "created_at": row.get("created_at"),
+                }
+            )
         return history
 
     async def _execute_qa_like(
@@ -1256,25 +1251,23 @@ class TemplateRuntimeService:
                 use_smart_search=False,
             )
         context_list = context if isinstance(context, list) else []
-        portrait_block = self._format_portrait_block(chat_portrait)
         effective_prompt = prompt.strip()
         if enable_owner_handoff:
             effective_prompt = f"{effective_prompt}\n\n{QA_OWNER_HANDOFF_INSTRUCTION}".strip()
-        if portrait_block:
-            effective_prompt = f"{effective_prompt}\n\n{portrait_block}" if effective_prompt else portrait_block
         is_phone = bool((runtime_context or {}).get("phone_channel"))
         llm_temperature = 0.48 if is_phone else 0.3
 
-        chat_history: list[dict[str, Any]] | None = None
+        loaded_history: list[dict[str, Any]] = []
         if enable_chat_history and agent_id and user_external_id and source_channel:
-            loaded = await self._load_recent_channel_history(
+            loaded_history = await self._load_recent_channel_history(
                 agent_id=agent_id,
                 user_external_id=user_external_id,
                 source_channel=source_channel,
-                include_timestamps=True,
             )
-            if loaded:
-                chat_history = loaded
+        memory_context = build_client_memory_block(
+            portrait=chat_portrait,
+            history=loaded_history,
+        )
 
         answer = await generate_answer_with_context(
             user_message,
@@ -1282,7 +1275,7 @@ class TemplateRuntimeService:
             effective_prompt,
             chat_model=chat_model,
             temperature=llm_temperature,
-            chat_history=chat_history,
+            memory_context=memory_context or None,
         )
         requires_owner_handoff = False
         owner_handoff_reason: str | None = None
@@ -1928,10 +1921,10 @@ class TemplateRuntimeService:
             return None
 
         generation_model = str(template_config.get("generation_model") or "deepseek-chat").strip() or "deepseek-chat"
-        portrait_block = self._format_portrait_block(chat_portrait)
+        client_memory_section = build_client_memory_system_section(portrait=chat_portrait, history=None)
         system_prompt = f"{prompt}\n\n{SALES_TOOLS_SYSTEM_INSTRUCTION}"
-        if portrait_block:
-            system_prompt = f"{system_prompt}\n\n{portrait_block}"
+        if client_memory_section:
+            system_prompt = f"{system_prompt}\n\n{client_memory_section}"
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
             {
@@ -2073,8 +2066,10 @@ class TemplateRuntimeService:
         product_name = str(template_config.get("sales_product_name") or "ваш продукт").strip() or "ваш продукт"
         offer_type = str(template_config.get("sales_offer_type") or "услуга").strip() or "услуга"
         usp = str(template_config.get("sales_usp") or "").strip()
-        history_block = self._format_sales_history(recent_history)
-        portrait_block = self._format_portrait_block(chat_portrait)
+        client_memory_section = build_client_memory_system_section(
+            portrait=chat_portrait,
+            history=recent_history,
+        )
         context_parts = [
             f"Источник: {c.get('source', 'Unknown')}\nТекст: {c.get('text', '')}"
             for c in context_list
@@ -2094,12 +2089,10 @@ class TemplateRuntimeService:
         )}\n\n{SALES_HUMAN_FLEXIBILITY_BLOCK}"
         if workflow_completion_mode == "auto_finish_on_signal":
             instruction = f"{instruction}\n{SALES_UNIFIED_FINISH_MODE_ADDON}"
-        if portrait_block:
-            instruction = f"{instruction}\n\n{portrait_block}"
+        if client_memory_section:
+            instruction = f"{instruction}\n\n{client_memory_section}"
         if usp:
             instruction = f"{instruction}\n\nКлючевое УТП:\n{usp}"
-        if history_block:
-            instruction = f"{instruction}\n\nНедавняя история диалога:\n{history_block}"
 
         user_prompt = (
             f"Исходное сообщение в чате:\n{user_message}\n\n"
@@ -2198,8 +2191,10 @@ class TemplateRuntimeService:
         product_name = str(template_config.get("sales_product_name") or "ваш продукт").strip() or "ваш продукт"
         offer_type = str(template_config.get("sales_offer_type") or "услуга").strip() or "услуга"
         usp = str(template_config.get("sales_usp") or "").strip()
-        history_block = self._format_sales_history(recent_history)
-        portrait_block = self._format_portrait_block(chat_portrait)
+        client_memory_section = build_client_memory_system_section(
+            portrait=chat_portrait,
+            history=recent_history,
+        )
         instruction = f"{prompt}\n\n{SALES_PRE_SALES_SCREENING_INSTRUCTION.format(
             product_name=product_name,
             offer_type=offer_type,
@@ -2209,12 +2204,10 @@ class TemplateRuntimeService:
             instruction = f"{instruction}\n{SALES_PRE_SALES_FINISH_MODE_ADDON}"
         instruction = f"{instruction}\n{SALES_PRE_SALES_SCORING_ADDON.format(lead_score_scale=lead_score_scale)}"
         max_score = 10 if lead_score_scale == 10 else 100
-        if portrait_block:
-            instruction = f"{instruction}\n\n{portrait_block}"
+        if client_memory_section:
+            instruction = f"{instruction}\n\n{client_memory_section}"
         if usp:
             instruction = f"{instruction}\n\nКлючевое УТП:\n{usp}"
-        if history_block:
-            instruction = f"{instruction}\n\nНедавняя история диалога:\n{history_block}"
         tools = [
             {
                 "type": "function",
@@ -2447,8 +2440,10 @@ class TemplateRuntimeService:
             for c in context_list
         ]
         context_text = "\n\n---\n\n".join(context_parts) if context_parts else "Контекст не найден."
-        history_block = self._format_sales_history(recent_history)
-        portrait_block = self._format_portrait_block(chat_portrait)
+        client_memory_section = build_client_memory_system_section(
+            portrait=chat_portrait,
+            history=recent_history,
+        )
         stage_instruction = sales_stage_instruction(
             current_sales_state=(current_sales_state or "DISCOVERED").strip().upper(),
             stage_hint=stage_hint,
@@ -2460,14 +2455,12 @@ class TemplateRuntimeService:
             current_sales_state=(current_sales_state or 'DISCOVERED').strip().upper(),
             stage_instruction=stage_instruction,
         )}"
-        if portrait_block:
-            system_prompt = f"{system_prompt}\n\n{portrait_block}"
+        if client_memory_section:
+            system_prompt = f"{system_prompt}\n\n{client_memory_section}"
         if lead_profile_block:
             system_prompt = f"{system_prompt}\n\n{lead_profile_block}"
         if usp:
             system_prompt = f"{system_prompt}\n\nКлючевое УТП:\n{usp}"
-        if history_block:
-            system_prompt = f"{system_prompt}\n\nНедавняя история диалога:\n{history_block}"
         user_prompt = (
             f"Исходное сообщение в чате:\n{user_message}\n\n"
             f"Классификация:\n{json.dumps(qualification, ensure_ascii=False)}\n\n"
@@ -2490,20 +2483,6 @@ class TemplateRuntimeService:
         content = (completion.choices[0].message.content or "").strip()
         cleaned = content.replace("#", "").replace("*", "").strip()
         return cleaned[:1200]
-
-    @staticmethod
-    def _format_sales_history(history: list[dict[str, Any]] | None) -> str:
-        if not history:
-            return ""
-        rows: list[str] = []
-        for item in history[-6:]:
-            role = str(item.get("role") or "").strip().lower()
-            content = str(item.get("content") or "").strip()
-            if not content:
-                continue
-            label = "Агент" if role == "assistant" else "Клиент"
-            rows.append(f"{label}: {content}")
-        return "\n".join(rows)
 
     def emit_action(
         self,
