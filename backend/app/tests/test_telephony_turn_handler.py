@@ -23,7 +23,7 @@ async def test_turn_handler_stt_empty_without_transcript():
 
     with (
         patch(
-            "app.router_telephony.call_loader.load_call_and_agent",
+            "app.router_telephony.turn_handler.load_call_and_agent",
             AsyncMock(return_value=(call, agent)),
         ),
         patch("app.router_telephony.turn_handler._count_user_turns", AsyncMock(return_value=0)),
@@ -44,7 +44,7 @@ async def test_turn_handler_stt_empty_without_transcript():
 async def test_turn_handler_rejects_pstn_caller():
     session = AsyncMock()
     with patch(
-        "app.router_telephony.call_loader.load_call_and_agent",
+        "app.router_telephony.turn_handler.load_call_and_agent",
         AsyncMock(),
     ):
         payload = TelephonyTurnRequest(
@@ -65,7 +65,7 @@ async def test_turn_handler_ignores_recording_url_for_pstn():
     session.add = MagicMock()
 
     with patch(
-        "app.router_telephony.call_loader.load_call_and_agent",
+        "app.router_telephony.turn_handler.load_call_and_agent",
         AsyncMock(),
     ):
         payload = TelephonyTurnRequest(
