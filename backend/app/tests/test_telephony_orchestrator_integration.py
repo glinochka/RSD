@@ -49,8 +49,10 @@ async def test_stt_final_records_latency_budget_in_metadata():
     }
 
     session = AsyncMock()
-    session.begin.return_value.__aenter__ = AsyncMock(return_value=None)
-    session.begin.return_value.__aexit__ = AsyncMock(return_value=None)
+    begin_cm = MagicMock()
+    begin_cm.__aenter__ = AsyncMock(return_value=None)
+    begin_cm.__aexit__ = AsyncMock(return_value=None)
+    session.begin = MagicMock(return_value=begin_cm)
     session.get = AsyncMock(return_value=call)
     session.merge = AsyncMock(side_effect=lambda obj: obj)
 

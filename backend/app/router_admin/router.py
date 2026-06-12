@@ -511,6 +511,7 @@ async def admin_create_user(
                         "telegram_id": payload.telegram_id,
                     },
                 )
+                await session.flush()
                 await session.refresh(existing_user)
                 logger.info(
                     "Admin activated unverified user id=%d email=%s",
@@ -1010,6 +1011,7 @@ async def admin_application_log_resolve(
                     "resolved_at": datetime.now(timezone.utc).replace(tzinfo=None),
                 },
             )
+            await session.flush()
 
     return JSONResponse(content={"ok": True}, status_code=status.HTTP_200_OK)
 
@@ -1248,6 +1250,7 @@ async def admin_ban_user(
                 await agent_dao.delete(agent)
 
             await user_dao.update(user, {"is_banned": True})
+            await session.flush()
 
     logger.info("User %s (id=%d) banned by admin", user.name, user_id)
     return JSONResponse(content={"detail": "User banned"}, status_code=status.HTTP_200_OK)
@@ -1267,6 +1270,7 @@ async def admin_unban_user(
             if not user.is_banned:
                 return JSONResponse(content={"detail": "User is not banned"}, status_code=status.HTTP_200_OK)
             await user_dao.update(user, {"is_banned": False})
+            await session.flush()
 
     logger.info("User %s (id=%d) unbanned by admin", user.name, user_id)
     return JSONResponse(content={"detail": "User unbanned"}, status_code=status.HTTP_200_OK)
@@ -1285,6 +1289,7 @@ async def admin_set_free_agent_activation(
             if not user:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
             await user_dao.update(user, {"free_agent_activation": payload.enabled})
+            await session.flush()
 
     logger.info(
         "Admin set free_agent_activation=%s for user id=%d",

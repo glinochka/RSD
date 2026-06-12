@@ -156,8 +156,8 @@ def _serialize_appointment(row: AdminAppointment) -> dict[str, Any]:
 class LocalBookingProvider(BookingProvider):
     provider_name = "local"
 
-    def __init__(self, session_factory: Callable[[], Any] | async_sessionmaker = async_session_maker):
-        self._session_factory = session_factory
+    def __init__(self, session_factory: Callable[[], Any] | async_sessionmaker | None = None):
+        self._session_factory = session_factory or async_session_maker
 
     async def list_staff(
         self,

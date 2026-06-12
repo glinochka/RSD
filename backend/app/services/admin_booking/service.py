@@ -39,9 +39,10 @@ class BookingProviderResolution:
 class AdminBookingService:
     """Domain service that routes booking operations to the selected provider."""
 
-    def __init__(self, session_factory: Callable[[], Any] | async_sessionmaker = async_session_maker):
-        self._session_factory = session_factory
-        self._local_provider = LocalBookingProvider(session_factory=session_factory)
+    def __init__(self, session_factory: Callable[[], Any] | async_sessionmaker | None = None):
+        factory = session_factory or async_session_maker
+        self._session_factory = factory
+        self._local_provider = LocalBookingProvider(session_factory=factory)
 
     async def resolve_provider(self, *, agent_id: int) -> BookingProviderResolution:
         async with self._session_factory() as session:

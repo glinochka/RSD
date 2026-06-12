@@ -1,7 +1,6 @@
 import asyncio
 import os
 import sys
-from base64 import urlsafe_b64encode
 from contextlib import ExitStack
 from pathlib import Path
 from typing import AsyncGenerator, Generator
@@ -35,7 +34,9 @@ _env_candidates = [
 env_path = next((p for p in _env_candidates if p.exists()), _env_candidates[0])
 load_dotenv(env_path, override=True)
 
-_TEST_FERNET_KEY = urlsafe_b64encode(b"rsd-test-fernet-key-change-me!!!").decode()
+from cryptography.fernet import Fernet
+
+_TEST_FERNET_KEY = Fernet.generate_key().decode()
 
 _TEST_ENV_DEFAULTS = {
     "SECRET_KEY": "test-jwt-secret-key-for-ci-min-32-chars-long",
@@ -44,7 +45,7 @@ _TEST_ENV_DEFAULTS = {
     "USER_JWT_SECRET_KEY": "798cd1b6cb25d52ce4e49824b01b5b22a117325ad327161c50ad5a8c2898fc89",
 }
 for _key, _value in _TEST_ENV_DEFAULTS.items():
-    os.environ.setdefault(_key, _value)
+    os.environ[_key] = _value
 
 required_vars = ["SECRET_KEY", "INTERNAL_API_KEY", "ENCRYPTION_KEY"]
 for var in required_vars:
@@ -104,6 +105,9 @@ _ASYNC_SESSION_MAKER_PATCH_TARGETS = (
     "app.services.admin_booking.service.async_session_maker",
     "app.services.admin_booking.payment_service.async_session_maker",
     "app.services.admin_booking.client_notify.async_session_maker",
+    "app.services.http_integration.tool_registry.async_session_maker",
+    "app.services.admin_booking.providers.local.async_session_maker",
+    "app.telephony.orchestrator_worker.async_session_maker",
 )
 
 
@@ -114,12 +118,17 @@ def _make_sqlite_async_session_maker(test_engine):
 def _patch_async_session_makers(stack: ExitStack, test_engine):
     factory = _make_sqlite_async_session_maker(test_engine)
 
-    def maker():
-        return factory()
-
     for target in _ASYNC_SESSION_MAKER_PATCH_TARGETS:
-        stack.enter_context(patch(target, maker))
-    return maker
+        stack.enter_context(patch(target, factory))
+    _wire_test_booking_service(factory)
+    return factory
+
+
+def _wire_test_booking_service(factory):
+    from app.services.admin_booking.service import AdminBookingService
+    import app.services.admin_booking.service as booking_module
+
+    booking_module._admin_booking_service = AdminBookingService(session_factory=factory)
 
 
 @pytest.fixture(autouse=True)
@@ -165,6 +174,14 @@ async def test_session(test_engine) -> AsyncGenerator[AsyncSession, None]:
     async_session_factory = async_sessionmaker(test_engine, expire_on_commit=False, class_=AsyncSession)
     
     async with async_session_factory() as session:
+        yield session
+
+
+@pytest_asyncio.fixture(scope="function")
+async def verify_session(test_engine) -> AsyncGenerator[AsyncSession, None]:
+    """Fresh DB session for assertions after HTTP handlers commit in another session."""
+    factory = _make_sqlite_async_session_maker(test_engine)
+    async with factory() as session:
         yield session
 
 
@@ -427,7 +444,6 @@ async def mock_db_session(test_engine):
     This allows tests to use DmQueueService, SalesFSMService, etc. without connecting to PostgreSQL.
     """
     with ExitStack() as stack:
-        _patch_async_session_makers(stack, test_engine)
-        factory = _make_sqlite_async_session_maker(test_engine)
+        factory = _patch_async_session_makers(stack, test_engine)
         async with factory() as session:
             yield session

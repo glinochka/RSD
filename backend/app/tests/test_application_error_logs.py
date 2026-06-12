@@ -47,7 +47,7 @@ async def test_admin_logs_lists_items(client, test_session, test_user):
 
 
 @pytest.mark.asyncio
-async def test_admin_logs_resolve(client, test_session):
+async def test_admin_logs_resolve(client, test_session, verify_session):
     async with test_session.begin():
         row = ApplicationErrorLog(
             level="error",
@@ -65,8 +65,8 @@ async def test_admin_logs_resolve(client, test_session):
     response = await client.patch(f"/api/admin/logs/{log_id}/resolve")
     assert response.status_code == 200
 
-    async with test_session.begin():
-        updated = await test_session.scalar(select(ApplicationErrorLog).where(ApplicationErrorLog.id == log_id))
+    async with verify_session.begin():
+        updated = await verify_session.scalar(select(ApplicationErrorLog).where(ApplicationErrorLog.id == log_id))
     assert updated is not None
     assert updated.is_resolved is True
     assert updated.resolved_at is not None

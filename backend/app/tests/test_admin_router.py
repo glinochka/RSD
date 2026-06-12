@@ -290,7 +290,7 @@ class TestAdminCreateUser:
         assert response.status_code == 409
 
     @pytest.mark.asyncio
-    async def test_create_user_activates_unverified_email(self, client, test_session):
+    async def test_create_user_activates_unverified_email(self, client, test_session, verify_session):
         from app.utils.JWT import create_access_token
         from app.utils.security import get_password_hash
         from app.router_users.dao import UserDAO
@@ -316,6 +316,13 @@ class TestAdminCreateUser:
         data = response.json()
         assert data["created"] is False
         assert data["item"]["email_verified"] is True
+
+        async with verify_session.begin():
+            refreshed = await verify_session.scalar(
+                select(User).where(User.email == "pending@example.com")
+            )
+        assert refreshed is not None
+        assert refreshed.email_verified is True
 
     @pytest.mark.asyncio
     async def test_create_user_unauthorized(self, client):
@@ -474,7 +481,7 @@ class TestAdminBanUser:
     """Tests for POST /api/admin/users/{user_id}/ban endpoint."""
 
     @pytest.mark.asyncio
-    async def test_ban_user_success(self, client, test_session):
+    async def test_ban_user_success(self, client, test_session, verify_session):
         """Test banning a user."""
         from app.utils.JWT import create_access_token
         from app.utils.security import get_password_hash
@@ -497,12 +504,12 @@ class TestAdminBanUser:
 
         assert response.status_code == 200
 
-        # Verify user was banned
-        async with test_session.begin():
-            result = await test_session.execute(
+        # Verify user was banned (fresh session avoids stale identity-map reads)
+        async with verify_session.begin():
+            banned_user = await verify_session.scalar(
                 select(User).where(User.id == user.id)
             )
-            banned_user = result.scalar_one_or_none()
+            assert banned_user is not None
             assert banned_user.is_banned is True
 
     @pytest.mark.asyncio
@@ -522,7 +529,7 @@ class TestAdminUnbanUser:
     """Tests for POST /api/admin/users/{user_id}/unban endpoint."""
 
     @pytest.mark.asyncio
-    async def test_unban_user_success(self, client, test_session):
+    async def test_unban_user_success(self, client, test_session, verify_session):
         """Test unbanning a user."""
         from app.utils.JWT import create_access_token
         from app.utils.security import get_password_hash
@@ -545,11 +552,11 @@ class TestAdminUnbanUser:
         assert response.status_code == 200
 
         # Verify user was unbanned
-        async with test_session.begin():
-            result = await test_session.execute(
+        async with verify_session.begin():
+            unbanned_user = await verify_session.scalar(
                 select(User).where(User.id == user.id)
             )
-            unbanned_user = result.scalar_one_or_none()
+            assert unbanned_user is not None
             assert unbanned_user.is_banned is False
 
     @pytest.mark.asyncio
@@ -656,7 +663,7 @@ class TestAdminFreeAgentActivation:
     """Tests for POST /api/admin/users/{user_id}/free-agent-activation endpoint."""
 
     @pytest.mark.asyncio
-    async def test_enable_free_agent_activation(self, client, test_session):
+    async def test_enable_free_agent_activation(self, client, test_session, verify_session):
         from app.utils.JWT import create_access_token
         from app.utils.security import get_password_hash
         from app.router_users.dao import UserDAO
@@ -683,13 +690,13 @@ class TestAdminFreeAgentActivation:
         assert response.status_code == 200
         assert response.json()["free_agent_activation"] is True
 
-        async with test_session.begin():
-            result = await test_session.execute(select(User).where(User.id == user.id))
-            updated = result.scalar_one_or_none()
+        async with verify_session.begin():
+            updated = await verify_session.scalar(select(User).where(User.id == user.id))
+            assert updated is not None
             assert updated.free_agent_activation is True
 
     @pytest.mark.asyncio
-    async def test_disable_free_agent_activation(self, client, test_session):
+    async def test_disable_free_agent_activation(self, client, test_session, verify_session):
         from app.utils.JWT import create_access_token
         from app.utils.security import get_password_hash
         from app.router_users.dao import UserDAO
@@ -716,9 +723,9 @@ class TestAdminFreeAgentActivation:
         assert response.status_code == 200
         assert response.json()["free_agent_activation"] is False
 
-        async with test_session.begin():
-            result = await test_session.execute(select(User).where(User.id == user.id))
-            updated = result.scalar_one_or_none()
+        async with verify_session.begin():
+            updated = await verify_session.scalar(select(User).where(User.id == user.id))
+            assert updated is not None
             assert updated.free_agent_activation is False
 
     @pytest.mark.asyncio

@@ -11,7 +11,6 @@ from app.router_telephony.schemas import TelephonyTurnRequest
 @pytest.mark.asyncio
 async def test_turn_handler_stt_empty_without_transcript():
     session = AsyncMock()
-    session.scalar = AsyncMock(return_value=0)
     session.flush = AsyncMock()
     session.add = MagicMock()
 
