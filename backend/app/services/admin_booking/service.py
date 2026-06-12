@@ -597,10 +597,10 @@ class AdminBookingService:
         appointment_id: int,
         reason: str | None = None,
     ) -> dict[str, Any]:
-        return await self.cancel_appointment(
+        resolution = await self.resolve_provider(agent_id=agent_id)
+        return await resolution.provider.delete_appointment(
             agent_id=agent_id,
             appointment_id=appointment_id,
-            reason=reason,
         )
 
     async def _build_crm_provider(self, *, connection: AgentCrmConnection | None):
