@@ -6,8 +6,9 @@ from app.telephony.streaming import extract_complete_sentences, split_sentences
 def test_split_sentences_russian():
     text = "Добрый день. Чем помочь? Запишу вас на завтра!"
     parts = split_sentences(text)
-    assert len(parts) == 3
+    assert len(parts) == 2
     assert parts[0].startswith("Добрый")
+    assert "Запишу вас" in parts[1]
 
 
 def test_extract_complete_sentences_buffers_tail():

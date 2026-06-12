@@ -8,12 +8,13 @@ from app.services.admin_booking.tool_registry import AdminBookingToolRegistry
 
 @pytest.mark.asyncio
 async def test_admin_booking_tool_registry_idempotency_replay(monkeypatch):
-    calls = {"list_staff": 0}
+    calls = {"create_appointment": 0}
+    future_day = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
 
     class _FakeService:
-        async def list_staff(self, *, agent_id, role, active_only):
-            calls["list_staff"] += 1
-            return [{"id": 1, "name": "Alex", "role": role or "master", "is_active": active_only}]
+        async def create_appointment(self, **kwargs):
+            calls["create_appointment"] += 1
+            return {"id": 101, "status": "booked", **kwargs}
 
     monkeypatch.setattr(
         "app.services.admin_booking.tool_registry.get_admin_booking_service",
@@ -25,19 +26,21 @@ async def test_admin_booking_tool_registry_idempotency_replay(monkeypatch):
         user_external_id="u-5",
         source_channel="telegram",
         confirmation_policy="confirm_risky",
-        user_message="покажи сотрудников",
-        allowed_tools=["list_staff"],
+        user_message="создай запись",
+        allowed_tools=["create_appointment"],
     )
-    raw_args = '{"role":"master","active_only":true}'
+    raw_args = (
+        f'{{"starts_at":"{future_day}T10:00:00","ends_at":"{future_day}T11:00:00","staff_id":1}}'
+    )
 
-    first = await registry.execute_tool("list_staff", raw_args)
-    second = await registry.execute_tool("list_staff", raw_args)
+    first = await registry.execute_tool("create_appointment", raw_args)
+    second = await registry.execute_tool("create_appointment", raw_args)
 
     assert first["ok"] is True
     assert second["ok"] is True
     assert second["idempotent_replay"] is True
     assert first["idempotency_key"] == second["idempotency_key"]
-    assert calls["list_staff"] == 1
+    assert calls["create_appointment"] == 1
 
 
 @pytest.mark.asyncio
@@ -114,12 +117,18 @@ async def test_admin_booking_tool_registry_supports_list_and_cancel_tools(monkey
 async def test_admin_booking_tool_registry_find_next_available_tool(monkeypatch):
     from datetime import datetime
     
+    future_day = (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%d")
+    slot_day = (datetime.now() + timedelta(days=3)).strftime("%Y-%m-%d")
+
     class _FakeService:
+        async def list_staff(self, **kwargs):
+            return [{"id": 1, "name": "Alex", "is_active": True}]
+
         async def find_next_available_slot(self, **kwargs):
             return {
                 "available": True,
-                "starts_at": "2026-04-30T09:00:00",
-                "ends_at": "2026-04-30T09:30:00",
+                "starts_at": f"{slot_day}T09:00:00",
+                "ends_at": f"{slot_day}T09:30:00",
                 "staff_id": 1,
                 "duration_minutes": 30,
             }
@@ -140,12 +149,12 @@ async def test_admin_booking_tool_registry_find_next_available_tool(monkeypatch)
 
     result = await registry.execute_tool(
         "find_next_available",
-        '{"duration_minutes":30,"staff_id":1,"earliest_starts_at":"2026-04-29T08:00:00"}',
+        f'{{"duration_minutes":30,"staff_id":1,"earliest_starts_at":"{future_day}T08:00:00"}}',
     )
     assert result["ok"] is True
     assert result["tool_status"] == "success"
     assert result["result"]["available"] is True
-    assert "2026-04-30T09:00:00" in result["result"]["starts_at"]
+    assert f"{slot_day}T09:00:00" in result["result"]["starts_at"]
 
 
 @pytest.mark.asyncio

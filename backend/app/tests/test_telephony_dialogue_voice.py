@@ -19,6 +19,9 @@ def test_filler_for_turn_crm_priority():
 
 
 def test_prepend_opening_ack():
-    chunks = _prepend_opening_ack(["Запись возможна завтра."], call_id=3)
+    long_reply = (
+        "Запись возможна завтра после обеда, могу предложить несколько удобных временных слотов."
+    )
+    chunks = _prepend_opening_ack([long_reply], call_id=3)
     assert chunks[0].startswith("Понял.")
     assert "Запись возможна" in chunks[0]

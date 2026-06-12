@@ -9,8 +9,17 @@ import pytest
 import pytest_asyncio
 from dotenv import load_dotenv
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import JSON, event, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.pool import StaticPool
+
+
+@compiles(JSONB, "sqlite")
+def _compile_jsonb_sqlite(type_, compiler, **kw):
+    return "JSON"
+
  
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
  
@@ -32,6 +41,19 @@ for var in required_vars:
 
 # Импортируем Base ДО создания фикстур
 from app.alembic.database import Base
+
+
+@event.listens_for(Base.metadata, "before_create")
+def _prepare_sqlite_schema(target, connection, **kw):
+    if connection.dialect.name != "sqlite":
+        return
+    for table in target.tables.values():
+        for column in table.columns:
+            if isinstance(column.type, JSONB):
+                column.type = JSON()
+            server_default = column.server_default
+            if server_default is not None and "::jsonb" in str(getattr(server_default, "arg", server_default)):
+                column.server_default = text("'{}'")
 
 # ВАЖНО: Импортируем модели здесь, чтобы они зарегистрировались в Base.metadata
 from app.alembic import models  # noqa: F401

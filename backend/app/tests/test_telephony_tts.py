@@ -77,6 +77,6 @@ async def test_elevenlabs_rejects_non_pcm_content_type(monkeypatch):
 
     monkeypatch.setattr(stream_tts.httpx, "AsyncClient", _BadClient)
 
-    with pytest.raises(RuntimeError, match="elevenlabs_unexpected_content_type"):
+    with pytest.raises(RuntimeError, match="elevenlabs_unexpected_format"):
         async for _ in stream_tts._stream_elevenlabs_pcm16("Привет", voice_id="default", timeout=1.0):
             pass

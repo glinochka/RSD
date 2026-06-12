@@ -32,7 +32,7 @@ async def test_turn_handler_rejects_when_max_turns_reached():
         payload = TelephonyTurnRequest(
             connection_id=1,
             call_db_id=10,
-            caller_e164="+79001234567",
+            caller_e164="preview:web:1",
             user_transcript="ещё один вопрос",
         )
         resp = await handle_telephony_turn(session, payload)
@@ -64,7 +64,7 @@ async def test_turn_handler_rejects_when_call_duration_exceeded():
         payload = TelephonyTurnRequest(
             connection_id=1,
             call_db_id=10,
-            caller_e164="+79001234567",
+            caller_e164="preview:web:1",
             user_transcript="вопрос",
         )
         resp = await handle_telephony_turn(session, payload)

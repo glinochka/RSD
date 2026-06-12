@@ -41,7 +41,11 @@ async def test_upsert_call_event_creates_then_updates():
     session.add = lambda obj: None
     session.flush = AsyncMock()
 
-    with patch("app.router_telephony.service.load_active_telephony_connection", AsyncMock(return_value=connection)):
+    with (
+        patch("app.router_telephony.service.resolve_inbound_connection", AsyncMock(return_value=(7, "webhook"))),
+        patch("app.router_telephony.service.cache_call_mapping", AsyncMock()),
+        patch("app.router_telephony.service.load_active_telephony_connection", AsyncMock(return_value=connection)),
+    ):
         call, created = await upsert_call_event(
             session,
             connection_id=7,

@@ -57,6 +57,17 @@ class _FakeFSMService:
         return None
 
 
+def _patch_sales_userbot_db(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.sales.sales_followup_service.mark_excel_import_reply_if_any",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(
+        "app.services.sales.agent_contact_context.resolve_sales_source_chat_id",
+        AsyncMock(return_value="global"),
+    )
+
+
 @pytest.mark.asyncio
 async def test_sales_runtime_draft_only(monkeypatch):
     service = TemplateRuntimeService()
@@ -215,6 +226,11 @@ async def test_crm_admin_runtime_uses_booking_tools_without_crm_connection(monke
     service = TemplateRuntimeService()
     calls = {"n": 0}
 
+    monkeypatch.setattr(
+        "app.services.admin_booking.payment_fulfillment.sync_pending_payments_for_client",
+        AsyncMock(return_value=None),
+    )
+
     class _FakeBookingRegistry:
         def __init__(self, **kwargs):
             self._kwargs = kwargs
@@ -258,6 +274,10 @@ async def test_crm_admin_runtime_uses_booking_tools_without_crm_connection(monke
     monkeypatch.setattr("app.services.template_runtime.ai_client.chat.completions.create", fake_create)
     monkeypatch.setattr("app.services.template_runtime.AdminBookingToolRegistry", _FakeBookingRegistry)
     monkeypatch.setattr("app.services.template_runtime.TemplateRuntimeService._get_active_crm_connection", fake_get_connection)
+    monkeypatch.setattr(
+        "app.services.template_runtime.TemplateRuntimeService._get_admin_booking_payment_api_key",
+        AsyncMock(return_value=None),
+    )
 
     result = await service.execute(
         template_type="crm_admin",
@@ -285,6 +305,14 @@ async def test_crm_admin_runtime_uses_booking_tools_without_crm_connection(monke
 async def test_crm_admin_runtime_executes_dsml_tool_calls(monkeypatch):
     service = TemplateRuntimeService()
     calls = {"n": 0, "args": None}
+    from datetime import datetime, timedelta
+
+    future_day = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
+
+    monkeypatch.setattr(
+        "app.services.admin_booking.payment_fulfillment.sync_pending_payments_for_client",
+        AsyncMock(return_value=None),
+    )
 
     class _FakeBookingRegistry:
         def __init__(self, **kwargs):
@@ -325,15 +353,15 @@ async def test_crm_admin_runtime_executes_dsml_tool_calls(monkeypatch):
                 'Отлично, повторяю запись.\n\n'
                 '<｜DSML｜tool_calls>\n'
                 '<｜DSML｜invoke name="create_appointment">\n'
-                '<｜DSML｜parameter name="starts_at" string="true">2026-04-30T13:00:00</｜DSML｜parameter>\n'
-                '<｜DSML｜parameter name="ends_at" string="true">2026-04-30T13:30:00</｜DSML｜parameter>\n'
+                f'<｜DSML｜parameter name="starts_at" string="true">{future_day}T13:00:00</｜DSML｜parameter>\n'
+                f'<｜DSML｜parameter name="ends_at" string="true">{future_day}T13:30:00</｜DSML｜parameter>\n'
                 '<｜DSML｜parameter name="staff_id" string="false">7</｜DSML｜parameter>\n'
                 '<｜DSML｜parameter name="service_id" string="false">1</｜DSML｜parameter>\n'
                 '<｜DSML｜parameter name="client_name" string="true">Петр</｜DSML｜parameter>\n'
                 '</｜DSML｜invoke>\n'
                 '</｜DSML｜tool_calls>'
             )
-        return _completion("Готово! Запись создана на 30 апреля в 13:00.")
+        return _completion(f"Готово! Запись создана на {future_day} в 13:00.")
 
     async def fake_get_connection(self, *, agent_id: int, provider: str):
         return None
@@ -341,11 +369,15 @@ async def test_crm_admin_runtime_executes_dsml_tool_calls(monkeypatch):
     monkeypatch.setattr("app.services.template_runtime.ai_client.chat.completions.create", fake_create)
     monkeypatch.setattr("app.services.template_runtime.AdminBookingToolRegistry", _FakeBookingRegistry)
     monkeypatch.setattr("app.services.template_runtime.TemplateRuntimeService._get_active_crm_connection", fake_get_connection)
+    monkeypatch.setattr(
+        "app.services.template_runtime.TemplateRuntimeService._get_admin_booking_payment_api_key",
+        AsyncMock(return_value=None),
+    )
 
     result = await service.execute(
         template_type="crm_admin",
         prompt="Ты администратор записи",
-        user_message="Запиши меня к Анне на 30 апреля в 13:00",
+        user_message="Запиши меня к Анне на ближайшее свободное время",
         knowledge_scope_id=101,
         agent_id=77,
         template_config={
@@ -530,6 +562,7 @@ async def test_sales_runtime_pool_only_rejects_unknown_private_inbound(monkeypat
 @pytest.mark.asyncio
 async def test_sales_runtime_private_inbound_skips_target_check(monkeypatch):
     service = TemplateRuntimeService()
+    _patch_sales_userbot_db(monkeypatch)
     unified_mock = AsyncMock(side_effect=AssertionError("_qualify_and_compose_unified should not be called"))
     monkeypatch.setattr(service, "_qualify_and_compose_unified", unified_mock)
     monkeypatch.setattr(service, "retrieve_offer_context", AsyncMock(return_value=([], [])))
@@ -568,6 +601,7 @@ async def test_sales_runtime_private_inbound_skips_target_check(monkeypatch):
 @pytest.mark.asyncio
 async def test_sales_runtime_mark_contacted_returns_human_text(monkeypatch):
     service = TemplateRuntimeService()
+    _patch_sales_userbot_db(monkeypatch)
     human_dm = "Здравствуйте! Да, занимаемся автоматизацией бизнес-процессов. Подскажите ваш кейс?"
     monkeypatch.setattr(
         service,
@@ -621,6 +655,7 @@ async def test_sales_runtime_mark_contacted_returns_human_text(monkeypatch):
 @pytest.mark.asyncio
 async def test_sales_runtime_stops_when_contact_already_terminal(monkeypatch):
     service = TemplateRuntimeService()
+    _patch_sales_userbot_db(monkeypatch)
     qualify_mock = AsyncMock(side_effect=AssertionError("qualify_message should not be called"))
     monkeypatch.setattr(service, "qualify_message", qualify_mock)
     monkeypatch.setattr(service, "_load_sales_contact_state", AsyncMock(return_value="HANDOFF_CRM"))
@@ -647,6 +682,7 @@ async def test_sales_runtime_stops_when_contact_already_terminal(monkeypatch):
 @pytest.mark.asyncio
 async def test_sales_runtime_finish_workflow_signal(monkeypatch):
     service = TemplateRuntimeService()
+    _patch_sales_userbot_db(monkeypatch)
     monkeypatch.setattr(
         service,
         "_qualify_and_compose_unified",

@@ -103,6 +103,6 @@ async def test_apply_routed_agent_streams_default_welcome():
     play_welcome.assert_awaited_once_with(
         slot,
         welcome_raw="Добро пожаловать в тестового агента.",
-        voice_id="default",
+        voice_id="AB9XsbSA4eLG12t2myjN",
         language="ru-RU",
     )
