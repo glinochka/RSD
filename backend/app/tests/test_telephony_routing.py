@@ -70,8 +70,8 @@ def test_rejects_invalid_extension_in_credentials():
 
 
 @pytest.mark.asyncio
-async def test_resolve_agent_by_extension_falls_back_to_db_when_redis_miss(test_session):
-    from app.alembic.models import AgentChannelConnection
+async def test_resolve_agent_by_extension_falls_back_to_db_when_redis_miss(test_session, mock_db_session):
+    from app.alembic.models import Agent, AgentChannelConnection, User
     from app.utils.crypto import encrypt_token
 
     agent_id = 77
@@ -80,6 +80,24 @@ async def test_resolve_agent_by_extension_falls_back_to_db_when_redis_miss(test_
     encrypted = encrypt_token(creds.to_encrypted_payload())
 
     async with test_session.begin():
+        test_session.add(
+            User(
+                id=1,
+                name="telephony_user",
+                password="pwd",
+                telegram_id=770770,
+            )
+        )
+        test_session.add(
+            Agent(
+                id=agent_id,
+                user_id=1,
+                bot_username="telephony_agent",
+                encrypted_token="enc_test_telephony_routing",
+                bot_id=77001,
+                is_active=True,
+            )
+        )
         test_session.add(
             AgentChannelConnection(
                 id=connection_id,

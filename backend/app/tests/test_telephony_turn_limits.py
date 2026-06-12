@@ -12,6 +12,7 @@ from app.router_telephony.schemas import TelephonyTurnRequest
 @pytest.mark.asyncio
 async def test_turn_handler_rejects_when_max_turns_reached():
     session = AsyncMock()
+    session.scalar = AsyncMock(return_value=15)
     session.flush = AsyncMock()
 
     call = MagicMock()
@@ -44,6 +45,7 @@ async def test_turn_handler_rejects_when_max_turns_reached():
 @pytest.mark.asyncio
 async def test_turn_handler_rejects_when_call_duration_exceeded():
     session = AsyncMock()
+    session.scalar = AsyncMock(return_value=0)
     session.flush = AsyncMock()
 
     call = MagicMock()

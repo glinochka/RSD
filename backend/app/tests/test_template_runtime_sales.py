@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from app.services.template_runtime import TemplateRuntimeService
+from app.services.template_runtime import TemplateRuntimeService, TemplateExecutionResult
 
 
 def _completion(content: str):
@@ -222,7 +222,7 @@ async def test_sales_runtime_function_call_schedule_dm(monkeypatch, mock_db_sess
 
 
 @pytest.mark.asyncio
-async def test_crm_admin_runtime_uses_booking_tools_without_crm_connection(monkeypatch):
+async def test_crm_admin_runtime_uses_booking_tools_without_crm_connection(monkeypatch, mock_db_session):
     service = TemplateRuntimeService()
     calls = {"n": 0}
 
@@ -302,7 +302,7 @@ async def test_crm_admin_runtime_uses_booking_tools_without_crm_connection(monke
 
 
 @pytest.mark.asyncio
-async def test_crm_admin_runtime_executes_dsml_tool_calls(monkeypatch):
+async def test_crm_admin_runtime_executes_dsml_tool_calls(monkeypatch, mock_db_session):
     service = TemplateRuntimeService()
     calls = {"n": 0, "args": None}
     from datetime import datetime, timedelta
@@ -570,11 +570,15 @@ async def test_sales_runtime_private_inbound_skips_target_check(monkeypatch, moc
     monkeypatch.setattr(
         service,
         "_execute_sales_tools",
-        AsyncMock(return_value=SimpleNamespace(answer="Спасибо за сообщение! Могу показать подход под ваш кейс.", sources=[], tool_events=[{
-            "tool_name": "sales_outreach_action",
-            "tool_status": "sent_auto",
-            "ok": True,
-        }])),
+        AsyncMock(return_value=TemplateExecutionResult(
+            answer="Спасибо за сообщение! Могу показать подход под ваш кейс.",
+            sources=[],
+            tool_events=[{
+                "tool_name": "sales_outreach_action",
+                "tool_status": "sent_auto",
+                "ok": True,
+            }],
+        )),
     )
     monkeypatch.setattr("app.services.template_runtime.get_sales_fsm_service", lambda: _FakeFSMService())
     monkeypatch.setattr(

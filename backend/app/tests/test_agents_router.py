@@ -714,36 +714,44 @@ class TestAgentsCrm:
 class TestTelegramWebhookSync:
     @pytest.mark.asyncio
     async def test_toggle_status_surfaces_telegram_webhook_error(
-        self, client: AsyncClient, auth_headers, test_agent, monkeypatch
+        self, client: AsyncClient, auth_headers, test_agent, test_session
     ):
         from app.config import settings
 
+        monkeypatch = pytest.MonkeyPatch()
         monkeypatch.setattr(settings, "BASE_URL", "https://example.com")
+
+        async with test_session.begin():
+            test_agent.is_active = False
+            await test_session.flush()
 
         mock_channel = MagicMock()
         mock_channel.encrypted_credentials = "mock_encrypted_test_bot_token_123"
         mock_channel.external_id = "12345"
 
-        with (
-            patch(
-                "app.router_agents.router._get_telegram_bot_channel_for_agent",
-                new_callable=AsyncMock,
-                return_value=mock_channel,
-            ),
-            patch(
-                "app.router_agents.router._telegram_bot_api_json",
-                new_callable=AsyncMock,
-                side_effect=__import__("fastapi").HTTPException(
-                    status_code=502,
-                    detail="Telegram API (setWebhook): Bad Request: bad webhook: HTTPS URL must be provided",
+        try:
+            with (
+                patch(
+                    "app.router_agents.router._get_telegram_bot_channel_for_agent",
+                    new_callable=AsyncMock,
+                    return_value=mock_channel,
                 ),
-            ),
-        ):
-            response = await client.patch(
-                "/api/agents/toggle_status",
-                headers=auth_headers,
-                json={"bot_id": test_agent.bot_id},
-            )
+                patch(
+                    "app.router_agents.router._telegram_bot_api_json",
+                    new_callable=AsyncMock,
+                    side_effect=__import__("fastapi").HTTPException(
+                        status_code=502,
+                        detail="Telegram API (setWebhook): Bad Request: bad webhook: HTTPS URL must be provided",
+                    ),
+                ),
+            ):
+                response = await client.patch(
+                    "/api/agents/toggle_status",
+                    headers=auth_headers,
+                    json={"bot_id": test_agent.bot_id},
+                )
 
-        assert response.status_code == 502
-        assert "setWebhook" in response.json()["detail"]
+            assert response.status_code == 502
+            assert "setWebhook" in response.json()["detail"]
+        finally:
+            monkeypatch.undo()

@@ -507,9 +507,10 @@ class AdminBookingService:
                     )
 
         resolution = await self.resolve_provider(agent_id=agent_id)
-        deleted = await resolution.provider.delete_appointment(
+        cancelled = await resolution.provider.cancel_appointment(
             agent_id=agent_id,
             appointment_id=appointment_id,
+            reason=reason,
         )
 
         refund_request = None
@@ -548,8 +549,8 @@ class AdminBookingService:
                     )
 
         return {
-            "deleted": True,
-            "appointment": deleted,
+            "deleted": False,
+            "appointment": cancelled,
             "refund_request": refund_request,
             "auto_refunded": auto_refunded,
         }

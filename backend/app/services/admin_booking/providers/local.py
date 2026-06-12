@@ -819,11 +819,44 @@ class LocalBookingProvider(BookingProvider):
         appointment_id: int,
         reason: str | None = None,
     ) -> dict[str, Any]:
-        del reason
-        return await self.delete_appointment(
-            agent_id=agent_id,
-            appointment_id=appointment_id,
-        )
+        async with self._session_factory() as session:
+            async with _maybe_begin(session):
+                row = await session.scalar(
+                    select(AdminAppointment).where(
+                        AdminAppointment.id == appointment_id,
+                        AdminAppointment.agent_id == agent_id,
+                    )
+                )
+                if row is None:
+                    raise ValueError("Appointment not found")
+                if row.status in {"cancelled", "completed", "no_show"}:
+                    raise ValueError("Cannot cancel finished appointment")
+                freed_starts_at = row.starts_at
+                freed_ends_at = row.ends_at
+                freed_staff_id = row.staff_id
+                freed_resource_id = row.resource_id
+                freed_service_id = row.service_id
+                row.status = "cancelled"
+                if reason:
+                    existing_notes = (row.notes or "").strip()
+                    cancel_note = f"cancel_reason: {reason}"
+                    row.notes = (
+                        f"{existing_notes}\n{cancel_note}".strip()
+                        if existing_notes
+                        else cancel_note
+                    )
+                await session.flush()
+                await self._try_waitlist_auto_book(
+                    session,
+                    agent_id=agent_id,
+                    freed_starts_at=freed_starts_at,
+                    freed_ends_at=freed_ends_at,
+                    staff_id=freed_staff_id,
+                    resource_id=freed_resource_id,
+                    service_id=freed_service_id,
+                )
+                await session.refresh(row)
+                return _serialize_appointment(row)
 
     async def confirm_appointment(
         self,

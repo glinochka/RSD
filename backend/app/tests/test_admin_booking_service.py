@@ -248,5 +248,6 @@ async def test_local_booking_lifecycle_create_reschedule_cancel(booking_session_
         appointment_id=appointment["id"],
         reason="client requested",
     )
-    assert cancelled["status"] == "cancelled"
-    assert "cancel_reason" in str(cancelled.get("notes") or "")
+    cancelled_appt = cancelled["appointment"]
+    assert cancelled_appt["status"] == "cancelled"
+    assert "cancel_reason" in str(cancelled_appt.get("notes") or "")

@@ -36,10 +36,21 @@ async def test_upsert_call_event_creates_then_updates():
     connection.is_active = True
     connection.encrypted_credentials = "enc"
 
+    added_objects = []
+
+    def track_add(obj):
+        added_objects.append(obj)
+
     session = AsyncMock()
     session.scalar = AsyncMock(return_value=None)
-    session.add = lambda obj: None
-    session.flush = AsyncMock()
+    session.add = track_add
+
+    async def _flush():
+        for obj in added_objects:
+            if getattr(obj, "id", None) is None:
+                obj.id = 101
+
+    session.flush = AsyncMock(side_effect=_flush)
 
     with (
         patch("app.router_telephony.service.resolve_inbound_connection", AsyncMock(return_value=(7, "webhook"))),

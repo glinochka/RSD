@@ -1,6 +1,7 @@
 import asyncio
 import os
 import sys
+from base64 import urlsafe_b64encode
 from contextlib import ExitStack
 from pathlib import Path
 from typing import AsyncGenerator, Generator
@@ -34,10 +35,12 @@ _env_candidates = [
 env_path = next((p for p in _env_candidates if p.exists()), _env_candidates[0])
 load_dotenv(env_path, override=True)
 
+_TEST_FERNET_KEY = urlsafe_b64encode(b"rsd-test-fernet-key-change-me!!!").decode()
+
 _TEST_ENV_DEFAULTS = {
     "SECRET_KEY": "test-jwt-secret-key-for-ci-min-32-chars-long",
     "INTERNAL_API_KEY": "test-internal-api-key",
-    "ENCRYPTION_KEY": "test-encryption-key-for-fernet-ci",
+    "ENCRYPTION_KEY": _TEST_FERNET_KEY,
     "USER_JWT_SECRET_KEY": "798cd1b6cb25d52ce4e49824b01b5b22a117325ad327161c50ad5a8c2898fc89",
 }
 for _key, _value in _TEST_ENV_DEFAULTS.items():
@@ -86,6 +89,13 @@ _replace_jsonb_columns_for_sqlite(Base.metadata.tables.values())
 
 _ASYNC_SESSION_MAKER_PATCH_TARGETS = (
     "app.alembic.database.async_session_maker",
+    "app.router_admin.router.async_session_maker",
+    "app.router_users.router.async_session_maker",
+    "app.router_agents.router.async_session_maker",
+    "app.router_payments.router.async_session_maker",
+    "app.router_documents.router.async_session_maker",
+    "app.services.template_runtime.async_session_maker",
+    "app.telephony.routing.async_session_maker",
     "app.services.error_log_service.async_session_maker",
     "app.services.sales.contact_pool.async_session_maker",
     "app.services.sales.dm_queue_service.async_session_maker",
