@@ -21,7 +21,7 @@ class TestProcessSuccessfulPayment:
     """Tests for POST /api/payments/process_successful endpoint."""
 
     @pytest.mark.asyncio
-    async def test_process_payment_success(self, internal_client, test_session):
+    async def test_process_payment_success(self, internal_client, test_session, verify_session):
         from app.utils.security import get_password_hash
         from app.router_users.dao import UserDAO
 
@@ -54,11 +54,11 @@ class TestProcessSuccessfulPayment:
         assert data["status"] == "processed"
         assert data["subscription_type"] == "Advanced"
 
-        async with test_session.begin():
-            result = await test_session.execute(
+        async with verify_session.begin():
+            updated_user = await verify_session.scalar(
                 select(User).where(User.telegram_id == 123456789)
             )
-            updated_user = result.scalar_one_or_none()
+            assert updated_user is not None
             assert updated_user.subscription_type == "Advanced"
 
     @pytest.mark.asyncio

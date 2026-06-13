@@ -51,6 +51,7 @@ export const ENV_CONFIG = {
   APP: {
     NAME: 'RSD',
     VERSION: import.meta.env.VITE_APP_VERSION || '1.0.0',
+    GOOGLE_CLIENT_ID: import.meta.env.VITE_GOOGLE_CLIENT_ID || '',
   },
 
   // Feature Flags
@@ -65,7 +66,9 @@ export const ENV_CONFIG = {
     REFRESH_TOKEN: 'refresh_token',
     USER: 'user',
     ADMIN_TOKEN: 'admin_token',
+    SALES_TOKEN: 'sales_token',
     THEME: 'theme',
+    REFERRAL_CODE: 'referral_code',
   },
 };
 

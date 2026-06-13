@@ -1,0 +1,981 @@
+rsd_telephony_worker         | INFO:     172.18.0.11:42484 - "POST /api/internal/telephony/webhook-auth HTTP/1.1" 200 OK
+rsd_telephony_worker         | INFO:     172.18.0.11:42484 - "POST /api/internal/telephony/resolve-inbound HTTP/1.1" 200 OK
+rsd_telephony_worker         | INFO:     172.18.0.11:42498 - "POST /api/internal/telephony/call-event HTTP/1.1" 200 OK
+rsd_telephony_worker         | 2026-06-09 15:06:01,725 - app.router_telephony.service - INFO - 166: resolve_telephony_channel: agent_id=37 connection_id=47 voice_id=default lang=ru-RU routed_by=webhook
+rsd_telephony_worker         | 2026-06-09 15:06:01,726 - app.telephony.session_cache - INFO - 45: cache_resolve_payload: connection_id=47 agent_id=37 voice_id=default language=ru-RU
+rsd_telephony_worker         | INFO:     172.18.0.11:42484 - "POST /api/internal/telephony/resolve HTTP/1.1" 200 OK
+rsd_frontend                 | 185.164.150.3 - - [09/Jun/2026:15:06:01 +0000] "POST /webhook/voximplant/47 HTTP/1.1" 200 146 "-" "VoxEngine/1.0" "-"
+rsd_telephony_worker         | INFO:     172.18.0.11:46612 - "POST /api/internal/telephony/resolve-inbound HTTP/1.1" 200 OK
+rsd_telephony_worker         | INFO:     172.18.0.11:46618 - "POST /api/internal/telephony/call-event HTTP/1.1" 200 OK
+rsd_telephony_worker         | 2026-06-09 15:06:09,965 - app.router_telephony.service - INFO - 166: resolve_telephony_channel: agent_id=37 connection_id=47 voice_id=default lang=ru-RU routed_by=webhook
+rsd_telephony_worker         | 2026-06-09 15:06:09,966 - app.telephony.session_cache - INFO - 45: cache_resolve_payload: connection_id=47 agent_id=37 voice_id=default language=ru-RU
+rsd_telephony_worker         | INFO:     172.18.0.11:46612 - "POST /api/internal/telephony/resolve HTTP/1.1" 200 OK
+rsd_frontend                 | 185.164.150.3 - - [09/Jun/2026:15:06:10 +0000] "POST /webhook/voximplant/47 HTTP/1.1" 200 146 "-" "VoxEngine/1.0" "-"
+rsd_telephony_media_gateway  | [media-gateway] VAD: Silero ONNX + energy assist /app/models/silero_vad.onnx
+rsd_telephony_media_gateway  | [media-gateway] reply session registered {"call_id":"96194468A4D7D68B.1781017560.20799531","total_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] session.start {"call_id":"96194468A4D7D68B.1781017560.20799531","connection_id":47,"codec":"pcmu","pipeline":true,"stt_provider":"yandex"}
+rsd_telephony_media_gateway  | [media-gateway] audio.in {"call_id":"96194468A4D7D68B.1781017560.20799531","frames":1,"bytes":160,"expected_frame_bytes":160,"rtf":0,"avg_rtf":0}
+rsd_telephony_media_gateway  | [media-gateway] audio.in {"call_id":"96194468A4D7D68B.1781017560.20799531","frames":50,"bytes":160,"expected_frame_bytes":160,"rtf":1.25,"avg_rtf":0.805}
+rsd_telephony_orchestrator   | 2026-06-09 15:06:11,863 - app.telephony.orchestrator_worker - INFO - 522: orchestrator session.start call_id=96194468A4D7D68B.1781017560.20799531 connection_id=47 redis_session=True awaiting_ext=True
+rsd_telephony_media_gateway  | [media-gateway] dtmf {"call_id":"96194468A4D7D68B.1781017560.20799531","digit":"1"}
+rsd_telephony_orchestrator   | 2026-06-09 15:06:12,017 - app.telephony.orchestrator_worker - INFO - 470: dtmf_handler digit=1 call_id=96194468A4D7D68B.1781017560.20799531 buffer_before= awaiting=True routed_by=webhook
+rsd_telephony_orchestrator   | 2026-06-09 15:06:12,018 - app.telephony.orchestrator_worker - INFO - 483: dtmf_handler buffer=1 call_id=96194468A4D7D68B.1781017560.20799531
+rsd_telephony_media_gateway  | [media-gateway] dtmf {"call_id":"96194468A4D7D68B.1781017560.20799531","digit":"2"}
+rsd_telephony_orchestrator   | 2026-06-09 15:06:12,425 - app.telephony.orchestrator_worker - INFO - 470: dtmf_handler digit=2 call_id=96194468A4D7D68B.1781017560.20799531 buffer_before=1 awaiting=True routed_by=webhook
+rsd_telephony_orchestrator   | 2026-06-09 15:06:12,426 - app.telephony.orchestrator_worker - INFO - 483: dtmf_handler buffer=12 call_id=96194468A4D7D68B.1781017560.20799531
+rsd_telephony_media_gateway  | [media-gateway] dtmf {"call_id":"96194468A4D7D68B.1781017560.20799531","digit":"3"}
+rsd_telephony_orchestrator   | 2026-06-09 15:06:12,597 - app.telephony.orchestrator_worker - INFO - 470: dtmf_handler digit=3 call_id=96194468A4D7D68B.1781017560.20799531 buffer_before=12 awaiting=True routed_by=webhook
+rsd_telephony_orchestrator   | 2026-06-09 15:06:12,597 - app.telephony.orchestrator_worker - INFO - 483: dtmf_handler buffer=123 call_id=96194468A4D7D68B.1781017560.20799531
+rsd_telephony_media_gateway  | [media-gateway] audio.in {"call_id":"96194468A4D7D68B.1781017560.20799531","frames":100,"bytes":160,"expected_frame_bytes":160,"rtf":2.85,"avg_rtf":1.014}
+rsd_telephony_media_gateway  | [media-gateway] dtmf {"call_id":"96194468A4D7D68B.1781017560.20799531","digit":"4"}
+rsd_telephony_orchestrator   | 2026-06-09 15:06:12,893 - app.telephony.orchestrator_worker - INFO - 470: dtmf_handler digit=4 call_id=96194468A4D7D68B.1781017560.20799531 buffer_before=123 awaiting=True routed_by=webhook
+rsd_telephony_orchestrator   | 2026-06-09 15:06:12,895 - app.telephony.orchestrator_worker - INFO - 483: dtmf_handler buffer=1234 call_id=96194468A4D7D68B.1781017560.20799531
+rsd_telephony_orchestrator   | 2026-06-09 15:06:12,896 - app.telephony.orchestrator_worker - INFO - 486: dtmf_handler resolving extension=1234 call_id=96194468A4D7D68B.1781017560.20799531
+rsd_telephony_orchestrator   | 2026-06-09 15:06:12,899 - app.telephony.routing - INFO - 158: dtmf_resolve cached hit: ext=1234 agent_id=37
+rsd_telephony_orchestrator   | 2026-06-09 15:06:12,899 - app.telephony.orchestrator_worker - INFO - 500: dtmf_handler agent found: extension=1234 agent_id=37 call_id=96194468A4D7D68B.1781017560.20799531
+rsd_telephony_orchestrator   | 2026-06-09 15:06:12,963 - app.router_telephony.service - INFO - 166: resolve_telephony_channel: agent_id=37 connection_id=47 voice_id=default lang=ru-RU routed_by=dtmf
+rsd_telephony_orchestrator   | 2026-06-09 15:06:12,963 - app.telephony.session_cache - INFO - 45: cache_resolve_payload: connection_id=47 agent_id=37 voice_id=default language=ru-RU
+rsd_telephony_orchestrator   | 2026-06-09 15:06:12,976 - app.telephony.session_cache - INFO - 45: cache_resolve_payload: connection_id=47 agent_id=37 voice_id=default language=ru-RU
+rsd_telephony_orchestrator   | 2026-06-09 15:06:12,978 - app.telephony.orchestrator_worker - INFO - 381: orchestrator _play_agent_welcome call_id=96194468A4D7D68B.1781017560.20799531 agent_id=37 welcome_raw='Здравствуйте! Чем могу помочь?' welcome_text='Здравствуйте! Чем могу помочь?'
+rsd_telephony_orchestrator   | 2026-06-09 15:06:12,979 - app.telephony.orchestrator_worker - INFO - 238: orchestrator _stream_routing_phrase call_id=96194468A4D7D68B.1781017560.20799531 log_label=welcome text='Здравствуйте! Чем могу помочь?' plain='Здравствуйте! Чем могу помочь?' empty=False
+rsd_telephony_orchestrator   | 2026-06-09 15:06:12,979 - app.telephony.orchestrator_worker - INFO - 259: orchestrator welcome starting TTS call_id=96194468A4D7D68B.1781017560.20799531 voice=default lang=ru-RU text_len=30
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.start","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_orchestrator   | 2026-06-09 15:06:12,992 - app.telephony.yandex_tts_stream - INFO - 222: yandex_tts_stream: text_len=13 voice_id=default mapped=alena effective=alena timeout=10.0
+rsd_telephony_media_gateway  | [media-gateway] buildVoxStartMessage: {"format":"l16","encoding":"audio/l16"}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"start\",\"sequenceNumber\":0,\"start\":{\"mediaFormat\":{\"encoding\":\"audio/l16\",\"sampleRate\":8000"}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"playback_grace","since_start_ms":13,"grace_ms":300}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"playback_grace","since_start_ms":14,"grace_ms":300}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"playback_grace","since_start_ms":29,"grace_ms":300}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"playback_grace","since_start_ms":46,"grace_ms":300}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"playback_grace","since_start_ms":64,"grace_ms":300}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"playback_grace","since_start_ms":96,"grace_ms":300}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"playback_grace","since_start_ms":117,"grace_ms":300}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"playback_grace","since_start_ms":152,"grace_ms":300}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"playback_grace","since_start_ms":177,"grace_ms":300}
+rsd_telephony_media_gateway  | [media-gateway] pacer ready no pacer {"call_id":"96194468A4D7D68B.1781017560.20799531"}
+rsd_telephony_media_gateway  | [media-gateway] downlink.ready fallback {"call_id":"96194468A4D7D68B.1781017560.20799531","timeout_ms":250}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"dtmf_suppress","since_dtmf_ms":468,"suppress_ms":1000}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"dtmf_suppress","since_dtmf_ms":469,"suppress_ms":1000}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"dtmf_suppress","since_dtmf_ms":469,"suppress_ms":1000}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"dtmf_suppress","since_dtmf_ms":469,"suppress_ms":1000}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"dtmf_suppress","since_dtmf_ms":469,"suppress_ms":1000}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"dtmf_suppress","since_dtmf_ms":493,"suppress_ms":1000}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"dtmf_suppress","since_dtmf_ms":493,"suppress_ms":1000}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"dtmf_suppress","since_dtmf_ms":517,"suppress_ms":1000}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"dtmf_suppress","since_dtmf_ms":543,"suppress_ms":1000}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"dtmf_suppress","since_dtmf_ms":568,"suppress_ms":1000}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"dtmf_suppress","since_dtmf_ms":570,"suppress_ms":1000}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"dtmf_suppress","since_dtmf_ms":690,"suppress_ms":1000}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"dtmf_suppress","since_dtmf_ms":690,"suppress_ms":1000}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"dtmf_suppress","since_dtmf_ms":691,"suppress_ms":1000}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"dtmf_suppress","since_dtmf_ms":691,"suppress_ms":1000}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"dtmf_suppress","since_dtmf_ms":714,"suppress_ms":1000}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"dtmf_suppress","since_dtmf_ms":716,"suppress_ms":1000}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"dtmf_suppress","since_dtmf_ms":717,"suppress_ms":1000}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"dtmf_suppress","since_dtmf_ms":744,"suppress_ms":1000}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"dtmf_suppress","since_dtmf_ms":868,"suppress_ms":1000}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"dtmf_suppress","since_dtmf_ms":869,"suppress_ms":1000}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"dtmf_suppress","since_dtmf_ms":869,"suppress_ms":1000}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"dtmf_suppress","since_dtmf_ms":869,"suppress_ms":1000}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"dtmf_suppress","since_dtmf_ms":893,"suppress_ms":1000}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"dtmf_suppress","since_dtmf_ms":895,"suppress_ms":1000}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"dtmf_suppress","since_dtmf_ms":897,"suppress_ms":1000}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"dtmf_suppress","since_dtmf_ms":918,"suppress_ms":1000}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"dtmf_suppress","since_dtmf_ms":944,"suppress_ms":1000}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"dtmf_suppress","since_dtmf_ms":972,"suppress_ms":1000}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"dtmf_suppress","since_dtmf_ms":974,"suppress_ms":1000}
+rsd_telephony_media_gateway  | [media-gateway] barge_in suppressed {"call_id":"96194468A4D7D68B.1781017560.20799531","reason":"dtmf_suppress","since_dtmf_ms":993,"suppress_ms":1000}
+rsd_telephony_media_gateway  | [media-gateway] audio.in {"call_id":"96194468A4D7D68B.1781017560.20799531","frames":150,"bytes":160,"expected_frame_bytes":160,"rtf":6.55,"avg_rtf":1.092}
+rsd_telephony_orchestrator   | 2026-06-09 15:06:14,082 - app.telephony.yandex_tts_stream - INFO - 239: yandex_tts_stream endian normalize: chosen=as_is_le raw_mean=1608.6 raw_clip=0.000 swap_mean=9694.4 swap_clip=0.082 bytes=21848
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] debug orch chunk payload {"hypothesis":"H1","call_id":"96194468A4D7D68B.1781017560.20799531","sequence":0,"payload_keys":["sequence","audio_pcm16_b64"],"b64_len":428}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] debug orch chunk payload {"hypothesis":"H1","call_id":"96194468A4D7D68B.1781017560.20799531","sequence":1,"payload_keys":["sequence","audio_pcm16_b64"],"b64_len":428}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] debug orch chunk payload {"hypothesis":"H1","call_id":"96194468A4D7D68B.1781017560.20799531","sequence":2,"payload_keys":["sequence","audio_pcm16_b64"],"b64_len":428}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_orchestrator   | 2026-06-09 15:06:14,181 - app.telephony.stream_tts - INFO - 276: tts_success: provider=yandex text_len=13
+rsd_telephony_orchestrator   | 2026-06-09 15:06:14,183 - app.telephony.yandex_tts_stream - INFO - 222: yandex_tts_stream: text_len=16 voice_id=default mapped=alena effective=alena timeout=10.0
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_redis                    | 1:M 09 Jun 2026 15:06:14.205 * 100 changes in 300 seconds. Saving...
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_redis                    | 1:M 09 Jun 2026 15:06:14.209 * Background saving started by pid 116655
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_redis                    | 116655:C 09 Jun 2026 15:06:14.242 * DB saved on disk
+rsd_redis                    | 116655:C 09 Jun 2026 15:06:14.243 * Fork CoW for RDB: current 0 MB, peak 0 MB, average 0 MB
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_redis                    | 1:M 09 Jun 2026 15:06:14.310 * Background saving terminated with success
+rsd_telephony_media_gateway  | [media-gateway] debug pcm16 stats {"hypothesis":"H3","call_id":"96194468A4D7D68B.1781017560.20799531","frame_index":0,"pcm16_bytes":320,"mean_abs_le":2,"mean_abs_be":174}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"ff ff fe ff fe ff fe ff fe ff fd ff fe ff fe ff","leSamples":[-1,-2,-2,-2],"beSamples":[-1,-257,-257,-257]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"ff ff ff fe ff fe ff fe ff fe ff fd ff fe ff fe","leSamples":[-1,-257,-257,-257],"beSamples":[-1,-2,-2,-2]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":1,\"media\":{\"chunk\":0,\"timestamp\":1781017574315,\"payload\":\"/////v/+"}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] debug pcm16 stats {"hypothesis":"H3","call_id":"96194468A4D7D68B.1781017560.20799531","frame_index":1,"pcm16_bytes":320,"mean_abs_le":2,"mean_abs_be":169}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"ff ff ff ff ff ff fe ff fe ff fd ff fe ff fe ff","leSamples":[-1,-1,-1,-2],"beSamples":[-1,-1,-1,-257]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"ff ff ff ff ff ff ff fe ff fe ff fd ff fe ff fe","leSamples":[-1,-1,-1,-257],"beSamples":[-1,-1,-1,-2]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":2,\"media\":{\"chunk\":1,\"timestamp\":1781017574594,\"payload\":\"////////"}
+rsd_telephony_orchestrator   | 2026-06-09 15:06:14,609 - app.telephony.yandex_tts_stream - INFO - 239: yandex_tts_stream endian normalize: chosen=as_is_le raw_mean=1586.9 raw_clip=0.000 swap_mean=10611.5 swap_clip=0.092 bytes=23520
+rsd_telephony_media_gateway  | [media-gateway] debug pcm16 stats {"hypothesis":"H3","call_id":"96194468A4D7D68B.1781017560.20799531","frame_index":2,"pcm16_bytes":320,"mean_abs_le":1,"mean_abs_be":110}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"fe ff ff ff ff ff ff ff fe ff fe ff fe ff fe ff","leSamples":[-2,-1,-1,-1],"beSamples":[-257,-1,-1,-1]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"ff fe ff ff ff ff ff ff ff fe ff fe ff fe ff fe","leSamples":[-257,-1,-1,-1],"beSamples":[-2,-1,-1,-1]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":3,\"media\":{\"chunk\":2,\"timestamp\":1781017574672,\"payload\":\"//7/////"}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_orchestrator   | 2026-06-09 15:06:14,689 - app.telephony.stream_tts - INFO - 276: tts_success: provider=yandex text_len=16
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_orchestrator   | 2026-06-09 15:06:14,692 - app.telephony.orchestrator_worker - INFO - 327: orchestrator welcome TTS completed call_id=96194468A4D7D68B.1781017560.20799531
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_orchestrator   | 2026-06-09 15:06:14,693 - app.telephony.orchestrator_worker - INFO - 333: [orchestrator] welcome guaranteed path=stream call_id=96194468A4D7D68B.1781017560.20799531
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_orchestrator   | 2026-06-09 15:06:14,717 - app.telephony.orchestrator_worker - INFO - 451: orchestrator dtmf routed call_id=96194468A4D7D68B.1781017560.20799531 extension=1234 agent_id=37
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] debug pcm16 stats {"hypothesis":"H3","call_id":"96194468A4D7D68B.1781017560.20799531","frame_index":3,"pcm16_bytes":320,"mean_abs_le":1,"mean_abs_be":79}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"ff ff fe ff fe ff fd ff fd ff ff ff 00 00 fe ff","leSamples":[-1,-2,-2,-3],"beSamples":[-1,-257,-257,-513]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"ff ff ff fe ff fe ff fd ff fd ff ff 00 00 ff fe","leSamples":[-1,-257,-257,-513],"beSamples":[-1,-2,-2,-3]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":4,\"media\":{\"chunk\":3,\"timestamp\":1781017574833,\"payload\":\"/////v/+"}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.chunk","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] orch reply received {"type":"agent.audio.end","call_id":"96194468A4D7D68B.1781017560.20799531","has_session":true,"active_sessions":1}
+rsd_telephony_media_gateway  | [media-gateway] debug pcm16 stats {"hypothesis":"H3","call_id":"96194468A4D7D68B.1781017560.20799531","frame_index":4,"pcm16_bytes":320,"mean_abs_le":1,"mean_abs_be":122}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"fe ff fe ff ff ff ff ff fe ff 00 00 ff ff ff ff","leSamples":[-2,-2,-1,-1],"beSamples":[-257,-257,-1,-1]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"ff fe ff fe ff ff ff ff ff fe 00 00 ff ff ff ff","leSamples":[-257,-257,-1,-1],"beSamples":[-2,-2,-1,-1]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":5,\"media\":{\"chunk\":4,\"timestamp\":1781017574949,\"payload\":\"//7//v//"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"00 00 00 00 00 00 ff ff ff ff 00 00 ff ff 00 00","leSamples":[0,0,0,-1],"beSamples":[0,0,0,-1]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 00 00 00 00 00 ff ff ff ff 00 00 ff ff 00 00","leSamples":[0,0,0,-1],"beSamples":[0,0,0,-1]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":6,\"media\":{\"chunk\":5,\"timestamp\":1781017574989,\"payload\":\"AAAAAAAA"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"ff ff fe ff ff ff ff ff ff ff 00 00 ff ff ff ff","leSamples":[-1,-2,-1,-1],"beSamples":[-1,-257,-1,-1]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"ff ff ff fe ff ff ff ff ff ff 00 00 ff ff ff ff","leSamples":[-1,-257,-1,-1],"beSamples":[-1,-2,-1,-1]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":7,\"media\":{\"chunk\":6,\"timestamp\":1781017575001,\"payload\":\"/////v//"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"00 00 ff ff 00 00 00 00 ff ff 00 00 fe ff ff ff","leSamples":[0,-1,0,0],"beSamples":[0,-1,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 00 ff ff 00 00 00 00 ff ff 00 00 ff fe ff ff","leSamples":[0,-1,0,0],"beSamples":[0,-1,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":8,\"media\":{\"chunk\":7,\"timestamp\":1781017575022,\"payload\":\"AAD//wAA"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"ff ff fe ff fe ff fe ff fe ff fe ff fe ff ff ff","leSamples":[-1,-2,-2,-2],"beSamples":[-1,-257,-257,-257]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"ff ff ff fe ff fe ff fe ff fe ff fe ff fe ff ff","leSamples":[-1,-257,-257,-257],"beSamples":[-1,-2,-2,-2]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":9,\"media\":{\"chunk\":8,\"timestamp\":1781017575041,\"payload\":\"/////v/+"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"ff ff 00 00 00 00 00 00 ff ff ff ff 00 00 ff ff","leSamples":[-1,0,0,0],"beSamples":[-1,0,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"ff ff 00 00 00 00 00 00 ff ff ff ff 00 00 ff ff","leSamples":[-1,0,0,0],"beSamples":[-1,0,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":10,\"media\":{\"chunk\":9,\"timestamp\":1781017575061,\"payload\":\"//8AAAA"}
+rsd_telephony_media_gateway  | [media-gateway] audio.in {"call_id":"96194468A4D7D68B.1781017560.20799531","frames":200,"bytes":160,"expected_frame_bytes":160,"rtf":5.35,"avg_rtf":1.076}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"00 00 00 00 02 00 03 00 02 00 02 00 01 00 03 00","leSamples":[0,0,2,3],"beSamples":[0,0,512,768]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 00 00 00 00 02 00 03 00 02 00 02 00 01 00 03","leSamples":[0,0,512,768],"beSamples":[0,0,2,3]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":11,\"media\":{\"chunk\":10,\"timestamp\":1781017575085,\"payload\":\"AAAAAA"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"0d 1b 6e 18 41 12 74 0c ce 09 cd 08 94 08 13 07","leSamples":[6925,6254,4673,3188],"beSamples":[3355,28184,16658,29708]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"1b 0d 18 6e 12 41 0c 74 09 ce 08 cd 08 94 07 13","leSamples":[3355,28184,16658,29708],"beSamples":[6925,6254,4673,3188]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":12,\"media\":{\"chunk\":11,\"timestamp\":1781017575101,\"payload\":\"Gw0Ybh"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"51 f5 b3 fa 9d 00 14 08 9f 10 b5 18 7a 1e 93 21","leSamples":[-2735,-1357,157,2068],"beSamples":[20981,-19462,-25344,5128]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"f5 51 fa b3 00 9d 08 14 10 9f 18 b5 1e 7a 21 93","leSamples":[20981,-19462,-25344,5128],"beSamples":[-2735,-1357,157,2068]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":13,\"media\":{\"chunk\":12,\"timestamp\":1781017575121,\"payload\":\"9VH6sw"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"8b ec 9b eb 2a eb bc e9 61 e9 d5 e9 2d ea 89 eb","leSamples":[-4981,-5221,-5334,-5700],"beSamples":[-29716,-25621,10987,-17175]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"ec 8b eb 9b eb 2a e9 bc e9 61 e9 d5 ea 2d eb 89","leSamples":[-29716,-25621,10987,-17175],"beSamples":[-4981,-5221,-5334,-5700]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":14,\"media\":{\"chunk\":13,\"timestamp\":1781017575140,\"payload\":\"7Ivrm+"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"e0 11 2a 10 9c 0d d6 0b 04 0a 68 06 81 04 be 02","leSamples":[4576,4138,3484,3030],"beSamples":[-8175,10768,-25587,-10741]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"11 e0 10 2a 0d 9c 0b d6 0a 04 06 68 04 81 02 be","leSamples":[-8175,10768,-25587,-10741],"beSamples":[4576,4138,3484,3030]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":15,\"media\":{\"chunk\":14,\"timestamp\":1781017575161,\"payload\":\"EeAQKg"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"40 f3 f1 f4 5d f7 ab f9 35 fc f7 fe f0 01 5e 05","leSamples":[-3264,-2831,-2211,-1621],"beSamples":[16627,-3596,24055,-21511]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"f3 40 f4 f1 f7 5d f9 ab fc 35 fe f7 01 f0 05 5e","leSamples":[16627,-3596,24055,-21511],"beSamples":[-3264,-2831,-2211,-1621]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":16,\"media\":{\"chunk\":15,\"timestamp\":1781017575180,\"payload\":\"80D08f"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"a8 07 06 06 34 04 58 02 6f 00 7e fe b0 fc ff fa","leSamples":[1960,1542,1076,600],"beSamples":[-22521,1542,13316,22530]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"07 a8 06 06 04 34 02 58 00 6f fe 7e fc b0 fa ff","leSamples":[-22521,1542,13316,22530],"beSamples":[1960,1542,1076,600]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":17,\"media\":{\"chunk\":16,\"timestamp\":1781017575200,\"payload\":\"B6gGBg"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"19 f7 3e f8 b5 f9 7e fb 71 fd 80 ff 98 01 a4 03","leSamples":[-2279,-1986,-1611,-1154],"beSamples":[6647,16120,-18951,32507]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"f7 19 f8 3e f9 b5 fb 7e fd 71 ff 80 01 98 03 a4","leSamples":[6647,16120,-18951,32507],"beSamples":[-2279,-1986,-1611,-1154]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":18,\"media\":{\"chunk\":17,\"timestamp\":1781017575220,\"payload\":\"9xn4Pv"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"20 05 a9 03 0e 02 fa 01 d9 00 47 ff e1 fd 44 ff","leSamples":[1312,937,526,506],"beSamples":[8197,-22269,3586,-1535]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"05 20 03 a9 02 0e 01 fa 00 d9 ff 47 fd e1 ff 44","leSamples":[8197,-22269,3586,-1535],"beSamples":[1312,937,526,506]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":19,\"media\":{\"chunk\":18,\"timestamp\":1781017575243,\"payload\":\"BSADqQ"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"5a d3 94 be 43 ba b1 ac 88 a1 5d a2 69 9b 00 9c","leSamples":[-11430,-16748,-17853,-21327],"beSamples":[23251,-27458,17338,-20052]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"d3 5a be 94 ba 43 ac b1 a1 88 a2 5d 9b 69 9c 00","leSamples":[23251,-27458,17338,-20052],"beSamples":[-11430,-16748,-17853,-21327]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":20,\"media\":{\"chunk\":19,\"timestamp\":1781017575263,\"payload\":\"01q+lL"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"0a 00 2e 02 8a 05 78 08 4a 0b 1c 0e 75 10 aa 11","leSamples":[10,558,1418,2168],"beSamples":[2560,11778,-30203,30728]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 0a 02 2e 05 8a 08 78 0b 4a 0e 1c 10 75 11 aa","leSamples":[2560,11778,-30203,30728],"beSamples":[10,558,1418,2168]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":21,\"media\":{\"chunk\":20,\"timestamp\":1781017575282,\"payload\":\"AAoCLg"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"3d ae 32 a5 10 b3 68 d8 5d 03 59 25 b4 39 8d 41","leSamples":[-20931,-23246,-19696,-10136],"beSamples":[15790,12965,4275,26840]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"ae 3d a5 32 b3 10 d8 68 03 5d 25 59 39 b4 41 8d","leSamples":[15790,12965,4275,26840],"beSamples":[-20931,-23246,-19696,-10136]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":22,\"media\":{\"chunk\":21,\"timestamp\":1781017575302,\"payload\":\"rj2lMr"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"c3 fc 50 f9 39 f4 b9 e7 b4 d7 0f cf 19 bb 24 aa","leSamples":[-829,-1712,-3015,-6215],"beSamples":[-15364,20729,14836,-17945]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"fc c3 f9 50 f4 39 e7 b9 d7 b4 cf 0f bb 19 aa 24","leSamples":[-15364,20729,14836,-17945],"beSamples":[-829,-1712,-3015,-6215]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":23,\"media\":{\"chunk\":22,\"timestamp\":1781017575323,\"payload\":\"/MP5UP"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"f2 0a 9e 0b d3 fd 40 f7 c7 f8 91 ec 20 de 79 da","leSamples":[2802,2974,-557,-2240],"beSamples":[-3574,-25077,-11267,16631]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"0a f2 0b 9e fd d3 f7 40 f8 c7 ec 91 de 20 da 79","leSamples":[-3574,-25077,-11267,16631],"beSamples":[2802,2974,-557,-2240]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":24,\"media\":{\"chunk\":23,\"timestamp\":1781017575343,\"payload\":\"CvILnv"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"69 04 ef 03 01 f9 cd eb 47 e8 38 e6 fa d9 d0 cc","leSamples":[1129,1007,-1791,-5171],"beSamples":[26884,-4349,505,-12821]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"04 69 03 ef f9 01 eb cd e8 47 e6 38 d9 fa cc d0","leSamples":[26884,-4349,505,-12821],"beSamples":[1129,1007,-1791,-5171]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":25,\"media\":{\"chunk\":24,\"timestamp\":1781017575364,\"payload\":\"BGkD7/"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"11 fc b5 f5 5a f0 2b ed 15 ed a6 ec 81 eb 3e e8","leSamples":[-1007,-2635,-4006,-4821],"beSamples":[4604,-18955,23280,11245]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"fc 11 f5 b5 f0 5a ed 2b ed 15 ec a6 eb 81 e8 3e","leSamples":[4604,-18955,23280,11245],"beSamples":[-1007,-2635,-4006,-4821]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":26,\"media\":{\"chunk\":25,\"timestamp\":1781017575385,\"payload\":\"/BH1tf"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"71 05 0e 06 15 07 43 07 64 08 37 0a 2e 0a 4c 09","leSamples":[1393,1550,1813,1859],"beSamples":[28933,3590,5383,17159]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"05 71 06 0e 07 15 07 43 08 64 0a 37 0a 2e 09 4c","leSamples":[28933,3590,5383,17159],"beSamples":[1393,1550,1813,1859]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":27,\"media\":{\"chunk\":26,\"timestamp\":1781017575405,\"payload\":\"BXEGDg"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"c2 fd 49 fd ad fe 3c fe 46 fe 58 ff 9d fd 50 fe","leSamples":[-574,-695,-339,-452],"beSamples":[-15619,18941,-20994,15614]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"fd c2 fd 49 fe ad fe 3c fe 46 ff 58 fd 9d fe 50","leSamples":[-15619,18941,-20994,15614],"beSamples":[-574,-695,-339,-452]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":28,\"media\":{\"chunk\":27,\"timestamp\":1781017575424,\"payload\":\"/cL9Sf"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"65 01 bd 00 1a 00 c2 00 17 01 ed ff d4 ff 4e 00","leSamples":[357,189,26,194],"beSamples":[25857,-17152,6656,-15872]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"01 65 00 bd 00 1a 00 c2 01 17 ff ed ff d4 00 4e","leSamples":[25857,-17152,6656,-15872],"beSamples":[357,189,26,194]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":29,\"media\":{\"chunk\":28,\"timestamp\":1781017575445,\"payload\":\"AWUAvQ"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"86 00 3f 00 3f 00 af 00 72 00 72 00 89 00 53 00","leSamples":[134,63,63,175],"beSamples":[-31232,16128,16128,-20736]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 86 00 3f 00 3f 00 af 00 72 00 72 00 89 00 53","leSamples":[-31232,16128,16128,-20736],"beSamples":[134,63,63,175]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":30,\"media\":{\"chunk\":29,\"timestamp\":1781017575464,\"payload\":\"AIYAPw"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"0e 00 0f 00 11 00 13 00 14 00 17 00 1b 00 1c 00","leSamples":[14,15,17,19],"beSamples":[3584,3840,4352,4864]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 0e 00 0f 00 11 00 13 00 14 00 17 00 1b 00 1c","leSamples":[3584,3840,4352,4864],"beSamples":[14,15,17,19]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":31,\"media\":{\"chunk\":30,\"timestamp\":1781017575485,\"payload\":\"AA4ADw"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"1b 00 17 00 15 00 13 00 12 00 10 00 0c 00 08 00","leSamples":[27,23,21,19],"beSamples":[6912,5888,5376,4864]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 1b 00 17 00 15 00 13 00 12 00 10 00 0c 00 08","leSamples":[6912,5888,5376,4864],"beSamples":[27,23,21,19]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":32,\"media\":{\"chunk\":31,\"timestamp\":1781017575507,\"payload\":\"ABsAFw"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"eb ff d7 ff c1 ff ec ff 3c ff 11 00 2a ff cc 01","leSamples":[-21,-41,-63,-20],"beSamples":[-5121,-10241,-15873,-4865]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"ff eb ff d7 ff c1 ff ec ff 3c 00 11 ff 2a 01 cc","leSamples":[-5121,-10241,-15873,-4865],"beSamples":[-21,-41,-63,-20]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":33,\"media\":{\"chunk\":32,\"timestamp\":1781017575527,\"payload\":\"/+v/1/"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"d6 fe 94 ff b0 ff 5d ff 45 00 47 00 66 ff 1f ff","leSamples":[-298,-108,-80,-163],"beSamples":[-10498,-27393,-20225,24063]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"fe d6 ff 94 ff b0 ff 5d 00 45 00 47 ff 66 ff 1f","leSamples":[-10498,-27393,-20225,24063],"beSamples":[-298,-108,-80,-163]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":34,\"media\":{\"chunk\":33,\"timestamp\":1781017575548,\"payload\":\"/tb/lP"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"86 01 a7 00 96 00 9d 00 72 01 a7 00 6a ff bd ff","leSamples":[390,167,150,157],"beSamples":[-31231,-22784,-27136,-25344]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"01 86 00 a7 00 96 00 9d 01 72 00 a7 ff 6a ff bd","leSamples":[-31231,-22784,-27136,-25344],"beSamples":[390,167,150,157]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":35,\"media\":{\"chunk\":34,\"timestamp\":1781017575567,\"payload\":\"AYYApw"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"e8 f9 04 03 49 0b 19 12 e3 17 b7 1e 84 23 b4 23","leSamples":[-1560,772,2889,4633],"beSamples":[-5895,1027,18699,6418]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"f9 e8 03 04 0b 49 12 19 17 e3 1e b7 23 84 23 b4","leSamples":[-5895,1027,18699,6418],"beSamples":[-1560,772,2889,4633]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":36,\"media\":{\"chunk\":35,\"timestamp\":1781017575609,\"payload\":\"+egDBA"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"a5 0d f3 05 49 fe d6 f8 12 f5 2f f4 19 f7 82 fb","leSamples":[3493,1523,-439,-1834],"beSamples":[-23283,-3323,18942,-10504]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"0d a5 05 f3 fe 49 f8 d6 f5 12 f4 2f f7 19 fb 82","leSamples":[-23283,-3323,18942,-10504],"beSamples":[3493,1523,-439,-1834]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":37,\"media\":{\"chunk\":36,\"timestamp\":1781017575623,\"payload\":\"DaUF8/"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"86 08 6f 0c 15 10 e5 13 b4 14 84 12 1f 10 f2 0c","leSamples":[2182,3183,4117,5093],"beSamples":[-31224,28428,5392,-6893]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"08 86 0c 6f 10 15 13 e5 14 b4 12 84 10 1f 0c f2","leSamples":[-31224,28428,5392,-6893],"beSamples":[2182,3183,4117,5093]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":38,\"media\":{\"chunk\":37,\"timestamp\":1781017575643,\"payload\":\"CIYMbx"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"06 0f 45 0c 52 09 ac 06 1a 02 5d fd 1b fa 34 f6","leSamples":[3846,3141,2386,1708],"beSamples":[1551,17676,21001,-21498]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"0f 06 0c 45 09 52 06 ac 02 1a fd 5d fa 1b f6 34","leSamples":[1551,17676,21001,-21498],"beSamples":[3846,3141,2386,1708]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":39,\"media\":{\"chunk\":38,\"timestamp\":1781017575664,\"payload\":\"DwYMRQ"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"bc f4 62 f1 44 ee b7 eb eb e9 ab e8 75 e8 e7 e8","leSamples":[-2884,-3742,-4540,-5193],"beSamples":[-17164,25329,17646,-18453]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"f4 bc f1 62 ee 44 eb b7 e9 eb e8 ab e8 75 e8 e7","leSamples":[-17164,25329,17646,-18453],"beSamples":[-2884,-3742,-4540,-5193]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":40,\"media\":{\"chunk\":39,\"timestamp\":1781017575684,\"payload\":\"9LzxYu"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"46 00 41 00 3c 00 3c 00 46 00 56 00 66 00 7a 00","leSamples":[70,65,60,60],"beSamples":[17920,16640,15360,15360]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 46 00 41 00 3c 00 3c 00 46 00 56 00 66 00 7a","leSamples":[17920,16640,15360,15360],"beSamples":[70,65,60,60]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":41,\"media\":{\"chunk\":40,\"timestamp\":1781017575704,\"payload\":\"AEYAQQ"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"21 00 2f 00 38 00 42 00 46 00 46 00 43 00 39 00","leSamples":[33,47,56,66],"beSamples":[8448,12032,14336,16896]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 21 00 2f 00 38 00 42 00 46 00 46 00 43 00 39","leSamples":[8448,12032,14336,16896],"beSamples":[33,47,56,66]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":42,\"media\":{\"chunk\":41,\"timestamp\":1781017575725,\"payload\":\"ACEALw"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"02 00 00 00 fa ff f4 ff ef ff e9 ff e8 ff e8 ff","leSamples":[2,0,-6,-12],"beSamples":[512,0,-1281,-2817]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 02 00 00 ff fa ff f4 ff ef ff e9 ff e8 ff e8","leSamples":[512,0,-1281,-2817],"beSamples":[2,0,-6,-12]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":43,\"media\":{\"chunk\":42,\"timestamp\":1781017575745,\"payload\":\"AAIAAP"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"18 00 f8 ff 85 00 2f 00 bb ff f1 ff e0 ff 85 ff","leSamples":[24,-8,133,47],"beSamples":[6144,-1793,-31488,12032]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 18 ff f8 00 85 00 2f ff bb ff f1 ff e0 ff 85","leSamples":[6144,-1793,-31488,12032],"beSamples":[24,-8,133,47]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":44,\"media\":{\"chunk\":43,\"timestamp\":1781017575765,\"payload\":\"ABj/+A"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"ff 01 e1 00 51 00 f5 ff 19 ff a0 ff e4 ff e2 fe","leSamples":[511,225,81,-11],"beSamples":[-255,-7936,20736,-2561]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"01 ff 00 e1 00 51 ff f5 ff 19 ff a0 ff e4 fe e2","leSamples":[-255,-7936,20736,-2561],"beSamples":[511,225,81,-11]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":45,\"media\":{\"chunk\":44,\"timestamp\":1781017575785,\"payload\":\"Af8A4Q"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"91 ff 57 00 7a ff d0 ff e1 ff 7c 00 88 ff 70 ff","leSamples":[-111,87,-134,-48],"beSamples":[-28161,22272,31487,-12033]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"ff 91 00 57 ff 7a ff d0 ff e1 00 7c ff 88 ff 70","leSamples":[-28161,22272,31487,-12033],"beSamples":[-111,87,-134,-48]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":46,\"media\":{\"chunk\":45,\"timestamp\":1781017575805,\"payload\":\"/5EAV/"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"af 01 48 02 71 01 87 01 39 02 78 01 53 01 89 01","leSamples":[431,584,369,391],"beSamples":[-20735,18434,28929,-30975]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"01 af 02 48 01 71 01 87 02 39 01 78 01 53 01 89","leSamples":[-20735,18434,28929,-30975],"beSamples":[431,584,369,391]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":47,\"media\":{\"chunk\":46,\"timestamp\":1781017575826,\"payload\":\"Aa8CSA"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"29 eb 18 e9 89 e8 2c ea d2 ea fc e7 96 e8 14 eb","leSamples":[-5335,-5864,-6007,-5588],"beSamples":[10731,6377,-30232,11498]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"eb 29 e9 18 e8 89 ea 2c ea d2 e7 fc e8 96 eb 14","leSamples":[10731,6377,-30232,11498],"beSamples":[-5335,-5864,-6007,-5588]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":48,\"media\":{\"chunk\":47,\"timestamp\":1781017575847,\"payload\":\"6ynpGO"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"fa ea de e9 08 e8 8c ea 9d ec ea ea ae ed 58 f2","leSamples":[-5382,-5666,-6136,-5492],"beSamples":[-1302,-8471,2280,-29462]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"ea fa e9 de e8 08 ea 8c ec 9d ea ea ed ae f2 58","leSamples":[-1302,-8471,2280,-29462],"beSamples":[-5382,-5666,-6136,-5492]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":49,\"media\":{\"chunk\":48,\"timestamp\":1781017575870,\"payload\":\"6vrp3u"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"65 ef 0c f0 e8 f0 04 f3 6c f5 d1 f8 6f fd 88 02","leSamples":[-4251,-4084,-3864,-3324],"beSamples":[26095,3312,-5904,1267]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"ef 65 f0 0c f0 e8 f3 04 f5 6c f8 d1 fd 6f 02 88","leSamples":[26095,3312,-5904,1267],"beSamples":[-4251,-4084,-3864,-3324]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":50,\"media\":{\"chunk\":49,\"timestamp\":1781017575895,\"payload\":\"72XwDP"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"41 0a b0 0c 66 0f 46 10 54 10 2c 11 b4 12 d4 13","leSamples":[2625,3248,3942,4166],"beSamples":[16650,-20468,26127,17936]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"0a 41 0c b0 0f 66 10 46 10 54 11 2c 12 b4 13 d4","leSamples":[16650,-20468,26127,17936],"beSamples":[2625,3248,3942,4166]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":51,\"media\":{\"chunk\":50,\"timestamp\":1781017575918,\"payload\":\"CkEMsA"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"28 08 12 07 f7 05 84 04 d0 02 28 01 9f ff 57 fe","leSamples":[2088,1810,1527,1156],"beSamples":[10248,4615,-2299,-31740]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"08 28 07 12 05 f7 04 84 02 d0 01 28 ff 9f fe 57","leSamples":[10248,4615,-2299,-31740],"beSamples":[2088,1810,1527,1156]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":52,\"media\":{\"chunk\":51,\"timestamp\":1781017575942,\"payload\":\"CCgHEg"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"ce fe dd fe dc fe 05 ff 40 ff 6b ff 7c ff 73 ff","leSamples":[-306,-291,-292,-251],"beSamples":[-12546,-8706,-8962,1535]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"fe ce fe dd fe dc ff 05 ff 40 ff 6b ff 7c ff 73","leSamples":[-12546,-8706,-8962,1535],"beSamples":[-306,-291,-292,-251]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":53,\"media\":{\"chunk\":52,\"timestamp\":1781017575958,\"payload\":\"/s7+3f"}
+rsd_telephony_media_gateway  | [media-gateway] audio.in {"call_id":"96194468A4D7D68B.1781017560.20799531","frames":250,"bytes":160,"expected_frame_bytes":160,"rtf":0,"avg_rtf":1.041}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"e1 ff e6 ff e7 ff dd ff d2 ff c8 ff c0 ff bb ff","leSamples":[-31,-26,-25,-35],"beSamples":[-7681,-6401,-6145,-8705]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"ff e1 ff e6 ff e7 ff dd ff d2 ff c8 ff c0 ff bb","leSamples":[-7681,-6401,-6145,-8705],"beSamples":[-31,-26,-25,-35]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":54,\"media\":{\"chunk\":53,\"timestamp\":1781017575977,\"payload\":\"/+H/5v"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"17 00 13 00 0e 00 0d 00 06 00 04 00 06 00 01 00","leSamples":[23,19,14,13],"beSamples":[5888,4864,3584,3328]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 17 00 13 00 0e 00 0d 00 06 00 04 00 06 00 01","leSamples":[5888,4864,3584,3328],"beSamples":[23,19,14,13]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":55,\"media\":{\"chunk\":54,\"timestamp\":1781017575998,\"payload\":\"ABcAEw"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"fd ff fe ff fc ff fd ff 00 00 00 00 00 00 01 00","leSamples":[-3,-2,-4,-3],"beSamples":[-513,-257,-769,-513]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"ff fd ff fe ff fc ff fd 00 00 00 00 00 00 00 01","leSamples":[-513,-257,-769,-513],"beSamples":[-3,-2,-4,-3]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":56,\"media\":{\"chunk\":55,\"timestamp\":1781017576021,\"payload\":\"//3//v"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"f8 ff fa ff f9 ff f8 ff f9 ff fb ff fc ff fe ff","leSamples":[-8,-6,-7,-8],"beSamples":[-1793,-1281,-1537,-1793]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"ff f8 ff fa ff f9 ff f8 ff f9 ff fb ff fc ff fe","leSamples":[-1793,-1281,-1537,-1793],"beSamples":[-8,-6,-7,-8]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":57,\"media\":{\"chunk\":56,\"timestamp\":1781017576053,\"payload\":\"//j/+v"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"fe ff 00 00 03 00 00 00 fe ff ff ff 00 00 00 00","leSamples":[-2,0,3,0],"beSamples":[-257,0,768,0]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"ff fe 00 00 00 03 00 00 ff fe ff ff 00 00 00 00","leSamples":[-257,0,768,0],"beSamples":[-2,0,3,0]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":58,\"media\":{\"chunk\":57,\"timestamp\":1781017576091,\"payload\":\"//4AAA"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"00 00 ff ff 00 00 00 00 00 00 fe ff fe ff ff ff","leSamples":[0,-1,0,0],"beSamples":[0,-1,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 00 ff ff 00 00 00 00 00 00 ff fe ff fe ff ff","leSamples":[0,-1,0,0],"beSamples":[0,-1,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":59,\"media\":{\"chunk\":58,\"timestamp\":1781017576117,\"payload\":\"AAD//w"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"00 00 ff ff 00 00 ff ff ff ff 00 00 00 00 00 00","leSamples":[0,-1,0,-1],"beSamples":[0,-1,0,-1]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 00 ff ff 00 00 ff ff ff ff 00 00 00 00 00 00","leSamples":[0,-1,0,-1],"beSamples":[0,-1,0,-1]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":60,\"media\":{\"chunk\":59,\"timestamp\":1781017576151,\"payload\":\"AAD//w"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"fd ff fe ff fd ff fd ff fd ff fd ff fc ff fc ff","leSamples":[-3,-2,-3,-3],"beSamples":[-513,-257,-513,-513]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"ff fd ff fe ff fd ff fd ff fd ff fd ff fc ff fc","leSamples":[-513,-257,-513,-513],"beSamples":[-3,-2,-3,-3]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":61,\"media\":{\"chunk\":60,\"timestamp\":1781017576172,\"payload\":\"//3//v"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"ff ff fe ff fd ff fc ff f9 ff fa ff fa ff f9 ff","leSamples":[-1,-2,-3,-4],"beSamples":[-1,-257,-513,-769]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"ff ff ff fe ff fd ff fc ff f9 ff fa ff fa ff f9","leSamples":[-1,-257,-513,-769],"beSamples":[-1,-2,-3,-4]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":62,\"media\":{\"chunk\":61,\"timestamp\":1781017576197,\"payload\":\"/////v"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00","leSamples":[0,0,0,0],"beSamples":[0,0,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00","leSamples":[0,0,0,0],"beSamples":[0,0,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":63,\"media\":{\"chunk\":62,\"timestamp\":1781017576214,\"payload\":\"AAAAAA"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00","leSamples":[0,0,0,0],"beSamples":[0,0,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00","leSamples":[0,0,0,0],"beSamples":[0,0,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":64,\"media\":{\"chunk\":63,\"timestamp\":1781017576232,\"payload\":\"AAAAAA"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00","leSamples":[0,0,0,0],"beSamples":[0,0,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00","leSamples":[0,0,0,0],"beSamples":[0,0,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":65,\"media\":{\"chunk\":64,\"timestamp\":1781017576252,\"payload\":\"AAAAAA"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00","leSamples":[0,0,0,0],"beSamples":[0,0,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00","leSamples":[0,0,0,0],"beSamples":[0,0,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":66,\"media\":{\"chunk\":65,\"timestamp\":1781017576273,\"payload\":\"AAAAAA"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00","leSamples":[0,0,0,0],"beSamples":[0,0,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00","leSamples":[0,0,0,0],"beSamples":[0,0,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":67,\"media\":{\"chunk\":66,\"timestamp\":1781017576293,\"payload\":\"AAAAAA"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00","leSamples":[0,0,0,0],"beSamples":[0,0,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00","leSamples":[0,0,0,0],"beSamples":[0,0,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":68,\"media\":{\"chunk\":67,\"timestamp\":1781017576313,\"payload\":\"AAAAAA"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00","leSamples":[0,0,0,0],"beSamples":[0,0,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00","leSamples":[0,0,0,0],"beSamples":[0,0,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":69,\"media\":{\"chunk\":68,\"timestamp\":1781017576334,\"payload\":\"AAAAAA"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"00 00 ff ff fe ff ff ff ff ff ff ff fe ff ff ff","leSamples":[0,-1,-2,-1],"beSamples":[0,-1,-257,-1]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 00 ff ff ff fe ff ff ff ff ff ff ff fe ff ff","leSamples":[0,-1,-257,-1],"beSamples":[0,-1,-2,-1]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":70,\"media\":{\"chunk\":69,\"timestamp\":1781017576354,\"payload\":\"AAD///"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"00 00 ff ff ff ff ff ff ff ff fe ff ff ff ff ff","leSamples":[0,-1,-1,-1],"beSamples":[0,-1,-1,-1]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 00 ff ff ff ff ff ff ff ff ff fe ff ff ff ff","leSamples":[0,-1,-1,-1],"beSamples":[0,-1,-1,-1]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":71,\"media\":{\"chunk\":70,\"timestamp\":1781017576374,\"payload\":\"AAD///"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"ff ff ff ff 00 00 00 00 ff ff ff ff ff ff ff ff","leSamples":[-1,-1,0,0],"beSamples":[-1,-1,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"ff ff ff ff 00 00 00 00 ff ff ff ff ff ff ff ff","leSamples":[-1,-1,0,0],"beSamples":[-1,-1,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":72,\"media\":{\"chunk\":71,\"timestamp\":1781017576394,\"payload\":\"/////w"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"ff ff 00 00 ff ff fe ff ff ff 00 00 ff ff ff ff","leSamples":[-1,0,-1,-2],"beSamples":[-1,0,-1,-257]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"ff ff 00 00 ff ff ff fe ff ff 00 00 ff ff ff ff","leSamples":[-1,0,-1,-257],"beSamples":[-1,0,-1,-2]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":73,\"media\":{\"chunk\":72,\"timestamp\":1781017576414,\"payload\":\"//8AAP"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"00 00 ff ff ff ff ff ff ff ff ff ff ff ff 00 00","leSamples":[0,-1,-1,-1],"beSamples":[0,-1,-1,-1]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 00 ff ff ff ff ff ff ff ff ff ff ff ff 00 00","leSamples":[0,-1,-1,-1],"beSamples":[0,-1,-1,-1]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":74,\"media\":{\"chunk\":73,\"timestamp\":1781017576434,\"payload\":\"AAD///"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"00 00 ff ff ff ff ff ff ff ff ff ff ff ff ff ff","leSamples":[0,-1,-1,-1],"beSamples":[0,-1,-1,-1]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 00 ff ff ff ff ff ff ff ff ff ff ff ff ff ff","leSamples":[0,-1,-1,-1],"beSamples":[0,-1,-1,-1]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":75,\"media\":{\"chunk\":74,\"timestamp\":1781017576455,\"payload\":\"AAD///"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"00 00 00 00 ff ff ff ff 00 00 00 00 00 00 00 00","leSamples":[0,0,-1,-1],"beSamples":[0,0,-1,-1]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 00 00 00 ff ff ff ff 00 00 00 00 00 00 00 00","leSamples":[0,0,-1,-1],"beSamples":[0,0,-1,-1]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":76,\"media\":{\"chunk\":75,\"timestamp\":1781017576475,\"payload\":\"AAAAAP"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"f8 ff f8 ff f7 ff f7 ff f7 ff f7 ff f7 ff f7 ff","leSamples":[-8,-8,-9,-9],"beSamples":[-1793,-1793,-2049,-2049]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"ff f8 ff f8 ff f7 ff f7 ff f7 ff f7 ff f7 ff f7","leSamples":[-1793,-1793,-2049,-2049],"beSamples":[-8,-8,-9,-9]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":77,\"media\":{\"chunk\":76,\"timestamp\":1781017576495,\"payload\":\"//j/+P"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"08 00 08 00 01 00 10 00 07 00 0c 00 17 00 0a 00","leSamples":[8,8,1,16],"beSamples":[2048,2048,256,4096]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 08 00 08 00 01 00 10 00 07 00 0c 00 17 00 0a","leSamples":[2048,2048,256,4096],"beSamples":[8,8,1,16]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":78,\"media\":{\"chunk\":77,\"timestamp\":1781017576516,\"payload\":\"AAgACA"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"01 00 15 ff 02 00 de ff ae ff ea ff f6 fe 65 00","leSamples":[1,-235,2,-34],"beSamples":[256,5631,512,-8449]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 01 ff 15 00 02 ff de ff ae ff ea fe f6 00 65","leSamples":[256,5631,512,-8449],"beSamples":[1,-235,2,-34]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":79,\"media\":{\"chunk\":78,\"timestamp\":1781017576536,\"payload\":\"AAH/FQ"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"d6 fd 79 00 bf fe 45 fe e5 00 b6 fd 2a 00 bd ff","leSamples":[-554,121,-321,-443],"beSamples":[-10499,30976,-16386,17918]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"fd d6 00 79 fe bf fe 45 00 e5 fd b6 00 2a ff bd","leSamples":[-10499,30976,-16386,17918],"beSamples":[-554,121,-321,-443]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":80,\"media\":{\"chunk\":79,\"timestamp\":1781017576571,\"payload\":\"/dYAef"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"1d fd 89 fd 78 06 76 f8 48 03 94 04 5e f6 a1 08","leSamples":[-739,-631,1656,-1930],"beSamples":[7677,-30211,30726,30456]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"fd 1d fd 89 06 78 f8 76 03 48 04 94 f6 5e 08 a1","leSamples":[7677,-30211,30726,30456],"beSamples":[-739,-631,1656,-1930]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":81,\"media\":{\"chunk\":80,\"timestamp\":1781017576587,\"payload\":\"/R39iQ"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"65 ff 64 01 8a fe ab fd 0f 02 51 01 46 fd cd 01","leSamples":[-155,356,-374,-597],"beSamples":[26111,25601,-29954,-21507]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"ff 65 01 64 fe 8a fd ab 02 0f 01 51 fd 46 01 cd","leSamples":[26111,25601,-29954,-21507],"beSamples":[-155,356,-374,-597]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":82,\"media\":{\"chunk\":81,\"timestamp\":1781017576610,\"payload\":\"/2UBZP"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"42 02 e1 fe a9 fd 7a 00 26 fb 6a 01 3b 00 70 fb","leSamples":[578,-287,-599,122],"beSamples":[16898,-7682,-22019,31232]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"02 42 fe e1 fd a9 00 7a fb 26 01 6a 00 3b fb 70","leSamples":[16898,-7682,-22019,31232],"beSamples":[578,-287,-599,122]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":83,\"media\":{\"chunk\":82,\"timestamp\":1781017576631,\"payload\":\"AkL+4f"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"06 d7 36 cd e3 cc e2 cb c2 d6 24 e1 4a e7 62 ff","leSamples":[-10490,-13002,-13085,-13342],"beSamples":[1751,14029,-7220,-7477]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"d7 06 cd 36 cc e3 cb e2 d6 c2 e1 24 e7 4a ff 62","leSamples":[1751,14029,-7220,-7477],"beSamples":[-10490,-13002,-13085,-13342]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":84,\"media\":{\"chunk\":83,\"timestamp\":1781017576653,\"payload\":\"1wbNNs"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"9f 3f ce 45 d0 44 af 36 b6 28 b0 16 51 05 f7 fd","leSamples":[16287,17870,17616,13999],"beSamples":[-24769,-12731,-12220,-20682]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"3f 9f 45 ce 44 d0 36 af 28 b6 16 b0 05 51 fd f7","leSamples":[-24769,-12731,-12220,-20682],"beSamples":[16287,17870,17616,13999]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":85,\"media\":{\"chunk\":84,\"timestamp\":1781017576670,\"payload\":\"P59Fzk"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"9c 03 a8 04 c3 ff 4e f3 03 ea 8f e1 0d da 32 d1","leSamples":[924,1192,-61,-3250],"beSamples":[-25597,-22524,-15361,20211]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"03 9c 04 a8 ff c3 f3 4e ea 03 e1 8f da 0d d1 32","leSamples":[-25597,-22524,-15361,20211],"beSamples":[924,1192,-61,-3250]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":86,\"media\":{\"chunk\":85,\"timestamp\":1781017576690,\"payload\":\"A5wEqP"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"9f e8 c2 e2 22 df d6 e0 b2 e6 81 f1 c8 fd 68 07","leSamples":[-5985,-7486,-8414,-7978],"beSamples":[-24600,-15646,8927,-10528]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"e8 9f e2 c2 df 22 e0 d6 e6 b2 f1 81 fd c8 07 68","leSamples":[-24600,-15646,8927,-10528],"beSamples":[-5985,-7486,-8414,-7978]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":87,\"media\":{\"chunk\":86,\"timestamp\":1781017576711,\"payload\":\"6J/iwt"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"54 f0 26 e9 9a e1 29 dc 08 dc f0 df 1f e5 d4 ea","leSamples":[-4012,-5850,-7782,-9175],"beSamples":[21744,9961,-25887,10716]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"f0 54 e9 26 e1 9a dc 29 dc 08 df f0 e5 1f ea d4","leSamples":[21744,9961,-25887,10716],"beSamples":[-4012,-5850,-7782,-9175]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":88,\"media\":{\"chunk\":87,\"timestamp\":1781017576730,\"payload\":\"8FTpJu"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"6a 1c e7 18 ae 15 2f 12 d1 0c cf 05 22 fe c2 f5","leSamples":[7274,6375,5550,4655],"beSamples":[27164,-6376,-20971,12050]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"1c 6a 18 e7 15 ae 12 2f 0c d1 05 cf fe 22 f5 c2","leSamples":[27164,-6376,-20971,12050],"beSamples":[7274,6375,5550,4655]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":89,\"media\":{\"chunk\":88,\"timestamp\":1781017576751,\"payload\":\"HGoY5x"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"cb 1f cc 19 51 13 53 0f 33 0c 15 09 2c 05 60 fe","leSamples":[8139,6604,4945,3923],"beSamples":[-13537,-13287,20755,21263]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"1f cb 19 cc 13 51 0f 53 0c 33 09 15 05 2c fe 60","leSamples":[-13537,-13287,20755,21263],"beSamples":[8139,6604,4945,3923]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":90,\"media\":{\"chunk\":89,\"timestamp\":1781017576771,\"payload\":\"H8sZzB"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"49 d6 45 d3 af d0 60 d2 09 d9 c2 de f0 e5 54 f0","leSamples":[-10679,-11451,-12113,-11680],"beSamples":[18902,17875,-20528,24786]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"d6 49 d3 45 d0 af d2 60 d9 09 de c2 e5 f0 f0 54","leSamples":[18902,17875,-20528,24786],"beSamples":[-10679,-11451,-12113,-11680]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":91,\"media\":{\"chunk\":90,\"timestamp\":1781017576791,\"payload\":\"1knTRd"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"39 d3 0c d5 9a d9 f0 dd 8d e4 12 ed bf f4 8f fc","leSamples":[-11463,-10996,-9830,-8720],"beSamples":[14803,3285,-25895,-3875]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"d3 39 d5 0c d9 9a dd f0 e4 8d ed 12 f4 bf fc 8f","leSamples":[14803,3285,-25895,-3875],"beSamples":[-11463,-10996,-9830,-8720]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":92,\"media\":{\"chunk\":91,\"timestamp\":1781017576814,\"payload\":\"0znVDN"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"77 fe 1a f7 0a f0 6b ea 23 e6 61 e2 d9 dc 0b d6","leSamples":[-393,-2278,-4086,-5525],"beSamples":[30718,6903,2800,27626]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"fe 77 f7 1a f0 0a ea 6b e6 23 e2 61 dc d9 d6 0b","leSamples":[30718,6903,2800,27626],"beSamples":[-393,-2278,-4086,-5525]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":93,\"media\":{\"chunk\":92,\"timestamp\":1781017576832,\"payload\":\"/nf3Gv"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"fd 15 45 16 5e 14 d2 10 d9 0b 36 07 f2 05 fe 07","leSamples":[5629,5701,5214,4306],"beSamples":[-747,17686,24084,-11760]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"15 fd 16 45 14 5e 10 d2 0b d9 07 36 05 f2 07 fe","leSamples":[-747,17686,24084,-11760],"beSamples":[5629,5701,5214,4306]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":94,\"media\":{\"chunk\":93,\"timestamp\":1781017576852,\"payload\":\"Ff0WRR"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"da e1 e6 e0 4f e2 1e e6 9d ec 87 f5 cd fe 04 07","leSamples":[-7718,-7962,-7601,-6626],"beSamples":[-9503,-6432,20450,7910]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"e1 da e0 e6 e2 4f e6 1e ec 9d f5 87 fe cd 07 04","leSamples":[-9503,-6432,20450,7910],"beSamples":[-7718,-7962,-7601,-6626]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":95,\"media\":{\"chunk\":94,\"timestamp\":1781017576874,\"payload\":\"4drg5u"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"a8 09 25 09 8a 08 d8 07 13 07 3e 06 58 05 66 04","leSamples":[2472,2341,2186,2008],"beSamples":[-22519,9481,-30200,-10233]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"09 a8 09 25 08 8a 07 d8 07 13 06 3e 05 58 04 66","leSamples":[-22519,9481,-30200,-10233],"beSamples":[2472,2341,2186,2008]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":96,\"media\":{\"chunk\":95,\"timestamp\":1781017576894,\"payload\":\"CagJJQ"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"a5 fd 78 fd 52 fd 39 fd 2b fd 1b fd 09 fd f1 fc","leSamples":[-603,-648,-686,-711],"beSamples":[-23043,30973,21245,14845]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"fd a5 fd 78 fd 52 fd 39 fd 2b fd 1b fd 09 fc f1","leSamples":[-23043,30973,21245,14845],"beSamples":[-603,-648,-686,-711]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":97,\"media\":{\"chunk\":96,\"timestamp\":1781017576913,\"payload\":\"/aX9eP"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"81 fe ab fe dd fe 1d ff 5b ff 95 ff c8 ff f0 ff","leSamples":[-383,-341,-291,-227],"beSamples":[-32258,-21506,-8706,7679]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"fe 81 fe ab fe dd ff 1d ff 5b ff 95 ff c8 ff f0","leSamples":[-32258,-21506,-8706,7679],"beSamples":[-383,-341,-291,-227]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":98,\"media\":{\"chunk\":97,\"timestamp\":1781017576933,\"payload\":\"/oH+q/"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"3a 04 e4 04 09 05 87 04 29 03 e5 00 d7 fd f9 f9","leSamples":[1082,1252,1289,1159],"beSamples":[14852,-7164,2309,-30972]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"04 3a 04 e4 05 09 04 87 03 29 00 e5 fd d7 f9 f9","leSamples":[14852,-7164,2309,-30972],"beSamples":[1082,1252,1289,1159]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":99,\"media\":{\"chunk\":98,\"timestamp\":1781017576958,\"payload\":\"BDoE5A"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"6a eb e7 f0 92 f7 3d ff 93 07 85 0f 36 16 0e 1b","leSamples":[-5270,-3865,-2158,-195],"beSamples":[27371,-6160,-27913,15871]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"eb 6a f0 e7 f7 92 ff 3d 07 93 0f 85 16 36 1b 0e","leSamples":[27371,-6160,-27913,15871],"beSamples":[-5270,-3865,-2158,-195]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":100,\"media\":{\"chunk\":99,\"timestamp\":1781017576979,\"payload\":\"62rw5"}
+rsd_telephony_media_gateway  | [media-gateway] audio.in {"call_id":"96194468A4D7D68B.1781017560.20799531","frames":300,"bytes":160,"expected_frame_bytes":160,"rtf":2.3,"avg_rtf":1.037}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"08 04 76 04 0c 05 a8 05 33 06 c5 06 3e 07 96 07","leSamples":[1032,1142,1292,1448],"beSamples":[2052,30212,3077,-22523]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"04 08 04 76 05 0c 05 a8 06 33 06 c5 07 3e 07 96","leSamples":[2052,30212,3077,-22523],"beSamples":[1032,1142,1292,1448]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":101,\"media\":{\"chunk\":100,\"timestamp\":1781017576999,\"payload\":\"BAgE"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"5e ff 4e ff 3e ff 30 ff 23 ff 18 ff 12 ff 0f ff","leSamples":[-162,-178,-194,-208],"beSamples":[24319,20223,16127,12543]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"ff 5e ff 4e ff 3e ff 30 ff 23 ff 18 ff 12 ff 0f","leSamples":[24319,20223,16127,12543],"beSamples":[-162,-178,-194,-208]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":102,\"media\":{\"chunk\":101,\"timestamp\":1781017577019,\"payload\":\"/17/"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"0f 00 0f 00 10 00 10 00 0d 00 0a 00 06 00 00 00","leSamples":[15,15,16,16],"beSamples":[3840,3840,4096,4096]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 0f 00 0f 00 10 00 10 00 0d 00 0a 00 06 00 00","leSamples":[3840,3840,4096,4096],"beSamples":[15,15,16,16]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":103,\"media\":{\"chunk\":102,\"timestamp\":1781017577039,\"payload\":\"AA8A"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"24 00 29 00 2d 00 31 00 36 00 3a 00 3c 00 40 00","leSamples":[36,41,45,49],"beSamples":[9216,10496,11520,12544]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 24 00 29 00 2d 00 31 00 36 00 3a 00 3c 00 40","leSamples":[9216,10496,11520,12544],"beSamples":[36,41,45,49]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":104,\"media\":{\"chunk\":103,\"timestamp\":1781017577058,\"payload\":\"ACQA"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"b0 01 0d 02 ae 03 8d 03 c6 01 67 ff 17 fc 36 fa","leSamples":[432,525,942,909],"beSamples":[-20479,3330,-20989,-29437]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"01 b0 02 0d 03 ae 03 8d 01 c6 ff 67 fc 17 fa 36","leSamples":[-20479,3330,-20989,-29437],"beSamples":[432,525,942,909]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":105,\"media\":{\"chunk\":104,\"timestamp\":1781017577079,\"payload\":\"AbAC"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"cd fd 7b fc 10 fb 30 f9 d9 f6 2e f4 2a f1 4b ee","leSamples":[-563,-901,-1264,-1744],"beSamples":[-12803,31740,4347,12537]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"fd cd fc 7b fb 10 f9 30 f6 d9 f4 2e f1 2a ee 4b","leSamples":[-12803,31740,4347,12537],"beSamples":[-563,-901,-1264,-1744]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":106,\"media\":{\"chunk\":105,\"timestamp\":1781017577099,\"payload\":\"/c38"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"3c 13 a3 15 49 17 2b 18 db 15 68 0f 27 06 9f fd","leSamples":[4924,5539,5961,6187],"beSamples":[15379,-23787,18711,11032]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"13 3c 15 a3 17 49 18 2b 15 db 0f 68 06 27 fd 9f","leSamples":[15379,-23787,18711,11032],"beSamples":[4924,5539,5961,6187]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":107,\"media\":{\"chunk\":106,\"timestamp\":1781017577119,\"payload\":\"EzwV"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"a8 14 e6 13 4b 10 d9 0a 0a 05 df ff 53 fc c6 fa","leSamples":[5288,5094,4171,2777],"beSamples":[-22508,-6637,19216,-9974]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"14 a8 13 e6 10 4b 0a d9 05 0a ff df fc 53 fa c6","leSamples":[-22508,-6637,19216,-9974],"beSamples":[5288,5094,4171,2777]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":108,\"media\":{\"chunk\":107,\"timestamp\":1781017577139,\"payload\":\"FKgT"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"93 f5 b6 f2 48 f0 91 ee b7 ed 0a ee 1f ef ed ef","leSamples":[-2669,-3402,-4024,-4463],"beSamples":[-27659,-18702,18672,-28178]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"f5 93 f2 b6 f0 48 ee 91 ed b7 ee 0a ef 1f ef ed","leSamples":[-27659,-18702,18672,-28178],"beSamples":[-2669,-3402,-4024,-4463]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":109,\"media\":{\"chunk\":108,\"timestamp\":1781017577159,\"payload\":\"9ZPy"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"9e ec 21 ec 75 ec f9 ed 65 ef 10 f1 c1 f3 70 f6","leSamples":[-4962,-5087,-5003,-4615],"beSamples":[-24852,8684,30188,-1555]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"ec 9e ec 21 ec 75 ed f9 ef 65 f1 10 f3 c1 f6 70","leSamples":[-24852,8684,30188,-1555],"beSamples":[-4962,-5087,-5003,-4615]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":110,\"media\":{\"chunk\":109,\"timestamp\":1781017577179,\"payload\":\"7J7s"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"76 f4 fa f5 be f7 36 fa 61 fc 56 fe d8 00 db 02","leSamples":[-2954,-2566,-2114,-1482],"beSamples":[30452,-1291,-16649,14074]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"f4 76 f5 fa f7 be fa 36 fc 61 fe 56 00 d8 02 db","leSamples":[30452,-1291,-16649,14074],"beSamples":[-2954,-2566,-2114,-1482]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":111,\"media\":{\"chunk\":110,\"timestamp\":1781017577201,\"payload\":\"9Hb1"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"df f6 51 f8 24 fa 13 fc d5 fd ad ff 85 01 33 03","leSamples":[-2337,-1967,-1500,-1005],"beSamples":[-8202,20984,9466,5116]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"f6 df f8 51 fa 24 fc 13 fd d5 ff ad 01 85 03 33","leSamples":[-8202,20984,9466,5116],"beSamples":[-2337,-1967,-1500,-1005]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":112,\"media\":{\"chunk\":111,\"timestamp\":1781017577221,\"payload\":\"9t/4"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"fc ef a1 ef 1f ef be ee 54 ef 4e f1 0d f5 5f fa","leSamples":[-4100,-4191,-4321,-4418],"beSamples":[-785,-24081,8175,-16658]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"ef fc ef a1 ef 1f ee be ef 54 f1 4e f5 0d fa 5f","leSamples":[-785,-24081,8175,-16658],"beSamples":[-4100,-4191,-4321,-4418]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":113,\"media\":{\"chunk\":112,\"timestamp\":1781017577242,\"payload\":\"7/zv"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"7f ef a8 ee 26 ee b4 ed 9c ed b9 ed 60 ee a7 ef","leSamples":[-4225,-4440,-4570,-4684],"beSamples":[32751,-22290,9966,-19219]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"ef 7f ee a8 ee 26 ed b4 ed 9c ed b9 ee 60 ef a7","leSamples":[32751,-22290,9966,-19219],"beSamples":[-4225,-4440,-4570,-4684]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":114,\"media\":{\"chunk\":113,\"timestamp\":1781017577262,\"payload\":\"73/u"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"60 f1 7f f0 3b f0 b4 f0 cc f0 ee ef 18 ef 15 ef","leSamples":[-3744,-3969,-4037,-3916],"beSamples":[24817,32752,15344,-19216]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"f1 60 f0 7f f0 3b f0 b4 f0 cc ef ee ef 18 ef 15","leSamples":[24817,32752,15344,-19216],"beSamples":[-3744,-3969,-4037,-3916]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":115,\"media\":{\"chunk\":114,\"timestamp\":1781017577283,\"payload\":\"8WDw"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"bc ed b7 ed bd ee ce ef 7a f0 f3 f0 3a f2 b6 f3","leSamples":[-4676,-4681,-4419,-4146],"beSamples":[-17171,-18451,-16914,-12561]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"ed bc ed b7 ee bd ef ce f0 7a f0 f3 f2 3a f3 b6","leSamples":[-17171,-18451,-16914,-12561],"beSamples":[-4676,-4681,-4419,-4146]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":116,\"media\":{\"chunk\":115,\"timestamp\":1781017577304,\"payload\":\"7bzt"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"16 fd a1 fd 2d fe ab fe 1f ff 8d ff e6 ff 34 00","leSamples":[-746,-607,-467,-341],"beSamples":[5885,-24067,11774,-21506]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"fd 16 fd a1 fe 2d fe ab ff 1f ff 8d ff e6 00 34","leSamples":[5885,-24067,11774,-21506],"beSamples":[-746,-607,-467,-341]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":117,\"media\":{\"chunk\":116,\"timestamp\":1781017577323,\"payload\":\"/Rb9"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"24 00 1d 00 15 00 0c 00 02 00 fd ff fb ff fc ff","leSamples":[36,29,21,12],"beSamples":[9216,7424,5376,3072]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 24 00 1d 00 15 00 0c 00 02 ff fd ff fb ff fc","leSamples":[9216,7424,5376,3072],"beSamples":[36,29,21,12]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":118,\"media\":{\"chunk\":117,\"timestamp\":1781017577344,\"payload\":\"ACQA"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"0d 00 16 00 17 00 11 00 13 00 0b 00 0b 00 0c 00","leSamples":[13,22,23,17],"beSamples":[3328,5632,5888,4352]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 0d 00 16 00 17 00 11 00 13 00 0b 00 0b 00 0c","leSamples":[3328,5632,5888,4352],"beSamples":[13,22,23,17]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":119,\"media\":{\"chunk\":118,\"timestamp\":1781017577363,\"payload\":\"AA0A"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"2d 00 01 00 eb fd 0a 02 b2 fe 0e ff 81 02 dd fd","leSamples":[45,1,-533,522],"beSamples":[11520,256,-5123,2562]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 2d 00 01 fd eb 02 0a fe b2 ff 0e 02 81 fd dd","leSamples":[11520,256,-5123,2562],"beSamples":[45,1,-533,522]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":120,\"media\":{\"chunk\":119,\"timestamp\":1781017577383,\"payload\":\"AC0A"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"88 fe 97 ff 19 01 21 ff a4 fe 23 02 4d ff e6 fe","leSamples":[-376,-105,281,-223],"beSamples":[-30466,-26625,6401,8703]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"fe 88 ff 97 01 19 ff 21 fe a4 02 23 ff 4d fe e6","leSamples":[-30466,-26625,6401,8703],"beSamples":[-376,-105,281,-223]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":121,\"media\":{\"chunk\":120,\"timestamp\":1781017577402,\"payload\":\"/oj/"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"f0 00 61 ff 68 00 10 00 87 fe dd 01 10 ff d0 fe","leSamples":[240,-159,104,16],"beSamples":[-4096,25087,26624,4096]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 f0 ff 61 00 68 00 10 fe 87 01 dd ff 10 fe d0","leSamples":[-4096,25087,26624,4096],"beSamples":[240,-159,104,16]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":122,\"media\":{\"chunk\":121,\"timestamp\":1781017577422,\"payload\":\"APD/"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"88 00 12 01 c3 fd c1 01 8d 00 07 ff bc 00 45 00","leSamples":[136,274,-573,449],"beSamples":[-30720,4609,-15363,-16127]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 88 01 12 fd c3 01 c1 00 8d ff 07 00 bc 00 45","leSamples":[-30720,4609,-15363,-16127],"beSamples":[136,274,-573,449]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":123,\"media\":{\"chunk\":122,\"timestamp\":1781017577443,\"payload\":\"AIgB"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"08 00 f1 01 89 ff f8 ff 44 01 09 ff b1 ff f8 ff","leSamples":[8,497,-119,-8],"beSamples":[2048,-3839,-30209,-1793]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 08 01 f1 ff 89 ff f8 01 44 ff 09 ff b1 ff f8","leSamples":[2048,-3839,-30209,-1793],"beSamples":[8,497,-119,-8]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":124,\"media\":{\"chunk\":123,\"timestamp\":1781017577462,\"payload\":\"AAgB"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"11 00 1d 00 d9 ff 22 00 d9 ff 00 00 d3 00 fe ff","leSamples":[17,29,-39,34],"beSamples":[4352,7424,-9729,8704]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 11 00 1d ff d9 00 22 ff d9 00 00 00 d3 ff fe","leSamples":[4352,7424,-9729,8704],"beSamples":[17,29,-39,34]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":125,\"media\":{\"chunk\":124,\"timestamp\":1781017577482,\"payload\":\"ABEA"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"f3 ff db ff 49 00 5d 00 1b 00 2d 00 7f 00 86 00","leSamples":[-13,-37,73,93],"beSamples":[-3073,-9217,18688,23808]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"ff f3 ff db 00 49 00 5d 00 1b 00 2d 00 7f 00 86","leSamples":[-3073,-9217,18688,23808],"beSamples":[-13,-37,73,93]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":126,\"media\":{\"chunk\":125,\"timestamp\":1781017577502,\"payload\":\"//P/"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"e6 ff e9 ff e3 ff e8 ff f5 ff f9 ff f8 ff ed ff","leSamples":[-26,-23,-29,-24],"beSamples":[-6401,-5633,-7169,-5889]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"ff e6 ff e9 ff e3 ff e8 ff f5 ff f9 ff f8 ff ed","leSamples":[-6401,-5633,-7169,-5889],"beSamples":[-26,-23,-29,-24]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":127,\"media\":{\"chunk\":126,\"timestamp\":1781017577523,\"payload\":\"/+b/"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"08 00 04 00 05 00 08 00 05 00 03 00 04 00 03 00","leSamples":[8,4,5,8],"beSamples":[2048,1024,1280,2048]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 08 00 04 00 05 00 08 00 05 00 03 00 04 00 03","leSamples":[2048,1024,1280,2048],"beSamples":[8,4,5,8]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":128,\"media\":{\"chunk\":127,\"timestamp\":1781017577544,\"payload\":\"AAgA"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"00 00 00 00 00 00 01 00 01 00 03 00 02 00 00 00","leSamples":[0,0,0,1],"beSamples":[0,0,0,256]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 00 00 00 00 00 00 01 00 01 00 03 00 02 00 00","leSamples":[0,0,0,256],"beSamples":[0,0,0,1]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":129,\"media\":{\"chunk\":128,\"timestamp\":1781017577570,\"payload\":\"AAAA"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"f9 ff fa ff fa ff fa ff fb ff fa ff fb ff fb ff","leSamples":[-7,-6,-6,-6],"beSamples":[-1537,-1281,-1281,-1281]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"ff f9 ff fa ff fa ff fa ff fb ff fa ff fb ff fb","leSamples":[-1537,-1281,-1281,-1281],"beSamples":[-7,-6,-6,-6]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":130,\"media\":{\"chunk\":129,\"timestamp\":1781017577589,\"payload\":\"//n/"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"00 00 ff ff fc ff fc ff fc ff fc ff fb ff fd ff","leSamples":[0,-1,-4,-4],"beSamples":[0,-1,-769,-769]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 00 ff ff ff fc ff fc ff fc ff fc ff fb ff fd","leSamples":[0,-1,-769,-769],"beSamples":[0,-1,-4,-4]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":131,\"media\":{\"chunk\":130,\"timestamp\":1781017577615,\"payload\":\"AAD/"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00","leSamples":[0,0,0,0],"beSamples":[0,0,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00","leSamples":[0,0,0,0],"beSamples":[0,0,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":132,\"media\":{\"chunk\":131,\"timestamp\":1781017577632,\"payload\":\"AAAA"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"fe ff ff ff fe ff ff ff ff ff ff ff fe ff ff ff","leSamples":[-2,-1,-2,-1],"beSamples":[-257,-1,-257,-1]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"ff fe ff ff ff fe ff ff ff ff ff ff ff fe ff ff","leSamples":[-257,-1,-257,-1],"beSamples":[-2,-1,-2,-1]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":133,\"media\":{\"chunk\":132,\"timestamp\":1781017577654,\"payload\":\"//7/"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00","leSamples":[0,0,0,0],"beSamples":[0,0,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00","leSamples":[0,0,0,0],"beSamples":[0,0,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":134,\"media\":{\"chunk\":133,\"timestamp\":1781017577674,\"payload\":\"AAAA"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"00 00 00 00 00 00 00 00 00 00 00 00 00 00 ff ff","leSamples":[0,0,0,0],"beSamples":[0,0,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 00 00 00 00 00 00 00 00 00 00 00 00 00 ff ff","leSamples":[0,0,0,0],"beSamples":[0,0,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":135,\"media\":{\"chunk\":134,\"timestamp\":1781017577695,\"payload\":\"AAAA"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"00 00 00 00 ff ff 00 00 ff ff 00 00 ff ff fd ff","leSamples":[0,0,-1,0],"beSamples":[0,0,-1,0]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 00 00 00 ff ff 00 00 ff ff 00 00 ff ff ff fd","leSamples":[0,0,-1,0],"beSamples":[0,0,-1,0]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":136,\"media\":{\"chunk\":135,\"timestamp\":1781017577715,\"payload\":\"AAAA"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"ff ff ff ff ff ff ff ff 00 00 00 00 ff ff ff ff","leSamples":[-1,-1,-1,-1],"beSamples":[-1,-1,-1,-1]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"ff ff ff ff ff ff ff ff 00 00 00 00 ff ff ff ff","leSamples":[-1,-1,-1,-1],"beSamples":[-1,-1,-1,-1]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":137,\"media\":{\"chunk\":136,\"timestamp\":1781017577735,\"payload\":\"////"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"fe ff ff ff ff ff ff ff 00 00 ff ff ff ff ff ff","leSamples":[-2,-1,-1,-1],"beSamples":[-257,-1,-1,-1]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"ff fe ff ff ff ff ff ff 00 00 ff ff ff ff ff ff","leSamples":[-257,-1,-1,-1],"beSamples":[-2,-1,-1,-1]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":138,\"media\":{\"chunk\":137,\"timestamp\":1781017577756,\"payload\":\"//7/"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00","leSamples":[0,0,0,0],"beSamples":[0,0,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00","leSamples":[0,0,0,0],"beSamples":[0,0,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":139,\"media\":{\"chunk\":138,\"timestamp\":1781017577777,\"payload\":\"AAAA"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00","leSamples":[0,0,0,0],"beSamples":[0,0,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00","leSamples":[0,0,0,0],"beSamples":[0,0,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":140,\"media\":{\"chunk\":139,\"timestamp\":1781017577797,\"payload\":\"AAAA"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00","leSamples":[0,0,0,0],"beSamples":[0,0,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00","leSamples":[0,0,0,0],"beSamples":[0,0,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":141,\"media\":{\"chunk\":140,\"timestamp\":1781017577815,\"payload\":\"AAAA"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00","leSamples":[0,0,0,0],"beSamples":[0,0,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00","leSamples":[0,0,0,0],"beSamples":[0,0,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":142,\"media\":{\"chunk\":141,\"timestamp\":1781017577835,\"payload\":\"AAAA"}
+rsd_telephony_media_gateway  | [media-gateway] vox frame {"len":320}
+rsd_telephony_media_gateway  | [media-gateway] payload debug input: {"hex":"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00","leSamples":[0,0,0,0],"beSamples":[0,0,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] format conv: PCM16 LE → BE
+rsd_telephony_media_gateway  | [media-gateway] payload debug output: {"hex":"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00","leSamples":[0,0,0,0],"beSamples":[0,0,0,0]}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"media\",\"sequenceNumber\":143,\"media\":{\"chunk\":142,\"timestamp\":1781017577856,\"payload\":\"AAAA"}
+rsd_telephony_media_gateway  | [media-gateway] vox send {"msg":"{\"event\":\"stop\",\"sequenceNumber\":144}"}
+rsd_telephony_media_gateway  | [media-gateway] audio.in {"call_id":"96194468A4D7D68B.1781017560.20799531","frames":350,"bytes":160,"expected_frame_bytes":160,"rtf":0,"avg_rtf":1.03}
+rsd_telephony_media_gateway  | [media-gateway] audio.in {"call_id":"96194468A4D7D68B.1781017560.20799531","frames":400,"bytes":160,"expected_frame_bytes":160,"rtf":0,"avg_rtf":1.024}
+rsd_telephony_media_gateway  | [media-gateway] audio.in {"call_id":"96194468A4D7D68B.1781017560.20799531","frames":450,"bytes":160,"expected_frame_bytes":160,"rtf":1.2,"avg_rtf":1.021}
+rsd_telephony_media_gateway  | [media-gateway] audio.in {"call_id":"96194468A4D7D68B.1781017560.20799531","frames":500,"bytes":160,"expected_frame_bytes":160,"rtf":2.6,"avg_rtf":1.024}
+rsd_telephony_media_gateway  | [media-gateway] audio.in {"call_id":"96194468A4D7D68B.1781017560.20799531","frames":550,"bytes":160,"expected_frame_bytes":160,"rtf":1.25,"avg_rtf":1.018}
+rsd_telephony_media_gateway  | [media-gateway] pipeline metrics {"stt_partial_ms":[],"stt_final_ms":[359,2202,664],"vad_speech_ratio":0.041,"vad_frames":557,"vad_speech_frames":23}
+rsd_frontend                 | 185.164.150.3 - - [09/Jun/2026:15:06:22 +0000] "GET /ws HTTP/1.1" 101 86034 "-" "-" "-"
+rsd_telephony_worker         | INFO:     172.18.0.11:57722 - "POST /api/internal/telephony/call-event HTTP/1.1" 200 OK
+rsd_frontend                 | 185.164.150.3 - - [09/Jun/2026:15:06:22 +0000] "POST /webhook/voximplant/47 HTTP/1.1" 200 146 "-" "VoxEngine/1.0" "-"

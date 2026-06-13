@@ -39,6 +39,23 @@ const adminService = {
     return response.data;
   },
 
+  async createUser(token, { email, password, telegram_id }) {
+    const response = await adminClient.post(
+      API_ROUTES.ADMIN_CREATE_USER,
+      {
+        email,
+        password,
+        telegram_id: telegram_id ?? null,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+    return response.data;
+  },
+
   async getAgents(token, { page = 1, pageSize = 10, search = '' } = {}) {
     const response = await adminClient.get(API_ROUTES.ADMIN_AGENTS, {
       headers: {
@@ -48,6 +65,33 @@ const adminService = {
         page,
         page_size: pageSize,
         search: search || undefined,
+      },
+    });
+    return response.data;
+  },
+
+  async getChats(
+    token,
+    {
+      page = 1,
+      pageSize = 25,
+      search = '',
+      messagesPerChat = 50,
+      agentId = null,
+      agentUsername = '',
+    } = {}
+  ) {
+    const response = await adminClient.get(API_ROUTES.ADMIN_CHATS, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      params: {
+        page,
+        page_size: pageSize,
+        search: search || undefined,
+        messages_per_chat: messagesPerChat,
+        agent_id: agentId || undefined,
+        agent_username: agentUsername || undefined,
       },
     });
     return response.data;
@@ -81,6 +125,46 @@ const adminService = {
     return response.data;
   },
 
+  async getApplicationLogs(
+    token,
+    {
+      page = 1,
+      pageSize = 20,
+      search = '',
+      level = '',
+      source = '',
+      isResolved = null,
+    } = {}
+  ) {
+    const response = await adminClient.get(API_ROUTES.ADMIN_LOGS, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      params: {
+        page,
+        page_size: pageSize,
+        search: search || undefined,
+        level: level || undefined,
+        source: source || undefined,
+        is_resolved: isResolved === null ? undefined : isResolved,
+      },
+    });
+    return response.data;
+  },
+
+  async resolveApplicationLog(token, logId) {
+    const response = await adminClient.patch(
+      API_ROUTES.ADMIN_LOG_RESOLVE(logId),
+      {},
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+    return response.data;
+  },
+
   async getPlans(token) {
     const response = await adminClient.get(API_ROUTES.ADMIN_PLANS, {
       headers: {
@@ -94,6 +178,28 @@ const adminService = {
     const response = await adminClient.put(
       API_ROUTES.ADMIN_PLANS,
       { plans },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+    return response.data;
+  },
+
+  async getAgentTemplatePricing(token) {
+    const response = await adminClient.get(API_ROUTES.ADMIN_AGENT_TEMPLATE_PRICING, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    return response.data;
+  },
+
+  async updateAgentTemplatePricing(token, templates) {
+    const response = await adminClient.put(
+      API_ROUTES.ADMIN_AGENT_TEMPLATE_PRICING,
+      { templates },
       {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -137,6 +243,23 @@ const adminService = {
     return response.data;
   },
 
+  async getPartnerPayouts(token, { status } = {}) {
+    const response = await adminClient.get(API_ROUTES.ADMIN_PARTNER_PAYOUTS, {
+      headers: { Authorization: `Bearer ${token}` },
+      params: status ? { status } : undefined,
+    });
+    return response.data;
+  },
+
+  async updatePartnerPayout(token, payoutId, { action, adminNote }) {
+    const response = await adminClient.patch(
+      API_ROUTES.ADMIN_PARTNER_PAYOUT(payoutId),
+      { action, admin_note: adminNote ?? null },
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    return response.data;
+  },
+
   async banUser(token, userId) {
     const response = await adminClient.post(
       API_ROUTES.ADMIN_BAN_USER(userId),
@@ -159,6 +282,210 @@ const adminService = {
     const response = await adminClient.post(
       API_ROUTES.ADMIN_GIFT_SUBSCRIPTION(userId),
       { plan_code: planCode },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data;
+  },
+
+  async setFreeAgentActivation(token, userId, enabled) {
+    const response = await adminClient.post(
+      API_ROUTES.ADMIN_FREE_AGENT_ACTIVATION(userId),
+      { enabled },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data;
+  },
+
+  async sendEmailBroadcast(token, { subject, body, interval_seconds }) {
+    const response = await adminClient.post(
+      API_ROUTES.ADMIN_EMAIL_BROADCAST,
+      { subject, body, interval_seconds },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data;
+  },
+
+  async previewEmailTargeted(token, { groups, selected_titles }) {
+    const response = await adminClient.post(
+      API_ROUTES.ADMIN_EMAIL_TARGETED_PREVIEW,
+      { groups, selected_titles },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data;
+  },
+
+  async sendEmailTargetedBroadcast(token, { groups, selected_titles, subject, body, interval_seconds }) {
+    const response = await adminClient.post(
+      API_ROUTES.ADMIN_EMAIL_TARGETED_BROADCAST,
+      { groups, selected_titles, subject, body, interval_seconds },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data;
+  },
+
+  async getEmailTargetedBroadcastJob(token, jobId) {
+    const response = await adminClient.get(API_ROUTES.ADMIN_EMAIL_TARGETED_JOB(jobId), {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return response.data;
+  },
+
+  // --- Article Publisher ---
+
+  async apGetSettings(token) {
+    const response = await adminClient.get(API_ROUTES.ADMIN_AP_SETTINGS, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return response.data;
+  },
+
+  async apUpdateSettings(token, settings) {
+    const response = await adminClient.put(API_ROUTES.ADMIN_AP_SETTINGS, settings, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return response.data;
+  },
+
+  async apGetTopics(token, { page = 1, pageSize = 50, unusedOnly = false } = {}) {
+    const response = await adminClient.get(API_ROUTES.ADMIN_AP_TOPICS, {
+      headers: { Authorization: `Bearer ${token}` },
+      params: { page, page_size: pageSize, unused_only: unusedOnly },
+    });
+    return response.data;
+  },
+
+  async apAddTopics(token, topics) {
+    const response = await adminClient.post(
+      API_ROUTES.ADMIN_AP_TOPICS,
+      { topics },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data;
+  },
+
+  async apGenerateTopics(token, { categories, count = 10 } = {}) {
+    const response = await adminClient.post(
+      API_ROUTES.ADMIN_AP_TOPICS_GENERATE,
+      { categories, count },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data;
+  },
+
+  async apDeleteTopic(token, topicId) {
+    const response = await adminClient.delete(API_ROUTES.ADMIN_AP_TOPIC_DELETE(topicId), {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return response.data;
+  },
+
+  async apGetImages(token) {
+    const response = await adminClient.get(API_ROUTES.ADMIN_AP_IMAGES, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return response.data;
+  },
+
+  async apUploadImage(token, file) {
+    const form = new FormData();
+    form.append('file', file);
+    const response = await adminClient.post(API_ROUTES.ADMIN_AP_IMAGES, form, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data;
+  },
+
+  async apDeleteImage(token, imageId) {
+    const response = await adminClient.delete(API_ROUTES.ADMIN_AP_IMAGE_DELETE(imageId), {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return response.data;
+  },
+
+  async apGetJobs(token, { page = 1, pageSize = 20 } = {}) {
+    const response = await adminClient.get(API_ROUTES.ADMIN_AP_JOBS, {
+      headers: { Authorization: `Bearer ${token}` },
+      params: { page, page_size: pageSize },
+    });
+    return response.data;
+  },
+
+  async apRunNow(token, { platform, topic } = {}) {
+    const response = await adminClient.post(
+      API_ROUTES.ADMIN_AP_RUN_NOW,
+      { platform: platform || null, topic: topic || null },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data;
+  },
+
+  async apPreviewArticle(token, { topic, platform = 'vcru' }) {
+    const response = await adminClient.post(
+      API_ROUTES.ADMIN_AP_PREVIEW,
+      { topic, platform },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data;
+  },
+
+  async salesGetTeam(token, { includeInactive = false } = {}) {
+    const response = await adminClient.get(API_ROUTES.ADMIN_SALES_TEAM, {
+      headers: { Authorization: `Bearer ${token}` },
+      params: { include_inactive: includeInactive || undefined },
+    });
+    return response.data;
+  },
+
+  async salesCreateMember(token, body) {
+    const response = await adminClient.post(API_ROUTES.ADMIN_SALES_TEAM, body, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return response.data;
+  },
+
+  async salesUpdateMember(token, memberId, body) {
+    const response = await adminClient.patch(API_ROUTES.ADMIN_SALES_TEAM_MEMBER(memberId), body, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return response.data;
+  },
+
+  async salesGetFunnel(token, { period = 'all' } = {}) {
+    const response = await adminClient.get(API_ROUTES.ADMIN_SALES_FUNNEL, {
+      headers: { Authorization: `Bearer ${token}` },
+      params: { period },
+    });
+    return response.data;
+  },
+
+  async salesUploadExcel(token, file) {
+    const form = new FormData();
+    form.append('file', file);
+    const response = await adminClient.post(API_ROUTES.ADMIN_SALES_EXCEL_UPLOAD, form, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data;
+  },
+
+  async salesAddContactManual(token, body) {
+    const response = await adminClient.post(
+      API_ROUTES.ADMIN_SALES_CONTACT_MANUAL,
+      body,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data;
+  },
+
+  async salesClearCrm(token) {
+    const response = await adminClient.post(
+      API_ROUTES.ADMIN_SALES_CRM_CLEAR,
+      {},
       { headers: { Authorization: `Bearer ${token}` } }
     );
     return response.data;

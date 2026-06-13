@@ -1,6 +1,7 @@
 import asyncio
 import os
 import sys
+from contextlib import ExitStack
 from pathlib import Path
 from typing import AsyncGenerator, Generator
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -9,11 +10,20 @@ import pytest
 import pytest_asyncio
 from dotenv import load_dotenv
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import JSON, event, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.pool import StaticPool
- 
+
+
+@compiles(JSONB, "sqlite")
+def _compile_jsonb_sqlite(type_, compiler, **kw):
+    return "JSON"
+
+
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
- 
+
 # --- ЗАГРУЗКА ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ---
 # Ищем .env: backend/app/.env, app/tests/.env, корень репозитория (часто один общий .env)
 _env_candidates = [
@@ -24,7 +34,19 @@ _env_candidates = [
 env_path = next((p for p in _env_candidates if p.exists()), _env_candidates[0])
 load_dotenv(env_path, override=True)
 
-# Проверка критических переменных
+from cryptography.fernet import Fernet
+
+_TEST_FERNET_KEY = Fernet.generate_key().decode()
+
+_TEST_ENV_DEFAULTS = {
+    "SECRET_KEY": "test-jwt-secret-key-for-ci-min-32-chars-long",
+    "INTERNAL_API_KEY": "test-internal-api-key",
+    "ENCRYPTION_KEY": _TEST_FERNET_KEY,
+    "USER_JWT_SECRET_KEY": "798cd1b6cb25d52ce4e49824b01b5b22a117325ad327161c50ad5a8c2898fc89",
+}
+for _key, _value in _TEST_ENV_DEFAULTS.items():
+    os.environ[_key] = _value
+
 required_vars = ["SECRET_KEY", "INTERNAL_API_KEY", "ENCRYPTION_KEY"]
 for var in required_vars:
     if not os.getenv(var):
@@ -33,8 +55,92 @@ for var in required_vars:
 # Импортируем Base ДО создания фикстур
 from app.alembic.database import Base
 
+
+def _sqlite_tables_from_ddl_target(target):
+    if hasattr(target, "columns"):
+        return [target]
+    if hasattr(target, "tables"):
+        return list(target.tables.values())
+    return []
+
+
+def _replace_jsonb_columns_for_sqlite(tables) -> None:
+    for table in tables:
+        for column in table.columns:
+            if isinstance(column.type, JSONB):
+                column.type = JSON()
+            server_default = column.server_default
+            if server_default is not None and "::jsonb" in str(
+                getattr(server_default, "arg", server_default)
+            ):
+                column.server_default = text("'{}'")
+
+
+@event.listens_for(Base.metadata, "before_create")
+def _prepare_sqlite_schema(target, connection, **kw):
+    if connection.dialect.name != "sqlite":
+        return
+    _replace_jsonb_columns_for_sqlite(_sqlite_tables_from_ddl_target(target))
+
+
 # ВАЖНО: Импортируем модели здесь, чтобы они зарегистрировались в Base.metadata
 from app.alembic import models  # noqa: F401
+
+_replace_jsonb_columns_for_sqlite(Base.metadata.tables.values())
+
+_ASYNC_SESSION_MAKER_PATCH_TARGETS = (
+    "app.alembic.database.async_session_maker",
+    "app.router_admin.router.async_session_maker",
+    "app.router_users.router.async_session_maker",
+    "app.router_agents.router.async_session_maker",
+    "app.router_payments.router.async_session_maker",
+    "app.router_documents.router.async_session_maker",
+    "app.services.template_runtime.async_session_maker",
+    "app.telephony.routing.async_session_maker",
+    "app.services.error_log_service.async_session_maker",
+    "app.services.sales.contact_pool.async_session_maker",
+    "app.services.sales.dm_queue_service.async_session_maker",
+    "app.services.sales.fsm.async_session_maker",
+    "app.services.sales.sales_followup_service.async_session_maker",
+    "app.services.admin_booking.service.async_session_maker",
+    "app.services.admin_booking.payment_service.async_session_maker",
+    "app.services.admin_booking.client_notify.async_session_maker",
+    "app.services.http_integration.tool_registry.async_session_maker",
+    "app.services.admin_booking.providers.local.async_session_maker",
+    "app.telephony.orchestrator_worker.async_session_maker",
+)
+
+
+def _make_sqlite_async_session_maker(test_engine):
+    return async_sessionmaker(test_engine, expire_on_commit=False, class_=AsyncSession)
+
+
+def _patch_async_session_makers(stack: ExitStack, test_engine):
+    factory = _make_sqlite_async_session_maker(test_engine)
+
+    for target in _ASYNC_SESSION_MAKER_PATCH_TARGETS:
+        stack.enter_context(patch(target, factory))
+    _wire_test_booking_service(factory)
+    return factory
+
+
+def _wire_test_booking_service(factory):
+    from app.services.admin_booking.service import AdminBookingService
+    import app.services.admin_booking.service as booking_module
+
+    booking_module._admin_booking_service = AdminBookingService(session_factory=factory)
+
+
+@pytest.fixture(autouse=True)
+def _reset_booking_service_singletons():
+    import app.services.admin_booking.payment_service as payment_module
+    import app.services.admin_booking.service as booking_module
+
+    booking_module._admin_booking_service = None
+    payment_module._payment_service = None
+    yield
+    booking_module._admin_booking_service = None
+    payment_module._payment_service = None
 
 
 @pytest.fixture(scope="session")
@@ -72,6 +178,14 @@ async def test_session(test_engine) -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest_asyncio.fixture(scope="function")
+async def verify_session(test_engine) -> AsyncGenerator[AsyncSession, None]:
+    """Fresh DB session for assertions after HTTP handlers commit in another session."""
+    factory = _make_sqlite_async_session_maker(test_engine)
+    async with factory() as session:
+        yield session
+
+
+@pytest_asyncio.fixture(scope="function")
 async def client(test_engine, test_session) -> AsyncGenerator[AsyncClient, None]:
     """Создает тестовый HTTP клиент FastAPI."""
     
@@ -95,7 +209,7 @@ async def client(test_engine, test_session) -> AsyncGenerator[AsyncClient, None]
     # Моки для других сервисов
     mock_search_service = MagicMock()
     mock_ai_authoring = MagicMock()
-    mock_fastembed = MagicMock()
+    mock_sentence_transformers = MagicMock()
 
     # --- 2. ПАТЧИНГ СИСТЕМНЫХ МОДУЛЕЙ ПЕРЕД ИМПОРТОМ РОУТЕРОВ ---
     # Это критически важно: мы подменяем модуль в sys.modules ДО того, как кто-то сделает 'import app.qdrant.indexer'
@@ -104,9 +218,7 @@ async def client(test_engine, test_session) -> AsyncGenerator[AsyncClient, None]
         'app.qdrant.indexer': mock_indexer_module,  # Полная замена модуля
         'app.qdrant.search_service': mock_search_service,
         'app.services.ai_authoring': mock_ai_authoring,
-        'fastembed': mock_fastembed,
-        'fastembed.sparse': mock_fastembed,
-        'fastembed.sparse.sparse_text_embedding': mock_fastembed,
+        'sentence_transformers': mock_sentence_transformers,
     }):
         
         # --- 3. ПАТЧИНГ ФУНКЦИЙ КРИПТОГРАФИИ ---
@@ -126,9 +238,8 @@ async def client(test_engine, test_session) -> AsyncGenerator[AsyncClient, None]
             with patch('app.utils.crypto.decrypt_token', side_effect=mock_decrypt_token):
                 with patch('app.utils.crypto.encrypt_crm_credentials', side_effect=mock_encrypt_crm_credentials):
                     # --- 4. ПАТЧИНГ БАЗЫ ДАННЫХ ---
-                    with patch('app.alembic.database.async_session_maker') as mock_factory:
-                        mock_factory.return_value.__aenter__.return_value = test_session
-                        mock_factory.return_value.__aexit__.return_value = None
+                    with ExitStack() as stack:
+                        _patch_async_session_makers(stack, test_engine)
 
                         from fastapi import FastAPI
                         from fastapi.middleware.cors import CORSMiddleware
@@ -324,3 +435,15 @@ def mock_httpx_client():
         mock_client.post = AsyncMock()
         mock_client_class.return_value = mock_client
         yield mock_client
+
+
+@pytest_asyncio.fixture(scope="function")
+async def mock_db_session(test_engine):
+    """
+    Fixtures that provides mocked async_session_maker for database services.
+    This allows tests to use DmQueueService, SalesFSMService, etc. without connecting to PostgreSQL.
+    """
+    with ExitStack() as stack:
+        factory = _patch_async_session_makers(stack, test_engine)
+        async with factory() as session:
+            yield session

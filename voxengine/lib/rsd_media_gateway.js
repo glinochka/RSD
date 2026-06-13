@@ -1,0 +1,500 @@
+/**
+ * Media WebSocket client: session.start + Voximplant ULAW stream ↔ gateway.
+ *
+ * ⚠️ КРИТИЧЕСКИ ВАЖНО: Формат медиа- сообщений строго определен документацией Voximplant.
+ * Любые изменения могут привести к потере звука агента для абонента!
+ *
+ * Gateway отправляет в Voximplant native JSON в строгом порядке:
+ *   1. { event: "start", sequenceNumber: 0, start: { mediaFormat: {...} } }
+ *   2. { event: "media", sequenceNumber: N, media: { chunk: N, timestamp: T, payload: "..." } }
+ *   3. { event: "stop", sequenceNumber: M }
+ *
+ * Без события "start" Voximplant не распознает медиа как аудио!
+ *
+ * История исправления: Ранее звук агента не воспроизводился абоненту
+ * из-за неправильного формата медиа-сообщений. Исправлено строгим
+ * следованием документации Voximplant.
+ *
+ * @see https://voximplant.com/docs/guides/media-streams/websocket
+ * @see ../../docs/telephony/VOXIMPLANT_MEDIA_FORMAT.md
+ */
+
+
+
+/**
+
+ * @param {object} opts
+
+ * @param {string} opts.mediaWsUrl - wss://host/ws
+
+ * @param {string} opts.callId
+
+ * @param {number} opts.connectionId
+
+ * @param {string} opts.callerE164
+
+ * @param {string} [opts.calledNumber]
+
+ * @param {Call} opts.call - VoxEngine call for playback
+
+ * @param {function} opts.onReady
+
+ * @param {function} opts.onError
+
+ */
+
+function connectMediaGateway(opts) {
+
+  var wsUrl = String(opts.mediaWsUrl || '').trim();
+
+  if (!wsUrl) {
+
+    opts.onError('media_ws_url missing');
+
+    return null;
+
+  }
+
+
+
+  var webSocket = VoxEngine.createWebSocket(wsUrl);
+
+  var mediaBound = false;
+
+  var firstDownlinkMediaLogged = false;
+  var firstDownlinkMediaAtMs = 0;
+  var lastSttPartialAtMs = 0;
+
+
+
+  /**
+   * Привязывает WebSocket к call для downlink медиа (аудио агента → абонент).
+   *
+   * ⚠️ КРИТИЧЕСКИ ВАЖНО: Эта функция должна вызываться:
+   * 1. При получении события 'start' от gateway
+   * 2. При получении первого 'media' события
+   * 3. При событии 'agent.audio.start' от orchestrator
+   *
+   * Без вызова sendMediaTo аудио от gateway не будет направлено на звонок!
+   *
+   * Некоторые Voximplant runtime могут сбрасывать downlink соединение
+   * после перехода early media → answer, поэтому делаем rebind.
+   */
+  function bindDownlinkMedia() {
+
+    // Re-bind websocket -> call explicitly when playback starts.
+    // In some Vox runtimes the downlink leg can be dropped after early media/answer transition.
+    try {
+
+      webSocket.sendMediaTo(opts.call, {
+
+        encoding: WebSocketAudioEncoding.ULAW,
+
+      });
+
+      return;
+
+    } catch (downErr) {
+
+      Logger.write('[rsd] downlink bind with ULAW failed, retry without encoding: ' + downErr);
+
+    }
+
+    try {
+
+      webSocket.sendMediaTo(opts.call);
+
+    } catch (fallbackErr) {
+
+      Logger.write('[rsd] downlink bind fallback failed: ' + fallbackErr);
+
+    }
+
+  }
+
+
+
+  function bindDuplexMedia() {
+
+    if (mediaBound) return;
+
+    mediaBound = true;
+
+    opts.call.sendMediaTo(webSocket, {
+
+      encoding: WebSocketAudioEncoding.ULAW,
+
+    });
+
+    bindDownlinkMedia();
+
+    Logger.write('[rsd] gateway duplex ULAW ready call_id=' + opts.callId);
+
+  }
+
+
+
+  if (typeof WebSocketEvents !== 'undefined' && WebSocketEvents.MEDIA_STARTED !== undefined) {
+
+    webSocket.addEventListener(WebSocketEvents.MEDIA_STARTED, function (ev) {
+
+      Logger.write(
+
+        '[rsd] gateway WS MEDIA_STARTED encoding=' +
+
+          String(ev.encoding || '') +
+
+          ' tag=' +
+
+          String(ev.tag || '') +
+
+          ' call_id=' +
+
+          opts.callId,
+
+      );
+
+    });
+
+  }
+
+
+
+  if (typeof WebSocketEvents !== 'undefined' && WebSocketEvents.MEDIA_ENDED !== undefined) {
+
+    webSocket.addEventListener(WebSocketEvents.MEDIA_ENDED, function () {
+
+      Logger.write('[rsd] gateway WS MEDIA_ENDED call_id=' + opts.callId);
+
+    });
+
+  }
+
+
+
+  webSocket.addEventListener(WebSocketEvents.OPEN, function () {
+
+    var startMsg = {
+
+      type: 'session.start',
+
+      payload: {
+
+        call_id: String(opts.callId),
+
+        connection_id: Number(opts.connectionId),
+
+        caller_e164: String(opts.callerE164),
+
+        codec: 'pcmu',
+
+        called_number: opts.calledNumber ? String(opts.calledNumber) : undefined,
+
+        protocol_version: '1',
+
+      },
+
+    };
+
+    webSocket.send(JSON.stringify(startMsg));
+
+    bindDuplexMedia();
+
+    if (opts.onReady) opts.onReady(webSocket);
+
+  });
+
+
+
+  webSocket.addEventListener(WebSocketEvents.MESSAGE, function (e) {
+
+    var text = (e && e.text) ? String(e.text) : '';
+
+    if (!text) return;
+
+
+
+    try {
+
+      var msg = JSON.parse(text);
+
+      if (msg.type === 'session.start' && msg.payload && msg.payload.ok) {
+
+        Logger.write('[rsd] gateway session.start ok call_id=' + opts.callId);
+
+        return;
+
+      }
+
+      if (msg.type === 'error') {
+
+        Logger.write('[rsd] gateway error: ' + JSON.stringify(msg.payload));
+
+        return;
+
+      }
+
+      if (msg.type === 'call.transfer' && msg.payload) {
+
+        var target = String(msg.payload.e164 || msg.payload.operator_transfer_e164 || '').trim();
+
+        if (opts.onTransferRequest) {
+
+          opts.onTransferRequest(target || 'operator');
+
+        } else {
+
+          Logger.write('[rsd] call.transfer ignored: no onTransferRequest handler call_id=' + opts.callId);
+
+        }
+
+        return;
+
+      }
+
+      if (msg.type === 'stt.partial') {
+
+        lastSttPartialAtMs = Date.now();
+
+        return;
+
+      }
+
+      if (msg.type === 'barge_in' && msg.payload && msg.payload.clear_playback) {
+
+        var nowMs = Date.now();
+        var sinceFirstMediaMs = firstDownlinkMediaAtMs ? nowMs - firstDownlinkMediaAtMs : -1;
+        var sinceSttPartialMs = lastSttPartialAtMs ? nowMs - lastSttPartialAtMs : -1;
+        var recentPlaybackStart = sinceFirstMediaMs >= 0 && sinceFirstMediaMs < 1200;
+        var noRecentUserSpeech = sinceSttPartialMs < 0 || sinceSttPartialMs > 1200;
+        if (recentPlaybackStart && noRecentUserSpeech) {
+
+          Logger.write(
+
+            '[rsd] gateway barge_in ignored (likely playback echo) call_id=' +
+
+              opts.callId +
+
+              ' since_first_media_ms=' +
+
+              sinceFirstMediaMs +
+
+              ' since_stt_partial_ms=' +
+
+              sinceSttPartialMs,
+
+          );
+
+          return;
+
+        }
+
+        try {
+
+          if (typeof webSocket.clearMediaBuffer === 'function') {
+
+            webSocket.clearMediaBuffer();
+
+            Logger.write('[rsd] gateway barge_in clearMediaBuffer call_id=' + opts.callId);
+
+          } else {
+
+            Logger.write('[rsd] gateway barge_in: clearMediaBuffer not available on WebSocket');
+
+          }
+
+        } catch (clearErr) {
+
+          Logger.write('[rsd] gateway barge_in clear failed: ' + clearErr);
+
+        }
+
+        return;
+
+      }
+
+      /**
+       * Обработка события 'start' от gateway — начало медиа-потока.
+       *
+       * ⚠️ КРИТИЧЕСКИ ВАЖНО: Это событие означает, что gateway начинает
+       * передачу аудио агента. Оно ДОЛЖНО быть первым в последовательности:
+       * start → media → stop
+       *
+       * При получении 'start':
+       * 1. Перепривязываем websocket->call media routing
+       * 2. Отправляем downlink.ready подтверждение в gateway
+       * 3. Сбрасываем флаги firstDownlinkMedia
+       */
+      if (msg.event === 'start' && msg.start) {
+
+        // Guard against lost websocket->call media routing before first chunk.
+        bindDownlinkMedia();
+        firstDownlinkMediaLogged = false;
+        firstDownlinkMediaAtMs = 0;
+        try {
+          webSocket.send(JSON.stringify({ type: 'downlink.ready', payload: { call_id: opts.callId } }));
+          Logger.write('[rsd] gateway downlink ready call_id=' + opts.callId);
+        } catch (readyErr) {
+          Logger.write('[rsd] gateway downlink ready send failed call_id=' + opts.callId + ' err=' + readyErr);
+        }
+
+        Logger.write('[rsd] gateway downlink start call_id=' + opts.callId);
+
+        return;
+
+      }
+
+      if (msg.event === 'stop') {
+
+        Logger.write('[rsd] gateway downlink stop call_id=' + opts.callId);
+
+        return;
+
+      }
+
+      /**
+       * Обработка события 'media' от gateway — аудио-данные агента.
+       *
+       * Событие media содержит base64-закодированные аудио-чанки в формате PCM16.
+       * Данные автоматически направляются на call через webSocket.sendMediaTo().
+       *
+       * При первом media-событии:
+       * 1. Дополнительно привязываем downlink media routing
+       * 2. Логируем получение первого аудио-чанка
+       */
+      if (msg.event === 'media' && msg.media && msg.media.payload) {
+
+        if (!firstDownlinkMediaLogged) {
+
+          // One more safety rebind at the first real payload.
+          bindDownlinkMedia();
+
+          firstDownlinkMediaLogged = true;
+          firstDownlinkMediaAtMs = Date.now();
+
+          Logger.write(
+
+            '[rsd] gateway first downlink media call_id=' +
+
+              opts.callId +
+
+              ' payloadLen=' +
+
+              String(msg.media.payload.length || 0),
+
+          );
+
+        }
+
+        return;
+
+      }
+
+      if (msg.type && String(msg.type).indexOf('agent.audio') === 0) {
+
+        if (msg.type === 'agent.audio.start') {
+
+          // Force downlink rebind right before new playback turn.
+          // This mitigates rare websocket->call media-leg drops.
+          bindDownlinkMedia();
+          firstDownlinkMediaLogged = false;
+          firstDownlinkMediaAtMs = 0;
+
+        }
+
+        if (msg.type === 'agent.audio.chunk' && !firstDownlinkMediaLogged) {
+
+          // Extra guard for environments where first media arrives before
+          // start/media events are fully observed in JS callback order.
+          bindDownlinkMedia();
+
+        }
+
+        return;
+
+      }
+
+    } catch (err) {
+
+      Logger.write('[rsd] gateway ws text: ' + text.substring(0, 200));
+
+    }
+
+  });
+
+
+
+  webSocket.addEventListener(WebSocketEvents.ERROR, function (e) {
+
+    Logger.write('[rsd] gateway ws error: ' + JSON.stringify(e || {}));
+
+    if (opts.onError) opts.onError('websocket_error');
+
+  });
+
+
+
+  webSocket.addEventListener(WebSocketEvents.CLOSE, function (e) {
+
+    Logger.write('[rsd] gateway ws close: ' + (e && e.reason ? e.reason : ''));
+
+  });
+
+
+
+  return webSocket;
+
+}
+
+
+
+function sendDtmfToGateway(webSocket, digit) {
+
+  if (!webSocket || !digit) return;
+
+  webSocket.send(
+
+    JSON.stringify({
+
+      type: 'dtmf',
+
+      payload: { digit: String(digit) },
+
+    }),
+
+  );
+
+}
+
+
+
+function sendSessionEnd(webSocket, reason) {
+
+  if (!webSocket) return;
+
+  try {
+
+    webSocket.send(JSON.stringify({ type: 'session.end', payload: { reason: reason || 'hangup' } }));
+
+    webSocket.close();
+
+  } catch (e) {
+
+    Logger.write('[rsd] session.end failed: ' + e);
+
+  }
+
+}
+
+
+
+module.exports = {
+
+  connectMediaGateway: connectMediaGateway,
+
+  sendDtmfToGateway: sendDtmfToGateway,
+
+  sendSessionEnd: sendSessionEnd,
+
+};
+

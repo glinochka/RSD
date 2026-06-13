@@ -1,4 +1,6 @@
+import asyncio
 import logging
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, HTTPException, status
@@ -25,6 +27,38 @@ agent_dp = None
 
 # Rate limiter: 100 requests per minute per IP
 limiter = Limiter(key_func=get_remote_address, default_limits=["100/minute"])
+
+# Telegram may redeliver the same update_id if webhook does not ACK quickly enough.
+# Voice (STT + LLM) can exceed that window → duplicate handlers → several bot replies for one ГС.
+_AGENT_UPDATE_HANDLE_LOCKS: dict[tuple[int, int], asyncio.Lock] = {}
+_AGENT_UPDATE_HANDLED_AT: dict[tuple[int, int], float] = {}
+_AGENT_UPDATE_STATE_TTL_SEC = 600.0
+
+
+def _prune_agent_update_state(now: float) -> None:
+    cutoff = now - _AGENT_UPDATE_STATE_TTL_SEC
+    stale = [k for k, t in _AGENT_UPDATE_HANDLED_AT.items() if t < cutoff]
+    for k in stale:
+        _AGENT_UPDATE_HANDLED_AT.pop(k, None)
+        _AGENT_UPDATE_HANDLE_LOCKS.pop(k, None)
+
+
+async def _run_agent_webhook_update_once(bot_id: int, update_id: int, coro_factory):
+    """Run handler once per Telegram update_id; ignore duplicate webhook deliveries."""
+    key = (int(bot_id), int(update_id))
+    lock = _AGENT_UPDATE_HANDLE_LOCKS.setdefault(key, asyncio.Lock())
+    async with lock:
+        now = time.monotonic()
+        _prune_agent_update_state(now)
+        if key in _AGENT_UPDATE_HANDLED_AT:
+            logger.info(
+                "agent webhook: skipping duplicate update bot_id=%s update_id=%s",
+                bot_id,
+                update_id,
+            )
+            return
+        await coro_factory()
+        _AGENT_UPDATE_HANDLED_AT[key] = time.monotonic()
 
 
 @asynccontextmanager
@@ -131,15 +165,32 @@ async def handle_agent_webhook(bot_id: int, request: Request):
             logger.warning("Invalid webhook payload for bot_id=%s: %s", bot_id, e)
             return {"status": "error", "detail": "Invalid payload"}
 
-        # Process update
-        async with Bot(token=token) as bot:
-            await agent_dp.feed_update(
-                bot,
-                tg_update,
-                bot_id=agent_json.get("bot_id"),
-                system_prompt=agent_json.get("system_prompt", ""),
-                welcome_message=agent_json.get("welcome_message"),
-            )
+        update_id = getattr(tg_update, "update_id", None)
+        if update_id is None:
+            logger.warning("agent webhook: missing update_id bot_id=%s, processing without dedup", bot_id)
+            async with Bot(token=token) as bot:
+                await agent_dp.feed_update(
+                    bot,
+                    tg_update,
+                    bot_id=agent_json.get("bot_id"),
+                    system_prompt=agent_json.get("system_prompt", ""),
+                    welcome_message=agent_json.get("welcome_message"),
+                    process_start_with_llm=bool(agent_json.get("process_start_with_llm", False)),
+                )
+        else:
+
+            async def _run_feed():
+                async with Bot(token=token) as bot:
+                    await agent_dp.feed_update(
+                        bot,
+                        tg_update,
+                        bot_id=agent_json.get("bot_id"),
+                        system_prompt=agent_json.get("system_prompt", ""),
+                        welcome_message=agent_json.get("welcome_message"),
+                        process_start_with_llm=bool(agent_json.get("process_start_with_llm", False)),
+                    )
+
+            await _run_agent_webhook_update_once(bot_id, int(update_id), _run_feed)
 
         return {"status": "ok"}
 

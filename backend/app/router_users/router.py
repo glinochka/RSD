@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 import re
@@ -6,18 +7,21 @@ from datetime import datetime, timedelta, timezone
 from logging import getLogger
 
 import httpx
+import jwt
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from jwt.exceptions import InvalidTokenError
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from .dao import TelegramLinkChallengeDAO, UserDAO, UserErrorReportDAO
 from .schemas import *
 from ..alembic.database import async_session_maker
-from ..alembic.models import UserAuthSession
+from ..alembic.models import UserAuthSession, UserExternalIdentity
 from ..config import settings
 from ..router_agents.dao import AgentDAO
+from ..services.referral import attach_referrer_on_signup, ensure_user_referral_code
 from ..utils.convert import convert_to_dict
 from ..utils.internal_auth import verify_internal_key
 from ..utils.JWT import create_access_token, decode_access_token_payload, get_user_from_access_token
@@ -48,6 +52,37 @@ PASSWORD_RESET_TOKEN_TTL_MINUTES = 15
 EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 REFRESH_TOKEN_BYTES = 48
 MAILOPOST_RATE_LIMIT_RETRY_RE = re.compile(r"try again in (\d+)\s*seconds?", re.IGNORECASE)
+MAX_AGE_RE = re.compile(r"max-age=(\d+)", re.IGNORECASE)
+GOOGLE_OIDC_CERTS_URL = "https://www.googleapis.com/oauth2/v3/certs"
+GOOGLE_OIDC_ISSUERS = {"accounts.google.com", "https://accounts.google.com"}
+_GOOGLE_JWKS_CACHE: dict = {}
+_GOOGLE_JWKS_EXPIRES_AT: datetime | None = None
+_REGISTRATION_FAIL_OPEN_TOTAL = 0
+
+
+def _render_mailopost_card_html(*, title: str, paragraphs: list[str], accent_block_html: str = "") -> str:
+    rendered_paragraphs = "".join(
+        f"<tr><td style='padding:0 24px 8px 24px;color:#374151;font-size:14px;line-height:1.6;'>{line}</td></tr>"
+        for line in paragraphs
+    )
+    return (
+        "<!DOCTYPE html>"
+        "<html><body style='margin:0;padding:0;background:#f5f7fb;font-family:Arial,sans-serif;'>"
+        "<table role='presentation' width='100%' cellspacing='0' cellpadding='0' style='background:#f5f7fb;padding:24px 12px;'>"
+        "<tr><td align='center'>"
+        "<table role='presentation' width='100%' cellspacing='0' cellpadding='0' style='max-width:560px;background:#ffffff;border:1px solid #e8ecf3;border-radius:12px;overflow:hidden;'>"
+        "<tr><td style='padding:24px 24px 8px 24px;'>"
+        f"<div style='font-size:20px;font-weight:700;color:#111827;'>{title}</div>"
+        "</td></tr>"
+        f"{rendered_paragraphs}"
+        f"{accent_block_html}"
+        "<tr><td style='padding:8px 24px 24px 24px;color:#9ca3af;font-size:12px;line-height:1.6;'>"
+        "Это письмо отправлено автоматически. Отвечать на него не нужно."
+        "</td></tr>"
+        "</table>"
+        "</td></tr></table>"
+        "</body></html>"
+    )
 
 
 def _mailopost_rate_limit_retry_seconds(response: httpx.Response) -> int | None:
@@ -64,6 +99,137 @@ def _mailopost_rate_limit_retry_seconds(response: httpx.Response) -> int | None:
         if match:
             return int(match.group(1))
     return None
+
+
+def _cache_max_age_seconds(cache_control_value: str | None) -> int:
+    if not cache_control_value:
+        return 300
+    match = MAX_AGE_RE.search(cache_control_value)
+    if not match:
+        return 300
+    try:
+        return max(60, int(match.group(1)))
+    except (TypeError, ValueError):
+        return 300
+
+
+async def _get_google_jwks() -> dict:
+    global _GOOGLE_JWKS_CACHE, _GOOGLE_JWKS_EXPIRES_AT
+
+    now_utc = datetime.now(timezone.utc)
+    if _GOOGLE_JWKS_CACHE and _GOOGLE_JWKS_EXPIRES_AT and _GOOGLE_JWKS_EXPIRES_AT > now_utc:
+        return _GOOGLE_JWKS_CACHE
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as client:
+        response = await client.get(GOOGLE_OIDC_CERTS_URL)
+    if not response.is_success:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Google public keys endpoint is unavailable",
+        )
+
+    jwks = response.json()
+    if not isinstance(jwks, dict) or not isinstance(jwks.get("keys"), list):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Invalid Google public keys response",
+        )
+
+    cache_ttl_seconds = _cache_max_age_seconds(response.headers.get("Cache-Control"))
+    _GOOGLE_JWKS_CACHE = jwks
+    _GOOGLE_JWKS_EXPIRES_AT = now_utc + timedelta(seconds=cache_ttl_seconds)
+    return jwks
+
+
+def _google_public_key_by_kid(jwks: dict, kid: str):
+    for item in jwks.get("keys") or []:
+        if item.get("kid") == kid:
+            return jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(item))
+    return None
+
+
+async def _decode_and_validate_google_id_token(id_token: str, nonce: str) -> dict:
+    google_client_id = settings.GOOGLE_OAUTH_CLIENT_ID.strip()
+    if not google_client_id:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Google OAuth is not configured",
+        )
+
+    try:
+        unverified_header = jwt.get_unverified_header(id_token)
+        kid = str(unverified_header.get("kid") or "").strip()
+        alg = str(unverified_header.get("alg") or "").strip()
+        if not kid or alg != "RS256":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid Google token header",
+            )
+    except InvalidTokenError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Google token is invalid",
+        )
+
+    jwks = await _get_google_jwks()
+    public_key = _google_public_key_by_kid(jwks, kid)
+    if public_key is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Google token key is not recognized",
+        )
+
+    try:
+        payload = jwt.decode(
+            id_token,
+            public_key,
+            algorithms=["RS256"],
+            audience=google_client_id,
+            issuer=list(GOOGLE_OIDC_ISSUERS),
+            options={"require": ["exp", "iat", "sub", "aud", "iss"]},
+        )
+    except InvalidTokenError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Google token validation failed",
+        )
+
+    token_nonce = str(payload.get("nonce") or "").strip()
+    if token_nonce != nonce:
+        logger.warning(f"Nonce mismatch: token={token_nonce!r}, expected={nonce!r}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Google token nonce mismatch",
+        )
+
+    email = _normalize_email(str(payload.get("email") or ""))
+    if not EMAIL_PATTERN.match(email):
+        logger.warning(f"Invalid email format: {email!r}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Google account has no valid email",
+        )
+    email_verified = payload.get("email_verified")
+    if email_verified not in (True, "true", "True", 1):
+        logger.warning(f"Email not verified: {email_verified!r}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Google email is not verified",
+        )
+
+    # Allow all Google accounts - both personal and workspace
+    # GOOGLE_OAUTH_ALLOWED_HD setting is currently unused (all accounts allowed)
+    allowed_hd = settings.GOOGLE_OAUTH_ALLOWED_HD.strip().lower()
+    token_hd = str(payload.get("hd") or "").strip().lower()
+    
+    logger.debug(f"Google OAuth: email={email}, token_hd={token_hd or 'personal'}, allowed_hd={allowed_hd or 'none (all allowed)'}")
+    
+    # Currently allowing all accounts - comment out the check below if domain restriction needed in future
+    # if allowed_hd and token_hd and token_hd != allowed_hd:
+    #     raise HTTPException(...)
+    
+    logger.info(f"Google OAuth validation successful for email={email}")
+    return payload
 
 
 def _utc_now_naive() -> datetime:
@@ -258,30 +424,17 @@ async def _send_registration_email_code(email: str, code: str) -> None:
             f"Код действует {EMAIL_CODE_TTL_MINUTES} минут.\n\n"
             "Если вы не запрашивали регистрацию, просто проигнорируйте письмо."
         ),
-        "html": (
-            "<!DOCTYPE html>"
-            "<html><body style='margin:0;padding:0;background:#f5f7fb;font-family:Arial,sans-serif;'>"
-            "<table role='presentation' width='100%' cellspacing='0' cellpadding='0' style='background:#f5f7fb;padding:24px 12px;'>"
-            "<tr><td align='center'>"
-            "<table role='presentation' width='100%' cellspacing='0' cellpadding='0' style='max-width:560px;background:#ffffff;border:1px solid #e8ecf3;border-radius:12px;overflow:hidden;'>"
-            "<tr><td style='padding:24px 24px 8px 24px;'>"
-            "<div style='font-size:20px;font-weight:700;color:#111827;'>Подтверждение регистрации в RSD</div>"
-            "</td></tr>"
-            "<tr><td style='padding:0 24px 8px 24px;color:#374151;font-size:14px;line-height:1.6;'>"
-            "Введите код ниже на странице регистрации."
-            "</td></tr>"
-            "<tr><td style='padding:8px 24px 8px 24px;'>"
-            f"<div style='display:inline-block;background:#111827;color:#ffffff;font-size:28px;font-weight:700;letter-spacing:6px;padding:14px 18px;border-radius:10px;'>{code}</div>"
-            "</td></tr>"
-            "<tr><td style='padding:8px 24px 8px 24px;color:#6b7280;font-size:13px;line-height:1.6;'>"
-            f"Код действует {EMAIL_CODE_TTL_MINUTES} минут."
-            "</td></tr>"
-            "<tr><td style='padding:0 24px 24px 24px;color:#9ca3af;font-size:12px;line-height:1.6;'>"
-            "Если вы не запрашивали регистрацию, просто проигнорируйте это письмо."
-            "</td></tr>"
-            "</table>"
-            "</td></tr></table>"
-            "</body></html>"
+        "html": _render_mailopost_card_html(
+            title="Подтверждение регистрации в RSD",
+            paragraphs=[
+                "Введите код ниже на странице регистрации.",
+                f"Код действует {EMAIL_CODE_TTL_MINUTES} минут.",
+            ],
+            accent_block_html=(
+                "<tr><td style='padding:8px 24px 8px 24px;'>"
+                f"<div style='display:inline-block;background:#111827;color:#ffffff;font-size:28px;font-weight:700;letter-spacing:6px;padding:14px 18px;border-radius:10px;'>{code}</div>"
+                "</td></tr>"
+            ),
         ),
     }
     from_name = settings.MAILOPOST_FROM_NAME.strip()
@@ -326,6 +479,64 @@ async def _send_registration_email_code(email: str, code: str) -> None:
         )
 
 
+def _log_registration_fail_open(*, email: str, reason: str) -> None:
+    global _REGISTRATION_FAIL_OPEN_TOTAL
+    _REGISTRATION_FAIL_OPEN_TOTAL += 1
+    logger.info(
+        "registration_completed_without_email_verification email=%s reason=%s total=%s",
+        email,
+        reason,
+        _REGISTRATION_FAIL_OPEN_TOTAL,
+    )
+
+
+async def _complete_registration_without_email_verification(
+    normalized_email: str,
+    *,
+    reason: str,
+) -> JSONResponse:
+    """Finish registration when MailoPost cannot deliver the verification code."""
+    _log_registration_fail_open(email=normalized_email, reason=reason)
+    async with async_session_maker() as session:
+        user_dao = UserDAO(session)
+        async with session.begin():
+            user = await user_dao.find_one_by_filter(email=normalized_email)
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Пользователь не найден",
+                )
+            if not user.email_verified:
+                await user_dao.update(
+                    user,
+                    {
+                        "email_verified": True,
+                        "email_verification_code_hash": None,
+                        "email_verification_expires_at": None,
+                        "email_verification_attempts_left": 0,
+                        "email_verification_last_sent_at": None,
+                    },
+                )
+            access_token, refresh_token = await _issue_user_tokens(session, user.id)
+
+    await _send_welcome_email(normalized_email)
+    logger.info(
+        "Registration completed without email verification code for %s",
+        normalized_email,
+    )
+    return JSONResponse(
+        content={
+            "status": "registered",
+            "detail": "Регистрация завершена. Подтверждение email временно недоступно.",
+            "email": normalized_email,
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": "bearer",
+        },
+        status_code=status.HTTP_201_CREATED,
+    )
+
+
 async def _send_password_reset_email_code(email: str, code: str) -> None:
     api_token = settings.MAILOPOST_API_TOKEN.strip()
     from_email = settings.MAILOPOST_FROM_EMAIL.strip()
@@ -346,30 +557,17 @@ async def _send_password_reset_email_code(email: str, code: str) -> None:
             f"Код действует {PASSWORD_RESET_CODE_TTL_MINUTES} минут.\n\n"
             "Если вы не запрашивали восстановление, просто проигнорируйте письмо."
         ),
-        "html": (
-            "<!DOCTYPE html>"
-            "<html><body style='margin:0;padding:0;background:#f5f7fb;font-family:Arial,sans-serif;'>"
-            "<table role='presentation' width='100%' cellspacing='0' cellpadding='0' style='background:#f5f7fb;padding:24px 12px;'>"
-            "<tr><td align='center'>"
-            "<table role='presentation' width='100%' cellspacing='0' cellpadding='0' style='max-width:560px;background:#ffffff;border:1px solid #e8ecf3;border-radius:12px;overflow:hidden;'>"
-            "<tr><td style='padding:24px 24px 8px 24px;'>"
-            "<div style='font-size:20px;font-weight:700;color:#111827;'>Восстановление пароля в RSD</div>"
-            "</td></tr>"
-            "<tr><td style='padding:0 24px 8px 24px;color:#374151;font-size:14px;line-height:1.6;'>"
-            "Введите код ниже на странице восстановления пароля."
-            "</td></tr>"
-            "<tr><td style='padding:8px 24px 8px 24px;'>"
-            f"<div style='display:inline-block;background:#111827;color:#ffffff;font-size:28px;font-weight:700;letter-spacing:6px;padding:14px 18px;border-radius:10px;'>{code}</div>"
-            "</td></tr>"
-            "<tr><td style='padding:8px 24px 8px 24px;color:#6b7280;font-size:13px;line-height:1.6;'>"
-            f"Код действует {PASSWORD_RESET_CODE_TTL_MINUTES} минут."
-            "</td></tr>"
-            "<tr><td style='padding:0 24px 24px 24px;color:#9ca3af;font-size:12px;line-height:1.6;'>"
-            "Если вы не запрашивали восстановление, просто проигнорируйте это письмо."
-            "</td></tr>"
-            "</table>"
-            "</td></tr></table>"
-            "</body></html>"
+        "html": _render_mailopost_card_html(
+            title="Восстановление пароля в RSD",
+            paragraphs=[
+                "Введите код ниже на странице восстановления пароля.",
+                f"Код действует {PASSWORD_RESET_CODE_TTL_MINUTES} минут.",
+            ],
+            accent_block_html=(
+                "<tr><td style='padding:8px 24px 8px 24px;'>"
+                f"<div style='display:inline-block;background:#111827;color:#ffffff;font-size:28px;font-weight:700;letter-spacing:6px;padding:14px 18px;border-radius:10px;'>{code}</div>"
+                "</td></tr>"
+            ),
         ),
     }
     from_name = settings.MAILOPOST_FROM_NAME.strip()
@@ -408,6 +606,101 @@ async def _send_password_reset_email_code(email: str, code: str) -> None:
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Не удалось отправить код восстановления на email",
         )
+
+
+async def _send_welcome_email(email: str) -> None:
+    api_token = settings.MAILOPOST_API_TOKEN.strip()
+    from_email = settings.MAILOPOST_FROM_EMAIL.strip()
+    base_url = settings.MAILOPOST_API_URL.strip().rstrip("/")
+    if not api_token or not from_email:
+        logger.warning("Welcome email skipped: Mail sender is not configured")
+        return
+
+    payload = {
+        "from_email": from_email,
+        "to": email,
+        "subject": "Добро пожаловать в RSD AI! Ваш промокод START50",
+        "text": (
+            "Здравствуйте!\n\n"
+            "Спасибо за регистрацию в RSD AI.\n\n"
+            "Ваш персональный промокод: START50\n"
+            "Промокод активен в течение 7 дней с момента регистрации.\n\n"
+            "В сервисе можно создать ИИ сотрудника по шаблонам:\n"
+            "- Консультант\n"
+            "- Администратор\n"
+            "- МОП-лидогенератор\n\n"
+            "Каналы подключения: Telegram, МАКС, WhatsApp.\n"
+            "Если вам нужна индивидуальная ИИ автоматизация под ваш бизнес, то мы можем сделать ее под ключ!\n"
+            "Просто оставьте заявку на сайте или в ответном письме.\n\n"
+            "Если нужна помощь, напишите в ответ на письмо, в чате на сайте "
+            "или в Telegram: t.me/fakerebellious"
+        ),
+        "html": _render_mailopost_card_html(
+            title="Добро пожаловать в RSD AI!",
+            paragraphs=[
+                "Спасибо за регистрацию — рады видеть вас в сервисе.",
+                "Ваш персональный промокод START50 активен 7 дней с момента регистрации.",
+                "RSD помогает быстро запускать ИИ сотрудников для бизнеса.",
+                "Шаблоны для старта: Консультант, Администратор, МОП-лидогенератор.",
+                "Доступные подключения: Telegram, МАКС и WhatsApp.",
+                "Нужна помощь или доработка под ваши процессы? Сделаем автоматизацию под ключ.",
+                "Вопросы: ответным письмом, в чате на сайте или в Telegram: t.me/fakerebellious.",
+            ],
+            accent_block_html=(
+                "<tr><td style='padding:8px 24px 8px 24px;'>"
+                "<div style='display:inline-block;background:#111827;color:#ffffff;font-size:20px;font-weight:700;letter-spacing:2px;padding:12px 16px;border-radius:10px;'>"
+                "START50"
+                "</div>"
+                "</td></tr>"
+                "<tr><td style='padding:4px 24px 8px 24px;'>"
+                "<div style='display:inline-block;background:#eef2ff;color:#3730a3;font-size:13px;font-weight:600;padding:10px 14px;border-radius:10px;'>"
+                "Если вам нужна индивидуальная ИИ автоматизация под ваш бизнес, то мы можем сделать ее под ключ! "
+                "Просто оставьте заявку на сайте или в ответном письме."
+                "</div>"
+                "</td></tr>"
+            ),
+        ),
+    }
+    from_name = settings.MAILOPOST_FROM_NAME.strip()
+    if from_name:
+        payload["from_name"] = from_name
+
+    headers = {
+        "Authorization": f"Bearer {api_token}",
+        "Content-Type": "application/json",
+    }
+    url = f"{base_url}/email/messages"
+    timeout = httpx.Timeout(settings.MAILOPOST_SEND_TIMEOUT_SECONDS, connect=5.0)
+    attempts = 2
+    for attempt in range(attempts):
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.post(url, json=payload, headers=headers)
+        except httpx.HTTPError as exc:
+            logger.error("MailoPost welcome email transport error: %s", exc)
+            if attempt < attempts - 1:
+                await asyncio.sleep(2)
+                continue
+            return
+
+        if response.is_success:
+            return
+
+        logger.error(
+            "MailoPost welcome email send failed: status=%s body=%s",
+            response.status_code,
+            response.text[:500],
+        )
+        is_retryable = response.status_code == 429 or response.status_code >= 500
+        if not is_retryable or attempt >= attempts - 1:
+            return
+
+        retry_after = response.headers.get("Retry-After")
+        try:
+            retry_delay = min(5, max(1, int(retry_after or "2")))
+        except ValueError:
+            retry_delay = 2
+        await asyncio.sleep(retry_delay)
 
 
 async def get_current_user_required(
@@ -569,6 +862,14 @@ async def user_registration(new_user: NewUser):
                     )
                     # Surface uniqueness races before leaving transaction block.
                     await session.flush()
+                    created_user = await user_dao.find_one_by_filter(email=normalized_email)
+                    if created_user:
+                        await attach_referrer_on_signup(
+                            user_dao,
+                            created_user,
+                            new_user.referral_code,
+                        )
+                        await ensure_user_referral_code(user_dao, created_user)
             break
         except IntegrityError:
             if attempt == 1:
@@ -581,15 +882,21 @@ async def user_registration(new_user: NewUser):
     try:
         await _send_registration_email_code(normalized_email, verification_code)
     except HTTPException as exc:
-        # If sending failed due to transport/provider error, unlock immediate resend.
-        if exc.status_code == status.HTTP_502_BAD_GATEWAY:
-            async with async_session_maker() as session:
-                user_dao = UserDAO(session)
-                async with session.begin():
-                    user = await user_dao.find_one_by_filter(email=normalized_email)
-                    if user and not user.email_verified:
-                        await user_dao.update(user, {"email_verification_last_sent_at": None})
-        raise
+        logger.warning(
+            "Registration verification email failed (status=%s): %s",
+            exc.status_code,
+            exc.detail,
+        )
+        return await _complete_registration_without_email_verification(
+            normalized_email,
+            reason=f"registration_send_http_{exc.status_code}",
+        )
+    except httpx.HTTPError as exc:
+        logger.error("Registration verification email transport error: %s", exc)
+        return await _complete_registration_without_email_verification(
+            normalized_email,
+            reason="registration_send_transport_error",
+        )
 
     logger.info("Код подтверждения регистрации отправлен на email %s", normalized_email)
 
@@ -660,14 +967,21 @@ async def resend_registration_code(payload: RegistrationResendCodeRequest):
     try:
         await _send_registration_email_code(normalized_email, code)
     except HTTPException as exc:
-        if exc.status_code == status.HTTP_502_BAD_GATEWAY:
-            async with async_session_maker() as session:
-                user_dao = UserDAO(session)
-                async with session.begin():
-                    user = await user_dao.find_one_by_filter(email=normalized_email)
-                    if user and not user.email_verified:
-                        await user_dao.update(user, {"email_verification_last_sent_at": None})
-        raise
+        logger.warning(
+            "Registration resend email failed (status=%s): %s",
+            exc.status_code,
+            exc.detail,
+        )
+        return await _complete_registration_without_email_verification(
+            normalized_email,
+            reason=f"registration_resend_http_{exc.status_code}",
+        )
+    except httpx.HTTPError as exc:
+        logger.error("Registration resend transport error: %s", exc)
+        return await _complete_registration_without_email_verification(
+            normalized_email,
+            reason="registration_resend_transport_error",
+        )
 
     return JSONResponse(
         content={
@@ -755,6 +1069,8 @@ async def verify_user_registration_code(payload: VerifyRegistrationCodeRequest):
             )
 
             access_token, refresh_token = await _issue_user_tokens(session, user.id)
+
+    await _send_welcome_email(normalized_email)
 
     return JSONResponse(
         content={
@@ -1000,6 +1316,7 @@ async def confirm_password_reset(payload: PasswordResetConfirmRequest):
 async def user_login(login_user: LoginUser):
     login_value = login_user.name.strip()
     matched_user = None
+    has_login_candidates = False
     async with async_session_maker() as session:
         user_dao = UserDAO(session)
 
@@ -1026,6 +1343,7 @@ async def user_login(login_user: LoginUser):
                 if user_by_name:
                     candidates = [user_by_name]
 
+            has_login_candidates = len(candidates) > 0
             for candidate in candidates:
                 if not candidate.password:
                     continue
@@ -1043,6 +1361,11 @@ async def user_login(login_user: LoginUser):
 
     if not matched_user:
         logger.info("Неуспешная попытка входа для логина: %s", login_value)
+        if not has_login_candidates:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Пользователь не найден",
+            )
         raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Неверные учетные данные"
@@ -1070,6 +1393,120 @@ async def user_login(login_user: LoginUser):
             "refresh_token": refresh_token,
             "token_type": "bearer"
         }
+
+
+@router.post(
+    "/oauth/google",
+    dependencies=[Depends(rate_limit(max_requests=20, window_seconds=60, scope="users_oauth_google"))],
+)
+async def user_google_oauth_login(payload: GoogleOAuthLoginRequest):
+    logger.info("Google OAuth login request received")
+    nonce = payload.nonce.strip()
+    
+    try:
+        google_payload = await _decode_and_validate_google_id_token(payload.id_token.strip(), nonce)
+    except HTTPException as e:
+        logger.error(f"Google token validation failed: {e.detail}", exc_info=True)
+        raise
+
+    google_sub = str(google_payload.get("sub") or "").strip()
+    if not google_sub:
+        logger.error("Google token has no subject")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Google token has no subject",
+        )
+    normalized_email = _normalize_email(str(google_payload.get("email") or ""))
+    display_name = str(google_payload.get("name") or "").strip()[:128] or None
+
+    for attempt in range(2):
+        should_send_welcome = False
+        try:
+            async with async_session_maker() as session:
+                user_dao = UserDAO(session)
+                async with session.begin():
+                    identity = await session.scalar(
+                        select(UserExternalIdentity).where(
+                            UserExternalIdentity.provider == "google",
+                            UserExternalIdentity.external_user_id == google_sub,
+                        )
+                    )
+
+                    user = None
+                    if identity:
+                        user = await user_dao.find_one_by_filter(id=identity.user_id)
+                    if user is None:
+                        user = await user_dao.find_one_by_filter(email=normalized_email)
+
+                    if user is None:
+                        generated_name = await _build_unique_username(user_dao, normalized_email)
+                        await user_dao.add(
+                            {
+                                "name": generated_name,
+                                "email": normalized_email,
+                                "password": None,
+                                "email_verified": True,
+                            }
+                        )
+                        await session.flush()
+                        user = await user_dao.find_one_by_filter(email=normalized_email)
+                        if user:
+                            await attach_referrer_on_signup(
+                                user_dao,
+                                user,
+                                payload.referral_code,
+                            )
+                            await ensure_user_referral_code(user_dao, user)
+                        should_send_welcome = True
+
+                    if user is None:
+                        raise HTTPException(
+                            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail="Failed to create user account",
+                        )
+
+                    if user.is_banned:
+                        raise HTTPException(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Пользователь заблокирован",
+                        )
+
+                    if user.email != normalized_email or not user.email_verified:
+                        await user_dao.update(
+                            user,
+                            {"email": normalized_email, "email_verified": True},
+                        )
+
+                    if identity is None:
+                        session.add(
+                            UserExternalIdentity(
+                                user_id=user.id,
+                                provider="google",
+                                external_user_id=google_sub,
+                                display_name=display_name,
+                            )
+                        )
+                    elif display_name and identity.display_name != display_name:
+                        identity.display_name = display_name
+
+                    access_token, refresh_token = await _issue_user_tokens(session, user.id)
+            if should_send_welcome:
+                await _send_welcome_email(normalized_email)
+            return JSONResponse(
+                content={
+                    "access_token": access_token,
+                    "refresh_token": refresh_token,
+                    "token_type": "bearer",
+                },
+                status_code=status.HTTP_200_OK,
+            )
+        except IntegrityError:
+            if attempt == 1:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Google account is already linked to another user",
+                )
+            continue
 
 
 @router.post("/refresh", dependencies=[Depends(rate_limit(max_requests=20, window_seconds=60, scope="users_refresh"))])

@@ -24,6 +24,7 @@ class ProcessingStatus(str, Enum):
     EXPIRED_SUBSCRIPTION = "expired_subscription"
     WELCOME = "welcome"
     ERROR = "error"
+    DISCARDED = "discarded"
 
 
 @dataclass
@@ -35,8 +36,11 @@ class MessageRequest:
     channel: Channel
     system_prompt: str = ""
     welcome_message: str | None = None
+    process_start_with_llm: bool = False
     user_display_name: str | None = None
     telegram_peer_access_hash: int | None = None
+    voice_base64: str | None = None
+    voice_mime_type: str | None = None
 
 
 @dataclass
@@ -44,6 +48,14 @@ class MessageResponse:
     """Unified message response."""
     text: str
     status: ProcessingStatus
+    reply: bool = True
+
+    def delivers_reply(self) -> bool:
+        if not self.reply:
+            return False
+        if self.status == ProcessingStatus.DISCARDED:
+            return False
+        return bool((self.text or "").strip())
 
 
 class MessageProcessor:
@@ -70,8 +82,11 @@ class MessageProcessor:
                 channel=request.channel.value,
                 system_prompt=request.system_prompt,
                 welcome_message=request.welcome_message,
+                process_start_with_llm=request.process_start_with_llm,
                 user_display_name=request.user_display_name,
                 telegram_peer_access_hash=request.telegram_peer_access_hash,
+                voice_base64=request.voice_base64,
+                voice_mime_type=request.voice_mime_type,
             )
             if payload.get("error_code"):
                 self.logger.error(
@@ -87,14 +102,24 @@ class MessageProcessor:
                 )
 
             answer = str(payload.get("text") or "").strip()
-            if not answer:
-                answer = "⚠️ Произошла ошибка при обработке вашего сообщения. Попробуйте позже."
-
             status_raw = str(payload.get("status") or "").strip().lower()
             try:
                 response_status = ProcessingStatus(status_raw)
             except ValueError:
                 response_status = ProcessingStatus.ERROR
+
+            delivers_reply = payload.get("reply")
+            if delivers_reply is False:
+                return MessageResponse(text="", status=ProcessingStatus.DISCARDED, reply=False)
+
+            if response_status in (
+                ProcessingStatus.DISCARDED,
+                ProcessingStatus.BLOCKED_USER,
+            ):
+                return MessageResponse(text="", status=ProcessingStatus.DISCARDED, reply=False)
+
+            if not answer:
+                answer = "⚠️ Произошла ошибка при обработке вашего сообщения. Попробуйте позже."
 
             return MessageResponse(text=answer, status=response_status)
 

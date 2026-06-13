@@ -11,7 +11,9 @@ from sqlalchemy import select
 
 from ..alembic.database import async_session_maker
 from ..alembic.models import Agent, AgentAnalyticsMessage, AgentFrozenUser, User
-from ..services.template_runtime import get_template_runtime
+from ..services.agent_availability import agent_availability_allows_now
+from ..services.qa_handoff_service import EscalationType as QAEscalationType, get_qa_handoff_service
+from ..services.template_runtime import EscalationType, get_template_runtime
 from ..utils.pii import redact_pii_text
 logger = logging.getLogger(__name__)
 MAX_INT32 = 2_147_483_647
@@ -20,6 +22,8 @@ MAX_INT32 = 2_147_483_647
 class Channel(str, Enum):
     TELEGRAM = "telegram"
     TELEGRAM_USERBOT = "telegram_userbot"
+    MAX_BOT = "max_bot"
+    MAX_USERBOT = "max_userbot"
     WHATSAPP_USERBOT = "whatsapp_userbot"
 
 
@@ -29,6 +33,7 @@ class ProcessingStatus(str, Enum):
     EXPIRED_SUBSCRIPTION = "expired_subscription"
     WELCOME = "welcome"
     ERROR = "error"
+    DISCARDED = "discarded"
 
 
 @dataclass
@@ -39,14 +44,25 @@ class MessageRequest:
     channel: Channel
     system_prompt: str = ""
     welcome_message: str | None = None
+    process_start_with_llm: bool = False
     user_display_name: str | None = None
     telegram_peer_access_hash: int | None = None
+    skip_chat_portrait_update: bool = False
+    runtime_context: dict[str, object] | None = None
 
 
 @dataclass
 class MessageResponse:
     text: str
     status: ProcessingStatus
+    reply: bool = True
+
+    def delivers_reply(self) -> bool:
+        if not self.reply:
+            return False
+        if self.status == ProcessingStatus.DISCARDED:
+            return False
+        return bool((self.text or "").strip())
 
 
 class MessageProcessor:
@@ -81,6 +97,7 @@ class MessageProcessor:
         latency_ms = int(event.get("latency_ms") or 0)
         provider = str(event.get("crm_provider") or "unknown")
         replay = bool(event.get("idempotent_replay"))
+        args_summary = str(event.get("tool_args_summary") or "").strip()
         error = redact_pii_text(str(event.get("error") or "")).strip()
         parts = [
             f"tool={tool_name}",
@@ -89,6 +106,8 @@ class MessageProcessor:
             f"crm_provider={provider}",
             f"idempotent_replay={str(replay).lower()}",
         ]
+        if args_summary:
+            parts.append(f"args=[{args_summary}]")
         if error:
             parts.append(f"error={error}")
         return " ".join(parts)
@@ -117,14 +136,20 @@ class MessageProcessor:
 
             if await self._is_user_frozen(resolved_agent.id, normalized_user_external_id):
                 return MessageResponse(
-                    text=(
-                        "Доступ к этому агенту для вас временно ограничен владельцем. "
-                        "Если это ошибка, обратитесь в поддержку."
-                    ),
-                    status=ProcessingStatus.BLOCKED_USER,
+                    text="",
+                    status=ProcessingStatus.DISCARDED,
+                    reply=False,
                 )
 
-            if request.query.strip() == "/start":
+            template_config = self._parse_template_config(resolved_agent.template_config)
+            if not agent_availability_allows_now(template_config):
+                return MessageResponse(text="", status=ProcessingStatus.DISCARDED)
+
+            if (
+                request.query.strip() == "/start"
+                and request.channel == Channel.TELEGRAM
+                and not request.process_start_with_llm
+            ):
                 return MessageResponse(
                     text=request.welcome_message or "Здравствуйте! Чем я могу вам помочь?",
                     status=ProcessingStatus.WELCOME,
@@ -140,7 +165,27 @@ class MessageProcessor:
                 channel=request.channel.value,
                 telegram_peer_access_hash=request.telegram_peer_access_hash,
             )
+            normalized_template = str(resolved_agent.template_type or "qa").strip().lower()
+            portrait_enabled = bool((template_config or {}).get("enable_chat_portrait", True))
+            if normalized_template == "content_factory":
+                portrait_enabled = False
+            if request.skip_chat_portrait_update:
+                portrait_enabled = False
+            chat_portrait = ""
+            if portrait_enabled:
+                chat_portrait = await get_template_runtime().update_chat_portrait(
+                    agent_id=resolved_agent.id,
+                    analytics_namespace_id=resolved_agent.bot_id or resolved_agent.id,
+                    user_external_id=normalized_user_external_id,
+                    source_channel=request.channel.value,
+                    user_message=request.query,
+                    base_prompt=request.system_prompt or (resolved_agent.system_prompt or ""),
+                    template_config=template_config,
+                )
 
+            merged_runtime_ctx: dict[str, object] = dict(request.runtime_context or {})
+            if request.telegram_peer_access_hash is not None and int(request.telegram_peer_access_hash) != 0:
+                merged_runtime_ctx["telegram_peer_access_hash"] = int(request.telegram_peer_access_hash)
             execution = await get_template_runtime().execute(
                 template_type=resolved_agent.template_type,
                 prompt=request.system_prompt or (resolved_agent.system_prompt or ""),
@@ -148,10 +193,34 @@ class MessageProcessor:
                 knowledge_scope_id=resolved_agent.bot_id or resolved_agent.id,
                 agent_id=resolved_agent.id,
                 user_external_id=normalized_user_external_id,
-                template_config=self._parse_template_config(resolved_agent.template_config),
+                template_config=template_config,
                 source_channel=request.channel.value,
+                chat_portrait=chat_portrait,
+                runtime_context=merged_runtime_ctx,
             )
+            if execution.discard_message:
+                return MessageResponse(text="", status=ProcessingStatus.DISCARDED)
             answer = execution.answer
+            handoff_applied = False
+            escalation_type_applied: str | None = None
+            if execution.requires_owner_handoff and normalized_template == "qa":
+                qa_escalation_type = (
+                    QAEscalationType.FREEZE_CHAT
+                    if execution.escalation_type == EscalationType.FREEZE_CHAT
+                    else QAEscalationType.NOTIFY_ONLY
+                )
+                await get_qa_handoff_service().escalate_to_operator(
+                    agent_id=resolved_agent.id,
+                    user_external_id=normalized_user_external_id,
+                    user_message=request.query,
+                    answer=answer,
+                    reason=execution.owner_handoff_reason,
+                    channel=request.channel.value,
+                    user_display_name=request.user_display_name,
+                    escalation_type=qa_escalation_type,
+                )
+                handoff_applied = True
+                escalation_type_applied = qa_escalation_type.value
 
             for event in execution.tool_events:
                 await self._log_message(
@@ -185,8 +254,27 @@ class MessageProcessor:
                     tool_status="fallback",
                     latency_ms=0,
                     crm_provider=(
-                        (self._parse_template_config(resolved_agent.template_config) or {}).get("crm_provider")
+                        (template_config or {}).get("crm_provider")
                     ),
+                )
+            if handoff_applied:
+                tool_status = (
+                    "chat_frozen" if escalation_type_applied == "freeze_chat" else "operator_notified"
+                )
+                await self._log_message(
+                    agent_id=resolved_agent.id,
+                    analytics_namespace_id=resolved_agent.bot_id or resolved_agent.id,
+                    role="operator",
+                    message_text=execution.owner_handoff_reason or "qa_owner_handoff",
+                    user_external_id=normalized_user_external_id,
+                    user_display_name=request.user_display_name,
+                    channel=request.channel.value,
+                    telegram_peer_access_hash=request.telegram_peer_access_hash,
+                    tool_name="qa_owner_handoff",
+                    tool_args_hash=None,
+                    tool_status=tool_status,
+                    latency_ms=0,
+                    crm_provider=None,
                 )
 
             await self._log_message(

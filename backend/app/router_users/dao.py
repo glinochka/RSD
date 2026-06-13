@@ -21,6 +21,7 @@ class UserDAO(BaseDAO):
             query = query.where(
                 or_(
                     self.model.name.ilike(pattern),
+                    self.model.email.ilike(pattern),
                     cast(self.model.telegram_id, String).ilike(pattern),
                 )
             )
@@ -42,6 +43,7 @@ class UserDAO(BaseDAO):
             query = query.where(
                 or_(
                     self.model.name.ilike(pattern),
+                    self.model.email.ilike(pattern),
                     cast(self.model.telegram_id, String).ilike(pattern),
                 )
             )

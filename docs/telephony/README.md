@@ -1,0 +1,68 @@
+# Телефония RSD — документация этапа 0
+
+Этап 0 («Подготовка и проектирование») зафиксирован в репозитории до начала разработки `telephony_bridge` и API канала.
+
+## Результаты этапа 0
+
+| Артефакт | Файл |
+|----------|------|
+| Выбор CPaaS (Voximplant) + чеклист тестового аккаунта | [CPaaS_DECISION.md](./CPaaS_DECISION.md) |
+| RFC webhook (события, идентификаторы, HMAC) | [RFC-001-webhook-contract.md](./RFC-001-webhook-contract.md) |
+| KPI задержки (MVP vs production) | [KPI_LATENCY.md](./KPI_LATENCY.md) |
+| Юридический чеклист (черновик) | [COMPLIANCE_CHECKLIST.md](./COMPLIANCE_CHECKLIST.md) |
+| Переменные окружения | [ENV_VARIABLES.md](./ENV_VARIABLES.md) |
+| JSON Schema credentials v1 | [../../schemas/telephony/credentials.v1.schema.json](../../schemas/telephony/credentials.v1.schema.json) |
+| Pydantic-модель (валидация в backend) | `backend/app/telephony/credentials.py` |
+| Шаблон `.env` | [../../.env.telephony.example](../../.env.telephony.example) |
+
+## Утверждённые решения
+
+- **CPaaS:** Voximplant (первая интеграция).
+- **`AgentChannelConnection.provider`:** `telephony_voximplant`.
+- **Поле `provider` внутри JSON credentials:** `voximplant`.
+- **Webhook (публичный):** `POST {TELEPHONY_WEBHOOK_BASE_URL}/webhook/voximplant/{connection_id}`.
+- **Внутренний контракт событий:** RSD Telephony Webhook v1 ([RFC-001](./RFC-001-webhook-contract.md)); bridge нормализует нативные callback Voximplant в этот формат.
+
+## Этап 1 (реализован)
+
+| Компонент | Путь |
+|-----------|------|
+| Миграция | `backend/app/alembic/migration/versions/e2f3a4b5c6d7_add_telephony_tables.py` |
+| Internal API | `backend/app/router_telephony/` → `/api/internal/telephony/*` |
+| Канал (UI API) | `POST /api/agents/channels/add-telephony`, `POST .../telephony/validate` |
+| Bridge | `telephony_bridge/` → `:8100`, webhook `/webhook/voximplant/:connection_id` |
+| Compose | сервис `telephony_bridge` в `docker-compose.yml` |
+
+Включение: `TELEPHONY_ENABLED=true`, `TELEPHONY_WEBHOOK_BASE_URL`, ключи из `.env.telephony.example`.
+
+## Этап 3 (UI)
+
+- Создание агента и модалка каналов: подключение Voximplant, валидация, webhook URL.
+- Аналитика: вкладка «Звонки», `GET /api/agents/analytics/telephony/calls`.
+- Чаты: фильтр канала `phone`.
+
+## Потоковый рефакторинг (этап 1 — контракты)
+
+| Артефакт | Файл |
+|----------|------|
+| Целевая архитектура + диаграмма | [STREAMING_ARCHITECTURE.md](./STREAMING_ARCHITECTURE.md) |
+| Протокол media WS v1 | [SESSION_PROTOCOL.md](./SESSION_PROTOCOL.md) |
+| DTMF / DID routing (этап 7) | [ROUTING.md](./ROUTING.md) |
+| Скелет Media Gateway | `telephony_media_gateway/` → `:8200`, `GET /health`, `WS /ws` |
+| JSON Schema control messages | [../../schemas/telephony/media_session.v1.schema.json](../../schemas/telephony/media_session.v1.schema.json) |
+| Control-only bridge | `telephony_bridge/README.md` (без record/turn) |
+| Preview (без bridge) | API `source: browser_preview` — `telephony_preview.py` |
+
+План этапов: [TELEPHONY_STREAMING_REFACTOR.md](../../TELEPHONY_STREAMING_REFACTOR.md).
+
+## Потоковый рефакторинг (этап 2 — VoxEngine + gateway audio)
+
+| Артефакт | Путь |
+|----------|------|
+| VoxEngine сценарий | `voxengine/rsd_inbound.js`, [voxengine/README.md](../../voxengine/README.md) |
+| Gateway μ-law + RTF | `telephony_media_gateway` — Vox JSON `event:media` + loopback |
+| Bridge control-only | `TELEPHONY_BRIDGE_CONTROL_ONLY=true` → только `call.inbound` / `call.answered` / `call.hangup` |
+
+## Следующий шаг
+
+Этап 3: VAD + streaming STT. Исторический MVP-план: [TELEPHONY_AI_OPERATOR_PLAN.md](../../TELEPHONY_AI_OPERATOR_PLAN.md).

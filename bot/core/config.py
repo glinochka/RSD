@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     WHATSAPP_USERBOT_BRIDGE_API_KEY: str = ""
     WHATSAPP_USERBOT_BRIDGE_TIMEOUT_SECONDS: float = 60.0
     WHATSAPP_USERBOT_POLL_INTERVAL_SECONDS: int = 5
+    # Align with backend VOICE_MAX_BYTES (media download guardrails).
+    VOICE_DOWNLOAD_MAX_BYTES: int = 10 * 1024 * 1024
 
 settings = Settings()
 if not os.path.exists('/.dockerenv'):

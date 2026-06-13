@@ -57,6 +57,43 @@ export const agentService = {
     return response.data;
   },
 
+  startUserbotQr: async (data = {}) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_USERBOT_QR_START, data, {
+      timeout: USERBOT_TELETHON_TIMEOUT_MS,
+    });
+    return response.data;
+  },
+
+  userbotQrStatus: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_USERBOT_QR_STATUS, data, {
+      timeout: USERBOT_TELETHON_TIMEOUT_MS,
+    });
+    return response.data;
+  },
+
+  verifyUserbotQr2fa: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_USERBOT_QR_VERIFY_2FA, data, {
+      timeout: USERBOT_TELETHON_TIMEOUT_MS,
+    });
+    return response.data;
+  },
+
+  importUserbotSession: async ({ session_file, api_id, api_hash }) => {
+    const formData = new FormData();
+    formData.append('session_file', session_file);
+    if (api_id != null && api_id !== '') {
+      formData.append('api_id', String(api_id));
+    }
+    if (api_hash) {
+      formData.append('api_hash', api_hash);
+    }
+    const response = await apiClient.post(API_ROUTES.AGENTS_USERBOT_IMPORT_SESSION, formData, {
+      timeout: USERBOT_TELETHON_TIMEOUT_MS,
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  },
+
   requestWhatsAppUserbotCode: async (data) => {
     const response = await apiClient.post(API_ROUTES.AGENTS_WHATSAPP_USERBOT_REQUEST_CODE, data);
     return response.data;
@@ -91,6 +128,16 @@ export const agentService = {
     return response.data;
   },
 
+  addMaxBotChannel: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_CHANNELS_ADD_MAX_BOT, data);
+    return response.data;
+  },
+
+  addMaxUserbotChannel: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_CHANNELS_ADD_MAX_USERBOT, data);
+    return response.data;
+  },
+
   addWhatsAppUserbotChannel: async (data) => {
     const response = await apiClient.post(API_ROUTES.AGENTS_CHANNELS_ADD_WHATSAPP_USERBOT, data);
     return response.data;
@@ -98,6 +145,33 @@ export const agentService = {
 
   addWhatsAppBusinessApiChannel: async (data) => {
     const response = await apiClient.post(API_ROUTES.AGENTS_CHANNELS_ADD_WHATSAPP_BUSINESS_API, data);
+    return response.data;
+  },
+
+  addTelephonyChannel: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_CHANNELS_ADD_TELEPHONY, data);
+    return response.data;
+  },
+
+  updateTelephonyRouting: async (data) => {
+    const response = await api.patch('/agents/channels/telephony/routing', data);
+    return response.data;
+  },
+
+  getTelephonyPlatformConfig: async () => {
+    const response = await apiClient.get(API_ROUTES.AGENTS_CHANNELS_TELEPHONY_PLATFORM);
+    return response.data;
+  },
+
+  validateTelephonyChannel: async (data = {}) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_CHANNELS_VALIDATE_TELEPHONY, data);
+    return response.data;
+  },
+
+  getTelephonyCalls: async (agentId, params = {}) => {
+    const response = await apiClient.get(API_ROUTES.AGENTS_ANALYTICS_TELEPHONY_CALLS, {
+      params: { agent_id: agentId, ...params },
+    });
     return response.data;
   },
 
@@ -132,6 +206,14 @@ export const agentService = {
   toggleStatus: async (agentId) => {
     const response = await apiClient.patch(API_ROUTES.AGENTS_TOGGLE, {
       agent_id: agentId,
+    });
+    return response.data;
+  },
+
+  setAutopay: async (agentId, enabled) => {
+    const response = await apiClient.patch(API_ROUTES.AGENTS_AUTOPAY, {
+      agent_id: agentId,
+      enabled: Boolean(enabled),
     });
     return response.data;
   },
@@ -216,6 +298,15 @@ export const agentService = {
     return response.data;
   },
 
+  sendExternalMessageAsOwner: async (agentId, userExternalId, message) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_EXTERNAL_SEND_TO_USER, {
+      agent_id: agentId,
+      user_external_id: userExternalId,
+      message,
+    });
+    return response.data;
+  },
+
   getTelegramBroadcastRecipients: async (agentId) => {
     const response = await apiClient.get(API_ROUTES.AGENTS_TELEGRAM_BROADCAST_RECIPIENTS, {
       params: { agent_id: agentId },
@@ -235,6 +326,15 @@ export const agentService = {
 
   sendWhatsappUserbotMessageAsOwner: async (agentId, userExternalId, message) => {
     const response = await apiClient.post(API_ROUTES.AGENTS_WHATSAPP_USERBOT_SEND_TO_USER, {
+      agent_id: agentId,
+      user_external_id: userExternalId,
+      message,
+    });
+    return response.data;
+  },
+
+  sendMaxUserbotMessageAsOwner: async (agentId, userExternalId, message) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_MAX_USERBOT_SEND_TO_USER, {
       agent_id: agentId,
       user_external_id: userExternalId,
       message,
@@ -280,6 +380,235 @@ export const agentService = {
     return response.data;
   },
 
+  listAdminTemplateStaff: async ({ agent_id = null, bot_id = null, role = null, active_only = true } = {}) => {
+    const response = await apiClient.get(API_ROUTES.AGENTS_ADMIN_TEMPLATE_STAFF, {
+      params: { agent_id: agent_id ?? undefined, bot_id: bot_id ?? undefined, role: role ?? undefined, active_only },
+    });
+    return response.data;
+  },
+  getAdminDomainRegistry: async () => {
+    const response = await apiClient.get('/api/agents/admin_template/domain-registry');
+    return response.data;
+  },
+  createAdminTemplateStaff: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_ADMIN_TEMPLATE_STAFF, data);
+    return response.data;
+  },
+  updateAdminTemplateStaff: async (data) => {
+    const response = await apiClient.patch(API_ROUTES.AGENTS_ADMIN_TEMPLATE_STAFF, data);
+    return response.data;
+  },
+  deleteAdminTemplateStaff: async (data) => {
+    const response = await apiClient.delete(API_ROUTES.AGENTS_ADMIN_TEMPLATE_STAFF, { data });
+    return response.data;
+  },
+
+  listAdminTemplateServices: async ({ agent_id = null, bot_id = null, target_role = null, active_only = true } = {}) => {
+    const response = await apiClient.get(API_ROUTES.AGENTS_ADMIN_TEMPLATE_SERVICES, {
+      params: { agent_id: agent_id ?? undefined, bot_id: bot_id ?? undefined, target_role: target_role ?? undefined, active_only },
+    });
+    return response.data;
+  },
+  createAdminTemplateService: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_ADMIN_TEMPLATE_SERVICES, data);
+    return response.data;
+  },
+  updateAdminTemplateService: async (data) => {
+    const response = await apiClient.patch(API_ROUTES.AGENTS_ADMIN_TEMPLATE_SERVICES, data);
+    return response.data;
+  },
+  deleteAdminTemplateService: async (data) => {
+    const response = await apiClient.delete(API_ROUTES.AGENTS_ADMIN_TEMPLATE_SERVICES, { data });
+    return response.data;
+  },
+
+  listAdminTemplateResources: async ({ agent_id = null, bot_id = null, resource_type = null, active_only = true } = {}) => {
+    const response = await apiClient.get(API_ROUTES.AGENTS_ADMIN_TEMPLATE_RESOURCES, {
+      params: { agent_id: agent_id ?? undefined, bot_id: bot_id ?? undefined, resource_type: resource_type ?? undefined, active_only },
+    });
+    return response.data;
+  },
+  createAdminTemplateResource: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_ADMIN_TEMPLATE_RESOURCES, data);
+    return response.data;
+  },
+  updateAdminTemplateResource: async (data) => {
+    const response = await apiClient.patch(API_ROUTES.AGENTS_ADMIN_TEMPLATE_RESOURCES, data);
+    return response.data;
+  },
+  deleteAdminTemplateResource: async (data) => {
+    const response = await apiClient.delete(API_ROUTES.AGENTS_ADMIN_TEMPLATE_RESOURCES, { data });
+    return response.data;
+  },
+
+  listAdminTemplateSchedule: async ({ agent_id = null, bot_id = null, starts_at = null, ends_at = null, staff_id = null, resource_id = null, active_only = true } = {}) => {
+    const response = await apiClient.get(API_ROUTES.AGENTS_ADMIN_TEMPLATE_SCHEDULE, {
+      params: {
+        agent_id: agent_id ?? undefined,
+        bot_id: bot_id ?? undefined,
+        starts_at: starts_at ?? undefined,
+        ends_at: ends_at ?? undefined,
+        staff_id: staff_id ?? undefined,
+        resource_id: resource_id ?? undefined,
+        active_only,
+      },
+    });
+    return response.data;
+  },
+  listAdminTemplateAvailableSlots: async ({ agent_id = null, bot_id = null, starts_at, ends_at, staff_id = null, resource_id = null, service_id = null } = {}) => {
+    const response = await apiClient.get(API_ROUTES.AGENTS_ADMIN_TEMPLATE_SCHEDULE_AVAILABLE, {
+      params: {
+        agent_id: agent_id ?? undefined,
+        bot_id: bot_id ?? undefined,
+        starts_at,
+        ends_at,
+        staff_id: staff_id ?? undefined,
+        resource_id: resource_id ?? undefined,
+        service_id: service_id ?? undefined,
+      },
+    });
+    return response.data;
+  },
+  createAdminTemplateSchedule: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_ADMIN_TEMPLATE_SCHEDULE, data);
+    return response.data;
+  },
+  deleteAdminTemplateSchedule: async (data) => {
+    const response = await apiClient.delete(API_ROUTES.AGENTS_ADMIN_TEMPLATE_SCHEDULE, { data });
+    return response.data;
+  },
+
+  listAdminTemplateAppointments: async ({ agent_id = null, bot_id = null, starts_at = null, ends_at = null, staff_id = null, resource_id = null, service_id = null, status = null } = {}) => {
+    const response = await apiClient.get(API_ROUTES.AGENTS_ADMIN_TEMPLATE_APPOINTMENTS, {
+      params: {
+        agent_id: agent_id ?? undefined,
+        bot_id: bot_id ?? undefined,
+        starts_at: starts_at ?? undefined,
+        ends_at: ends_at ?? undefined,
+        staff_id: staff_id ?? undefined,
+        resource_id: resource_id ?? undefined,
+        service_id: service_id ?? undefined,
+        status: status ?? undefined,
+      },
+    });
+    return response.data;
+  },
+  createAdminTemplateAppointment: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_ADMIN_TEMPLATE_APPOINTMENTS, data);
+    return response.data;
+  },
+  rescheduleAdminTemplateAppointment: async (data) => {
+    const response = await apiClient.patch(API_ROUTES.AGENTS_ADMIN_TEMPLATE_APPOINTMENTS_RESCHEDULE, data);
+    return response.data;
+  },
+  cancelAdminTemplateAppointment: async (data) => {
+    const response = await apiClient.patch(API_ROUTES.AGENTS_ADMIN_TEMPLATE_APPOINTMENTS_CANCEL, data);
+    return response.data;
+  },
+  confirmAdminTemplateAppointment: async (data) => {
+    const response = await apiClient.patch(API_ROUTES.AGENTS_ADMIN_TEMPLATE_APPOINTMENTS_CONFIRM, data);
+    return response.data;
+  },
+  deleteAdminTemplateAppointment: async (data) => {
+    const response = await apiClient.delete(API_ROUTES.AGENTS_ADMIN_TEMPLATE_APPOINTMENTS, { data });
+    return response.data;
+  },
+  listAdminTemplateRefundRequests: async ({ agent_id = null, bot_id = null, status_filter = null } = {}) => {
+    const response = await apiClient.get(API_ROUTES.AGENTS_ADMIN_TEMPLATE_REFUND_REQUESTS, {
+      params: {
+        agent_id: agent_id ?? undefined,
+        bot_id: bot_id ?? undefined,
+        status: status_filter ?? undefined,
+      },
+    });
+    return response.data;
+  },
+  approveAdminTemplateRefundRequest: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_ADMIN_TEMPLATE_REFUND_REQUESTS_APPROVE, data);
+    return response.data;
+  },
+  rejectAdminTemplateRefundRequest: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_ADMIN_TEMPLATE_REFUND_REQUESTS_REJECT, data);
+    return response.data;
+  },
+  getAdminTemplateOccupancy: async ({ agent_id = null, bot_id = null, starts_at, ends_at, staff_id = null, service_id = null, resource_id = null, granularity_minutes = 30 } = {}) => {
+    const response = await apiClient.get(API_ROUTES.AGENTS_ADMIN_TEMPLATE_OCCUPANCY, {
+      params: {
+        agent_id: agent_id ?? undefined,
+        bot_id: bot_id ?? undefined,
+        starts_at,
+        ends_at,
+        staff_id: staff_id ?? undefined,
+        service_id: service_id ?? undefined,
+        resource_id: resource_id ?? undefined,
+        granularity_minutes,
+      },
+    });
+    return response.data;
+  },
+  listAdminTemplateWaitlist: async ({ agent_id = null, bot_id = null, status_filter = null } = {}) => {
+    const response = await apiClient.get(API_ROUTES.AGENTS_ADMIN_TEMPLATE_WAITLIST, {
+      params: {
+        agent_id: agent_id ?? undefined,
+        bot_id: bot_id ?? undefined,
+        status_filter: status_filter ?? undefined,
+      },
+    });
+    return response.data;
+  },
+  createAdminTemplateWaitlist: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_ADMIN_TEMPLATE_WAITLIST, data);
+    return response.data;
+  },
+  updateAdminTemplateWaitlist: async (data) => {
+    const response = await apiClient.patch(API_ROUTES.AGENTS_ADMIN_TEMPLATE_WAITLIST, data);
+    return response.data;
+  },
+  deleteAdminTemplateWaitlist: async (data) => {
+    const response = await apiClient.delete(API_ROUTES.AGENTS_ADMIN_TEMPLATE_WAITLIST, { data });
+    return response.data;
+  },
+  listAdminTemplateClientProfiles: async ({ agent_id = null, bot_id = null, client_external_id = null } = {}) => {
+    const response = await apiClient.get(API_ROUTES.AGENTS_ADMIN_TEMPLATE_CLIENT_PROFILES, {
+      params: {
+        agent_id: agent_id ?? undefined,
+        bot_id: bot_id ?? undefined,
+        client_external_id: client_external_id ?? undefined,
+      },
+    });
+    return response.data;
+  },
+  updateAdminTemplateClientProfile: async (data) => {
+    const response = await apiClient.patch(API_ROUTES.AGENTS_ADMIN_TEMPLATE_CLIENT_PROFILES, data);
+    return response.data;
+  },
+  listAdminTemplateQuickReplies: async ({ agent_id = null, bot_id = null, active_only = true } = {}) => {
+    const response = await apiClient.get(API_ROUTES.AGENTS_ADMIN_TEMPLATE_QUICK_REPLIES, {
+      params: {
+        agent_id: agent_id ?? undefined,
+        bot_id: bot_id ?? undefined,
+        active_only,
+      },
+    });
+    return response.data;
+  },
+  createAdminTemplateQuickReply: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_ADMIN_TEMPLATE_QUICK_REPLIES, data);
+    return response.data;
+  },
+  updateAdminTemplateQuickReply: async (data) => {
+    const response = await apiClient.patch(API_ROUTES.AGENTS_ADMIN_TEMPLATE_QUICK_REPLIES, data);
+    return response.data;
+  },
+  deleteAdminTemplateQuickReply: async (data) => {
+    const response = await apiClient.delete(API_ROUTES.AGENTS_ADMIN_TEMPLATE_QUICK_REPLIES, { data });
+    return response.data;
+  },
+  runAdminTemplateReminders: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_ADMIN_TEMPLATE_REMINDERS_RUN, data);
+    return response.data;
+  },
+
   uploadDocumentByBotId: async (agentId, file) => {
     const formData = new FormData();
     formData.append('agent_data', JSON.stringify({ agent_id: agentId }));
@@ -314,6 +643,26 @@ export const agentService = {
 
   deleteDocumentById: async (docId) => {
     const response = await apiClient.delete(API_ROUTES.DOCUMENTS_DELETE(docId));
+    return response.data;
+  },
+
+  uploadSalesManagerExcel: async (agentId, file) => {
+    const form = new FormData();
+    form.append('agent_id', String(agentId));
+    form.append('file', file);
+    const response = await apiClient.post(API_ROUTES.AGENTS_SALES_MANAGER_EXCEL_UPLOAD, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 120_000,
+    });
+    return response.data;
+  },
+
+  getSalesManagerImportStatus: async (agentId, importBatchId = null) => {
+    const params = { agent_id: agentId };
+    if (importBatchId) {
+      params.import_batch_id = importBatchId;
+    }
+    const response = await apiClient.get(API_ROUTES.AGENTS_SALES_MANAGER_IMPORT_STATUS, { params });
     return response.data;
   },
 };

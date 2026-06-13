@@ -4,7 +4,7 @@
  * Field names and validation match backend (router_users/schemas.py): name, password.
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 /** Message for auth UI: apiClient sets error.message from FastAPI detail (normalized). */
 function getAuthErrorMessage(error) {
@@ -21,11 +21,25 @@ function getAuthErrorMessage(error) {
   }
   return 'Ошибка входа. Проверьте учетные данные.';
 }
+
+function isUserNotFoundAuthError(error) {
+  const detail = `${error?.message ?? ''} ${error?.data?.detail ?? ''}`.toLowerCase();
+  return (
+    error?.status === 404 ||
+    detail.includes('not found') ||
+    detail.includes('user not found') ||
+    detail.includes('пользователь не найден') ||
+    detail.includes('не зарегистр') ||
+    detail.includes('аккаунт не найден')
+  );
+}
+
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 import { useNotification } from '../context/useNotification';
 import { useForm } from '../hooks/useForm';
 import { NAVIGATION_ROUTES, SUCCESS_MESSAGES, VALIDATION } from '../config/constants';
+import { ENV_CONFIG } from '../config/environment';
 import authService from '../services/authService';
 import { reachYandexGoal, YM_GOALS } from '../utils/yandexMetrika';
 import AgentChatShowcase from '../components/AgentChatShowcase';
@@ -43,13 +57,22 @@ const AUTH_FORM_INITIAL = {
   resetToken: '',
   newPassword: '',
   confirmNewPassword: '',
-  consentPersonal: false,
-  consentTerms: false,
+};
+
+const GOOGLE_IDENTITY_SCRIPT_URL = 'https://accounts.google.com/gsi/client';
+
+const base64UrlEncode = (bytes) =>
+  btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+
+const generateNonce = () => {
+  const bytes = new Uint8Array(24);
+  window.crypto.getRandomValues(bytes);
+  return base64UrlEncode(bytes);
 };
 
 const Auth = () => {
   const navigate = useNavigate();
-  const { login, register, verifyRegistrationCode } = useAuth();
+  const { login, loginWithGoogle, register, verifyRegistrationCode } = useAuth();
   const { showError, showSuccess } = useNotification();
   const [isLogin, setIsLogin] = useState(true);
   const [isAwaitingEmailCode, setIsAwaitingEmailCode] = useState(false);
@@ -58,6 +81,32 @@ const Auth = () => {
   const [, setResendTick] = useState(0);
   const isRecoveryMode = recoveryStep !== null;
   const isRegister = !isLogin && !isRecoveryMode;
+  const googleScriptPromiseRef = useRef(null);
+
+  const ensureGoogleIdentityScript = useCallback(() => {
+    if (window.google?.accounts?.id) {
+      return Promise.resolve();
+    }
+    if (googleScriptPromiseRef.current) {
+      return googleScriptPromiseRef.current;
+    }
+    googleScriptPromiseRef.current = new Promise((resolve, reject) => {
+      const existing = document.querySelector(`script[src="${GOOGLE_IDENTITY_SCRIPT_URL}"]`);
+      if (existing) {
+        existing.addEventListener('load', () => resolve(), { once: true });
+        existing.addEventListener('error', () => reject(new Error('Failed to load Google Identity SDK')), { once: true });
+        return;
+      }
+      const script = document.createElement('script');
+      script.src = GOOGLE_IDENTITY_SCRIPT_URL;
+      script.async = true;
+      script.defer = true;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error('Failed to load Google Identity SDK'));
+      document.head.appendChild(script);
+    });
+    return googleScriptPromiseRef.current;
+  }, []);
 
   useEffect(() => {
     if (!resendCooldownUntil || resendCooldownUntil <= Date.now()) {
@@ -130,18 +179,6 @@ const Auth = () => {
     return {
       email: { required: true, type: 'email', label: 'Email' },
       password: { required: true, type: 'password', label: 'Пароль' },
-      consentPersonal: {
-        type: 'checkbox',
-        required: true,
-        label: 'Согласие на обработку персональных данных',
-        message: 'Отметьте согласие на обработку персональных данных',
-      },
-      consentTerms: {
-        type: 'checkbox',
-        required: true,
-        label: 'Принятие условий оферты и соглашения',
-        message: 'Примите условия Публичной оферты и Пользовательского соглашения',
-      },
     };
   }, [isAwaitingEmailCode, isLogin, isRecoveryMode, recoveryStep]);
 
@@ -190,7 +227,13 @@ const Auth = () => {
           navigate(NAVIGATION_ROUTES.AGENTS);
         } else {
           if (!isAwaitingEmailCode) {
-            await register(values.email, values.password);
+            const registerResult = await register(values.email, values.password);
+            if (registerResult?.token) {
+              reachYandexGoal(YM_GOALS.REGISTRATION_SUCCESS);
+              showSuccess('Регистрация успешна!', 3000);
+              navigate(NAVIGATION_ROUTES.AGENTS);
+              return;
+            }
             setIsAwaitingEmailCode(true);
             setResendCooldownUntil(
               Date.now() + VALIDATION.EMAIL_RESEND_COOLDOWN_SECONDS * 1000
@@ -205,6 +248,94 @@ const Auth = () => {
           navigate(NAVIGATION_ROUTES.AGENTS);
         }
       } catch (error) {
+        if (isLogin && isUserNotFoundAuthError(error)) {
+          const loginValue = values.name?.trim() ?? '';
+          const looksLikeEmail = VALIDATION.EMAIL_PATTERN.test(loginValue);
+
+          if (looksLikeEmail) {
+            try {
+              const registerResult = await register(loginValue, values.password);
+              setIsLogin(false);
+              form.setFieldValue('email', loginValue);
+              if (registerResult?.token) {
+                reachYandexGoal(YM_GOALS.REGISTRATION_SUCCESS);
+                showSuccess('Аккаунт создан. Регистрация успешна!', 5000);
+                navigate(NAVIGATION_ROUTES.AGENTS);
+                return;
+              }
+              setIsAwaitingEmailCode(true);
+              setResendCooldownUntil(
+                Date.now() + VALIDATION.EMAIL_RESEND_COOLDOWN_SECONDS * 1000
+              );
+              showSuccess('Аккаунт не найден. Мы перевели вас на регистрацию и отправили код на email.', 5000);
+              return;
+            } catch (registerError) {
+              if (registerError?.status === 409) {
+                const registerDetail = `${registerError?.message ?? ''} ${registerError?.data?.detail ?? ''}`.toLowerCase();
+                const isExistingUnverifiedAccount =
+                  registerDetail.includes('аккаунт уже создан') ||
+                  registerDetail.includes('используйте подтверждение кода');
+                if (isExistingUnverifiedAccount) {
+                  setIsLogin(false);
+                  setIsAwaitingEmailCode(true);
+                  form.setFieldValue('email', loginValue);
+                  form.setFieldValue('password', values.password);
+                  try {
+                    await authService.resendRegistrationCode(loginValue);
+                    setResendCooldownUntil(
+                      Date.now() + VALIDATION.EMAIL_RESEND_COOLDOWN_SECONDS * 1000
+                    );
+                    showSuccess('Аккаунт уже создан. Мы отправили новый код подтверждения.', 5000);
+                  } catch (resendError) {
+                    const retryAfter = Number(
+                      resendError?.data?.retry_after ?? resendError?.headers?.['retry-after'] ?? 0
+                    );
+                    if (retryAfter > 0) {
+                      setResendCooldownUntil(Date.now() + retryAfter * 1000);
+                    }
+                    showError('Аккаунт уже создан. Введите код из письма или запросите новый.');
+                  }
+                  return;
+                }
+                showError(getAuthErrorMessage(registerError));
+                return;
+              }
+              showError(getAuthErrorMessage(registerError));
+              return;
+            }
+          }
+        }
+        if (isLogin) {
+          const detail = `${error?.message ?? ''} ${error?.data?.detail ?? ''}`.toLowerCase();
+          const isEmailNotVerified =
+            error?.status === 403 &&
+            (detail.includes('подтвердите email') || detail.includes('email') && detail.includes('подтверд'));
+          const loginValue = values.name?.trim() ?? '';
+          const looksLikeEmail = VALIDATION.EMAIL_PATTERN.test(loginValue);
+
+          if (isEmailNotVerified && looksLikeEmail) {
+            setIsLogin(false);
+            setIsAwaitingEmailCode(true);
+            form.setFieldValue('email', loginValue);
+            form.setFieldValue('password', values.password);
+            try {
+              await authService.resendRegistrationCode(loginValue);
+              setResendCooldownUntil(
+                Date.now() + VALIDATION.EMAIL_RESEND_COOLDOWN_SECONDS * 1000
+              );
+              showSuccess('Email не подтвержден. Мы отправили новый код подтверждения.', 5000);
+            } catch (resendError) {
+              const retryAfter = Number(
+                resendError?.data?.retry_after ?? resendError?.headers?.['retry-after'] ?? 0
+              );
+              if (retryAfter > 0) {
+                setResendCooldownUntil(Date.now() + retryAfter * 1000);
+              }
+              showError('Email не подтвержден. Введите код из письма или запросите новый.');
+            }
+            return;
+          }
+        }
         showError(getAuthErrorMessage(error));
       }
     },
@@ -246,6 +377,96 @@ const Auth = () => {
     }
   };
 
+  const handleGoogleSignIn = async () => {
+    if (isRecoveryMode || isAwaitingEmailCode || form.isSubmitting) {
+      return;
+    }
+    if (!ENV_CONFIG.APP.GOOGLE_CLIENT_ID) {
+      showError('Google OAuth не настроен на клиенте (VITE_GOOGLE_CLIENT_ID)');
+      return;
+    }
+    try {
+      await ensureGoogleIdentityScript();
+      if (!window.google?.accounts?.id) {
+        throw new Error('Google Identity SDK not available');
+      }
+      
+      const nonce = generateNonce();
+      
+      // Detect mobile
+      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      
+      // Initialize Google SDK
+      window.google.accounts.id.initialize({
+        client_id: ENV_CONFIG.APP.GOOGLE_CLIENT_ID,
+        nonce,
+        callback: async (response) => {
+          if (response.credential) {
+            try {
+              // Decode the credential to see what we have (for debugging only)
+              const parts = response.credential.split('.');
+              if (parts.length === 3) {
+                try {
+                  const payload = JSON.parse(atob(parts[1]));
+                  console.log('Google ID token payload:', {
+                    email: payload.email,
+                    email_verified: payload.email_verified,
+                    nonce: payload.nonce,
+                    hd: payload.hd,
+                  });
+                } catch (e) {
+                  console.log('Could not decode token payload:', e.message);
+                }
+              }
+              console.log('Google credential received, attempting login with nonce:', nonce);
+              await loginWithGoogle(response.credential, nonce, {
+                consentPersonalData: true,
+                consentTerms: true,
+              });
+              showSuccess(SUCCESS_MESSAGES.LOGIN_SUCCESS, 3000);
+              navigate(NAVIGATION_ROUTES.AGENTS);
+            } catch (error) {
+              console.error('Google login failed:', error);
+              showError(getAuthErrorMessage(error));
+            }
+          }
+        },
+      });
+      
+      if (isMobile) {
+        // For mobile: use one-tap (more reliable than popup on mobile)
+        window.google.accounts.id.prompt((notification) => {
+          // One-tap UI showed/was dismissed
+        });
+      } else {
+        // For desktop: use renderButton and direct trigger
+        const buttonContainer = document.createElement('div');
+        buttonContainer.id = `gsi_button_${Date.now()}`;
+        buttonContainer.style.display = 'none';
+        document.body.appendChild(buttonContainer);
+        
+        window.google.accounts.id.renderButton(buttonContainer, {
+          theme: 'outline',
+          size: 'large',
+        });
+        
+        // Click the button to open popup
+        const button = buttonContainer.querySelector('div[role="button"]');
+        if (button) {
+          button.click();
+        }
+        
+        // Cleanup after a delay
+        setTimeout(() => {
+          buttonContainer.remove();
+        }, 5000);
+      }
+    } catch (error) {
+      console.error('Google sign-in initialization error:', error);
+      showError(getAuthErrorMessage(error));
+    }
+  };
+
   return (
     <div className="auth-page">
       <a className="auth-logo" href={NAVIGATION_ROUTES.HOME}>
@@ -281,7 +502,8 @@ const Auth = () => {
               <button
                 className="google-btn"
                 type="button"
-                disabled={form.isSubmitting}
+                disabled={form.isSubmitting || isRecoveryMode || isAwaitingEmailCode}
+                onClick={handleGoogleSignIn}
               >
                 Авторизация через Google
               </button>
@@ -442,80 +664,6 @@ const Auth = () => {
                 </>
               )}
 
-              {isRegister && !isAwaitingEmailCode && (
-                <div className="auth-consents" role="group" aria-label="Согласия при регистрации">
-                  <div className="auth-consent-block">
-                    <div className="auth-checkbox-row auth-checkbox-row--terms">
-                      <input
-                        id="consentPersonal"
-                        type="checkbox"
-                        name="consentPersonal"
-                        checked={form.values.consentPersonal}
-                        onChange={form.handleChange}
-                        onBlur={form.handleBlur}
-                        disabled={form.isSubmitting}
-                        aria-invalid={!!form.errors.consentPersonal}
-                        aria-describedby="consent-personal-text"
-                      />
-                      <p className="auth-consent-text" id="consent-personal-text">
-                        <label htmlFor="consentPersonal" className="auth-consent-label-inline">
-                          Я согласен на{' '}
-                        </label>
-                        <Link
-                          className="auth-legal-link"
-                          to={NAVIGATION_ROUTES.PRIVACY_POLICY}
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          обработку персональных данных
-                        </Link>
-                      </p>
-                    </div>
-                    {form.errors.consentPersonal && (
-                      <span className="error-message auth-consent-error">{form.errors.consentPersonal}</span>
-                    )}
-                  </div>
-
-                  <div className="auth-consent-block">
-                    <div className="auth-checkbox-row auth-checkbox-row--terms">
-                      <input
-                        id="consentTerms"
-                        type="checkbox"
-                        name="consentTerms"
-                        checked={form.values.consentTerms}
-                        onChange={form.handleChange}
-                        onBlur={form.handleBlur}
-                        disabled={form.isSubmitting}
-                        aria-invalid={!!form.errors.consentTerms}
-                        aria-describedby="consent-terms-text"
-                      />
-                      <p className="auth-consent-text" id="consent-terms-text">
-                        <label htmlFor="consentTerms" className="auth-consent-label-inline">
-                          Я принимаю условия{' '}
-                        </label>
-                        <Link
-                          className="auth-legal-link"
-                          to={NAVIGATION_ROUTES.PUBLIC_OFFER}
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          Публичной оферты
-                        </Link>
-                        <span> и </span>
-                        <Link
-                          className="auth-legal-link"
-                          to={NAVIGATION_ROUTES.USER_AGREEMENT}
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          Пользовательского соглашения
-                        </Link>
-                      </p>
-                    </div>
-                    {form.errors.consentTerms && (
-                      <span className="error-message auth-consent-error">{form.errors.consentTerms}</span>
-                    )}
-                  </div>
-                </div>
-              )}
-
               <button
                 type="submit"
                 className="btn btn-continue"
@@ -588,7 +736,7 @@ const Auth = () => {
               </div>
               )}
 
-              {isLogin && !isRecoveryMode && (
+              {!isRecoveryMode && (
                 <p className="terms">
                   Продолжая, вы подтверждаете ознакомление с{' '}
                   <Link className="auth-legal-link" to={NAVIGATION_ROUTES.PUBLIC_OFFER}>

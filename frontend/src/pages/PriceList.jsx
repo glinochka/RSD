@@ -10,6 +10,12 @@ import { useNotification } from '../context/useNotification';
 import MainLayout from '../components/Layout';
 import { NAVIGATION_ROUTES, VALIDATION } from '../config/constants';
 import pricingService from '../services/pricingService';
+import {
+  COMING_SOON_TEMPLATES,
+  POLICY_NOTES,
+  SPECIAL_CONDITIONS,
+} from '../utils/agentTemplatePricing';
+import DemoBadge from '../components/DemoBadge';
 import { reachYandexGoal, YM_GOALS } from '../utils/yandexMetrika';
 import '../styles/priceList.css';
 
@@ -51,8 +57,15 @@ const PriceList = () => {
   const { isAuthenticated } = useAuth();
   const { showError, showInfo, showSuccess } = useNotification();
   const [plans, setPlans] = useState([]);
+  const [agentTemplates, setAgentTemplates] = useState([]);
+  const [policyNotes, setPolicyNotes] = useState(POLICY_NOTES);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
+  const [requestModalConfig, setRequestModalConfig] = useState({
+    title: 'Заявка на тариф «Агент под ключ»',
+    requestPlaceholder: 'Опишите роли, задачи и сценарии работы сотрудника',
+    defaultAgentLabel: '',
+  });
   const [isSubmittingRequest, setIsSubmittingRequest] = useState(false);
   const [isPurchaseModalOpen, setIsPurchaseModalOpen] = useState(false);
   const [selectedPaidPlan, setSelectedPaidPlan] = useState(null);
@@ -72,6 +85,19 @@ const PriceList = () => {
     });
   };
 
+  const handleOpenSpecialRequest = (offer) => {
+    setRequestModalConfig({
+      title: offer.modalTitle,
+      requestPlaceholder: offer.requestPlaceholder,
+      defaultAgentLabel: offer.requestLabel,
+    });
+    setRequestForm((prev) => ({
+      ...prev,
+      employeeRequest: offer.requestLabel,
+    }));
+    setIsRequestModalOpen(true);
+  };
+
   const handleCloseRequestModal = () => {
     if (isSubmittingRequest) return;
     setIsRequestModalOpen(false);
@@ -88,31 +114,21 @@ const PriceList = () => {
 
   const handleSelectPlan = async (plan) => {
     if (!plan) return;
+    if (plan.disabled) {
+      showInfo('Этот шаблон пока недоступен.');
+      return;
+    }
     if (plan.requestOnly) {
+      setRequestModalConfig({
+        title: 'Заявка на тариф «Агент под ключ»',
+        requestPlaceholder: 'Опишите роли, задачи и сценарии работы сотрудника',
+        defaultAgentLabel: 'Агент под ключ',
+      });
       setIsRequestModalOpen(true);
       return;
     }
 
-    const selectedPlan = plans.find((p) => p?.code === plan.id);
-    if (!selectedPlan) {
-      showError('Не удалось найти выбранный тариф.');
-      return;
-    }
-
-    if (!isAuthenticated) {
-      navigate(NAVIGATION_ROUTES.AUTH);
-      return;
-    }
-
-    if (!selectedPlan.is_paid) {
-      navigate(NAVIGATION_ROUTES.CREATE_AGENT);
-      return;
-    }
-
-    setSelectedPaidPlan(selectedPlan);
-    setSelectedDurationMonths(1);
-    setPurchasePromoCode('');
-    setIsPurchaseModalOpen(true);
+    navigate(isAuthenticated ? NAVIGATION_ROUTES.CREATE_AGENT : NAVIGATION_ROUTES.AUTH);
   };
 
   const handleSubmitPurchase = async () => {
@@ -201,10 +217,24 @@ const PriceList = () => {
     let cancelled = false;
     (async () => {
       try {
-        const data = await pricingService.getPlans();
-        if (!cancelled) setPlans(Array.isArray(data?.plans) ? data.plans : []);
+        const [templatesData, plansData] = await Promise.all([
+          pricingService.getAgentTemplates(),
+          pricingService.getPlans(),
+        ]);
+        if (!cancelled) {
+          setAgentTemplates(Array.isArray(templatesData?.templates) ? templatesData.templates : []);
+          setPolicyNotes(
+            Array.isArray(templatesData?.policy_notes) && templatesData.policy_notes.length
+              ? templatesData.policy_notes
+              : POLICY_NOTES
+          );
+          setPlans(Array.isArray(plansData?.plans) ? plansData.plans : []);
+        }
       } catch (e) {
-        if (!cancelled) setPlans([]);
+        if (!cancelled) {
+          setAgentTemplates([]);
+          setPlans([]);
+        }
       }
     })();
     return () => {
@@ -251,126 +281,217 @@ const PriceList = () => {
   }, [isAuthenticated, showError, showInfo, showSuccess]);
 
   const uiPlans = useMemo(() => {
-    const order = { Free: 1, Advanced: 2, Pro: 3 };
-    const sorted = [...plans].sort((a, b) => (order[a?.code] ?? 999) - (order[b?.code] ?? 999));
-    const mapped = sorted.map((plan) => {
-      const code = plan?.code;
-      const title = PLAN_DISPLAY_NAMES[code] || plan?.title || code;
-      const price = Number(plan?.price_rub_month ?? 0);
-      const discountPercent = MARKETING_DISCOUNTS_BY_PLAN[code] ?? null;
-      const isPaid = Boolean(plan?.is_paid);
-      const originalPrice = isPaid && discountPercent
-        ? roundUpToNextHundred(price * (1 + discountPercent / 100))
-        : null;
-      const kbLimit = plan?.knowledge_base_chunk_limit;
-      const maxAgents = Number(plan?.max_active_agents ?? 0);
-      const kbText = kbLimit == null ? 'Безлимит' : `${kbLimit} чанков`;
-      const agentsText = code === 'Free' ? `${maxAgents} активный агент` : `До ${maxAgents} активных агентов`;
+    const featuresByCode = {
+      qa: [
+        'Ответы по базе знаний (RAG)',
+        'Поддержка и консультации 24/7',
+        'Токены LLM включены',
+      ],
+      crm_admin: [
+        'Запись, расписание, напоминания',
+        'Интеграция с CRM / ERP',
+        '1-й месяц обслуживания бесплатно',
+      ],
+      sales_manager: [
+        'Telegram userbot и сценарии продаж',
+        'Квалификация и ведение диалога',
+        '1-й месяц обслуживания бесплатно',
+      ],
+    };
 
-      return {
-        id: code,
-        name: title,
-        price,
-        originalPrice,
-        discountPercent: isPaid ? discountPercent : null,
-        isPaid,
-        requestOnly: false,
-        currency: '₽',
-        period: 'мес',
-        per: '',
-        features: [
-          agentsText,
-          `Лимит базы знаний: ${kbText}`,
-        ],
-      };
-    });
+    const byCode = Object.fromEntries((agentTemplates || []).map((t) => [t.code, t]));
+    const templateCards = ['qa', 'crm_admin', 'sales_manager']
+      .map((code) => byCode[code])
+      .filter(Boolean)
+      .map((template) => {
+        const setupRub = Number(template.setup_rub_min || 0);
+        const maintenanceRub = Number(template.monthly_maintenance_rub_min || 0);
+
+        return {
+          id: template.code,
+          name: template.card_title || template.title,
+          setupRub,
+          maintenanceRub,
+          isFree: Boolean(template.is_free),
+          requestOnly: false,
+          features: featuresByCode[template.code] || [],
+        };
+      });
+
     return [
-      ...mapped,
+      ...templateCards,
       {
         id: 'turnkey',
-        name: 'Агент под ключ',
-        price: 0,
-        originalPrice: null,
-        discountPercent: null,
-        isPaid: false,
+        name: 'Под ключ',
+        setupRub: 0,
+        maintenanceRub: 0,
+        isFree: false,
         requestOnly: true,
-        currency: '₽',
-        period: 'мес',
-        per: '',
         features: [
-          'Разработка и настройка под ваши задачи',
-          'Сопровождение запуска под ключ',
+          'Разработка под ваши задачи',
+          'Сложные интеграции CRM/ERP',
+          'Сопровождение запуска',
         ],
       },
     ];
-  }, [plans]);
+  }, [agentTemplates]);
 
   return (
     <MainLayout>
       <div className="pricing-page">
         <div className="pricing-header">
-          <h1>Наши тарифные планы</h1>
-          <p>Выберите подходящий план для вашего бизнеса</p>
+          <h1>Цены на шаблоны агентов</h1>
+          <p>Выберите шаблон и запустите агента — ежемесячная оплата обслуживания без разового взноса</p>
         </div>
 
         <div className="pricing-grid">
           {uiPlans.map((plan) => (
             <div key={plan.id} className="price-card">
               <h2 className="price-title">{plan.name}</h2>
-              <div className={`price-old-row ${plan.isPaid && plan.originalPrice ? '' : 'price-old-row--placeholder'}`}>
-                {plan.isPaid && plan.originalPrice ? (
-                  <>
-                  <span className="price-old-value">
-                    {formatRubPrice(plan.originalPrice)}
-                    <span className="currency">{plan.currency}</span>
-                    <span className="period">/{plan.period}</span>
-                  </span>
-                  <span className="price-discount-badge">-{plan.discountPercent}%</span>
-                  </>
-                ) : (
-                  <>
-                    <span className="price-old-value">0 ₽/мес</span>
-                    <span className="price-discount-badge">-0%</span>
-                  </>
-                )}
+
+              <div className="price-old-row price-old-row--placeholder" aria-hidden="true">
+                <span className="price-old-value">0 ₽</span>
+                <span className="price-discount-badge">-0%</span>
               </div>
+
               <div className="price-value">
                 {plan.requestOnly ? (
                   <span>По запросу</span>
+                ) : plan.isFree ? (
+                  <span>Бесплатно</span>
                 ) : (
                   <>
-                    {formatRubPrice(plan.price)}
-                    <span className="currency">{plan.currency}</span>
-                    <span className="period">/{plan.period}</span>
+                    <span className="price-from">от </span>
+                    {formatRubPrice(plan.maintenanceRub)}
+                    <span className="currency">₽/мес</span>
                   </>
                 )}
               </div>
-              {plan.per ? <p className="price-per">{plan.per}</p> : null}
+
+              {plan.requestOnly ? (
+                <p className="price-per">Индивидуальный расчёт</p>
+              ) : plan.isFree ? (
+                <p className="price-per">пробный запуск</p>
+              ) : plan.maintenanceRub > 0 ? (
+                <p className="price-per">первый месяц обслуживания бесплатно</p>
+              ) : (
+                <p className="price-per price-per--placeholder" aria-hidden="true">
+                  &nbsp;
+                </p>
+              )}
 
               <ul className="price-features">
-                {plan.features.map((feature, index) => (
-                  <li key={index}>
-                    <span className="feature-icon">✓</span>
+                {plan.features.map((feature) => (
+                  <li key={feature}>
+                    <span className="feature-icon">-</span>
                     {feature}
                   </li>
                 ))}
               </ul>
 
               <button
+                type="button"
                 className="btn btn-black"
                 onClick={() => handleSelectPlan(plan)}
-                disabled={isProcessingPayment || isSubmittingRequest}
+                disabled={isSubmittingRequest}
               >
                 {plan.requestOnly
                   ? 'Оставить заявку'
-                  : isProcessingPayment && plan.price > 0
-                    ? 'Переход к оплате...'
-                    : 'Выбрать план'}
+                  : plan.isFree
+                    ? 'Попробовать бесплатно'
+                    : 'Создать агента'}
               </button>
             </div>
           ))}
         </div>
+
+        <section className="pricing-section" aria-labelledby="pricing-coming-soon-heading">
+          <h2 id="pricing-coming-soon-heading" className="pricing-section__title">
+            Скоро
+          </h2>
+          <p className="pricing-section__lead">
+            Шаблоны в разработке — скоро появятся на платформе.
+          </p>
+          <div className="pricing-grid pricing-grid--coming-soon">
+            {COMING_SOON_TEMPLATES.map((template) => (
+              <div key={template.id} className="price-card price-card--coming-soon">
+                <span className="price-soon-badge">
+                  {template.id === 'ai_manager' ? (
+                    <>
+                      Скоро <DemoBadge />
+                    </>
+                  ) : (
+                    'Скоро'
+                  )}
+                </span>
+                <h2 className="price-title">{template.name}</h2>
+                <div className="price-value">
+                  <span className="price-soon-label">В разработке</span>
+                </div>
+                <p className="price-per">скоро на платформе</p>
+                <ul className="price-features">
+                  {template.features.map((feature) => (
+                    <li key={feature}>
+                      <span className="feature-icon">-</span>
+                      {feature}
+                    </li>
+                  ))}
+                </ul>
+                <button type="button" className="btn btn-outline" disabled>
+                  Скоро
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="pricing-section" aria-labelledby="pricing-special-heading">
+          <h2 id="pricing-special-heading" className="pricing-section__title">
+            Спец условия
+          </h2>
+          <p className="pricing-section__lead">
+            Индивидуальные условия для партнёров и независимых специалистов.
+          </p>
+          <div className="pricing-grid pricing-grid--special">
+            {SPECIAL_CONDITIONS.map((offer) => (
+              <div key={offer.id} className="price-card price-card--special">
+                <h2 className="price-title">{offer.name}</h2>
+                <p className="price-special-description">{offer.description}</p>
+                <div className="price-value">
+                  <span>По запросу</span>
+                </div>
+                <p className="price-per">индивидуальный расчёт</p>
+                <ul className="price-features">
+                  {offer.features.map((feature) => (
+                    <li key={feature}>
+                      <span className="feature-icon">-</span>
+                      {feature}
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  type="button"
+                  className="btn btn-black"
+                  onClick={() => handleOpenSpecialRequest(offer)}
+                  disabled={isSubmittingRequest}
+                >
+                  Оставить заявку
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <details className="pricing-footnote">
+          <summary>Условия тарификации</summary>
+          <ul>
+            {(policyNotes.length ? policyNotes : POLICY_NOTES).map((note) => (
+              <li key={note}>{note}</li>
+            ))}
+          </ul>
+        </details>
       </div>
+
       {isPurchaseModalOpen && selectedPaidPlan && (
         <div className="pricing-modal-overlay" onClick={handleClosePurchaseModal}>
           <div className="pricing-modal" onClick={(event) => event.stopPropagation()}>
@@ -431,7 +552,7 @@ const PriceList = () => {
       {isRequestModalOpen && (
         <div className="pricing-modal-overlay" onClick={handleCloseRequestModal}>
           <div className="pricing-modal" onClick={(event) => event.stopPropagation()}>
-            <h3>Заявка на тариф «Агент под ключ»</h3>
+            <h3>{requestModalConfig.title}</h3>
             <form className="pricing-request-form" onSubmit={handleSubmitTurnkeyRequest}>
               <label>
                 Номер телефона
@@ -460,7 +581,7 @@ const PriceList = () => {
                 <textarea
                   value={requestForm.employeeRequest}
                   onChange={(event) => setRequestForm((prev) => ({ ...prev, employeeRequest: event.target.value }))}
-                  placeholder="Опишите роли, задачи и сценарии работы сотрудника"
+                  placeholder={requestModalConfig.requestPlaceholder}
                   rows={4}
                   required
                 />

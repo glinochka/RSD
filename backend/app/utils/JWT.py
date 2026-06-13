@@ -8,21 +8,23 @@ from sqlalchemy import select
 
 logger = getLogger(__name__)
 
-from ..config import get_auth_data, settings
+from ..config import get_auth_data, settings, sales_staff_token_expire_delta
 from ..alembic.models import User, UserAuthSession
 from ..router_users.dao import UserDAO
 
 def create_access_token(
     data: dict,
     expires_delta: timedelta | None = None,
-    token_kind: Literal["user", "admin"] = "user",
+    token_kind: Literal["user", "admin", "sales_staff"] = "user",
 ) -> str:
     to_encode = data.copy()
     if token_kind == "user" and to_encode.get("admin_web") is True:
         token_kind = "admin"
-    
+
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta
+    elif token_kind == "sales_staff":
+        expire = datetime.now(timezone.utc) + sales_staff_token_expire_delta()
     else:
         expire_minutes = (
             settings.ADMIN_ACCESS_TOKEN_EXPIRE_MINUTES
@@ -32,7 +34,7 @@ def create_access_token(
         expire = datetime.now(timezone.utc) + timedelta(minutes=expire_minutes)
 
     to_encode.update({"exp": expire, "token_kind": token_kind})
-    
+
     auth_data = get_auth_data(token_kind)
     secret_key = auth_data['secret_key']
     algorithm = auth_data['algorithm']
@@ -45,7 +47,7 @@ def create_access_token(
     return encode_jwt
 
 
-def decode_access_token_payload(token: str, token_kind: Literal["user", "admin"]) -> dict:
+def decode_access_token_payload(token: str, token_kind: Literal["user", "admin", "sales_staff"]) -> dict:
     try:
         auth_data = get_auth_data(token_kind)
         secret_key = auth_data["secret_key"]

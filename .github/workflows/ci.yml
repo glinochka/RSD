@@ -5,6 +5,9 @@ on:
     branches: [ main, develop ]
     paths:
       - 'backend/**'
+      - 'telephony_bridge/**'
+      - 'telephony_media_gateway/**'
+      - '.github/workflows/ci.yml'
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -30,7 +33,7 @@ jobs:
 
       - name: Run tests
         env:
-          PYTHONPATH: ./backend 
+          PYTHONPATH: ./backend
           ALGORITHM: HS256
           SECRET_KEY: test-jwt-secret-key-for-ci-min-32-chars-long
           USER_JWT_SECRET_KEY: 798cd1b6cb25d52ce4e49824b01b5b22a117325ad327161c50ad5a8c2898fc89
@@ -54,3 +57,19 @@ jobs:
         run: |
           cd backend
           pytest app/tests/ -v --cov=app
+
+  telephony-media-gateway:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install gateway deps
+        run: |
+          cd telephony_media_gateway
+          npm ci
+      - name: VAD unit test
+        run: |
+          cd telephony_media_gateway
+          node scripts/test_vad_unit.mjs

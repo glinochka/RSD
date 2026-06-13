@@ -1,0 +1,2 @@
+{"delay_ms":0,"type":"control","body":{"type":"session.start","payload":{"call_id":"trace-1","connection_id":1,"caller_e164":"+79000000099","codec":"pcmu"}}}
+{"delay_ms":400,"type":"control","body":{"type":"session.end","payload":{"reason":"replay"}}}

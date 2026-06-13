@@ -1,6 +1,9 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
 from pydantic import field_validator
 
+from ..agent_template_pricing import PAYMENT_KIND_AGENT_ACTIVATION, PAYMENT_KIND_AGENT_MAINTENANCE
 from ..subscription_plans import get_subscription_plan_codes
 
 
@@ -48,6 +51,38 @@ class YooKassaPaymentStatusResponse(BaseModel):
     plan_name: str
     subscription_type: str | None = None
     subscription_end_date: str | None = None
+    agent_id: int | None = None
+    payment_kind: str | None = None
+    agent_billing: dict | None = None
+
+
+class CreateAgentBillingPayment(BaseModel):
+    agent_id: int = Field(..., ge=1, description="ID агента")
+    payment_kind: Literal["agent_activation", "agent_maintenance"] = Field(
+        ...,
+        description="Тип платежа: разовый запуск или подписка на агента",
+    )
+    return_url: str | None = Field(default=None, description="URL возврата после оплаты в ЮKassa")
+    promo_code: str | None = Field(default=None, max_length=64, description="Optional promo code")
+    duration_months: int = Field(default=1, description="Contract duration in months (1, 3, or 6)")
+    enable_autopay: bool = Field(
+        default=False,
+        description="Save payment method in YooKassa for automatic renewals",
+    )
+
+    @field_validator("payment_kind")
+    @classmethod
+    def validate_payment_kind(cls, value: str) -> str:
+        if value not in (PAYMENT_KIND_AGENT_ACTIVATION, PAYMENT_KIND_AGENT_MAINTENANCE):
+            raise ValueError("Invalid agent billing payment kind")
+        return value
+
+    @field_validator("duration_months")
+    @classmethod
+    def validate_duration_months(cls, value: int) -> int:
+        if value not in (1, 3, 6):
+            raise ValueError("duration_months must be one of 1, 3, 6")
+        return value
 
 
 class CreateTurnkeyAgentRequest(BaseModel):

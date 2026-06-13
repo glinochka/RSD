@@ -1,0 +1,630 @@
+"""Unified booking domain service for crm_admin template."""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime
+import json
+from typing import Any, Callable
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
+from ...alembic.database import async_session_maker
+from ...alembic.models import AdminAppointment, Agent, AgentCrmConnection
+from ...utils.crypto import decrypt_crm_credentials
+from ..crm import build_provider
+from .providers import BookingProvider, CrmBookingProvider, LocalBookingProvider
+
+CRM_MODES = {"disabled", "optional", "required"}
+BOOKING_BACKENDS = {"local", "crm", "auto"}
+
+
+def _parse_template_config(raw: str | None) -> dict[str, Any]:
+    if not raw:
+        return {}
+    try:
+        loaded = json.loads(raw)
+    except Exception:
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+@dataclass
+class BookingProviderResolution:
+    provider_name: str
+    provider: BookingProvider
+    crm_connected: bool
+
+
+class AdminBookingService:
+    """Domain service that routes booking operations to the selected provider."""
+
+    def __init__(self, session_factory: Callable[[], Any] | async_sessionmaker | None = None):
+        factory = session_factory or async_session_maker
+        self._session_factory = factory
+        self._local_provider = LocalBookingProvider(session_factory=factory)
+
+    async def resolve_provider(self, *, agent_id: int) -> BookingProviderResolution:
+        async with self._session_factory() as session:
+            agent = await session.scalar(select(Agent).where(Agent.id == agent_id))
+            if agent is None:
+                raise ValueError("Agent not found")
+            template_type = str(agent.template_type or "").strip().lower()
+            if template_type != "crm_admin":
+                return BookingProviderResolution(
+                    provider_name="local",
+                    provider=self._local_provider,
+                    crm_connected=False,
+                )
+
+            cfg = _parse_template_config(agent.template_config)
+            crm_mode = str(cfg.get("crm_mode") or "optional").strip().lower()
+            booking_backend = str(cfg.get("booking_backend") or "auto").strip().lower()
+            crm_provider_name = str(cfg.get("crm_provider") or "amocrm").strip().lower()
+
+            if crm_mode not in CRM_MODES:
+                crm_mode = "optional"
+            if booking_backend not in BOOKING_BACKENDS:
+                booking_backend = "auto"
+
+            crm_connection = await session.scalar(
+                select(AgentCrmConnection).where(
+                    AgentCrmConnection.agent_id == agent_id,
+                    AgentCrmConnection.provider == crm_provider_name,
+                    AgentCrmConnection.is_active.is_(True),
+                )
+            )
+            crm_provider = await self._build_crm_provider(connection=crm_connection)
+            has_crm = crm_provider is not None
+
+            if crm_mode == "disabled":
+                return BookingProviderResolution(
+                    provider_name="local",
+                    provider=self._local_provider,
+                    crm_connected=False,
+                )
+
+            if crm_mode == "required" and not has_crm:
+                raise RuntimeError("CRM connection is required for this administrator template")
+
+            if booking_backend == "local":
+                return BookingProviderResolution(
+                    provider_name="local",
+                    provider=self._local_provider,
+                    crm_connected=has_crm,
+                )
+            if booking_backend == "crm":
+                if has_crm and crm_provider is not None:
+                    return BookingProviderResolution(
+                        provider_name="crm",
+                        provider=CrmBookingProvider(local_provider=self._local_provider, crm_provider=crm_provider),
+                        crm_connected=True,
+                    )
+                if crm_mode == "required":
+                    raise RuntimeError("CRM booking backend is required but no active CRM connection found")
+                return BookingProviderResolution(
+                    provider_name="local",
+                    provider=self._local_provider,
+                    crm_connected=False,
+                )
+
+            # booking_backend = auto
+            if has_crm and crm_provider is not None:
+                return BookingProviderResolution(
+                    provider_name="crm",
+                    provider=CrmBookingProvider(local_provider=self._local_provider, crm_provider=crm_provider),
+                    crm_connected=True,
+                )
+            return BookingProviderResolution(
+                provider_name="local",
+                provider=self._local_provider,
+                crm_connected=False,
+            )
+
+    async def list_staff(
+        self,
+        *,
+        agent_id: int,
+        role: str | None = None,
+        active_only: bool = True,
+    ) -> list[dict[str, Any]]:
+        resolution = await self.resolve_provider(agent_id=agent_id)
+        return await resolution.provider.list_staff(agent_id=agent_id, role=role, active_only=active_only)
+
+    async def create_staff(
+        self,
+        *,
+        agent_id: int,
+        role: str,
+        full_name: str,
+        specializations: list[str] | None = None,
+        is_active: bool = True,
+    ) -> dict[str, Any]:
+        resolution = await self.resolve_provider(agent_id=agent_id)
+        return await resolution.provider.create_staff(
+            agent_id=agent_id,
+            role=role,
+            full_name=full_name,
+            specializations=specializations,
+            is_active=is_active,
+        )
+
+    async def update_staff(
+        self,
+        *,
+        agent_id: int,
+        staff_id: int,
+        full_name: str | None = None,
+        specializations: list[str] | None = None,
+        is_active: bool | None = None,
+    ) -> dict[str, Any]:
+        resolution = await self.resolve_provider(agent_id=agent_id)
+        return await resolution.provider.update_staff(
+            agent_id=agent_id,
+            staff_id=staff_id,
+            full_name=full_name,
+            specializations=specializations,
+            is_active=is_active,
+        )
+
+    async def delete_staff(self, *, agent_id: int, staff_id: int) -> None:
+        resolution = await self.resolve_provider(agent_id=agent_id)
+        await resolution.provider.delete_staff(agent_id=agent_id, staff_id=staff_id)
+
+    async def list_resources(
+        self,
+        *,
+        agent_id: int,
+        resource_type: str | None = None,
+        active_only: bool = True,
+    ) -> list[dict[str, Any]]:
+        resolution = await self.resolve_provider(agent_id=agent_id)
+        return await resolution.provider.list_resources(
+            agent_id=agent_id,
+            resource_type=resource_type,
+            active_only=active_only,
+        )
+
+    async def create_resource(
+        self,
+        *,
+        agent_id: int,
+        resource_type: str,
+        title: str,
+        is_active: bool = True,
+    ) -> dict[str, Any]:
+        resolution = await self.resolve_provider(agent_id=agent_id)
+        return await resolution.provider.create_resource(
+            agent_id=agent_id,
+            resource_type=resource_type,
+            title=title,
+            is_active=is_active,
+        )
+
+    async def update_resource(
+        self,
+        *,
+        agent_id: int,
+        resource_id: int,
+        title: str | None = None,
+        is_active: bool | None = None,
+    ) -> dict[str, Any]:
+        resolution = await self.resolve_provider(agent_id=agent_id)
+        return await resolution.provider.update_resource(
+            agent_id=agent_id,
+            resource_id=resource_id,
+            title=title,
+            is_active=is_active,
+        )
+
+    async def delete_resource(self, *, agent_id: int, resource_id: int) -> None:
+        resolution = await self.resolve_provider(agent_id=agent_id)
+        await resolution.provider.delete_resource(agent_id=agent_id, resource_id=resource_id)
+
+    async def list_services(
+        self,
+        *,
+        agent_id: int,
+        target_role: str | None = None,
+        active_only: bool = True,
+    ) -> list[dict[str, Any]]:
+        resolution = await self.resolve_provider(agent_id=agent_id)
+        return await resolution.provider.list_services(
+            agent_id=agent_id,
+            target_role=target_role,
+            active_only=active_only,
+        )
+
+    async def create_service(
+        self,
+        *,
+        agent_id: int,
+        target_role: str,
+        staff_id: int | None = None,
+        title: str,
+        duration_minutes: int,
+        price_minor: int = 0,
+        resource_type_filters: list[str] | None = None,
+        is_active: bool = True,
+    ) -> dict[str, Any]:
+        resolution = await self.resolve_provider(agent_id=agent_id)
+        return await resolution.provider.create_service(
+            agent_id=agent_id,
+            target_role=target_role,
+            staff_id=staff_id,
+            title=title,
+            duration_minutes=duration_minutes,
+            price_minor=price_minor,
+            resource_type_filters=resource_type_filters,
+            is_active=is_active,
+        )
+
+    async def update_service(
+        self,
+        *,
+        agent_id: int,
+        service_id: int,
+        staff_id: int | None = None,
+        title: str | None = None,
+        duration_minutes: int | None = None,
+        price_minor: int | None = None,
+        resource_type_filters: list[str] | None = None,
+        is_active: bool | None = None,
+    ) -> dict[str, Any]:
+        resolution = await self.resolve_provider(agent_id=agent_id)
+        return await resolution.provider.update_service(
+            agent_id=agent_id,
+            service_id=service_id,
+            staff_id=staff_id,
+            title=title,
+            duration_minutes=duration_minutes,
+            price_minor=price_minor,
+            resource_type_filters=resource_type_filters,
+            is_active=is_active,
+        )
+
+    async def delete_service(self, *, agent_id: int, service_id: int) -> None:
+        resolution = await self.resolve_provider(agent_id=agent_id)
+        await resolution.provider.delete_service(agent_id=agent_id, service_id=service_id)
+
+    async def create_schedule_slot(
+        self,
+        *,
+        agent_id: int,
+        starts_at: datetime,
+        ends_at: datetime,
+        staff_id: int | None = None,
+        resource_id: int | None = None,
+        slot_kind: str = "work",
+        is_active: bool = True,
+    ) -> dict[str, Any]:
+        resolution = await self.resolve_provider(agent_id=agent_id)
+        return await resolution.provider.create_schedule_slot(
+            agent_id=agent_id,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            staff_id=staff_id,
+            resource_id=resource_id,
+            slot_kind=slot_kind,
+            is_active=is_active,
+        )
+
+    async def list_available_slots(
+        self,
+        *,
+        agent_id: int,
+        starts_at: datetime,
+        ends_at: datetime,
+        staff_id: int | None = None,
+        resource_id: int | None = None,
+        service_id: int | None = None,
+    ) -> list[dict[str, Any]]:
+        resolution = await self.resolve_provider(agent_id=agent_id)
+        return await resolution.provider.list_available_slots(
+            agent_id=agent_id,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            staff_id=staff_id,
+            resource_id=resource_id,
+            service_id=service_id,
+        )
+
+    async def list_appointments(
+        self,
+        *,
+        agent_id: int,
+        starts_at: datetime | None = None,
+        ends_at: datetime | None = None,
+        staff_id: int | None = None,
+        resource_id: int | None = None,
+        service_id: int | None = None,
+        client_external_id: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        # Ensure agent exists and backend constraints are respected.
+        await self.resolve_provider(agent_id=agent_id)
+        async with self._session_factory() as session:
+            conditions = [AdminAppointment.agent_id == agent_id]
+            if staff_id is not None:
+                conditions.append(AdminAppointment.staff_id == staff_id)
+            if resource_id is not None:
+                conditions.append(AdminAppointment.resource_id == resource_id)
+            if service_id is not None:
+                conditions.append(AdminAppointment.service_id == service_id)
+            if starts_at is not None:
+                conditions.append(AdminAppointment.ends_at > starts_at)
+            if ends_at is not None:
+                conditions.append(AdminAppointment.starts_at < ends_at)
+            normalized_client_external_id = str(client_external_id or "").strip()
+            if normalized_client_external_id:
+                conditions.append(AdminAppointment.client_external_id == normalized_client_external_id)
+            normalized_status = str(status or "").strip().lower()
+            if normalized_status:
+                conditions.append(AdminAppointment.status == normalized_status)
+            rows = (
+                await session.execute(
+                    select(AdminAppointment)
+                    .where(*conditions)
+                    .order_by(AdminAppointment.starts_at.asc(), AdminAppointment.id.asc())
+                )
+            ).scalars().all()
+        return [
+            {
+                "id": row.id,
+                "agent_id": row.agent_id,
+                "staff_id": row.staff_id,
+                "resource_id": row.resource_id,
+                "service_id": row.service_id,
+                "client_external_id": row.client_external_id,
+                "client_name": row.client_name,
+                "source_channel": row.source_channel,
+                "starts_at": row.starts_at.isoformat() if row.starts_at else None,
+                "ends_at": row.ends_at.isoformat() if row.ends_at else None,
+                "status": row.status,
+                "notes": row.notes,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+                "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+            }
+            for row in rows
+        ]
+
+    async def create_appointment(
+        self,
+        *,
+        agent_id: int,
+        client_external_id: str,
+        starts_at: datetime,
+        ends_at: datetime,
+        staff_id: int | None = None,
+        resource_id: int | None = None,
+        service_id: int | None = None,
+        client_name: str | None = None,
+        source_channel: str | None = None,
+        notes: str | None = None,
+    ) -> dict[str, Any]:
+        resolution = await self.resolve_provider(agent_id=agent_id)
+        return await resolution.provider.create_appointment(
+            agent_id=agent_id,
+            client_external_id=client_external_id,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            staff_id=staff_id,
+            resource_id=resource_id,
+            service_id=service_id,
+            client_name=client_name,
+            source_channel=source_channel,
+            notes=notes,
+        )
+
+    async def reschedule_appointment(
+        self,
+        *,
+        agent_id: int,
+        appointment_id: int,
+        starts_at: datetime,
+        ends_at: datetime,
+        staff_id: int | None = None,
+        resource_id: int | None = None,
+    ) -> dict[str, Any]:
+        resolution = await self.resolve_provider(agent_id=agent_id)
+        return await resolution.provider.reschedule_appointment(
+            agent_id=agent_id,
+            appointment_id=appointment_id,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            staff_id=staff_id,
+            resource_id=resource_id,
+        )
+
+    async def _get_appointment_snapshot(
+        self,
+        *,
+        agent_id: int,
+        appointment_id: int,
+    ) -> dict[str, Any]:
+        async with self._session_factory() as session:
+            row = await session.scalar(
+                select(AdminAppointment).where(
+                    AdminAppointment.id == appointment_id,
+                    AdminAppointment.agent_id == agent_id,
+                )
+            )
+            if row is None:
+                raise ValueError("Appointment not found")
+            return {
+                "id": row.id,
+                "agent_id": row.agent_id,
+                "staff_id": row.staff_id,
+                "resource_id": row.resource_id,
+                "service_id": row.service_id,
+                "client_external_id": row.client_external_id,
+                "client_name": row.client_name,
+                "source_channel": row.source_channel,
+                "starts_at": row.starts_at.isoformat() if row.starts_at else None,
+                "ends_at": row.ends_at.isoformat() if row.ends_at else None,
+                "status": row.status,
+                "notes": row.notes,
+            }
+
+    async def cancel_appointment(
+        self,
+        *,
+        agent_id: int,
+        appointment_id: int,
+        reason: str | None = None,
+        client_full_name: str | None = None,
+        client_phone: str | None = None,
+        require_refund_contact: bool = False,
+    ) -> dict[str, Any]:
+        from .payment_service import (
+            AdminBookingPaymentService,
+            RefundContactDetailsRequired,
+            _is_auto_refund_eligible,
+            _normalize_phone,
+        )
+
+        payment_svc = AdminBookingPaymentService(session_factory=self._session_factory)
+        snapshot = await self._get_appointment_snapshot(
+            agent_id=agent_id,
+            appointment_id=appointment_id,
+        )
+        paid_payment = await payment_svc.get_paid_payment_for_appointment(
+            agent_id=agent_id,
+            appointment_id=appointment_id,
+        )
+
+        if paid_payment is not None and require_refund_contact:
+            starts_at = payment_svc._parse_appointment_starts_at(snapshot)
+            if not _is_auto_refund_eligible(starts_at):
+                full_name = (client_full_name or snapshot.get("client_name") or "").strip()
+                phone = _normalize_phone(client_phone)
+                if not full_name or len(full_name.split()) < 2:
+                    raise RefundContactDetailsRequired(
+                        "Для возврата нужно полное ФИО клиента (фамилия, имя и при наличии отчество)."
+                    )
+                if not phone:
+                    raise RefundContactDetailsRequired(
+                        "Для возврата нужен номер телефона клиента в формате +7XXXXXXXXXX."
+                    )
+
+        resolution = await self.resolve_provider(agent_id=agent_id)
+        cancelled = await resolution.provider.cancel_appointment(
+            agent_id=agent_id,
+            appointment_id=appointment_id,
+            reason=reason,
+        )
+
+        refund_request = None
+        auto_refunded = False
+        if paid_payment is not None:
+            refund_request = await payment_svc.create_refund_request_for_payment(
+                payment=paid_payment,
+                appointment_id=appointment_id,
+                cancel_reason=reason,
+                appointment_snapshot=snapshot,
+                client_full_name=client_full_name,
+                client_phone=client_phone,
+                require_contact_details=False,
+            )
+            auto_refunded = (
+                refund_request.get("refund_mode") == "auto"
+                and refund_request.get("status") == "refunded"
+            )
+            if auto_refunded:
+                from .client_notify import notify_refund_auto_completed
+
+                try:
+                    await notify_refund_auto_completed(
+                        agent_id=agent_id,
+                        client_external_id=str(snapshot.get("client_external_id") or ""),
+                        source_channel=snapshot.get("source_channel"),
+                        amount_rub=refund_request.get("amount_rub"),
+                    )
+                except Exception:
+                    import logging
+
+                    logging.getLogger(__name__).exception(
+                        "notify_refund_auto_completed failed agent_id=%s appointment_id=%s",
+                        agent_id,
+                        appointment_id,
+                    )
+
+        return {
+            "deleted": False,
+            "appointment": cancelled,
+            "refund_request": refund_request,
+            "auto_refunded": auto_refunded,
+        }
+
+    async def confirm_appointment(
+        self,
+        *,
+        agent_id: int,
+        appointment_id: int,
+    ) -> dict[str, Any]:
+        resolution = await self.resolve_provider(agent_id=agent_id)
+        return await resolution.provider.confirm_appointment(
+            agent_id=agent_id,
+            appointment_id=appointment_id,
+        )
+
+    async def find_next_available_slot(
+        self,
+        *,
+        agent_id: int,
+        duration_minutes: int = 30,
+        staff_id: int | None = None,
+        resource_id: int | None = None,
+        service_id: int | None = None,
+        earliest_starts_at: datetime | None = None,
+        search_days_ahead: int = 7,
+    ) -> dict[str, Any]:
+        resolution = await self.resolve_provider(agent_id=agent_id)
+        return await resolution.provider.find_next_available_slot(
+            agent_id=agent_id,
+            duration_minutes=duration_minutes,
+            staff_id=staff_id,
+            resource_id=resource_id,
+            service_id=service_id,
+            earliest_starts_at=earliest_starts_at or datetime.now(),
+            search_days_ahead=search_days_ahead,
+        )
+
+    async def delete_appointment(
+        self,
+        *,
+        agent_id: int,
+        appointment_id: int,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        resolution = await self.resolve_provider(agent_id=agent_id)
+        return await resolution.provider.delete_appointment(
+            agent_id=agent_id,
+            appointment_id=appointment_id,
+        )
+
+    async def _build_crm_provider(self, *, connection: AgentCrmConnection | None):
+        if connection is None or not connection.encrypted_credentials:
+            return None
+        try:
+            decrypted_payload, _ = decrypt_crm_credentials(connection.encrypted_credentials)
+            payload = json.loads(decrypted_payload)
+            if not isinstance(payload, dict):
+                return None
+            base_url = str(payload.get("base_url") or "").strip()
+            access_token = str(payload.get("access_token") or "").strip()
+            if not base_url or not access_token:
+                return None
+            return build_provider(connection.provider, base_url=base_url, access_token=access_token)
+        except Exception:
+            return None
+
+
+_admin_booking_service: AdminBookingService | None = None
+
+
+def get_admin_booking_service() -> AdminBookingService:
+    global _admin_booking_service
+    if _admin_booking_service is None:
+        _admin_booking_service = AdminBookingService()
+    return _admin_booking_service

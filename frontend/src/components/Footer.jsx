@@ -22,8 +22,8 @@ const Footer = () => {
             <ul className="site-footer__list">
               <li>
                 Email:{' '}
-                <a href="mailto:support@rsd.ai" className="site-footer__link">
-                  support@rsd.ai
+                <a href="mailto:noreply@rsd-ai.ru" className="site-footer__link">
+                  noreply@rsd-ai.ru
                 </a>
               </li>
               <li>Режим обработки обращений: ежедневно, 09:00-21:00 (МСК)</li>
