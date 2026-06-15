@@ -135,6 +135,11 @@ class DmQueueService:
                         updated_at=_now_utc(),
                     )
                 )
+                if new_status == "failed":
+                    await session.refresh(row)
+                    from ..ai_mop.dm_hooks import on_dm_queue_failed
+
+                    await on_dm_queue_failed(row, error=error or "", final=True)
 
     @staticmethod
     async def get_queue_stats(

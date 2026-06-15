@@ -3,6 +3,7 @@ from logging import getLogger
 
 import asyncio
 import httpx
+import random
 from sqlalchemy import exists, select
 
 from ..alembic.database import async_session_maker
@@ -16,6 +17,14 @@ INACTIVE_REMINDER_REPEAT_DAYS = 10
 
 def _utc_now_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _next_reminder_batch_interval_seconds() -> int:
+    lo = settings.MAILOPOST_REMINDER_BATCH_INTERVAL_MIN_SECONDS
+    hi = settings.MAILOPOST_REMINDER_BATCH_INTERVAL_MAX_SECONDS
+    if lo > hi:
+        lo, hi = hi, lo
+    return random.randint(lo, hi)
 
 
 def _render_mailopost_card_html(*, title: str, paragraphs: list[str], accent_block_html: str = "") -> str:
@@ -130,7 +139,7 @@ async def send_onboarding_inactive_user_reminders_once() -> int:
 
         for idx, user in enumerate(rows):
             if idx > 0:
-                await asyncio.sleep(settings.MAILOPOST_REMINDER_BATCH_INTERVAL_SECONDS)
+                await asyncio.sleep(_next_reminder_batch_interval_seconds())
             if not user.email:
                 continue
             delivered = await _send_inactive_user_reminder_email(user.email)

@@ -1,7 +1,10 @@
 """Public website endpoints for custom domain and subdomain access (Stage 7)."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import Response
 from typing import Annotated
 
 from ..alembic.database import async_session_maker
@@ -17,6 +20,8 @@ from .utils import (
 )
 from ..services.agent_public_data import get_agent_public_data
 
+from ..config.website_domains import BASE_DOMAIN
+
 router = APIRouter()
 
 # Rate limit for public website access
@@ -31,10 +36,6 @@ SYSTEM_DOMAINS = {
     "staging.rsd-ai.ru",
     "dev.rsd-ai.ru",
 }
-
-# Base domain for subdomain routing
-BASE_DOMAIN = "rsd-ai.ru"
-
 
 async def _build_schema_agent_payload(website: Website, *, include_widget_key: bool) -> dict | None:
     """Build agent payload for website schema."""
@@ -221,3 +222,44 @@ async def get_website_schema_by_host(
 async def health_check():
     """Health check endpoint for domain routing."""
     return {"status": "ok", "service": "website-public"}
+
+
+def _format_sitemap_lastmod(value: datetime | None) -> str:
+    if not value:
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).strftime("%Y-%m-%d")
+
+
+@router.get("/sitemap-websites.xml", response_class=Response)
+async def get_websites_sitemap(
+    website_dao: Annotated[WebsiteDAO, Depends(get_website_dao)],
+    _: None = _PUBLIC_RATE,
+):
+    """Dynamic sitemap of all published client websites."""
+    websites = await website_dao.list_published_for_sitemap()
+    lines = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+    ]
+
+    for website in websites:
+        loc = f"https://{BASE_DOMAIN}/w/{website.slug}"
+        lastmod = _format_sitemap_lastmod(website.updated_at or website.published_at)
+        lines.extend(
+            [
+                "  <url>",
+                f"    <loc>{loc}</loc>",
+                f"    <lastmod>{lastmod}</lastmod>",
+                "    <changefreq>weekly</changefreq>",
+                "    <priority>0.7</priority>",
+                "  </url>",
+            ]
+        )
+
+    lines.append("</urlset>")
+    return Response(
+        content="\n".join(lines),
+        media_type="application/xml; charset=utf-8",
+    )

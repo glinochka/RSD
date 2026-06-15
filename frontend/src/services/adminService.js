@@ -490,6 +490,85 @@ const adminService = {
     );
     return response.data;
   },
+
+  async aiMopGetDashboard(token) {
+    const response = await adminClient.get(API_ROUTES.ADMIN_AI_MOP_DASHBOARD, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return response.data;
+  },
+
+  async aiMopGetAgents(token) {
+    const response = await adminClient.get(API_ROUTES.ADMIN_AI_MOP_AGENTS, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return response.data;
+  },
+
+  async aiMopAssignAgent(token, agentId, { enabled = true } = {}) {
+    const response = await adminClient.post(
+      API_ROUTES.ADMIN_AI_MOP_AGENT_ASSIGN(agentId),
+      { enabled },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data;
+  },
+
+  async aiMopUnassignAgent(token, agentId) {
+    const response = await adminClient.delete(API_ROUTES.ADMIN_AI_MOP_AGENT_ASSIGN(agentId), {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return response.data;
+  },
+
+  async aiMopToggleAgent(token, agentId, enabled) {
+    const response = await adminClient.patch(
+      API_ROUTES.ADMIN_AI_MOP_AGENT(agentId),
+      { enabled },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data;
+  },
+
+  async aiMopGetLeads(token, { page = 1, pageSize = 20, status } = {}) {
+    const response = await adminClient.get(API_ROUTES.ADMIN_AI_MOP_LEADS, {
+      headers: { Authorization: `Bearer ${token}` },
+      params: { page, page_size: pageSize, status: status || undefined },
+    });
+    return response.data;
+  },
+
+  async aiMopUploadLeads(token, file) {
+    const form = new FormData();
+    form.append('file', file);
+    const response = await adminClient.post(API_ROUTES.ADMIN_AI_MOP_LEADS_UPLOAD, form, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data;
+  },
+
+  async aiMopClearLeads(token, { onlyPending = true } = {}) {
+    const response = await adminClient.post(
+      API_ROUTES.ADMIN_AI_MOP_LEADS_CLEAR,
+      {},
+      {
+        headers: { Authorization: `Bearer ${token}` },
+        params: { only_pending: onlyPending },
+      }
+    );
+    return response.data;
+  },
+
+  async aiMopGetErrors(token, { page = 1, pageSize = 20, stage } = {}) {
+    const response = await adminClient.get(API_ROUTES.ADMIN_AI_MOP_ERRORS, {
+      headers: { Authorization: `Bearer ${token}` },
+      params: { page, page_size: pageSize, stage: stage || undefined },
+    });
+    return response.data;
+  },
 };
 
 export default adminService;

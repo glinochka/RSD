@@ -31,6 +31,7 @@ from ..services.website_seo_service import (
     get_website_seo_service,
     FAVICON_SIZES,
 )
+from ..services.website_seo_defaults import ensure_default_favicon
 from ..services.website_sanitization_service import (
     get_website_sanitization_service,
     WebsiteSanitizationService,
@@ -514,6 +515,7 @@ async def publish_website(
             detail="Website must have a title before publishing",
         )
 
+    await ensure_default_favicon(website_dao, website)
     await website_dao.publish(website)
     return website
 
@@ -1392,7 +1394,16 @@ async def _run_website_generation(
                         website_id, result.html_content, result.meta or {}
                     )
                     if success:
-                        await website_dao.set_generation_status(website, "completed")
+                        fresh_website = await website_dao.find_one_by_filter(id=website_id)
+                        if fresh_website:
+                            await ensure_default_favicon(
+                                website_dao,
+                                fresh_website,
+                                primary_color=request.primary_color,
+                            )
+                            await website_dao.set_generation_status(fresh_website, "completed")
+                        else:
+                            await website_dao.set_generation_status(website, "completed")
                         logger.info(f"[WebsiteGen] Generation completed successfully for website_id={website_id}")
                         await _append_runtime_log("Генерация завершена успешно (completed)")
                     else:

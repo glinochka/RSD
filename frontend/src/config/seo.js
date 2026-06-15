@@ -62,11 +62,18 @@ const ROUTES = {
 };
 
 const PRIVATE_PREFIXES = ['/agents', '/create-agent'];
+const WEBSITE_BUILDER_PREFIXES = ['/w/', '/preview/', '/websites/'];
 
 export function getSeoForPath(pathname) {
   let path = pathname || '/';
   if (path.length > 1 && path.endsWith('/')) {
     path = path.slice(0, -1);
+  }
+
+  for (const prefix of WEBSITE_BUILDER_PREFIXES) {
+    if (path.startsWith(prefix)) {
+      return null;
+    }
   }
 
   if (path.startsWith('/management-portal')) {

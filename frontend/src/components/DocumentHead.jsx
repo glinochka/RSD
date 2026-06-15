@@ -9,8 +9,12 @@ const defaultOgImagePath = '/favicon/android-chrome-512x512.png';
  */
 const DocumentHead = () => {
   const { pathname } = useLocation();
-  const origin = getPublicSiteOrigin();
   const seo = getSeoForPath(pathname);
+  if (!seo) {
+    return null;
+  }
+
+  const origin = getPublicSiteOrigin();
   const canonical = `${origin}${pathname === '/' ? '/' : pathname}`;
   const ogUrl = `${origin}${pathname}`;
   const ogImage = `${origin}${defaultOgImagePath}`;

@@ -1481,6 +1481,12 @@ class TemplateRuntimeService:
         runtime_context: dict[str, Any] | None = None,
     ) -> TemplateExecutionResult:
         runtime_context = runtime_context or {}
+        if str(template_config.get("custom_runtime") or "").strip().lower() == "ai_mop":
+            return TemplateExecutionResult(
+                answer=None,
+                sources=[],
+                discard_message=True,
+            )
         if bool(runtime_context.get("is_channel_chat")) and bool(
             runtime_context.get("neuro_commenting_enabled")
         ):

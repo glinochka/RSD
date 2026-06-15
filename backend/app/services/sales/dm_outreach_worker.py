@@ -385,6 +385,10 @@ class DmOutreachWorker:
             await get_dm_queue_service().mark_sent(queue_id=item.id)
             self._last_send_by_account[account_key] = self._now_utc_naive()
 
+            from ..ai_mop.dm_hooks import on_dm_queue_sent
+
+            await on_dm_queue_sent(item)
+
             if imported_id is not None:
                 try:
                     if meta.get("message_kind") == "follow_up" and follow_up_tier:

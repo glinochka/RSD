@@ -78,6 +78,15 @@ class WebsiteDAO(BaseDAO):
         count = await self.scalar_or_default(query, 0)
         return count > 0
 
+    async def list_published_for_sitemap(self) -> list[Website]:
+        """Published websites for dynamic sitemap generation."""
+        query = (
+            select(self.model)
+            .where(self.model.status == "published")
+            .order_by(desc(self.model.updated_at))
+        )
+        return await self.list_scalars(query)
+
     async def get_max_order_for_website(self, website_id: int) -> int:
         query = (
             select(func.coalesce(func.max(WebsiteBlock.order), -1))

@@ -167,6 +167,15 @@ export const API_ROUTES = {
   ADMIN_SALES_CONTACT_MANUAL: '/api/admin/sales/contacts/manual',
   ADMIN_SALES_CRM_CLEAR: '/api/admin/sales/contacts/clear',
 
+  ADMIN_AI_MOP_DASHBOARD: '/api/admin/ai-mop/dashboard',
+  ADMIN_AI_MOP_AGENTS: '/api/admin/ai-mop/agents',
+  ADMIN_AI_MOP_AGENT_ASSIGN: (id) => `/api/admin/ai-mop/agents/${id}/assign`,
+  ADMIN_AI_MOP_AGENT: (id) => `/api/admin/ai-mop/agents/${id}`,
+  ADMIN_AI_MOP_LEADS: '/api/admin/ai-mop/leads',
+  ADMIN_AI_MOP_LEADS_UPLOAD: '/api/admin/ai-mop/leads/excel-upload',
+  ADMIN_AI_MOP_LEADS_CLEAR: '/api/admin/ai-mop/leads/clear',
+  ADMIN_AI_MOP_ERRORS: '/api/admin/ai-mop/errors',
+
   SALES_LOGIN: '/api/sales/login',
   SALES_ME: '/api/sales/me',
   SALES_CONTACTS: '/api/sales/contacts',

@@ -94,7 +94,7 @@ class AdminEmailBroadcastRequest(BaseModel):
         default=None,
         ge=30,
         le=86_400,
-        description="Пауза между письмами; None = MAILOPOST_BROADCAST_INTERVAL_SECONDS",
+        description="Фиксированная пауза между письмами (сек.); None = случайно 5–10 мин",
     )
 
 
@@ -142,7 +142,7 @@ class AdminTargetedBroadcastRequest(AdminEmailTargetedPreviewRequest):
         default=None,
         ge=30,
         le=86_400,
-        description="Пауза между письмами; None = MAILOPOST_BROADCAST_INTERVAL_SECONDS",
+        description="Фиксированная пауза между письмами (сек.); None = случайно 5–10 мин",
     )
 
 

@@ -233,6 +233,11 @@ class Agent(Base):
         back_populates="agent",
         cascade="all, delete-orphan",
     )
+    ai_mop_assignment: Mapped["AiMopAgentAssignment | None"] = relationship(
+        back_populates="agent",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
     content_jobs: Mapped[list["AgentContentJob"]] = relationship(
         back_populates="agent",
         cascade="all, delete-orphan",
@@ -898,6 +903,89 @@ class AgentSalesImportedContact(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
 
     agent: Mapped["Agent"] = relationship(back_populates="sales_imported_contacts")
+
+
+class AiMopLead(Base):
+    """Общая база лидов для кастомного рантайма ИИ МОП (продажа платформы)."""
+
+    __tablename__ = "ai_mop_leads"
+    __table_args__ = (
+        UniqueConstraint("dedup_key", name="uq_ai_mop_lead_dedup"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    org_name: Mapped[str] = mapped_column(String(512), nullable=False)
+    email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    lpr_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    address: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    category: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    yandex_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    telegram: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    whatsapp: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    extra_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    dedup_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="pending",
+        server_default="pending",
+        index=True,
+    )  # pending, processing, outreach_queued, outreach_sent, failed
+    assigned_agent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("agents.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    provisioned_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    provisioned_agent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("agents.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    provisioned_website_id: Mapped[int | None] = mapped_column(
+        ForeignKey("websites.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    website_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    temp_password: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    outreach_channel: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    outreach_target: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    failure_stage: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    dm_queue_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    outreach_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    import_batch_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+
+class AiMopAgentAssignment(Base):
+    """Привязка sales_manager-агента к кастомному рантайму ИИ МОП."""
+
+    __tablename__ = "ai_mop_agent_assignments"
+    __table_args__ = (
+        UniqueConstraint("agent_id", name="uq_ai_mop_agent_assignment"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    is_busy: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    cooldown_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    leads_processed: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    leads_sent: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    leads_failed: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    agent: Mapped["Agent"] = relationship(back_populates="ai_mop_assignment")
 
 
 class AgentContentJob(Base):

@@ -2,6 +2,7 @@
 
 import io
 import os
+import re
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -132,6 +133,134 @@ class WebsiteSEOService:
                 files={},
                 error_message=f"Favicon conversion failed: {str(e)}"
             )
+
+    @staticmethod
+    def extract_brand_letter(title: str) -> str:
+        """First meaningful character for letter-based favicons."""
+        cleaned = re.sub(r"[^\w\u0400-\u04FF]", "", (title or "").strip(), flags=re.UNICODE)
+        if cleaned:
+            return cleaned[0].upper()
+        return "R"
+
+    @staticmethod
+    def contrast_text_color(background_color: str) -> str:
+        """Pick white or near-black text for readable contrast on a solid background."""
+        rgb = WebsiteSEOService._hex_to_rgb_static(background_color)
+        luminance = (0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]) / 255
+        return "#FFFFFF" if luminance < 0.55 else "#111827"
+
+    @staticmethod
+    def _hex_to_rgb_static(hex_color: str) -> tuple[int, int, int]:
+        hex_color = (hex_color or "#2563EB").lstrip("#")
+        if len(hex_color) != 6:
+            hex_color = "2563EB"
+        return tuple(int(hex_color[i : i + 2], 16) for i in (0, 2, 4))
+
+    def _render_letter_favicon_image(
+        self,
+        *,
+        letter: str,
+        background_color: str,
+        text_color: str,
+        size: int,
+    ) -> Image.Image:
+        """Render a simple square favicon: solid brand color + contrasting letter."""
+        img = Image.new("RGBA", (size, size), (*self._hex_to_rgb(background_color), 255))
+        draw = ImageDraw.Draw(img)
+        font_size = max(8, int(size * 0.62))
+        try:
+            font = ImageFont.truetype(
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                font_size,
+            )
+        except OSError:
+            font = ImageFont.load_default()
+
+        bbox = draw.textbbox((0, 0), letter, font=font)
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
+        x = (size - text_width) // 2 - bbox[0]
+        y = (size - text_height) // 2 - bbox[1]
+        draw.text((x, y), letter, font=font, fill=self._hex_to_rgb(text_color))
+        return img
+
+    def _save_favicon_variants(
+        self,
+        *,
+        img: Image.Image,
+        website_id: int,
+        favicon_id: str,
+    ) -> dict[str, str]:
+        """Persist favicon sizes and return saved file paths keyed by size name."""
+        files: dict[str, bytes] = {}
+        for size in FAVICON_SIZES:
+            resized = img.resize((size, size), Image.Resampling.LANCZOS)
+            output = io.BytesIO()
+            resized.save(output, format="PNG", optimize=True)
+            files[f"{size}x{size}"] = output.getvalue()
+
+        ico_sizes = [16, 32, 48]
+        ico_images = [img.resize((s, s), Image.Resampling.LANCZOS) for s in ico_sizes]
+        ico_output = io.BytesIO()
+        ico_images[0].save(
+            ico_output,
+            format="ICO",
+            sizes=[(s, s) for s in ico_sizes],
+            append_images=ico_images[1:],
+        )
+        files["favicon.ico"] = ico_output.getvalue()
+
+        saved_files: dict[str, str] = {}
+        for size_name, data in files.items():
+            if size_name == "favicon.ico":
+                filename = f"favicon-{favicon_id}.ico"
+            else:
+                filename = f"favicon-{favicon_id}-{size_name}.png"
+            filepath = self._get_storage_path(website_id, filename)
+            with open(filepath, "wb") as f:
+                f.write(data)
+            saved_files[size_name] = filepath
+        return saved_files
+
+    def generate_letter_favicon(
+        self,
+        *,
+        website_id: int,
+        title: str,
+        background_color: str = "#2563EB",
+        text_color: str | None = None,
+    ) -> FaviconResult:
+        """Generate a simple letter favicon from the site title and brand color."""
+        try:
+            letter = self.extract_brand_letter(title)
+            bg = background_color if background_color else "#2563EB"
+            fg = text_color or self.contrast_text_color(bg)
+            master = self._render_letter_favicon_image(
+                letter=letter,
+                background_color=bg,
+                text_color=fg,
+                size=256,
+            )
+            favicon_id = str(uuid.uuid4())[:8]
+            saved_files = self._save_favicon_variants(
+                img=master,
+                website_id=website_id,
+                favicon_id=favicon_id,
+            )
+            return FaviconResult(success=True, files=saved_files)
+        except Exception as e:
+            return FaviconResult(
+                success=False,
+                files={},
+                error_message=f"Letter favicon generation failed: {str(e)}",
+            )
+
+    def favicon_url_from_result(self, website_id: int, result: FaviconResult) -> str | None:
+        """Build public favicon URL from a conversion/generation result."""
+        ico_path = result.files.get("favicon.ico")
+        if not ico_path:
+            return None
+        return f"/assets/websites/{website_id}/{os.path.basename(ico_path)}"
 
     def _resize_for_favicon(self, img: Image.Image, size: int) -> Image.Image:
         """Resize image for favicon, maintaining aspect ratio with transparency."""

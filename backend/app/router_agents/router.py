@@ -933,6 +933,10 @@ def _normalize_template_config(template_type: str, template_config: dict | None)
         common_config["enable_phone_portrait"] = bool(raw.get("enable_phone_portrait"))
     if "enable_smart_search" in raw:
         common_config["enable_smart_search"] = bool(raw.get("enable_smart_search"))
+    if "enable_human_delay" in raw:
+        common_config["enable_human_delay"] = bool(raw.get("enable_human_delay"))
+    if "enable_chat_history" in raw:
+        common_config["enable_chat_history"] = bool(raw.get("enable_chat_history"))
     # Chat freeze feature is available only for QA template.
     if template_type == "qa" and "enable_chat_freeze" in raw:
         common_config["enable_chat_freeze"] = bool(raw.get("enable_chat_freeze"))

@@ -7,7 +7,6 @@
  */
 import React, { useMemo, useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { HelmetProvider } from 'react-helmet-async';
 
 import WebsiteRenderer from '../components/WebsiteRenderer';
 import AgentWidget from '../components/AgentWidget';
@@ -300,9 +299,8 @@ const WebsitePublicPage = () => {
 
 
   return (
-    <HelmetProvider>
+    <WebsiteAgentProvider agent={agent} agentId={mergedSchema.agent_id}>
       <WebsiteMetaTags website={mergedSchema} agent={agent} />
-      <WebsiteAgentProvider agent={agent} agentId={mergedSchema.agent_id}>
         <WebsiteRenderer
           schema={mergedSchema}
           templateStyles={mergedSchema.styles}
@@ -322,7 +320,6 @@ const WebsitePublicPage = () => {
           primaryColor={globalStyles.primaryColor}
         />
       </WebsiteAgentProvider>
-    </HelmetProvider>
   );
 };
 

@@ -625,20 +625,30 @@
 
 .feature-toggle {
   width: 100%;
-  border: 1px solid color-mix(in srgb, var(--color-primary) 28%, var(--color-border));
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--color-primary) 6%, var(--color-bg));
+  background: var(--color-bg);
   transition: border-color var(--transition-base), background-color var(--transition-base), box-shadow var(--transition-base);
   position: relative;
 }
 
 .feature-toggle:hover {
-  border-color: color-mix(in srgb, var(--color-primary) 48%, var(--color-border));
-  background: color-mix(in srgb, var(--color-primary) 10%, var(--color-bg));
+  border-color: color-mix(in srgb, var(--primary-black) 18%, var(--color-border));
+  background: var(--color-bg-light);
+}
+
+.feature-toggle--on {
+  border-color: color-mix(in srgb, var(--primary-black) 28%, var(--color-border));
+  background: var(--color-bg-lighter);
+}
+
+.feature-toggle--on:hover {
+  border-color: color-mix(in srgb, var(--primary-black) 38%, var(--color-border));
+  background: color-mix(in srgb, var(--primary-black) 4%, var(--color-bg-lighter));
 }
 
 .feature-toggle:focus-within {
-  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.14);
+  box-shadow: 0 0 0 3px rgba(47, 47, 47, 0.1);
 }
 
 .feature-toggle__main {
@@ -677,14 +687,16 @@
   width: 46px;
   height: 26px;
   border-radius: 999px;
-  background: #c5ced9;
+  background: #d1d5db;
+  border: 1px solid rgba(47, 47, 47, 0.08);
   position: relative;
   flex-shrink: 0;
-  transition: background-color var(--transition-base);
+  transition: background-color var(--transition-base), border-color var(--transition-base);
 }
 
 .feature-toggle--on .feature-toggle__switch {
-  background: var(--color-primary);
+  background: var(--primary-black);
+  border-color: var(--primary-black);
 }
 
 .feature-toggle__thumb {
@@ -723,9 +735,9 @@
   width: 20px;
   height: 20px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--color-primary) 38%, var(--color-border));
+  border: 1px solid var(--color-border);
   background: #ffffff;
-  color: var(--color-primary);
+  color: var(--color-text-light);
   font-size: 12px;
   font-weight: 700;
   line-height: 1;
@@ -737,7 +749,9 @@
 }
 
 .feature-toggle__help:hover {
-  background: color-mix(in srgb, var(--color-primary) 8%, #ffffff);
+  background: var(--color-bg-lighter);
+  color: var(--color-text);
+  border-color: color-mix(in srgb, var(--primary-black) 20%, var(--color-border));
 }
 
 .feature-toggle__tooltip {

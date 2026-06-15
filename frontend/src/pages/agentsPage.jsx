@@ -1309,6 +1309,86 @@ const AgentsPageContent = () => {
     }
   };
 
+  const persistTemplateConfigPatch = async (patch, { successMessage, errorMessage } = {}) => {
+    if (!selectedBotId || !selectedAgent) return false;
+    const currentConfig = getTemplateConfig(selectedAgent);
+    const nextConfig = { ...currentConfig, ...patch };
+    setIsSavingTemplateConfig(true);
+    try {
+      await agentService.update(selectedBotId, { template_config: nextConfig });
+      setSelectedAgent((prev) => (prev ? { ...prev, template_config: nextConfig } : prev));
+      if (successMessage) showSuccess(successMessage);
+      return true;
+    } catch (error) {
+      showError(error?.message || errorMessage || 'Не удалось сохранить настройку');
+      return false;
+    } finally {
+      setIsSavingTemplateConfig(false);
+    }
+  };
+
+  const handleToggleAdminWaitlist = async (enabled) => {
+    const next = Boolean(enabled);
+    const ok = await persistTemplateConfigPatch(
+      { waitlist_enabled: next },
+      {
+        successMessage: next ? 'Waitlist включён' : 'Waitlist отключён',
+        errorMessage: 'Не удалось обновить настройку waitlist',
+      },
+    );
+    if (ok) setAdminWaitlistEnabled(next);
+  };
+
+  const handleToggleAdminReminder = async (enabled) => {
+    const next = Boolean(enabled);
+    const ok = await persistTemplateConfigPatch(
+      { reminder_enabled: next },
+      {
+        successMessage: next ? 'Напоминания включены' : 'Напоминания отключены',
+        errorMessage: 'Не удалось обновить настройку напоминаний',
+      },
+    );
+    if (ok) setAdminReminderEnabled(next);
+  };
+
+  const handleToggleAdminPaidBooking = async (enabled) => {
+    if (!selectedBotId || !selectedAgent) return;
+    const next = Boolean(enabled);
+    const nextConfig = {
+      ...getTemplateConfig(selectedAgent),
+      paid_booking_enabled: next,
+    };
+    const updatePayload = { template_config: nextConfig };
+    if (!next) {
+      updatePayload.yookassa_api_key = '';
+    }
+    setIsSavingTemplateConfig(true);
+    try {
+      await agentService.update(selectedBotId, updatePayload);
+      const refreshedAgent = await agentService.getById(selectedBotId);
+      setSelectedAgent((prev) =>
+        prev
+          ? {
+              ...prev,
+              ...refreshedAgent,
+              template_config: nextConfig,
+            }
+          : refreshedAgent
+      );
+      setAdminPaidBookingEnabled(next);
+      if (!next) {
+        setAdminHasYookassaApiKey(false);
+        setAdminYookassaShopId('');
+        setAdminYookassaSecretKey('');
+      }
+      showSuccess(next ? 'Платная бронь включена' : 'Платная бронь отключена');
+    } catch (error) {
+      showError(error?.message || 'Не удалось обновить настройку платной брони');
+    } finally {
+      setIsSavingTemplateConfig(false);
+    }
+  };
+
   const handleSaveAdminTemplateConfig = async () => {
     if (!selectedBotId || !selectedAgent) return;
     const currentConfig = getTemplateConfig(selectedAgent);
@@ -1933,50 +2013,100 @@ const AgentsPageContent = () => {
     return ordered.map((tz) => ({ value: tz, label: tz }));
   }, [agentAvailTimezone]);
 
-  const handleSaveAgentAvailability = async () => {
-    if (!selectedBotId || !selectedAgent) return;
-    if (!agentAvailAlwaysOn) {
-      const anyDay = agentAvailWeekdays.some((d) => d.enabled);
-      if (!anyDay) {
-        showError('Включите хотя бы один день недели или вернитесь в режим 24/7');
-        return;
-      }
-    }
-    const currentConfig = getTemplateConfig(selectedAgent);
-    const nextBlock = agentAvailAlwaysOn
+  const buildAgentAvailabilityBlock = (alwaysOn, timezone, weekdays) =>
+    alwaysOn
       ? {
           always_on: true,
-          timezone: agentAvailTimezone.trim() || 'Europe/Moscow',
+          timezone: timezone.trim() || 'Europe/Moscow',
         }
       : {
           always_on: false,
-          timezone: agentAvailTimezone.trim() || 'Europe/Moscow',
-          weekdays: agentAvailWeekdays.map((d) => ({
+          timezone: timezone.trim() || 'Europe/Moscow',
+          weekdays: weekdays.map((d) => ({
             enabled: Boolean(d.enabled),
             start: d.start,
             end: d.end,
           })),
         };
+
+  const persistAgentAvailability = async ({ alwaysOn, timezone, weekdays } = {}) => {
+    if (!selectedBotId || !selectedAgent) return false;
+    const resolvedAlwaysOn = alwaysOn !== undefined ? Boolean(alwaysOn) : agentAvailAlwaysOn;
+    const resolvedTimezone = timezone !== undefined ? timezone : agentAvailTimezone;
+    const resolvedWeekdays = weekdays !== undefined ? weekdays : agentAvailWeekdays;
+
+    if (!resolvedAlwaysOn) {
+      const anyDay = resolvedWeekdays.some((d) => d.enabled);
+      if (!anyDay) {
+        showError('Включите хотя бы один день недели или вернитесь в режим 24/7');
+        return false;
+      }
+    }
+
+    const currentConfig = getTemplateConfig(selectedAgent);
     const nextConfig = {
       ...currentConfig,
-      agent_availability: nextBlock,
+      agent_availability: buildAgentAvailabilityBlock(
+        resolvedAlwaysOn,
+        resolvedTimezone,
+        resolvedWeekdays,
+      ),
     };
     setIsSavingAgentAvailability(true);
     try {
       await agentService.update(selectedBotId, { template_config: nextConfig });
       setSelectedAgent((prev) => (prev ? { ...prev, template_config: nextConfig } : prev));
-      showSuccess('Режим работы ассистента сохранён');
+      return true;
     } catch (error) {
       showError(error?.message || 'Не удалось сохранить режим работы');
+      return false;
     } finally {
       setIsSavingAgentAvailability(false);
     }
   };
 
-  const handleToggleAgentAvailabilityDay = (index, enabled) => {
-    setAgentAvailWeekdays((prev) =>
-      prev.map((row, i) => (i === index ? { ...row, enabled: Boolean(enabled) } : row))
+  const handleSaveAgentAvailability = async () => {
+    const ok = await persistAgentAvailability();
+    if (ok) showSuccess('Режим работы ассистента сохранён');
+  };
+
+  const handleToggleAgentAvailAlwaysOn = async (enabled) => {
+    const next = Boolean(enabled);
+    if (!next) {
+      const anyDay = agentAvailWeekdays.some((d) => d.enabled);
+      if (!anyDay) {
+        showError('Включите хотя бы один день недели или оставьте круглосуточный режим');
+        return;
+      }
+    }
+    setAgentAvailAlwaysOn(next);
+    const ok = await persistAgentAvailability({ alwaysOn: next });
+    if (ok) {
+      showSuccess(next ? 'Круглосуточный режим включён' : 'Расписание по дням активировано');
+    } else {
+      setAgentAvailAlwaysOn(!next);
+    }
+  };
+
+  const handleToggleAgentAvailabilityDay = async (index, enabled) => {
+    const prevWeekdays = agentAvailWeekdays;
+    const nextWeekdays = prevWeekdays.map((row, i) =>
+      i === index ? { ...row, enabled: Boolean(enabled) } : row,
     );
+    if (!agentAvailAlwaysOn) {
+      const anyDay = nextWeekdays.some((d) => d.enabled);
+      if (!anyDay) {
+        showError('Должен быть включён хотя бы один день недели');
+        return;
+      }
+    }
+    setAgentAvailWeekdays(nextWeekdays);
+    if (!agentAvailAlwaysOn) {
+      const ok = await persistAgentAvailability({ weekdays: nextWeekdays });
+      if (!ok) {
+        setAgentAvailWeekdays(prevWeekdays);
+      }
+    }
   };
 
   const handleAgentAvailabilityTimeChange = (index, field, value) => {
@@ -2700,7 +2830,7 @@ const AgentsPageContent = () => {
                     </p>
                     <FeatureToggle
                       checked={agentAvailAlwaysOn}
-                      onChange={(next) => setAgentAvailAlwaysOn(Boolean(next))}
+                      onChange={handleToggleAgentAvailAlwaysOn}
                       disabled={isSavingAgentAvailability}
                       title="Круглосуточный режим (24/7)"
                       helpText="Выключите, чтобы вне заданного расписания входящие сообщения не обрабатывались и не получали ответа. Вне окна сообщение не попадает в аналитику и не вызывает LLM; пользователь не получает ответ. Подписка и блокировки пользователя проверяются как обычно."
@@ -2790,14 +2920,14 @@ const AgentsPageContent = () => {
                         <h4 className="agent-form-channel-title">Дополнительные фичи</h4>
                         <FeatureToggle
                           checked={adminWaitlistEnabled}
-                          onChange={setAdminWaitlistEnabled}
+                          onChange={handleToggleAdminWaitlist}
                           disabled={isSavingTemplateConfig}
                           title="Включить waitlist с авто-подбором окон"
                           helpText="Когда включено, агент сможет предлагать клиентам окна из waitlist при освобождении слотов."
                         />
                         <FeatureToggle
                           checked={adminReminderEnabled}
-                          onChange={setAdminReminderEnabled}
+                          onChange={handleToggleAdminReminder}
                           disabled={isSavingTemplateConfig}
                           title="Включить напоминания о визите"
                           helpText="При включении отправляются напоминания клиенту по расписанию, заданному в offsets."
@@ -2817,7 +2947,7 @@ const AgentsPageContent = () => {
                         </div>
                         <FeatureToggle
                           checked={adminPaidBookingEnabled}
-                          onChange={setAdminPaidBookingEnabled}
+                          onChange={handleToggleAdminPaidBooking}
                           disabled={isSavingTemplateConfig}
                           title="Платная бронь"
                           helpText="При включении агент сначала отправляет ссылку на оплату, и только после успешной оплаты подтверждает бронь."

@@ -68,6 +68,11 @@ class Settings(BaseSettings):
     ARTICLE_PUBLISHER_POLL_INTERVAL_SECONDS: int = 300
     ARTICLE_PUBLISHER_IMAGES_DIR: str = ""
 
+    AI_MOP_ENABLED: bool = False
+    AI_MOP_POLL_INTERVAL_SECONDS: int = 30
+    # Домен для автогенерации login-email лидам без почты в базе (translit@domain).
+    AI_MOP_ACCOUNT_EMAIL_DOMAIN: str = "rsd-ai.ru"
+
     QDRANT_URL: str
     DB_HOST: str
     INTERNAL_API_KEY: str = ""
@@ -115,10 +120,12 @@ class Settings(BaseSettings):
     MAILOPOST_FROM_EMAIL: str = ""
     MAILOPOST_FROM_NAME: str = ""
     MAILOPOST_SEND_TIMEOUT_SECONDS: float = 10.0
-    # Пауза между письмами в админских рассылках (подтверждённые пользователи, точечные группы), сек.
-    MAILOPOST_BROADCAST_INTERVAL_SECONDS: int = 900
-    # Пауза между автоматическими напоминаниям (onboarding), сек. (30 мин).
-    MAILOPOST_REMINDER_BATCH_INTERVAL_SECONDS: int = 1800
+    # Случайная пауза между письмами в админских рассылках (подтверждённые, точечные группы), сек.
+    MAILOPOST_BROADCAST_INTERVAL_MIN_SECONDS: int = 300
+    MAILOPOST_BROADCAST_INTERVAL_MAX_SECONDS: int = 600
+    # Случайная пауза между onboarding-напоминаниями, сек.
+    MAILOPOST_REMINDER_BATCH_INTERVAL_MIN_SECONDS: int = 300
+    MAILOPOST_REMINDER_BATCH_INTERVAL_MAX_SECONDS: int = 600
     WHATSAPP_USERBOT_BRIDGE_URL: str = ""
     WHATSAPP_USERBOT_BRIDGE_API_KEY: str = ""
     WHATSAPP_USERBOT_BRIDGE_TIMEOUT_SECONDS: float = 60.0

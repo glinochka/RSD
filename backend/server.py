@@ -1,9 +1,12 @@
 from contextlib import asynccontextmanager
 import asyncio
+import os
+from pathlib import Path
 
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import HTTPException
+from fastapi.staticfiles import StaticFiles
 from logging import getLogger
 from app.logger_config import setup_logger
 setup_logger()
@@ -37,6 +40,7 @@ from app.services.reindex_jobs import run_reindex_worker_forever
 from app.services.content_factory_worker import get_content_factory_worker
 from app.services.sales.dm_outreach_worker import get_dm_outreach_worker
 from app.services.article_publisher.worker import get_article_publisher_worker
+from app.services.ai_mop import get_ai_mop_worker
 from app.channels import UserbotManager, MaxBotManager, MaxUserbotManager, WhatsAppUserbotManager
 from app.qdrant.embeddings import get_active_dense_model_name, get_dense_vector_size
 from app.utils.internal_auth import is_request_secure
@@ -65,6 +69,8 @@ async def lifespan(app: FastAPI):
     dm_outreach_task: asyncio.Task | None = None
     article_publisher_worker = None
     article_publisher_task: asyncio.Task | None = None
+    ai_mop_worker = None
+    ai_mop_task: asyncio.Task | None = None
 
     async def run_subscription_cron():
         while True:
@@ -154,6 +160,12 @@ async def lifespan(app: FastAPI):
         logger.info("ArticlePublisherWorker enabled")
     else:
         logger.info("ArticlePublisherWorker disabled via ARTICLE_PUBLISHER_ENABLED")
+    if settings.AI_MOP_ENABLED:
+        ai_mop_worker = get_ai_mop_worker()
+        ai_mop_task = asyncio.create_task(ai_mop_worker.run_forever())
+        logger.info("AiMopWorker enabled")
+    else:
+        logger.info("AiMopWorker disabled via AI_MOP_ENABLED")
 
     yield 
 
@@ -223,6 +235,14 @@ async def lifespan(app: FastAPI):
         article_publisher_task.cancel()
         try:
             await article_publisher_task
+        except asyncio.CancelledError:
+            pass
+    if ai_mop_worker:
+        await ai_mop_worker.shutdown()
+    if ai_mop_task:
+        ai_mop_task.cancel()
+        try:
+            await ai_mop_task
         except asyncio.CancelledError:
             pass
 
@@ -309,6 +329,14 @@ app.include_router(sales_management_router, prefix="/api/sales/management")
 app.include_router(telephony_router)
 app.include_router(websites_router)
 app.include_router(websites_public_router, prefix="/public-website")
+
+website_assets_path = os.getenv("WEBSITE_ASSETS_PATH", "/tmp/website_assets")
+Path(website_assets_path).mkdir(parents=True, exist_ok=True)
+app.mount(
+    "/assets/websites",
+    StaticFiles(directory=website_assets_path),
+    name="website_assets",
+)
 
 
 if __name__ == "__main__":

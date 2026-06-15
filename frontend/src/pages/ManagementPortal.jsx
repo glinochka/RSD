@@ -676,6 +676,7 @@ const MENU_ITEMS = [
   { id: 'emailBroadcast', label: 'Email рассылка' },
   { id: 'contentPublisher', label: 'Контент' },
   { id: 'salesDepartment', label: 'Отдел продаж' },
+  { id: 'aiMop', label: 'ИИ Моп' },
 ];
 
 function formatError(error) {
@@ -745,6 +746,17 @@ const ManagementPortal = () => {
   const [salesFunnelPeriod, setSalesFunnelPeriod] = useState('all');
   const [salesDeskFunnelPeriod, setSalesDeskFunnelPeriod] = useState('day');
   const [salesDeptLoading, setSalesDeptLoading] = useState(false);
+  const [aiMopDashboard, setAiMopDashboard] = useState(null);
+  const [aiMopAgents, setAiMopAgents] = useState([]);
+  const [aiMopLeads, setAiMopLeads] = useState({ items: [], page: 1, total: 0, page_size: 20 });
+  const [aiMopLeadsPage, setAiMopLeadsPage] = useState(1);
+  const [aiMopLoading, setAiMopLoading] = useState(false);
+  const [aiMopBusy, setAiMopBusy] = useState(null);
+  const [aiMopSuccess, setAiMopSuccess] = useState('');
+  const [aiMopTab, setAiMopTab] = useState('dashboard');
+  const [aiMopErrors, setAiMopErrors] = useState({ items: [], page: 1, total: 0, page_size: 20, by_stage: {} });
+  const [aiMopErrorsPage, setAiMopErrorsPage] = useState(1);
+  const [aiMopErrorStage, setAiMopErrorStage] = useState('');
   const [salesShowInactive, setSalesShowInactive] = useState(false);
   const [salesNewMember, setSalesNewMember] = useState({
     login: '',
@@ -848,7 +860,7 @@ const ManagementPortal = () => {
   const [actionInProgress, setActionInProgress] = useState(null);
   const [giftModal, setGiftModal] = useState({ open: false, user: null, planCode: 'Advanced' });
   const [broadcastDraft, setBroadcastDraft] = useState({ subject: '', body: '' });
-  const [broadcastIntervalSeconds, setBroadcastIntervalSeconds] = useState(900);
+  const [broadcastIntervalSeconds, setBroadcastIntervalSeconds] = useState('');
   const [broadcastJobId, setBroadcastJobId] = useState(null);
   const [broadcastJobStatus, setBroadcastJobStatus] = useState(null);
 
@@ -857,7 +869,7 @@ const ManagementPortal = () => {
     { id: 'g1', title: 'Группа 1', emailsRaw: '', selected: true },
   ]);
   const [targetedBroadcastDraft, setTargetedBroadcastDraft] = useState({ subject: '', body: '' });
-  const [targetedIntervalSeconds, setTargetedIntervalSeconds] = useState(900);
+  const [targetedIntervalSeconds, setTargetedIntervalSeconds] = useState('');
   const [targetedPreview, setTargetedPreview] = useState(null);
   const [targetedJobStatus, setTargetedJobStatus] = useState(null);
   const [targetedJobId, setTargetedJobId] = useState(null);
@@ -1288,6 +1300,45 @@ const ManagementPortal = () => {
     load();
     return () => { cancelled = true; };
   }, [adminToken, activeSection, salesFunnelPeriod]);
+
+  useEffect(() => {
+    if (!adminToken || activeSection !== 'aiMop') return;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        setAiMopLoading(true);
+        setError('');
+        const requests = [
+          adminService.aiMopGetDashboard(adminToken),
+          adminService.aiMopGetAgents(adminToken),
+        ];
+        if (aiMopTab === 'leads') {
+          requests.push(adminService.aiMopGetLeads(adminToken, { page: aiMopLeadsPage, pageSize: 20 }));
+        }
+        if (aiMopTab === 'errors') {
+          requests.push(
+            adminService.aiMopGetErrors(adminToken, {
+              page: aiMopErrorsPage,
+              pageSize: 20,
+              stage: aiMopErrorStage || undefined,
+            })
+          );
+        }
+        const results = await Promise.all(requests);
+        if (cancelled) return;
+        setAiMopDashboard(results[0]);
+        setAiMopAgents(results[1].items ?? []);
+        if (aiMopTab === 'leads' && results[2]) setAiMopLeads(results[2]);
+        if (aiMopTab === 'errors' && results[2]) setAiMopErrors(results[2]);
+      } catch (err) {
+        if (!cancelled) setError(formatError(err));
+      } finally {
+        if (!cancelled) setAiMopLoading(false);
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [adminToken, activeSection, aiMopTab, aiMopLeadsPage, aiMopErrorsPage, aiMopErrorStage]);
 
   const loadSalesDeskContacts = async (token, me, { page = 1, scope } = {}) => {
     const archived = (scope ?? salesContactsScope) === 'archive';
@@ -1892,14 +1943,22 @@ const ManagementPortal = () => {
       setError('Текст рассылки должен быть не короче 10 символов');
       return;
     }
-    const interval = Number(broadcastIntervalSeconds);
-    if (Number.isNaN(interval) || interval < 30) {
-      setError('Интервал между письмами — не меньше 30 секунд');
-      return;
+    const intervalRaw = String(broadcastIntervalSeconds ?? '').trim();
+    let intervalPayload = null;
+    if (intervalRaw !== '') {
+      const interval = Number(intervalRaw);
+      if (Number.isNaN(interval) || interval < 30) {
+        setError('Интервал между письмами — не меньше 30 секунд');
+        return;
+      }
+      intervalPayload = Math.min(Math.max(Math.round(interval), 30), 86400);
     }
+    const intervalLabel = intervalPayload
+      ? `${intervalPayload} с`
+      : 'случайно 5–10 мин';
     if (
       !window.confirm(
-        `Запустить рассылку по всем с подтверждённым email? Пауза между письмами: ${interval} с.`
+        `Запустить рассылку по всем с подтверждённым email? Пауза между письмами: ${intervalLabel}.`
       )
     ) {
       return;
@@ -1912,7 +1971,7 @@ const ManagementPortal = () => {
       const result = await adminService.sendEmailBroadcast(adminToken, {
         subject,
         body,
-        interval_seconds: Math.min(Math.max(Math.round(interval), 30), 86400),
+        interval_seconds: intervalPayload,
       });
       setBroadcastJobId(result.job_id);
     } catch (err) {
@@ -2023,10 +2082,15 @@ const ManagementPortal = () => {
       setError('Текст письма — не короче 10 символов');
       return;
     }
-    const interval = Number(targetedIntervalSeconds);
-    if (Number.isNaN(interval) || interval < 30) {
-      setError('Интервал между письмами — не меньше 30 секунд');
-      return;
+    const intervalRaw = String(targetedIntervalSeconds ?? '').trim();
+    let intervalPayload = null;
+    if (intervalRaw !== '') {
+      const interval = Number(intervalRaw);
+      if (Number.isNaN(interval) || interval < 30) {
+        setError('Интервал между письмами — не меньше 30 секунд');
+        return;
+      }
+      intervalPayload = Math.min(Math.max(Math.round(interval), 30), 86400);
     }
     const { groups, selected_titles } = buildTargetedPayload();
     if (!selected_titles.length) {
@@ -2037,9 +2101,12 @@ const ManagementPortal = () => {
       setError('У каждой группы должно быть название');
       return;
     }
+    const intervalLabel = intervalPayload
+      ? `${intervalPayload} с`
+      : 'случайно 5–10 мин';
     if (
       !window.confirm(
-        `Запустить точечную рассылку? Получатели: после разбора списков — смотрите превью. Пауза между письмами: ${interval} с.`
+        `Запустить точечную рассылку? Получатели: после разбора списков — смотрите превью. Пауза между письмами: ${intervalLabel}.`
       )
     ) {
       return;
@@ -2053,7 +2120,7 @@ const ManagementPortal = () => {
         selected_titles,
         subject,
         body,
-        interval_seconds: Math.min(Math.max(Math.round(interval), 30), 86400),
+        interval_seconds: intervalPayload,
       });
       setTargetedJobId(result.job_id);
       setTargetedPreview((prev) => ({
@@ -3760,6 +3827,481 @@ const ManagementPortal = () => {
     );
   };
 
+  const refreshAiMop = async () => {
+    if (!adminToken) return;
+    const [dashboard, agents] = await Promise.all([
+      adminService.aiMopGetDashboard(adminToken),
+      adminService.aiMopGetAgents(adminToken),
+    ]);
+    setAiMopDashboard(dashboard);
+    setAiMopAgents(agents.items ?? []);
+    if (aiMopTab === 'leads') {
+      const leads = await adminService.aiMopGetLeads(adminToken, { page: aiMopLeadsPage, pageSize: 20 });
+      setAiMopLeads(leads);
+    }
+    if (aiMopTab === 'errors') {
+      const errors = await adminService.aiMopGetErrors(adminToken, {
+        page: aiMopErrorsPage,
+        pageSize: 20,
+        stage: aiMopErrorStage || undefined,
+      });
+      setAiMopErrors(errors);
+    }
+  };
+
+  const handleAiMopExcel = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      setAiMopBusy('upload');
+      setError('');
+      setAiMopSuccess('');
+      const res = await adminService.aiMopUploadLeads(adminToken, file);
+      await refreshAiMop();
+      setAiMopSuccess(
+        `Загружено: +${res.inserted ?? 0}, обновлено: ${res.updated ?? 0}, пропущено: ${res.skipped ?? 0}`
+      );
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setAiMopBusy(null);
+      e.target.value = '';
+    }
+  };
+
+  const handleAiMopAssign = async (agentId) => {
+    try {
+      setAiMopBusy(`assign-${agentId}`);
+      setError('');
+      await adminService.aiMopAssignAgent(adminToken, agentId, { enabled: true });
+      await refreshAiMop();
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setAiMopBusy(null);
+    }
+  };
+
+  const handleAiMopUnassign = async (agentId) => {
+    if (!window.confirm('Отключить ИИ Моп для этого агента?')) return;
+    try {
+      setAiMopBusy(`unassign-${agentId}`);
+      setError('');
+      await adminService.aiMopUnassignAgent(adminToken, agentId);
+      await refreshAiMop();
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setAiMopBusy(null);
+    }
+  };
+
+  const handleAiMopToggle = async (agentId, enabled) => {
+    try {
+      setAiMopBusy(`toggle-${agentId}`);
+      setError('');
+      await adminService.aiMopToggleAgent(adminToken, agentId, enabled);
+      await refreshAiMop();
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setAiMopBusy(null);
+    }
+  };
+
+  const handleAiMopClearLeads = async () => {
+    if (!window.confirm('Удалить необработанные лиды из базы ИИ Моп?')) return;
+    try {
+      setAiMopBusy('clear');
+      setError('');
+      const res = await adminService.aiMopClearLeads(adminToken, { onlyPending: true });
+      setAiMopSuccess(`Удалено лидов: ${res.deleted ?? 0}`);
+      await refreshAiMop();
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setAiMopBusy(null);
+    }
+  };
+
+  const renderAiMop = () => {
+    const leadStats = aiMopDashboard?.leads || {};
+    const totalLeadPages = Math.max(1, Math.ceil((aiMopLeads.total || 0) / (aiMopLeads.page_size || 20)));
+    const totalErrorPages = Math.max(1, Math.ceil((aiMopErrors.total || 0) / (aiMopErrors.page_size || 20)));
+    const errorStageOptions = [
+      { value: '', label: 'Все этапы' },
+      { value: 'no_messenger', label: 'Нет мессенджера' },
+      { value: 'website', label: 'Генерация сайта' },
+      { value: 'outreach_compose', label: 'Текст сообщения' },
+      { value: 'outreach_queue', label: 'Очередь' },
+      { value: 'outreach_send', label: 'Отправка в мессенджер' },
+      { value: 'provisioning', label: 'Провижининг' },
+    ];
+    return (
+      <>
+        <div className="management-content-head management-content-head--stack">
+          <h2>ИИ Моп</h2>
+          <p className="management-cell-muted">
+            Кастомный пайплайн для sales_manager: аккаунт → ИИ-администратор → сайт → outreach через
+            подключённые userbot-каналы (Telegram / WhatsApp). Пауза между лидами — 3–7 минут.
+            Воркер: AI_MOP_ENABLED=true в .env.
+          </p>
+        </div>
+        <div className="management-billing-tabs" style={{ marginBottom: '1rem' }}>
+          <button
+            type="button"
+            className={aiMopTab === 'dashboard' ? 'active' : ''}
+            onClick={() => setAiMopTab('dashboard')}
+          >
+            Обзор
+          </button>
+          <button
+            type="button"
+            className={aiMopTab === 'leads' ? 'active' : ''}
+            onClick={() => setAiMopTab('leads')}
+          >
+            Лиды
+          </button>
+          <button
+            type="button"
+            className={aiMopTab === 'errors' ? 'active' : ''}
+            onClick={() => setAiMopTab('errors')}
+          >
+            Ошибки {leadStats.failed ? `(${leadStats.failed})` : ''}
+          </button>
+        </div>
+        {error && activeSection === 'aiMop' && <div className="management-error">{error}</div>}
+        {aiMopSuccess && activeSection === 'aiMop' && (
+          <div className="management-success">{aiMopSuccess}</div>
+        )}
+        {aiMopLoading ? (
+          <p>Загрузка...</p>
+        ) : aiMopTab === 'errors' ? (
+          <>
+            <div className="management-stats-grid">
+              {Object.entries(aiMopErrors.by_stage || {}).map(([stage, count]) => (
+                <div key={stage} className="management-stat-card">
+                  <div className="management-stat-label">{stage}</div>
+                  <div className="management-stat-value">{count}</div>
+                </div>
+              ))}
+            </div>
+            <div className="management-form-actions" style={{ margin: '1rem 0' }}>
+              <label>
+                Этап
+                <select
+                  className="management-field"
+                  value={aiMopErrorStage}
+                  onChange={(e) => {
+                    setAiMopErrorStage(e.target.value);
+                    setAiMopErrorsPage(1);
+                  }}
+                >
+                  {errorStageOptions.map((opt) => (
+                    <option key={opt.value || 'all'} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div className="management-table-wrap">
+              <table className="management-table">
+                <thead>
+                  <tr>
+                    <th>Компания</th>
+                    <th>Этап</th>
+                    <th>Сайт</th>
+                    <th>Канал</th>
+                    <th>Ошибка</th>
+                    <th>Обновлено</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(aiMopErrors.items || []).length === 0 && (
+                    <tr>
+                      <td colSpan={6}>Ошибок нет</td>
+                    </tr>
+                  )}
+                  {(aiMopErrors.items || []).map((row) => (
+                    <tr key={row.id}>
+                      <td>{row.org_name}</td>
+                      <td>{row.failure_stage_label || row.failure_stage || '—'}</td>
+                      <td>
+                        {row.website_url ? (
+                          <a href={row.website_url} target="_blank" rel="noreferrer">
+                            {row.provisioned_website_id ? 'сайт' : '—'}
+                          </a>
+                        ) : (
+                          'не создан'
+                        )}
+                      </td>
+                      <td className="management-cell-muted">
+                        {row.outreach_channel ? `${row.outreach_channel} → ${row.outreach_target}` : '—'}
+                      </td>
+                      <td className="management-cell-muted" title={row.last_error}>
+                        {(row.last_error || '—').slice(0, 120)}
+                      </td>
+                      <td className="management-cell-muted">
+                        {row.updated_at ? new Date(row.updated_at).toLocaleString('ru-RU') : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="management-pagination">
+              <button
+                type="button"
+                className="btn btn-outline"
+                disabled={aiMopErrorsPage <= 1}
+                onClick={() => setAiMopErrorsPage((p) => Math.max(1, p - 1))}
+              >
+                Назад
+              </button>
+              <span>
+                {aiMopErrorsPage} / {totalErrorPages}
+              </span>
+              <button
+                type="button"
+                className="btn btn-outline"
+                disabled={aiMopErrorsPage >= totalErrorPages}
+                onClick={() => setAiMopErrorsPage((p) => p + 1)}
+              >
+                Вперёд
+              </button>
+            </div>
+          </>
+        ) : aiMopTab === 'leads' ? (
+          <>
+            <div className="management-table-wrap">
+              <table className="management-table">
+                <thead>
+                  <tr>
+                    <th>Компания</th>
+                    <th>Email аккаунта</th>
+                    <th>Статус</th>
+                    <th>Сайт</th>
+                    <th>Канал</th>
+                    <th>Отправлено</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(aiMopLeads.items || []).length === 0 && (
+                    <tr>
+                      <td colSpan={6}>Нет лидов</td>
+                    </tr>
+                  )}
+                  {(aiMopLeads.items || []).map((lead) => (
+                    <tr key={lead.id}>
+                      <td>{lead.org_name}</td>
+                      <td>{lead.email}</td>
+                      <td>{lead.status}</td>
+                      <td>
+                        {lead.website_url ? (
+                          <a href={lead.website_url} target="_blank" rel="noreferrer">
+                            {lead.website_url}
+                          </a>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                      <td className="management-cell-muted">{lead.outreach_channel || '—'}</td>
+                      <td className="management-cell-muted">
+                        {lead.outreach_sent_at
+                          ? new Date(lead.outreach_sent_at).toLocaleString('ru-RU')
+                          : lead.last_error || '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="management-pagination">
+              <button
+                type="button"
+                className="btn btn-outline"
+                disabled={aiMopLeadsPage <= 1 || !!aiMopBusy}
+                onClick={() => setAiMopLeadsPage((p) => Math.max(1, p - 1))}
+              >
+                Назад
+              </button>
+              <span>
+                {aiMopLeadsPage} / {totalLeadPages}
+              </span>
+              <button
+                type="button"
+                className="btn btn-outline"
+                disabled={aiMopLeadsPage >= totalLeadPages || !!aiMopBusy}
+                onClick={() => setAiMopLeadsPage((p) => p + 1)}
+              >
+                Вперёд
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="management-stats-grid">
+              <div className="management-stat-card">
+                <div className="management-stat-label">Всего лидов</div>
+                <div className="management-stat-value">{leadStats.total ?? 0}</div>
+              </div>
+              <div className="management-stat-card">
+                <div className="management-stat-label">В очереди</div>
+                <div className="management-stat-value">{leadStats.pending ?? 0}</div>
+              </div>
+              <div className="management-stat-card">
+                <div className="management-stat-label">В очереди DM</div>
+                <div className="management-stat-value">{leadStats.outreach_queued ?? 0}</div>
+              </div>
+              <div className="management-stat-card">
+                <div className="management-stat-label">Отправлено</div>
+                <div className="management-stat-value">{leadStats.outreach_sent ?? 0}</div>
+              </div>
+              <div className="management-stat-card">
+                <div className="management-stat-label">Ошибки</div>
+                <div className="management-stat-value">{leadStats.failed ?? 0}</div>
+              </div>
+              <div className="management-stat-card">
+                <div className="management-stat-label">Активных агентов</div>
+                <div className="management-stat-value">{aiMopDashboard?.active_agents ?? 0}</div>
+              </div>
+            </div>
+
+            <h3 style={{ marginTop: '1.5rem' }}>База лидов</h3>
+            <div className="management-form-actions" style={{ marginBottom: '1rem' }}>
+              <label className="btn btn-black" style={{ cursor: 'pointer' }}>
+                {aiMopBusy === 'upload' ? 'Загрузка...' : 'Загрузить Excel'}
+                <input
+                  type="file"
+                  accept=".xlsx,.xls"
+                  onChange={handleAiMopExcel}
+                  disabled={!!aiMopBusy}
+                  style={{ display: 'none' }}
+                />
+              </label>
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={handleAiMopClearLeads}
+                disabled={!!aiMopBusy}
+              >
+                Очистить очередь
+              </button>
+            </div>
+
+            <h3 style={{ marginTop: '1.5rem' }}>Агенты sales_manager</h3>
+            <div className="management-table-wrap">
+              <table className="management-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Владелец</th>
+                    <th>Промпт</th>
+                    <th>ИИ Моп</th>
+                    <th>Отправлено</th>
+                    <th>Действия</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {aiMopAgents.length === 0 && (
+                    <tr>
+                      <td colSpan={6}>Нет агентов с шаблоном sales_manager</td>
+                    </tr>
+                  )}
+                  {aiMopAgents.map((agent) => (
+                    <tr key={agent.id}>
+                      <td>{agent.id}</td>
+                      <td>{agent.owner_email || '—'}</td>
+                      <td className="management-cell-muted">{agent.system_prompt_preview || '—'}</td>
+                      <td>
+                        {agent.ai_mop_assigned
+                          ? agent.ai_mop_enabled
+                            ? agent.assignment?.is_busy
+                              ? 'В работе'
+                              : 'Включён'
+                            : 'На паузе'
+                          : '—'}
+                      </td>
+                      <td>{agent.assignment?.leads_sent ?? 0}</td>
+                      <td>
+                        {!agent.ai_mop_assigned ? (
+                          <button
+                            type="button"
+                            className="btn btn-black btn-sm"
+                            disabled={!!aiMopBusy || !agent.is_active}
+                            onClick={() => handleAiMopAssign(agent.id)}
+                          >
+                            Подключить
+                          </button>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              className="btn btn-outline btn-sm"
+                              disabled={!!aiMopBusy}
+                              onClick={() => handleAiMopToggle(agent.id, !agent.ai_mop_enabled)}
+                            >
+                              {agent.ai_mop_enabled ? 'Пауза' : 'Включить'}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-outline btn-sm"
+                              disabled={!!aiMopBusy}
+                              onClick={() => handleAiMopUnassign(agent.id)}
+                              style={{ marginLeft: '0.5rem' }}
+                            >
+                              Отключить
+                            </button>
+                          </>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {aiMopDashboard?.agents?.length > 0 && (
+              <>
+                <h3 style={{ marginTop: '1.5rem' }}>Эффективность подключённых агентов</h3>
+                <div className="management-table-wrap">
+                  <table className="management-table">
+                    <thead>
+                      <tr>
+                        <th>Агент</th>
+                        <th>Обработано</th>
+                        <th>Отправлено</th>
+                        <th>Ошибки</th>
+                        <th>Последний запуск</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {aiMopDashboard.agents.map((row) => (
+                        <tr key={row.agent_id}>
+                          <td>#{row.agent_id} {row.bot_username ? `@${row.bot_username}` : ''}</td>
+                          <td>{row.leads_processed}</td>
+                          <td>{row.leads_sent}</td>
+                          <td>{row.leads_failed}</td>
+                          <td className="management-cell-muted">
+                            {row.last_run_at ? new Date(row.last_run_at).toLocaleString('ru-RU') : '—'}
+                            {row.last_error && (
+                              <div title={row.last_error}> ⚠</div>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </>
+        )}
+      </>
+    );
+  };
+
   const renderSalesDepartment = () => (
     <>
       <div className="management-content-head management-content-head--stack">
@@ -5062,20 +5604,23 @@ const ManagementPortal = () => {
         <section className="management-broadcast-card">
           <h3 className="management-broadcast-card-title">Все подтверждённые пользователи</h3>
           <p className="management-broadcast-card-desc">
-            По одному письму на адрес, с паузой между отправками (как в MailoPost). Значение паузы по умолчанию
-            можно задать в окружении сервера <code>MAILOPOST_BROADCAST_INTERVAL_SECONDS</code> (например 900 = 15 мин).
+            По одному письму на адрес, с паузой между отправками. По умолчанию — случайно 5–10 минут между
+            письмами (настраивается на сервере через{' '}
+            <code>MAILOPOST_BROADCAST_INTERVAL_MIN_SECONDS</code> /{' '}
+            <code>MAILOPOST_BROADCAST_INTERVAL_MAX_SECONDS</code>).
           </p>
           <form className="management-broadcast-form" onSubmit={handleSendEmailBroadcast}>
             <div className="management-form-row">
-              <label htmlFor="broadcast-interval">Пауза между письмами (секунд)</label>
+              <label htmlFor="broadcast-interval">Пауза между письмами (секунд, необязательно)</label>
               <input
                 id="broadcast-interval"
                 type="number"
                 min={30}
                 max={86400}
                 step={1}
+                placeholder="По умолчанию: случайно 5–10 мин"
                 value={broadcastIntervalSeconds}
-                onChange={(e) => setBroadcastIntervalSeconds(Number(e.target.value))}
+                onChange={(e) => setBroadcastIntervalSeconds(e.target.value)}
               />
             </div>
             <div className="management-form-row">
@@ -5211,17 +5756,18 @@ const ManagementPortal = () => {
 
           <form className="management-broadcast-form management-targeted-message" onSubmit={handleTargetedSend}>
             <div className="management-form-row">
-              <label>Пауза между письмами (секунд)</label>
+              <label>Пауза между письмами (секунд, необязательно)</label>
               <input
                 type="number"
                 min={30}
                 max={86400}
                 step={1}
+                placeholder="По умолчанию: случайно 5–10 мин"
                 value={targetedIntervalSeconds}
-                onChange={(e) => setTargetedIntervalSeconds(Number(e.target.value))}
+                onChange={(e) => setTargetedIntervalSeconds(e.target.value)}
               />
               <span className="management-broadcast-hint">
-                По умолчанию 900 с (15 мин). Минимум 30 с, максимум сутки.
+                Пустое поле — случайная пауза 5–10 мин. Можно задать фиксированную от 30 с до суток.
               </span>
             </div>
             <div className="management-form-row">
@@ -5540,6 +6086,7 @@ const ManagementPortal = () => {
             {activeSection === 'partnerPayouts' && renderPartnerPayouts()}
             {activeSection === 'emailBroadcast' && renderEmailBroadcast()}
             {activeSection === 'salesDepartment' && renderSalesDepartment()}
+            {activeSection === 'aiMop' && renderAiMop()}
           </section>
         </main>
       )}

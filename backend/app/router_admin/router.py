@@ -4,6 +4,7 @@ from html import escape
 import json
 from logging import getLogger
 import os
+import random
 import re
 from secrets import compare_digest
 import uuid
@@ -92,6 +93,14 @@ def _mailopost_rate_limit_retry_seconds(response: httpx.Response) -> int | None:
         if match:
             return int(match.group(1))
     return None
+
+
+def _next_mailopost_broadcast_interval_seconds() -> int:
+    lo = settings.MAILOPOST_BROADCAST_INTERVAL_MIN_SECONDS
+    hi = settings.MAILOPOST_BROADCAST_INTERVAL_MAX_SECONDS
+    if lo > hi:
+        lo, hi = hi, lo
+    return random.randint(lo, hi)
 
 
 def _render_broadcast_html(*, subject: str, body: str) -> str:
@@ -209,7 +218,7 @@ async def _run_admin_mass_mail_job(
     recipients: list[str],
     subject: str,
     body: str,
-    interval_seconds: int,
+    interval_seconds: int | None,
 ) -> None:
     global _current_admin_mass_mail_job_id
     job = _admin_mass_mail_jobs.get(job_id)
@@ -232,7 +241,12 @@ async def _run_admin_mass_mail_job(
             else:
                 job["failed"] = job.get("failed", 0) + 1
             if i + 1 < len(recipients):
-                await asyncio.sleep(interval_seconds)
+                pause = (
+                    interval_seconds
+                    if interval_seconds is not None
+                    else _next_mailopost_broadcast_interval_seconds()
+                )
+                await asyncio.sleep(pause)
         job["status"] = "completed"
     except Exception as exc:
         logger.exception("Targeted broadcast job %s failed", job_id)
@@ -1347,9 +1361,8 @@ async def admin_email_broadcast(
     body = payload.body.strip()
 
     interval_seconds = payload.interval_seconds
-    if interval_seconds is None:
-        interval_seconds = settings.MAILOPOST_BROADCAST_INTERVAL_SECONDS
-    interval_seconds = max(30, min(int(interval_seconds), 86_400))
+    if interval_seconds is not None:
+        interval_seconds = max(30, min(int(interval_seconds), 86_400))
 
     async with async_session_maker() as session:
         async with session.begin():
@@ -1412,11 +1425,19 @@ async def admin_email_broadcast(
         )
     )
 
+    interval_desc = (
+        f"{interval_seconds}s"
+        if interval_seconds is not None
+        else (
+            f"random {settings.MAILOPOST_BROADCAST_INTERVAL_MIN_SECONDS}-"
+            f"{settings.MAILOPOST_BROADCAST_INTERVAL_MAX_SECONDS}s"
+        )
+    )
     logger.info(
-        "Admin all-verified email broadcast queued: job_id=%s total=%s interval=%ss subject=%s",
+        "Admin all-verified email broadcast queued: job_id=%s total=%s interval=%s subject=%s",
         job_id,
         total,
-        interval_seconds,
+        interval_desc,
         subject,
     )
 
@@ -1427,6 +1448,16 @@ async def admin_email_broadcast(
             "status": "started",
             "total_recipients": total,
             "interval_seconds": interval_seconds,
+            "interval_seconds_min": (
+                settings.MAILOPOST_BROADCAST_INTERVAL_MIN_SECONDS
+                if interval_seconds is None
+                else None
+            ),
+            "interval_seconds_max": (
+                settings.MAILOPOST_BROADCAST_INTERVAL_MAX_SECONDS
+                if interval_seconds is None
+                else None
+            ),
             "subject": subject,
         },
     )
@@ -1469,9 +1500,8 @@ async def admin_email_targeted_broadcast(
         )
 
     interval_seconds = payload.interval_seconds
-    if interval_seconds is None:
-        interval_seconds = settings.MAILOPOST_BROADCAST_INTERVAL_SECONDS
-    interval_seconds = max(30, min(int(interval_seconds), 86_400))
+    if interval_seconds is not None:
+        interval_seconds = max(30, min(int(interval_seconds), 86_400))
 
     global _current_admin_mass_mail_job_id
 
@@ -1517,11 +1547,19 @@ async def admin_email_targeted_broadcast(
         )
     )
 
+    interval_desc = (
+        f"{interval_seconds}s"
+        if interval_seconds is not None
+        else (
+            f"random {settings.MAILOPOST_BROADCAST_INTERVAL_MIN_SECONDS}-"
+            f"{settings.MAILOPOST_BROADCAST_INTERVAL_MAX_SECONDS}s"
+        )
+    )
     logger.info(
-        "Admin targeted email broadcast queued: job_id=%s total=%s interval=%ss subject=%s",
+        "Admin targeted email broadcast queued: job_id=%s total=%s interval=%s subject=%s",
         job_id,
         len(recipients),
-        interval_seconds,
+        interval_desc,
         subject,
     )
 
@@ -1532,6 +1570,16 @@ async def admin_email_targeted_broadcast(
             "status": "started",
             "total_recipients": len(recipients),
             "interval_seconds": interval_seconds,
+            "interval_seconds_min": (
+                settings.MAILOPOST_BROADCAST_INTERVAL_MIN_SECONDS
+                if interval_seconds is None
+                else None
+            ),
+            "interval_seconds_max": (
+                settings.MAILOPOST_BROADCAST_INTERVAL_MAX_SECONDS
+                if interval_seconds is None
+                else None
+            ),
             "preview": meta,
         },
     )
@@ -1883,5 +1931,7 @@ async def ap_preview_article(
 
 
 from .sales_admin import router as admin_sales_router  # noqa: E402
+from .ai_mop_admin import router as admin_ai_mop_router  # noqa: E402
 
 router.include_router(admin_sales_router)
+router.include_router(admin_ai_mop_router)
