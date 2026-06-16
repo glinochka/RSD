@@ -589,11 +589,47 @@ def _inject_tailwind_color(html: str, primary_color: str | None) -> str:
     return html
 
 
+# Website model column limits (websites.title, meta_description, og_*)
+_WEBSITE_TITLE_MAX_LEN = 100
+_WEBSITE_META_DESCRIPTION_MAX_LEN = 500
+_WEBSITE_OG_DESCRIPTION_MAX_LEN = 300
+
+
+def _normalize_website_meta(meta: dict | None) -> dict[str, str]:
+    """Clamp meta fields to DB column sizes."""
+    meta = meta or {}
+    title = str(meta.get("title") or "")[:_WEBSITE_TITLE_MAX_LEN]
+    description = str(meta.get("description") or "")[:_WEBSITE_META_DESCRIPTION_MAX_LEN]
+    og_description = str(meta.get("og_description") or description)[
+        :_WEBSITE_OG_DESCRIPTION_MAX_LEN
+    ]
+    return {
+        "title": title,
+        "description": description,
+        "og_title": str(meta.get("og_title") or title)[:_WEBSITE_TITLE_MAX_LEN],
+        "og_description": og_description,
+    }
+
+
+def _prepare_html_for_db_storage(html: str) -> str:
+    """Remove characters that PostgreSQL JSON/text columns reject."""
+    if not html:
+        return ""
+    return "".join(
+        ch
+        for ch in html
+        if ch != "\x00" and (ch in "\t\n\r" or ord(ch) >= 32)
+    )
+
+
 def _build_meta_from_html(html: str, business_name: str, business_description: str) -> dict:
     """Extract meta info from the generated HTML content."""
-    title = business_name[:100]
-    description = business_description[:500]
-    return {"title": title, "description": description}
+    return _normalize_website_meta(
+        {
+            "title": business_name,
+            "description": business_description,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -858,13 +894,38 @@ class WebsiteGenerationService:
         website_id: int,
         html_content: str,
         meta: dict,
-    ) -> bool:
+    ) -> tuple[bool, str | None]:
         """Save generated HTML to the website as a fullpage block."""
         logger.info(f"[WebsiteGenService] apply_generated_html called for website_id={website_id}")
         logger.info(f"[WebsiteGenService] HTML content size: {len(html_content)} chars")
-        logger.info(f"[WebsiteGenService] Meta: title='{meta.get('title', 'N/A')[:50]}...'")
+        normalized_meta = _normalize_website_meta(meta)
+        logger.info(
+            "[WebsiteGenService] Meta: title='%s...', description_len=%s, og_description_len=%s",
+            normalized_meta["title"][:50],
+            len(normalized_meta["description"]),
+            len(normalized_meta["og_description"]),
+        )
 
         try:
+            sanitization_service = get_website_sanitization_service()
+            try:
+                sanitized_html = sanitization_service.sanitize_fullpage_html(html_content)
+            except Exception as sanitize_exc:
+                logger.warning(
+                    "[WebsiteGenService] Fullpage sanitization failed for website_id=%s, "
+                    "storing normalized HTML only: %s",
+                    website_id,
+                    sanitize_exc,
+                )
+                sanitized_html = _prepare_html_for_db_storage(html_content)
+            else:
+                sanitized_html = _prepare_html_for_db_storage(sanitized_html)
+            logger.info(
+                "[WebsiteGenService] HTML sanitized: %s -> %s chars",
+                len(html_content),
+                len(sanitized_html),
+            )
+
             async with async_session_maker() as session:
                 async with session.begin():
                     website_dao = WebsiteDAO(session)
@@ -873,16 +934,16 @@ class WebsiteGenerationService:
                     website = await website_dao.find_one_by_filter(id=website_id)
                     if not website:
                         logger.error(f"[WebsiteGenService] Website not found: {website_id}")
-                        return False
+                        return False, "Website not found"
 
                     logger.info(f"[WebsiteGenService] Found website '{website.title}', updating metadata")
 
                     # Update website metadata
                     updates = {
-                        "title": meta.get("title", ""),
-                        "meta_description": meta.get("description", ""),
-                        "og_title": meta.get("title", ""),
-                        "og_description": meta.get("description", ""),
+                        "title": normalized_meta["title"],
+                        "meta_description": normalized_meta["description"],
+                        "og_title": normalized_meta["og_title"],
+                        "og_description": normalized_meta["og_description"],
                         "custom_styles": {
                             **(website.custom_styles or {}),
                             "rendering_mode": "fullpage",
@@ -903,11 +964,6 @@ class WebsiteGenerationService:
                         await block_dao.delete(block)
                     logger.info(f"[WebsiteGenService] Cleared {blocks_count} existing blocks")
 
-                    # Sanitize HTML while preserving safe scripts for carousels/animations
-                    sanitization_service = get_website_sanitization_service()
-                    sanitized_html = sanitization_service.sanitize_fullpage_html(html_content)
-                    logger.info(f"[WebsiteGenService] HTML sanitized: {len(html_content)} -> {len(sanitized_html)} chars")
-
                     # Create single fullpage block
                     logger.info(f"[WebsiteGenService] Creating fullpage block for website_id={website_id}")
                     block = WebsiteBlock(
@@ -921,12 +977,11 @@ class WebsiteGenerationService:
                     session.add(block)
                     logger.info(f"[WebsiteGenService] Fullpage block added to session for website_id={website_id}")
 
-                    # File creation is logged at the DB level
                     logger.info(f"[WebsiteGenService] apply_generated_html completed successfully for website_id={website_id}")
-                    return True
+                    return True, None
         except Exception as e:
             logger.exception(f"[WebsiteGenService] Error in apply_generated_html for website_id={website_id}: {e}")
-            return False
+            return False, str(e)
 
     async def edit_website_with_prompt(
         self,

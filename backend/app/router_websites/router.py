@@ -1390,7 +1390,7 @@ async def _run_website_generation(
                     # Apply generated HTML
                     logger.info(f"[WebsiteGen] Applying generated HTML for website_id={website_id}")
                     await _append_runtime_log("Сохранение сгенерированного HTML в сайт")
-                    success = await service.apply_generated_html(
+                    success, save_error = await service.apply_generated_html(
                         website_id, result.html_content, result.meta or {}
                     )
                     if success:
@@ -1408,12 +1408,17 @@ async def _run_website_generation(
                         await _append_runtime_log("Генерация завершена успешно (completed)")
                     else:
                         # apply_generated_html failed - mark as failed
-                        error_msg = "AI generated HTML but failed to save to database"
-                        logger.error(f"[WebsiteGen] apply_generated_html failed for website_id={website_id}")
+                        error_msg = save_error or "AI generated HTML but failed to save to database"
+                        logger.error(
+                            "[WebsiteGen] apply_generated_html failed for website_id=%s: %s",
+                            website_id,
+                            error_msg,
+                        )
                         await _log_website_builder_failure(
                             scenario=f"Website AI generation: save failed (website_id={website_id})",
                             message=error_msg,
                             website_id=website_id,
+                            exc=RuntimeError(error_msg),
                             context={
                                 "business_name": request.business_name,
                                 "agent_id": request.agent_id,
