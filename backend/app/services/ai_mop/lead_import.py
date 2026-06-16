@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -15,6 +16,9 @@ from ...alembic.models import AiMopLead
 from ...config import settings
 from ...router_websites.utils import generate_slug_from_name
 from ..sales_excel_import import parse_sales_excel
+
+_EMAIL_LOCAL_SUFFIX_RE = re.compile(r"^(?P<base>.+?)(?P<num>\d+)$")
+_MAX_ACCOUNT_EMAIL_CANDIDATES = 1000
 
 
 def _utc_now() -> datetime:
@@ -34,6 +38,40 @@ def generate_account_email_from_org(org_name: str) -> str:
     slug = generate_slug_from_name(org_name.strip() or "business")
     domain = (settings.AI_MOP_ACCOUNT_EMAIL_DOMAIN or "rsd-ai.ru").strip().lstrip("@")
     return f"{slug}@{domain}"[:255]
+
+
+def account_email_candidates(preferred_email: str, *, max_candidates: int = _MAX_ACCOUNT_EMAIL_CANDIDATES) -> list[str]:
+    """Варианты email: base@domain, base1@domain, base2@domain, …"""
+    preferred = preferred_email.strip().casefold()
+    local, _, domain = preferred.rpartition("@")
+    if not local or not domain:
+        raise ValueError(f"Invalid account email: {preferred_email}")
+
+    match = _EMAIL_LOCAL_SUFFIX_RE.match(local)
+    if match:
+        base_local = match.group("base")
+        start_suffix = int(match.group("num"))
+        candidates = [f"{base_local}{start_suffix}@{domain}"]
+        first_suffix = start_suffix + 1
+    else:
+        base_local = local
+        candidates = [f"{base_local}@{domain}"]
+        first_suffix = 1
+
+    for suffix in range(first_suffix, first_suffix + max(0, max_candidates - len(candidates))):
+        candidate = f"{base_local}{suffix}@{domain}"
+        if candidate not in candidates:
+            candidates.append(candidate)
+    return [candidate[:255] for candidate in candidates]
+
+
+async def allocate_unique_account_email(user_dao, preferred_email: str) -> str:
+    """Подобрать свободный login-email, добавляя суффикс 1, 2, 3… при занятости."""
+    for candidate in account_email_candidates(preferred_email):
+        existing = await user_dao.find_one_by_filter(email=candidate)
+        if existing is None:
+            return candidate
+    raise ValueError(f"Could not allocate unique account email for {preferred_email}")
 
 
 def _extract_address(extra: dict[str, Any]) -> str | None:

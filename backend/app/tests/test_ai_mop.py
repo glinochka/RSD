@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from app.services.ai_mop.lead_import import _dedup_key, generate_account_email_from_org
+from app.services.ai_mop.lead_import import (
+    _dedup_key,
+    account_email_candidates,
+    allocate_unique_account_email,
+    generate_account_email_from_org,
+)
 from app.services.ai_mop.outreach import _ai_mop_outreach_user_message
 from app.services.ai_mop.provisioning import generate_temp_password
 from app.services.sales.outreach_scheduling import EXCEL_STAGGER_MAX_MINUTES, EXCEL_STAGGER_MIN_MINUTES
@@ -31,6 +36,43 @@ def test_generate_account_email_from_org(monkeypatch):
     assert "@" in email
     local = email.split("@")[0]
     assert local.isascii()
+
+
+def test_account_email_candidates_adds_numeric_suffixes():
+    candidates = account_email_candidates("dentrium@rsd-ai.ru", max_candidates=4)
+    assert candidates == [
+        "dentrium@rsd-ai.ru",
+        "dentrium1@rsd-ai.ru",
+        "dentrium2@rsd-ai.ru",
+        "dentrium3@rsd-ai.ru",
+    ]
+
+
+def test_account_email_candidates_continue_from_existing_suffix():
+    candidates = account_email_candidates("dentrium2@rsd-ai.ru", max_candidates=3)
+    assert candidates == [
+        "dentrium2@rsd-ai.ru",
+        "dentrium3@rsd-ai.ru",
+        "dentrium4@rsd-ai.ru",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_allocate_unique_account_email_skips_taken_addresses():
+    class _User:
+        def __init__(self, email: str) -> None:
+            self.email = email
+
+    class _UserDAO:
+        def __init__(self, taken: set[str]) -> None:
+            self.taken = taken
+
+        async def find_one_by_filter(self, *, email: str):
+            return _User(email) if email in self.taken else None
+
+    dao = _UserDAO({"dentrium@rsd-ai.ru"})
+    allocated = await allocate_unique_account_email(dao, "dentrium@rsd-ai.ru")
+    assert allocated == "dentrium1@rsd-ai.ru"
 
 
 def test_ai_mop_outreach_user_message_includes_demo_credentials():

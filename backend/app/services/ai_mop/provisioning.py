@@ -29,6 +29,7 @@ from ...utils.security import get_password_hash
 from ..admin_booking import get_admin_booking_service
 from ..admin_booking.domains import DOMAIN_REGISTRY
 from ..website_generation_service import get_website_generation_service
+from .lead_import import allocate_unique_account_email
 from .llm_helpers import build_lead_context, generate_provision_profile
 
 logger = logging.getLogger(__name__)
@@ -136,37 +137,31 @@ async def provision_lead_demo(
     agent_prompt = str(profile.get("agent_system_prompt") or f"Ты ИИ-администратор компании {lead.org_name}.")
     agent_prompt = f"Ты ИИ-администратор компании «{lead.org_name}». {agent_prompt}".strip()
     temp_password = generate_temp_password()
-    normalized_email = _validate_email_or_422(lead.email)
+    preferred_email = _validate_email_or_422(lead.email)
 
     async with async_session_maker() as session:
         user_dao = UserDAO(session)
         agent_dao = AgentDAO(session)
         async with session.begin():
-            existing = await user_dao.find_one_by_filter(email=normalized_email)
-            if existing and existing.email_verified:
-                raise ValueError(f"Email already registered: {normalized_email}")
+            normalized_email = await allocate_unique_account_email(user_dao, preferred_email)
+            if normalized_email != preferred_email:
+                logger.info(
+                    "AI MOP allocated alternate login email for lead %s: %s -> %s",
+                    lead.id,
+                    preferred_email,
+                    normalized_email,
+                )
 
             username = await _build_unique_username(user_dao, normalized_email)
-            if existing:
-                user = existing
-                await user_dao.update(
-                    user,
-                    {
-                        "name": username,
-                        "password": get_password_hash(temp_password),
-                        "email_verified": True,
-                    },
-                )
-            else:
-                user = await user_dao.add(
-                    {
-                        "name": username,
-                        "email": normalized_email,
-                        "password": get_password_hash(temp_password),
-                        "email_verified": True,
-                    }
-                )
-                await session.flush()
+            user = await user_dao.add(
+                {
+                    "name": username,
+                    "email": normalized_email,
+                    "password": get_password_hash(temp_password),
+                    "email_verified": True,
+                }
+            )
+            await session.flush()
 
             template_config = _default_crm_admin_config(domain_type)
             external_api_key = generate_agent_external_api_key()
@@ -277,6 +272,15 @@ async def provision_lead_demo(
             await website_dao.publish(website)
 
     website_url = _website_public_url(final_slug)
+
+    if normalized_email != preferred_email:
+        async with async_session_maker() as session:
+            async with session.begin():
+                db_lead = await session.get(AiMopLead, lead.id)
+                if db_lead is not None:
+                    db_lead.email = normalized_email[:255]
+                    db_lead.updated_at = _utc_now()
+
     return {
         "provisioned_user_id": provisioned_user_id,
         "provisioned_agent_id": provisioned_agent_id,
