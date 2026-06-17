@@ -36,7 +36,6 @@ const CRM_TOOL_OPTIONS = [
 const CRM_DOMAIN_OPTIONS_FALLBACK = [
   { value: 'beauty_salon', label: 'Салон красоты' },
   { value: 'dental_clinic', label: 'Стоматологическая клиника' },
-  { value: 'consulting', label: 'Консалтинг / приём заявок' },
 ];
 
 const CRM_WORKFLOW_MODE_OPTIONS = [
@@ -1266,10 +1265,38 @@ const CreateAgentContent = () => {
   ) || null;
   const crmDomainPlaceholders = getCrmDomainPlaceholders(domainConfig);
   const isCustomDomain = form.values.crm_domain_type === 'custom';
-  const crmDomainOptions = (Array.isArray(domainRegistry) ? domainRegistry : []).map((d) => ({
-    value: d.key || d.value,
-    label: d.label_ru || d.label,
-  }));
+  const crmDomainOptions = (Array.isArray(domainRegistry) ? domainRegistry : [])
+    .filter((d) => isApplicationsWorkflow || (d.key || d.value) !== 'consulting')
+    .map((d) => ({
+      value: d.key || d.value,
+      label: d.label_ru || d.label,
+    }));
+
+  const handleWorkflowModeChange = (event) => {
+    const nextMode = event?.target?.value;
+    form.handleChange(event);
+    if (nextMode === 'applications') {
+      form.setFieldValue('crm_domain_type', 'consulting');
+      if (!applicationFieldList.length) {
+        setApplicationFieldList(DEFAULT_APPLICATION_FIELDS);
+      }
+      return;
+    }
+    if (nextMode === 'booking' && form.values.crm_domain_type === 'consulting') {
+      form.setFieldValue('crm_domain_type', 'beauty_salon');
+    }
+  };
+
+  const handleCrmDomainTypeChange = (event) => {
+    const nextDomain = event?.target?.value;
+    if (nextDomain === 'consulting') {
+      form.setFieldValue('crm_workflow_mode', 'applications');
+      if (!applicationFieldList.length) {
+        setApplicationFieldList(DEFAULT_APPLICATION_FIELDS);
+      }
+    }
+    form.handleChange(event);
+  };
   const shouldShowCrmCredentials = isCrmConnectionEnabled && form.values.crm_connect_timing === 'now';
   const skipChannelSelection = isContentFactoryTemplate;
 
@@ -2183,29 +2210,25 @@ const CreateAgentContent = () => {
                   name="crm_workflow_mode"
                   className="input-main"
                   value={form.values.crm_workflow_mode}
-                  onChange={(event) => {
-                    form.handleChange(event);
-                    const nextMode = event?.target?.value;
-                    if (nextMode === 'applications') {
-                      form.setFieldValue('crm_domain_type', 'consulting');
-                      if (!applicationFieldList.length) {
-                        setApplicationFieldList(DEFAULT_APPLICATION_FIELDS);
-                      }
-                    }
-                  }}
+                  onChange={handleWorkflowModeChange}
                   options={CRM_WORKFLOW_MODE_OPTIONS}
                   disabled={form.isSubmitting}
                 />
+                <p className="analytics-note">
+                  {isApplicationsWorkflow
+                    ? 'Режим заявок: настройте поля ниже. Сотрудники, услуги и календарь не используются.'
+                    : 'Режим записи: выберите подшаблон и настройте сотрудников с услугами.'}
+                </p>
 
                 {!isApplicationsWorkflow ? (
                   <>
-                <label htmlFor="crm_domain_type" className="mt-input">Подшаблон:</label>
+                <label htmlFor="crm_domain_type" className="mt-input">Подшаблон (запись на услуги):</label>
                 <CustomSelect
                   id="crm_domain_type"
                   name="crm_domain_type"
                   className="input-main"
                   value={form.values.crm_domain_type}
-                  onChange={form.handleChange}
+                  onChange={handleCrmDomainTypeChange}
                   options={crmDomainOptions.length > 0 ? crmDomainOptions : CRM_DOMAIN_OPTIONS_FALLBACK}
                   disabled={form.isSubmitting}
                 />
