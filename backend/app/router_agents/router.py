@@ -59,6 +59,7 @@ from ..services.admin_booking import get_admin_booking_service
 from ..services.admin_booking.payment_service import get_admin_booking_payment_service
 from ..services.admin_booking.domains import DOMAIN_REGISTRY as _DOMAIN_REGISTRY
 from ..services.admin_applications import get_admin_application_service
+from ..services.website_public_forms import WEBSITE_UNIFIED_LEAD_FIELDS
 from ..services.voice_transcription import is_voice_stt_configured, transcribe_voice_bytes
 from ..services.http_integration.errors import HttpIntegrationValidationError
 from ..services.http_integration.tool_registry import validate_integration_config_dict
@@ -8600,6 +8601,7 @@ async def admin_template_applications_list(
     bot_id: int | None = Query(default=None),
     status_filter: str | None = Query(default=None, alias="status"),
     client_external_id: str | None = Query(default=None),
+    source_channel: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     current_user=Depends(get_current_user_required),
@@ -8616,7 +8618,9 @@ async def admin_template_applications_list(
                 agent_id=agent_id,
                 bot_id=bot_id,
             )
-            if str(cfg.get("workflow_mode") or "booking").strip().lower() != "applications":
+            workflow_mode = str(cfg.get("workflow_mode") or "booking").strip().lower()
+            channel = str(source_channel or "").strip().lower() or None
+            if workflow_mode != "applications" and channel != "website":
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail="Applications API is available only for agents with workflow_mode=applications",
@@ -8626,13 +8630,18 @@ async def admin_template_applications_list(
                 agent_id=agent.id,
                 status=status_filter,
                 client_external_id=client_external_id,
+                source_channel=channel,
                 limit=limit,
                 offset=offset,
             )
+            if channel == "website":
+                fields_schema = WEBSITE_UNIFIED_LEAD_FIELDS
+            else:
+                fields_schema = get_admin_application_service().get_fields_schema(cfg)
     return JSONResponse(
         content={
             "items": items,
-            "fields_schema": get_admin_application_service().get_fields_schema(cfg),
+            "fields_schema": fields_schema,
         },
         status_code=status.HTTP_200_OK,
     )
@@ -8642,6 +8651,7 @@ async def admin_template_applications_list(
 async def admin_template_applications_stats(
     agent_id: int | None = Query(default=None),
     bot_id: int | None = Query(default=None),
+    source_channel: str | None = Query(default=None),
     current_user=Depends(get_current_user_required),
 ):
     if agent_id is None and bot_id is None:
@@ -8656,12 +8666,18 @@ async def admin_template_applications_stats(
                 agent_id=agent_id,
                 bot_id=bot_id,
             )
-            if str(cfg.get("workflow_mode") or "booking").strip().lower() != "applications":
+            workflow_mode = str(cfg.get("workflow_mode") or "booking").strip().lower()
+            channel = str(source_channel or "").strip().lower() or None
+            if workflow_mode != "applications" and channel != "website":
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail="Applications API is available only for agents with workflow_mode=applications",
                 )
-            counts = await get_admin_application_service().count_by_status(session, agent_id=agent.id)
+            counts = await get_admin_application_service().count_by_status(
+                session,
+                agent_id=agent.id,
+                source_channel=channel,
+            )
     return JSONResponse(content={"counts": counts}, status_code=status.HTTP_200_OK)
 
 
@@ -8679,11 +8695,18 @@ async def admin_template_applications_update(
                 current_user=current_user,
                 payload=payload,
             )
-            if str(cfg.get("workflow_mode") or "booking").strip().lower() != "applications":
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Applications API is available only for agents with workflow_mode=applications",
+            workflow_mode = str(cfg.get("workflow_mode") or "booking").strip().lower()
+            if workflow_mode != "applications":
+                existing = await get_admin_application_service().get_application(
+                    session,
+                    agent_id=agent.id,
+                    application_id=payload.application_id,
                 )
+                if not existing or str(existing.get("source_channel") or "").lower() != "website":
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail="Applications API is available only for agents with workflow_mode=applications",
+                    )
             try:
                 row = await get_admin_application_service().update_application(
                     session,

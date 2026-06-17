@@ -89,6 +89,7 @@ class AdminApplicationService:
         agent_id: int,
         status: str | None = None,
         client_external_id: str | None = None,
+        source_channel: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
@@ -99,6 +100,8 @@ class AdminApplicationService:
                 conditions.append(AdminApplication.status == normalized)
         if client_external_id:
             conditions.append(AdminApplication.client_external_id == str(client_external_id).strip())
+        if source_channel:
+            conditions.append(AdminApplication.source_channel == str(source_channel).strip().lower())
         stmt = (
             select(AdminApplication)
             .where(and_(*conditions))
@@ -145,12 +148,19 @@ class AdminApplicationService:
         await session.refresh(row)
         return _serialize_row(row)
 
-    async def count_by_status(self, session: AsyncSession, *, agent_id: int) -> dict[str, int]:
+    async def count_by_status(
+        self,
+        session: AsyncSession,
+        *,
+        agent_id: int,
+        source_channel: str | None = None,
+    ) -> dict[str, int]:
+        conditions = [AdminApplication.agent_id == agent_id]
+        if source_channel:
+            conditions.append(AdminApplication.source_channel == str(source_channel).strip().lower())
         rows = (
             await session.execute(
-                select(AdminApplication.status, AdminApplication.id).where(
-                    AdminApplication.agent_id == agent_id
-                )
+                select(AdminApplication.status, AdminApplication.id).where(and_(*conditions))
             )
         ).all()
         counts = {status: 0 for status in APPLICATION_STATUSES}

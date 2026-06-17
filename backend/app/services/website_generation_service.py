@@ -93,10 +93,12 @@ AVOID:
 
 FORMS (contact / lead capture):
 - Use real HTML <form> elements (not fake buttons) in contact/CTA sections
-- Standard field names: name, phone, email, message (type="text|tel|email|textarea")
+- REQUIRED fields only: fio (text), phone (tel)
+- Optional: message (textarea) — include only if there is a clear reason; otherwise omit
 - Add data-rsd-form="lead" on the form tag
 - Do NOT add action/method to external URLs — submission is handled by the platform
-- For booking requests use a simple lead form; online slot picker is added by the platform when available
+- Labels in Russian: «ФИО», «Телефон»; optional message label: «Комментарий (необязательно)»
+- For booking agents: contact form is for callback requests; online booking widget is added below the page by the platform
 """
 
 WEBSITE_EDIT_SYSTEM_PROMPT = """\

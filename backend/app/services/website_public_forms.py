@@ -10,18 +10,40 @@ from ..alembic.models import Agent
 from .admin_applications.fields import normalize_application_fields, validate_field_values
 from .admin_applications.service import get_admin_application_service
 
-DEFAULT_WEBSITE_LEAD_FIELDS: list[dict[str, Any]] = [
-    {"key": "name", "label": "Имя", "type": "text", "required": True},
-    {"key": "phone", "label": "Телефон", "type": "phone", "required": False},
-    {"key": "email", "label": "Email", "type": "email", "required": False},
-    {"key": "message", "label": "Сообщение", "type": "textarea", "required": False},
+# Canonical schema for every public landing form (AI HTML + ContactsBlock).
+WEBSITE_UNIFIED_LEAD_FIELDS: list[dict[str, Any]] = [
+    {"key": "fio", "label": "ФИО", "type": "text", "required": True},
+    {"key": "phone", "label": "Телефон", "type": "phone", "required": True},
+    {"key": "message", "label": "Комментарий", "type": "textarea", "required": False},
 ]
 
 _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
-    "name": ("name", "имя", "fio", "fullname", "full_name", "client_name", "your_name", "username", "contact_name"),
+    "fio": (
+        "fio",
+        "name",
+        "имя",
+        "фио",
+        "fullname",
+        "full_name",
+        "client_name",
+        "your_name",
+        "username",
+        "contact_name",
+    ),
     "phone": ("phone", "tel", "telephone", "телефон", "mobile", "your_phone", "phonenumber"),
-    "email": ("email", "e-mail", "mail", "your_email", "почта"),
-    "message": ("message", "comment", "comments", "сообщение", "question", "text", "body", "note", "notes", "описание"),
+    "message": (
+        "message",
+        "comment",
+        "comments",
+        "сообщение",
+        "обращение",
+        "question",
+        "text",
+        "body",
+        "note",
+        "notes",
+        "описание",
+    ),
 }
 
 
@@ -36,13 +58,19 @@ def _load_template_config(agent: Agent) -> dict[str, Any]:
         return {}
 
 
+def resolve_website_lead_fields(_agent: Agent | None = None) -> list[dict[str, Any]]:
+    """Website forms always use the unified FIO / phone / message schema."""
+    return list(WEBSITE_UNIFIED_LEAD_FIELDS)
+
+
 def resolve_application_fields(agent: Agent) -> list[dict[str, Any]]:
+    """Chat/agent application schema (configurable per agent)."""
     cfg = _load_template_config(agent)
     try:
         fields = normalize_application_fields(cfg.get("application_fields"))
     except ValueError:
         fields = []
-    return fields or list(DEFAULT_WEBSITE_LEAD_FIELDS)
+    return fields
 
 
 def _normalize_key(raw: str) -> str:
@@ -50,7 +78,7 @@ def _normalize_key(raw: str) -> str:
 
 
 def map_website_form_payload(raw_fields: dict[str, Any] | None) -> dict[str, Any]:
-    """Map arbitrary HTML form keys to application schema keys."""
+    """Map arbitrary HTML form keys to unified website lead keys."""
     incoming = raw_fields if isinstance(raw_fields, dict) else {}
     mapped: dict[str, Any] = {}
 
@@ -64,9 +92,19 @@ def map_website_form_payload(raw_fields: dict[str, Any] | None) -> dict[str, Any
             if norm in alias_norms or norm == schema_key:
                 target = schema_key
                 break
-        mapped[target or norm] = value
+        mapped[target or norm] = value.strip() if isinstance(value, str) else value
 
     return mapped
+
+
+def _client_name_from_mapped(mapped: dict[str, Any], client_name: str | None) -> str | None:
+    for key in ("fio", "name"):
+        value = mapped.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    if client_name and str(client_name).strip():
+        return str(client_name).strip()
+    return None
 
 
 async def submit_website_lead(
@@ -81,18 +119,22 @@ async def submit_website_lead(
         if not agent or not agent.is_active:
             raise ValueError("Agent not found")
 
-        schema = resolve_application_fields(agent)
+        schema = resolve_website_lead_fields(agent)
         mapped = map_website_form_payload(fields)
-        if client_name and not mapped.get("name"):
-            mapped["name"] = client_name.strip()
+        resolved_name = _client_name_from_mapped(mapped, client_name)
+        if resolved_name and not mapped.get("fio"):
+            mapped["fio"] = resolved_name
 
         validated = validate_field_values(schema, mapped)
         if not validated:
-            raise ValueError("Заполните хотя бы одно поле")
+            raise ValueError("Заполните обязательные поля: ФИО и телефон")
 
         client_external_id = f"web_{uuid.uuid4().hex[:16]}"
-        name = str(validated.get("name") or client_name or "").strip() or None
-        template_config = {**_load_template_config(agent), "application_fields": schema}
+        name = resolved_name or str(validated.get("fio") or "").strip() or None
+        template_config = {
+            **_load_template_config(agent),
+            "application_fields": schema,
+        }
 
         async with session.begin():
             row = await get_admin_application_service().create_application(

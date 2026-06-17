@@ -608,24 +608,26 @@ export const agentService = {
     const response = await apiClient.post(API_ROUTES.AGENTS_ADMIN_TEMPLATE_REMINDERS_RUN, data);
     return response.data;
   },
-  listAdminTemplateApplications: async ({ agent_id = null, bot_id = null, status = null, client_external_id = null, limit = 100, offset = 0 } = {}) => {
+  listAdminTemplateApplications: async ({ agent_id = null, bot_id = null, status = null, client_external_id = null, source_channel = null, limit = 100, offset = 0 } = {}) => {
     const response = await apiClient.get(API_ROUTES.AGENTS_ADMIN_TEMPLATE_APPLICATIONS, {
       params: {
         agent_id: agent_id || undefined,
         bot_id: bot_id || undefined,
         status: status || undefined,
         client_external_id: client_external_id || undefined,
+        source_channel: source_channel || undefined,
         limit,
         offset,
       },
     });
     return response.data;
   },
-  getAdminTemplateApplicationsStats: async ({ agent_id = null, bot_id = null } = {}) => {
+  getAdminTemplateApplicationsStats: async ({ agent_id = null, bot_id = null, source_channel = null } = {}) => {
     const response = await apiClient.get(API_ROUTES.AGENTS_ADMIN_TEMPLATE_APPLICATIONS_STATS, {
       params: {
         agent_id: agent_id || undefined,
         bot_id: bot_id || undefined,
+        source_channel: source_channel || undefined,
       },
     });
     return response.data;

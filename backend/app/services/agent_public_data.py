@@ -23,6 +23,28 @@ def is_admin_booking_agent(agent: Agent) -> bool:
     return template_type in ADMIN_TEMPLATE_TYPES
 
 
+def _agent_workflow_mode(agent: Agent) -> str:
+    raw = agent.template_config
+    if not raw:
+        return "booking"
+    try:
+        cfg = json.loads(raw) if isinstance(raw, str) else raw
+        if isinstance(cfg, dict):
+            return str(cfg.get("workflow_mode") or "booking").strip().lower()
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return "booking"
+
+
+def agent_accepts_website_leads(agent: Agent) -> bool:
+    """Any CRM admin agent with a published site can receive website callback requests."""
+    return is_admin_booking_agent(agent)
+
+
+def agent_has_online_booking(agent: Agent) -> bool:
+    return is_admin_booking_agent(agent) and _agent_workflow_mode(agent) == "booking"
+
+
 def _agent_display_name(agent: Agent) -> str:
     if agent.bot_username:
         return agent.bot_username if agent.bot_username.startswith("@") else f"@{agent.bot_username}"
@@ -112,6 +134,7 @@ async def get_agent_public_data(agent_id: int, *, include_widget_key: bool = Fal
 
         contacts = await _fetch_channel_contacts(agent_id)
         admin_template = is_admin_booking_agent(agent)
+        workflow_mode = _agent_workflow_mode(agent)
         services = await _fetch_admin_services(agent_id) if admin_template else []
 
         payload: dict[str, Any] = {
@@ -121,8 +144,9 @@ async def get_agent_public_data(agent_id: int, *, include_widget_key: bool = Fal
             "logo_url": _agent_logo_url(agent),
             "template_type": (agent.template_type or "qa").strip().lower(),
             "is_admin_template": admin_template,
-            "has_booking": admin_template,
-            "has_applications": True,
+            "workflow_mode": workflow_mode,
+            "has_booking": agent_has_online_booking(agent) and bool(services),
+            "has_applications": agent_accepts_website_leads(agent),
             "services": services,
             "contacts": contacts,
         }

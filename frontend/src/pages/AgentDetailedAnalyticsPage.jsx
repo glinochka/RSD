@@ -25,8 +25,15 @@ const refundChannelLabel = (channel) => {
   if (key === 'telegram_userbot') return 'Telegram (аккаунт)';
   if (key === 'whatsapp_userbot') return 'WhatsApp';
   if (key === 'external_api') return 'API';
+  if (key === 'website') return 'Сайт';
   return key || '—';
 };
+
+const WEBSITE_LEAD_FIELDS_SCHEMA = [
+  { key: 'fio', label: 'ФИО' },
+  { key: 'phone', label: 'Телефон' },
+  { key: 'message', label: 'Комментарий' },
+];
 
 const refundStatusLabel = (status) => {
   const key = String(status || '').trim().toLowerCase();
@@ -786,6 +793,8 @@ const AgentDetailedAnalyticsPageContent = () => {
   const [applicationStatusFilter, setApplicationStatusFilter] = useState('');
   const [selectedApplicationId, setSelectedApplicationId] = useState(null);
   const [applicationNotesDraft, setApplicationNotesDraft] = useState('');
+  const [websiteLeadItems, setWebsiteLeadItems] = useState([]);
+  const [websiteLeadStats, setWebsiteLeadStats] = useState(null);
 
   const botId = useMemo(() => Number(id), [id]);
   const isCrmAdminTemplate = String(agent?.template_type || '').trim().toLowerCase() === 'crm_admin';
@@ -1034,6 +1043,27 @@ const AgentDetailedAnalyticsPageContent = () => {
     }
   };
 
+  const loadWebsiteLeadsDashboard = async () => {
+    if (!Number.isFinite(botId) || botId <= 0) return;
+    try {
+      const [listData, statsData] = await Promise.all([
+        agentService.listAdminTemplateApplications({
+          bot_id: botId,
+          source_channel: 'website',
+        }),
+        agentService.getAdminTemplateApplicationsStats({
+          bot_id: botId,
+          source_channel: 'website',
+        }),
+      ]);
+      setWebsiteLeadItems(Array.isArray(listData?.items) ? listData.items : []);
+      setWebsiteLeadStats(statsData?.counts || null);
+    } catch {
+      setWebsiteLeadItems([]);
+      setWebsiteLeadStats(null);
+    }
+  };
+
   const loadApplicationsDashboard = async () => {
     if (!Number.isFinite(botId) || botId <= 0) return;
     setOpsLoading(true);
@@ -1065,7 +1095,11 @@ const AgentDetailedAnalyticsPageContent = () => {
         notes: applicationNotesDraft || undefined,
       });
       showSuccess('Заявка обновлена');
-      await loadApplicationsDashboard();
+      if (isApplicationsMode) {
+        await loadApplicationsDashboard();
+      } else {
+        await loadWebsiteLeadsDashboard();
+      }
     } catch (error) {
       showError(error.message || 'Не удалось обновить заявку');
     }
@@ -1079,6 +1113,7 @@ const AgentDetailedAnalyticsPageContent = () => {
       return;
     }
     loadOperationsDashboard();
+    loadWebsiteLeadsDashboard();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedSection, isCrmAdminTemplate, isApplicationsMode, botId, operationRange.start, operationRange.end, monthRange.start, monthRange.end, applicationStatusFilter]);
 
@@ -2245,12 +2280,14 @@ const AgentDetailedAnalyticsPageContent = () => {
                     {opsLoading ? (
                       <p className="analytics-note">Загрузка...</p>
                     ) : applicationItems.length === 0 ? (
-                      <p className="analytics-note">Заявок пока нет. Они появятся, когда клиенты оформят заявку через чат с агентом.</p>
+                      <p className="analytics-note">Заявок пока нет. Они появятся, когда клиенты оформят заявку через чат с агентом или форму на сайте.</p>
                     ) : (
                       <div className="analytics-ops-list">
                         {applicationItems.map((item) => {
                           const isSelected = selectedApplicationId === item.id;
-                          const fieldEntries = applicationFieldsSchema.length
+                          const fieldEntries = item.source_channel === 'website'
+                            ? WEBSITE_LEAD_FIELDS_SCHEMA
+                            : applicationFieldsSchema.length
                             ? applicationFieldsSchema
                             : Object.keys(item.fields || {}).map((key) => ({ key, label: key }));
                           return (
@@ -2350,6 +2387,88 @@ const AgentDetailedAnalyticsPageContent = () => {
                   </button>
                 </div>
               </div>
+
+              <article className="analytics-ops-card analytics-ops-card--wide">
+                <div className="analytics-operations-header">
+                  <h4>Заявки с сайта</h4>
+                  {Number(websiteLeadStats?.new || 0) > 0 ? (
+                    <span className="analytics-section-badge">{websiteLeadStats.new}</span>
+                  ) : null}
+                </div>
+                <p className="analytics-note">
+                  Обратные звонки с контактной формы лендинга (ФИО и телефон).
+                </p>
+                {websiteLeadItems.length === 0 ? (
+                  <p className="analytics-note">Заявок с сайта пока нет.</p>
+                ) : (
+                  <div className="analytics-ops-list">
+                    {websiteLeadItems.map((item) => {
+                      const isSelected = selectedApplicationId === item.id;
+                      return (
+                        <div
+                          key={`website-lead-${item.id}`}
+                          className={`analytics-ops-row ${isSelected ? 'analytics-ops-row--selected' : ''}`}
+                        >
+                          <div className="analytics-ops-row-main">
+                            <strong>{item.client_name || item.fields?.fio || 'Без имени'}</strong>
+                            <span>
+                              {applicationStatusLabel(item.status)}
+                              {' · Сайт'}
+                              {' · '}
+                              {formatDateTime(item.created_at, '—')}
+                            </span>
+                            <div className="analytics-ops-fields">
+                              {WEBSITE_LEAD_FIELDS_SCHEMA.map((field) => {
+                                const value = item.fields?.[field.key];
+                                if (!value) return null;
+                                return (
+                                  <span key={field.key}>
+                                    {field.label}: {String(value)}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          </div>
+                          <div className="analytics-ops-row-actions">
+                            <button
+                              type="button"
+                              className="btn btn-outline"
+                              onClick={() => {
+                                setSelectedApplicationId(item.id);
+                                setApplicationNotesDraft(item.notes || '');
+                              }}
+                            >
+                              Управление
+                            </button>
+                          </div>
+                          {isSelected ? (
+                            <div className="analytics-ops-inline-form analytics-ops-inline-form--stack">
+                              <textarea
+                                className="input-main"
+                                rows={2}
+                                placeholder="Внутренняя заметка"
+                                value={applicationNotesDraft}
+                                onChange={(e) => setApplicationNotesDraft(e.target.value)}
+                              />
+                              <div className="analytics-ops-row-actions">
+                                <button type="button" className="btn btn-outline" onClick={() => handleUpdateApplicationStatus(item.id, 'in_progress')}>
+                                  В работу
+                                </button>
+                                <button type="button" className="btn btn-outline" onClick={() => handleUpdateApplicationStatus(item.id, 'completed')}>
+                                  Завершить
+                                </button>
+                                <button type="button" className="btn btn-outline" onClick={() => handleUpdateApplicationStatus(item.id, 'rejected')}>
+                                  Отклонить
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </article>
 
               <article className="analytics-ops-card analytics-ops-card--wide">
                 <div className="analytics-admin-calendar-head">

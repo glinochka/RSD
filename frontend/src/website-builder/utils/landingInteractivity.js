@@ -1,8 +1,9 @@
 /**
  * Self-contained JS injected into AI-generated landing pages at render time.
- * Fixes common broken patterns: mobile burger menus and carousels/sliders.
+ * Fixes common broken patterns: mobile burger menus, carousels, and lead forms.
  */
-export const LANDING_INTERACTIVITY_RUNTIME = `
+
+export const LANDING_MENU_CAROUSEL_RUNTIME = `
 (function() {
   'use strict';
 
@@ -135,8 +136,23 @@ export const LANDING_INTERACTIVITY_RUNTIME = `
     });
   }
 
-  function normalizeFieldKey(raw) {
-    return String(raw || '').toLowerCase().replace(/[^a-z0-9а-яё]+/gi, '_').replace(/^_|_$/g, '');
+  onReady(function() {
+    initMobileMenus();
+    initCarousels();
+  });
+})();
+`;
+
+export const LANDING_FORM_RUNTIME = `
+(function() {
+  'use strict';
+
+  function onReady(fn) {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', fn);
+    } else {
+      fn();
+    }
   }
 
   function collectFormFields(form) {
@@ -180,8 +196,10 @@ export const LANDING_INTERACTIVITY_RUNTIME = `
       form.addEventListener('submit', function(e) {
         e.preventDefault();
         var fields = collectFormFields(form);
-        if (!Object.keys(fields).length) {
-          showFormMessage(form, 'Заполните хотя бы одно поле', true);
+        var fio = fields.fio || fields.name || fields.client_name || '';
+        var phone = fields.phone || fields.tel || '';
+        if (!String(fio).trim() || !String(phone).trim()) {
+          showFormMessage(form, 'Укажите ФИО и телефон', true);
           return;
         }
 
@@ -191,7 +209,167 @@ export const LANDING_INTERACTIVITY_RUNTIME = `
         fetch(cfg.apiBase.replace(/\\/$/, '') + '/api/v1/agents/' + cfg.agentId + '/website/leads', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fields: fields, client_name: fields.name || fields.client_name || null }),
+          body: JSON.stringify({
+            fields: fields,
+            client_name: String(fio).trim() || null,
+          }),
+        })
+          .then(function(res) {
+            return res.json().then(function(data) {
+              if (!res.ok) throw new Error(data.detail || 'Ошибка отправки');
+              showFormMessage(form, data.message || 'Заявка отправлена!', false);
+              form.reset();
+            });
+          })
+          .catch(function(err) {
+            showFormMessage(form, err.message || 'Не удалось отправить заявку', true);
+          })
+          .finally(function() {
+            if (submitBtn) submitBtn.disabled = false;
+          });
+      });
+    });
+  }
+
+  onReady(initWebsiteForms);
+})();
+`;
+
+/** Full runtime (menus + carousels + forms) for pages without backend-injected scripts. */
+export const LANDING_INTERACTIVITY_RUNTIME = `
+(function() {
+  'use strict';
+
+  function onReady(fn) {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', fn);
+    } else {
+      fn();
+    }
+  }
+
+  function isElementHidden(el) {
+    if (!el) return true;
+    if (el.classList.contains('hidden')) return true;
+    var style = window.getComputedStyle(el);
+    return style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0';
+  }
+
+  function setElementVisible(el, visible) {
+    if (!el) return;
+    el.classList.toggle('hidden', !visible);
+    el.classList.toggle('invisible', !visible);
+    el.style.display = visible ? '' : 'none';
+    el.setAttribute('aria-hidden', visible ? 'false' : 'true');
+  }
+
+  function bindMenuToggle(btn, menu) {
+    if (!btn || !menu || btn.dataset.rsdMenuBound) return;
+    btn.dataset.rsdMenuBound = '1';
+    btn.addEventListener('click', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var willShow = isElementHidden(menu);
+      setElementVisible(menu, willShow);
+      btn.setAttribute('aria-expanded', willShow ? 'true' : 'false');
+    });
+  }
+
+  function initMobileMenus() {
+    document.querySelectorAll('[data-menu-toggle]').forEach(function(btn) {
+      var menu = document.querySelector('[data-mobile-menu]');
+      if (!menu) {
+        var header = btn.closest('header, nav');
+        menu = header && header.querySelector('[data-mobile-menu], [id*="mobile"], [class*="mobile-menu"]');
+      }
+      bindMenuToggle(btn, menu);
+    });
+    document.querySelectorAll('header button, nav button').forEach(function(btn) {
+      if (btn.dataset.rsdMenuBound || btn.type === 'submit') return;
+      var label = (btn.getAttribute('aria-label') || btn.textContent || '').toLowerCase();
+      var looksLikeBurger = label.indexOf('меню') >= 0 || label.indexOf('menu') >= 0
+        || btn.querySelector('svg') || (btn.className && /burger|hamburger|menu-toggle/i.test(btn.className));
+      if (!looksLikeBurger) return;
+      var menu = null;
+      var controls = btn.getAttribute('aria-controls');
+      if (controls) menu = document.getElementById(controls);
+      if (!menu) {
+        var scope = btn.closest('header, nav') || document;
+        menu = scope.querySelector('[id*="mobile"], [id*="Mobile"], [class*="mobile-menu"], [data-mobile-menu]');
+      }
+      bindMenuToggle(btn, menu);
+    });
+  }
+
+  function initCarousels() {
+    document.querySelectorAll('[data-carousel], [data-slider], .carousel, .slider').forEach(function(root) {
+      if (root.dataset.rsdCarouselBound) return;
+      var slides = root.querySelectorAll('[data-slide], .carousel-slide, .slide');
+      if (slides.length < 2) return;
+      root.dataset.rsdCarouselBound = '1';
+      var index = 0;
+      function show(nextIndex) {
+        index = (nextIndex + slides.length) % slides.length;
+        for (var i = 0; i < slides.length; i++) setElementVisible(slides[i], i === index);
+      }
+      show(0);
+      var prev = root.querySelector('[data-carousel-prev], [data-prev]');
+      var next = root.querySelector('[data-carousel-next], [data-next]');
+      if (prev) prev.addEventListener('click', function(e) { e.preventDefault(); show(index - 1); });
+      if (next) next.addEventListener('click', function(e) { e.preventDefault(); show(index + 1); });
+    });
+  }
+
+  function collectFormFields(form) {
+    var fields = {};
+    form.querySelectorAll('input, textarea, select').forEach(function(el) {
+      if (!el.name && !el.id) return;
+      if (el.type === 'submit' || el.type === 'button' || el.type === 'hidden') return;
+      var key = el.name || el.id;
+      var val = (el.value || '').trim();
+      if (val) fields[key] = val;
+    });
+    return fields;
+  }
+
+  function showFormMessage(form, text, isError) {
+    var box = form.querySelector('[data-rsd-form-message]');
+    if (!box) {
+      box = document.createElement('p');
+      box.setAttribute('data-rsd-form-message', '1');
+      box.style.marginTop = '0.75rem';
+      box.style.fontSize = '0.875rem';
+      form.appendChild(box);
+    }
+    box.textContent = text;
+    box.style.color = isError ? '#dc2626' : '#16a34a';
+  }
+
+  function initWebsiteForms() {
+    var cfg = window.__RSD_LANDING__;
+    if (!cfg || !cfg.agentId || !cfg.apiBase) return;
+    document.querySelectorAll('form').forEach(function(form) {
+      if (form.dataset.rsdFormBound) return;
+      if ((form.getAttribute('method') || '').toLowerCase() === 'get') return;
+      if (form.querySelector('input[type="search"]')) return;
+      var formType = (form.getAttribute('data-rsd-form') || 'lead').toLowerCase();
+      if (formType === 'search') return;
+      form.dataset.rsdFormBound = '1';
+      form.addEventListener('submit', function(e) {
+        e.preventDefault();
+        var fields = collectFormFields(form);
+        var fio = fields.fio || fields.name || fields.client_name || '';
+        var phone = fields.phone || fields.tel || '';
+        if (!String(fio).trim() || !String(phone).trim()) {
+          showFormMessage(form, 'Укажите ФИО и телефон', true);
+          return;
+        }
+        var submitBtn = form.querySelector('[type="submit"]');
+        if (submitBtn) submitBtn.disabled = true;
+        fetch(cfg.apiBase.replace(/\\/$/, '') + '/api/v1/agents/' + cfg.agentId + '/website/leads', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fields: fields, client_name: String(fio).trim() || null }),
         })
           .then(function(res) {
             return res.json().then(function(data) {

@@ -12,6 +12,7 @@ import { blockStylesToCss } from '../utils/styleUtils';
 import { scopeCSS, generateScopedClass } from '../utils/security';
 import { resolveWebsiteAssetUrl } from '../utils/assetUrl';
 import FullpageRenderer from './FullpageRenderer';
+import { useWebsiteAgent } from '../context/WebsiteAgentContext';
 
 // Import all block components
 import {
@@ -217,6 +218,7 @@ const WebsiteRenderer = ({
   onContentChange = null,
   placeholderVars = {},
 }) => {
+  const websiteAgent = useWebsiteAgent();
   const {
     id,
     slug,
@@ -241,6 +243,10 @@ const WebsiteRenderer = ({
     const fullpageBlock = blocks?.find((b) => b.type === 'fullpage');
     const htmlContent = fullpageBlock?.content?.html || '';
     const resolvedFaviconUrl = resolveWebsiteAssetUrl(favicon_url);
+    const pageStyles = mergeStyles(templateStyles, styles);
+    const showBooking =
+      Boolean(websiteAgent?.hasBooking) && (websiteAgent?.services?.length ?? 0) > 0;
+    const formsEnabled = Boolean(agent_id) && websiteAgent?.hasApplications !== false;
 
     return (
       <>
@@ -258,11 +264,20 @@ const WebsiteRenderer = ({
           title={title}
           faviconUrl={resolvedFaviconUrl}
           agentId={agent_id}
-          formsEnabled={Boolean(agent_id)}
+          formsEnabled={formsEnabled}
           editMode={editMode}
           previewMode={previewMode}
           className={className}
         />
+        {showBooking && !editMode && (
+          <BookingBlock
+            content={{
+              title: 'Онлайн-запись',
+              subtitle: 'Выберите услугу, дату и удобное время',
+            }}
+            styles={pageStyles}
+          />
+        )}
       </>
     );
   }

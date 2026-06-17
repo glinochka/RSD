@@ -41,7 +41,7 @@ const ContactsBlock = ({
     darkMode = false,
   } = styles;
 
-  const [formData, setFormData] = useState({ name: '', phone: '', message: '' });
+  const [formData, setFormData] = useState({ fio: '', phone: '' });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [submitError, setSubmitError] = useState(null);
@@ -63,15 +63,14 @@ const ContactsBlock = ({
     setSubmitError(null);
     try {
       await submitWebsiteLead(agentId, {
-        client_name: formData.name.trim() || null,
+        client_name: formData.fio.trim() || null,
         fields: {
-          name: formData.name.trim(),
+          fio: formData.fio.trim(),
           phone: formData.phone.trim(),
-          message: formData.message.trim(),
         },
       });
       setIsSubmitted(true);
-      setFormData({ name: '', phone: '', message: '' });
+      setFormData({ fio: '', phone: '' });
     } catch (err) {
       const detail = err.response?.data?.detail;
       setSubmitError(typeof detail === 'string' ? detail : 'Не удалось отправить заявку');
@@ -197,8 +196,8 @@ const ContactsBlock = ({
             )}
           </div>
 
-          {/* Contact Form */}
-          {showForm && (
+          {/* Contact Form — unified lead capture for all CRM agents */}
+          {showForm && hasApplications && (
             <div
               className="p-6 md:p-8 rounded-xl md:rounded-2xl"
               style={{
@@ -249,13 +248,14 @@ const ContactsBlock = ({
                         className="block text-sm font-medium mb-2"
                         style={{ color: textSecondary }}
                       >
-                        Ваше имя
+                        ФИО
                       </label>
                       <input
                         type="text"
+                        name="fio"
                         required
-                        value={formData.name}
-                        onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                        value={formData.fio}
+                        onChange={(e) => setFormData({ ...formData, fio: e.target.value })}
                         className="w-full px-4 py-3 rounded-lg border-2 transition-colors duration-200 focus:outline-none focus:ring-2"
                         style={{
                           borderColor: darkMode ? '#374151' : '#E5E7EB',
@@ -274,6 +274,7 @@ const ContactsBlock = ({
                       </label>
                       <input
                         type="tel"
+                        name="phone"
                         required
                         value={formData.phone}
                         onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
@@ -284,26 +285,6 @@ const ContactsBlock = ({
                           color: titleColor,
                         }}
                         placeholder="+7 (999) 999-99-99"
-                      />
-                    </div>
-                    <div>
-                      <label
-                        className="block text-sm font-medium mb-2"
-                        style={{ color: textSecondary }}
-                      >
-                        Сообщение
-                      </label>
-                      <textarea
-                        rows={4}
-                        value={formData.message}
-                        onChange={(e) => setFormData({ ...formData, message: e.target.value })}
-                        className="w-full px-4 py-3 rounded-lg border-2 transition-colors duration-200 focus:outline-none focus:ring-2 resize-none"
-                        style={{
-                          borderColor: darkMode ? '#374151' : '#E5E7EB',
-                          backgroundColor: darkMode ? '#111827' : '#FFFFFF',
-                          color: titleColor,
-                        }}
-                        placeholder="Опишите ваш вопрос..."
                       />
                     </div>
                     <button

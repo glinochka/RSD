@@ -30,6 +30,7 @@ class AgentPublicDataResponse(BaseModel):
     logo_url: str | None = None
     template_type: str
     is_admin_template: bool = False
+    workflow_mode: str | None = None
     has_booking: bool = False
     has_applications: bool = True
     services: list[AgentPublicServiceItem] = Field(default_factory=list)
