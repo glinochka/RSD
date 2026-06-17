@@ -777,3 +777,9 @@ class AdminTemplateRemindersRunPayload(AgentLookup):
     channel: Optional[str] = Field(default=None, max_length=32)
 
 
+class AdminTemplateApplicationUpdatePayload(AgentLookup):
+    application_id: int = Field(..., gt=0)
+    status: Optional[str] = Field(default=None, max_length=24)
+    notes: Optional[str] = Field(default=None, max_length=4000)
+
+

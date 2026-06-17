@@ -112,6 +112,8 @@ export const API_ROUTES = {
   AGENTS_ADMIN_TEMPLATE_CLIENT_PROFILES: '/api/agents/admin_template/client_profiles',
   AGENTS_ADMIN_TEMPLATE_QUICK_REPLIES: '/api/agents/admin_template/quick_replies',
   AGENTS_ADMIN_TEMPLATE_REMINDERS_RUN: '/api/agents/admin_template/reminders/run',
+  AGENTS_ADMIN_TEMPLATE_APPLICATIONS: '/api/agents/admin_template/applications',
+  AGENTS_ADMIN_TEMPLATE_APPLICATIONS_STATS: '/api/agents/admin_template/applications/stats',
   DOCUMENTS_CREATE: '/api/documents',
   DOCUMENTS_CREATE_LINK: '/api/documents/link',
   DOCUMENTS_LIST_BY_BOT: '/api/documents/allBy_botID',

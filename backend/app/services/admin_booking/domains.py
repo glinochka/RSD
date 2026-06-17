@@ -127,6 +127,21 @@ DOMAIN_REGISTRY: dict[str, DomainConfig] = {
         default_services_hints=[],
         custom_domain=True,
     ),
+    "consulting": DomainConfig(
+        label_ru="Консалтинг / приём заявок",
+        label_en="Consulting / Applications",
+        staff_role_default="manager",
+        staff_label_ru="Менеджер",
+        resource_examples=[],
+        resources_mode="none",
+        resource_linked_to_staff=False,
+        domain_instruction_ru=(
+            "Предметная область: консалтинг, B2B-услуги, приём заявок. "
+            "Собирай данные по схеме заявки, уточняй детали запроса клиента и оформляй заявку через create_application."
+        ),
+        default_services_hints=[],
+        custom_domain=True,
+    ),
 }
 
 

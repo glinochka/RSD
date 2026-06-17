@@ -608,6 +608,32 @@ export const agentService = {
     const response = await apiClient.post(API_ROUTES.AGENTS_ADMIN_TEMPLATE_REMINDERS_RUN, data);
     return response.data;
   },
+  listAdminTemplateApplications: async ({ agent_id = null, bot_id = null, status = null, client_external_id = null, limit = 100, offset = 0 } = {}) => {
+    const response = await apiClient.get(API_ROUTES.AGENTS_ADMIN_TEMPLATE_APPLICATIONS, {
+      params: {
+        agent_id: agent_id || undefined,
+        bot_id: bot_id || undefined,
+        status: status || undefined,
+        client_external_id: client_external_id || undefined,
+        limit,
+        offset,
+      },
+    });
+    return response.data;
+  },
+  getAdminTemplateApplicationsStats: async ({ agent_id = null, bot_id = null } = {}) => {
+    const response = await apiClient.get(API_ROUTES.AGENTS_ADMIN_TEMPLATE_APPLICATIONS_STATS, {
+      params: {
+        agent_id: agent_id || undefined,
+        bot_id: bot_id || undefined,
+      },
+    });
+    return response.data;
+  },
+  updateAdminTemplateApplication: async (data) => {
+    const response = await apiClient.patch(API_ROUTES.AGENTS_ADMIN_TEMPLATE_APPLICATIONS, data);
+    return response.data;
+  },
 
   uploadDocumentByBotId: async (agentId, file) => {
     const formData = new FormData();

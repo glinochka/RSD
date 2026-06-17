@@ -64,6 +64,10 @@ CRM_ADMIN_LLM_EMPTY_FALLBACK = (
     "я посмотрю расписание."
 )
 
+CRM_ADMIN_APPLICATIONS_LLM_EMPTY_FALLBACK = (
+    "Расскажите, пожалуйста, подробнее о вашем запросе — я помогу оформить заявку."
+)
+
 SALES_COMPOSED_MESSAGE_FALLBACK = "Интересное предложение! Подскажите, вам актуально?"
 
 AI_AUTHORING_EMPTY_ANSWER_FALLBACK = "Не удалось сформулировать ответ. Задайте вопрос чуть подробнее."
@@ -162,6 +166,38 @@ def build_crm_admin_system_prompt(
     catalog = (knowledge_catalog_block or "").strip()
     if catalog:
         system_prompt = f"{system_prompt}\n\n{catalog}"
+    if portrait_block:
+        system_prompt = f"{system_prompt}\n\n{portrait_block}"
+    return system_prompt
+
+
+CRM_ADMIN_APPLICATIONS_CORE_INSTRUCTION = (
+    "Ты администратор, который принимает заявки от клиентов. "
+    "Работай через function tools — не выдумывай результат операций. "
+    "Сначала вызови get_application_schema, чтобы узнать обязательные поля заявки. "
+    "Собери у клиента все обязательные данные в диалоге — по одному-двум вопроса за сообщение, без анкеты-стены. "
+    "Перед отправкой заявки кратко перечисли собранные данные и спроси, всё ли верно. "
+    "После согласия клиента вызови create_application с полями в объекте fields (ключи из схемы). "
+    "Имя клиента передавай в client_name, если оно известно из диалога или портрета. "
+    "Если клиент спрашивает о статусе своих заявок — вызови list_client_applications. "
+    "Не показывай пользователю служебные id, JSON и внутренние названия полей. "
+    "Отвечай только чистым текстом, без markdown.\n\n"
+    "{context_tail}"
+)
+
+
+def build_crm_admin_applications_system_prompt(
+    *,
+    agent_prompt: str,
+    context_tail: str,
+    fields_schema_block: str = "",
+    portrait_block: str = "",
+) -> str:
+    core = CRM_ADMIN_APPLICATIONS_CORE_INSTRUCTION.format(context_tail=context_tail.strip())
+    system_prompt = f"{agent_prompt.strip()}\n\n{core}".strip()
+    schema = (fields_schema_block or "").strip()
+    if schema:
+        system_prompt = f"{system_prompt}\n\n{schema}"
     if portrait_block:
         system_prompt = f"{system_prompt}\n\n{portrait_block}"
     return system_prompt

@@ -16,6 +16,8 @@ from ..alembic.models import Agent, AgentAnalyticsMessage, AgentCrmConnection, A
 from ..utils.crypto import decrypt_booking_payment_secret, decrypt_crm_credentials
 from ..utils.pii import mask_external_id, redact_pii_text
 from .admin_booking import AdminBookingNeedsConfirmationError, AdminBookingToolRegistry
+from .admin_applications.tool_registry import AdminApplicationToolRegistry
+from .admin_applications.fields import fields_schema_for_prompt
 from .admin_booking.catalog_prompt import load_booking_catalog_knowledge
 from .agent_memory import build_client_memory_block, build_client_memory_system_section
 from .ai_authoring import ai_client, generate_answer_with_context
@@ -45,6 +47,8 @@ from ..prompts.system_prompts import (
     SALES_UNIFIED_QUALIFY_INSTRUCTION,
     SANITIZE_EMPTY_ANSWER_FALLBACK,
     build_crm_admin_system_prompt,
+    build_crm_admin_applications_system_prompt,
+    CRM_ADMIN_APPLICATIONS_LLM_EMPTY_FALLBACK,
     sales_stage_instruction,
 )
 from ..qdrant.search_service import search_knowledge_base
@@ -726,6 +730,18 @@ class TemplateRuntimeService:
         if not agent_id:
             return None
 
+        workflow_mode = str(template_config.get("workflow_mode") or "booking").strip().lower()
+        if workflow_mode == "applications":
+            return await self._execute_crm_admin_applications(
+                prompt=prompt,
+                user_message=user_message,
+                agent_id=agent_id,
+                user_external_id=user_external_id,
+                template_config=template_config,
+                source_channel=source_channel,
+                chat_portrait=chat_portrait,
+            )
+
         from .admin_booking.payment_fulfillment import sync_pending_payments_for_client
         from .admin_booking.client_notify import notify_booking_payment_confirmed
 
@@ -1085,6 +1101,227 @@ class TemplateRuntimeService:
         )
         return TemplateExecutionResult(
             answer=cleaned or CRM_ADMIN_LLM_EMPTY_FALLBACK,
+            sources=[],
+            tool_events=tool_events,
+        )
+
+    async def _execute_crm_admin_applications(
+        self,
+        *,
+        prompt: str,
+        user_message: str,
+        agent_id: int | None,
+        user_external_id: str | None,
+        template_config: dict[str, Any],
+        source_channel: str,
+        chat_portrait: str | None = None,
+    ) -> TemplateExecutionResult | None:
+        if not agent_id:
+            return None
+
+        from .admin_booking.domains import DOMAIN_REGISTRY as _domain_registry
+
+        domain_type = str(template_config.get("domain_type") or "consulting").strip().lower()
+        if domain_type not in _domain_registry:
+            domain_type = "consulting"
+        custom_domain_instruction = template_config.get("custom_domain_instruction") or None
+        crm_provider_name = str(template_config.get("crm_provider") or "amocrm").strip().lower()
+        confirmation_policy = str(template_config.get("confirmation_policy") or "confirm_risky").strip().lower()
+        allowed_crm_tools_raw = template_config.get("allowed_tools")
+        allowed_crm_tools = allowed_crm_tools_raw if isinstance(allowed_crm_tools_raw, list) else None
+        allowed_application_tools_raw = template_config.get("allowed_application_tools")
+        allowed_application_tools = (
+            allowed_application_tools_raw if isinstance(allowed_application_tools_raw, list) else None
+        )
+        http_integrations_enabled = bool(template_config.get("http_integrations_enabled", True))
+        http_integration_names_raw = template_config.get("http_integration_names")
+        http_integration_names_allow: list[str] | None = None
+        if isinstance(http_integration_names_raw, list):
+            http_integration_names_allow = [
+                str(x or "").strip().lower() for x in http_integration_names_raw if str(x or "").strip()
+            ]
+
+        application_registry = AdminApplicationToolRegistry(
+            agent_id=agent_id,
+            user_external_id=user_external_id,
+            source_channel=source_channel,
+            template_config=template_config,
+            allowed_tools=allowed_application_tools,
+        )
+        application_llm_tools = application_registry.tools_for_llm()
+
+        crm_registry: CRMToolRegistry | None = None
+        crm_tool_names: set[str] = set()
+        connection = await self._get_active_crm_connection(agent_id=agent_id, provider=crm_provider_name)
+        if connection is not None:
+            try:
+                decrypted_bundle, _ = decrypt_crm_credentials(connection.encrypted_credentials)
+                bundle = json.loads(decrypted_bundle)
+                provider = build_provider(
+                    crm_provider_name,
+                    base_url=str(bundle.get("base_url") or ""),
+                    access_token=str(bundle.get("access_token") or ""),
+                )
+                crm_registry = CRMToolRegistry(
+                    provider=provider,
+                    allowed_tools=allowed_crm_tools,
+                    confirmation_policy=confirmation_policy,
+                    user_message=user_message,
+                    agent_id=agent_id,
+                    user_external_id=user_external_id,
+                )
+                crm_tool_names = {
+                    str(item.get("function", {}).get("name") or "")
+                    for item in crm_registry.tools_for_llm()
+                    if isinstance(item, dict)
+                }
+            except Exception:
+                logger.exception("Failed to initialize CRM provider for applications agent_id=%s", agent_id)
+
+        http_registry = await load_http_integration_registry(
+            agent_id=agent_id,
+            enabled=http_integrations_enabled,
+            name_allowlist=http_integration_names_allow,
+            user_message=user_message or "",
+        )
+
+        llm_tools: list[dict[str, Any]] = []
+        llm_tools.extend(application_llm_tools)
+        if crm_registry is not None:
+            llm_tools.extend(crm_registry.tools_for_llm())
+        if http_registry is not None:
+            llm_tools.extend(http_registry.tools_for_llm())
+        if not llm_tools:
+            return None
+
+        chat_history = await self._load_recent_channel_history(
+            agent_id=agent_id,
+            user_external_id=user_external_id,
+            source_channel=source_channel,
+        )
+        client_memory_section = build_client_memory_system_section(
+            portrait=chat_portrait,
+            history=chat_history,
+        )
+        domain_instruction = self._crm_admin_domain_instruction(
+            domain_type=domain_type,
+            custom_domain_instruction=custom_domain_instruction,
+        )
+        now_local = datetime.now()
+        now_context = (
+            f"Сейчас: {now_local.strftime('%Y-%m-%d %H:%M')} "
+            f"(день недели: {now_local.strftime('%A')})."
+        )
+        fields_schema = template_config.get("application_fields")
+        if not isinstance(fields_schema, list):
+            fields_schema = []
+        fields_block = fields_schema_for_prompt(fields_schema)
+        context_tail = f"{now_context}\n{domain_instruction}"
+        system_prompt = build_crm_admin_applications_system_prompt(
+            agent_prompt=prompt,
+            context_tail=context_tail,
+            fields_schema_block=fields_block,
+        )
+        if client_memory_section:
+            system_prompt = f"{system_prompt}\n\n{client_memory_section}"
+
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ]
+        tool_events: list[dict[str, Any]] = []
+        max_iterations = 12
+        is_phone_channel = (source_channel or "").strip().lower() == "phone"
+        llm_temperature = 0.38 if is_phone_channel else 0.2
+
+        for iteration in range(max_iterations):
+            completion = await ai_client.chat.completions.create(
+                model="deepseek-chat",
+                messages=messages,
+                tools=llm_tools,
+                tool_choice="auto",
+                temperature=llm_temperature,
+            )
+            message = completion.choices[0].message
+            tool_calls: list[Any] = list(message.tool_calls or [])
+            content = (message.content or "").strip()
+            if not tool_calls:
+                tool_calls = self._parse_dsml_tool_calls(content, call_id_prefix=f"crm_apps_{iteration}")
+
+            if not tool_calls:
+                cleaned = self._clean_llm_text(content)
+                if not cleaned:
+                    cleaned = CRM_ADMIN_APPLICATIONS_LLM_EMPTY_FALLBACK
+                return TemplateExecutionResult(answer=cleaned, sources=[], tool_events=tool_events)
+
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": self._strip_dsml_tool_markup(message.content or "").strip(),
+                    "tool_calls": [self._serialize_tool_call(tool_call) for tool_call in tool_calls],
+                }
+            )
+
+            for call_index, tool_call in enumerate(tool_calls, start=1):
+                tool_name = self._tool_call_name(tool_call)
+                raw_args = self._tool_call_arguments(tool_call)
+                tool_call_id = self._tool_call_id(
+                    tool_call,
+                    fallback=f"crm_apps_{iteration}_{call_index}",
+                )
+                try:
+                    if application_registry.has_tool(tool_name):
+                        tool_result = await application_registry.execute_tool(tool_name, raw_args)
+                    elif crm_registry is not None and tool_name in crm_tool_names:
+                        tool_result = await crm_registry.execute_tool(tool_name, raw_args)
+                    elif http_registry is not None and http_registry.has_tool(tool_name):
+                        tool_result = await http_registry.execute_tool(tool_name, raw_args)
+                    else:
+                        raise RuntimeError(f"Tool '{tool_name}' is not available in current runtime")
+                    tool_events.append(
+                        {
+                            "tool_name": tool_name,
+                            "tool_status": tool_result.get("tool_status", "success"),
+                            "latency_ms": int(tool_result.get("latency_ms") or 0),
+                            "source_channel": source_channel,
+                            "user_external_id": mask_external_id(user_external_id),
+                            "ok": bool(tool_result.get("ok")),
+                            "error": None,
+                        }
+                    )
+                except Exception as exc:
+                    safe_error = redact_pii_text(str(exc))
+                    tool_result = {"ok": False, "error": safe_error}
+                    tool_events.append(
+                        {
+                            "tool_name": tool_name,
+                            "tool_status": "error",
+                            "latency_ms": 0,
+                            "source_channel": source_channel,
+                            "user_external_id": mask_external_id(user_external_id),
+                            "ok": False,
+                            "error": safe_error,
+                        }
+                    )
+
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "name": tool_name,
+                        "content": json.dumps(tool_result, ensure_ascii=False),
+                    }
+                )
+
+        final_completion = await ai_client.chat.completions.create(
+            model="deepseek-chat",
+            messages=messages,
+            temperature=0.2,
+        )
+        final_content = (final_completion.choices[0].message.content or "").strip()
+        cleaned = self._clean_llm_text(final_content)
+        return TemplateExecutionResult(
+            answer=cleaned or CRM_ADMIN_APPLICATIONS_LLM_EMPTY_FALLBACK,
             sources=[],
             tool_events=tool_events,
         )

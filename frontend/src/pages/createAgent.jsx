@@ -36,6 +36,30 @@ const CRM_TOOL_OPTIONS = [
 const CRM_DOMAIN_OPTIONS_FALLBACK = [
   { value: 'beauty_salon', label: 'Салон красоты' },
   { value: 'dental_clinic', label: 'Стоматологическая клиника' },
+  { value: 'consulting', label: 'Консалтинг / приём заявок' },
+];
+
+const CRM_WORKFLOW_MODE_OPTIONS = [
+  { value: 'booking', label: 'Запись на услуги (календарь, расписание)' },
+  { value: 'applications', label: 'Приём заявок (консалтинг, B2B и т.д.)' },
+];
+
+const APPLICATION_FIELD_TYPE_OPTIONS = [
+  { value: 'text', label: 'Текст' },
+  { value: 'phone', label: 'Телефон' },
+  { value: 'email', label: 'Email' },
+  { value: 'number', label: 'Число' },
+  { value: 'select', label: 'Выбор из списка' },
+  { value: 'textarea', label: 'Длинный текст' },
+  { value: 'date', label: 'Дата' },
+];
+
+const DEFAULT_APPLICATION_FIELDS = [
+  { localId: 'f1', key: 'company_name', label: 'Название компании', type: 'text', required: true, placeholder: 'ООО Пример', optionsText: '' },
+  { localId: 'f2', key: 'contact_name', label: 'Контактное лицо', type: 'text', required: true, placeholder: '', optionsText: '' },
+  { localId: 'f3', key: 'phone', label: 'Телефон', type: 'phone', required: true, placeholder: '+7...', optionsText: '' },
+  { localId: 'f4', key: 'email', label: 'Email', type: 'email', required: false, placeholder: '', optionsText: '' },
+  { localId: 'f5', key: 'request_summary', label: 'Суть запроса', type: 'textarea', required: true, placeholder: 'Опишите задачу', optionsText: '' },
 ];
 
 const CRM_DOMAIN_PLACEHOLDERS = {
@@ -121,6 +145,104 @@ const buildAdminDomainPromptAppendix = (domainConfig, staffList, serviceList) =>
     `services: ${serviceNames.join(', ') || '-'}`,
   ].join('\n');
 };
+
+const buildApplicationsPromptAppendix = (applicationFields, domainInstruction = '') => {
+  const fieldLines = applicationFields.map((field) => {
+    const req = field.required ? 'обязательное' : 'опциональное';
+    return `- ${field.label} (key=${field.key}, ${req})`;
+  });
+  return [
+    '---',
+    'Application intake profile:',
+    'workflow_mode: applications',
+    domainInstruction ? `domain_instruction: ${domainInstruction}` : null,
+    'application_fields:',
+    ...(fieldLines.length ? fieldLines : ['- (не настроено)']),
+  ].filter(Boolean).join('\n');
+};
+
+let _applicationFieldLocalIdCounter = 0;
+const newApplicationFieldLocalId = () => `app-field-${++_applicationFieldLocalIdCounter}`;
+
+const ApplicationFieldCard = ({ field, onChange, onRemove, disabled }) => (
+  <div className="onboarding-card onboarding-card--application-field">
+    <button
+      type="button"
+      className="onboarding-card__remove"
+      onClick={onRemove}
+      disabled={disabled}
+      aria-label="Удалить поле"
+    >
+      ×
+    </button>
+    <div className="onboarding-card__field">
+      <label className="onboarding-card__label">Название поля</label>
+      <input
+        type="text"
+        className="onboarding-card__input"
+        value={field.label}
+        onChange={(e) => onChange({ ...field, label: e.target.value })}
+        placeholder="Например: Бюджет проекта"
+        disabled={disabled}
+        maxLength={128}
+      />
+    </div>
+    <div className="onboarding-card__field">
+      <label className="onboarding-card__label">Ключ (для ИИ)</label>
+      <input
+        type="text"
+        className="onboarding-card__input"
+        value={field.key}
+        onChange={(e) => onChange({ ...field, key: e.target.value })}
+        placeholder="budget"
+        disabled={disabled}
+        maxLength={48}
+      />
+    </div>
+    <div className="onboarding-card__field">
+      <label className="onboarding-card__label">Тип</label>
+      <CustomSelect
+        className="input-main"
+        value={field.type}
+        onChange={(e) => onChange({ ...field, type: e.target.value })}
+        options={APPLICATION_FIELD_TYPE_OPTIONS}
+        disabled={disabled}
+      />
+    </div>
+    <div className="onboarding-card__field">
+      <label className="onboarding-card__label">Подсказка</label>
+      <input
+        type="text"
+        className="onboarding-card__input"
+        value={field.placeholder}
+        onChange={(e) => onChange({ ...field, placeholder: e.target.value })}
+        placeholder="Текст подсказки для клиента"
+        disabled={disabled}
+        maxLength={256}
+      />
+    </div>
+    {field.type === 'select' ? (
+      <div className="onboarding-card__field">
+        <label className="onboarding-card__label">Варианты (через запятую)</label>
+        <input
+          type="text"
+          className="onboarding-card__input"
+          value={field.optionsText}
+          onChange={(e) => onChange({ ...field, optionsText: e.target.value })}
+          placeholder="Базовый, Стандарт, Премиум"
+          disabled={disabled}
+        />
+      </div>
+    ) : null}
+    <FeatureToggle
+      checked={Boolean(field.required)}
+      onChange={(enabled) => onChange({ ...field, required: enabled })}
+      disabled={disabled}
+      title="Обязательное поле"
+      helpText="ИИ не отправит заявку, пока клиент не заполнит это поле."
+    />
+  </div>
+);
 
 const StaffCard = ({ staff, onChange, onRemove, disabled, roleLabel, specializationPlaceholder }) => (
   <div className="onboarding-card onboarding-card--staff">
@@ -340,7 +462,7 @@ const SALES_DEFAULT_TEMPLATE_CONFIG = {
 const TEMPLATE_TYPE_HELP = {
   qa: 'Бесплатный пробный шаблон: ответы по базе знаний (RAG) для поддержки и консультаций. Токены LLM включены.',
   crm_admin:
-    'ИИ Администратор: запись, расписание, CRM/ERP. 990 ₽/мес, первые 3 дня после создания — бесплатно.',
+    'ИИ Администратор: запись на услуги или приём заявок (консалтинг, B2B). 990 ₽/мес, первые 3 дня после создания — бесплатно.',
   sales_manager:
     'ИИ МОП в мессенджерах: квалификация и диалог по стадиям. 1 990 ₽/мес, первые 3 дня — бесплатно.',
   ai_logist: 'Шаблон находится в разработке.',
@@ -600,6 +722,7 @@ const CreateAgentContent = () => {
 
   const [staffList, setStaffList] = useState([]);
   const [serviceList, setServiceList] = useState([]);
+  const [applicationFieldList, setApplicationFieldList] = useState(DEFAULT_APPLICATION_FIELDS);
   const [domainRegistry, setDomainRegistry] = useState(CRM_DOMAIN_OPTIONS_FALLBACK);
   const [customStaffRole, setCustomStaffRole] = useState('');
   const [customDomainInstruction, setCustomDomainInstruction] = useState('');
@@ -636,6 +759,7 @@ const CreateAgentContent = () => {
       telephony_voice_id: 'default',
       telephony_language: 'ru-RU',
       template_type: 'qa',
+      crm_workflow_mode: 'booking',
       crm_domain_type: 'beauty_salon',
       crm_mode: 'disabled',
       crm_connect_timing: 'later',
@@ -810,19 +934,57 @@ const CreateAgentContent = () => {
           }
         }
         const _selectedDomainType = values.crm_domain_type?.trim() || 'beauty_salon';
+        const _selectedWorkflowMode = values.crm_workflow_mode?.trim() || 'booking';
         const _selectedDomainCfg = (Array.isArray(domainRegistry) ? domainRegistry : []).find(
           (d) => (d.key || d.value) === _selectedDomainType
         );
+        const serializedApplicationFields = applicationFieldList
+          .filter((field) => field.label?.trim())
+          .map((field) => {
+            const entry = {
+              key: field.key?.trim() || field.label.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, ''),
+              label: field.label.trim(),
+              type: field.type || 'text',
+              required: Boolean(field.required),
+            };
+            if (field.placeholder?.trim()) {
+              entry.placeholder = field.placeholder.trim();
+            }
+            if (entry.type === 'select') {
+              entry.options = String(field.optionsText || '')
+                .split(',')
+                .map((item) => item.trim())
+                .filter(Boolean);
+            }
+            return entry;
+          });
+        if (selectedTemplate === 'crm_admin' && _selectedWorkflowMode === 'applications') {
+          if (!serializedApplicationFields.length) {
+            showError('Добавьте хотя бы одно поле заявки');
+            return;
+          }
+          const invalidSelect = serializedApplicationFields.find(
+            (field) => field.type === 'select' && (!Array.isArray(field.options) || !field.options.length)
+          );
+          if (invalidSelect) {
+            showError(`Укажите варианты для поля «${invalidSelect.label}»`);
+            return;
+          }
+        }
         const templateConfig = selectedTemplate === 'crm_admin'
           ? {
-              domain_type: _selectedDomainType,
+              workflow_mode: _selectedWorkflowMode,
+              domain_type: _selectedWorkflowMode === 'applications' ? 'consulting' : _selectedDomainType,
+              application_fields: _selectedWorkflowMode === 'applications' ? serializedApplicationFields : [],
               crm_mode: crmMode === 'optional' ? 'optional' : 'disabled',
               booking_backend:
-                crmMode === 'disabled'
+                _selectedWorkflowMode === 'applications'
                   ? 'local'
-                  : crmConnectTiming === 'now'
-                    ? 'crm'
-                    : 'auto',
+                  : crmMode === 'disabled'
+                    ? 'local'
+                    : crmConnectTiming === 'now'
+                      ? 'crm'
+                      : 'auto',
               crm_provider: values.crm_provider?.trim() || 'amocrm',
               allowed_tools: parseAllowedTools(values.crm_allowed_tools),
               allowed_booking_tools: [
@@ -835,20 +997,31 @@ const CreateAgentContent = () => {
                 'list_services',
                 'list_appointments',
               ],
+              allowed_application_tools: [
+                'get_application_schema',
+                'create_application',
+                'list_client_applications',
+              ],
               confirmation_policy: values.crm_confirmation_policy?.trim() || 'confirm_risky',
               fallback_mode: values.crm_fallback_mode?.trim() || 'ask_clarifying_question',
-              waitlist_enabled: Boolean(values.waitlist_enabled),
-              reminder_enabled: Boolean(values.reminder_enabled),
+              waitlist_enabled: _selectedWorkflowMode === 'applications' ? false : Boolean(values.waitlist_enabled),
+              reminder_enabled: _selectedWorkflowMode === 'applications' ? false : Boolean(values.reminder_enabled),
               reminder_offsets_hours: String(values.reminder_offsets_hours || '')
                 .split(',')
                 .map((item) => Number(item.trim()))
                 .filter((item) => Number.isFinite(item) && item > 0 && item <= 72),
               appointment_confirmation_enabled: true,
-              resources_enabled: _selectedDomainCfg?.resources_mode !== 'none',
+              resources_enabled: _selectedWorkflowMode === 'applications'
+                ? false
+                : _selectedDomainCfg?.resources_mode !== 'none',
               resource_linked_to_staff: _selectedDomainCfg?.resource_linked_to_staff ?? true,
               custom_staff_role: _selectedDomainType === 'custom' ? (customStaffRole.trim() || null) : null,
               custom_staff_label: null,
-              custom_domain_instruction: _selectedDomainType === 'custom' ? (customDomainInstruction.trim() || null) : null,
+              custom_domain_instruction: _selectedWorkflowMode === 'applications'
+                ? (customDomainInstruction.trim() || null)
+                : _selectedDomainType === 'custom'
+                  ? (customDomainInstruction.trim() || null)
+                  : null,
             }
           : selectedTemplate === 'sales_manager'
             ? {
@@ -875,7 +1048,9 @@ const CreateAgentContent = () => {
 
         const adminOnboardingPrompt =
           selectedTemplate === 'crm_admin'
-            ? buildAdminDomainPromptAppendix(activeDomainConfig, staffList, serviceList)
+            ? _selectedWorkflowMode === 'applications'
+              ? buildApplicationsPromptAppendix(serializedApplicationFields, customDomainInstruction.trim())
+              : buildAdminDomainPromptAppendix(activeDomainConfig, staffList, serviceList)
             : '';
         const finalSystemPrompt = selectedTemplate === 'crm_admin'
           ? [values.system_prompt.trim(), adminOnboardingPrompt].filter(Boolean).join('\n\n')
@@ -902,7 +1077,7 @@ const CreateAgentContent = () => {
           });
         }
 
-        if (selectedTemplate === 'crm_admin') {
+        if (selectedTemplate === 'crm_admin' && _selectedWorkflowMode !== 'applications') {
           const staffRole = activeDomainConfig.staff_role_default
             || (domainType === 'custom' ? (customStaffRole.trim() || 'specialist') : 'specialist');
           const localIdToApiId = {};
@@ -1063,6 +1238,7 @@ const CreateAgentContent = () => {
   const isSalesManagerTemplate = form.values.template_type === 'sales_manager';
   const isContentFactoryTemplate = form.values.template_type === 'content_factory';
   const isCrmAdminTemplate = form.values.template_type === 'crm_admin';
+  const isApplicationsWorkflow = form.values.crm_workflow_mode === 'applications';
   const selectedTemplatePricing = templatePricingCatalog.find(
     (row) => row.code === form.values.template_type
   );
@@ -2000,7 +2176,30 @@ const CreateAgentContent = () => {
             {isCrmAdminTemplate && (
               <div className="form-group">
                 <h3 className="agent-form-channel-title">Онбординг администратора</h3>
-                <label htmlFor="crm_domain_type">Подшаблон:</label>
+
+                <label htmlFor="crm_workflow_mode">Режим работы:</label>
+                <CustomSelect
+                  id="crm_workflow_mode"
+                  name="crm_workflow_mode"
+                  className="input-main"
+                  value={form.values.crm_workflow_mode}
+                  onChange={(event) => {
+                    form.handleChange(event);
+                    const nextMode = event?.target?.value;
+                    if (nextMode === 'applications') {
+                      form.setFieldValue('crm_domain_type', 'consulting');
+                      if (!applicationFieldList.length) {
+                        setApplicationFieldList(DEFAULT_APPLICATION_FIELDS);
+                      }
+                    }
+                  }}
+                  options={CRM_WORKFLOW_MODE_OPTIONS}
+                  disabled={form.isSubmitting}
+                />
+
+                {!isApplicationsWorkflow ? (
+                  <>
+                <label htmlFor="crm_domain_type" className="mt-input">Подшаблон:</label>
                 <CustomSelect
                   id="crm_domain_type"
                   name="crm_domain_type"
@@ -2010,6 +2209,8 @@ const CreateAgentContent = () => {
                   options={crmDomainOptions.length > 0 ? crmDomainOptions : CRM_DOMAIN_OPTIONS_FALLBACK}
                   disabled={form.isSubmitting}
                 />
+                  </>
+                ) : null}
 
                 <label htmlFor="crm_mode" className="mt-input">
                   CRM-режим:
@@ -2026,6 +2227,8 @@ const CreateAgentContent = () => {
 
                 <div className="admin-template-onboarding-block">
                   <h4 className="admin-template-onboarding-title">Дополнительные фичи</h4>
+                  {!isApplicationsWorkflow ? (
+                  <>
                   <FeatureToggle
                     checked={Boolean(form.values.waitlist_enabled)}
                     onChange={(enabled) => form.setFieldValue('waitlist_enabled', enabled)}
@@ -2054,8 +2257,65 @@ const CreateAgentContent = () => {
                       placeholder="24,2"
                     />
                   </div>
+                  </>
+                  ) : (
+                    <p className="analytics-note">
+                      В режиме заявок календарь, расписание и напоминания не используются — агент собирает данные по вашей схеме и создаёт заявки.
+                    </p>
+                  )}
                 </div>
 
+                {isApplicationsWorkflow ? (
+                  <div className="admin-template-onboarding-block">
+                    <h4 className="admin-template-onboarding-title">Поля заявки</h4>
+                    <p className="analytics-note">
+                      Настройте, какие данные ИИ должен собрать у клиента перед отправкой заявки.
+                    </p>
+                    <label className="mt-input">Доменная инструкция (для ИИ):</label>
+                    <textarea
+                      className="input-main"
+                      placeholder="Опишите сферу: консалтинг, юридические услуги, IT-аудит — что уточнять у клиента..."
+                      value={customDomainInstruction}
+                      onChange={(e) => setCustomDomainInstruction(e.target.value)}
+                      disabled={form.isSubmitting}
+                      rows={3}
+                      maxLength={4000}
+                    />
+                    <label className="mt-input">Поля:</label>
+                    <CardCarousel
+                      addCard={() =>
+                        setApplicationFieldList((prev) => [
+                          ...prev,
+                          {
+                            localId: newApplicationFieldLocalId(),
+                            key: '',
+                            label: '',
+                            type: 'text',
+                            required: false,
+                            placeholder: '',
+                            optionsText: '',
+                          },
+                        ])
+                      }
+                    >
+                      {applicationFieldList.map((field) => (
+                        <ApplicationFieldCard
+                          key={field.localId}
+                          field={field}
+                          disabled={form.isSubmitting}
+                          onChange={(updated) =>
+                            setApplicationFieldList((prev) =>
+                              prev.map((item) => (item.localId === field.localId ? updated : item))
+                            )
+                          }
+                          onRemove={() =>
+                            setApplicationFieldList((prev) => prev.filter((item) => item.localId !== field.localId))
+                          }
+                        />
+                      ))}
+                    </CardCarousel>
+                  </div>
+                ) : (
                 <div className="admin-template-onboarding-block">
                     <h4 className="admin-template-onboarding-title">
                       {domainConfig ? domainConfig.label_ru || domainConfig.label : 'Настройки'} — Настройки
@@ -2149,6 +2409,7 @@ const CreateAgentContent = () => {
                       ))}
                     </CardCarousel>
                   </div>
+                )}
 
                 {isCrmConnectionEnabled ? (
                   <>

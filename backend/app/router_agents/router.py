@@ -23,6 +23,7 @@ from .dao import AgentChannelConnectionDAO, AgentCrmConnectionDAO, AgentDAO, Age
 from .schemas import *
 from ..alembic.database import async_session_maker
 from ..alembic.models import (
+    AdminApplication,
     AdminAppointment,
     AdminAppointmentReminderLog,
     AdminClientProfile,
@@ -57,6 +58,7 @@ from ..services.ai_authoring import ai_client, generate_welcome_with_ai, improve
 from ..services.admin_booking import get_admin_booking_service
 from ..services.admin_booking.payment_service import get_admin_booking_payment_service
 from ..services.admin_booking.domains import DOMAIN_REGISTRY as _DOMAIN_REGISTRY
+from ..services.admin_applications import get_admin_application_service
 from ..services.voice_transcription import is_voice_stt_configured, transcribe_voice_bytes
 from ..services.http_integration.errors import HttpIntegrationValidationError
 from ..services.http_integration.tool_registry import validate_integration_config_dict
@@ -158,6 +160,12 @@ DEFAULT_BOOKING_ALLOWED_TOOLS = [
     "cancel_appointment",
     "list_staff",
     "list_services",
+]
+CRM_WORKFLOW_MODES = {"booking", "applications"}
+DEFAULT_APPLICATION_ALLOWED_TOOLS = [
+    "get_application_schema",
+    "create_application",
+    "list_client_applications",
 ]
 SALES_MODES = {"draft_only", "semi_auto", "auto"}
 SALES_ALLOWED_LANGUAGES = {"ru", "en"}
@@ -713,13 +721,16 @@ def _normalize_template_type(template_type: str | None, *, allow_legacy: bool = 
 
 def _default_crm_admin_config() -> dict[str, object]:
     return {
+        "workflow_mode": "booking",
         "domain_type": "beauty_salon",
+        "application_fields": [],
         "crm_mode": "optional",
         # Keep runtime-compatible behavior for current implementation.
         "booking_backend": "crm",
         "crm_provider": "amocrm",
         "allowed_tools": list(DEFAULT_CRM_ALLOWED_TOOLS),
         "allowed_booking_tools": list(DEFAULT_BOOKING_ALLOWED_TOOLS),
+        "allowed_application_tools": list(DEFAULT_APPLICATION_ALLOWED_TOOLS),
         "confirmation_policy": "confirm_risky",
         "fallback_mode": "ask_clarifying_question",
         "waitlist_enabled": True,
@@ -745,6 +756,7 @@ def _migrate_crm_admin_config(raw_config: dict | None) -> dict[str, object]:
 
     # Legacy compatibility: support both `crm_mode` and older aliases if they ever appear.
     crm_mode_raw = raw.get("crm_mode", raw.get("integration_mode", defaults["crm_mode"]))
+    workflow_mode = str(raw.get("workflow_mode") or defaults["workflow_mode"]).strip().lower()
     domain_type = str(raw.get("domain_type") or defaults["domain_type"]).strip().lower()
     crm_mode = str(crm_mode_raw or defaults["crm_mode"]).strip().lower()
     booking_backend = str(raw.get("booking_backend") or defaults["booking_backend"]).strip().lower()
@@ -757,6 +769,11 @@ def _migrate_crm_admin_config(raw_config: dict | None) -> dict[str, object]:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"template_config.domain_type must be one of: {valid}",
+        )
+    if workflow_mode not in CRM_WORKFLOW_MODES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="template_config.workflow_mode must be one of: booking, applications",
         )
     if crm_mode not in CRM_MODES:
         raise HTTPException(
@@ -799,6 +816,39 @@ def _migrate_crm_admin_config(raw_config: dict | None) -> dict[str, object]:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="template_config.allowed_booking_tools must be an array of strings",
+        )
+
+    allowed_application_tools_raw = raw.get("allowed_application_tools")
+    if allowed_application_tools_raw is None:
+        allowed_application_tools = list(DEFAULT_APPLICATION_ALLOWED_TOOLS)
+    elif isinstance(allowed_application_tools_raw, list):
+        allowed_application_tools = []
+        for item in allowed_application_tools_raw:
+            tool = str(item or "").strip()
+            if tool and tool not in allowed_application_tools:
+                allowed_application_tools.append(tool)
+        if not allowed_application_tools:
+            allowed_application_tools = list(DEFAULT_APPLICATION_ALLOWED_TOOLS)
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="template_config.allowed_application_tools must be an array of strings",
+        )
+
+    from ..services.admin_applications.fields import normalize_application_fields
+
+    application_fields_raw = raw.get("application_fields", defaults["application_fields"])
+    try:
+        application_fields = normalize_application_fields(application_fields_raw)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    if workflow_mode == "applications" and not application_fields:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="template_config.application_fields must contain at least one field when workflow_mode is applications",
         )
 
     waitlist_enabled = bool(raw.get("waitlist_enabled", defaults["waitlist_enabled"]))
@@ -894,12 +944,15 @@ def _migrate_crm_admin_config(raw_config: dict | None) -> dict[str, object]:
         )
 
     return {
+        "workflow_mode": workflow_mode,
         "domain_type": domain_type,
+        "application_fields": application_fields,
         "crm_mode": crm_mode,
         "booking_backend": booking_backend,
         "crm_provider": crm_provider,
         "allowed_tools": allowed_tools,
         "allowed_booking_tools": allowed_booking_tools,
+        "allowed_application_tools": allowed_application_tools,
         "confirmation_policy": confirmation_policy,
         "fallback_mode": fallback_mode,
         "waitlist_enabled": waitlist_enabled,
@@ -8538,6 +8591,114 @@ async def admin_template_appointments_cancel(
                 appointment_id=payload.appointment_id,
                 reason=payload.reason,
             )
+    return JSONResponse(content=row, status_code=status.HTTP_200_OK)
+
+
+@router.get("/admin_template/applications")
+async def admin_template_applications_list(
+    agent_id: int | None = Query(default=None),
+    bot_id: int | None = Query(default=None),
+    status_filter: str | None = Query(default=None, alias="status"),
+    client_external_id: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    current_user=Depends(get_current_user_required),
+):
+    if agent_id is None and bot_id is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="agent_id or bot_id is required")
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent, cfg = await _find_admin_template_agent(
+                session=session,
+                agent_dao=agent_dao,
+                current_user=current_user,
+                agent_id=agent_id,
+                bot_id=bot_id,
+            )
+            if str(cfg.get("workflow_mode") or "booking").strip().lower() != "applications":
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Applications API is available only for agents with workflow_mode=applications",
+                )
+            items = await get_admin_application_service().list_applications(
+                session,
+                agent_id=agent.id,
+                status=status_filter,
+                client_external_id=client_external_id,
+                limit=limit,
+                offset=offset,
+            )
+    return JSONResponse(
+        content={
+            "items": items,
+            "fields_schema": get_admin_application_service().get_fields_schema(cfg),
+        },
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@router.get("/admin_template/applications/stats")
+async def admin_template_applications_stats(
+    agent_id: int | None = Query(default=None),
+    bot_id: int | None = Query(default=None),
+    current_user=Depends(get_current_user_required),
+):
+    if agent_id is None and bot_id is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="agent_id or bot_id is required")
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent, cfg = await _find_admin_template_agent(
+                session=session,
+                agent_dao=agent_dao,
+                current_user=current_user,
+                agent_id=agent_id,
+                bot_id=bot_id,
+            )
+            if str(cfg.get("workflow_mode") or "booking").strip().lower() != "applications":
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Applications API is available only for agents with workflow_mode=applications",
+                )
+            counts = await get_admin_application_service().count_by_status(session, agent_id=agent.id)
+    return JSONResponse(content={"counts": counts}, status_code=status.HTTP_200_OK)
+
+
+@router.patch("/admin_template/applications")
+async def admin_template_applications_update(
+    payload: AdminTemplateApplicationUpdatePayload,
+    current_user=Depends(get_current_user_required),
+):
+    async with async_session_maker() as session:
+        agent_dao = AgentDAO(session)
+        async with session.begin():
+            agent, cfg = await _find_admin_template_agent(
+                session=session,
+                agent_dao=agent_dao,
+                current_user=current_user,
+                payload=payload,
+            )
+            if str(cfg.get("workflow_mode") or "booking").strip().lower() != "applications":
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Applications API is available only for agents with workflow_mode=applications",
+                )
+            try:
+                row = await get_admin_application_service().update_application(
+                    session,
+                    agent_id=agent.id,
+                    application_id=payload.application_id,
+                    status=payload.status,
+                    notes=payload.notes,
+                )
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=str(exc),
+                ) from exc
+            if row is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Application not found")
     return JSONResponse(content=row, status_code=status.HTTP_200_OK)
 
 

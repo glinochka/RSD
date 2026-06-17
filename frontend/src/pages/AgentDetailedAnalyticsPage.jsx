@@ -37,6 +37,25 @@ const refundStatusLabel = (status) => {
   return key || '—';
 };
 
+const applicationStatusLabel = (status) => {
+  const key = String(status || '').trim().toLowerCase();
+  if (key === 'new') return 'Новая';
+  if (key === 'in_progress') return 'В работе';
+  if (key === 'completed') return 'Завершена';
+  if (key === 'rejected') return 'Отклонена';
+  if (key === 'cancelled') return 'Отменена';
+  return key || '—';
+};
+
+const APPLICATION_STATUS_OPTIONS = [
+  { value: '', label: 'Все статусы' },
+  { value: 'new', label: 'Новые' },
+  { value: 'in_progress', label: 'В работе' },
+  { value: 'completed', label: 'Завершённые' },
+  { value: 'rejected', label: 'Отклонённые' },
+  { value: 'cancelled', label: 'Отменённые' },
+];
+
 const BROADCAST_LIMIT_OPTIONS = [100, 250, 500, 1000, 2000, 5000];
 const CHART_PERIODS = [7, 30, 90];
 const isPortraitFeatureEnabled = (agent) => {
@@ -761,9 +780,17 @@ const AgentDetailedAnalyticsPageContent = () => {
   });
   const [newQuickReplyDraft, setNewQuickReplyDraft] = useState({ title: '', body: '', category: '' });
   const [reminderRunResult, setReminderRunResult] = useState(null);
+  const [applicationItems, setApplicationItems] = useState([]);
+  const [applicationFieldsSchema, setApplicationFieldsSchema] = useState([]);
+  const [applicationStats, setApplicationStats] = useState(null);
+  const [applicationStatusFilter, setApplicationStatusFilter] = useState('');
+  const [selectedApplicationId, setSelectedApplicationId] = useState(null);
+  const [applicationNotesDraft, setApplicationNotesDraft] = useState('');
 
   const botId = useMemo(() => Number(id), [id]);
   const isCrmAdminTemplate = String(agent?.template_type || '').trim().toLowerCase() === 'crm_admin';
+  const isApplicationsMode = isCrmAdminTemplate
+    && String(agent?.template_config?.workflow_mode || 'booking').trim().toLowerCase() === 'applications';
 
   const plannedBroadcastRecipients = useMemo(() => {
     if (!broadcastStats) return 0;
@@ -1007,22 +1034,63 @@ const AgentDetailedAnalyticsPageContent = () => {
     }
   };
 
-  useEffect(() => {
-    if (!isCrmAdminTemplate) return;
-    if (selectedSection !== ANALYTICS_SECTIONS.OPERATIONS) return;
-    loadOperationsDashboard();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedSection, isCrmAdminTemplate, botId, operationRange.start, operationRange.end, monthRange.start, monthRange.end]);
+  const loadApplicationsDashboard = async () => {
+    if (!Number.isFinite(botId) || botId <= 0) return;
+    setOpsLoading(true);
+    try {
+      const [listData, statsData] = await Promise.all([
+        agentService.listAdminTemplateApplications({
+          bot_id: botId,
+          status: applicationStatusFilter || null,
+        }),
+        agentService.getAdminTemplateApplicationsStats({ bot_id: botId }),
+      ]);
+      setApplicationItems(Array.isArray(listData?.items) ? listData.items : []);
+      setApplicationFieldsSchema(Array.isArray(listData?.fields_schema) ? listData.fields_schema : []);
+      setApplicationStats(statsData?.counts || null);
+    } catch (error) {
+      showError(error.message || 'Не удалось загрузить заявки');
+    } finally {
+      setOpsLoading(false);
+    }
+  };
+
+  const handleUpdateApplicationStatus = async (applicationId, status) => {
+    if (!Number.isFinite(botId) || botId <= 0) return;
+    try {
+      await agentService.updateAdminTemplateApplication({
+        bot_id: botId,
+        application_id: applicationId,
+        status,
+        notes: applicationNotesDraft || undefined,
+      });
+      showSuccess('Заявка обновлена');
+      await loadApplicationsDashboard();
+    } catch (error) {
+      showError(error.message || 'Не удалось обновить заявку');
+    }
+  };
 
   useEffect(() => {
     if (!isCrmAdminTemplate) return;
+    if (selectedSection !== ANALYTICS_SECTIONS.OPERATIONS) return;
+    if (isApplicationsMode) {
+      loadApplicationsDashboard();
+      return;
+    }
+    loadOperationsDashboard();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSection, isCrmAdminTemplate, isApplicationsMode, botId, operationRange.start, operationRange.end, monthRange.start, monthRange.end, applicationStatusFilter]);
+
+  useEffect(() => {
+    if (!isCrmAdminTemplate || isApplicationsMode) return;
     if (selectedSection !== ANALYTICS_SECTIONS.REFUNDS) return;
     loadRefundRequests();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedSection, isCrmAdminTemplate, botId]);
 
   useEffect(() => {
-    if (!isCrmAdminTemplate || !Number.isFinite(botId) || botId <= 0) return;
+    if (!isCrmAdminTemplate || isApplicationsMode || !Number.isFinite(botId) || botId <= 0) return;
     agentService
       .listAdminTemplateRefundRequests({ bot_id: botId })
       .then((data) => {
@@ -1030,6 +1098,14 @@ const AgentDetailedAnalyticsPageContent = () => {
       })
       .catch(() => {});
   }, [isCrmAdminTemplate, botId]);
+
+  useEffect(() => {
+    if (!isCrmAdminTemplate || !isApplicationsMode || !Number.isFinite(botId) || botId <= 0) return;
+    agentService
+      .getAdminTemplateApplicationsStats({ bot_id: botId })
+      .then((data) => setApplicationStats(data?.counts || null))
+      .catch(() => {});
+  }, [isCrmAdminTemplate, isApplicationsMode, botId]);
 
   const selectedUser = useMemo(
     () => filteredChatUsers.find((user) => user.id === selectedUserId) || null,
@@ -1802,8 +1878,12 @@ const AgentDetailedAnalyticsPageContent = () => {
                 className={`analytics-section-btn ${selectedSection === ANALYTICS_SECTIONS.OPERATIONS ? 'analytics-section-btn--active' : ''}`}
                 onClick={() => setSelectedSection(ANALYTICS_SECTIONS.OPERATIONS)}
               >
-                Операционный дашборд
+                {isApplicationsMode ? 'Заявки' : 'Операционный дашборд'}
+                {isApplicationsMode && Number(applicationStats?.new || 0) > 0 ? (
+                  <span className="analytics-section-badge">{applicationStats.new}</span>
+                ) : null}
               </button>
+              {!isApplicationsMode ? (
               <button
                 type="button"
                 className={`analytics-section-btn ${selectedSection === ANALYTICS_SECTIONS.REFUNDS ? 'analytics-section-btn--active' : ''}`}
@@ -1816,6 +1896,7 @@ const AgentDetailedAnalyticsPageContent = () => {
                   </span>
                 ) : null}
               </button>
+              ) : null}
             </>
           ) : null}
         </aside>
@@ -2123,6 +2204,127 @@ const AgentDetailedAnalyticsPageContent = () => {
             </section>
           ) : selectedSection === ANALYTICS_SECTIONS.OPERATIONS ? (
             <section className="analytics-operations">
+              {isApplicationsMode ? (
+                <>
+                  <div className="analytics-operations-header">
+                    <h3>Заявки</h3>
+                    <div className="analytics-operations-toolbar">
+                      <AnalyticsCustomSelect
+                        value={applicationStatusFilter}
+                        onChange={setApplicationStatusFilter}
+                        ariaLabel="Фильтр по статусу заявки"
+                        options={APPLICATION_STATUS_OPTIONS}
+                      />
+                      <button type="button" className="btn btn-outline" onClick={loadApplicationsDashboard} disabled={opsLoading}>
+                        {opsLoading ? 'Обновление...' : 'Обновить'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="analytics-ops-kpis">
+                    <article className="analytics-ops-kpi">
+                      <span className="analytics-ops-kpi-label">Всего</span>
+                      <strong>{formatNumber(applicationStats?.total || 0)}</strong>
+                    </article>
+                    <article className="analytics-ops-kpi">
+                      <span className="analytics-ops-kpi-label">Новые</span>
+                      <strong>{formatNumber(applicationStats?.new || 0)}</strong>
+                    </article>
+                    <article className="analytics-ops-kpi">
+                      <span className="analytics-ops-kpi-label">В работе</span>
+                      <strong>{formatNumber(applicationStats?.in_progress || 0)}</strong>
+                    </article>
+                    <article className="analytics-ops-kpi">
+                      <span className="analytics-ops-kpi-label">Завершённые</span>
+                      <strong>{formatNumber(applicationStats?.completed || 0)}</strong>
+                    </article>
+                  </div>
+
+                  <article className="analytics-ops-card analytics-ops-card--wide">
+                    <h4>Входящие заявки</h4>
+                    {opsLoading ? (
+                      <p className="analytics-note">Загрузка...</p>
+                    ) : applicationItems.length === 0 ? (
+                      <p className="analytics-note">Заявок пока нет. Они появятся, когда клиенты оформят заявку через чат с агентом.</p>
+                    ) : (
+                      <div className="analytics-ops-list">
+                        {applicationItems.map((item) => {
+                          const isSelected = selectedApplicationId === item.id;
+                          const fieldEntries = applicationFieldsSchema.length
+                            ? applicationFieldsSchema
+                            : Object.keys(item.fields || {}).map((key) => ({ key, label: key }));
+                          return (
+                            <div
+                              key={`application-${item.id}`}
+                              className={`analytics-ops-row ${isSelected ? 'analytics-ops-row--selected' : ''}`}
+                            >
+                              <div className="analytics-ops-row-main">
+                                <strong>
+                                  #{item.id}
+                                  {item.client_name ? ` — ${item.client_name}` : ''}
+                                </strong>
+                                <span>
+                                  {applicationStatusLabel(item.status)}
+                                  {' · '}
+                                  {formatDateTime(item.created_at)}
+                                  {item.source_channel ? ` · ${refundChannelLabel(item.source_channel)}` : ''}
+                                </span>
+                                <div className="analytics-application-fields">
+                                  {fieldEntries.map((field) => {
+                                    const value = item.fields?.[field.key];
+                                    if (value === undefined || value === null || value === '') return null;
+                                    return (
+                                      <span key={`${item.id}-${field.key}`}>
+                                        <b>{field.label || field.key}:</b> {String(value)}
+                                      </span>
+                                    );
+                                  })}
+                                </div>
+                                {item.notes ? <span className="analytics-note">Заметка: {item.notes}</span> : null}
+                              </div>
+                              <div className="analytics-ops-row-actions">
+                                <button
+                                  type="button"
+                                  className="btn btn-outline"
+                                  onClick={() => {
+                                    setSelectedApplicationId(item.id);
+                                    setApplicationNotesDraft(item.notes || '');
+                                  }}
+                                >
+                                  Управление
+                                </button>
+                              </div>
+                              {isSelected ? (
+                                <div className="analytics-ops-inline-form analytics-ops-inline-form--stack">
+                                  <textarea
+                                    className="input-main"
+                                    rows={2}
+                                    placeholder="Внутренняя заметка"
+                                    value={applicationNotesDraft}
+                                    onChange={(e) => setApplicationNotesDraft(e.target.value)}
+                                  />
+                                  <div className="analytics-ops-row-actions">
+                                    <button type="button" className="btn btn-outline" onClick={() => handleUpdateApplicationStatus(item.id, 'in_progress')}>
+                                      В работу
+                                    </button>
+                                    <button type="button" className="btn btn-outline" onClick={() => handleUpdateApplicationStatus(item.id, 'completed')}>
+                                      Завершить
+                                    </button>
+                                    <button type="button" className="btn btn-outline" onClick={() => handleUpdateApplicationStatus(item.id, 'rejected')}>
+                                      Отклонить
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </article>
+                </>
+              ) : (
+              <>
               <div className="analytics-operations-header">
                 <h3>Операционный дашборд</h3>
                 <div className="analytics-operations-toolbar">
@@ -3157,6 +3359,8 @@ const AgentDetailedAnalyticsPageContent = () => {
                   </article>
                 </div>
               ) : null}
+            </>
+              )}
             </section>
           ) : selectedSection === ANALYTICS_SECTIONS.REFUNDS ? (
             <section className="analytics-operations">

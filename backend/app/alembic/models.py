@@ -278,6 +278,10 @@ class Agent(Base):
         back_populates="agent",
         cascade="all, delete-orphan",
     )
+    admin_applications: Mapped[list["AdminApplication"]] = relationship(
+        back_populates="agent",
+        cascade="all, delete-orphan",
+    )
 
 
 class AgentFrozenUser(Base):
@@ -615,6 +619,32 @@ class AdminAppointment(Base):
         back_populates="appointment",
         uselist=False,
     )
+
+
+class AdminApplication(Base):
+    __tablename__ = "admin_applications"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('new','in_progress','completed','rejected','cancelled')",
+            name="ck_admin_applications_status",
+        ),
+        Index("ix_admin_applications_agent_status_created", "agent_id", "status", "created_at"),
+        Index("ix_admin_applications_client_lookup", "agent_id", "client_external_id"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    client_external_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    client_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="new", server_default="new", index=True)
+    fields_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}", server_default="{}")
+    source_channel: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    agent: Mapped["Agent"] = relationship(back_populates="admin_applications")
 
 
 class AdminBookingPayment(Base):
