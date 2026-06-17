@@ -13,13 +13,16 @@ const INTER_FONT_CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
 `;
 
-function buildFullDocument(html, title = 'Website', faviconUrl = null) {
+function buildFullDocument(html, title = 'Website', faviconUrl = null, landingConfig = null) {
   const faviconTag = faviconUrl
     ? `<link rel="icon" type="image/x-icon" href="${faviconUrl}">`
     : '';
   const needsRuntime = !html.includes('data-rsd-landing-runtime');
   const runtimeScript = needsRuntime
     ? `<script data-rsd-landing-runtime="1">${LANDING_INTERACTIVITY_RUNTIME}</script>`
+    : '';
+  const landingConfigScript = landingConfig?.agentId
+    ? `<script>window.__RSD_LANDING__=${JSON.stringify(landingConfig)};</script>`
     : '';
 
   return `<!DOCTYPE html>
@@ -57,7 +60,11 @@ function buildFullDocument(html, title = 'Website', faviconUrl = null) {
     }
     img { max-width: 100%; height: auto; }
     a { text-decoration: none; }
+    /* Decorative AI chat bubbles — real widget is injected by the platform */
+    [class*="chat-widget"], [class*="live-chat"], [class*="chat-bubble"],
+    [id*="chat-widget"], [id*="live-chat"] { display: none !important; }
   </style>
+  ${landingConfigScript}
 </head>
 <body>
   ${html}
@@ -71,6 +78,9 @@ const FullpageRenderer = ({
   websiteId,
   title,
   faviconUrl = null,
+  agentId = null,
+  apiBase = null,
+  formsEnabled = true,
   editMode = false,
   previewMode = false,
   className = '',
@@ -88,7 +98,17 @@ const FullpageRenderer = ({
     try {
       const doc = iframe.contentDocument || iframe.contentWindow?.document;
       if (doc) {
-        const fullDoc = buildFullDocument(htmlContent, title, faviconUrl);
+        const landingConfig =
+          formsEnabled && agentId
+            ? {
+                agentId,
+                apiBase:
+                  apiBase ||
+                  (import.meta.env.VITE_API_URL || '').replace(/\/$/, '') ||
+                  (typeof window !== 'undefined' ? window.location.origin : ''),
+              }
+            : null;
+        const fullDoc = buildFullDocument(htmlContent, title, faviconUrl, landingConfig);
         doc.open();
         doc.write(fullDoc);
         doc.close();
@@ -115,7 +135,7 @@ const FullpageRenderer = ({
       console.error('FullpageRenderer: failed to render', error);
       setIsLoading(false);
     }
-  }, [htmlContent, title, faviconUrl]);
+  }, [htmlContent, title, faviconUrl, agentId, apiBase, formsEnabled]);
 
   useEffect(() => {
     updateIframeContent();
@@ -190,6 +210,9 @@ FullpageRenderer.propTypes = {
   websiteId: PropTypes.number,
   title: PropTypes.string,
   faviconUrl: PropTypes.string,
+  agentId: PropTypes.number,
+  apiBase: PropTypes.string,
+  formsEnabled: PropTypes.bool,
   editMode: PropTypes.bool,
   previewMode: PropTypes.bool,
   className: PropTypes.string,

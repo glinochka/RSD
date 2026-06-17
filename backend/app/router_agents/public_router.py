@@ -15,12 +15,15 @@ from ..services.agent_public_data import (
     get_agent_public_data,
     is_admin_booking_agent,
 )
+from ..services.website_public_forms import submit_website_lead
 from ..utils.rate_limit import rate_limit
 from .public_schemas import (
     AgentPublicDataResponse,
     PublicBookingCreateRequest,
     PublicBookingCreateResponse,
     PublicBookingSlotsResponse,
+    PublicWebsiteLeadRequest,
+    PublicWebsiteLeadResponse,
 )
 
 router = APIRouter(prefix="/api/v1/agents")
@@ -147,4 +150,35 @@ async def create_public_booking(
         status=row.get("status", "pending"),
         starts_at=row.get("starts_at"),
         ends_at=row.get("ends_at"),
+    )
+
+
+@router.post("/{agent_id}/website/leads", response_model=PublicWebsiteLeadResponse)
+async def create_website_lead(
+    agent_id: int,
+    request: PublicWebsiteLeadRequest,
+    _: None = _PUBLIC_RATE,
+):
+    """Create a lead/application from a public landing page form."""
+    if not await agent_has_published_website(agent_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+
+    try:
+        row = await submit_website_lead(
+            agent_id=agent_id,
+            client_name=request.client_name,
+            fields=request.fields,
+            notes=request.notes,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Не удалось отправить заявку. Попробуйте позже.",
+        ) from e
+
+    return PublicWebsiteLeadResponse(
+        id=row["id"],
+        status=row.get("status", "new"),
     )

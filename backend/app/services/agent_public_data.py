@@ -122,6 +122,7 @@ async def get_agent_public_data(agent_id: int, *, include_widget_key: bool = Fal
             "template_type": (agent.template_type or "qa").strip().lower(),
             "is_admin_template": admin_template,
             "has_booking": admin_template,
+            "has_applications": True,
             "services": services,
             "contacts": contacts,
         }

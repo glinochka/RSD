@@ -10,6 +10,7 @@ export function WebsiteAgentProvider({ agent, agentId, children }) {
       agentId: agent?.id ?? agentId ?? null,
       isAdminTemplate: Boolean(agent?.is_admin_template),
       hasBooking: Boolean(agent?.has_booking),
+      hasApplications: agent?.has_applications !== false,
       services: agent?.services || [],
       contacts: agent?.contacts || {},
       widgetApiKey: agent?.widget_api_key || null,

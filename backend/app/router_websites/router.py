@@ -32,6 +32,7 @@ from ..services.website_seo_service import (
     FAVICON_SIZES,
 )
 from ..services.website_seo_defaults import ensure_default_favicon
+from ..services.website_html_cleanup import strip_decorative_chat_widgets
 from ..services.website_interactivity import inject_landing_interactivity_runtime
 from ..services.website_sanitization_service import (
     get_website_sanitization_service,
@@ -163,6 +164,7 @@ async def _run_block_edit_task(
                 )
                 change_summary = _generate_change_summary(improved_prompt)
                 sanitized_html = sanitization_service.sanitize_fullpage_html(edited_html)
+                sanitized_html = strip_decorative_chat_widgets(sanitized_html)
                 sanitized_html = inject_landing_interactivity_runtime(sanitized_html)
                 edited = {
                     "content": {"html": sanitized_html},

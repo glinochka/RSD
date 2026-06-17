@@ -31,9 +31,22 @@ class AgentPublicDataResponse(BaseModel):
     template_type: str
     is_admin_template: bool = False
     has_booking: bool = False
+    has_applications: bool = True
     services: list[AgentPublicServiceItem] = Field(default_factory=list)
     contacts: AgentContactInfo | dict[str, str] = Field(default_factory=dict)
     widget_api_key: str | None = None
+
+
+class PublicWebsiteLeadRequest(BaseModel):
+    client_name: str | None = Field(default=None, max_length=128)
+    fields: dict[str, Any] = Field(default_factory=dict)
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class PublicWebsiteLeadResponse(BaseModel):
+    id: int
+    status: str
+    message: str = "Заявка отправлена. Мы свяжемся с вами в ближайшее время."
 
 
 class PublicBookingSlotsResponse(BaseModel):

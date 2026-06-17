@@ -5,6 +5,8 @@
 import React, { useState } from 'react';
 import PropTypes from 'prop-types';
 import { EditableText } from '../editor';
+import { useWebsiteAgent } from '../../context/WebsiteAgentContext';
+import { submitWebsiteLead } from '../../utils/leadApi';
 
 const ContactsBlock = ({
   content,
@@ -42,6 +44,9 @@ const ContactsBlock = ({
   const [formData, setFormData] = useState({ name: '', phone: '', message: '' });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [submitError, setSubmitError] = useState(null);
+
+  const { agentId, hasApplications } = useWebsiteAgent();
 
   const containerBg = darkMode ? '#111827' : backgroundColor;
   const cardBg = darkMode ? '#1F2937' : '#FFFFFF';
@@ -50,11 +55,29 @@ const ContactsBlock = ({
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!agentId || !hasApplications) {
+      setSubmitError('Отправка заявок недоступна для этого сайта');
+      return;
+    }
     setIsSubmitting(true);
-    // Simulate submission - in real app this would call an API
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    setIsSubmitting(false);
-    setIsSubmitted(true);
+    setSubmitError(null);
+    try {
+      await submitWebsiteLead(agentId, {
+        client_name: formData.name.trim() || null,
+        fields: {
+          name: formData.name.trim(),
+          phone: formData.phone.trim(),
+          message: formData.message.trim(),
+        },
+      });
+      setIsSubmitted(true);
+      setFormData({ name: '', phone: '', message: '' });
+    } catch (err) {
+      const detail = err.response?.data?.detail;
+      setSubmitError(typeof detail === 'string' ? detail : 'Не удалось отправить заявку');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const contactIcons = {
@@ -215,7 +238,12 @@ const ContactsBlock = ({
                   >
                     {formTitle}
                   </h3>
-                  <form onSubmit={handleSubmit} className="space-y-4">
+                  {submitError && (
+                    <p className="text-sm mb-4" style={{ color: '#dc2626' }}>
+                      {submitError}
+                    </p>
+                  )}
+                  <form onSubmit={handleSubmit} className="space-y-4" data-rsd-form="lead">
                     <div>
                       <label
                         className="block text-sm font-medium mb-2"

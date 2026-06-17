@@ -226,6 +226,7 @@ const WebsiteRenderer = ({
     og_description,
     og_image_url,
     favicon_url,
+    agent_id,
     status,
     generation_status,
     styles = {},
@@ -256,6 +257,8 @@ const WebsiteRenderer = ({
           websiteId={id}
           title={title}
           faviconUrl={resolvedFaviconUrl}
+          agentId={agent_id}
+          formsEnabled={Boolean(agent_id)}
           editMode={editMode}
           previewMode={previewMode}
           className={className}

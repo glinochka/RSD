@@ -135,9 +135,85 @@ export const LANDING_INTERACTIVITY_RUNTIME = `
     });
   }
 
+  function normalizeFieldKey(raw) {
+    return String(raw || '').toLowerCase().replace(/[^a-z0-9а-яё]+/gi, '_').replace(/^_|_$/g, '');
+  }
+
+  function collectFormFields(form) {
+    var fields = {};
+    form.querySelectorAll('input, textarea, select').forEach(function(el) {
+      if (!el.name && !el.id) return;
+      if (el.type === 'submit' || el.type === 'button' || el.type === 'hidden') return;
+      var key = el.name || el.id;
+      var val = (el.value || '').trim();
+      if (val) fields[key] = val;
+    });
+    return fields;
+  }
+
+  function showFormMessage(form, text, isError) {
+    var box = form.querySelector('[data-rsd-form-message]');
+    if (!box) {
+      box = document.createElement('p');
+      box.setAttribute('data-rsd-form-message', '1');
+      box.style.marginTop = '0.75rem';
+      box.style.fontSize = '0.875rem';
+      form.appendChild(box);
+    }
+    box.textContent = text;
+    box.style.color = isError ? '#dc2626' : '#16a34a';
+  }
+
+  function initWebsiteForms() {
+    var cfg = window.__RSD_LANDING__;
+    if (!cfg || !cfg.agentId || !cfg.apiBase) return;
+
+    document.querySelectorAll('form').forEach(function(form) {
+      if (form.dataset.rsdFormBound) return;
+      if ((form.getAttribute('method') || '').toLowerCase() === 'get') return;
+      if (form.querySelector('input[type="search"]')) return;
+
+      var formType = (form.getAttribute('data-rsd-form') || 'lead').toLowerCase();
+      if (formType === 'search') return;
+
+      form.dataset.rsdFormBound = '1';
+      form.addEventListener('submit', function(e) {
+        e.preventDefault();
+        var fields = collectFormFields(form);
+        if (!Object.keys(fields).length) {
+          showFormMessage(form, 'Заполните хотя бы одно поле', true);
+          return;
+        }
+
+        var submitBtn = form.querySelector('[type="submit"]');
+        if (submitBtn) submitBtn.disabled = true;
+
+        fetch(cfg.apiBase.replace(/\\/$/, '') + '/api/v1/agents/' + cfg.agentId + '/website/leads', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fields: fields, client_name: fields.name || fields.client_name || null }),
+        })
+          .then(function(res) {
+            return res.json().then(function(data) {
+              if (!res.ok) throw new Error(data.detail || 'Ошибка отправки');
+              showFormMessage(form, data.message || 'Заявка отправлена!', false);
+              form.reset();
+            });
+          })
+          .catch(function(err) {
+            showFormMessage(form, err.message || 'Не удалось отправить заявку', true);
+          })
+          .finally(function() {
+            if (submitBtn) submitBtn.disabled = false;
+          });
+      });
+    });
+  }
+
   onReady(function() {
     initMobileMenus();
     initCarousels();
+    initWebsiteForms();
   });
 })();
 `;

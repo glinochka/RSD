@@ -18,6 +18,7 @@ from ..alembic.models import WebsiteBlock
 from ..router_websites.dao import WebsiteBlockDAO, WebsiteDAO
 from ..config import settings
 from .ai_authoring import ai_client
+from .website_html_cleanup import strip_decorative_chat_widgets
 from .website_interactivity import inject_landing_interactivity_runtime
 from .website_sanitization_service import get_website_sanitization_service
 
@@ -87,6 +88,15 @@ AVOID:
 - Placeholder contacts and fake data (e.g., +7 (999) 999-99-99, hello@example.com, "Иван Иванов")
 - Generic service names ("Услуга 1", "Базовая услуга") when business context is available
 - Branding that does not match provided business name/description
+- Floating chat buttons, messenger bubbles, live-chat icons (platform injects a real chat widget automatically)
+- Decorative fixed-position chat FABs in corners
+
+FORMS (contact / lead capture):
+- Use real HTML <form> elements (not fake buttons) in contact/CTA sections
+- Standard field names: name, phone, email, message (type="text|tel|email|textarea")
+- Add data-rsd-form="lead" on the form tag
+- Do NOT add action/method to external URLs — submission is handled by the platform
+- For booking requests use a simple lead form; online slot picker is added by the platform when available
 """
 
 WEBSITE_EDIT_SYSTEM_PROMPT = """\
@@ -938,6 +948,7 @@ class WebsiteGenerationService:
                 sanitized_html = _prepare_html_for_db_storage(html_content)
             else:
                 sanitized_html = _prepare_html_for_db_storage(sanitized_html)
+            sanitized_html = strip_decorative_chat_widgets(sanitized_html)
             sanitized_html = inject_landing_interactivity_runtime(sanitized_html)
             logger.info(
                 "[WebsiteGenService] HTML sanitized: %s -> %s chars",

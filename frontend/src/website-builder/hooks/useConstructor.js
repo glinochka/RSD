@@ -272,6 +272,7 @@ export function useConstructor(websiteId) {
         og_description: website.og_description,
         og_image_url: website.og_image_url,
         favicon_url: website.favicon_url,
+        agent_id: website.agent_id,
         status: website.status,
         styles: globalStyles,
         blocks,
