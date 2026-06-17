@@ -105,6 +105,30 @@ def test_ai_mop_stagger_uses_sales_scheduling_constants():
     assert EXCEL_STAGGER_MAX_MINUTES == 7.0
 
 
+def test_ai_mop_send_window_moscow_hours():
+    from datetime import datetime, timezone
+
+    from app.services.ai_mop.send_window import (
+        ai_mop_first_message_allowed_now,
+        next_ai_mop_first_message_at,
+    )
+
+    # 10:00 MSK = 07:00 UTC
+    inside = datetime(2026, 5, 11, 7, 0, tzinfo=timezone.utc)
+    assert ai_mop_first_message_allowed_now(now=inside) is True
+    assert next_ai_mop_first_message_at(now=inside) == inside.replace(tzinfo=None)
+
+    # 21:00 MSK = 18:00 UTC
+    outside = datetime(2026, 5, 11, 18, 0, tzinfo=timezone.utc)
+    assert ai_mop_first_message_allowed_now(now=outside) is False
+    assert next_ai_mop_first_message_at(now=outside) == datetime(2026, 5, 12, 5, 0)
+
+    # 07:00 MSK = 04:00 UTC -> same day 08:00 MSK = 05:00 UTC
+    early = datetime(2026, 5, 11, 4, 0, tzinfo=timezone.utc)
+    assert ai_mop_first_message_allowed_now(now=early) is False
+    assert next_ai_mop_first_message_at(now=early) == datetime(2026, 5, 11, 5, 0)
+
+
 @pytest.mark.asyncio
 async def test_template_runtime_ai_mop_discards_unknown_contact(monkeypatch):
     from app.services.ai_mop import runtime as ai_mop_runtime

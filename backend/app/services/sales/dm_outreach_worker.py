@@ -69,6 +69,12 @@ def _parse_queue_metadata(item: AgentSalesDmQueue) -> dict[str, Any]:
         return {}
 
 
+def _is_ai_mop_first_outreach(meta: dict[str, Any]) -> bool:
+    if meta.get("message_kind") == "follow_up" or meta.get("compose_at_send"):
+        return False
+    return meta.get("source") == "ai_mop" or meta.get("ai_mop_lead_id") is not None
+
+
 class DmOutreachWorker:
     """Background worker for sending queued DM messages."""
 
@@ -122,6 +128,33 @@ class DmOutreachWorker:
                         metadata_json=json.dumps(meta, ensure_ascii=False),
                     )
                 )
+
+    async def _defer_if_outside_ai_mop_send_window(
+        self,
+        *,
+        item: AgentSalesDmQueue,
+        meta: dict[str, Any],
+    ) -> bool:
+        if not _is_ai_mop_first_outreach(meta):
+            return False
+
+        from ..ai_mop.send_window import ai_mop_first_message_allowed_now, next_ai_mop_first_message_at
+
+        if ai_mop_first_message_allowed_now():
+            return False
+
+        scheduled_for = next_ai_mop_first_message_at()
+        await self._defer_queue_item(
+            queue_id=int(item.id),
+            scheduled_for=scheduled_for,
+            meta=meta,
+        )
+        logger.info(
+            "Deferred AI MOP first message until Moscow business hours: queue_id=%d until=%s",
+            item.id,
+            scheduled_for.isoformat(),
+        )
+        return True
 
     async def shutdown(self) -> None:
         """Stop the worker."""
@@ -178,6 +211,8 @@ class DmOutreachWorker:
     async def _send_message(self, item: AgentSalesDmQueue) -> None:
         """Send a single queued message via userbot (Telegram or WhatsApp)."""
         meta = _parse_queue_metadata(item)
+        if await self._defer_if_outside_ai_mop_send_window(item=item, meta=meta):
+            return
         channel = str(meta.get("channel") or "telegram_userbot").strip().lower()
         message_text = (item.message_text or "").strip()
         imported_id = meta.get("imported_contact_id")
