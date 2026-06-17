@@ -18,6 +18,7 @@ from ..alembic.models import WebsiteBlock
 from ..router_websites.dao import WebsiteBlockDAO, WebsiteDAO
 from ..config import settings
 from .ai_authoring import ai_client
+from .website_interactivity import inject_landing_interactivity_runtime
 from .website_sanitization_service import get_website_sanitization_service
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,9 @@ CRITICAL RULES:
     IMPORTANT: Keep JavaScript minimal, clean, and self-contained. No external JS libraries.
     NEVER use document.write, eval, or dynamic script injection.
     All JS must be inside the returned HTML body content (at the end, before </body>).
+    REQUIRED DATA ATTRIBUTES (for reliable interactivity):
+    - Mobile menu: toggle button MUST have data-menu-toggle, menu panel MUST have data-mobile-menu
+    - Carousels: container MUST have data-carousel, slides data-slide, prev/next data-carousel-prev / data-carousel-next
 11. CSS animations via Tailwind are preferred where possible (transition, animate-, hover:).
 
 DESIGN PRINCIPLES:
@@ -135,6 +139,20 @@ EXAMPLE SCENARIOS:
 - User says "add Yandex map with our address" → Add map section with iframe or JS API before footer.
 
 OUTPUT: Complete HTML body content with ALL original sections + requested modifications.
+"""
+
+WEBSITE_EDIT_PROMPT_IMPROVEMENT = """\
+Ты помогаешь обычным людям (не программистам) редактировать лендинг через AI-конструктор.
+
+Пользователь написал запрос своими словами. Переформулируй его в чёткую техническую инструкцию \
+для frontend-разработчика, который будет менять HTML.
+
+Правила:
+1. Сохрани исходное намерение пользователя — не добавляй новых пожеланий.
+2. Если запрос расплывчатый — выбери наиболее вероятную интерпретацию и сформулируй явно.
+3. Укажи конкретику: какие секции, цвета, тексты, элементы затронуть.
+4. Пиши по-русски, 1–3 коротких предложения.
+5. Только текст инструкции, без markdown и пояснений.
 """
 
 WEBSITE_EDIT_SMART_MERGE_PROMPT = """\
@@ -920,6 +938,7 @@ class WebsiteGenerationService:
                 sanitized_html = _prepare_html_for_db_storage(html_content)
             else:
                 sanitized_html = _prepare_html_for_db_storage(sanitized_html)
+            sanitized_html = inject_landing_interactivity_runtime(sanitized_html)
             logger.info(
                 "[WebsiteGenService] HTML sanitized: %s -> %s chars",
                 len(html_content),
@@ -982,6 +1001,27 @@ class WebsiteGenerationService:
         except Exception as e:
             logger.exception(f"[WebsiteGenService] Error in apply_generated_html for website_id={website_id}: {e}")
             return False, str(e)
+
+    async def improve_edit_prompt(
+        self,
+        *,
+        raw_prompt: str,
+        business_name: str = "",
+    ) -> str:
+        """Clarify a casual user edit request before applying it to HTML."""
+        user_message = (
+            f"Название бизнеса: {business_name or 'не указано'}\n\n"
+            f"Запрос пользователя:\n{raw_prompt.strip()}"
+        )
+        improved = await self._call_ai(
+            system_prompt=WEBSITE_EDIT_PROMPT_IMPROVEMENT,
+            user_prompt=user_message,
+            model=self.edit_model,
+            temperature=0.3,
+            max_tokens=400,
+        )
+        cleaned = (improved or "").strip()
+        return cleaned or raw_prompt.strip()
 
     async def edit_website_with_prompt(
         self,

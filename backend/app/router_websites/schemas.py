@@ -393,6 +393,7 @@ class BlockPromptEditTaskStatusResponse(BaseModel):
     error: str | None = None
     content: dict | None = None
     styles: dict | None = None
+    improved_prompt: str | None = None
 
 
 # ---------------------------------------------------------------------------

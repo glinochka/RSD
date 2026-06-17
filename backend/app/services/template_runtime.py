@@ -1482,10 +1482,16 @@ class TemplateRuntimeService:
     ) -> TemplateExecutionResult:
         runtime_context = runtime_context or {}
         if str(template_config.get("custom_runtime") or "").strip().lower() == "ai_mop":
-            return TemplateExecutionResult(
-                answer=None,
-                sources=[],
-                discard_message=True,
+            from .ai_mop.runtime import execute_ai_mop_runtime
+
+            return await execute_ai_mop_runtime(
+                prompt=prompt,
+                user_message=user_message,
+                template_config=template_config,
+                source_channel=source_channel,
+                user_external_id=user_external_id,
+                agent_id=agent_id,
+                chat_portrait=chat_portrait,
             )
         if bool(runtime_context.get("is_channel_chat")) and bool(
             runtime_context.get("neuro_commenting_enabled")

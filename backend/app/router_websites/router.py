@@ -32,6 +32,7 @@ from ..services.website_seo_service import (
     FAVICON_SIZES,
 )
 from ..services.website_seo_defaults import ensure_default_favicon
+from ..services.website_interactivity import inject_landing_interactivity_runtime
 from ..services.website_sanitization_service import (
     get_website_sanitization_service,
     WebsiteSanitizationService,
@@ -133,13 +134,20 @@ async def _run_block_edit_task(
             service = get_website_generation_service()
             sanitization_service = get_website_sanitization_service()
             change_summary = "Изменения применены"
+            improved_prompt = prompt
 
             if block.type == "fullpage":
                 current_html = (block.content or {}).get("html", "")
                 if not current_html:
                     raise ValueError("Fullpage block has no HTML content")
 
-                enhanced_prompt = prompt
+                _BLOCK_EDIT_TASKS[task_id]["message"] = "Уточняем ваш запрос..."
+                improved_prompt = await service.improve_edit_prompt(
+                    raw_prompt=prompt,
+                    business_name=website.title or "",
+                )
+
+                enhanced_prompt = improved_prompt
                 if uploaded_images:
                     image_context = "\n\n[Загруженные изображения:\n"
                     for idx, img in enumerate(uploaded_images, 1):
@@ -147,13 +155,15 @@ async def _run_block_edit_task(
                     image_context += "\nИспользуй эти изображения как референс или вставь их в соответствующие места на сайте."
                     enhanced_prompt += image_context
 
+                _BLOCK_EDIT_TASKS[task_id]["message"] = "ИИ редактирует сайт..."
                 edited_html = await service.edit_website_with_prompt(
                     current_html=current_html,
                     prompt=enhanced_prompt,
                     business_name=website.title or "",
                 )
-                change_summary = _generate_change_summary(prompt)
+                change_summary = _generate_change_summary(improved_prompt)
                 sanitized_html = sanitization_service.sanitize_fullpage_html(edited_html)
+                sanitized_html = inject_landing_interactivity_runtime(sanitized_html)
                 edited = {
                     "content": {"html": sanitized_html},
                     "styles": block.styles or {},
@@ -179,7 +189,13 @@ async def _run_block_edit_task(
             _BLOCK_EDIT_TASKS[task_id].update(
                 {
                     "status": "completed",
-                    "message": change_summary,
+                    "message": _build_edit_feedback_message(
+                        success=True,
+                        change_summary=change_summary,
+                        improved_prompt=improved_prompt if block.type == "fullpage" else None,
+                        raw_prompt=prompt if block.type == "fullpage" else None,
+                    ),
+                    "improved_prompt": improved_prompt if block.type == "fullpage" else None,
                     "content": edited["content"],
                     "styles": edited["styles"],
                 }
@@ -190,7 +206,7 @@ async def _run_block_edit_task(
             {
                 "status": "failed",
                 "error": str(e),
-                "message": "Ошибка редактирования",
+                "message": _build_edit_feedback_message(success=False, error=str(e)),
             }
         )
 
@@ -381,6 +397,7 @@ async def get_website(
             detail="Access denied",
         )
 
+    await ensure_default_favicon(website_dao, website)
     return website
 
 
@@ -874,6 +891,28 @@ async def edit_block_with_prompt(
     )
 
 
+def _build_edit_feedback_message(
+    *,
+    success: bool,
+    change_summary: str | None = None,
+    improved_prompt: str | None = None,
+    raw_prompt: str | None = None,
+    error: str | None = None,
+) -> str:
+    """Human-readable feedback for the constructor chat."""
+    if not success:
+        return f"Не удалось применить правки: {error or 'неизвестная ошибка'}"
+
+    parts = ["Изменения успешно применены."]
+    if improved_prompt and raw_prompt and improved_prompt.strip() != raw_prompt.strip():
+        parts.append(f"Поняли ваш запрос так: «{improved_prompt.strip()}».")
+    elif improved_prompt:
+        parts.append(f"Инструкция для AI: «{improved_prompt.strip()}».")
+    if change_summary:
+        parts.append(change_summary)
+    return " ".join(parts)
+
+
 def _generate_change_summary(prompt: str) -> str:
     """Generate a brief summary of what was changed based on the prompt."""
     prompt_lower = prompt.lower()
@@ -934,6 +973,7 @@ async def get_edit_prompt_task_status_by_website(
         error=task.get("error"),
         content=task.get("content"),
         styles=task.get("styles"),
+        improved_prompt=task.get("improved_prompt"),
     )
 
 
@@ -966,6 +1006,7 @@ async def get_edit_prompt_task_status(
         error=task.get("error"),
         content=task.get("content"),
         styles=task.get("styles"),
+        improved_prompt=task.get("improved_prompt"),
     )
 
 
@@ -1662,6 +1703,8 @@ async def get_website_schema(
             detail="Website not found",
         )
 
+    await ensure_default_favicon(website_dao, website)
+
     # Merge styles from template and custom
     styles = {}
     if website.template:
@@ -1720,6 +1763,8 @@ async def get_website_schema_by_slug(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Website not found",
         )
+
+    await ensure_default_favicon(website_dao, website)
 
     # Merge styles from template and custom
     styles = {}
@@ -1796,6 +1841,8 @@ async def get_website_schema_by_domain(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Website not found or not published",
         )
+
+    await ensure_default_favicon(website_dao, website)
 
     # Merge styles from template and custom
     styles = {}

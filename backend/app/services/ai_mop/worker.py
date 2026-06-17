@@ -195,8 +195,6 @@ class AiMopWorker:
                 agent=agent,
                 lead=lead,
                 website_url=result["website_url"],
-                login_email=result["login_email"],
-                temp_password=result["temp_password"],
             )
         except Exception as exc:
             raise AiMopPipelineError("outreach_compose", str(exc), provision=result) from exc

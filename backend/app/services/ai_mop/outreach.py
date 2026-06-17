@@ -70,14 +70,10 @@ def _ai_mop_outreach_user_message(
     *,
     lead: AiMopLead,
     website_url: str,
-    login_email: str,
-    temp_password: str,
 ) -> str:
     parts = [
         f"Компания: {lead.org_name}",
         f"Демо-сайт: {website_url}",
-        f"Логин в личный кабинет: {login_email}",
-        f"Временный пароль: {temp_password}",
     ]
     if lead.lpr_name:
         parts.append(f"Контакт: {lead.lpr_name}")
@@ -89,7 +85,11 @@ def _ai_mop_outreach_user_message(
         parts.append(f"Категория: {lead.category}")
     parts.append(
         "Задача: первое холодное сообщение в мессенджер. Мы бесплатно сделали демо-сайт с ИИ-чатом; "
-        "первый месяц бесплатно. Обязательно дай ссылку на сайт и данные для входа. Тон — мягкий, по делу."
+        "первый месяц бесплатно, далее ежемесячная оплата. "
+        "Обязательно дай ссылку на демо-сайт и кратко опиши условия. "
+        "НЕ указывай логин, пароль и данные для входа в личный кабинет — это выглядит как фишинг. "
+        "Вместо этого мягко спроси, интересно ли получить доступ для управления сайтом. "
+        "Тон — мягкий, по делу, без давления."
     )
     parts.append(EXCEL_COLD_OUTREACH_EXTRA)
     return "\n".join(parts)
@@ -100,8 +100,6 @@ async def compose_ai_mop_dm(
     agent: Agent,
     lead: AiMopLead,
     website_url: str,
-    login_email: str,
-    temp_password: str,
 ) -> str:
     runtime = TemplateRuntimeService()
     raw_config = agent.template_config
@@ -120,8 +118,6 @@ async def compose_ai_mop_dm(
     user_message = _ai_mop_outreach_user_message(
         lead=lead,
         website_url=website_url,
-        login_email=login_email,
-        temp_password=temp_password,
     )
 
     qualification = {

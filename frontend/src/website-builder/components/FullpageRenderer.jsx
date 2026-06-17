@@ -5,6 +5,7 @@
  */
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import PropTypes from 'prop-types';
+import { LANDING_INTERACTIVITY_RUNTIME } from '../utils/landingInteractivity';
 
 const TAILWIND_CDN = 'https://cdn.tailwindcss.com';
 
@@ -12,13 +13,22 @@ const INTER_FONT_CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
 `;
 
-function buildFullDocument(html, title = 'Website') {
+function buildFullDocument(html, title = 'Website', faviconUrl = null) {
+  const faviconTag = faviconUrl
+    ? `<link rel="icon" type="image/x-icon" href="${faviconUrl}">`
+    : '';
+  const needsRuntime = !html.includes('data-rsd-landing-runtime');
+  const runtimeScript = needsRuntime
+    ? `<script data-rsd-landing-runtime="1">${LANDING_INTERACTIVITY_RUNTIME}</script>`
+    : '';
+
   return `<!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${title || 'Website'}</title>
+  ${faviconTag}
   <script src="${TAILWIND_CDN}"></script>
   <script>
     tailwind.config = {
@@ -51,6 +61,7 @@ function buildFullDocument(html, title = 'Website') {
 </head>
 <body>
   ${html}
+  ${runtimeScript}
 </body>
 </html>`;
 }
@@ -59,6 +70,7 @@ const FullpageRenderer = ({
   htmlContent,
   websiteId,
   title,
+  faviconUrl = null,
   editMode = false,
   previewMode = false,
   className = '',
@@ -76,7 +88,7 @@ const FullpageRenderer = ({
     try {
       const doc = iframe.contentDocument || iframe.contentWindow?.document;
       if (doc) {
-        const fullDoc = buildFullDocument(htmlContent, title);
+        const fullDoc = buildFullDocument(htmlContent, title, faviconUrl);
         doc.open();
         doc.write(fullDoc);
         doc.close();
@@ -103,7 +115,7 @@ const FullpageRenderer = ({
       console.error('FullpageRenderer: failed to render', error);
       setIsLoading(false);
     }
-  }, [htmlContent, title]);
+  }, [htmlContent, title, faviconUrl]);
 
   useEffect(() => {
     updateIframeContent();
@@ -177,6 +189,7 @@ FullpageRenderer.propTypes = {
   htmlContent: PropTypes.string,
   websiteId: PropTypes.number,
   title: PropTypes.string,
+  faviconUrl: PropTypes.string,
   editMode: PropTypes.bool,
   previewMode: PropTypes.bool,
   className: PropTypes.string,

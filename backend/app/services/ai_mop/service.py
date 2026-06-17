@@ -132,6 +132,7 @@ async def assign_agent_to_ai_mop(*, agent_id: int, enabled: bool = True) -> dict
 
             config = _parse_template_config(agent)
             config["custom_runtime"] = "ai_mop"
+            config["allowed_tools"] = ["send_demo_credentials", "edit_demo_website"]
             agent.template_config = json.dumps(config, ensure_ascii=False)
 
             assignment = await session.scalar(
@@ -160,6 +161,8 @@ async def unassign_agent_from_ai_mop(*, agent_id: int) -> None:
             if agent:
                 config = _parse_template_config(agent)
                 config.pop("custom_runtime", None)
+                if config.get("allowed_tools") == ["send_demo_credentials", "edit_demo_website"]:
+                    config.pop("allowed_tools", None)
                 agent.template_config = json.dumps(config, ensure_ascii=False)
             assignment = await session.scalar(
                 select(AiMopAgentAssignment).where(AiMopAgentAssignment.agent_id == agent_id)

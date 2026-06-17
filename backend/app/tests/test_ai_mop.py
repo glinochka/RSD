@@ -75,7 +75,7 @@ async def test_allocate_unique_account_email_skips_taken_addresses():
     assert allocated == "dentrium1@rsd-ai.ru"
 
 
-def test_ai_mop_outreach_user_message_includes_demo_credentials():
+def test_ai_mop_outreach_user_message_excludes_credentials():
     class _Lead:
         org_name = "Салон"
         lpr_name = None
@@ -86,12 +86,18 @@ def test_ai_mop_outreach_user_message_includes_demo_credentials():
     text = _ai_mop_outreach_user_message(
         lead=_Lead(),
         website_url="https://rsd-ai.ru/w/salon",
-        login_email="salon@rsd-ai.ru",
-        temp_password="abc12",
     )
     assert "https://rsd-ai.ru/w/salon" in text
-    assert "salon@rsd-ai.ru" in text
-    assert "abc12" in text
+    assert "НЕ указывай логин" in text
+    assert "salon@rsd-ai.ru" not in text
+    assert "abc12" not in text
+
+
+def test_contact_match_keys_whatsapp():
+    from app.services.ai_mop.lead_lookup import contact_match_keys
+
+    keys = contact_match_keys("79991234567@s.whatsapp.net")
+    assert "79991234567" in keys
 
 
 def test_ai_mop_stagger_uses_sales_scheduling_constants():
@@ -100,8 +106,14 @@ def test_ai_mop_stagger_uses_sales_scheduling_constants():
 
 
 @pytest.mark.asyncio
-async def test_template_runtime_skips_ai_mop_custom_runtime():
+async def test_template_runtime_ai_mop_discards_unknown_contact(monkeypatch):
+    from app.services.ai_mop import runtime as ai_mop_runtime
     from app.services.template_runtime import TemplateRuntimeService
+
+    async def _no_lead(**_kwargs):
+        return None
+
+    monkeypatch.setattr(ai_mop_runtime, "find_lead_for_contact", _no_lead)
 
     runtime = TemplateRuntimeService()
     result = await runtime._execute_sales_manager(
@@ -109,9 +121,9 @@ async def test_template_runtime_skips_ai_mop_custom_runtime():
         user_message="привет",
         knowledge_scope_id=1,
         template_config={"custom_runtime": "ai_mop"},
-        source_channel="telegram",
+        source_channel="telegram_userbot",
         user_external_id="123",
         agent_id=1,
     )
     assert result.discard_message is True
-    assert result.answer is None
+    assert result.answer in ("", None)

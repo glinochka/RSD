@@ -4,6 +4,7 @@
  */
 import React from 'react';
 import { Helmet } from 'react-helmet-async';
+import { resolveWebsiteAssetUrl } from '../utils/assetUrl';
 
 /**
  * Generate JSON-LD structured data for LocalBusiness
@@ -70,13 +71,11 @@ export function WebsiteMetaTags({ website, agent }) {
   const ogTitle = website.og_title || title;
   const ogDescription = website.og_description || description;
 
-  // Full URLs for images
-  const faviconUrl = website.favicon_url
-    ? (website.favicon_url.startsWith('http') ? website.favicon_url : `${baseUrl}${website.favicon_url}`)
-    : `${baseUrl}/favicon.ico`;
+  // Landing favicon only — do not fall back to the main RSD site icon
+  const faviconUrl = website.favicon_url ? resolveWebsiteAssetUrl(website.favicon_url) : null;
 
   const ogImageUrl = website.og_image_url
-    ? (website.og_image_url.startsWith('http') ? website.og_image_url : `${baseUrl}${website.og_image_url}`)
+    ? resolveWebsiteAssetUrl(website.og_image_url)
     : null;
 
   // Generate structured data
@@ -90,13 +89,11 @@ export function WebsiteMetaTags({ website, agent }) {
       <meta name="description" content={description} />
       <meta name="viewport" content="width=device-width, initial-scale=1" />
 
-      {/* Favicon */}
-      <link rel="icon" type="image/x-icon" href={faviconUrl} />
-      <link rel="shortcut icon" href={faviconUrl} />
-
-      {/* Apple Touch Icon */}
-      {website.favicon_url && (
+      {/* Favicon — only for this landing, never the main site default */}
+      {faviconUrl && (
         <>
+          <link rel="icon" type="image/x-icon" href={faviconUrl} />
+          <link rel="shortcut icon" href={faviconUrl} />
           <link rel="apple-touch-icon" sizes="180x180" href={faviconUrl.replace('.ico', '-180x180.png')} />
           <link rel="icon" type="image/png" sizes="32x32" href={faviconUrl.replace('.ico', '-32x32.png')} />
           <link rel="icon" type="image/png" sizes="16x16" href={faviconUrl.replace('.ico', '-16x16.png')} />

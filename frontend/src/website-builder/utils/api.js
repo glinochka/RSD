@@ -115,7 +115,8 @@ async function waitForEditTask(websiteId, taskId, timeoutMs = 180000) {
       return {
         content: data.content || {},
         styles: data.styles || {},
-        change_summary: data.message || 'Изменения применены',
+        message: data.message || 'Изменения применены',
+        improved_prompt: data.improved_prompt || null,
       };
     }
 

@@ -10,6 +10,7 @@ import PropTypes from 'prop-types';
 import { Helmet } from 'react-helmet-async';
 import { blockStylesToCss } from '../utils/styleUtils';
 import { scopeCSS, generateScopedClass } from '../utils/security';
+import { resolveWebsiteAssetUrl } from '../utils/assetUrl';
 import FullpageRenderer from './FullpageRenderer';
 
 // Import all block components
@@ -238,6 +239,7 @@ const WebsiteRenderer = ({
   if (isFullpage) {
     const fullpageBlock = blocks?.find((b) => b.type === 'fullpage');
     const htmlContent = fullpageBlock?.content?.html || '';
+    const resolvedFaviconUrl = resolveWebsiteAssetUrl(favicon_url);
 
     return (
       <>
@@ -247,12 +249,13 @@ const WebsiteRenderer = ({
           <meta property="og:title" content={og_title || title || ''} />
           <meta property="og:description" content={og_description || meta_description || ''} />
           {og_image_url && <meta property="og:image" content={og_image_url} />}
-          {favicon_url && <link rel="icon" href={favicon_url} />}
+          {resolvedFaviconUrl && <link rel="icon" href={resolvedFaviconUrl} />}
         </Helmet>
         <FullpageRenderer
           htmlContent={htmlContent}
           websiteId={id}
           title={title}
+          faviconUrl={resolvedFaviconUrl}
           editMode={editMode}
           previewMode={previewMode}
           className={className}

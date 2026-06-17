@@ -98,6 +98,49 @@ def _website_public_url(slug: str) -> str:
     return f"https://{BASE_DOMAIN}/w/{slug}"
 
 
+async def _reset_website_for_retry(website_id: int) -> None:
+    async with async_session_maker() as session:
+        website_dao = WebsiteDAO(session)
+        async with session.begin():
+            website = await website_dao.find_one_by_filter(id=website_id)
+            if website is None:
+                raise RuntimeError("Website not found for retry")
+            await website_dao.set_generation_status(website, "queued")
+            styles = dict(website.custom_styles or {})
+            styles.pop("_generation_error", None)
+            website.custom_styles = styles
+
+
+async def _generate_website_with_retry(
+    *,
+    website_id: int,
+    gen_request: WebsiteGenerateRequest,
+    service,
+    max_attempts: int = 2,
+) -> str:
+    last_error: Exception | None = None
+    for attempt in range(1, max_attempts + 1):
+        if attempt > 1:
+            logger.warning(
+                "AI MOP website generation retry %s/%s for website_id=%s",
+                attempt,
+                max_attempts,
+                website_id,
+            )
+            await _reset_website_for_retry(website_id)
+
+        await _run_website_generation(website_id, gen_request, service)
+        try:
+            return await _wait_for_website_generation(website_id)
+        except RuntimeError as exc:
+            last_error = exc
+            if attempt >= max_attempts:
+                raise RuntimeError(
+                    f"Website generation failed after {max_attempts} attempts: {exc}"
+                ) from exc
+    raise RuntimeError(f"Website generation failed: {last_error}")
+
+
 async def _wait_for_website_generation(website_id: int) -> str:
     deadline = asyncio.get_event_loop().time() + _GENERATION_MAX_WAIT_SECONDS
     while asyncio.get_event_loop().time() < deadline:
@@ -260,8 +303,11 @@ async def provision_lead_demo(
         ),
     )
     service = get_website_generation_service()
-    await _run_website_generation(website_id, gen_request, service)
-    final_slug = await _wait_for_website_generation(website_id)
+    final_slug = await _generate_website_with_retry(
+        website_id=website_id,
+        gen_request=gen_request,
+        service=service,
+    )
 
     async with async_session_maker() as session:
         website_dao = WebsiteDAO(session)

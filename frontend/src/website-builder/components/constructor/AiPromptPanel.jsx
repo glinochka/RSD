@@ -19,7 +19,7 @@ const EXAMPLE_PROMPTS_FULLPAGE = [
   'Добавь Яндекс Карту с адресом компании',
 ];
 
-const AiPromptPanel = ({ selectedBlock, blocks, loading, onSubmit }) => {
+const AiPromptPanel = ({ selectedBlock, blocks, loading, onSubmit, feedback, onDismissFeedback }) => {
   const [prompt, setPrompt] = useState('');
   const [attachedImages, setAttachedImages] = useState([]);
   const [isDragging, setIsDragging] = useState(false);
@@ -188,6 +188,34 @@ const AiPromptPanel = ({ selectedBlock, blocks, loading, onSubmit }) => {
           </button>
         ))}
       </div>
+
+      {feedback && (
+        <div className={`wb-ai-feedback wb-ai-feedback--${feedback.type}`}>
+          <div className="wb-ai-feedback-content">
+            {feedback.type === 'success' ? (
+              <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            ) : (
+              <svg className="w-4 h-4 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            )}
+            <span>{feedback.message}</span>
+          </div>
+          {onDismissFeedback && (
+            <button
+              type="button"
+              className="wb-ai-feedback-close"
+              onClick={onDismissFeedback}
+            >
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 };
@@ -196,7 +224,12 @@ AiPromptPanel.propTypes = {
   selectedBlock: PropTypes.object,
   blocks: PropTypes.array,
   loading: PropTypes.bool,
-  onSubmit: PropTypes.func.isRequired, // onSubmit(blockId, prompt, images[])
+  onSubmit: PropTypes.func.isRequired,
+  feedback: PropTypes.shape({
+    type: PropTypes.oneOf(['success', 'error']),
+    message: PropTypes.string,
+  }),
+  onDismissFeedback: PropTypes.func,
 };
 
 export default AiPromptPanel;
