@@ -1,4 +1,4 @@
-"""Фоновый воркер ИИ МОП: провижининг + outreach через userbot."""
+"""Фоновый воркер ИИ МОП: провижининг + outreach (email + userbot)."""
 
 from __future__ import annotations
 
@@ -14,8 +14,9 @@ from ...alembic.database import async_session_maker
 from ...alembic.models import Agent, AiMopAgentAssignment, AiMopLead
 from ...config import settings
 from ..sales.outreach_scheduling import EXCEL_STAGGER_MAX_MINUTES, EXCEL_STAGGER_MIN_MINUTES
-from .lead_status import mark_lead_failed, mark_lead_outreach_queued
-from .outreach import compose_ai_mop_dm, enqueue_ai_mop_outreach, resolve_lead_outreach_channel
+from .lead_status import mark_lead_failed
+from .outreach import resolve_all_lead_messenger_channels, resolve_lead_contact_email, run_outreach_for_lead
+from .pipeline_state import is_ai_mop_pipeline_paused
 from .provisioning import provision_lead_demo
 
 logger = logging.getLogger(__name__)
@@ -78,6 +79,9 @@ class AiMopWorker:
             logger.info("AiMopWorker stopped")
 
     async def process_once(self) -> bool:
+        if await is_ai_mop_pipeline_paused():
+            return False
+
         now = _utc_now()
         async with async_session_maker() as session:
             assignment = await session.scalar(
@@ -180,10 +184,14 @@ class AiMopWorker:
             if lead is None or agent is None:
                 raise AiMopPipelineError("provisioning", "Lead or agent not found")
 
-        try:
-            channel, target, hint = await resolve_lead_outreach_channel(agent_id=agent_id, lead=lead)
-        except ValueError as exc:
-            raise AiMopPipelineError("no_messenger", str(exc)) from exc
+        contact_email = resolve_lead_contact_email(lead)
+        messengers = await resolve_all_lead_messenger_channels(agent_id=agent_id, lead=lead)
+
+        if not contact_email and not messengers:
+            raise AiMopPipelineError(
+                "no_messenger",
+                "Нет email для рассылки и нет контактов Telegram/WhatsApp",
+            )
 
         try:
             result = await provision_lead_demo(lead=lead, sales_agent=agent)
@@ -191,34 +199,13 @@ class AiMopWorker:
             raise AiMopPipelineError("website", str(exc)) from exc
 
         try:
-            message_text = await compose_ai_mop_dm(
-                agent=agent,
-                lead=lead,
-                website_url=result["website_url"],
-            )
-        except Exception as exc:
-            raise AiMopPipelineError("outreach_compose", str(exc), provision=result) from exc
-
-        try:
-            queue_id = await enqueue_ai_mop_outreach(
-                agent_id=agent_id,
+            await run_outreach_for_lead(
                 lead_id=lead_id,
-                channel=channel,
-                target=target,
-                hint=hint,
-                message_text=message_text,
+                agent_id=agent_id,
+                provision=result,
             )
         except Exception as exc:
-            raise AiMopPipelineError("outreach_queue", str(exc), provision=result) from exc
-
-        await mark_lead_outreach_queued(
-            lead_id=lead_id,
-            agent_id=agent_id,
-            channel=channel,
-            target=target,
-            dm_queue_id=queue_id,
-            provision=result,
-        )
+            raise AiMopPipelineError("outreach_send", str(exc), provision=result) from exc
 
 
 def get_ai_mop_worker() -> AiMopWorker:

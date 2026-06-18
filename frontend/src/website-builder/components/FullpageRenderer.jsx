@@ -5,7 +5,10 @@
  */
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import PropTypes from 'prop-types';
-import { LANDING_INTERACTIVITY_RUNTIME, LANDING_FORM_RUNTIME } from '../utils/landingInteractivity';
+import {
+  LANDING_MENU_CAROUSEL_RUNTIME,
+  LANDING_FORM_RUNTIME,
+} from '../utils/landingInteractivity';
 
 const TAILWIND_CDN = 'https://cdn.tailwindcss.com';
 
@@ -22,11 +25,10 @@ function buildFullDocument(html, title = 'Website', faviconUrl = null, landingCo
   const formsEnabled = Boolean(landingConfig?.agentId);
 
   const menuRuntimeScript = !hasBackendMenuRuntime
-    ? `<script data-rsd-landing-runtime="1">${LANDING_INTERACTIVITY_RUNTIME}</script>`
+    ? `<script data-rsd-landing-runtime="1">${LANDING_MENU_CAROUSEL_RUNTIME}</script>`
     : '';
-  // Backend injects menu/carousel only — always add form handler at render time.
   const formRuntimeScript =
-    formsEnabled && !hasFormRuntime && hasBackendMenuRuntime
+    formsEnabled && !hasFormRuntime
       ? `<script data-rsd-form-runtime="1">${LANDING_FORM_RUNTIME}</script>`
       : '';
   const landingConfigScript = landingConfig?.agentId

@@ -47,24 +47,32 @@ def _extract_json(text: str) -> dict[str, Any]:
 
 
 async def generate_provision_profile(*, lead_context: str) -> dict[str, Any]:
+    domain_options = ", ".join(_DOMAIN_KEYS)
     prompt = (
         "Ты готовишь демо-аккаунт для малого бизнеса на платформе RSD.\n"
-        "По данным компании из холодной базы (без сайта) сгенерируй профиль для:\n"
+        "По данным компании из холодной базы (Яндекс Карты / 2GIS, часто без сайта) сгенерируй профиль для:\n"
         "1) ИИ-администратора (crm_admin)\n"
         "2) Услуг и сотрудника\n"
         "3) Описания для генерации сайта\n\n"
+        "КРИТИЧЕСКИ ВАЖНО:\n"
+        "- Определи нишу строго по рубрикам/категории и названию компании из данных ниже.\n"
+        "- domain_type выбирай только из списка; если ни один не подходит — используй custom.\n"
+        "- НЕ подставляй нерелевантные ниши (салон красоты, ремонт ноутбуков, стоматология и т.д.), "
+        "если они не следуют из рубрик.\n"
+        "- business_description и services должны отражать реальный вид деятельности компании.\n\n"
         f"Данные компании:\n{lead_context}\n\n"
+        f"Доступные domain_type: {domain_options}\n\n"
         f"{_PROVISION_SCHEMA}"
     )
     response = await ai_client.chat.completions.create(
         model="deepseek-chat",
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.7,
+        temperature=0.4,
     )
     data = _extract_json(response.choices[0].message.content or "")
-    domain_type = str(data.get("domain_type") or "beauty_salon").strip().lower()
+    domain_type = str(data.get("domain_type") or "custom").strip().lower()
     if domain_type not in DOMAIN_REGISTRY:
-        domain_type = "beauty_salon"
+        domain_type = "custom"
     data["domain_type"] = domain_type
     return data
 
@@ -109,15 +117,97 @@ def build_lead_context(
     phone: str | None = None,
     address: str | None = None,
     category: str | None = None,
+    region: str | None = None,
+    city: str | None = None,
+    working_hours: str | None = None,
+    website_existing: str | None = None,
+    yandex_url: str | None = None,
+    extra_notes: str | None = None,
 ) -> str:
     parts = [f"Название: {org_name}", f"Email: {email}"]
     if lpr_name:
         parts.append(f"Контакт: {lpr_name}")
     if phone:
         parts.append(f"Телефон: {phone}")
+    if region:
+        parts.append(f"Регион: {region}")
+    if city:
+        parts.append(f"Город: {city}")
     if address:
         parts.append(f"Адрес: {address}")
     if category:
-        parts.append(f"Категория: {category}")
-    parts.append("Сайта у компании нет (или не указан).")
+        parts.append(f"Рубрика / ниша: {category}")
+    if working_hours:
+        parts.append(f"Время работы: {working_hours}")
+    if website_existing:
+        parts.append(f"Сайт в карточке: {website_existing}")
+    if yandex_url:
+        parts.append(f"Карточка Яндекс: {yandex_url}")
+    if extra_notes:
+        parts.append(extra_notes)
+    parts.append("Сайта у компании нет (или не указан) — делаем демо с нуля.")
     return "\n".join(parts)
+
+
+def parse_lead_extra_json(lead) -> dict[str, Any]:
+    raw = getattr(lead, "extra_json", None)
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, TypeError):
+        return {}
+
+
+def build_lead_context_from_lead(lead) -> str:
+    extra = parse_lead_extra_json(lead)
+    notes: list[str] = []
+    for key in ("subrubric", "подрубрика", "payment_methods", "rating", "reviews_count"):
+        val = extra.get(key)
+        if val and str(val).strip():
+            label = {
+                "subrubric": "Подрубрика",
+                "подрубрика": "Подрубрика",
+                "payment_methods": "Способы оплаты",
+                "rating": "Рейтинг",
+                "reviews_count": "Отзывы",
+            }.get(key, key)
+            notes.append(f"{label}: {val}")
+    contact_email = str(extra.get("contact_email") or lead.email or "").strip()
+    return build_lead_context(
+        org_name=lead.org_name,
+        email=contact_email or str(lead.email or ""),
+        lpr_name=lead.lpr_name,
+        phone=lead.phone,
+        address=lead.address,
+        category=lead.category,
+        region=extra.get("region"),
+        city=extra.get("city"),
+        working_hours=extra.get("working_hours"),
+        website_existing=extra.get("сайт") or extra.get("website"),
+        yandex_url=getattr(lead, "yandex_url", None),
+        extra_notes="\n".join(notes) if notes else None,
+    )
+
+
+def build_website_generation_brief(*, lead, business_description: str) -> str:
+    extra = parse_lead_extra_json(lead)
+    region = extra.get("region") or "—"
+    city = extra.get("city") or "—"
+    hours = extra.get("working_hours") or "—"
+    rubric = lead.category or extra.get("rubric") or extra.get("рубрика") or "—"
+    subrubric = extra.get("subrubric") or extra.get("подрубрика") or ""
+    return (
+        f"Сайт для компании «{lead.org_name}».\n"
+        f"Описание бизнеса: {business_description}\n"
+        f"Рубрика / ниша (Яндекс Карты): {rubric}"
+        f"{f' — {subrubric}' if subrubric else ''}\n"
+        f"Регион: {region}, город: {city}\n"
+        f"Адрес: {lead.address or 'не указан'}\n"
+        f"Время работы: {hours}\n"
+        "ВАЖНО: дизайн, тексты и услуги должны соответствовать рубрике и названию компании. "
+        "Не используй шаблоны других отраслей (ремонт техники, салоны красоты, стоматология и т.д.), "
+        "если они не указаны в рубрике.\n"
+        "Добавь виджет ИИ-чата. Современный дизайн, понятная структура для клиентов."
+    )

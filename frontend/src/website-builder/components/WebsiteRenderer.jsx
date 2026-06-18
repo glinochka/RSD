@@ -243,9 +243,6 @@ const WebsiteRenderer = ({
     const fullpageBlock = blocks?.find((b) => b.type === 'fullpage');
     const htmlContent = fullpageBlock?.content?.html || '';
     const resolvedFaviconUrl = resolveWebsiteAssetUrl(favicon_url);
-    const pageStyles = mergeStyles(templateStyles, styles);
-    const showBooking =
-      Boolean(websiteAgent?.hasBooking) && (websiteAgent?.services?.length ?? 0) > 0;
     const formsEnabled = Boolean(agent_id) && websiteAgent?.hasApplications !== false;
 
     return (
@@ -269,15 +266,6 @@ const WebsiteRenderer = ({
           previewMode={previewMode}
           className={className}
         />
-        {showBooking && !editMode && (
-          <BookingBlock
-            content={{
-              title: 'Онлайн-запись',
-              subtitle: 'Выберите услугу, дату и удобное время',
-            }}
-            styles={pageStyles}
-          />
-        )}
       </>
     );
   }

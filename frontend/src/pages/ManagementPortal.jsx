@@ -1,4 +1,4 @@
-﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import adminService from '../services/adminService';
 import salesService from '../services/salesService';
 import { ENV_CONFIG } from '../config/environment';
@@ -3928,6 +3928,62 @@ const ManagementPortal = () => {
     }
   };
 
+  const handleAiMopPipelineToggle = async () => {
+    const paused = !aiMopDashboard?.pipeline_paused;
+    const confirmMsg = paused
+      ? 'Поставить ИИ Моп на паузу? Генерация сайтов и рассылка остановятся до возобновления.'
+      : 'Возобновить работу ИИ Моп?';
+    if (!window.confirm(confirmMsg)) return;
+    try {
+      setAiMopBusy('pipeline');
+      setError('');
+      setAiMopSuccess('');
+      await adminService.aiMopSetPipelinePaused(adminToken, paused);
+      await refreshAiMop();
+      setAiMopSuccess(paused ? 'ИИ Моп на паузе' : 'ИИ Моп возобновлён');
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setAiMopBusy(null);
+    }
+  };
+
+  const handleAiMopRetryGeneration = async (leadId) => {
+    if (!window.confirm('Повторить генерацию сайта для этого лида?')) return;
+    try {
+      setAiMopBusy(`retry-gen-${leadId}`);
+      setError('');
+      setAiMopSuccess('');
+      const res = await adminService.aiMopRetryGeneration(adminToken, leadId);
+      await refreshAiMop();
+      setAiMopSuccess(
+        res.mode === 'pending'
+          ? 'Лид возвращён в очередь на полную генерацию'
+          : 'Сайт перегенерирован, outreach запущен'
+      );
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setAiMopBusy(null);
+    }
+  };
+
+  const handleAiMopRetryOutreach = async (leadId) => {
+    if (!window.confirm('Повторить отправку предложения по всем каналам?')) return;
+    try {
+      setAiMopBusy(`retry-out-${leadId}`);
+      setError('');
+      setAiMopSuccess('');
+      await adminService.aiMopRetryOutreach(adminToken, leadId);
+      await refreshAiMop();
+      setAiMopSuccess('Повторная отправка запущена');
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setAiMopBusy(null);
+    }
+  };
+
   const renderAiMop = () => {
     const leadStats = aiMopDashboard?.leads || {};
     const totalLeadPages = Math.max(1, Math.ceil((aiMopLeads.total || 0) / (aiMopLeads.page_size || 20)));
@@ -3944,13 +4000,41 @@ const ManagementPortal = () => {
     return (
       <>
         <div className="management-content-head management-content-head--stack">
-          <h2>ИИ Моп</h2>
-          <p className="management-cell-muted">
-            Кастомный пайплайн для sales_manager: аккаунт → ИИ-администратор → сайт → outreach через
-            подключённые userbot-каналы (Telegram / WhatsApp). Пауза между лидами — 3–7 минут.
-            Воркер: AI_MOP_ENABLED=true в .env.
-          </p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: '1rem', justifyContent: 'space-between' }}>
+            <div>
+              <h2>ИИ Моп</h2>
+              <p className="management-cell-muted">
+                Кастомный пайплайн для sales_manager: аккаунт → ИИ-администратор → сайт → предложение
+                по email и/или outreach через подключённые userbot-каналы (Telegram / WhatsApp).
+                Пауза между лидами — 3–7 минут. Воркер: AI_MOP_ENABLED=true в .env.
+              </p>
+            </div>
+            <button
+              type="button"
+              className={aiMopDashboard?.pipeline_paused ? 'btn btn-black' : 'btn btn-outline'}
+              onClick={handleAiMopPipelineToggle}
+              disabled={!!aiMopBusy || aiMopLoading}
+              style={{ flexShrink: 0, marginTop: '0.25rem' }}
+            >
+              {aiMopBusy === 'pipeline'
+                ? '…'
+                : aiMopDashboard?.pipeline_paused
+                  ? 'Возобновить'
+                  : 'Пауза'}
+            </button>
+          </div>
         </div>
+        {aiMopDashboard?.pipeline_paused && (
+          <div
+            className="management-error"
+            style={{ marginBottom: '1rem', background: 'rgba(255, 193, 7, 0.12)', borderColor: 'rgba(255, 193, 7, 0.4)' }}
+          >
+            Пайплайн на паузе — генерация и рассылка остановлены.
+            {aiMopDashboard.pipeline_paused_at
+              ? ` С ${new Date(aiMopDashboard.pipeline_paused_at).toLocaleString('ru-RU')}.`
+              : ''}
+          </div>
+        )}
         <div className="management-billing-tabs" style={{ marginBottom: '1rem' }}>
           <button
             type="button"
@@ -4019,12 +4103,13 @@ const ManagementPortal = () => {
                     <th>Канал</th>
                     <th>Ошибка</th>
                     <th>Обновлено</th>
+                    <th>Действия</th>
                   </tr>
                 </thead>
                 <tbody>
                   {(aiMopErrors.items || []).length === 0 && (
                     <tr>
-                      <td colSpan={6}>Ошибок нет</td>
+                      <td colSpan={7}>Ошибок нет</td>
                     </tr>
                   )}
                   {(aiMopErrors.items || []).map((row) => (
@@ -4048,6 +4133,30 @@ const ManagementPortal = () => {
                       </td>
                       <td className="management-cell-muted">
                         {row.updated_at ? new Date(row.updated_at).toLocaleString('ru-RU') : '—'}
+                      </td>
+                      <td>
+                        <div className="management-form-actions" style={{ margin: 0, gap: '0.35rem' }}>
+                          {row.can_retry_generation && (
+                            <button
+                              type="button"
+                              className="btn btn-outline"
+                              disabled={!!aiMopBusy}
+                              onClick={() => handleAiMopRetryGeneration(row.id)}
+                            >
+                              {aiMopBusy === `retry-gen-${row.id}` ? '…' : 'Повтор генерации'}
+                            </button>
+                          )}
+                          {row.can_retry_outreach && (
+                            <button
+                              type="button"
+                              className="btn btn-outline"
+                              disabled={!!aiMopBusy}
+                              onClick={() => handleAiMopRetryOutreach(row.id)}
+                            >
+                              {aiMopBusy === `retry-out-${row.id}` ? '…' : 'Повтор отправки'}
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}

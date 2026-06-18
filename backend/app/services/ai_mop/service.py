@@ -11,6 +11,8 @@ from sqlalchemy import func, select
 from ...alembic.database import async_session_maker
 from ...alembic.models import Agent, AiMopAgentAssignment, AiMopLead, User
 from .lead_status import FAILURE_STAGE_LABELS
+from .retry import GENERATION_RETRY_STAGES, OUTREACH_RETRY_STAGES
+from .pipeline_state import get_ai_mop_pipeline_state
 
 
 def _utc_now() -> datetime:
@@ -72,6 +74,11 @@ async def get_dashboard_stats() -> dict[str, Any]:
                     "cooldown_until": row.cooldown_until.isoformat() if row.cooldown_until else None,
                 }
             )
+    pipeline = await get_ai_mop_pipeline_state()
+    pipeline_paused = bool(pipeline.get("is_paused"))
+    active_agents = len([a for a in agents_stats if a["is_enabled"] and not a["is_busy"]])
+    if pipeline_paused:
+        active_agents = 0
     return {
         "leads": {
             "total": int(total_leads),
@@ -82,7 +89,9 @@ async def get_dashboard_stats() -> dict[str, Any]:
             "failed": int(failed),
         },
         "agents": agents_stats,
-        "active_agents": len([a for a in agents_stats if a["is_enabled"] and not a["is_busy"]]),
+        "active_agents": active_agents,
+        "pipeline_paused": pipeline_paused,
+        "pipeline_paused_at": pipeline.get("updated_at"),
     }
 
 
@@ -228,6 +237,8 @@ def _serialize_lead_row(r: AiMopLead) -> dict[str, Any]:
         "assigned_agent_id": r.assigned_agent_id,
         "provisioned_website_id": r.provisioned_website_id,
         "last_error": r.last_error,
+        "can_retry_generation": stage in GENERATION_RETRY_STAGES,
+        "can_retry_outreach": stage in OUTREACH_RETRY_STAGES,
         "created_at": r.created_at.isoformat() if r.created_at else None,
         "updated_at": r.updated_at.isoformat() if r.updated_at else None,
     }

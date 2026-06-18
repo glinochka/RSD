@@ -30,7 +30,11 @@ from ..admin_booking import get_admin_booking_service
 from ..admin_booking.domains import DOMAIN_REGISTRY
 from ..website_generation_service import get_website_generation_service
 from .lead_import import allocate_unique_account_email
-from .llm_helpers import build_lead_context, generate_provision_profile
+from .llm_helpers import (
+    build_lead_context_from_lead,
+    build_website_generation_brief,
+    generate_provision_profile,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -166,16 +170,9 @@ async def provision_lead_demo(
     if not lead.email:
         raise ValueError("Lead email is required")
 
-    lead_context = build_lead_context(
-        org_name=lead.org_name,
-        email=lead.email,
-        lpr_name=lead.lpr_name,
-        phone=lead.phone,
-        address=lead.address,
-        category=lead.category,
-    )
+    lead_context = build_lead_context_from_lead(lead)
     profile = await generate_provision_profile(lead_context=lead_context)
-    domain_type = str(profile.get("domain_type") or "beauty_salon")
+    domain_type = str(profile.get("domain_type") or "custom")
     business_description = str(profile.get("business_description") or lead.org_name)
     agent_prompt = str(profile.get("agent_system_prompt") or f"Ты ИИ-администратор компании {lead.org_name}.")
     agent_prompt = f"Ты ИИ-администратор компании «{lead.org_name}». {agent_prompt}".strip()
@@ -231,7 +228,7 @@ async def provision_lead_demo(
     booking = get_admin_booking_service()
     staff_list = profile.get("staff") if isinstance(profile.get("staff"), list) else []
     if not staff_list:
-        domain = DOMAIN_REGISTRY.get(domain_type) or DOMAIN_REGISTRY["beauty_salon"]
+        domain = DOMAIN_REGISTRY.get(domain_type) or DOMAIN_REGISTRY["custom"]
         staff_list = [{"full_name": lead.lpr_name or "Администратор", "role": domain.staff_role_default, "specializations": []}]
 
     staff_id: int | None = None
@@ -246,8 +243,8 @@ async def provision_lead_demo(
     staff_id = int(staff_row.get("id") or 0) or None
 
     services = profile.get("services") if isinstance(profile.get("services"), list) else []
-    domain_cfg = DOMAIN_REGISTRY.get(domain_type) or DOMAIN_REGISTRY["beauty_salon"]
-    if not services:
+    domain_cfg = DOMAIN_REGISTRY.get(domain_type) or DOMAIN_REGISTRY["custom"]
+    if not services and domain_cfg.default_services_hints:
         for hint in domain_cfg.default_services_hints[:3]:
             services.append({"name": hint, "description": hint, "duration_minutes": 60, "price_rub": 0})
 
@@ -295,11 +292,9 @@ async def provision_lead_demo(
         business_name=lead.org_name,
         business_description=business_description,
         agent_id=provisioned_agent_id,
-        generation_brief=(
-            f"Сайт для {lead.org_name}. {business_description}. "
-            f"Категория: {lead.category or 'малый бизнес'}. "
-            f"Адрес: {lead.address or 'не указан'}. "
-            "Добавь виджет ИИ-чата. Современный дизайн."
+        generation_brief=build_website_generation_brief(
+            lead=lead,
+            business_description=business_description,
         ),
     )
     service = get_website_generation_service()
@@ -336,4 +331,62 @@ async def provision_lead_demo(
         "login_email": normalized_email,
         "lead_context": lead_context,
         "sales_agent_id": int(sales_agent.id),
+    }
+
+
+async def regenerate_lead_website(*, lead_id: int) -> dict[str, Any]:
+    """Перегенерировать сайт для лида с уже созданным аккаунтом."""
+    async with async_session_maker() as session:
+        lead = await session.get(AiMopLead, lead_id)
+        if lead is None:
+            raise ValueError("Lead not found")
+        if not lead.provisioned_website_id or not lead.provisioned_agent_id:
+            raise ValueError("Lead has no provisioned website")
+
+    lead_context = build_lead_context_from_lead(lead)
+    profile = await generate_provision_profile(lead_context=lead_context)
+    business_description = str(profile.get("business_description") or lead.org_name)
+    website_id = int(lead.provisioned_website_id)
+    provisioned_agent_id = int(lead.provisioned_agent_id)
+
+    gen_request = WebsiteGenerateRequest(
+        business_name=lead.org_name,
+        business_description=business_description,
+        agent_id=provisioned_agent_id,
+        generation_brief=build_website_generation_brief(
+            lead=lead,
+            business_description=business_description,
+        ),
+    )
+    service = get_website_generation_service()
+    final_slug = await _generate_website_with_retry(
+        website_id=website_id,
+        gen_request=gen_request,
+        service=service,
+    )
+
+    async with async_session_maker() as session:
+        website_dao = WebsiteDAO(session)
+        async with session.begin():
+            website = await website_dao.find_one_by_filter(id=website_id)
+            if website is None:
+                raise RuntimeError("Website not found after regeneration")
+            await website_dao.publish(website)
+            db_lead = await session.get(AiMopLead, lead_id)
+            if db_lead is not None:
+                db_lead.website_url = _website_public_url(final_slug)
+                db_lead.status = "processing"
+                db_lead.failure_stage = None
+                db_lead.last_error = None
+                db_lead.updated_at = _utc_now()
+
+    website_url = _website_public_url(final_slug)
+    return {
+        "provisioned_user_id": lead.provisioned_user_id,
+        "provisioned_agent_id": lead.provisioned_agent_id,
+        "provisioned_website_id": website_id,
+        "website_url": website_url,
+        "temp_password": lead.temp_password,
+        "login_email": lead.email,
+        "lead_context": lead_context,
     }

@@ -631,6 +631,8 @@ async def create_block(
         sanitization_service = get_website_sanitization_service()
         html_content = request.content.get("html", "") if isinstance(request.content, dict) else str(request.content)
         sanitized_html = sanitization_service.sanitize_fullpage_html(html_content)
+        sanitized_html = strip_decorative_chat_widgets(sanitized_html)
+        sanitized_html = inject_landing_interactivity_runtime(sanitized_html)
         if isinstance(request.content, dict):
             sanitized_content = {**request.content, "html": sanitized_html}
         else:
@@ -694,6 +696,8 @@ async def update_block(
             content = updates["content"]
             html_content = content.get("html", "") if isinstance(content, dict) else str(content)
             sanitized_html = sanitization_service.sanitize_fullpage_html(html_content)
+            sanitized_html = strip_decorative_chat_widgets(sanitized_html)
+            sanitized_html = inject_landing_interactivity_runtime(sanitized_html)
             if isinstance(content, dict):
                 updates["content"] = {**content, "html": sanitized_html}
             else:

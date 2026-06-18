@@ -83,6 +83,42 @@ def _normalize_whatsapp_import_value(value: str | None) -> str | None:
     return f"https://wa.me/{digits}"
 
 
+def _layout_yandex_maps(headers: list[str]) -> dict[str, int] | None:
+    """Выгрузка Яндекс Карт: ID, Название, Регион, Город, Адрес, …, Рубрика, Подрубрика, …"""
+    n = [_norm_header(h) for h in headers]
+    if len(n) < 11 or n[0] != "id" or n[1] != "название":
+        return None
+    if n[10] != "рубрика":
+        return None
+    mapping: dict[str, int] = {
+        "org_name": 1,
+        "region": 2,
+        "city": 3,
+        "org_address": 4,
+        "postal_code": 5,
+        "org_phone": 6,
+        "org_mobile": 7,
+        "email": 8,
+        "website": 9,
+        "category_rubric": 10,
+        "category_subrubric": 11,
+    }
+    for i, ni in enumerate(n):
+        if ni == "время работы":
+            mapping["working_hours"] = i
+        elif ni == "способы оплаты":
+            mapping["payment_methods"] = i
+        elif ni == "whatsapp":
+            mapping["whatsapp"] = i
+        elif ni == "telegram":
+            mapping["telegram"] = i
+        elif ni == "рейтинг":
+            mapping["rating"] = i
+        elif ni == "кол-во отзывов":
+            mapping["reviews_count"] = i
+    return mapping
+
+
 def _layout_by_position(headers: list[str]) -> dict[str, int] | None:
     """Стандартный порядок колонок из выгрузки (Название, ФИО ЛПР, Телефон, ...)."""
     n = [_norm_header(h) for h in headers]
@@ -116,6 +152,16 @@ def _extend_mapping(headers: list[str], base: dict[str, int]) -> dict[str, int]:
             m.setdefault("website", i)
         elif ni in ("email", "e-mail", "e_mail", "почта"):
             m.setdefault("email", i)
+        elif ni == "рубрика":
+            m.setdefault("category_rubric", i)
+        elif ni == "подрубрика":
+            m.setdefault("category_subrubric", i)
+        elif ni == "регион":
+            m.setdefault("region", i)
+        elif ni == "город":
+            m.setdefault("city", i)
+        elif ni == "адрес":
+            m.setdefault("org_address", i)
         elif ni == "whatsapp" or "whatsapp" in ni:
             m.setdefault("whatsapp", i)
         elif ni == "telegram" or "телеграм" in ni:
@@ -146,6 +192,16 @@ def _fuzzy_mapping(headers: list[str]) -> dict[str, int]:
             m.setdefault("website", i)
         elif ni in ("email", "e-mail", "e_mail", "почта"):
             m.setdefault("email", i)
+        elif ni == "рубрика":
+            m.setdefault("category_rubric", i)
+        elif ni == "подрубрика":
+            m.setdefault("category_subrubric", i)
+        elif ni == "регион":
+            m.setdefault("region", i)
+        elif ni == "город":
+            m.setdefault("city", i)
+        elif ni == "адрес":
+            m.setdefault("org_address", i)
         elif ni == "whatsapp" or "whatsapp" in ni:
             m.setdefault("whatsapp", i)
         elif ni == "telegram" or "телеграм" in ni:
@@ -156,6 +212,9 @@ def _fuzzy_mapping(headers: list[str]) -> dict[str, int]:
 
 
 def _pick_mapping(headers: list[str]) -> dict[str, int]:
+    yandex = _layout_yandex_maps(headers)
+    if yandex is not None:
+        return _extend_mapping(headers, yandex)
     by_pos = _layout_by_position(headers)
     if by_pos is not None:
         return _extend_mapping(headers, by_pos)
@@ -205,6 +264,32 @@ def parse_sales_excel(file_bytes: bytes) -> list[dict[str, Any]]:
             email = _fit_email(email_raw)
             if email_raw and email and email_raw.strip() != email:
                 extras.setdefault("Email (полный из выгрузки)", email_raw)
+            region = _fit_str(_opt_str(picked.get("region")), max_len=256)
+            city = _fit_str(_opt_str(picked.get("city")), max_len=256)
+            org_address = _fit_str(_opt_str(picked.get("org_address")), max_len=512)
+            rubric = _fit_str(_opt_str(picked.get("category_rubric")), max_len=512)
+            subrubric = _fit_str(_opt_str(picked.get("category_subrubric")), max_len=512)
+            if region:
+                extras.setdefault("region", region)
+            if city:
+                extras.setdefault("city", city)
+            if org_address:
+                extras.setdefault("address", org_address)
+            if rubric:
+                extras.setdefault("rubric", rubric)
+                extras.setdefault("рубрика", rubric)
+            if subrubric:
+                extras.setdefault("subrubric", subrubric)
+                extras.setdefault("подрубрика", subrubric)
+            for extra_key, pick_key in (
+                ("working_hours", "working_hours"),
+                ("payment_methods", "payment_methods"),
+                ("rating", "rating"),
+                ("reviews_count", "reviews_count"),
+            ):
+                val = _opt_str(picked.get(pick_key))
+                if val:
+                    extras.setdefault(extra_key, val)
             out.append(
                 {
                     "org_name": org_name[:512],
@@ -214,6 +299,11 @@ def parse_sales_excel(file_bytes: bytes) -> list[dict[str, Any]]:
                     "org_mobile": _fit_phone(_opt_str(picked.get("org_mobile"))),
                     "import_status": _opt_str(picked.get("import_status")),
                     "email": email,
+                    "region": region,
+                    "city": city,
+                    "org_address": org_address,
+                    "category_rubric": rubric,
+                    "category_subrubric": subrubric,
                     "website": _fit_str(_opt_str(picked.get("website")), max_len=URL_FIELD_MAX_LEN),
                     "whatsapp": _fit_str(
                         _normalize_whatsapp_import_value(_opt_str(picked.get("whatsapp"))),

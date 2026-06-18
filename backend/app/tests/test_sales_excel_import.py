@@ -58,6 +58,63 @@ def test_parse_yamap_phones_fit_db_columns() -> None:
                 assert len(value) <= PHONE_FIELD_MAX_LEN, key
 
 
+def test_parse_yamap_headers_layout() -> None:
+    from app.services.sales_excel_import import _layout_yandex_maps
+
+    headers = [
+        "ID",
+        "Название",
+        "Регион",
+        "Город",
+        "Адрес",
+        "Индекс",
+        "Телефон",
+        "Мобильный телефон",
+        "Email",
+        "Сайт",
+        "Рубрика",
+        "Подрубрика",
+        "Время работы",
+        "Способы оплаты",
+        "whatsapp",
+        "telegram",
+    ]
+    mapping = _layout_yandex_maps(headers)
+    assert mapping is not None
+    assert mapping["org_name"] == 1
+    assert mapping["category_rubric"] == 10
+    assert mapping["email"] == 8
+    assert mapping["whatsapp"] == 14
+    assert mapping["telegram"] == 15
+
+
+def test_parse_yamap_file_when_present() -> None:
+    path = _ROOT / "yamap.xlsx"
+    if not path.is_file():
+        return
+    rows = parse_sales_excel(path.read_bytes())
+    assert len(rows) > 0
+    sample = rows[0]
+    assert sample.get("org_name")
+    extras = sample.get("extras") or {}
+    assert extras.get("rubric") or sample.get("category_rubric")
+    assert sample.get("org_phone") or sample.get("org_mobile")
+
+
+def test_collect_all_messenger_channels_returns_both() -> None:
+    from app.services.sales.contact_target_resolver import collect_all_messenger_channels
+
+    row = {
+        "whatsapp": "https://wa.me/79395030304",
+        "telegram": "https://t.me/user",
+        "lpr_phone": "+79395030304",
+    }
+    channels = collect_all_messenger_channels(row, whatsapp_available=True, telegram_available=True)
+    assert len(channels) == 2
+    assert channels[0][0] == "whatsapp_userbot"
+    assert channels[1][0] == "telegram_userbot"
+
+
 def test_parse_yamap_messenger_columns() -> None:
     if not _YAMAP_XLSX.is_file():
         return

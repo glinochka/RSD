@@ -145,6 +145,35 @@ def pick_outreach_channel(
     return None, None, {}
 
 
+def collect_all_messenger_channels(
+    row: dict[str, Any],
+    *,
+    whatsapp_available: bool,
+    telegram_available: bool,
+) -> list[tuple[str, str, dict[str, Any]]]:
+    """Все доступные каналы outreach (WhatsApp + Telegram), без выбора одного."""
+    channels: list[tuple[str, str, dict[str, Any]]] = []
+    if whatsapp_available:
+        wa_target, wa_hint = normalize_whatsapp_target(
+            whatsapp=row.get("whatsapp"),
+            lpr_phone=row.get("lpr_phone"),
+            org_mobile=row.get("org_mobile"),
+            org_phone=row.get("org_phone"),
+        )
+        if wa_target:
+            channels.append(("whatsapp_userbot", wa_target, wa_hint))
+    if telegram_available:
+        tg_target, tg_hint = normalize_telegram_target(
+            telegram=row.get("telegram"),
+            lpr_phone=row.get("lpr_phone"),
+            org_mobile=row.get("org_mobile"),
+            org_phone=row.get("org_phone"),
+        )
+        if tg_target:
+            channels.append(("telegram_userbot", tg_target, tg_hint))
+    return channels
+
+
 def build_import_dedup_key(
     *,
     org_name: str,

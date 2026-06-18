@@ -74,16 +74,37 @@ async def allocate_unique_account_email(user_dao, preferred_email: str) -> str:
     raise ValueError(f"Could not allocate unique account email for {preferred_email}")
 
 
-def _extract_address(extra: dict[str, Any]) -> str | None:
+def _extract_address(extra: dict[str, Any], *, city: str | None = None, region: str | None = None) -> str | None:
+    addr = None
     for key in ("address", "адрес", "org_address"):
         val = extra.get(key)
         if val and str(val).strip():
-            return str(val).strip()[:512]
+            addr = str(val).strip()
+            break
+    parts = [p.strip() for p in (region, city, addr) if p and str(p).strip()]
+    if parts:
+        return ", ".join(dict.fromkeys(parts))[:512]
     return None
 
 
 def _extract_category(extra: dict[str, Any], org_name: str) -> str | None:
-    for key in ("category", "рубрика", "rubric", "тип"):
+    rubric = None
+    subrubric = None
+    for key in ("rubric", "рубрика", "category_rubric"):
+        val = extra.get(key)
+        if val and str(val).strip():
+            rubric = str(val).strip()
+            break
+    for key in ("subrubric", "подрубрика", "category_subrubric"):
+        val = extra.get(key)
+        if val and str(val).strip():
+            subrubric = str(val).strip()
+            break
+    if rubric and subrubric:
+        return f"{rubric} — {subrubric}"[:256]
+    if rubric:
+        return rubric[:256]
+    for key in ("category", "рубрика", "rubric"):
         val = extra.get(key)
         if val and str(val).strip():
             return str(val).strip()[:256]
@@ -158,6 +179,14 @@ async def import_ai_mop_leads_from_excel(
         if contact_email and "@" in contact_email:
             extra["contact_email"] = contact_email
         extra["account_email_generated"] = email_generated
+        if row.get("region"):
+            extra.setdefault("region", row.get("region"))
+        if row.get("city"):
+            extra.setdefault("city", row.get("city"))
+        if row.get("category_rubric"):
+            extra.setdefault("rubric", row.get("category_rubric"))
+        if row.get("category_subrubric"):
+            extra.setdefault("subrubric", row.get("category_subrubric"))
         if row.get("telegram"):
             extra["telegram"] = row.get("telegram")
         if row.get("whatsapp"):
@@ -179,7 +208,11 @@ async def import_ai_mop_leads_from_excel(
             "phone": (str(phone).strip()[:256] if phone else None),
             "telegram": (str(row.get("telegram") or "").strip()[:512] or None),
             "whatsapp": (str(row.get("whatsapp") or "").strip()[:512] or None),
-            "address": _extract_address(extra),
+            "address": _extract_address(
+                extra,
+                city=(row.get("city") or extra.get("city")),
+                region=(row.get("region") or extra.get("region")),
+            ),
             "category": _extract_category(extra, org_name),
             "yandex_url": _extract_yandex_url(extra, row.get("website")),
             "extra_json": json.dumps(extra, ensure_ascii=False) if extra else None,

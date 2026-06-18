@@ -530,6 +530,33 @@ const adminService = {
     return response.data;
   },
 
+  async aiMopSetPipelinePaused(token, paused) {
+    const response = await adminClient.patch(
+      API_ROUTES.ADMIN_AI_MOP_PIPELINE,
+      { paused },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data;
+  },
+
+  async aiMopRetryGeneration(token, leadId) {
+    const response = await adminClient.post(
+      API_ROUTES.ADMIN_AI_MOP_LEAD_RETRY_GENERATION(leadId),
+      {},
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data;
+  },
+
+  async aiMopRetryOutreach(token, leadId) {
+    const response = await adminClient.post(
+      API_ROUTES.ADMIN_AI_MOP_LEAD_RETRY_OUTREACH(leadId),
+      {},
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data;
+  },
+
   async aiMopGetLeads(token, { page = 1, pageSize = 20, status } = {}) {
     const response = await adminClient.get(API_ROUTES.ADMIN_AI_MOP_LEADS, {
       headers: { Authorization: `Bearer ${token}` },

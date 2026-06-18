@@ -1022,6 +1022,17 @@ class AiMopAgentAssignment(Base):
     agent: Mapped["Agent"] = relationship(back_populates="ai_mop_assignment")
 
 
+class AiMopPipelineState(Base):
+    """Глобальная пауза пайплайна ИИ МОП (одна строка id=1)."""
+
+    __tablename__ = "ai_mop_pipeline_state"
+    __table_args__ = ({"extend_existing": True},)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    is_paused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+
 class AgentContentJob(Base):
     """Pipeline job state for content_factory template."""
     __tablename__ = "agent_content_jobs"

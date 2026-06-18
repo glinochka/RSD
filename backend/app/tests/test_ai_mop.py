@@ -10,7 +10,7 @@ from app.services.ai_mop.lead_import import (
     allocate_unique_account_email,
     generate_account_email_from_org,
 )
-from app.services.ai_mop.outreach import _ai_mop_outreach_user_message
+from app.services.ai_mop.outreach import _ai_mop_outreach_user_message, resolve_lead_contact_email
 from app.services.ai_mop.provisioning import generate_temp_password
 from app.services.sales.outreach_scheduling import EXCEL_STAGGER_MAX_MINUTES, EXCEL_STAGGER_MIN_MINUTES
 
@@ -91,6 +91,49 @@ def test_ai_mop_outreach_user_message_excludes_credentials():
     assert "НЕ указывай логин" in text
     assert "salon@rsd-ai.ru" not in text
     assert "abc12" not in text
+
+
+def test_resolve_lead_contact_email_prefers_extra_contact_email():
+    class _Lead:
+        email = "login@rsd-ai.ru"
+        extra_json = '{"contact_email":"biz@example.com","account_email_generated":false}'
+
+    assert resolve_lead_contact_email(_Lead()) == "biz@example.com"
+
+
+def test_resolve_lead_contact_email_skips_generated_login_only():
+    class _Lead:
+        email = "dentrium@rsd-ai.ru"
+        extra_json = '{"account_email_generated":true}'
+
+    assert resolve_lead_contact_email(_Lead()) is None
+
+
+def test_resolve_lead_contact_email_uses_lead_email_when_not_generated():
+    class _Lead:
+        email = "biz@example.com"
+        extra_json = '{"account_email_generated":false}'
+
+    assert resolve_lead_contact_email(_Lead()) == "biz@example.com"
+
+
+def test_build_lead_context_from_lead_includes_rubric():
+    from app.services.ai_mop.llm_helpers import build_lead_context_from_lead
+
+    class _Lead:
+        org_name = "Коттеджи у озера"
+        email = "test@example.com"
+        lpr_name = None
+        phone = "+7999"
+        address = "Ростовская обл., пос. Овощной"
+        category = "Аренда коттеджей — загородный отдых"
+        yandex_url = None
+        extra_json = '{"region":"Ростовская область","city":"Овощной","working_hours":"08:00-20:00"}'
+
+    text = build_lead_context_from_lead(_Lead())
+    assert "Коттеджи" in text
+    assert "Аренда коттеджей" in text
+    assert "Ростовская область" in text
 
 
 def test_contact_match_keys_whatsapp():

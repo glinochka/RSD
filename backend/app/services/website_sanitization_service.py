@@ -114,6 +114,47 @@ DANGEROUS_URL_SCHEMES: Set[str] = {
     'javascript', 'vbscript', 'data', 'file', 'about', 'chrome', 'resource',
 }
 
+# Base attribute allowlist for AI fullpage HTML (data-* / aria-* added via filter).
+FULLPAGE_TAG_ATTRIBUTES: dict[str, set[str]] = {
+    '*': {
+        'class', 'id', 'style', 'role', 'tabindex', 'hidden', 'title', 'lang',
+    },
+    'a': {'href', 'title', 'target', 'rel'},
+    'img': {'src', 'alt', 'title', 'width', 'height', 'loading'},
+    'table': {'border', 'cellpadding', 'cellspacing'},
+    'script': {'src', 'type', 'async', 'defer'},
+    'style': {'type', 'media', 'scoped'},
+    'svg': {'viewBox', 'fill', 'stroke', 'stroke-width', 'xmlns'},
+    'path': {'d', 'fill', 'stroke', 'stroke-width'},
+    'input': {
+        'type', 'name', 'placeholder', 'value', 'required', 'disabled',
+        'readonly', 'maxlength', 'autocomplete', 'inputmode', 'pattern',
+    },
+    'textarea': {
+        'name', 'placeholder', 'rows', 'cols', 'required', 'disabled',
+        'readonly', 'maxlength',
+    },
+    'button': {'type', 'disabled', 'name', 'value'},
+    'form': {'action', 'method', 'enctype', 'novalidate'},
+    'label': {'for'},
+    'select': {'name', 'required', 'disabled', 'multiple'},
+    'option': {'value', 'selected', 'disabled'},
+    'video': {'src', 'controls', 'autoplay', 'loop', 'muted', 'poster', 'width', 'height'},
+    'audio': {'src', 'controls', 'autoplay', 'loop', 'muted'},
+    'source': {'src', 'type'},
+    'iframe': {'src', 'width', 'height', 'frameborder', 'allow', 'allowfullscreen'},
+    'details': {'open'},
+    'summary': set(),
+}
+
+
+def fullpage_allow_attribute(tag: str, name: str, value: str) -> bool:
+    """Allow data-* / aria-* and known safe attributes on fullpage HTML."""
+    if name.startswith('data-') or name.startswith('aria-'):
+        return True
+    allowed = FULLPAGE_TAG_ATTRIBUTES.get(tag, set()) | FULLPAGE_TAG_ATTRIBUTES.get('*', set())
+    return name in allowed
+
 
 class WebsiteSanitizationService:
     """Service for sanitizing user-generated content for websites."""
@@ -185,28 +226,11 @@ class WebsiteSanitizationService:
         if not content:
             return ""
         
-        # Extended attributes for fullpage content
-        fullpage_attrs = {
-            **ALLOWED_ATTRIBUTES,
-            'script': ['src', 'type', 'async', 'defer'],
-            'style': ['type', 'media', 'scoped'],
-            'svg': ['viewBox', 'fill', 'stroke', 'stroke-width', 'xmlns'],
-            'path': ['d', 'fill', 'stroke', 'stroke-width'],
-            'input': ['type', 'name', 'placeholder', 'value', 'required', 'disabled', 'readonly', 'maxlength'],
-            'textarea': ['name', 'placeholder', 'rows', 'cols', 'required', 'disabled', 'readonly', 'maxlength'],
-            'button': ['type', 'disabled'],
-            'form': ['action', 'method', 'enctype'],
-            'video': ['src', 'controls', 'autoplay', 'loop', 'muted', 'poster', 'width', 'height'],
-            'audio': ['src', 'controls', 'autoplay', 'loop', 'muted'],
-            'source': ['src', 'type'],
-            'iframe': ['src', 'width', 'height', 'frameborder', 'allow', 'allowfullscreen'],
-        }
-        
-        # First pass: Use bleach with extended tags
+        # First pass: Use bleach with extended tags and data-* / aria-* support
         sanitized = bleach.clean(
             content,
             tags=list(FULLPAGE_ALLOWED_TAGS),
-            attributes=fullpage_attrs,
+            attributes=fullpage_allow_attribute,
             strip=strip_disallowed,
             css_sanitizer=self.css_sanitizer,
         )

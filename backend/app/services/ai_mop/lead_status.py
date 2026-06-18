@@ -16,13 +16,13 @@ def _utc_now() -> datetime:
 
 
 FAILURE_STAGE_LABELS: dict[str, str] = {
-    "no_messenger": "Нет канала / контакта мессенджера",
+    "no_messenger": "Нет канала outreach (email / мессенджер)",
     "account": "Ошибка создания аккаунта",
     "agent": "Ошибка создания ИИ-агента",
     "website": "Ошибка генерации сайта",
     "outreach_compose": "Ошибка генерации текста",
     "outreach_queue": "Ошибка постановки в очередь",
-    "outreach_send": "Ошибка отправки в мессенджер",
+    "outreach_send": "Ошибка отправки (email / мессенджер)",
     "provisioning": "Ошибка провижининга",
 }
 
@@ -71,7 +71,7 @@ async def mark_lead_outreach_queued(
     agent_id: int,
     channel: str,
     target: str,
-    dm_queue_id: int,
+    dm_queue_id: int | None,
     provision: dict[str, Any],
 ) -> None:
     now = _utc_now()
@@ -97,6 +97,41 @@ async def mark_lead_outreach_queued(
             )
             if assignment:
                 assignment.leads_processed += 1
+                assignment.last_error = None
+                assignment.updated_at = now
+
+
+async def mark_lead_email_outreach_sent(
+    *,
+    lead_id: int,
+    agent_id: int,
+    contact_email: str,
+    provision: dict[str, Any],
+) -> None:
+    now = _utc_now()
+    async with async_session_maker() as session:
+        async with session.begin():
+            lead = await session.get(AiMopLead, lead_id)
+            if lead is None:
+                return
+            lead.status = "outreach_sent"
+            lead.outreach_channel = "email"
+            lead.outreach_target = contact_email[:256]
+            lead.outreach_sent_at = now
+            lead.failure_stage = None
+            lead.last_error = None
+            lead.provisioned_user_id = provision.get("provisioned_user_id")
+            lead.provisioned_agent_id = provision.get("provisioned_agent_id")
+            lead.provisioned_website_id = provision.get("provisioned_website_id")
+            lead.website_url = provision.get("website_url")
+            lead.temp_password = provision.get("temp_password")
+            lead.updated_at = now
+            assignment = await session.scalar(
+                select(AiMopAgentAssignment).where(AiMopAgentAssignment.agent_id == agent_id)
+            )
+            if assignment:
+                assignment.leads_processed += 1
+                assignment.leads_sent += 1
                 assignment.last_error = None
                 assignment.updated_at = now
 

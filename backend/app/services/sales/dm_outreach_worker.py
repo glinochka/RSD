@@ -76,6 +76,13 @@ def _is_ai_mop_first_outreach(meta: dict[str, Any]) -> bool:
     return meta.get("source") == "ai_mop" or meta.get("ai_mop_lead_id") is not None
 
 
+def _is_ai_mop_queue_item(meta: dict[str, Any]) -> bool:
+    if meta.get("ai_mop_lead_id") is not None:
+        return True
+    source = str(meta.get("source") or "")
+    return source == "ai_mop" or source == "ai_mop_follow_up"
+
+
 class DmOutreachWorker:
     """Background worker for sending queued DM messages."""
 
@@ -157,6 +164,33 @@ class DmOutreachWorker:
         )
         return True
 
+    async def _defer_if_ai_mop_pipeline_paused(
+        self,
+        *,
+        item: AgentSalesDmQueue,
+        meta: dict[str, Any],
+    ) -> bool:
+        if not _is_ai_mop_queue_item(meta):
+            return False
+
+        from ..ai_mop.pipeline_state import is_ai_mop_pipeline_paused
+
+        if not await is_ai_mop_pipeline_paused():
+            return False
+
+        scheduled_for = self._now_utc_naive() + timedelta(minutes=1)
+        await self._defer_queue_item(
+            queue_id=int(item.id),
+            scheduled_for=scheduled_for,
+            meta=meta,
+        )
+        logger.info(
+            "Deferred AI MOP message while pipeline paused: queue_id=%d until=%s",
+            item.id,
+            scheduled_for.isoformat(),
+        )
+        return True
+
     async def shutdown(self) -> None:
         """Stop the worker."""
         self._stop.set()
@@ -212,6 +246,8 @@ class DmOutreachWorker:
     async def _send_message(self, item: AgentSalesDmQueue) -> None:
         """Send a single queued message via userbot (Telegram or WhatsApp)."""
         meta = _parse_queue_metadata(item)
+        if await self._defer_if_ai_mop_pipeline_paused(item=item, meta=meta):
+            return
         if await self._defer_if_outside_ai_mop_send_window(item=item, meta=meta):
             return
         channel = str(meta.get("channel") or "telegram_userbot").strip().lower()

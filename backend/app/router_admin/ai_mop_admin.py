@@ -8,6 +8,8 @@ from pydantic import BaseModel, Field
 
 from ..alembic.database import async_session_maker
 from ..services.ai_mop.lead_import import import_ai_mop_leads_from_excel
+from ..services.ai_mop.pipeline_state import set_ai_mop_pipeline_paused
+from ..services.ai_mop.retry import retry_lead_generation, retry_lead_outreach
 from ..services.ai_mop.service import (
     assign_agent_to_ai_mop,
     clear_ai_mop_leads,
@@ -31,6 +33,10 @@ class AiMopAssignRequest(BaseModel):
 
 class AiMopEnableRequest(BaseModel):
     enabled: bool
+
+
+class AiMopPipelineRequest(BaseModel):
+    paused: bool
 
 
 @router.get("/dashboard")
@@ -80,6 +86,15 @@ async def ai_mop_toggle_agent(agent_id: int, payload: AiMopEnableRequest, _admin
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     return JSONResponse(content={"agent_id": agent_id, "enabled": payload.enabled})
+
+
+@router.patch(
+    "/pipeline",
+    dependencies=[Depends(rate_limit(max_requests=30, window_seconds=60, scope="admin_ai_mop"))],
+)
+async def ai_mop_set_pipeline(payload: AiMopPipelineRequest, _admin=Depends(get_current_admin)):
+    state = await set_ai_mop_pipeline_paused(paused=payload.paused)
+    return JSONResponse(content=state)
 
 
 @router.get("/errors")
@@ -133,3 +148,31 @@ async def ai_mop_clear_leads(
 ):
     deleted = await clear_ai_mop_leads(only_pending=only_pending)
     return JSONResponse(content={"deleted": deleted})
+
+
+@router.post(
+    "/leads/{lead_id}/retry-generation",
+    dependencies=[Depends(rate_limit(max_requests=20, window_seconds=60, scope="admin_ai_mop"))],
+)
+async def ai_mop_retry_generation(lead_id: int, _admin=Depends(get_current_admin)):
+    try:
+        result = await retry_lead_generation(lead_id=lead_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)[:500]) from exc
+    return JSONResponse(content=result)
+
+
+@router.post(
+    "/leads/{lead_id}/retry-outreach",
+    dependencies=[Depends(rate_limit(max_requests=20, window_seconds=60, scope="admin_ai_mop"))],
+)
+async def ai_mop_retry_outreach(lead_id: int, _admin=Depends(get_current_admin)):
+    try:
+        result = await retry_lead_outreach(lead_id=lead_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)[:500]) from exc
+    return JSONResponse(content=result)
