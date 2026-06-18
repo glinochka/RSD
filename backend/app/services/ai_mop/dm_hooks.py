@@ -6,10 +6,16 @@ import json
 import logging
 from typing import Any
 
-from ...alembic.models import AgentSalesDmQueue
+from ...alembic.database import async_session_maker
+from ...alembic.models import AgentSalesDmQueue, AiMopLead
 from ..sales.fsm import SalesFSMService
 from .lead_status import mark_lead_outreach_send_failed, mark_lead_outreach_sent
 from .outreach import AI_MOP_SOURCE_CHAT_ID
+from .outreach_tracking import (
+    count_pending_ai_mop_dm_for_lead,
+    get_completed_outreach_channels,
+    record_outreach_channel_sent,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +35,15 @@ async def on_dm_queue_sent(item: AgentSalesDmQueue) -> None:
     lead_id = meta.get("ai_mop_lead_id")
     if lead_id is None:
         return
+    channel = str(meta.get("channel") or "telegram_userbot").strip().lower()
+    target = str(item.target_user_external_id or "").strip()
     try:
+        if meta.get("message_kind") != "follow_up" and target:
+            await record_outreach_channel_sent(
+                lead_id=int(lead_id),
+                channel=channel,
+                target=target,
+            )
         await mark_lead_outreach_sent(lead_id=int(lead_id), agent_id=int(item.agent_id))
         fsm = SalesFSMService()
         try:
@@ -68,6 +82,28 @@ async def on_dm_queue_failed(item: AgentSalesDmQueue, *, error: str, final: bool
     lead_id = meta.get("ai_mop_lead_id")
     if lead_id is None:
         return
+
+    pending = await count_pending_ai_mop_dm_for_lead(lead_id=int(lead_id))
+    if pending > 0:
+        return
+
+    async with async_session_maker() as session:
+        lead = await session.get(AiMopLead, int(lead_id))
+
+    if lead is not None and get_completed_outreach_channels(lead):
+        try:
+            await mark_lead_outreach_sent(lead_id=int(lead_id), agent_id=int(item.agent_id))
+            async with async_session_maker() as session:
+                async with session.begin():
+                    db_lead = await session.get(AiMopLead, int(lead_id))
+                    if db_lead is not None:
+                        db_lead.failure_stage = None
+                        db_lead.last_error = f"Частичная отправка: {error[:1500]}"
+                        db_lead.status = "outreach_sent"
+            return
+        except Exception:
+            logger.warning("Failed to mark partial AI MOP outreach lead_id=%s", lead_id, exc_info=True)
+
     try:
         await mark_lead_outreach_send_failed(
             lead_id=int(lead_id),

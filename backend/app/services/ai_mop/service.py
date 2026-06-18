@@ -46,6 +46,9 @@ async def get_dashboard_stats() -> dict[str, Any]:
         processing = await session.scalar(
             select(func.count(AiMopLead.id)).where(AiMopLead.status == "processing")
         ) or 0
+        provisioned = await session.scalar(
+            select(func.count(AiMopLead.id)).where(AiMopLead.status == "provisioned")
+        ) or 0
         queued = await session.scalar(
             select(func.count(AiMopLead.id)).where(AiMopLead.status == "outreach_queued")
         ) or 0
@@ -84,6 +87,7 @@ async def get_dashboard_stats() -> dict[str, Any]:
             "total": int(total_leads),
             "pending": int(pending),
             "processing": int(processing),
+            "provisioned": int(provisioned),
             "outreach_queued": int(queued),
             "outreach_sent": int(sent),
             "failed": int(failed),
@@ -197,7 +201,7 @@ async def clear_ai_mop_leads(*, only_pending: bool = True) -> int:
         async with session.begin():
             q = select(AiMopLead)
             if only_pending:
-                q = q.where(AiMopLead.status.in_(("pending", "failed")))
+                q = q.where(AiMopLead.status.in_(("pending", "failed", "provisioned")))
             rows = (await session.scalars(q)).all()
             count = len(rows)
             for row in rows:

@@ -124,6 +124,103 @@ class DmOutreachWorker:
         slot = int(digest[:16], 16) % len(available_ids)
         return available_ids[slot]
 
+    @staticmethod
+    def _dm_fallback_targets(*, primary_target: str, meta: dict[str, Any]) -> list[str]:
+        targets = [str(primary_target or "").strip()]
+        raw_fallbacks = meta.get("fallback_targets")
+        if isinstance(raw_fallbacks, list):
+            for value in raw_fallbacks:
+                candidate = str(value or "").strip()
+                if candidate and candidate not in targets:
+                    targets.append(candidate)
+        return [target for target in targets if target]
+
+    @staticmethod
+    def _should_try_next_dm_target(*, channel: str, exc: Exception, attempt_index: int, total: int) -> bool:
+        if attempt_index >= total - 1:
+            return False
+        low = str(exc).casefold()
+        if channel == "telegram_userbot":
+            markers = (
+                "you can't write in this chat",
+                "could not find the input entity",
+                "peeridinvalid",
+                "chat_write_forbidden",
+                "user is deactivated",
+                "username not occupied",
+                "nobody is using this username",
+                "cannot find any entity",
+            )
+            return any(marker in low for marker in markers)
+        if channel == "whatsapp_userbot":
+            markers = (
+                "could not find",
+                "invalid",
+                "not registered",
+                "некорректный номер",
+                "not on whatsapp",
+            )
+            return any(marker in low for marker in markers)
+        return False
+
+    async def _send_dm_with_target_fallbacks(
+        self,
+        *,
+        channel: str,
+        primary_target: str,
+        meta: dict[str, Any],
+        message_text: str,
+        connection_id: int,
+        encrypted_credentials: str,
+        peer_access_hash: int | None,
+    ) -> str:
+        targets = self._dm_fallback_targets(primary_target=primary_target, meta=meta)
+        if not targets:
+            raise ValueError("invalid target_user_external_id")
+
+        last_exc: Exception | None = None
+        for idx, target in enumerate(targets):
+            try:
+                if channel == "whatsapp_userbot":
+                    await send_whatsapp_userbot_message(
+                        connection_id=connection_id,
+                        encrypted_credentials=encrypted_credentials,
+                        user_external_id=target,
+                        text=message_text,
+                    )
+                else:
+                    await send_telegram_userbot_message(
+                        encrypted_credentials=encrypted_credentials,
+                        target_external_id=target,
+                        text=message_text,
+                        peer_access_hash=peer_access_hash,
+                    )
+                if idx > 0:
+                    logger.info(
+                        "DM sent via fallback target channel=%s target=%s",
+                        channel,
+                        target,
+                    )
+                return target
+            except Exception as exc:
+                last_exc = exc
+                if not self._should_try_next_dm_target(
+                    channel=channel,
+                    exc=exc,
+                    attempt_index=idx,
+                    total=len(targets),
+                ):
+                    raise
+                logger.warning(
+                    "DM target failed channel=%s target=%s error=%s — trying fallback",
+                    channel,
+                    target,
+                    str(exc)[:200],
+                )
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError("DM send failed")
+
     async def _defer_queue_item(self, *, queue_id: int, scheduled_for: datetime, meta: dict[str, Any]) -> None:
         async with async_session_maker() as session:
             async with session.begin():
@@ -143,7 +240,7 @@ class DmOutreachWorker:
         item: AgentSalesDmQueue,
         meta: dict[str, Any],
     ) -> bool:
-        if not _is_ai_mop_first_outreach(meta):
+        if not _is_ai_mop_queue_item(meta):
             return False
 
         from ..ai_mop.send_window import ai_mop_first_message_allowed_now, next_ai_mop_first_message_at
@@ -158,7 +255,7 @@ class DmOutreachWorker:
             meta=meta,
         )
         logger.info(
-            "Deferred AI MOP first message until Moscow business hours: queue_id=%d until=%s",
+            "Deferred AI MOP message until Moscow business hours: queue_id=%d until=%s",
             item.id,
             scheduled_for.isoformat(),
         )
@@ -469,20 +566,27 @@ class DmOutreachWorker:
                 return
 
         try:
-            if channel == "whatsapp_userbot":
-                await send_whatsapp_userbot_message(
-                    connection_id=int(connection_id or 0),
-                    encrypted_credentials=encrypted_credentials or "",
-                    user_external_id=target_external,
-                    text=message_text,
-                )
-            else:
-                await send_telegram_userbot_message(
-                    encrypted_credentials=encrypted_credentials or "",
-                    target_external_id=target_external,
-                    text=message_text,
-                    peer_access_hash=peer_access_hash,
-                )
+            used_target = await self._send_dm_with_target_fallbacks(
+                channel=channel,
+                primary_target=target_external,
+                meta=meta,
+                message_text=message_text,
+                connection_id=int(connection_id or 0),
+                encrypted_credentials=encrypted_credentials or "",
+                peer_access_hash=peer_access_hash,
+            )
+            if used_target != target_external:
+                target_external = used_target
+                async with async_session_maker() as session:
+                    async with session.begin():
+                        await session.execute(
+                            update(AgentSalesDmQueue)
+                            .where(AgentSalesDmQueue.id == item.id)
+                            .values(
+                                target_user_external_id=used_target,
+                                updated_at=self._now_utc_naive(),
+                            )
+                        )
 
             logger.info(
                 "Sent DM: queue_id=%d agent_id=%d channel=%s user_id=%s",

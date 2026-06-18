@@ -65,6 +65,36 @@ async def mark_lead_failed(
                     assignment.updated_at = now
 
 
+async def mark_lead_provisioned(
+    *,
+    lead_id: int,
+    agent_id: int,
+    provision: dict[str, Any],
+) -> None:
+    """Сайт готов; отправка — сразу после антиспам-cooldown агента (после предыдущей отправки)."""
+    now = _utc_now()
+    async with async_session_maker() as session:
+        async with session.begin():
+            lead = await session.get(AiMopLead, lead_id)
+            if lead is None:
+                return
+            lead.status = "provisioned"
+            lead.failure_stage = None
+            lead.last_error = None
+            lead.provisioned_user_id = provision.get("provisioned_user_id")
+            lead.provisioned_agent_id = provision.get("provisioned_agent_id")
+            lead.provisioned_website_id = provision.get("provisioned_website_id")
+            lead.website_url = provision.get("website_url")
+            lead.temp_password = provision.get("temp_password")
+            lead.updated_at = now
+            assignment = await session.scalar(
+                select(AiMopAgentAssignment).where(AiMopAgentAssignment.agent_id == agent_id)
+            )
+            if assignment:
+                assignment.last_error = None
+                assignment.updated_at = now
+
+
 async def mark_lead_outreach_queued(
     *,
     lead_id: int,

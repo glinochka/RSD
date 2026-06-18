@@ -10,7 +10,8 @@ from app.services.ai_mop.lead_import import (
     allocate_unique_account_email,
     generate_account_email_from_org,
 )
-from app.services.ai_mop.outreach import _ai_mop_outreach_user_message, resolve_lead_contact_email
+from app.services.ai_mop.llm_helpers import AI_MOP_CONTACT_PHONE, build_lead_context_from_lead
+from app.services.ai_mop.outreach import resolve_lead_contact_email
 from app.services.ai_mop.provisioning import generate_temp_password
 from app.services.sales.outreach_scheduling import EXCEL_STAGGER_MAX_MINUTES, EXCEL_STAGGER_MIN_MINUTES
 
@@ -75,30 +76,33 @@ async def test_allocate_unique_account_email_skips_taken_addresses():
     assert allocated == "dentrium1@rsd-ai.ru"
 
 
-def test_ai_mop_outreach_user_message_excludes_credentials():
+def test_ai_mop_contact_phone_constant():
+    assert AI_MOP_CONTACT_PHONE == "+79179156670"
+
+
+def test_build_lead_context_from_lead_for_outreach():
     class _Lead:
         org_name = "Салон"
+        email = "test@example.com"
         lpr_name = None
         phone = "+7999"
         address = "Москва"
         category = "красота"
+        yandex_url = None
+        extra_json = None
 
-    text = _ai_mop_outreach_user_message(
-        lead=_Lead(),
-        website_url="https://rsd-ai.ru/w/salon",
-    )
-    assert "https://rsd-ai.ru/w/salon" in text
-    assert "НЕ указывай логин" in text
-    assert "salon@rsd-ai.ru" not in text
-    assert "abc12" not in text
+    text = build_lead_context_from_lead(_Lead())
+    assert "Салон" in text
+    assert "красота" in text
+    assert "нет сайта" in text.lower() or "Сайта" in text
 
 
 def test_resolve_lead_contact_email_prefers_extra_contact_email():
     class _Lead:
         email = "login@rsd-ai.ru"
-        extra_json = '{"contact_email":"biz@example.com","account_email_generated":false}'
+        extra_json = '{"contact_email":"biz@mail.ru","account_email_generated":false}'
 
-    assert resolve_lead_contact_email(_Lead()) == "biz@example.com"
+    assert resolve_lead_contact_email(_Lead()) == "biz@mail.ru"
 
 
 def test_resolve_lead_contact_email_skips_generated_login_only():
@@ -111,10 +115,28 @@ def test_resolve_lead_contact_email_skips_generated_login_only():
 
 def test_resolve_lead_contact_email_uses_lead_email_when_not_generated():
     class _Lead:
-        email = "biz@example.com"
+        email = "biz@yandex.ru"
         extra_json = '{"account_email_generated":false}'
 
-    assert resolve_lead_contact_email(_Lead()) == "biz@example.com"
+    assert resolve_lead_contact_email(_Lead()) == "biz@yandex.ru"
+
+
+def test_resolve_lead_contact_email_prefers_personal_over_custom():
+    class _Lead:
+        email = "login@company-site.ru"
+        extra_json = (
+            '{"contact_email":"info@company-site.ru, boss@mail.ru", "account_email_generated":false}'
+        )
+
+    assert resolve_lead_contact_email(_Lead()) == "boss@mail.ru"
+
+
+def test_resolve_lead_contact_email_skips_custom_domains_only():
+    class _Lead:
+        email = "info@company-site.ru"
+        extra_json = '{"account_email_generated":false}'
+
+    assert resolve_lead_contact_email(_Lead()) is None
 
 
 def test_build_lead_context_from_lead_includes_rubric():
@@ -146,6 +168,89 @@ def test_contact_match_keys_whatsapp():
 def test_ai_mop_stagger_uses_sales_scheduling_constants():
     assert EXCEL_STAGGER_MIN_MINUTES == 3.0
     assert EXCEL_STAGGER_MAX_MINUTES == 7.0
+
+
+@pytest.mark.asyncio
+async def test_ai_mop_worker_provisions_outside_send_window(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from app.services.ai_mop.worker import AiMopWorker
+
+    worker = AiMopWorker()
+    send_mock = AsyncMock(return_value=False)
+    provision_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(worker, "_try_send_ready_lead", send_mock)
+    monkeypatch.setattr(worker, "_try_provision_next_lead", provision_mock)
+    monkeypatch.setattr(
+        "app.services.ai_mop.worker.is_ai_mop_pipeline_paused",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(
+        "app.services.ai_mop.worker.ai_mop_first_message_allowed_now",
+        lambda: False,
+    )
+
+    assert await worker.process_once() is True
+    send_mock.assert_not_called()
+    provision_mock.assert_called_once()
+
+
+
+def test_ai_mop_send_cooldown_only_after_outreach():
+    """Антиспам привязан к cooldown_until агента, не к времени провижининга."""
+    from datetime import timedelta
+
+    from app.services.ai_mop.worker import _next_send_cooldown_until, _utc_now
+
+    until = _next_send_cooldown_until()
+    now = _utc_now()
+    assert until > now
+    assert until <= now + timedelta(minutes=7, seconds=5)
+
+
+@pytest.mark.asyncio
+async def test_ai_mop_worker_tries_send_before_provision(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from app.services.ai_mop.worker import AiMopWorker
+
+    worker = AiMopWorker()
+    send_mock = AsyncMock(return_value=True)
+    provision_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(worker, "_try_send_ready_lead", send_mock)
+    monkeypatch.setattr(worker, "_try_provision_next_lead", provision_mock)
+    monkeypatch.setattr(
+        "app.services.ai_mop.worker.is_ai_mop_pipeline_paused",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(
+        "app.services.ai_mop.worker.ai_mop_first_message_allowed_now",
+        lambda: True,
+    )
+
+    assert await worker.process_once() is True
+    send_mock.assert_called_once()
+    provision_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_ai_mop_worker_idle_outside_send_window_when_nothing_to_provision(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from app.services.ai_mop.worker import AiMopWorker
+
+    worker = AiMopWorker()
+    monkeypatch.setattr(worker, "_try_provision_next_lead", AsyncMock(return_value=False))
+    monkeypatch.setattr(
+        "app.services.ai_mop.worker.is_ai_mop_pipeline_paused",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(
+        "app.services.ai_mop.worker.ai_mop_first_message_allowed_now",
+        lambda: False,
+    )
+
+    assert await worker.process_once() is False
 
 
 def test_ai_mop_send_window_moscow_hours():

@@ -962,7 +962,7 @@ class AiMopLead(Base):
         default="pending",
         server_default="pending",
         index=True,
-    )  # pending, processing, outreach_queued, outreach_sent, failed
+    )  # pending, processing, provisioned, outreach_queued, outreach_sent, failed
     assigned_agent_id: Mapped[int | None] = mapped_column(
         ForeignKey("agents.id", ondelete="SET NULL"),
         nullable=True,

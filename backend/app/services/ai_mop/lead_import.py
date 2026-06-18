@@ -191,8 +191,12 @@ async def import_ai_mop_leads_from_excel(
             extra["telegram"] = row.get("telegram")
         if row.get("whatsapp"):
             extra["whatsapp"] = row.get("whatsapp")
+        for phone_key in ("lpr_phone", "org_phone", "org_mobile"):
+            val = row.get(phone_key)
+            if val and str(val).strip():
+                extra[phone_key] = str(val).strip()
 
-        phone = row.get("lpr_phone") or row.get("org_phone") or row.get("org_mobile")
+        phone = row.get("org_mobile") or row.get("org_phone") or row.get("lpr_phone")
         dedup = _dedup_key(
             email=None if email_generated else account_email,
             org_name=org_name if email_generated else None,
@@ -220,7 +224,7 @@ async def import_ai_mop_leads_from_excel(
             "updated_at": now,
         }
         if existing:
-            if existing.status in ("outreach_sent", "processing"):
+            if existing.status in ("outreach_sent", "processing", "provisioned", "outreach_queued"):
                 skipped += 1
                 batch_by_dedup[dedup] = existing
                 continue

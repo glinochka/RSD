@@ -24,6 +24,24 @@ def test_normalize_telegram_username() -> None:
     assert target == "somebrand"
 
 
+def test_normalize_telegram_bot_link_falls_back_to_mobile() -> None:
+    target, hint = normalize_telegram_target(
+        telegram="https://t.me/somechannel_bot",
+        org_mobile="+79991234567",
+    )
+    assert target == "+79991234567"
+    assert hint.get("source") == "phone"
+
+
+def test_normalize_telegram_username_keeps_phone_fallbacks() -> None:
+    _target, hint = normalize_telegram_target(
+        telegram="https://t.me/somebrand",
+        org_mobile="+79991234567",
+        org_phone="+74831234567",
+    )
+    assert "+79991234567" in (hint.get("fallback_targets") or [])
+
+
 def test_pick_outreach_prefers_whatsapp_column() -> None:
     row = {
         "org_name": "ООО Тест",

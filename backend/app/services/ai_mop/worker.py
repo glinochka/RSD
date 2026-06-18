@@ -1,4 +1,9 @@
-"""Фоновый воркер ИИ МОП: провижининг + outreach (email + userbot)."""
+"""Фоновый воркер ИИ МОП: провижининг параллельно с очередью на отправку.
+
+Антиспам 3–7 мин — только между отправками (cooldown_until агента).
+Сайт готов → отправка сразу, если cooldown прошёл; иначе ждём cooldown.
+Cooldown прошёл, сайт ещё собирается → отправка сразу по готовности.
+"""
 
 from __future__ import annotations
 
@@ -14,10 +19,11 @@ from ...alembic.database import async_session_maker
 from ...alembic.models import Agent, AiMopAgentAssignment, AiMopLead
 from ...config import settings
 from ..sales.outreach_scheduling import EXCEL_STAGGER_MAX_MINUTES, EXCEL_STAGGER_MIN_MINUTES
-from .lead_status import mark_lead_failed
+from .lead_status import mark_lead_failed, mark_lead_provisioned
 from .outreach import resolve_all_lead_messenger_channels, resolve_lead_contact_email, run_outreach_for_lead
 from .pipeline_state import is_ai_mop_pipeline_paused
 from .provisioning import provision_lead_demo
+from .send_window import ai_mop_first_message_allowed_now
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +42,7 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def _next_cooldown_until() -> datetime:
+def _next_send_cooldown_until() -> datetime:
     minutes = random.uniform(_STAGGER_MIN, _STAGGER_MAX)
     return _utc_now() + timedelta(minutes=minutes)
 
@@ -82,6 +88,16 @@ class AiMopWorker:
         if await is_ai_mop_pipeline_paused():
             return False
 
+        if ai_mop_first_message_allowed_now():
+            if await self._try_send_ready_lead():
+                return True
+
+        if await self._try_provision_next_lead():
+            return True
+
+        return False
+
+    async def _try_send_ready_lead(self) -> bool:
         now = _utc_now()
         async with async_session_maker() as session:
             assignment = await session.scalar(
@@ -93,6 +109,88 @@ class AiMopWorker:
                 .where(
                     (AiMopAgentAssignment.cooldown_until.is_(None))
                     | (AiMopAgentAssignment.cooldown_until <= now)
+                )
+                .order_by(AiMopAgentAssignment.last_run_at.asc().nullsfirst())
+                .limit(1)
+            )
+            if assignment is None:
+                return False
+
+            lead = await session.scalar(
+                select(AiMopLead)
+                .where(
+                    AiMopLead.status == "provisioned",
+                    AiMopLead.assigned_agent_id == assignment.agent_id,
+                )
+                .order_by(AiMopLead.id)
+                .limit(1)
+            )
+            if lead is None:
+                return False
+
+            agent = await session.get(Agent, assignment.agent_id)
+            if agent is None or not agent.is_active or agent.template_type != "sales_manager":
+                assignment.is_enabled = False
+                assignment.last_error = "Agent inactive or wrong template"
+                await session.commit()
+                return False
+
+            assignment.is_busy = True
+            lead.status = "processing"
+            lead.updated_at = now
+            assignment.updated_at = now
+            lead_id = int(lead.id)
+            agent_id = int(assignment.agent_id)
+            provision = {
+                "provisioned_user_id": lead.provisioned_user_id,
+                "provisioned_agent_id": lead.provisioned_agent_id,
+                "provisioned_website_id": lead.provisioned_website_id,
+                "website_url": lead.website_url,
+                "temp_password": lead.temp_password,
+                "login_email": lead.email,
+                "lead_context": None,
+            }
+            await session.commit()
+
+        try:
+            await run_outreach_for_lead(
+                lead_id=lead_id,
+                agent_id=agent_id,
+                provision=provision,
+            )
+        except AiMopPipelineError as exc:
+            logger.warning("AI MOP outreach failed lead_id=%s: %s", lead_id, exc)
+            await mark_lead_failed(
+                lead_id=lead_id,
+                stage=exc.stage,
+                error=str(exc)[:2000],
+                provision=provision,
+            )
+            await self._release_assignment(agent_id=agent_id, error=str(exc)[:500], set_cooldown=True)
+            return True
+        except Exception as exc:
+            logger.exception("AI MOP outreach unexpected error lead_id=%s: %s", lead_id, exc)
+            await mark_lead_failed(
+                lead_id=lead_id,
+                stage="outreach_send",
+                error=str(exc)[:2000],
+                provision=provision,
+            )
+            await self._release_assignment(agent_id=agent_id, error=str(exc)[:500], set_cooldown=True)
+            return True
+
+        await self._release_assignment(agent_id=agent_id, error=None, set_cooldown=True)
+        logger.info("AI MOP outreach dispatched lead_id=%s agent_id=%s", lead_id, agent_id)
+        return True
+
+    async def _try_provision_next_lead(self) -> bool:
+        now = _utc_now()
+        async with async_session_maker() as session:
+            assignment = await session.scalar(
+                select(AiMopAgentAssignment)
+                .where(
+                    AiMopAgentAssignment.is_enabled.is_(True),
+                    AiMopAgentAssignment.is_busy.is_(False),
                 )
                 .order_by(AiMopAgentAssignment.last_run_at.asc().nullsfirst())
                 .limit(1)
@@ -127,7 +225,7 @@ class AiMopWorker:
             await session.commit()
 
         try:
-            await self._process_lead(lead_id=lead_id, agent_id=agent_id)
+            await self._provision_lead(lead_id=lead_id, agent_id=agent_id)
         except AiMopPipelineError as exc:
             logger.warning("AI MOP lead %s failed at %s: %s", lead_id, exc.stage, exc)
             await mark_lead_failed(
@@ -136,48 +234,19 @@ class AiMopWorker:
                 error=str(exc)[:2000],
                 provision=exc.provision,
             )
-            async with async_session_maker() as session:
-                async with session.begin():
-                    assignment = await session.scalar(
-                        select(AiMopAgentAssignment).where(AiMopAgentAssignment.agent_id == agent_id)
-                    )
-                    if assignment:
-                        assignment.is_busy = False
-                        assignment.last_run_at = _utc_now()
-                        assignment.cooldown_until = _next_cooldown_until()
-                        assignment.last_error = str(exc)[:500]
-                        assignment.updated_at = _utc_now()
+            await self._release_assignment(agent_id=agent_id, error=str(exc)[:500], set_cooldown=False)
             return True
         except Exception as exc:
             logger.exception("AI MOP lead %s unexpected error: %s", lead_id, exc)
             await mark_lead_failed(lead_id=lead_id, stage="provisioning", error=str(exc)[:2000])
-            async with async_session_maker() as session:
-                async with session.begin():
-                    assignment = await session.scalar(
-                        select(AiMopAgentAssignment).where(AiMopAgentAssignment.agent_id == agent_id)
-                    )
-                    if assignment:
-                        assignment.is_busy = False
-                        assignment.last_run_at = _utc_now()
-                        assignment.cooldown_until = _next_cooldown_until()
-                        assignment.last_error = str(exc)[:500]
-                        assignment.updated_at = _utc_now()
+            await self._release_assignment(agent_id=agent_id, error=str(exc)[:500], set_cooldown=False)
             return True
 
-        async with async_session_maker() as session:
-            async with session.begin():
-                assignment = await session.scalar(
-                    select(AiMopAgentAssignment).where(AiMopAgentAssignment.agent_id == agent_id)
-                )
-                if assignment:
-                    assignment.is_busy = False
-                    assignment.last_run_at = _utc_now()
-                    assignment.cooldown_until = _next_cooldown_until()
-                    assignment.last_error = None
-                    assignment.updated_at = _utc_now()
+        await self._release_assignment(agent_id=agent_id, error=None, set_cooldown=False)
+        logger.info("AI MOP provisioned lead_id=%s agent_id=%s (awaiting send cooldown)", lead_id, agent_id)
         return True
 
-    async def _process_lead(self, *, lead_id: int, agent_id: int) -> None:
+    async def _provision_lead(self, *, lead_id: int, agent_id: int) -> None:
         async with async_session_maker() as session:
             lead = await session.get(AiMopLead, lead_id)
             agent = await session.get(Agent, agent_id)
@@ -186,7 +255,6 @@ class AiMopWorker:
 
         contact_email = resolve_lead_contact_email(lead)
         messengers = await resolve_all_lead_messenger_channels(agent_id=agent_id, lead=lead)
-
         if not contact_email and not messengers:
             raise AiMopPipelineError(
                 "no_messenger",
@@ -198,14 +266,32 @@ class AiMopWorker:
         except Exception as exc:
             raise AiMopPipelineError("website", str(exc)) from exc
 
-        try:
-            await run_outreach_for_lead(
-                lead_id=lead_id,
-                agent_id=agent_id,
-                provision=result,
-            )
-        except Exception as exc:
-            raise AiMopPipelineError("outreach_send", str(exc), provision=result) from exc
+        await mark_lead_provisioned(
+            lead_id=lead_id,
+            agent_id=agent_id,
+            provision=result,
+        )
+
+    async def _release_assignment(
+        self,
+        *,
+        agent_id: int,
+        error: str | None,
+        set_cooldown: bool,
+    ) -> None:
+        async with async_session_maker() as session:
+            async with session.begin():
+                assignment = await session.scalar(
+                    select(AiMopAgentAssignment).where(AiMopAgentAssignment.agent_id == agent_id)
+                )
+                if assignment is None:
+                    return
+                assignment.is_busy = False
+                assignment.last_run_at = _utc_now()
+                assignment.last_error = error
+                if set_cooldown:
+                    assignment.cooldown_until = _next_send_cooldown_until()
+                assignment.updated_at = _utc_now()
 
 
 def get_ai_mop_worker() -> AiMopWorker:

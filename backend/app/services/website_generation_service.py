@@ -31,7 +31,9 @@ logger = logging.getLogger(__name__)
 WEBSITE_INTERACTIVITY_INSTRUCTIONS = """\
 INTERACTIVITY (MANDATORY — page must be fully functional on first load, no manual fixes):
 The platform automatically injects a JavaScript runtime that activates elements \
-with data-* attributes. Use ONLY these patterns — do NOT write custom <script> \
+with data-* attributes. The platform also injects a floating AI chat widget after publish — \
+never add chat sections, messenger mockups, or chat input fields to the HTML. \
+Use ONLY these patterns — do NOT write custom <script> \
 for menus, carousels, FAQ, or tabs. Do NOT use onclick/onchange/on* handlers \
 (they are stripped by security sanitization).
 
@@ -128,6 +130,10 @@ AVOID:
 - Branding that does not match provided business name/description
 - Floating chat buttons, messenger bubbles, live-chat icons (platform injects a real chat widget automatically)
 - Decorative fixed-position chat FABs in corners
+- Embedded chat interfaces of ANY kind: full chat sections, messenger mockups, message-bubble UIs,
+  fake "online consultant" panels, chat input fields, or a "Чат" / "Написать нам" block in page content
+- Do NOT build chat UI in the landing HTML — the platform adds a floating widget after publish;
+  duplicating chat on the page is forbidden
 
 FORMS (contact / lead capture):
 - Use real HTML <form> elements (not fake buttons) in contact/CTA sections
@@ -159,6 +165,7 @@ CRITICAL RULES - PRESERVATION IS KEY:
 10. If the user asks to change colors/theme, update Tailwind color classes consistently.
 11. If adding new sections, match the existing design language and place them appropriately.
 12. When adding a new section, ensure it integrates with existing layout (e.g., footer stays at bottom).
+13. Do NOT add embedded chat UIs, messenger mockups, or fake online-consultant panels — the platform injects a floating chat widget automatically.
 
 """ + WEBSITE_INTERACTIVITY_INSTRUCTIONS + """
 

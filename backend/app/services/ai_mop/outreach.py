@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from sqlalchemy import select
@@ -13,39 +14,177 @@ from ...alembic.models import Agent, AgentChannelConnection, AiMopLead
 from ..sales.contact_target_resolver import collect_all_messenger_channels
 from ..sales.dm_queue_service import get_dm_queue_service
 from ..sales.fsm import SalesFSMService
-from ..sales.sales_playbook import EXCEL_COLD_OUTREACH_EXTRA
-from ..template_runtime import TemplateRuntimeService
 from .email_outreach import send_ai_mop_outreach_email
-from .llm_helpers import build_lead_context, compose_outreach_email
+from .llm_helpers import (
+    build_lead_context,
+    build_lead_context_from_lead,
+    compose_outreach_dm,
+    compose_outreach_email,
+    parse_lead_extra_json,
+)
+from .outreach_tracking import (
+    channel_key,
+    get_completed_outreach_channels,
+    record_outreach_channel_sent,
+)
 
 logger = logging.getLogger(__name__)
 
 AI_MOP_SOURCE_CHAT_ID = "ai_mop"
 OUTREACH_CHANNEL_EMAIL = "email"
 
+_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
+_PERSONAL_EMAIL_DOMAINS = frozenset({
+    "mail.ru",
+    "inbox.ru",
+    "list.ru",
+    "bk.ru",
+    "internet.ru",
+    "yandex.ru",
+    "ya.ru",
+    "yandex.com",
+    "gmail.com",
+    "googlemail.com",
+    "rambler.ru",
+    "lenta.ru",
+    "autorambler.ru",
+    "myrambler.ru",
+    "ro.ru",
+    "outlook.com",
+    "hotmail.com",
+    "live.com",
+    "msn.com",
+    "icloud.com",
+    "me.com",
+    "mac.com",
+    "proton.me",
+    "protonmail.com",
+    "yahoo.com",
+    "ukr.net",
+    "i.ua",
+    "meta.ua",
+})
+
+
+def _extract_emails_from_text(text: str) -> list[str]:
+    found: list[str] = []
+    for match in _EMAIL_RE.finditer(text or ""):
+        email = match.group(0).strip().casefold()
+        if email and email not in found:
+            found.append(email)
+    return found
+
+
+def _email_domain(email: str) -> str:
+    return email.rsplit("@", 1)[-1].casefold().strip()
+
+
+def _is_personal_email(email: str) -> bool:
+    domain = _email_domain(email)
+    if domain in _PERSONAL_EMAIL_DOMAINS:
+        return True
+    return domain.endswith(".mail.ru")
+
+
+def _is_generated_login_email(lead: AiMopLead, email: str) -> bool:
+    extra = parse_lead_extra_json(lead)
+    if extra.get("account_email_generated") is True:
+        login = str(lead.email or "").strip().casefold()
+        if login and email.casefold() == login:
+            return True
+    domain = (extra.get("account_email_domain") or "rsd-ai.ru").strip().lstrip("@").casefold()
+    if email.casefold().endswith(f"@{domain}"):
+        if extra.get("account_email_generated") is True:
+            return True
+    return False
+
+
+def collect_lead_contact_emails(lead: AiMopLead) -> list[str]:
+    """Все контактные email лида: сначала личные (mail.ru, yandex.ru…), кастомные домены — в конце."""
+    extra = parse_lead_extra_json(lead)
+    candidates: list[str] = []
+
+    for key in ("contact_email", "contact_emails", "email", "Email (полный из выгрузки)"):
+        val = extra.get(key)
+        if isinstance(val, list):
+            for item in val:
+                candidates.extend(_extract_emails_from_text(str(item)))
+        elif val:
+            candidates.extend(_extract_emails_from_text(str(val)))
+
+    for val in extra.values():
+        if isinstance(val, str) and "@" in val:
+            candidates.extend(_extract_emails_from_text(val))
+
+    lead_email = str(lead.email or "").strip()
+    if lead_email and "@" in lead_email:
+        candidates.append(lead_email.casefold())
+
+    unique: list[str] = []
+    seen: set[str] = set()
+    for email in candidates:
+        normalized = email.strip().casefold()
+        if not normalized or "@" not in normalized or normalized in seen:
+            continue
+        if _is_generated_login_email(lead, normalized):
+            continue
+        seen.add(normalized)
+        unique.append(normalized)
+
+    personal = [e for e in unique if _is_personal_email(e)]
+    custom = [e for e in unique if not _is_personal_email(e)]
+    return personal + custom
+
+
+def _legacy_completed_outreach_channels(lead: AiMopLead) -> set[str]:
+    """Лиды до outreach_sent_channels: email при multi/email-ошибке уже мог быть отправлен."""
+    from .outreach_tracking import channel_key
+
+    completed: set[str] = set()
+    if get_completed_outreach_channels(lead):
+        return completed
+    stage = str(lead.failure_stage or "")
+    channel = str(lead.outreach_channel or "").strip().lower()
+    target = str(lead.outreach_target or "").strip()
+    if stage != "outreach_send" and lead.status not in ("outreach_sent", "outreach_queued"):
+        return completed
+
+    contact_email = resolve_lead_contact_email(lead)
+    if contact_email and channel in ("email", "multi"):
+        completed.add(channel_key(channel=OUTREACH_CHANNEL_EMAIL, target=contact_email))
+    if channel in ("telegram_userbot", "whatsapp_userbot") and target and lead.outreach_sent_at:
+        completed.add(channel_key(channel=channel, target=target))
+    return completed
+
+
+def _effective_completed_channels(lead: AiMopLead) -> set[str]:
+    completed = get_completed_outreach_channels(lead)
+    if completed:
+        return completed
+    return _legacy_completed_outreach_channels(lead)
+
 
 def resolve_lead_contact_email(lead: AiMopLead) -> str | None:
-    """Контактный email компании для холодного письма (не login @rsd-ai.ru)."""
-    extra: dict[str, Any] = {}
-    if lead.extra_json:
-        try:
-            parsed = json.loads(lead.extra_json)
-            if isinstance(parsed, dict):
-                extra = parsed
-        except json.JSONDecodeError:
-            pass
-
-    contact = str(extra.get("contact_email") or "").strip()
-    if contact and "@" in contact:
-        return contact[:255]
-
-    if extra.get("account_email_generated") is True:
+    """Контактный email для холодного письма (только личные почтовики)."""
+    personal = [email for email in collect_lead_contact_emails(lead) if _is_personal_email(email)]
+    if not personal:
         return None
+    return personal[0][:255]
 
-    email = str(lead.email or "").strip()
-    if email and "@" in email:
-        return email[:255]
-    return None
+
+def _lead_outreach_row(lead: AiMopLead) -> dict[str, Any]:
+    extra = parse_lead_extra_json(lead)
+    fallback_phone = str(lead.phone or "").strip() or None
+    return {
+        "org_name": lead.org_name,
+        "lpr_name": lead.lpr_name,
+        "lpr_phone": str(extra.get("lpr_phone") or "").strip() or fallback_phone,
+        "org_phone": str(extra.get("org_phone") or "").strip() or fallback_phone,
+        "org_mobile": str(extra.get("org_mobile") or "").strip() or fallback_phone,
+        "telegram": lead.telegram,
+        "whatsapp": lead.whatsapp,
+    }
 
 
 async def _agent_has_channel(agent_id: int, provider: str) -> bool:
@@ -70,15 +209,7 @@ async def resolve_all_lead_messenger_channels(
     if not wa_ok and not tg_ok:
         return []
 
-    row = {
-        "org_name": lead.org_name,
-        "lpr_name": lead.lpr_name,
-        "lpr_phone": lead.phone,
-        "org_phone": lead.phone,
-        "org_mobile": lead.phone,
-        "telegram": lead.telegram,
-        "whatsapp": lead.whatsapp,
-    }
+    row = _lead_outreach_row(lead)
     return collect_all_messenger_channels(
         row,
         whatsapp_available=wa_ok,
@@ -130,35 +261,11 @@ async def send_ai_mop_proposal_email(
         html_body=email_content["html_body"],
     )
     logger.info("AI MOP outreach email sent lead_id=%s to=%s", lead.id, to_email)
-
-
-def _ai_mop_outreach_user_message(
-    *,
-    lead: AiMopLead,
-    website_url: str,
-) -> str:
-    parts = [
-        f"Компания: {lead.org_name}",
-        f"Демо-сайт: {website_url}",
-    ]
-    if lead.lpr_name:
-        parts.append(f"Контакт: {lead.lpr_name}")
-    if lead.phone:
-        parts.append(f"Телефон: {lead.phone}")
-    if lead.address:
-        parts.append(f"Адрес: {lead.address}")
-    if lead.category:
-        parts.append(f"Категория: {lead.category}")
-    parts.append(
-        "Задача: первое холодное сообщение в мессенджер. Мы бесплатно сделали демо-сайт с ИИ-чатом; "
-        "первый месяц бесплатно, далее ежемесячная оплата. "
-        "Обязательно дай ссылку на демо-сайт и кратко опиши условия. "
-        "НЕ указывай логин, пароль и данные для входа в личный кабинет — это выглядит как фишинг. "
-        "Вместо этого мягко спроси, интересно ли получить доступ для управления сайтом. "
-        "Тон — мягкий, по делу, без давления."
+    await record_outreach_channel_sent(
+        lead_id=int(lead.id),
+        channel=OUTREACH_CHANNEL_EMAIL,
+        target=to_email,
     )
-    parts.append(EXCEL_COLD_OUTREACH_EXTRA)
-    return "\n".join(parts)
 
 
 async def compose_ai_mop_dm(
@@ -167,57 +274,13 @@ async def compose_ai_mop_dm(
     lead: AiMopLead,
     website_url: str,
 ) -> str:
-    runtime = TemplateRuntimeService()
-    raw_config = agent.template_config
-    if isinstance(raw_config, str):
-        try:
-            template_config = json.loads(raw_config)
-        except json.JSONDecodeError:
-            template_config = {}
-    elif isinstance(raw_config, dict):
-        template_config = raw_config
-    else:
-        template_config = {}
-
-    knowledge_scope_id = int(agent.bot_id if agent.bot_id is not None else agent.id)
-    system_prompt = str(agent.system_prompt or "").strip()
-    user_message = _ai_mop_outreach_user_message(
-        lead=lead,
+    del agent  # dedicated prompt in llm_helpers; agent kept for API compatibility
+    lead_context = build_lead_context_from_lead(lead)
+    return await compose_outreach_dm(
+        lead_context=lead_context,
         website_url=website_url,
+        org_name=lead.org_name,
     )
-
-    qualification = {
-        "decision": "engage",
-        "intent": "target_warm",
-        "confidence": 1.0,
-        "reason": "ai_mop_demo_outreach",
-        "lead_temperature": "warm",
-        "stage_hint": "discovery",
-        "handoff_ready": False,
-        "workflow_outcome": "continue",
-        "lead_heat_score": 60,
-        "resilience_score": 50,
-        "engagement_score": 40,
-    }
-
-    context_list, _sources = await runtime.retrieve_offer_context(
-        user_message=user_message,
-        knowledge_scope_id=knowledge_scope_id,
-        enable_smart_search=runtime._is_smart_search_enabled(template_config),
-    )
-    message_text = await runtime.compose_dm(
-        prompt=system_prompt,
-        user_message=user_message,
-        qualification=qualification,
-        context_list=context_list,
-        template_config=template_config,
-        current_sales_state="DISCOVERED",
-        recent_history=[],
-    )
-    text = (message_text or "").strip()
-    if not text:
-        raise RuntimeError("Пустой текст сообщения для outreach")
-    return text
 
 
 async def enqueue_ai_mop_outreach(
@@ -304,13 +367,35 @@ async def run_outreach_for_lead(
         if lead is None or agent is None:
             raise ValueError("Lead or agent not found")
 
+    completed = _effective_completed_channels(lead)
     contact_email = resolve_lead_contact_email(lead)
     messengers = await resolve_all_lead_messenger_channels(agent_id=agent_id, lead=lead)
-    if not contact_email and not messengers:
+
+    pending_email = (
+        contact_email
+        and channel_key(channel=OUTREACH_CHANNEL_EMAIL, target=contact_email) not in completed
+    )
+    pending_messengers = [
+        (channel, target, hint)
+        for channel, target, hint in messengers
+        if channel_key(channel=channel, target=target) not in completed
+    ]
+
+    if not pending_email and not pending_messengers:
+        if completed:
+            from .lead_status import mark_lead_outreach_sent
+
+            await mark_lead_outreach_sent(lead_id=lead_id, agent_id=agent_id)
+            return {
+                "sent_channels": sorted(completed),
+                "dm_queue_ids": [],
+                "email_sent": False,
+                "skipped_already_sent": sorted(completed),
+            }
         raise ValueError("Нет email и нет контактов Telegram/WhatsApp для outreach")
 
     sent_channels: list[str] = []
-    if contact_email:
+    if pending_email and contact_email:
         await send_ai_mop_proposal_email(
             lead=lead,
             provision=provision,
@@ -320,13 +405,13 @@ async def run_outreach_for_lead(
 
     queue_ids: list[int] = []
     dm_channels: list[tuple[str, str]] = []
-    if messengers:
+    if pending_messengers:
         message_text = await compose_ai_mop_dm(
             agent=agent,
             lead=lead,
             website_url=str(provision["website_url"]),
         )
-        for channel, target, hint in messengers:
+        for channel, target, hint in pending_messengers:
             queue_id = await enqueue_ai_mop_outreach(
                 agent_id=agent_id,
                 lead_id=lead_id,
@@ -343,7 +428,7 @@ async def run_outreach_for_lead(
 
     if dm_channels:
         primary_channel, primary_target = dm_channels[0]
-        if len(dm_channels) > 1 or contact_email:
+        if len(dm_channels) > 1 or (pending_email and contact_email):
             channel_label = "multi"
         else:
             channel_label = primary_channel
@@ -355,7 +440,7 @@ async def run_outreach_for_lead(
             dm_queue_id=queue_ids[0] if queue_ids else None,
             provision=provision,
         )
-    elif contact_email:
+    elif pending_email and contact_email:
         await mark_lead_email_outreach_sent(
             lead_id=lead_id,
             agent_id=agent_id,
@@ -366,5 +451,6 @@ async def run_outreach_for_lead(
     return {
         "sent_channels": sent_channels,
         "dm_queue_ids": queue_ids,
-        "email_sent": bool(contact_email),
+        "email_sent": bool(pending_email and contact_email),
+        "skipped_already_sent": sorted(completed) if completed else [],
     }
