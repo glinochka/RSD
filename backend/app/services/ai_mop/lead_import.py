@@ -100,6 +100,28 @@ def _extract_yandex_url(extra: dict[str, Any], website: str | None) -> str | Non
     return None
 
 
+def _apply_import_payload(existing: AiMopLead, payload: dict[str, Any]) -> None:
+    for key, val in payload.items():
+        if key != "import_batch_id" or existing.import_batch_id is None:
+            setattr(existing, key, val)
+    if existing.status == "failed":
+        existing.status = "pending"
+        existing.last_error = None
+
+
+async def _find_existing_lead(
+    session: AsyncSession,
+    *,
+    dedup: str,
+    batch_by_dedup: dict[str, AiMopLead],
+) -> AiMopLead | None:
+    pending = batch_by_dedup.get(dedup)
+    if pending is not None:
+        return pending
+    async with session.no_autoflush:
+        return await session.scalar(select(AiMopLead).where(AiMopLead.dedup_key == dedup))
+
+
 async def import_ai_mop_leads_from_excel(
     session: AsyncSession,
     *,
@@ -112,8 +134,10 @@ async def import_ai_mop_leads_from_excel(
     inserted = 0
     updated = 0
     skipped = 0
+    skipped_duplicate_in_file = 0
     generated_emails = 0
     errors: list[str] = []
+    batch_by_dedup: dict[str, AiMopLead] = {}
 
     for row in rows:
         org_name = (row.get("org_name") or "").strip()
@@ -144,7 +168,10 @@ async def import_ai_mop_leads_from_excel(
             email=None if email_generated else account_email,
             org_name=org_name if email_generated else None,
         )
-        existing = await session.scalar(select(AiMopLead).where(AiMopLead.dedup_key == dedup))
+        if dedup in batch_by_dedup:
+            skipped_duplicate_in_file += 1
+
+        existing = await _find_existing_lead(session, dedup=dedup, batch_by_dedup=batch_by_dedup)
         payload = {
             "org_name": org_name[:512],
             "email": account_email[:255],
@@ -162,23 +189,20 @@ async def import_ai_mop_leads_from_excel(
         if existing:
             if existing.status in ("outreach_sent", "processing"):
                 skipped += 1
+                batch_by_dedup[dedup] = existing
                 continue
-            for key, val in payload.items():
-                if key != "import_batch_id" or existing.import_batch_id is None:
-                    setattr(existing, key, val)
-            if existing.status == "failed":
-                existing.status = "pending"
-                existing.last_error = None
+            _apply_import_payload(existing, payload)
             updated += 1
+            batch_by_dedup[dedup] = existing
         else:
-            session.add(
-                AiMopLead(
-                    dedup_key=dedup,
-                    status="pending",
-                    created_at=now,
-                    **payload,
-                )
+            lead = AiMopLead(
+                dedup_key=dedup,
+                status="pending",
+                created_at=now,
+                **payload,
             )
+            session.add(lead)
+            batch_by_dedup[dedup] = lead
             inserted += 1
 
     await session.flush()
@@ -187,6 +211,7 @@ async def import_ai_mop_leads_from_excel(
         "inserted": inserted,
         "updated": updated,
         "skipped": skipped,
+        "skipped_duplicate_in_file": skipped_duplicate_in_file,
         "generated_emails": generated_emails,
         "errors": errors,
         "total_parsed": len(rows),

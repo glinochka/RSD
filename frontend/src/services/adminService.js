@@ -538,7 +538,7 @@ const adminService = {
     return response.data;
   },
 
-  async aiMopUploadLeads(token, file) {
+    async aiMopUploadLeads(token, file) {
     const form = new FormData();
     form.append('file', file);
     const response = await adminClient.post(API_ROUTES.ADMIN_AI_MOP_LEADS_UPLOAD, form, {
@@ -546,6 +546,7 @@ const adminService = {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'multipart/form-data',
       },
+      timeout: 300000,
     });
     return response.data;
   },

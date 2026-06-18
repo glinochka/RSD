@@ -3859,7 +3859,11 @@ const ManagementPortal = () => {
       const res = await adminService.aiMopUploadLeads(adminToken, file);
       await refreshAiMop();
       setAiMopSuccess(
-        `Загружено: +${res.inserted ?? 0}, обновлено: ${res.updated ?? 0}, пропущено: ${res.skipped ?? 0}`
+        `Загружено: +${res.inserted ?? 0}, обновлено: ${res.updated ?? 0}, пропущено: ${res.skipped ?? 0}${
+          res.skipped_duplicate_in_file
+            ? `, дублей в файле: ${res.skipped_duplicate_in_file}`
+            : ''
+        }`
       );
     } catch (err) {
       setError(formatError(err));
