@@ -18,6 +18,7 @@ from ...alembic.models import (
     AgentChannelConnection,
     AgentSalesDmQueue,
     AgentSalesImportedContact,
+    AiMopLead,
 )
 from .agent_outreach_service import mark_import_contact_sent
 from .dm_queue_service import get_dm_queue_service
@@ -219,43 +220,80 @@ class DmOutreachWorker:
         follow_up_tier = str(meta.get("follow_up_tier") or "").strip().lower()
 
         if meta.get("compose_at_send") or message_text == COMPOSE_AT_SEND_PLACEHOLDER:
-            if imported_id is None:
-                await get_dm_queue_service().mark_skipped(
-                    queue_id=item.id,
-                    reason="follow_up_missing_imported_contact_id",
+            ai_mop_lead_id = meta.get("ai_mop_lead_id")
+            if ai_mop_lead_id is not None and meta.get("source") == "ai_mop_follow_up":
+                from ..ai_mop.followup_service import (
+                    compose_ai_mop_follow_up_message,
+                    should_send_ai_mop_follow_up,
                 )
-                return
-            if not await should_send_follow_up(
-                agent_id=item.agent_id,
-                imported_contact_id=int(imported_id),
-            ):
-                await get_dm_queue_service().mark_skipped(
-                    queue_id=item.id,
-                    reason="client_replied_or_not_eligible",
-                )
-                return
-            async with async_session_maker() as session:
-                async with session.begin():
-                    agent = await session.scalar(select(Agent).where(Agent.id == item.agent_id))
-                    row = await session.scalar(
-                        select(AgentSalesImportedContact).where(
-                            AgentSalesImportedContact.id == int(imported_id)
-                        )
+
+                if not await should_send_ai_mop_follow_up(
+                    agent_id=item.agent_id,
+                    lead_id=int(ai_mop_lead_id),
+                ):
+                    await get_dm_queue_service().mark_skipped(
+                        queue_id=item.id,
+                        reason="client_replied_or_not_eligible",
                     )
-            if agent is None or row is None:
-                await get_dm_queue_service().mark_failed(
+                    return
+                async with async_session_maker() as session:
+                    async with session.begin():
+                        agent = await session.scalar(select(Agent).where(Agent.id == item.agent_id))
+                        lead = await session.scalar(
+                            select(AiMopLead).where(AiMopLead.id == int(ai_mop_lead_id))
+                        )
+                if agent is None or lead is None:
+                    await get_dm_queue_service().mark_failed(
+                        queue_id=item.id,
+                        error="Agent or AI MOP lead not found",
+                        retry=False,
+                    )
+                    return
+                message_text = (
+                    await compose_ai_mop_follow_up_message(
+                        agent=agent,
+                        lead=lead,
+                        tier=follow_up_tier or "day",
+                    )
+                ).strip()
+            elif imported_id is not None:
+                if not await should_send_follow_up(
+                    agent_id=item.agent_id,
+                    imported_contact_id=int(imported_id),
+                ):
+                    await get_dm_queue_service().mark_skipped(
+                        queue_id=item.id,
+                        reason="client_replied_or_not_eligible",
+                    )
+                    return
+                async with async_session_maker() as session:
+                    async with session.begin():
+                        agent = await session.scalar(select(Agent).where(Agent.id == item.agent_id))
+                        row = await session.scalar(
+                            select(AgentSalesImportedContact).where(
+                                AgentSalesImportedContact.id == int(imported_id)
+                            )
+                        )
+                if agent is None or row is None:
+                    await get_dm_queue_service().mark_failed(
+                        queue_id=item.id,
+                        error="Agent or imported contact not found",
+                        retry=False,
+                    )
+                    return
+                message_text = (
+                    await compose_follow_up_message(
+                        agent=agent,
+                        row=row,
+                        tier=follow_up_tier or "day",
+                    )
+                ).strip()
+            else:
+                await get_dm_queue_service().mark_skipped(
                     queue_id=item.id,
-                    error="Agent or imported contact not found",
-                    retry=False,
+                    reason="follow_up_missing_contact_reference",
                 )
                 return
-            message_text = (
-                await compose_follow_up_message(
-                    agent=agent,
-                    row=row,
-                    tier=follow_up_tier or "day",
-                )
-            ).strip()
             if not message_text:
                 await get_dm_queue_service().mark_failed(
                     queue_id=item.id,
@@ -446,6 +484,26 @@ class DmOutreachWorker:
                             logger.debug("FSM SENT transition skipped queue_id=%s", item.id, exc_info=True)
                 except Exception:
                     logger.warning("Failed to mark imported contact sent id=%s", imported_id, exc_info=True)
+
+            ai_mop_lead_id = meta.get("ai_mop_lead_id")
+            if (
+                ai_mop_lead_id is not None
+                and meta.get("message_kind") == "follow_up"
+                and follow_up_tier
+            ):
+                try:
+                    from ..ai_mop.followup_service import mark_ai_mop_follow_up_sent
+
+                    await mark_ai_mop_follow_up_sent(
+                        lead_id=int(ai_mop_lead_id),
+                        tier=follow_up_tier,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Failed to mark AI MOP follow-up sent lead_id=%s",
+                        ai_mop_lead_id,
+                        exc_info=True,
+                    )
 
         except Exception as exc:
             error_msg = str(exc)[:500]

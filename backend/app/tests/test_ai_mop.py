@@ -129,6 +129,16 @@ def test_ai_mop_send_window_moscow_hours():
     assert next_ai_mop_first_message_at(now=early) == datetime(2026, 5, 11, 5, 0)
 
 
+def test_ai_mop_follow_up_delays_match_sales_manager():
+    from datetime import timedelta
+
+    from app.services.sales.outreach_scheduling import FOLLOW_UP_DELAYS
+
+    assert FOLLOW_UP_DELAYS["day"] == timedelta(days=1)
+    assert FOLLOW_UP_DELAYS["week"] == timedelta(days=7)
+    assert FOLLOW_UP_DELAYS["month"] == timedelta(days=30)
+
+
 @pytest.mark.asyncio
 async def test_template_runtime_ai_mop_discards_unknown_contact(monkeypatch):
     from app.services.ai_mop import runtime as ai_mop_runtime

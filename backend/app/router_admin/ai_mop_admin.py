@@ -115,8 +115,8 @@ async def ai_mop_upload_leads(
     raw = await file.read()
     if not raw:
         raise HTTPException(status_code=400, detail="Пустой файл")
-    if len(raw) > 15 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="Файл слишком большой (макс. 15 МБ)")
+    if len(raw) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Файл слишком большой (макс. 20 МБ)")
     async with async_session_maker() as session:
         async with session.begin():
             result = await import_ai_mop_leads_from_excel(session, file_bytes=raw)

@@ -60,6 +60,10 @@ async def execute_ai_mop_runtime(
     if lead is None:
         return TemplateExecutionResult(answer="", sources=[], discard_message=True)
 
+    from .followup_service import mark_ai_mop_reply_if_any
+
+    await mark_ai_mop_reply_if_any(agent_id=int(agent_id), user_external_id=user_external_id)
+
     allowed_tools_raw = template_config.get("allowed_tools")
     allowed_tools = allowed_tools_raw if isinstance(allowed_tools_raw, list) else None
     registry = AiMopToolRegistry(

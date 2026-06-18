@@ -42,6 +42,21 @@ async def on_dm_queue_sent(item: AgentSalesDmQueue) -> None:
             )
         except Exception:
             logger.debug("FSM SENT transition skipped ai_mop lead_id=%s", lead_id, exc_info=True)
+
+        if meta.get("message_kind") != "follow_up":
+            from .followup_service import enqueue_ai_mop_follow_up_reminders
+
+            try:
+                await enqueue_ai_mop_follow_up_reminders(
+                    lead_id=int(lead_id),
+                    agent_id=int(item.agent_id),
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to enqueue AI MOP follow-ups lead_id=%s",
+                    lead_id,
+                    exc_info=True,
+                )
     except Exception:
         logger.warning("Failed to mark AI MOP lead sent lead_id=%s", lead_id, exc_info=True)
 
