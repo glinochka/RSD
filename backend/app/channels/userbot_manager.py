@@ -416,6 +416,9 @@ async def _handle_chat_message(
         return
 
     cfg = template_config or {}
+    if bool(cfg.get("contacts_pool_only")):
+        return
+
     lead_generation_enabled = bool(cfg.get("lead_generation_enabled", True))
     neuro_commenting_enabled = bool(cfg.get("neuro_commenting_enabled", False))
     live_chat_simulation_enabled = bool(cfg.get("live_chat_simulation_enabled", False))

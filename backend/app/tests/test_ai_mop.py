@@ -204,3 +204,33 @@ async def test_template_runtime_ai_mop_discards_unknown_contact(monkeypatch):
     )
     assert result.discard_message is True
     assert result.answer in ("", None)
+
+
+@pytest.mark.asyncio
+async def test_template_runtime_ai_mop_pool_only_blocks_unknown_private(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from app.services.ai_mop import runtime as ai_mop_runtime
+    from app.services.template_runtime import TemplateRuntimeService
+
+    monkeypatch.setattr(
+        "app.services.sales.contact_pool.is_user_in_agent_contact_pool",
+        AsyncMock(return_value=False),
+    )
+    find_mock = AsyncMock(side_effect=AssertionError("find_lead should not run"))
+    monkeypatch.setattr(ai_mop_runtime, "find_lead_for_contact", find_mock)
+
+    runtime = TemplateRuntimeService()
+    result = await runtime._execute_sales_manager(
+        prompt="sales",
+        user_message="привет",
+        knowledge_scope_id=1,
+        template_config={"custom_runtime": "ai_mop", "contacts_pool_only": True},
+        source_channel="whatsapp_userbot",
+        user_external_id="79991234567",
+        agent_id=1,
+        runtime_context={"is_private_chat": True, "lead_initiated_private_dialog": True},
+    )
+    assert result.discard_message is True
+    assert result.tool_events[0]["tool_status"] == "contact_not_in_pool"
+    assert find_mock.await_count == 0

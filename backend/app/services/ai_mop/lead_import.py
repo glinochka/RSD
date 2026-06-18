@@ -139,7 +139,7 @@ async def _find_existing_lead(
     pending = batch_by_dedup.get(dedup)
     if pending is not None:
         return pending
-    async with session.no_autoflush:
+    with session.no_autoflush:
         return await session.scalar(select(AiMopLead).where(AiMopLead.dedup_key == dedup))
 
 

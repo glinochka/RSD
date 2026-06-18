@@ -3101,7 +3101,7 @@ const AgentsPageContent = () => {
                           onChange={(enabled) => handleToggleSalesActivity('contacts_pool_only', enabled)}
                           disabled={isSavingTemplateConfig}
                           title="Только контакты из пула"
-                          helpText="В личных сообщениях агент отвечает только тем, кто уже в базе (Excel), найден лидогенерацией в чатах или кому агент сам написал. Случайные входящие без истории игнорируются."
+                          helpText="Личные сообщения обрабатываются только для контактов из пула (Excel, лидогенерация, кому агент уже писал). Группы и каналы не сканируются. Случайные входящие в личку игнорируются."
                         />
                         <FeatureToggle
                           checked={salesNeuroCommentingEnabled}

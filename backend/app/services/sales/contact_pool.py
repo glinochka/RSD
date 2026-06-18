@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.database import async_session_maker
 from ...alembic.models import AgentSalesContact, AgentSalesImportedContact
+from ...utils.pii import mask_external_id
 from .agent_excel_import import EXCEL_IMPORT_SOURCE_CHAT_ID
 from .fsm import get_sales_fsm_service
 
@@ -195,3 +196,79 @@ async def register_user_in_agent_contact_pool(
             locked.updated_at = now
             locked.version = int(locked.version or 1) + 1
             await session.flush()
+
+
+def is_private_sales_inbound(runtime_context: dict[str, Any] | None) -> bool:
+    ctx = runtime_context or {}
+    return bool(ctx.get("is_private_chat") or ctx.get("lead_initiated_private_dialog"))
+
+
+def is_public_sales_chat(runtime_context: dict[str, Any] | None) -> bool:
+    ctx = runtime_context or {}
+    return bool(ctx.get("is_group_chat") or ctx.get("is_channel_chat"))
+
+
+def contact_pool_discard_tool_event(
+    *,
+    source_channel: str,
+    user_external_id: str | None,
+    tool_status: str,
+) -> dict[str, Any]:
+    return {
+        "tool_name": "sales_contact_pool_guard",
+        "tool_args_hash": None,
+        "tool_status": tool_status,
+        "latency_ms": 0,
+        "crm_provider": None,
+        "source_channel": source_channel,
+        "user_external_id": mask_external_id(user_external_id or ""),
+        "ok": True,
+        "idempotent_replay": False,
+        "idempotency_key": None,
+        "error": None,
+    }
+
+
+async def apply_contact_pool_guard(
+    *,
+    agent_id: int | None,
+    user_external_id: str | None,
+    template_config: dict[str, Any],
+    runtime_context: dict[str, Any] | None,
+    source_channel: str,
+) -> dict[str, Any] | None:
+    """
+    Если включён contacts_pool_only — вернуть discard-payload (tool_event dict) или None.
+    Блокирует: группы/каналы целиком; личные входящие не из пула.
+    """
+    if not bool(template_config.get("contacts_pool_only")):
+        return None
+
+    ctx = runtime_context or {}
+    if is_public_sales_chat(ctx):
+        return contact_pool_discard_tool_event(
+            source_channel=source_channel,
+            user_external_id=user_external_id,
+            tool_status="public_chat_blocked",
+        )
+
+    if not is_private_sales_inbound(ctx):
+        return None
+
+    if not agent_id or not (user_external_id or "").strip():
+        return contact_pool_discard_tool_event(
+            source_channel=source_channel,
+            user_external_id=user_external_id,
+            tool_status="contact_not_in_pool",
+        )
+
+    if not await is_user_in_agent_contact_pool(
+        agent_id=int(agent_id),
+        user_external_id=str(user_external_id),
+    ):
+        return contact_pool_discard_tool_event(
+            source_channel=source_channel,
+            user_external_id=user_external_id,
+            tool_status="contact_not_in_pool",
+        )
+    return None

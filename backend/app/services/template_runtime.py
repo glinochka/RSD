@@ -1718,6 +1718,26 @@ class TemplateRuntimeService:
         runtime_context: dict[str, Any] | None = None,
     ) -> TemplateExecutionResult:
         runtime_context = runtime_context or {}
+        from .sales.contact_pool import (
+            apply_contact_pool_guard,
+            register_user_in_agent_contact_pool,
+        )
+
+        pool_guard = await apply_contact_pool_guard(
+            agent_id=agent_id,
+            user_external_id=user_external_id,
+            template_config=template_config,
+            runtime_context=runtime_context,
+            source_channel=source_channel,
+        )
+        if pool_guard is not None:
+            return TemplateExecutionResult(
+                answer="",
+                sources=[],
+                discard_message=True,
+                tool_events=[pool_guard],
+            )
+
         if str(template_config.get("custom_runtime") or "").strip().lower() == "ai_mop":
             from .ai_mop.runtime import execute_ai_mop_runtime
 
@@ -1743,49 +1763,19 @@ class TemplateRuntimeService:
             )
 
         contacts_pool_only = bool(template_config.get("contacts_pool_only"))
-        is_private_inbound = bool(
-            runtime_context.get("is_private_chat")
-            or runtime_context.get("lead_initiated_private_dialog")
-        )
         runtime_source_chat_id = str(runtime_context.get("source_chat_id") or "").strip()
-        if agent_id and user_external_id:
-            from .sales.contact_pool import (
-                is_user_in_agent_contact_pool,
-                register_user_in_agent_contact_pool,
+        if (
+            agent_id
+            and user_external_id
+            and bool(runtime_context.get("is_group_chat"))
+            and not contacts_pool_only
+        ):
+            await register_user_in_agent_contact_pool(
+                agent_id=agent_id,
+                user_external_id=user_external_id,
+                source_chat_id=runtime_source_chat_id or "global",
+                origin="lead_generation",
             )
-
-            if contacts_pool_only and is_private_inbound:
-                if not await is_user_in_agent_contact_pool(
-                    agent_id=agent_id,
-                    user_external_id=user_external_id,
-                ):
-                    return TemplateExecutionResult(
-                        answer="",
-                        sources=[],
-                        discard_message=True,
-                        tool_events=[
-                            {
-                                "tool_name": "sales_contact_pool_guard",
-                                "tool_args_hash": None,
-                                "tool_status": "contact_not_in_pool",
-                                "latency_ms": 0,
-                                "crm_provider": None,
-                                "source_channel": source_channel,
-                                "user_external_id": mask_external_id(user_external_id),
-                                "ok": True,
-                                "idempotent_replay": False,
-                                "idempotency_key": None,
-                                "error": None,
-                            }
-                        ],
-                    )
-            if bool(runtime_context.get("is_group_chat")):
-                await register_user_in_agent_contact_pool(
-                    agent_id=agent_id,
-                    user_external_id=user_external_id,
-                    source_chat_id=runtime_source_chat_id or "global",
-                    origin="lead_generation",
-                )
 
         contact_key = self._resolve_sales_contact_key(template_config=template_config)
         if agent_id and user_external_id and self._is_userbot_channel(source_channel):

@@ -1,9 +1,13 @@
 """Тесты пула контактов sales_manager."""
 
 import json
+from unittest.mock import AsyncMock
+
+import pytest
 
 from app.alembic.models import AgentSalesContact, AgentSalesImportedContact
 from app.services.sales.contact_pool import (
+    apply_contact_pool_guard,
     contact_row_in_pool,
     external_id_lookup_variants,
 )
@@ -66,4 +70,46 @@ def test_user_in_pool_via_excel_import_unit():
     )
     assert row.target_external_id == "12345"
     assert "12345" in external_id_lookup_variants("12345")
+
+
+@pytest.mark.asyncio
+async def test_apply_contact_pool_guard_blocks_group_chat():
+    result = await apply_contact_pool_guard(
+        agent_id=1,
+        user_external_id="123",
+        template_config={"contacts_pool_only": True},
+        runtime_context={"is_group_chat": True, "is_private_chat": False},
+        source_channel="telegram_userbot",
+    )
+    assert result is not None
+    assert result["tool_status"] == "public_chat_blocked"
+
+
+@pytest.mark.asyncio
+async def test_apply_contact_pool_guard_blocks_unknown_private(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.sales.contact_pool.is_user_in_agent_contact_pool",
+        AsyncMock(return_value=False),
+    )
+    result = await apply_contact_pool_guard(
+        agent_id=1,
+        user_external_id="999",
+        template_config={"contacts_pool_only": True},
+        runtime_context={"is_private_chat": True},
+        source_channel="whatsapp_userbot",
+    )
+    assert result is not None
+    assert result["tool_status"] == "contact_not_in_pool"
+
+
+@pytest.mark.asyncio
+async def test_apply_contact_pool_guard_disabled():
+    result = await apply_contact_pool_guard(
+        agent_id=1,
+        user_external_id="999",
+        template_config={"contacts_pool_only": False},
+        runtime_context={"is_group_chat": True},
+        source_channel="telegram_userbot",
+    )
+    assert result is None
 

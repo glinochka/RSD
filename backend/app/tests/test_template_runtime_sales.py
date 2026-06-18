@@ -560,6 +560,29 @@ async def test_sales_runtime_pool_only_rejects_unknown_private_inbound(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_sales_runtime_pool_only_rejects_group_chat(monkeypatch):
+    service = TemplateRuntimeService()
+    qualify_mock = AsyncMock(side_effect=AssertionError("qualify should not run"))
+    monkeypatch.setattr(service, "_qualify_and_compose_unified", qualify_mock)
+
+    result = await service.execute(
+        template_type="sales_manager",
+        prompt="Ты sales-агент",
+        user_message="Ищу подрядчика",
+        knowledge_scope_id=101,
+        template_config={"mode": "auto", "contacts_pool_only": True, "lead_generation_enabled": True},
+        source_channel="telegram_userbot",
+        user_external_id="12345",
+        agent_id=77,
+        runtime_context={"is_group_chat": True, "lead_generation_enabled": True},
+    )
+
+    assert result.discard_message is True
+    assert result.tool_events[0]["tool_status"] == "public_chat_blocked"
+    assert qualify_mock.await_count == 0
+
+
+@pytest.mark.asyncio
 async def test_sales_runtime_private_inbound_skips_target_check(monkeypatch, mock_db_session):
     service = TemplateRuntimeService()
     _patch_sales_userbot_db(monkeypatch)
