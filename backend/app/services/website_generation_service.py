@@ -107,7 +107,13 @@ DESIGN PRINCIPLES:
 - Icons: use inline SVG icons (simple, clean) or Unicode symbols where appropriate
 - Sections: each section should have a DIFFERENT visual rhythm and layout
 - CTA buttons: prominent, with hover/focus states
-- Footer: clean, organized, with social links
+- Footer: clean, organized; social links ONLY when explicitly listed in the brief (see SOCIAL LINKS rules)
+
+SOCIAL LINKS (footer and contact sections):
+- Use ONLY links explicitly provided in INDIVIDUAL BRIEF or CONTACT INFO
+- Allowed platforms for Russia: VK (ВКонтакте), Telegram, WhatsApp, MAX, YouTube
+- Do NOT add Facebook, Twitter/X, Instagram, LinkedIn, TikTok icons or links unless explicitly provided
+- If no social links are provided, omit the social icons block entirely — do not invent placeholder icons
 
 STRUCTURE (adapt creatively per industry):
 1. Navigation bar (sticky, with backdrop-blur) — MUST include working mobile burger menu

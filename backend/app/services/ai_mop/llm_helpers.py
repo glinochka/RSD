@@ -236,6 +236,54 @@ def build_lead_context_from_lead(lead) -> str:
     )
 
 
+_GENERATION_BRIEF_MAX_LEN = 5000
+
+
+def extract_lead_social_links(lead) -> dict[str, str]:
+    """Соцсети из базы лида — только реально указанные ссылки."""
+    extra = parse_lead_extra_json(lead)
+    links: dict[str, str] = {}
+
+    def _put(label: str, raw: str | None) -> None:
+        val = str(raw or "").strip()
+        if not val or val in ("—", "-", "нет"):
+            return
+        if not val.startswith("http") and label in {"ВКонтакте", "YouTube"} and " " in val:
+            return
+        links[label] = val[:512]
+
+    _put("Telegram", lead.telegram or extra.get("telegram"))
+    _put("WhatsApp", lead.whatsapp or extra.get("whatsapp"))
+    _put("MAX", extra.get("messenger_max") or extra.get("max") or extra.get("макс"))
+
+    for key, val in extra.items():
+        if not val or not isinstance(key, str):
+            continue
+        nk = key.casefold().replace(" ", "")
+        text = str(val).strip()
+        if not text:
+            continue
+        if nk in {"vk", "вконтакте", "vkontakte"} or "вконтакт" in nk:
+            _put("ВКонтакте", text)
+        elif nk in {"youtube", "ютуб"} or "youtube" in nk:
+            _put("YouTube", text)
+        elif nk in {"telegram", "телеграм"}:
+            _put("Telegram", text)
+        elif nk in {"whatsapp"}:
+            _put("WhatsApp", text)
+        elif nk in {"messenger_max", "max", "макс"}:
+            _put("MAX", text)
+
+    return links
+
+
+def _fit_generation_brief(text: str, *, max_len: int = _GENERATION_BRIEF_MAX_LEN) -> str:
+    cleaned = " ".join((text or "").split())
+    if len(cleaned) <= max_len:
+        return cleaned
+    return cleaned[: max_len - 1].rstrip() + "…"
+
+
 def build_website_generation_brief(*, lead, business_description: str) -> str:
     extra = parse_lead_extra_json(lead)
     region = extra.get("region") or "—"
@@ -243,18 +291,21 @@ def build_website_generation_brief(*, lead, business_description: str) -> str:
     hours = extra.get("working_hours") or "—"
     rubric = lead.category or extra.get("rubric") or extra.get("рубрика") or "—"
     subrubric = extra.get("subrubric") or extra.get("подрубрика") or ""
-    return (
-        f"Сайт для компании «{lead.org_name}».\n"
-        f"Описание бизнеса: {business_description}\n"
-        f"Рубрика / ниша (Яндекс Карты): {rubric}"
-        f"{f' — {subrubric}' if subrubric else ''}\n"
-        f"Регион: {region}, город: {city}\n"
-        f"Адрес: {lead.address or 'не указан'}\n"
-        f"Время работы: {hours}\n"
-        "ВАЖНО: дизайн, тексты и услуги должны соответствовать рубрике и названию компании. "
-        "Не используй шаблоны других отраслей (ремонт техники, салоны красоты, стоматология и т.д.), "
-        "если они не указаны в рубрике.\n"
-        "НЕ добавляй на страницу чат, мессенджер, поле ввода сообщений или секцию «онлайн-консультант» — "
-        "платформа автоматически подключает плавающий виджет ИИ-чата после публикации. "
-        "Современный дизайн, понятная структура для клиентов."
-    )
+    social = extract_lead_social_links(lead)
+    parts = [
+        f"Сайт для компании «{lead.org_name}».",
+        f"Описание бизнеса: {business_description}",
+        f"Рубрика / ниша (Яндекс Карты): {rubric}{f' — {subrubric}' if subrubric else ''}.",
+        f"Регион: {region}, город: {city}. Адрес: {lead.address or 'не указан'}. Время работы: {hours}.",
+        "Дизайн, тексты и услуги должны соответствовать рубрике и названию компании. "
+        "Не используй шаблоны других отраслей, если они не указаны в рубрике.",
+        "НЕ добавляй чат, мессенджер или секцию «онлайн-консультант» — виджет подключит платформа.",
+    ]
+    if social:
+        social_text = "; ".join(f"{name}: {url}" for name, url in social.items())
+        parts.append(
+            f"Соцсети в футере ТОЛЬКО эти (без Facebook/Twitter/Instagram): {social_text}."
+        )
+    else:
+        parts.append("Соцсети в футере не добавляй — в базе нет ссылок.")
+    return _fit_generation_brief("\n".join(parts))

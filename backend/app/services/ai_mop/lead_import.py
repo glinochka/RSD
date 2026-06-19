@@ -191,6 +191,12 @@ async def import_ai_mop_leads_from_excel(
             extra["telegram"] = row.get("telegram")
         if row.get("whatsapp"):
             extra["whatsapp"] = row.get("whatsapp")
+        if row.get("messenger_max"):
+            extra["messenger_max"] = row.get("messenger_max")
+        if row.get("vk"):
+            extra["vk"] = row.get("vk")
+        if row.get("youtube"):
+            extra["youtube"] = row.get("youtube")
         for phone_key in ("lpr_phone", "org_phone", "org_mobile"):
             val = row.get(phone_key)
             if val and str(val).strip():

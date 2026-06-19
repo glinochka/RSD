@@ -139,6 +139,25 @@ def test_resolve_lead_contact_email_skips_custom_domains_only():
     assert resolve_lead_contact_email(_Lead()) is None
 
 
+def test_build_website_generation_brief_within_limit():
+    from app.services.ai_mop.llm_helpers import build_website_generation_brief
+
+    class _Lead:
+        org_name = "Очень длинное название компании " * 20
+        category = "Услуги " * 30
+        address = "Адрес " * 50
+        telegram = "https://t.me/test"
+        whatsapp = "https://wa.me/79001234567"
+        extra_json = (
+            '{"region":"Регион","city":"Город","working_hours":"09-18",'
+            '"vk":"https://vk.com/test","youtube":"https://youtube.com/@test"}'
+        )
+
+    brief = build_website_generation_brief(lead=_Lead(), business_description="x" * 5000)
+    assert len(brief) <= 5000
+    assert "ВКонтакте" in brief or "vk.com" in brief
+
+
 def test_build_lead_context_from_lead_includes_rubric():
     from app.services.ai_mop.llm_helpers import build_lead_context_from_lead
 

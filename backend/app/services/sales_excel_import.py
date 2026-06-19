@@ -168,6 +168,10 @@ def _extend_mapping(headers: list[str], base: dict[str, int]) -> dict[str, int]:
             m.setdefault("telegram", i)
         elif ni == "макс" or (ni.startswith("макс") and "максим" not in ni):
             m.setdefault("messenger_max", i)
+        elif "вконтакт" in ni or ni == "vk":
+            m.setdefault("vk", i)
+        elif "youtube" in ni or "ютуб" in ni:
+            m.setdefault("youtube", i)
     return m
 
 
@@ -208,6 +212,10 @@ def _fuzzy_mapping(headers: list[str]) -> dict[str, int]:
             m.setdefault("telegram", i)
         elif ni == "макс" or (ni.startswith("макс") and "максим" not in ni):
             m.setdefault("messenger_max", i)
+        elif "вконтакт" in ni or ni == "vk":
+            m.setdefault("vk", i)
+        elif "youtube" in ni or "ютуб" in ni:
+            m.setdefault("youtube", i)
     return _extend_mapping(headers, m)
 
 
@@ -311,6 +319,8 @@ def parse_sales_excel(file_bytes: bytes) -> list[dict[str, Any]]:
                     ),
                     "telegram": _fit_str(_opt_str(picked.get("telegram")), max_len=URL_FIELD_MAX_LEN),
                     "messenger_max": _fit_str(_opt_str(picked.get("messenger_max")), max_len=URL_FIELD_MAX_LEN),
+                    "vk": _fit_str(_opt_str(picked.get("vk")), max_len=URL_FIELD_MAX_LEN),
+                    "youtube": _fit_str(_opt_str(picked.get("youtube")), max_len=URL_FIELD_MAX_LEN),
                     "extras": extras,
                 }
             )

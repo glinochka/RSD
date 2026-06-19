@@ -93,7 +93,7 @@ def _telegram_target_from_link(raw: str) -> tuple[str | None, dict[str, Any]]:
     if path.startswith("+") or path.replace(" ", "").isdigit():
         digits = _normalize_ru_phone_digits(path)
         if digits:
-            return f"+{digits}", {"source": "telegram_link_phone", "raw": raw}
+            return f"+{digits}", {"source": "telegram_link_phone", "raw": raw, "digits": digits}
         return None, {"source": "telegram_link_invalid", "raw": raw}
     return path.lstrip("@"), {"source": "telegram_link", "username": path, "raw": raw}
 
@@ -112,8 +112,84 @@ def _telegram_target_from_raw(raw: str) -> tuple[str | None, dict[str, Any]]:
     if text.startswith("+") or text.isdigit():
         digits = _normalize_ru_phone_digits(text)
         if digits:
-            return f"+{digits}", {"source": "telegram_phone", "raw": text}
+            return f"+{digits}", {"source": "telegram_phone", "raw": text, "digits": digits}
     return None, {}
+
+
+def _telegram_dedup_key(target: str) -> str:
+    digits = _normalize_ru_phone_digits(target)
+    if digits:
+        return f"phone:{digits}"
+    return f"user:{target.casefold().lstrip('@')}"
+
+
+def collect_all_telegram_outreach_targets(
+    *,
+    telegram: str | None = None,
+    lpr_phone: str | None = None,
+    org_mobile: str | None = None,
+    org_phone: str | None = None,
+) -> list[tuple[str, dict[str, Any]]]:
+    """Все уникальные Telegram-цели: ссылка/username + каждый телефон отдельно."""
+    results: list[tuple[str, dict[str, Any]]] = []
+    seen: set[str] = set()
+
+    def _add(target: str, hint: dict[str, Any]) -> None:
+        key = _telegram_dedup_key(target)
+        if key in seen:
+            return
+        seen.add(key)
+        results.append((target, hint))
+
+    if telegram:
+        target, hint = _telegram_target_from_raw(telegram)
+        if target:
+            _add(target, hint)
+
+    for digits in _phone_targets_from_row(
+        lpr_phone=lpr_phone,
+        org_mobile=org_mobile,
+        org_phone=org_phone,
+    ):
+        _add(f"+{digits}", {"source": "phone", "digits": digits})
+
+    return results
+
+
+def collect_all_whatsapp_outreach_targets(
+    *,
+    whatsapp: str | None = None,
+    lpr_phone: str | None = None,
+    org_mobile: str | None = None,
+    org_phone: str | None = None,
+) -> list[tuple[str, dict[str, Any]]]:
+    """Все уникальные WhatsApp-цели: wa.me-ссылка + каждый телефон отдельно."""
+    results: list[tuple[str, dict[str, Any]]] = []
+    seen: set[str] = set()
+
+    def _add(digits: str, hint: dict[str, Any]) -> None:
+        normalized = _normalize_ru_phone_digits(digits) or digits
+        if not normalized or normalized in seen:
+            return
+        seen.add(normalized)
+        results.append((normalized, hint))
+
+    if whatsapp:
+        normalized = _normalize_whatsapp_import_value(_opt(whatsapp))
+        if normalized:
+            m = re.search(r"wa\.me/(\d+)", normalized, re.I)
+            digits = m.group(1) if m else _digits_only(normalized)
+            if len(digits) >= 10:
+                _add(digits, {"source": "whatsapp", "raw": whatsapp, "wa_url": normalized})
+
+    for digits in _phone_targets_from_row(
+        lpr_phone=lpr_phone,
+        org_mobile=org_mobile,
+        org_phone=org_phone,
+    ):
+        _add(digits, {"source": "phone", "digits": digits})
+
+    return results
 
 
 def collect_telegram_targets(
@@ -123,37 +199,17 @@ def collect_telegram_targets(
     org_mobile: str | None = None,
     org_phone: str | None = None,
 ) -> tuple[str | None, list[str], dict[str, Any]]:
-    """
-    primary + fallback_targets для Telegram userbot.
-    Порядок: ссылка/username (если не канал/бот) → мобильный → телефон → ЛПР.
-    """
-    candidates: list[tuple[str, dict[str, Any]]] = []
-    if telegram:
-        target, hint = _telegram_target_from_raw(telegram)
-        if target:
-            candidates.append((target, hint))
-
-    for digits in _phone_targets_from_row(
+    """Первый target + остальные (legacy / fallback при отправке)."""
+    targets = collect_all_telegram_outreach_targets(
+        telegram=telegram,
         lpr_phone=lpr_phone,
         org_mobile=org_mobile,
         org_phone=org_phone,
-    ):
-        candidates.append((f"+{digits}", {"source": "phone", "digits": digits}))
-
-    seen: set[str] = set()
-    ordered: list[tuple[str, dict[str, Any]]] = []
-    for target, hint in candidates:
-        key = target.casefold()
-        if key in seen:
-            continue
-        seen.add(key)
-        ordered.append((target, hint))
-
-    if not ordered:
+    )
+    if not targets:
         return None, [], {}
-
-    primary, primary_hint = ordered[0]
-    fallbacks = [target for target, _ in ordered[1:]]
+    primary, primary_hint = targets[0]
+    fallbacks = [target for target, _ in targets[1:]]
     hint = dict(primary_hint)
     if fallbacks:
         hint["fallback_targets"] = fallbacks
@@ -167,37 +223,16 @@ def collect_whatsapp_targets(
     org_mobile: str | None = None,
     org_phone: str | None = None,
 ) -> tuple[str | None, list[str], dict[str, Any]]:
-    """primary + fallback_targets для WhatsApp userbot."""
-    candidates: list[tuple[str, dict[str, Any]]] = []
-
-    if whatsapp:
-        normalized = _normalize_whatsapp_import_value(_opt(whatsapp))
-        if normalized:
-            m = re.search(r"wa\.me/(\d+)", normalized, re.I)
-            digits = m.group(1) if m else _digits_only(normalized)
-            if len(digits) >= 10:
-                candidates.append((digits, {"source": "whatsapp", "raw": whatsapp, "wa_url": normalized}))
-
-    for digits in _phone_targets_from_row(
+    targets = collect_all_whatsapp_outreach_targets(
+        whatsapp=whatsapp,
         lpr_phone=lpr_phone,
         org_mobile=org_mobile,
         org_phone=org_phone,
-    ):
-        candidates.append((digits, {"source": "phone", "digits": digits}))
-
-    seen: set[str] = set()
-    ordered: list[tuple[str, dict[str, Any]]] = []
-    for target, hint in candidates:
-        if target in seen:
-            continue
-        seen.add(target)
-        ordered.append((target, hint))
-
-    if not ordered:
+    )
+    if not targets:
         return None, [], {}
-
-    primary, primary_hint = ordered[0]
-    fallbacks = [target for target, _ in ordered[1:]]
+    primary, primary_hint = targets[0]
+    fallbacks = [target for target, _ in targets[1:]]
     hint = dict(primary_hint)
     if fallbacks:
         hint["fallback_targets"] = fallbacks
@@ -211,7 +246,6 @@ def normalize_whatsapp_target(
     org_mobile: str | None = None,
     org_phone: str | None = None,
 ) -> tuple[str | None, dict[str, Any]]:
-    """Возвращает (user_external_id для аналитики/очереди, hint)."""
     primary, _fallbacks, hint = collect_whatsapp_targets(
         whatsapp=whatsapp,
         lpr_phone=lpr_phone,
@@ -228,10 +262,6 @@ def normalize_telegram_target(
     org_mobile: str | None = None,
     org_phone: str | None = None,
 ) -> tuple[str | None, dict[str, Any]]:
-    """
-    target_external_id: numeric id, @username, или телефон в международном формате (+7...).
-    Telethon get_entity принимает эти формы на отправке.
-    """
     primary, _fallbacks, hint = collect_telegram_targets(
         telegram=telegram,
         lpr_phone=lpr_phone,
@@ -303,26 +333,37 @@ def collect_all_messenger_channels(
     whatsapp_available: bool,
     telegram_available: bool,
 ) -> list[tuple[str, str, dict[str, Any]]]:
-    """Все доступные каналы outreach (WhatsApp + Telegram), без выбора одного."""
+    """Все уникальные каналы outreach: каждая ссылка и каждый телефон — отдельная очередь."""
     channels: list[tuple[str, str, dict[str, Any]]] = []
+    seen: set[str] = set()
+
+    def _append(channel: str, target: str, hint: dict[str, Any]) -> None:
+        key = f"{channel}:{target.strip().casefold()}"
+        if key in seen:
+            return
+        seen.add(key)
+        channels.append((channel, target, hint))
+
+    phones = {
+        "lpr_phone": row.get("lpr_phone"),
+        "org_mobile": row.get("org_mobile"),
+        "org_phone": row.get("org_phone"),
+    }
+
     if whatsapp_available:
-        wa_target, wa_fallbacks, wa_hint = collect_whatsapp_targets(
+        for target, hint in collect_all_whatsapp_outreach_targets(
             whatsapp=row.get("whatsapp"),
-            lpr_phone=row.get("lpr_phone"),
-            org_mobile=row.get("org_mobile"),
-            org_phone=row.get("org_phone"),
-        )
-        if wa_target:
-            channels.append(("whatsapp_userbot", wa_target, wa_hint))
+            **phones,
+        ):
+            _append("whatsapp_userbot", target, hint)
+
     if telegram_available:
-        tg_target, tg_fallbacks, tg_hint = collect_telegram_targets(
+        for target, hint in collect_all_telegram_outreach_targets(
             telegram=row.get("telegram"),
-            lpr_phone=row.get("lpr_phone"),
-            org_mobile=row.get("org_mobile"),
-            org_phone=row.get("org_phone"),
-        )
-        if tg_target:
-            channels.append(("telegram_userbot", tg_target, tg_hint))
+            **phones,
+        ):
+            _append("telegram_userbot", target, hint)
+
     return channels
 
 

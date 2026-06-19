@@ -171,7 +171,7 @@ class WebsiteGenerateRequest(BaseModel):
     dark_mode: bool = Field(default=False, description="Whether to use dark mode theme")
     generation_brief: str | None = Field(
         default=None,
-        max_length=1200,
+        max_length=5000,
         description="Optional individual brief for AI website generation",
     )
 

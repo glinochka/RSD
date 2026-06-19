@@ -110,9 +110,10 @@ def test_collect_all_messenger_channels_returns_both() -> None:
         "lpr_phone": "+79395030304",
     }
     channels = collect_all_messenger_channels(row, whatsapp_available=True, telegram_available=True)
-    assert len(channels) == 2
-    assert channels[0][0] == "whatsapp_userbot"
-    assert channels[1][0] == "telegram_userbot"
+    providers = {c[0] for c in channels}
+    assert "whatsapp_userbot" in providers
+    assert "telegram_userbot" in providers
+    assert len(channels) >= 2
 
 
 def test_parse_yamap_messenger_columns() -> None:

@@ -24,13 +24,34 @@ def test_normalize_telegram_username() -> None:
     assert target == "somebrand"
 
 
-def test_normalize_telegram_bot_link_falls_back_to_mobile() -> None:
-    target, hint = normalize_telegram_target(
+def test_normalize_telegram_bot_link_uses_mobile() -> None:
+    from app.services.sales.contact_target_resolver import collect_all_telegram_outreach_targets
+
+    targets = collect_all_telegram_outreach_targets(
         telegram="https://t.me/somechannel_bot",
         org_mobile="+79991234567",
     )
-    assert target == "+79991234567"
-    assert hint.get("source") == "phone"
+    assert "+79991234567" in {t for t, _ in targets}
+
+
+def test_collect_all_messenger_includes_link_and_phones() -> None:
+    from app.services.sales.contact_target_resolver import collect_all_messenger_channels
+
+    row = {
+        "telegram": "https://t.me/somebrand",
+        "whatsapp": "https://wa.me/79001234567",
+        "org_mobile": "+79998887766",
+        "org_phone": "+74831234567",
+        "lpr_phone": "+79991112233",
+    }
+    channels = collect_all_messenger_channels(row, whatsapp_available=True, telegram_available=True)
+    keys = {(c, t) for c, t, _ in channels}
+    assert ("telegram_userbot", "somebrand") in keys
+    assert ("telegram_userbot", "+79998887766") in keys
+    assert ("whatsapp_userbot", "79001234567") in keys
+    assert ("whatsapp_userbot", "79998887766") in keys
+    # без дублей wa.me и того же мобильного
+    assert len(channels) == len({f"{c}:{t}" for c, t, _ in channels})
 
 
 def test_normalize_telegram_username_keeps_phone_fallbacks() -> None:
