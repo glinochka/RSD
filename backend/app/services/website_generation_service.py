@@ -744,6 +744,11 @@ class GenerationResult:
     raw_response: str | None
 
 
+# Primary full-page synthesis (4 LLM passes). High ceiling so HTML is not truncated;
+# still capped as a cost safeguard — API may enforce a lower model maximum.
+_PRIMARY_GENERATION_MAX_OUTPUT_TOKENS = 64_000
+_EDIT_MAX_OUTPUT_TOKENS = 16_000
+
 # ---------------------------------------------------------------------------
 # Main Service
 # ---------------------------------------------------------------------------
@@ -765,11 +770,15 @@ class WebsiteGenerationService:
         self.generation_model = configured_generation_model.strip()
         self.edit_model = configured_edit_model.strip()
         self.max_retries = 2
-        self.max_generation_tokens = 16000
+        self.max_primary_generation_tokens = _PRIMARY_GENERATION_MAX_OUTPUT_TOKENS
+        self.max_generation_tokens = _EDIT_MAX_OUTPUT_TOKENS
         logger.info(
-            "[WebsiteGenService] Initialized models: generation=%s, edit=%s",
+            "[WebsiteGenService] Initialized models: generation=%s, edit=%s, "
+            "primary_max_tokens=%s, edit_max_tokens=%s",
             self.generation_model,
             self.edit_model,
+            self.max_primary_generation_tokens,
+            self.max_generation_tokens,
         )
 
     async def _call_ai(
@@ -846,7 +855,7 @@ class WebsiteGenerationService:
                     user_prompt=user_prompt,
                     model=self.generation_model,
                     temperature=0.75,
-                    max_tokens=self.max_generation_tokens,
+                    max_tokens=self.max_primary_generation_tokens,
                 )
                 logger.info(f"[WebsiteGen] AI response received, length: {len(raw_response or '')} chars")
 
@@ -888,7 +897,7 @@ class WebsiteGenerationService:
                     user_prompt=refine_prompt,
                     model=self.generation_model,
                     temperature=0.3,
-                    max_tokens=self.max_generation_tokens,
+                    max_tokens=self.max_primary_generation_tokens,
                 )
 
                 refined_html = _extract_html_from_response(refined_raw)
@@ -917,7 +926,7 @@ class WebsiteGenerationService:
                     user_prompt=adaptive_prompt,
                     model=self.generation_model,
                     temperature=0.2,
-                    max_tokens=self.max_generation_tokens,
+                    max_tokens=self.max_primary_generation_tokens,
                 )
                 adaptive_html = _extract_html_from_response(adaptive_raw)
                 logger.info(f"[WebsiteGen] Adaptive HTML length: {len(adaptive_html)} chars")
@@ -944,7 +953,7 @@ class WebsiteGenerationService:
                     user_prompt=final_qa_prompt,
                     model=self.generation_model,
                     temperature=0.15,
-                    max_tokens=self.max_generation_tokens,
+                    max_tokens=self.max_primary_generation_tokens,
                 )
                 final_qa_html = _extract_html_from_response(final_qa_raw)
                 logger.info(f"[WebsiteGen] Final QA HTML length: {len(final_qa_html)} chars")
