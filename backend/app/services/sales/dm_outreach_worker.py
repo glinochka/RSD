@@ -128,6 +128,10 @@ class DmOutreachWorker:
     def _dm_fallback_targets(*, primary_target: str, meta: dict[str, Any]) -> list[str]:
         targets = [str(primary_target or "").strip()]
         raw_fallbacks = meta.get("fallback_targets")
+        if not isinstance(raw_fallbacks, list):
+            hint = meta.get("target_resolve_hint")
+            if isinstance(hint, dict):
+                raw_fallbacks = hint.get("fallback_targets")
         if isinstance(raw_fallbacks, list):
             for value in raw_fallbacks:
                 candidate = str(value or "").strip()
@@ -162,6 +166,115 @@ class DmOutreachWorker:
             )
             return any(marker in low for marker in markers)
         return False
+
+    @staticmethod
+    def _cross_channel_fallbacks(meta: dict[str, Any]) -> list[dict[str, str]]:
+        raw = meta.get("cross_channel_fallbacks")
+        if not isinstance(raw, list):
+            hint = meta.get("target_resolve_hint")
+            if isinstance(hint, dict):
+                raw = hint.get("cross_channel_fallbacks")
+        if not isinstance(raw, list):
+            return []
+        cleaned: list[dict[str, str]] = []
+        for entry in raw:
+            if not isinstance(entry, dict):
+                continue
+            channel = str(entry.get("channel") or "").strip().lower()
+            target = str(entry.get("target") or "").strip()
+            if channel in {"telegram_userbot", "whatsapp_userbot"} and target:
+                cleaned.append({"channel": channel, "target": target})
+        return cleaned
+
+    async def _try_cross_channel_fallbacks(
+        self,
+        *,
+        item: AgentSalesDmQueue,
+        meta: dict[str, Any],
+        message_text: str,
+        peer_access_hash: int | None,
+    ) -> tuple[str, str, int] | None:
+        for alt in self._cross_channel_fallbacks(meta):
+            alt_channel = alt["channel"]
+            alt_target = alt["target"]
+            encrypted_credentials: str | None = None
+            connection_id: int | None = None
+            alt_peer_hash = peer_access_hash if alt_channel == "telegram_userbot" else None
+
+            async with async_session_maker() as session:
+                async with session.begin():
+                    agent = await session.scalar(select(Agent).where(Agent.id == item.agent_id))
+                    if agent is None:
+                        continue
+                    provider = (
+                        "whatsapp_userbot"
+                        if alt_channel == "whatsapp_userbot"
+                        else "telegram_userbot"
+                    )
+                    channels = (
+                        await session.execute(
+                            select(AgentChannelConnection).where(
+                                AgentChannelConnection.agent_id == agent.id,
+                                AgentChannelConnection.provider == provider,
+                                AgentChannelConnection.is_active.is_(True),
+                            )
+                        )
+                    ).scalars().all()
+                    available_ids = [int(ch.id) for ch in channels if ch.encrypted_credentials]
+                    if not available_ids:
+                        continue
+                    chosen_id = self._pick_deterministic_connection(
+                        provider=provider,
+                        target_external=alt_target,
+                        available_ids=sorted(available_ids),
+                    )
+                    if chosen_id is None:
+                        continue
+                    ch = await session.scalar(
+                        select(AgentChannelConnection).where(
+                            AgentChannelConnection.id == int(chosen_id),
+                            AgentChannelConnection.is_active.is_(True),
+                        )
+                    )
+                    if ch is None or not ch.encrypted_credentials:
+                        continue
+                    encrypted_credentials = str(ch.encrypted_credentials)
+                    connection_id = int(ch.id)
+                    if alt_channel == "telegram_userbot" and alt_peer_hash is None:
+                        analytics_ns = int(agent.bot_id or agent.id)
+                        alt_peer_hash = await _latest_telegram_userbot_peer_access_hash(
+                            session,
+                            analytics_namespace_id=analytics_ns,
+                            user_external_id=alt_target,
+                        )
+
+            try:
+                used_target = await self._send_dm_with_target_fallbacks(
+                    channel=alt_channel,
+                    primary_target=alt_target,
+                    meta=meta,
+                    message_text=message_text,
+                    connection_id=int(connection_id or 0),
+                    encrypted_credentials=encrypted_credentials or "",
+                    peer_access_hash=alt_peer_hash,
+                )
+                logger.info(
+                    "DM sent via cross-channel fallback queue_id=%d channel=%s target=%s",
+                    item.id,
+                    alt_channel,
+                    used_target,
+                )
+                meta["channel"] = alt_channel
+                return alt_channel, used_target, int(connection_id or 0)
+            except Exception as exc:
+                logger.warning(
+                    "Cross-channel DM failed queue_id=%d channel=%s target=%s error=%s",
+                    item.id,
+                    alt_channel,
+                    alt_target,
+                    str(exc)[:200],
+                )
+        return None
 
     async def _send_dm_with_target_fallbacks(
         self,
@@ -566,17 +679,29 @@ class DmOutreachWorker:
                 return
 
         try:
-            used_target = await self._send_dm_with_target_fallbacks(
-                channel=channel,
-                primary_target=target_external,
-                meta=meta,
-                message_text=message_text,
-                connection_id=int(connection_id or 0),
-                encrypted_credentials=encrypted_credentials or "",
-                peer_access_hash=peer_access_hash,
-            )
-            if used_target != target_external:
+            try:
+                used_target = await self._send_dm_with_target_fallbacks(
+                    channel=channel,
+                    primary_target=target_external,
+                    meta=meta,
+                    message_text=message_text,
+                    connection_id=int(connection_id or 0),
+                    encrypted_credentials=encrypted_credentials or "",
+                    peer_access_hash=peer_access_hash,
+                )
+            except Exception:
+                cross = await self._try_cross_channel_fallbacks(
+                    item=item,
+                    meta=meta,
+                    message_text=message_text,
+                    peer_access_hash=peer_access_hash,
+                )
+                if cross is None:
+                    raise
+                channel, used_target, connection_id = cross
                 target_external = used_target
+                meta["channel"] = channel
+                account_key = (int(item.agent_id), channel, int(connection_id))
                 async with async_session_maker() as session:
                     async with session.begin():
                         await session.execute(
@@ -584,9 +709,26 @@ class DmOutreachWorker:
                             .where(AgentSalesDmQueue.id == item.id)
                             .values(
                                 target_user_external_id=used_target,
+                                metadata_json=json.dumps(meta, ensure_ascii=False),
                                 updated_at=self._now_utc_naive(),
                             )
                         )
+                item.target_user_external_id = used_target
+                item.metadata_json = json.dumps(meta, ensure_ascii=False)
+            else:
+                if used_target != target_external:
+                    target_external = used_target
+                    async with async_session_maker() as session:
+                        async with session.begin():
+                            await session.execute(
+                                update(AgentSalesDmQueue)
+                                .where(AgentSalesDmQueue.id == item.id)
+                                .values(
+                                    target_user_external_id=used_target,
+                                    updated_at=self._now_utc_naive(),
+                                )
+                            )
+                    meta["channel"] = channel
 
             logger.info(
                 "Sent DM: queue_id=%d agent_id=%d channel=%s user_id=%s",
@@ -647,20 +789,25 @@ class DmOutreachWorker:
 
         except Exception as exc:
             error_msg = str(exc)[:500]
-            low = error_msg.lower()
-            non_retry_substrings = (
+            low = error_msg.casefold()
+            non_retry_markers = (
                 "could not find the input entity",
                 "не удалось отправить dm",
                 "invalid target_user_external_id",
                 "некорректный номер",
                 "пустой идентификатор",
+                "peeridinvalid",
+                "username not occupied",
+                "you can't write in this chat",
+                "chat_write_forbidden",
+                "user is deactivated",
             )
-            is_peer_resolution = any(s in low for s in non_retry_substrings)
-            should_retry = (
-                "auth" not in low
-                and "not found" not in low
-                and not is_peer_resolution
-            )
+            if channel == "whatsapp_userbot":
+                non_retry_markers += (
+                    "not on whatsapp",
+                    "not registered on whatsapp",
+                )
+            should_retry = "auth" not in low and not any(marker in low for marker in non_retry_markers)
 
             logger.warning(
                 "Failed to send DM queue_id=%d: %s (retry=%s)",

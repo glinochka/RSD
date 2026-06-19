@@ -11,7 +11,10 @@ from sqlalchemy import select
 
 from ...alembic.database import async_session_maker
 from ...alembic.models import Agent, AgentChannelConnection, AiMopLead
-from ..sales.contact_target_resolver import collect_all_messenger_channels
+from ..sales.contact_target_resolver import (
+    attach_target_hint_to_dm_meta,
+    collect_all_messenger_channels,
+)
 from ..sales.dm_queue_service import get_dm_queue_service
 from ..sales.fsm import SalesFSMService
 from .email_outreach import send_ai_mop_outreach_email
@@ -208,6 +211,12 @@ async def resolve_all_lead_messenger_channels(
     tg_ok = await _agent_has_channel(agent_id, "telegram_userbot")
     if not wa_ok and not tg_ok:
         return []
+    if not wa_ok:
+        logger.warning(
+            "AI MOP lead_id=%s agent_id=%s: WhatsApp userbot не подключён — WA-рассылка пропущена",
+            lead.id,
+            agent_id,
+        )
 
     row = _lead_outreach_row(lead)
     return collect_all_messenger_channels(
@@ -295,14 +304,15 @@ async def enqueue_ai_mop_outreach(
     queue = get_dm_queue_service()
     fsm = SalesFSMService()
 
-    meta: dict[str, Any] = {
-        "channel": channel,
-        "ai_mop_lead_id": lead_id,
-        "org_name": "",
-        "source": "ai_mop",
-    }
-    if hint:
-        meta["target_resolve_hint"] = hint
+    meta: dict[str, Any] = attach_target_hint_to_dm_meta(
+        {
+            "channel": channel,
+            "ai_mop_lead_id": lead_id,
+            "org_name": "",
+            "source": "ai_mop",
+        },
+        hint,
+    )
 
     async with async_session_maker() as session:
         lead = await session.get(AiMopLead, lead_id)

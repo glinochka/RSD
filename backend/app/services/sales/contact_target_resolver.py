@@ -271,6 +271,33 @@ def normalize_telegram_target(
     return primary, hint
 
 
+def build_cross_messenger_fallbacks(
+    row: dict[str, Any],
+    *,
+    primary_channel: str,
+    whatsapp_available: bool,
+    telegram_available: bool,
+) -> list[dict[str, str]]:
+    """Запасные каналы при ошибке основного (WA↔TG по номеру из ссылки)."""
+    options: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    def _add(channel: str, target: str) -> None:
+        key = f"{channel}:{target.casefold()}"
+        if key in seen:
+            return
+        seen.add(key)
+        options.append({"channel": channel, "target": target})
+
+    if primary_channel == "whatsapp_userbot" and telegram_available:
+        for digits in _phones_from_whatsapp_link(row.get("whatsapp")):
+            _add("telegram_userbot", f"+{digits}")
+    elif primary_channel == "telegram_userbot" and whatsapp_available:
+        for digits in _phones_from_telegram_link(row.get("telegram")):
+            _add("whatsapp_userbot", digits)
+    return options
+
+
 def pick_outreach_channel(
     row: dict[str, Any],
     *,
@@ -281,6 +308,19 @@ def pick_outreach_channel(
     Выбор канала и target_external_id для строки Excel.
     Приоритет: заполненная колонка WhatsApp / Telegram → телефон (WA, затем TG).
     """
+
+    def _with_cross(channel: str, target: str, hint: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
+        enriched = dict(hint)
+        cross = build_cross_messenger_fallbacks(
+            row,
+            primary_channel=channel,
+            whatsapp_available=whatsapp_available,
+            telegram_available=telegram_available,
+        )
+        if cross:
+            enriched["cross_channel_fallbacks"] = cross
+        return channel, target, enriched
+
     has_wa_col = bool(_opt(row.get("whatsapp")))
     has_tg_col = bool(_opt(row.get("telegram")))
 
@@ -292,7 +332,7 @@ def pick_outreach_channel(
             org_phone=row.get("org_phone"),
         )
         if wa_target:
-            return "whatsapp_userbot", wa_target, wa_hint
+            return _with_cross("whatsapp_userbot", wa_target, wa_hint)
 
     if telegram_available and has_tg_col:
         tg_target, tg_hint = normalize_telegram_target(
@@ -302,7 +342,7 @@ def pick_outreach_channel(
             org_phone=row.get("org_phone"),
         )
         if tg_target:
-            return "telegram_userbot", tg_target, tg_hint
+            return _with_cross("telegram_userbot", tg_target, tg_hint)
 
     if whatsapp_available:
         wa_target, wa_hint = normalize_whatsapp_target(
@@ -312,7 +352,7 @@ def pick_outreach_channel(
             org_phone=row.get("org_phone"),
         )
         if wa_target:
-            return "whatsapp_userbot", wa_target, wa_hint
+            return _with_cross("whatsapp_userbot", wa_target, wa_hint)
 
     if telegram_available:
         tg_target, tg_hint = normalize_telegram_target(
@@ -322,9 +362,38 @@ def pick_outreach_channel(
             org_phone=row.get("org_phone"),
         )
         if tg_target:
-            return "telegram_userbot", tg_target, tg_hint
+            return _with_cross("telegram_userbot", tg_target, tg_hint)
 
     return None, None, {}
+
+
+def _phones_from_whatsapp_link(whatsapp: str | None) -> list[str]:
+    """Цифры из актуальной wa.me-ссылки или номера в колонке WhatsApp."""
+    normalized = _normalize_whatsapp_import_value(_opt(whatsapp))
+    if not normalized:
+        return []
+    match = re.search(r"wa\.me/(\d+)", normalized, re.I)
+    if not match:
+        return []
+    digits = _normalize_ru_phone_digits(match.group(1))
+    return [digits] if digits else []
+
+
+def _phones_from_telegram_link(telegram: str | None) -> list[str]:
+    """Телефон из TG только если он явно в ссылке (username/канал — номер скрыт)."""
+    if not telegram:
+        return []
+    target, hint = _telegram_target_from_raw(telegram)
+    source = str(hint.get("source") or "")
+    if source in {"telegram_link_skipped", "telegram_at_skipped", "telegram_link_invalid"}:
+        return []
+    if source in {"telegram_link_phone", "telegram_phone"}:
+        digits = _normalize_ru_phone_digits(str(hint.get("digits") or target))
+        return [digits] if digits else []
+    if target and str(target).startswith("+"):
+        digits = _normalize_ru_phone_digits(target)
+        return [digits] if digits else []
+    return []
 
 
 def collect_all_messenger_channels(
@@ -364,6 +433,24 @@ def collect_all_messenger_channels(
         ):
             _append("telegram_userbot", target, hint)
 
+    # Кросс-канал: номер из wa.me → Telegram (если ссылка WA актуальна).
+    if telegram_available:
+        for digits in _phones_from_whatsapp_link(row.get("whatsapp")):
+            _append(
+                "telegram_userbot",
+                f"+{digits}",
+                {"source": "cross_from_whatsapp", "digits": digits},
+            )
+
+    # Кросс-канал: телефон из t.me/+7… → WhatsApp (username без номера не трогаем).
+    if whatsapp_available:
+        for digits in _phones_from_telegram_link(row.get("telegram")):
+            _append(
+                "whatsapp_userbot",
+                digits,
+                {"source": "cross_from_telegram", "digits": digits},
+            )
+
     return channels
 
 
@@ -382,3 +469,28 @@ def hint_to_json(hint: dict[str, Any]) -> str | None:
     if not hint:
         return None
     return json.dumps(hint, ensure_ascii=False)
+
+
+def attach_target_hint_to_dm_meta(meta: dict[str, Any], hint: dict[str, Any] | None) -> dict[str, Any]:
+    """Прокидывает fallback_targets в meta очереди (воркер читает верхний уровень)."""
+    if not hint:
+        return meta
+    enriched = dict(meta)
+    enriched["target_resolve_hint"] = hint
+    fallbacks = hint.get("fallback_targets")
+    if isinstance(fallbacks, list):
+        cleaned = [str(value).strip() for value in fallbacks if str(value or "").strip()]
+        if cleaned:
+            enriched["fallback_targets"] = cleaned
+    cross = hint.get("cross_channel_fallbacks")
+    if isinstance(cross, list):
+        cleaned_cross = [
+            entry
+            for entry in cross
+            if isinstance(entry, dict)
+            and str(entry.get("channel") or "").strip()
+            and str(entry.get("target") or "").strip()
+        ]
+        if cleaned_cross:
+            enriched["cross_channel_fallbacks"] = cleaned_cross
+    return enriched

@@ -130,20 +130,26 @@ async def schedule_outreach_for_import_batch(
             if not message_text.strip():
                 raise RuntimeError("Пустой текст сообщения")
 
-            meta: dict[str, Any] = {
-                "channel": row.channel,
-                "import_batch_id": import_batch_id,
-                "imported_contact_id": row.id,
-                "org_name": row.org_name,
-                "source": "excel_import",
-            }
+            hint: dict[str, Any] | None = None
             if row.target_resolve_hint:
                 try:
-                    hint = json.loads(row.target_resolve_hint)
-                    if isinstance(hint, dict):
-                        meta["target_resolve_hint"] = hint
+                    parsed = json.loads(row.target_resolve_hint)
+                    if isinstance(parsed, dict):
+                        hint = parsed
                 except json.JSONDecodeError:
-                    pass
+                    hint = None
+            from .contact_target_resolver import attach_target_hint_to_dm_meta
+
+            meta: dict[str, Any] = attach_target_hint_to_dm_meta(
+                {
+                    "channel": row.channel,
+                    "import_batch_id": import_batch_id,
+                    "imported_contact_id": row.id,
+                    "org_name": row.org_name,
+                    "source": "excel_import",
+                },
+                hint,
+            )
 
             await queue.enqueue_dm(
                 agent_id=agent_id,

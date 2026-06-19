@@ -16,7 +16,7 @@ def test_normalize_whatsapp_from_wa_me() -> None:
 def test_normalize_telegram_from_t_me_phone() -> None:
     target, hint = normalize_telegram_target(telegram="https://t.me/89770890409")
     assert target == "+79770890409"
-    assert hint.get("source") == "telegram_link"
+    assert hint.get("source") == "telegram_link_phone"
 
 
 def test_normalize_telegram_username() -> None:
@@ -52,6 +52,46 @@ def test_collect_all_messenger_includes_link_and_phones() -> None:
     assert ("whatsapp_userbot", "79998887766") in keys
     # без дублей wa.me и того же мобильного
     assert len(channels) == len({f"{c}:{t}" for c, t, _ in channels})
+
+
+def test_collect_all_messenger_cross_channel_from_wa_link_only() -> None:
+    from app.services.sales.contact_target_resolver import collect_all_messenger_channels
+
+    row = {"whatsapp": "https://wa.me/79001234567"}
+    channels = collect_all_messenger_channels(row, whatsapp_available=True, telegram_available=True)
+    keys = {(c, t) for c, t, _ in channels}
+    assert ("whatsapp_userbot", "79001234567") in keys
+    assert ("telegram_userbot", "+79001234567") in keys
+
+
+def test_collect_all_messenger_cross_channel_from_tg_phone_link() -> None:
+    from app.services.sales.contact_target_resolver import collect_all_messenger_channels
+
+    row = {"telegram": "https://t.me/89770890409"}
+    channels = collect_all_messenger_channels(row, whatsapp_available=True, telegram_available=True)
+    keys = {(c, t) for c, t, _ in channels}
+    assert ("telegram_userbot", "+79770890409") in keys
+    assert ("whatsapp_userbot", "79770890409") in keys
+
+
+def test_collect_all_messenger_no_cross_from_tg_username_only() -> None:
+    from app.services.sales.contact_target_resolver import collect_all_messenger_channels
+
+    row = {"telegram": "https://t.me/somebrand"}
+    channels = collect_all_messenger_channels(row, whatsapp_available=True, telegram_available=True)
+    wa_targets = [t for c, t, _ in channels if c == "whatsapp_userbot"]
+    assert wa_targets == []
+
+
+def test_attach_target_hint_to_dm_meta_flattens_fallbacks() -> None:
+    from app.services.sales.contact_target_resolver import attach_target_hint_to_dm_meta
+
+    meta = attach_target_hint_to_dm_meta(
+        {"channel": "whatsapp_userbot"},
+        {"source": "whatsapp", "fallback_targets": ["79991234567", "+79997654321"]},
+    )
+    assert meta["fallback_targets"] == ["79991234567", "+79997654321"]
+    assert meta["target_resolve_hint"]["source"] == "whatsapp"
 
 
 def test_normalize_telegram_username_keeps_phone_fallbacks() -> None:
