@@ -186,6 +186,7 @@ export const API_ROUTES = {
   ADMIN_AI_MOP_PIPELINE: '/api/admin/ai-mop/pipeline',
   ADMIN_AI_MOP_LEAD_RETRY_GENERATION: (id) => `/api/admin/ai-mop/leads/${id}/retry-generation`,
   ADMIN_AI_MOP_LEAD_RETRY_OUTREACH: (id) => `/api/admin/ai-mop/leads/${id}/retry-outreach`,
+  ADMIN_AI_MOP_LEADS_RECOVER_LLM_BALANCE: '/api/admin/ai-mop/leads/recover-llm-balance-errors',
 
   SALES_LOGIN: '/api/sales/login',
   SALES_ME: '/api/sales/me',

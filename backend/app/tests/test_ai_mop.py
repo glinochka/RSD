@@ -189,6 +189,20 @@ def test_ai_mop_stagger_uses_sales_scheduling_constants():
     assert EXCEL_STAGGER_MAX_MINUTES == 7.0
 
 
+def test_is_llm_balance_error_detects_402():
+    from app.services.ai_mop.lead_recovery import is_llm_balance_error
+
+    assert is_llm_balance_error("Error code: 402 - Insufficient Balance")
+    assert is_llm_balance_error("insufficient balance on api")
+    assert not is_llm_balance_error("timeout while generating website")
+
+
+def test_ai_mop_max_provisioned_backlog_default():
+    from app.config import settings
+
+    assert settings.AI_MOP_MAX_PROVISIONED_BACKLOG == 10
+
+
 @pytest.mark.asyncio
 async def test_ai_mop_worker_provisions_outside_send_window(monkeypatch):
     from unittest.mock import AsyncMock

@@ -7,6 +7,11 @@ from typing import Any
 
 from ...alembic.database import async_session_maker
 from ...alembic.models import Agent, AiMopLead, Website
+from .lead_recovery import (
+    is_llm_balance_error,
+    lead_has_completed_website,
+    rollback_lead_after_llm_balance_error,
+)
 from .lead_status import mark_lead_failed
 from .outreach import run_outreach_for_lead
 from .provisioning import regenerate_lead_website
@@ -44,35 +49,41 @@ async def retry_lead_generation(*, lead_id: int) -> dict[str, Any]:
             raise ValueError("У лида не назначен агент")
 
     if stage == "website" and lead.provisioned_website_id and lead.provisioned_agent_id:
-        try:
-            provision = await regenerate_lead_website(lead_id=lead_id)
-            outreach = await run_outreach_for_lead(
-                lead_id=lead_id,
-                agent_id=int(agent_id),
-                provision=provision,
-            )
-            return {"ok": True, "mode": "website_regen", "outreach": outreach}
-        except Exception as exc:
-            await mark_lead_failed(
-                lead_id=lead_id,
-                stage="website",
-                error=str(exc)[:2000],
-                provision=_provision_snapshot(lead),
-            )
-            raise
+        if await lead_has_completed_website(lead=lead):
+            try:
+                provision = await regenerate_lead_website(lead_id=lead_id)
+                outreach = await run_outreach_for_lead(
+                    lead_id=lead_id,
+                    agent_id=int(agent_id),
+                    provision=provision,
+                )
+                return {"ok": True, "mode": "website_regen", "outreach": outreach}
+            except Exception as exc:
+                if is_llm_balance_error(str(exc)):
+                    recovery = await rollback_lead_after_llm_balance_error(lead_id=lead_id)
+                    return {"ok": True, "mode": "llm_balance_recovery", "recovery": recovery}
+                await mark_lead_failed(
+                    lead_id=lead_id,
+                    stage="website",
+                    error=str(exc)[:2000],
+                    provision=_provision_snapshot(lead),
+                )
+                raise
+        # Сайт не дособран — полный откат в pending, без пересборки на существующем черновике.
 
     async with async_session_maker() as session:
         async with session.begin():
             db_lead = await session.get(AiMopLead, lead_id)
             if db_lead is None:
                 raise ValueError("Лид не найден")
-            if stage in ("account", "agent", "provisioning"):
+            if stage in ("account", "agent", "provisioning", "website"):
                 db_lead.provisioned_user_id = None
                 db_lead.provisioned_agent_id = None
                 db_lead.provisioned_website_id = None
                 db_lead.website_url = None
                 db_lead.temp_password = None
                 db_lead.dm_queue_id = None
+                db_lead.assigned_agent_id = None
             db_lead.status = "pending"
             db_lead.failure_stage = None
             db_lead.last_error = None
@@ -89,7 +100,7 @@ async def retry_lead_outreach(*, lead_id: int) -> dict[str, Any]:
         stage = str(lead.failure_stage or "")
         if stage not in OUTREACH_RETRY_STAGES:
             raise ValueError(f"Повторная отправка недоступна для этапа: {stage or '—'}")
-        if not lead.website_url or not lead.provisioned_website_id:
+        if not await lead_has_completed_website(lead=lead):
             raise ValueError("Сначала нужна успешная генерация сайта")
         agent_id = lead.assigned_agent_id
         if agent_id is None:
@@ -113,6 +124,9 @@ async def retry_lead_outreach(*, lead_id: int) -> dict[str, Any]:
             provision=provision,
         )
     except Exception as exc:
+        if is_llm_balance_error(str(exc)):
+            recovery = await rollback_lead_after_llm_balance_error(lead_id=lead_id)
+            return {"ok": True, "mode": "llm_balance_recovery", "recovery": recovery}
         await mark_lead_failed(
             lead_id=lead_id,
             stage="outreach_send",

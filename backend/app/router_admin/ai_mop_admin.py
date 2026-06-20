@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from ..alembic.database import async_session_maker
 from ..services.ai_mop.lead_import import import_ai_mop_leads_from_excel
+from ..services.ai_mop.lead_recovery import recover_all_llm_balance_errors
 from ..services.ai_mop.pipeline_state import set_ai_mop_pipeline_paused
 from ..services.ai_mop.retry import retry_lead_generation, retry_lead_outreach
 from ..services.ai_mop.service import (
@@ -148,6 +149,16 @@ async def ai_mop_clear_leads(
 ):
     deleted = await clear_ai_mop_leads(only_pending=only_pending)
     return JSONResponse(content={"deleted": deleted})
+
+
+@router.post(
+    "/leads/recover-llm-balance-errors",
+    dependencies=[Depends(rate_limit(max_requests=5, window_seconds=60, scope="admin_ai_mop"))],
+)
+async def ai_mop_recover_llm_balance_errors(_admin=Depends(get_current_admin)):
+    """Откат лидов с ошибкой 402 / Insufficient Balance к pending или provisioned."""
+    result = await recover_all_llm_balance_errors()
+    return JSONResponse(content=result)
 
 
 @router.post(

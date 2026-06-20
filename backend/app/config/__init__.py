@@ -70,6 +70,7 @@ class Settings(BaseSettings):
 
     AI_MOP_ENABLED: bool = False
     AI_MOP_POLL_INTERVAL_SECONDS: int = 30
+    AI_MOP_MAX_PROVISIONED_BACKLOG: int = 10
     # Домен для автогенерации login-email лидам без почты в базе (translit@domain).
     AI_MOP_ACCOUNT_EMAIL_DOMAIN: str = "rsd-ai.ru"
 

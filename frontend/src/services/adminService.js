@@ -557,6 +557,15 @@ const adminService = {
     return response.data;
   },
 
+  async aiMopRecoverLlmBalanceErrors(token) {
+    const response = await adminClient.post(
+      API_ROUTES.ADMIN_AI_MOP_LEADS_RECOVER_LLM_BALANCE,
+      {},
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data;
+  },
+
   async aiMopGetLeads(token, { page = 1, pageSize = 20, status } = {}) {
     const response = await adminClient.get(API_ROUTES.ADMIN_AI_MOP_LEADS, {
       headers: { Authorization: `Bearer ${token}` },

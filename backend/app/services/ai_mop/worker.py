@@ -13,12 +13,13 @@ import random
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from ...alembic.database import async_session_maker
 from ...alembic.models import Agent, AiMopAgentAssignment, AiMopLead
 from ...config import settings
 from ..sales.outreach_scheduling import EXCEL_STAGGER_MAX_MINUTES, EXCEL_STAGGER_MIN_MINUTES
+from .lead_recovery import is_llm_balance_error, rollback_lead_after_llm_balance_error
 from .lead_status import mark_lead_failed, mark_lead_provisioned
 from .outreach import resolve_all_lead_messenger_channels, resolve_lead_contact_email, run_outreach_for_lead
 from .pipeline_state import is_ai_mop_pipeline_paused
@@ -29,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 _STAGGER_MIN = EXCEL_STAGGER_MIN_MINUTES
 _STAGGER_MAX = EXCEL_STAGGER_MAX_MINUTES
+_MAX_PROVISIONED_BACKLOG = max(1, int(settings.AI_MOP_MAX_PROVISIONED_BACKLOG))
 
 
 class AiMopPipelineError(RuntimeError):
@@ -160,22 +162,28 @@ class AiMopWorker:
             )
         except AiMopPipelineError as exc:
             logger.warning("AI MOP outreach failed lead_id=%s: %s", lead_id, exc)
-            await mark_lead_failed(
-                lead_id=lead_id,
-                stage=exc.stage,
-                error=str(exc)[:2000],
-                provision=provision,
-            )
+            if is_llm_balance_error(str(exc)):
+                await rollback_lead_after_llm_balance_error(lead_id=lead_id)
+            else:
+                await mark_lead_failed(
+                    lead_id=lead_id,
+                    stage=exc.stage,
+                    error=str(exc)[:2000],
+                    provision=provision,
+                )
             await self._release_assignment(agent_id=agent_id, error=str(exc)[:500], set_cooldown=True)
             return True
         except Exception as exc:
             logger.exception("AI MOP outreach unexpected error lead_id=%s: %s", lead_id, exc)
-            await mark_lead_failed(
-                lead_id=lead_id,
-                stage="outreach_send",
-                error=str(exc)[:2000],
-                provision=provision,
-            )
+            if is_llm_balance_error(str(exc)):
+                await rollback_lead_after_llm_balance_error(lead_id=lead_id)
+            else:
+                await mark_lead_failed(
+                    lead_id=lead_id,
+                    stage="outreach_send",
+                    error=str(exc)[:2000],
+                    provision=provision,
+                )
             await self._release_assignment(agent_id=agent_id, error=str(exc)[:500], set_cooldown=True)
             return True
 
@@ -186,6 +194,12 @@ class AiMopWorker:
     async def _try_provision_next_lead(self) -> bool:
         now = _utc_now()
         async with async_session_maker() as session:
+            provisioned_backlog = await session.scalar(
+                select(func.count(AiMopLead.id)).where(AiMopLead.status == "provisioned")
+            )
+            if int(provisioned_backlog or 0) >= _MAX_PROVISIONED_BACKLOG:
+                return False
+
             assignment = await session.scalar(
                 select(AiMopAgentAssignment)
                 .where(
@@ -228,17 +242,23 @@ class AiMopWorker:
             await self._provision_lead(lead_id=lead_id, agent_id=agent_id)
         except AiMopPipelineError as exc:
             logger.warning("AI MOP lead %s failed at %s: %s", lead_id, exc.stage, exc)
-            await mark_lead_failed(
-                lead_id=lead_id,
-                stage=exc.stage,
-                error=str(exc)[:2000],
-                provision=exc.provision,
-            )
+            if is_llm_balance_error(str(exc)):
+                await rollback_lead_after_llm_balance_error(lead_id=lead_id)
+            else:
+                await mark_lead_failed(
+                    lead_id=lead_id,
+                    stage=exc.stage,
+                    error=str(exc)[:2000],
+                    provision=exc.provision,
+                )
             await self._release_assignment(agent_id=agent_id, error=str(exc)[:500], set_cooldown=False)
             return True
         except Exception as exc:
             logger.exception("AI MOP lead %s unexpected error: %s", lead_id, exc)
-            await mark_lead_failed(lead_id=lead_id, stage="provisioning", error=str(exc)[:2000])
+            if is_llm_balance_error(str(exc)):
+                await rollback_lead_after_llm_balance_error(lead_id=lead_id)
+            else:
+                await mark_lead_failed(lead_id=lead_id, stage="provisioning", error=str(exc)[:2000])
             await self._release_assignment(agent_id=agent_id, error=str(exc)[:500], set_cooldown=False)
             return True
 

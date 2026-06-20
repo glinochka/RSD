@@ -3984,6 +3984,41 @@ const ManagementPortal = () => {
     }
   };
 
+  const handleAiMopRecoverLlmBalanceErrors = async () => {
+    if (
+      !window.confirm(
+        'Массовый откат лидов с ошибкой 402 (недостаточно баланса LLM)?\n\n'
+          + 'Без готового сайта — в очередь pending.\n'
+          + 'С готовым сайтом — в provisioned (без пересборки).'
+      )
+    ) {
+      return;
+    }
+    try {
+      setAiMopBusy('recover-llm');
+      setError('');
+      setAiMopSuccess('');
+      const res = await adminService.aiMopRecoverLlmBalanceErrors(adminToken);
+      await refreshAiMop();
+      const recovered = res.recovered ?? 0;
+      const candidates = res.candidates ?? 0;
+      const toPending = res.to_pending ?? 0;
+      const toProvisioned = res.to_provisioned ?? 0;
+      if (candidates === 0) {
+        setAiMopSuccess('Лидов с ошибкой 402 / Insufficient Balance не найдено');
+      } else {
+        setAiMopSuccess(
+          `Откат: ${recovered} из ${candidates} `
+            + `(pending: ${toPending}, provisioned: ${toProvisioned})`
+        );
+      }
+    } catch (err) {
+      setError(formatError(err));
+    } finally {
+      setAiMopBusy(null);
+    }
+  };
+
   const renderAiMop = () => {
     const leadStats = aiMopDashboard?.leads || {};
     const totalLeadPages = Math.max(1, Math.ceil((aiMopLeads.total || 0) / (aiMopLeads.page_size || 20)));
@@ -4074,7 +4109,7 @@ const ManagementPortal = () => {
                 </div>
               ))}
             </div>
-            <div className="management-form-actions" style={{ margin: '1rem 0' }}>
+            <div className="management-form-actions" style={{ margin: '1rem 0', flexWrap: 'wrap', alignItems: 'flex-end' }}>
               <label>
                 Этап
                 <select
@@ -4092,6 +4127,15 @@ const ManagementPortal = () => {
                   ))}
                 </select>
               </label>
+              <button
+                type="button"
+                className="btn btn-outline"
+                disabled={!!aiMopBusy || aiMopLoading}
+                onClick={handleAiMopRecoverLlmBalanceErrors}
+                title="Откат лидов с ошибкой 402 Insufficient Balance"
+              >
+                {aiMopBusy === 'recover-llm' ? 'Откат…' : 'Массовый откат 402'}
+              </button>
             </div>
             <div className="management-table-wrap">
               <table className="management-table">
