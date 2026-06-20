@@ -14,8 +14,8 @@ from ...alembic.database import async_session_maker
 from ...alembic.models import AgentHttpIntegration
 from ...utils.crypto import decrypt_crm_credentials
 from .errors import HttpIntegrationNeedsConfirmationError, HttpIntegrationValidationError
+from ..tool_confirmation import TOOL_CONFIRMATION_REQUIRED_HINT, user_has_confirmed_action
 from .executor import (
-    _has_confirmation_marker,
     assert_args_match_schema,
     assert_safe_relative_path,
     execute_http_tool,
@@ -153,10 +153,12 @@ class HttpIntegrationToolRegistry:
         bindings: dict[str, _ToolBinding],
         bundles_by_row: dict[int, dict[str, Any]],
         user_message: str,
+        recent_history: list[dict[str, Any]] | None = None,
     ) -> None:
         self._bindings = bindings
         self._bundles_by_row = bundles_by_row
         self._user_message = user_message or ""
+        self._recent_history = list(recent_history or [])
 
     def tools_for_llm(self) -> list[dict[str, Any]]:
         tools: list[dict[str, Any]] = []
@@ -224,11 +226,11 @@ class HttpIntegrationToolRegistry:
         schema = tool_spec.get("parameters") if isinstance(tool_spec.get("parameters"), dict) else {}
         assert_args_match_schema(schema, args)
 
-        if self._confirmation_required(binding, tool_spec) and not _has_confirmation_marker(self._user_message):
-            raise HttpIntegrationNeedsConfirmationError(
-                "Для этого действия внешней системы нужно явное подтверждение. "
-                "Попросите пользователя написать: «подтверждаю»."
-            )
+        if self._confirmation_required(binding, tool_spec) and not user_has_confirmed_action(
+            self._user_message,
+            recent_history=self._recent_history,
+        ):
+            raise HttpIntegrationNeedsConfirmationError(TOOL_CONFIRMATION_REQUIRED_HINT)
 
         canonical = self._canonical_args(args)
         tool_args_hash = self._tool_args_hash(canonical)
@@ -272,6 +274,7 @@ async def load_http_integration_registry(
     enabled: bool,
     name_allowlist: list[str] | None,
     user_message: str,
+    recent_history: list[dict[str, Any]] | None = None,
 ) -> HttpIntegrationToolRegistry | None:
     if not enabled or not agent_id:
         return None
@@ -348,4 +351,5 @@ async def load_http_integration_registry(
         bindings=bindings,
         bundles_by_row=bundles_by_row,
         user_message=user_message,
+        recent_history=recent_history,
     )

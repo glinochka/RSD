@@ -124,12 +124,7 @@ def _cleanup_idempotency_cache() -> None:
         _IDEMPOTENCY_CACHE.pop(key, None)
 
 
-def _has_confirmation_marker(user_message: str) -> bool:
-    text = (user_message or "").strip().lower()
-    if not text:
-        return False
-    markers = {"подтверждаю", "подтвердить", "confirm", "подтверждено", "ok, выполняй", "выполняй"}
-    return any(marker in text for marker in markers)
+from ..tool_confirmation import TOOL_CONFIRMATION_REQUIRED_HINT, user_has_confirmed_action
 
 
 class CRMToolRegistry:
@@ -142,6 +137,7 @@ class CRMToolRegistry:
         user_message: str,
         agent_id: int,
         user_external_id: str | None,
+        recent_history: list[dict[str, Any]] | None = None,
     ) -> None:
         requested = [str(tool or "").strip() for tool in (allowed_tools or [])]
         unique = []
@@ -152,6 +148,7 @@ class CRMToolRegistry:
         self._provider = provider
         self._confirmation_policy = (confirmation_policy or "confirm_risky").strip().lower()
         self._user_message = user_message or ""
+        self._recent_history = list(recent_history or [])
         self._agent_id = agent_id
         self._user_external_id = (user_external_id or "").strip() or "anonymous"
         self._crm_provider = getattr(provider, "provider_name", "unknown")
@@ -255,11 +252,11 @@ class CRMToolRegistry:
 
         self._assert_safe_fields(tool_name, args)
 
-        if self._requires_confirmation(tool_name) and not _has_confirmation_marker(self._user_message):
-            raise CRMNeedsConfirmationError(
-                "Для выполнения этого действия нужно явное подтверждение. "
-                "Попросите пользователя написать: 'подтверждаю'."
-            )
+        if self._requires_confirmation(tool_name) and not user_has_confirmed_action(
+            self._user_message,
+            recent_history=self._recent_history,
+        ):
+            raise CRMNeedsConfirmationError(TOOL_CONFIRMATION_REQUIRED_HINT)
 
         canonical_args = self._canonical_args(args)
         tool_args_hash = self._tool_args_hash(canonical_args)

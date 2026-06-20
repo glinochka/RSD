@@ -242,10 +242,6 @@ def build_crm_admin_applications_system_prompt(
 # QA / owner handoff
 # ---------------------------------------------------------------------------
 
-CLIENT_CONFIRMATION_REQUIRED_MESSAGE = (
-    "Чтобы я мог это сделать, напишите, пожалуйста, «подтверждаю» — и продолжим."
-)
-
 CLIENT_OPERATOR_ESCALATION_MESSAGE = (
     "Сейчас подключу коллегу — он поможет с этим вопросом. "
     "Обычно отвечаем в течение нескольких минут."

@@ -77,12 +77,7 @@ def _cleanup_idempotency_cache() -> None:
         _IDEMPOTENCY_CACHE.pop(key, None)
 
 
-def _has_confirmation_marker(user_message: str) -> bool:
-    text = (user_message or "").strip().lower()
-    if not text:
-        return False
-    markers = {"подтверждаю", "подтвердить", "confirm", "подтверждено", "ok, выполняй", "выполняй"}
-    return any(marker in text for marker in markers)
+from ..tool_confirmation import TOOL_CONFIRMATION_REQUIRED_HINT, user_has_confirmed_action
 
 
 class SalesToolRegistry:
@@ -97,6 +92,7 @@ class SalesToolRegistry:
         mode: str,
         telegram_peer_access_hash: int | None = None,
         source_channel: str | None = None,
+        recent_history: list[dict[str, Any]] | None = None,
     ) -> None:
         requested = [str(tool or "").strip() for tool in (allowed_tools or [])]
         unique: list[str] = []
@@ -106,6 +102,7 @@ class SalesToolRegistry:
         self._allowed_tools = unique or list(_TOOL_MODELS.keys())
         self._confirmation_policy = (confirmation_policy or "confirm_risky").strip().lower()
         self._user_message = user_message or ""
+        self._recent_history = list(recent_history or [])
         self._agent_id = int(agent_id or 0)
         self._user_external_id = (user_external_id or "").strip() or "anonymous"
         self._mode = (mode or "draft_only").strip().lower()
@@ -178,11 +175,11 @@ class SalesToolRegistry:
         except ValidationError as exc:
             raise RuntimeError(f"Validation failed for tool '{tool_name}': {exc}") from None
 
-        if self._requires_confirmation(tool_name) and not _has_confirmation_marker(self._user_message):
-            raise SalesNeedsConfirmationError(
-                "Для выполнения этого действия нужно явное подтверждение. "
-                "Попросите пользователя написать: 'подтверждаю'."
-            )
+        if self._requires_confirmation(tool_name) and not user_has_confirmed_action(
+            self._user_message,
+            recent_history=self._recent_history,
+        ):
+            raise SalesNeedsConfirmationError(TOOL_CONFIRMATION_REQUIRED_HINT)
 
         canonical_args = self._canonical_args(args)
         tool_args_hash = self._tool_args_hash(canonical_args)

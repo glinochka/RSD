@@ -20,14 +20,6 @@ _MAX_JSON_BODY_BYTES = 96_000
 _MAX_RESPONSE_BYTES = 384_000
 
 
-def _has_confirmation_marker(user_message: str) -> bool:
-    text = (user_message or "").strip().lower()
-    if not text:
-        return False
-    markers = {"подтверждаю", "подтвердить", "confirm", "подтверждено", "ok, выполняй", "выполняй"}
-    return any(marker in text for marker in markers)
-
-
 def hostname_is_blocked(hostname: str) -> bool:
     raw = (hostname or "").strip().lower().rstrip(".")
     if not raw:

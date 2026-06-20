@@ -41,7 +41,6 @@ from ..prompts.system_prompts import (
     CHAT_OPERATOR_PERSONA,
     CHAT_PORTRAIT_SYSTEM,
     CLIENT_ACTION_PENDING_MESSAGE,
-    CLIENT_CONFIRMATION_REQUIRED_MESSAGE,
     CLIENT_OPERATOR_ESCALATION_MESSAGE,
     CLIENT_OWNER_HANDOFF_MESSAGE,
     CRM_ADMIN_HTTP_INTEGRATION_HINT,
@@ -804,6 +803,12 @@ class TemplateRuntimeService:
                 str(x or "").strip().lower() for x in http_integration_names_raw if str(x or "").strip()
             ]
 
+        chat_history = await self._load_recent_channel_history(
+            agent_id=agent_id,
+            user_external_id=user_external_id,
+            source_channel=source_channel,
+        )
+
         booking_payment_api_key = await self._get_admin_booking_payment_api_key(agent_id=agent_id)
         booking_registry = AdminBookingToolRegistry(
             agent_id=agent_id,
@@ -836,6 +841,7 @@ class TemplateRuntimeService:
                     user_message=user_message,
                     agent_id=agent_id,
                     user_external_id=user_external_id,
+                    recent_history=chat_history,
                 )
                 crm_tool_names = {
                     str(item.get("function", {}).get("name") or "")
@@ -850,6 +856,7 @@ class TemplateRuntimeService:
             enabled=http_integrations_enabled,
             name_allowlist=http_integration_names_allow,
             user_message=user_message or "",
+            recent_history=chat_history,
         )
 
         llm_tools: list[dict[str, Any]] = []
@@ -861,11 +868,6 @@ class TemplateRuntimeService:
         if not llm_tools:
             return None
 
-        chat_history = await self._load_recent_channel_history(
-            agent_id=agent_id,
-            user_external_id=user_external_id,
-            source_channel=source_channel,
-        )
         client_memory_section = build_client_memory_system_section(
             portrait=chat_portrait,
             history=chat_history,
@@ -990,11 +992,17 @@ class TemplateRuntimeService:
                                 pending_payment_url = raw_url
                 except AdminBookingNeedsConfirmationError as exc:
                     safe_error = redact_pii_text(str(exc))
+                    tool_result = {
+                        "ok": False,
+                        "status": "awaiting_user_confirmation",
+                        "hint": safe_error,
+                    }
+                    all_tools_succeeded = False
                     tool_events.append(
                         {
                             "tool_name": tool_name,
                             "tool_args_hash": None,
-                            "tool_status": "confirmation_required",
+                            "tool_status": "awaiting_user_confirmation",
                             "latency_ms": 0,
                             "crm_provider": "booking",
                             "source_channel": source_channel,
@@ -1005,18 +1013,19 @@ class TemplateRuntimeService:
                             "error": safe_error,
                         }
                     )
-                    return TemplateExecutionResult(
-                        answer=CLIENT_CONFIRMATION_REQUIRED_MESSAGE,
-                        sources=[],
-                        tool_events=tool_events,
-                    )
                 except CRMNeedsConfirmationError as exc:
                     safe_error = redact_pii_text(str(exc))
+                    tool_result = {
+                        "ok": False,
+                        "status": "awaiting_user_confirmation",
+                        "hint": safe_error,
+                    }
+                    all_tools_succeeded = False
                     tool_events.append(
                         {
                             "tool_name": tool_name,
                             "tool_args_hash": None,
-                            "tool_status": "confirmation_required",
+                            "tool_status": "awaiting_user_confirmation",
                             "latency_ms": 0,
                             "crm_provider": crm_provider_name if crm_registry is not None else None,
                             "source_channel": source_channel,
@@ -1027,18 +1036,19 @@ class TemplateRuntimeService:
                             "error": safe_error,
                         }
                     )
-                    return TemplateExecutionResult(
-                        answer=CLIENT_CONFIRMATION_REQUIRED_MESSAGE,
-                        sources=[],
-                        tool_events=tool_events,
-                    )
                 except HttpIntegrationNeedsConfirmationError as exc:
                     safe_error = redact_pii_text(str(exc))
+                    tool_result = {
+                        "ok": False,
+                        "status": "awaiting_user_confirmation",
+                        "hint": safe_error,
+                    }
+                    all_tools_succeeded = False
                     tool_events.append(
                         {
                             "tool_name": tool_name,
                             "tool_args_hash": None,
-                            "tool_status": "confirmation_required",
+                            "tool_status": "awaiting_user_confirmation",
                             "latency_ms": 0,
                             "crm_provider": "http_integration",
                             "source_channel": source_channel,
@@ -1048,11 +1058,6 @@ class TemplateRuntimeService:
                             "idempotency_key": None,
                             "error": safe_error,
                         }
-                    )
-                    return TemplateExecutionResult(
-                        answer=CLIENT_CONFIRMATION_REQUIRED_MESSAGE,
-                        sources=[],
-                        tool_events=tool_events,
                     )
                 except HttpIntegrationValidationError as exc:
                     safe_error = redact_pii_text(str(exc))
@@ -1171,6 +1176,12 @@ class TemplateRuntimeService:
                 str(x or "").strip().lower() for x in http_integration_names_raw if str(x or "").strip()
             ]
 
+        chat_history = await self._load_recent_channel_history(
+            agent_id=agent_id,
+            user_external_id=user_external_id,
+            source_channel=source_channel,
+        )
+
         application_registry = AdminApplicationToolRegistry(
             agent_id=agent_id,
             user_external_id=user_external_id,
@@ -1199,6 +1210,7 @@ class TemplateRuntimeService:
                     user_message=user_message,
                     agent_id=agent_id,
                     user_external_id=user_external_id,
+                    recent_history=chat_history,
                 )
                 crm_tool_names = {
                     str(item.get("function", {}).get("name") or "")
@@ -1213,6 +1225,7 @@ class TemplateRuntimeService:
             enabled=http_integrations_enabled,
             name_allowlist=http_integration_names_allow,
             user_message=user_message or "",
+            recent_history=chat_history,
         )
 
         llm_tools: list[dict[str, Any]] = []
@@ -1224,11 +1237,6 @@ class TemplateRuntimeService:
         if not llm_tools:
             return None
 
-        chat_history = await self._load_recent_channel_history(
-            agent_id=agent_id,
-            user_external_id=user_external_id,
-            source_channel=source_channel,
-        )
         client_memory_section = build_client_memory_system_section(
             portrait=chat_portrait,
             history=chat_history,
@@ -2305,12 +2313,16 @@ class TemplateRuntimeService:
                     )
                 except SalesNeedsConfirmationError as exc:
                     safe_error = redact_pii_text(str(exc))
-                    tool_result = {"ok": False, "error": safe_error}
+                    tool_result = {
+                        "ok": False,
+                        "status": "awaiting_user_confirmation",
+                        "hint": safe_error,
+                    }
                     tool_events.append(
                         {
                             "tool_name": tool_name,
                             "tool_args_hash": None,
-                            "tool_status": "confirmation_required",
+                            "tool_status": "awaiting_user_confirmation",
                             "latency_ms": 0,
                             "crm_provider": None,
                             "source_channel": source_channel,
@@ -2363,8 +2375,8 @@ class TemplateRuntimeService:
             answer = composed_dm
         elif last_status == "draft_requires_review":
             answer = composed_dm or CLIENT_ACTION_PENDING_MESSAGE
-        elif last_status == "confirmation_required":
-            answer = CLIENT_CONFIRMATION_REQUIRED_MESSAGE
+        elif last_status in {"confirmation_required", "awaiting_user_confirmation"}:
+            answer = composed_dm or CLIENT_ACTION_PENDING_MESSAGE
         elif last_status.startswith("skipped_"):
             answer = "Лид пропущен согласно policy."
         else:
