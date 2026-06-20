@@ -178,6 +178,11 @@ async def compose_follow_up_message(
         template_config=template_config,
         current_sales_state="SENT",
         recent_history=[],
+        interaction_hint="follow_up",
+        runtime_context={
+            "follow_up_tier": tier,
+            "user_display_name": str(row.org_name or "").strip() or None,
+        },
     )
 
 

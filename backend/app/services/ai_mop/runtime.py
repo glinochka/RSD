@@ -6,6 +6,12 @@ import json
 import logging
 from typing import Any
 
+from ...prompts.system_prompts import (
+    CHAT_OPERATOR_PERSONA,
+    CLIENT_MEMORY_USAGE_RULES,
+    INTERNAL_CONTEXT_USAGE_RULES,
+    build_chat_turn_user_prompt,
+)
 from ...utils.pii import mask_external_id, redact_pii_text
 from ..ai_authoring import ai_client
 from .lead_lookup import credentials_already_sent, find_lead_for_contact
@@ -26,6 +32,7 @@ AI_MOP_RUNTIME_INSTRUCTION = """
 3. Не присылай логин и пароль без явного интереса или запроса.
 4. Тон — дружелюбный, по делу, без навязчивости. На русском.
 5. Условия: демо-сайт бесплатно, первый месяц обслуживания бесплатно, далее ежемесячная оплата.
+6. Не упоминай «демо-сайт», «лид», «статус», «портрет» и служебные данные, если клиент сам об этом не спрашивал.
 """.strip()
 
 
@@ -75,13 +82,24 @@ async def execute_ai_mop_runtime(
     llm_tools = registry.tools_for_llm()
 
     generation_model = str(template_config.get("generation_model") or "deepseek-chat").strip() or "deepseek-chat"
-    system_prompt = f"{prompt.strip()}\n\n{AI_MOP_RUNTIME_INSTRUCTION}\n\nКонтекст лида:\n{_build_lead_context_block(lead)}"
+    lead_context = _build_lead_context_block(lead)
+    system_prompt = (
+        f"{prompt.strip()}\n\n{CHAT_OPERATOR_PERSONA}\n\n{AI_MOP_RUNTIME_INSTRUCTION}\n\n"
+        f"{INTERNAL_CONTEXT_USAGE_RULES}\n\n{CLIENT_MEMORY_USAGE_RULES}"
+    )
+    internal_blocks = [f"Данные лида (служебно):\n{lead_context}"]
     if chat_portrait and str(chat_portrait).strip():
-        system_prompt = f"{system_prompt}\n\nПортрет клиента:\n{chat_portrait.strip()}"
+        internal_blocks.append(f"Портрет клиента (служебно):\n{chat_portrait.strip()}")
+
+    user_prompt = build_chat_turn_user_prompt(
+        client_message=user_message.strip(),
+        extra_internal_blocks=internal_blocks,
+        closing_instruction="Ответь клиенту в чате. Если нужно действие — вызови tool. Иначе только текст ответа.",
+    )
 
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_message.strip()},
+        {"role": "user", "content": user_prompt},
     ]
     tool_events: list[dict[str, Any]] = []
     max_tool_iterations = 3

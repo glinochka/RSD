@@ -481,6 +481,12 @@ async def _handle_chat_message(
             peer_access_hash = int(ah)
 
     source_chat_id = str(event.chat_id) if hasattr(event, "chat_id") else "0"
+    source_chat_title = ""
+    try:
+        chat = await event.get_chat()
+        source_chat_title = str(getattr(chat, "title", None) or "").strip()
+    except Exception:
+        logger.debug("userbot: failed to resolve chat title chat_id=%s", source_chat_id, exc_info=True)
     
     user_display_name = (
         (getattr(sender, "first_name", "") or "").strip()
@@ -505,6 +511,8 @@ async def _handle_chat_message(
             "lead_initiated_private_dialog": False,
             "is_private_chat": False,
             "source_chat_id": source_chat_id,
+            "source_chat_title": source_chat_title,
+            "user_display_name": user_display_name,
             "lead_generation_enabled": lead_generation_enabled,
             "neuro_commenting_enabled": neuro_commenting_enabled,
             "live_chat_simulation_enabled": live_chat_simulation_enabled,

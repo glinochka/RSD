@@ -134,17 +134,25 @@ async def stream_answer_sentences(
     """Stream LLM completion and yield text chunks at syntagma boundaries."""
     llm_start = time.perf_counter()
     if not context_list:
-        context_text = "Информации в базе знаний не найдено."
+        context_text = None
     else:
-        context_parts = [
-            f"Источник: {c.get('source', 'Unknown')}\nТекст: {c.get('text', '')}" for c in context_list
-        ]
-        context_text = "\n\n---\n\n".join(context_parts)
+        context_text = format_rag_chunks_for_prompt(context_list)
 
-    from ..prompts.system_prompts import PLAIN_TEXT_RESPONSE_RULES_STREAMING
+    from ..prompts.system_prompts import (
+        CHAT_OPERATOR_PERSONA,
+        INTERNAL_CONTEXT_USAGE_RULES,
+        PLAIN_TEXT_RESPONSE_RULES_STREAMING,
+        build_chat_turn_user_prompt,
+    )
 
-    base_system = f"{system_prompt}\n\n{PLAIN_TEXT_RESPONSE_RULES_STREAMING}"
-    user_prompt = f"КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ:\n{context_text}\n\nВОПРОС ПОЛЬЗОВАТЕЛЯ: {question}"
+    base_system = (
+        f"{system_prompt}\n\n{CHAT_OPERATOR_PERSONA}\n\n"
+        f"{PLAIN_TEXT_RESPONSE_RULES_STREAMING}\n\n{INTERNAL_CONTEXT_USAGE_RULES}"
+    )
+    user_prompt = build_chat_turn_user_prompt(
+        client_message=question,
+        rag_context_text=context_text,
+    )
     model = _llm_model(chat_model)
     mode = (getattr(settings, "TELEPHONY_LLM_MODE", None) or "chat").strip().lower()
     min_len = max(1, int(min_chunk_chars or settings.TELEPHONY_SYNTAGMA_MIN_CHARS))

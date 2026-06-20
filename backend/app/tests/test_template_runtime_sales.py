@@ -97,7 +97,8 @@ async def test_sales_runtime_draft_only(monkeypatch):
         user_external_id="12345",
     )
 
-    assert "Черновик outreach" in result.answer
+    assert "Здравствуйте" in result.answer
+    assert "Черновик outreach" not in result.answer
     assert result.sources == ["kb://offer"]
     assert result.tool_events
     assert result.tool_events[0]["tool_status"] == "draft_requires_review"
@@ -139,13 +140,60 @@ async def test_sales_runtime_skip_low_confidence(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_sales_runtime_group_chat_injects_scenario_frame(monkeypatch):
+    service = TemplateRuntimeService()
+    captured: dict[str, object] = {}
+
+    async def fake_create(**kwargs):
+        msgs = kwargs.get("messages") or []
+        user_blob = "\n".join(str(m.get("content") or "") for m in msgs if m.get("role") == "user")
+        captured["user_blob"] = user_blob
+        return _completion(
+            '{"decision":"engage","intent":"target_hot","confidence":0.93,"reason":"прямой спрос",'
+            '"lead_temperature":"hot","lead_heat_score":85,"resilience_score":70,"engagement_score":93,'
+            '"stage_hint":"discovery","handoff_ready":false,"workflow_outcome":"continue",'
+            '"composed_message":"Здравствуйте! Увидел ваше сообщение в чате."}'
+        )
+
+    async def fake_search(query, agent_id):
+        return [{"source": "kb://offer", "text": "context"}]
+
+    monkeypatch.setattr("app.services.template_runtime.ai_client.chat.completions.create", fake_create)
+    monkeypatch.setattr("app.services.template_runtime.search_knowledge_base", fake_search)
+    monkeypatch.setattr("app.services.template_runtime.get_sales_fsm_service", lambda: _FakeFSMService())
+
+    await service.execute(
+        template_type="sales_manager",
+        prompt="Ты sales-агент",
+        user_message="Ищем решение для автоматизации отдела продаж",
+        knowledge_scope_id=101,
+        template_config={"mode": "draft_only", "min_confidence": 0.75},
+        source_channel="telegram_userbot",
+        user_external_id="12345",
+        runtime_context={
+            "is_group_chat": True,
+            "lead_generation_enabled": True,
+            "source_chat_title": "Продажи B2B",
+            "user_display_name": "Алексей",
+        },
+    )
+
+    user_blob = str(captured.get("user_blob") or "")
+    assert "группового чата" in user_blob.lower()
+    assert "Продажи B2B" in user_blob
+    assert "Алексей" in user_blob
+    assert "Сообщение клиента" in user_blob
+
+
+@pytest.mark.asyncio
 async def test_sales_runtime_neuro_channel_skips_lead_pipeline(monkeypatch):
     service = TemplateRuntimeService()
 
     async def fake_create(**kwargs):
         msgs = kwargs.get("messages") or []
         user_blob = "\n".join(str(m.get("content") or "") for m in msgs if m.get("role") == "user")
-        assert "Верни только текст комментария." in user_blob
+        assert "Верни только текст комментария под постом." in user_blob
+        assert "СЛУЖЕБНЫЕ МАТЕРИАЛЫ" in user_blob
         return _completion("Сильная мысль, полезно для практики.")
 
     async def fake_search(query, agent_id):
@@ -464,9 +512,11 @@ async def test_qa_runtime_marks_owner_handoff_by_marker(monkeypatch):
         prompt="Ты QA-ассистент",
         user_message="Какой у меня индивидуальный тариф?",
         knowledge_scope_id=101,
+        template_config={"enable_chat_freeze": True},
     )
 
-    assert "ручная проверка" in result.answer
+    assert "ручная проверка" not in result.answer
+    assert "владельц" not in result.answer.lower() or "переключу" in result.answer.lower()
     assert result.requires_owner_handoff is True
     assert result.owner_handoff_reason is not None
     assert result.escalation_type == EscalationType.FREEZE_CHAT

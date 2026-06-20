@@ -126,6 +126,8 @@ async def schedule_outreach_for_import_batch(
                 template_config=template_config,
                 current_sales_state="DISCOVERED",
                 recent_history=[],
+                interaction_hint="cold_outreach",
+                runtime_context={"user_display_name": str(row.org_name or "").strip() or None},
             )
             if not message_text.strip():
                 raise RuntimeError("Пустой текст сообщения")

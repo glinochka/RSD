@@ -7,7 +7,9 @@ from ..prompts.system_prompts import (
     AI_AUTHORING_EMPTY_ANSWER_FALLBACK,
     IMPROVE_PROMPT_INSTRUCTION,
     WELCOME_GENERATION_INSTRUCTION,
+    build_chat_turn_user_prompt,
     build_rag_answer_system_prompt,
+    format_rag_chunks_for_prompt,
 )
 
 logger = logging.getLogger(__name__)
@@ -79,18 +81,16 @@ async def generate_answer_with_context(
     memory_context: str | None = None,
 ) -> str:
     if not context_list:
-        context_text = "Информации в базе знаний не найдено."
+        context_text = None
     else:
-        context_parts = [f"Источник: {c.get('source', 'Unknown')}\nТекст: {c.get('text', '')}" for c in context_list]
-        context_text = "\n\n---\n\n".join(context_parts)
+        context_text = format_rag_chunks_for_prompt(context_list)
 
     base_system = build_rag_answer_system_prompt(system_prompt)
-    parts = [f"КОНТЕКСТ ИЗ БАЗЫ ЗНАНИЙ:\n{context_text}"]
-    memory = (memory_context or "").strip()
-    if memory:
-        parts.append(memory)
-    parts.append(f"ВОПРОС ПОЛЬЗОВАТЕЛЯ: {question}")
-    user_prompt = "\n\n".join(parts)
+    user_prompt = build_chat_turn_user_prompt(
+        client_message=question,
+        rag_context_text=context_text,
+        memory_context=(memory_context or "").strip() or None,
+    )
     model = (chat_model or "deepseek-chat").strip() or "deepseek-chat"
 
     response = await ai_client.chat.completions.create(

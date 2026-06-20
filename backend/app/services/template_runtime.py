@@ -28,8 +28,22 @@ from .http_integration.errors import HttpIntegrationNeedsConfirmationError, Http
 from .http_integration.tool_registry import load_http_integration_registry
 from .sales.tool_registry import SalesNeedsConfirmationError, SalesToolRegistry
 from .sales.fsm import SalesFSMError, get_sales_fsm_service
+from .sales.sales_scenario_context import (
+    SCENARIO_CHANNEL_NEURO_COMMENT,
+    build_sales_compose_action_instruction,
+    build_sales_llm_user_prompt,
+    build_sales_message_frame,
+    build_sales_scenario_system_addon,
+    build_sales_unified_task_instruction,
+    resolve_sales_interaction_scenario,
+)
 from ..prompts.system_prompts import (
+    CHAT_OPERATOR_PERSONA,
     CHAT_PORTRAIT_SYSTEM,
+    CLIENT_ACTION_PENDING_MESSAGE,
+    CLIENT_CONFIRMATION_REQUIRED_MESSAGE,
+    CLIENT_OPERATOR_ESCALATION_MESSAGE,
+    CLIENT_OWNER_HANDOFF_MESSAGE,
     CRM_ADMIN_HTTP_INTEGRATION_HINT,
     CRM_ADMIN_LLM_EMPTY_FALLBACK,
     CRM_ADMIN_RESOURCE_LINKED_HINT,
@@ -46,9 +60,12 @@ from ..prompts.system_prompts import (
     SALES_UNIFIED_FINISH_MODE_ADDON,
     SALES_UNIFIED_QUALIFY_INSTRUCTION,
     SANITIZE_EMPTY_ANSWER_FALLBACK,
+    build_chat_turn_user_prompt,
     build_crm_admin_system_prompt,
     build_crm_admin_applications_system_prompt,
     CRM_ADMIN_APPLICATIONS_LLM_EMPTY_FALLBACK,
+    coerce_client_facing_answer,
+    format_rag_chunks_for_prompt,
     sales_stage_instruction,
 )
 from ..qdrant.search_service import search_knowledge_base
@@ -497,7 +514,8 @@ class TemplateRuntimeService:
         collapsed = "\n".join(safe_lines).strip()
         if not collapsed or TemplateRuntimeService._is_degenerate_sanitized_answer(collapsed):
             return SANITIZE_EMPTY_ANSWER_FALLBACK
-        return TemplateRuntimeService._restore_https_urls(collapsed, stashed_urls)
+        restored = TemplateRuntimeService._restore_https_urls(collapsed, stashed_urls)
+        return coerce_client_facing_answer(restored)
 
     def _sanitize_result(self, result: TemplateExecutionResult) -> TemplateExecutionResult:
         if not result.discard_message:
@@ -987,7 +1005,11 @@ class TemplateRuntimeService:
                             "error": safe_error,
                         }
                     )
-                    return TemplateExecutionResult(answer=safe_error, sources=[], tool_events=tool_events)
+                    return TemplateExecutionResult(
+                        answer=CLIENT_CONFIRMATION_REQUIRED_MESSAGE,
+                        sources=[],
+                        tool_events=tool_events,
+                    )
                 except CRMNeedsConfirmationError as exc:
                     safe_error = redact_pii_text(str(exc))
                     tool_events.append(
@@ -1005,7 +1027,11 @@ class TemplateRuntimeService:
                             "error": safe_error,
                         }
                     )
-                    return TemplateExecutionResult(answer=safe_error, sources=[], tool_events=tool_events)
+                    return TemplateExecutionResult(
+                        answer=CLIENT_CONFIRMATION_REQUIRED_MESSAGE,
+                        sources=[],
+                        tool_events=tool_events,
+                    )
                 except HttpIntegrationNeedsConfirmationError as exc:
                     safe_error = redact_pii_text(str(exc))
                     tool_events.append(
@@ -1023,7 +1049,11 @@ class TemplateRuntimeService:
                             "error": safe_error,
                         }
                     )
-                    return TemplateExecutionResult(answer=safe_error, sources=[], tool_events=tool_events)
+                    return TemplateExecutionResult(
+                        answer=CLIENT_CONFIRMATION_REQUIRED_MESSAGE,
+                        sources=[],
+                        tool_events=tool_events,
+                    )
                 except HttpIntegrationValidationError as exc:
                     safe_error = redact_pii_text(str(exc))
                     tool_result = {"ok": False, "error": safe_error}
@@ -1552,18 +1582,21 @@ class TemplateRuntimeService:
             r"\[OPERATOR_ASSIST\]\s*(.*)", text, flags=re.IGNORECASE | re.DOTALL
         )
         if operator_assist_match:
+            client_part = text[: operator_assist_match.start()].strip()
             reason_text = (operator_assist_match.group(1) or "").strip()
             first_sentence = reason_text.split("\n", 1)[0][:300] if reason_text else "operator_assist_requested"
-            default_msg = "Вызываю старшего менеджера, подождите пожалуйста. А пока могу помочь вам с другими вопросами."
-            return reason_text or default_msg, True, first_sentence, EscalationType.NOTIFY_ONLY
+            client_answer = client_part or CLIENT_OPERATOR_ESCALATION_MESSAGE
+            return client_answer, True, first_sentence, EscalationType.NOTIFY_ONLY
 
         owner_handoff_match = re.search(
             r"\[OWNER_HANDOFF\]\s*(.*)", text, flags=re.IGNORECASE | re.DOTALL
         )
         if owner_handoff_match:
+            client_part = text[: owner_handoff_match.start()].strip()
             reason_text = (owner_handoff_match.group(1) or "").strip()
             first_sentence = reason_text.split("\n", 1)[0][:300] if reason_text else "owner_handoff_requested"
-            return reason_text or "Передаю запрос владельцу для ручной обработки.", True, first_sentence, EscalationType.FREEZE_CHAT
+            client_answer = client_part or CLIENT_OWNER_HANDOFF_MESSAGE
+            return client_answer, True, first_sentence, EscalationType.FREEZE_CHAT
 
         operator_call_markers = (
             "вызываю оператора",
@@ -1577,7 +1610,7 @@ class TemplateRuntimeService:
         lowered = text.lower()
         for marker in operator_call_markers:
             if marker in lowered:
-                return text, True, marker, EscalationType.NOTIFY_ONLY
+                return coerce_client_facing_answer(text, fallback=CLIENT_OPERATOR_ESCALATION_MESSAGE), True, marker, EscalationType.NOTIFY_ONLY
 
         uncertainty_markers = (
             "не хватает данных",
@@ -1588,10 +1621,15 @@ class TemplateRuntimeService:
             "передам владельцу",
             "обратитесь к владельцу",
             "требуется вмешательство",
+            "внутренн",
+            "системн",
+            "недоступно мне",
+            "требуется помощь оператора",
+            "клиент запрашивает",
         )
         for marker in uncertainty_markers:
             if marker in lowered:
-                return text, True, marker, EscalationType.NOTIFY_ONLY
+                return CLIENT_OPERATOR_ESCALATION_MESSAGE, True, marker, EscalationType.NOTIFY_ONLY
         return text, False, None, EscalationType.NONE
 
     async def _execute_content_factory(
@@ -1634,24 +1672,32 @@ class TemplateRuntimeService:
         post_text: str,
         context_list: list[dict[str, Any]],
         template_config: dict[str, Any],
+        runtime_context: dict[str, Any] | None = None,
+        source_channel: str | None = None,
     ) -> str:
         """Short public comment for channel posts; no lead qualification."""
         model = str(template_config.get("generation_model") or "deepseek-chat").strip() or "deepseek-chat"
         product_name = str(template_config.get("sales_product_name") or "ваш продукт").strip() or "ваш продукт"
         offer_type = str(template_config.get("sales_offer_type") or "услуга").strip() or "услуга"
         usp = str(template_config.get("sales_usp") or "").strip()
-        context_parts = [
-            f"Источник: {c.get('source', 'Unknown')}\nТекст: {c.get('text', '')}"
-            for c in context_list
-        ]
-        context_text = "\n\n---\n\n".join(context_parts) if context_parts else "Дополнительный контекст не найден."
+        context_text = format_rag_chunks_for_prompt(context_list)
+        scenario_addon = build_sales_scenario_system_addon(scenario=SCENARIO_CHANNEL_NEURO_COMMENT)
         system_prompt = f"{prompt}\n\n{SALES_NEURO_COMMENT_INSTRUCTION.format(product_name=product_name, offer_type=offer_type)}"
+        if scenario_addon:
+            system_prompt = f"{system_prompt}\n\n{scenario_addon}"
         if usp:
-            system_prompt = f"{system_prompt}\nУТП: {usp}"
-        user_prompt = (
-            f"Текст поста:\n{post_text}\n\n"
-            f"Материалы из базы знаний:\n{context_text}\n\n"
-            "Верни только текст комментария."
+            system_prompt = f"{system_prompt}\nУТП (служебно): {usp}"
+        message_frame = build_sales_message_frame(
+            scenario=SCENARIO_CHANNEL_NEURO_COMMENT,
+            user_message=post_text,
+            runtime_context=runtime_context,
+            source_channel=source_channel,
+        )
+        user_prompt = build_chat_turn_user_prompt(
+            client_message=post_text,
+            rag_context_text=context_text,
+            extra_internal_blocks=[message_frame] if message_frame else None,
+            closing_instruction="Верни только текст комментария под постом.",
         )
         completion = await ai_client.chat.completions.create(
             model=model,
@@ -1673,6 +1719,7 @@ class TemplateRuntimeService:
         template_config: dict[str, Any],
         source_channel: str,
         user_external_id: str | None,
+        runtime_context: dict[str, Any] | None = None,
     ) -> TemplateExecutionResult:
         """Neuro-commenting on channel posts: compose comment only, skip lead pipeline."""
         context_list, sources = await self.retrieve_offer_context(
@@ -1685,6 +1732,8 @@ class TemplateRuntimeService:
             post_text=user_message,
             context_list=context_list,
             template_config=template_config,
+            runtime_context=runtime_context,
+            source_channel=source_channel,
         )
         cleaned = self._clean_llm_text(raw_comment)
         if self._is_degenerate_sanitized_answer(cleaned):
@@ -1760,6 +1809,7 @@ class TemplateRuntimeService:
                 template_config=template_config,
                 source_channel=source_channel,
                 user_external_id=user_external_id,
+                runtime_context=runtime_context,
             )
 
         contacts_pool_only = bool(template_config.get("contacts_pool_only"))
@@ -1849,6 +1899,11 @@ class TemplateRuntimeService:
                 ],
             )
         lead_initiated_private_dialog = bool(runtime_context.get("lead_initiated_private_dialog"))
+        sales_scenario = resolve_sales_interaction_scenario(
+            runtime_context=runtime_context,
+            source_channel=source_channel,
+            current_sales_state=current_sales_state,
+        )
         context_list, sources = await self.retrieve_offer_context(
             user_message=user_message,
             knowledge_scope_id=knowledge_scope_id,
@@ -1877,6 +1932,9 @@ class TemplateRuntimeService:
                 chat_portrait=chat_portrait,
                 current_sales_state=current_sales_state,
                 recent_history=recent_history,
+                sales_scenario=sales_scenario,
+                runtime_context=runtime_context,
+                source_channel=source_channel,
             )
         else:
             unified = await self._qualify_and_compose_unified(
@@ -1889,6 +1947,9 @@ class TemplateRuntimeService:
                 recent_history=recent_history,
                 workflow_completion_mode=workflow_completion_mode,
                 lead_score_scale=lead_score_scale,
+                sales_scenario=sales_scenario,
+                runtime_context=runtime_context,
+                source_channel=source_channel,
             )
             qualification = unified["qualification"]
             composed_dm = unified["composed_dm"]
@@ -2067,6 +2128,8 @@ class TemplateRuntimeService:
                 sources=sources,
                 chat_portrait=chat_portrait,
                 telegram_peer_access_hash=peer_hash,
+                sales_scenario=sales_scenario,
+                runtime_context=runtime_context,
             )
             if tool_driven is not None:
                 if agent_id and user_external_id and tool_driven.tool_events:
@@ -2139,6 +2202,8 @@ class TemplateRuntimeService:
         sources: list[str],
         chat_portrait: str | None = None,
         telegram_peer_access_hash: int | None = None,
+        sales_scenario: str | None = None,
+        runtime_context: dict[str, Any] | None = None,
     ) -> TemplateExecutionResult | None:
         allowed_tools_raw = template_config.get("allowed_tools")
         allowed_tools = allowed_tools_raw if isinstance(allowed_tools_raw, list) else None
@@ -2161,19 +2226,37 @@ class TemplateRuntimeService:
 
         generation_model = str(template_config.get("generation_model") or "deepseek-chat").strip() or "deepseek-chat"
         client_memory_section = build_client_memory_system_section(portrait=chat_portrait, history=None)
+        scenario = sales_scenario or resolve_sales_interaction_scenario(
+            runtime_context=runtime_context,
+            source_channel=source_channel,
+        )
+        scenario_addon = build_sales_scenario_system_addon(scenario=scenario)
         system_prompt = f"{prompt}\n\n{SALES_TOOLS_SYSTEM_INSTRUCTION}"
+        if scenario_addon:
+            system_prompt = f"{system_prompt}\n\n{scenario_addon}"
         if client_memory_section:
             system_prompt = f"{system_prompt}\n\n{client_memory_section}"
+        message_frame = build_sales_message_frame(
+            scenario=scenario,
+            user_message=user_message,
+            runtime_context=runtime_context,
+            source_channel=source_channel,
+        )
+        tool_user_prompt = build_sales_llm_user_prompt(
+            scenario=scenario,
+            user_message=user_message,
+            context_list=None,
+            message_frame=message_frame,
+            qualification=qualification,
+            task_instruction=(
+                f"Черновик outreach (служебно): {composed_dm}\n"
+                f"Канал (служебно): {source_channel}\n"
+                "Выбери подходящий tool call для следующего шага."
+            ),
+        )
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": (
-                    f"Классификация: {json.dumps(qualification, ensure_ascii=False)}\n"
-                    f"Черновик outreach: {composed_dm}\n"
-                    f"Канал: {source_channel}"
-                ),
-            },
+            {"role": "user", "content": tool_user_prompt},
         ]
         tool_events: list[dict[str, Any]] = []
         max_tool_iterations = 2
@@ -2279,9 +2362,9 @@ class TemplateRuntimeService:
         if last_status == "sent_auto":
             answer = composed_dm
         elif last_status == "draft_requires_review":
-            answer = f"Требуется подтверждение владельца. Черновик:\n{composed_dm}"
+            answer = composed_dm or CLIENT_ACTION_PENDING_MESSAGE
         elif last_status == "confirmation_required":
-            answer = "Для выполнения действия требуется явное подтверждение пользователя."
+            answer = CLIENT_CONFIRMATION_REQUIRED_MESSAGE
         elif last_status.startswith("skipped_"):
             answer = "Лид пропущен согласно policy."
         else:
@@ -2300,6 +2383,9 @@ class TemplateRuntimeService:
         recent_history: list[dict[str, Any]] | None = None,
         workflow_completion_mode: str = "auto_finish_on_signal",
         lead_score_scale: int = 100,
+        sales_scenario: str | None = None,
+        runtime_context: dict[str, Any] | None = None,
+        source_channel: str | None = None,
     ) -> dict[str, Any]:
         model = str(template_config.get("qualification_model") or "deepseek-chat").strip() or "deepseek-chat"
         product_name = str(template_config.get("sales_product_name") or "ваш продукт").strip() or "ваш продукт"
@@ -2309,34 +2395,49 @@ class TemplateRuntimeService:
             portrait=chat_portrait,
             history=recent_history,
         )
-        context_parts = [
-            f"Источник: {c.get('source', 'Unknown')}\nТекст: {c.get('text', '')}"
-            for c in context_list
-        ]
-        context_text = "\n\n---\n\n".join(context_parts) if context_parts else "Контекст не найден."
+        scenario = sales_scenario or resolve_sales_interaction_scenario(
+            runtime_context=runtime_context,
+            source_channel=source_channel,
+            current_sales_state=current_sales_state,
+        )
+        scenario_addon = build_sales_scenario_system_addon(scenario=scenario)
+        state_upper = (current_sales_state or "DISCOVERED").strip().upper()
+        stage_hint = "discovery" if state_upper in {"SENT", "REPLIED_POSITIVE", "REPLIED_NEGATIVE", "QUEUED"} else "first_touch"
         stage_instruction = sales_stage_instruction(
-            current_sales_state=(current_sales_state or "DISCOVERED").strip().upper(),
-            stage_hint="first_touch",
+            current_sales_state=state_upper,
+            stage_hint=stage_hint,
         )
 
         instruction = f"{prompt}\n\n{SALES_UNIFIED_QUALIFY_INSTRUCTION.format(
             product_name=product_name,
             offer_type=offer_type,
-            current_sales_state=(current_sales_state or 'DISCOVERED').strip().upper(),
+            current_sales_state=state_upper,
             stage_instruction=stage_instruction,
             lead_score_scale=lead_score_scale,
-        )}\n\n{SALES_HUMAN_FLEXIBILITY_BLOCK}"
+        )}\n\n{CHAT_OPERATOR_PERSONA}\n\n{SALES_HUMAN_FLEXIBILITY_BLOCK}"
+        if scenario_addon:
+            instruction = f"{instruction}\n\n{scenario_addon}"
         if workflow_completion_mode == "auto_finish_on_signal":
             instruction = f"{instruction}\n{SALES_UNIFIED_FINISH_MODE_ADDON}"
         if client_memory_section:
             instruction = f"{instruction}\n\n{client_memory_section}"
         if usp:
-            instruction = f"{instruction}\n\nКлючевое УТП:\n{usp}"
+            instruction = f"{instruction}\n\nКлючевое УТП (служебно, не цитировать дословно):\n{usp}"
 
-        user_prompt = (
-            f"Исходное сообщение в чате:\n{user_message}\n\n"
-            f"Контекст продукта (RAG):\n{context_text}\n\n"
-            "Проанализируй сообщение и верни JSON с квалификацией и текстом следующего сообщения."
+        message_frame = build_sales_message_frame(
+            scenario=scenario,
+            user_message=user_message,
+            runtime_context=runtime_context,
+            source_channel=source_channel,
+            current_sales_state=current_sales_state,
+        )
+        task_instruction = build_sales_unified_task_instruction(scenario=scenario)
+        user_prompt = build_sales_llm_user_prompt(
+            scenario=scenario,
+            user_message=user_message,
+            context_list=context_list,
+            message_frame=message_frame,
+            task_instruction=task_instruction,
         )
 
         try:
@@ -2425,6 +2526,9 @@ class TemplateRuntimeService:
         recent_history: list[dict[str, Any]] | None = None,
         workflow_completion_mode: str = "auto_finish_on_signal",
         lead_score_scale: int = 100,
+        sales_scenario: str | None = None,
+        runtime_context: dict[str, Any] | None = None,
+        source_channel: str | None = None,
     ) -> dict[str, Any]:
         model = str(template_config.get("qualification_model") or "deepseek-chat").strip() or "deepseek-chat"
         product_name = str(template_config.get("sales_product_name") or "ваш продукт").strip() or "ваш продукт"
@@ -2434,11 +2538,19 @@ class TemplateRuntimeService:
             portrait=chat_portrait,
             history=recent_history,
         )
+        scenario = sales_scenario or resolve_sales_interaction_scenario(
+            runtime_context=runtime_context,
+            source_channel=source_channel,
+            current_sales_state=current_sales_state,
+        )
+        scenario_addon = build_sales_scenario_system_addon(scenario=scenario)
         instruction = f"{prompt}\n\n{SALES_PRE_SALES_SCREENING_INSTRUCTION.format(
             product_name=product_name,
             offer_type=offer_type,
             current_sales_state=(current_sales_state or 'DISCOVERED').strip().upper(),
         )}"
+        if scenario_addon:
+            instruction = f"{instruction}\n\n{scenario_addon}"
         if workflow_completion_mode == "auto_finish_on_signal":
             instruction = f"{instruction}\n{SALES_PRE_SALES_FINISH_MODE_ADDON}"
         instruction = f"{instruction}\n{SALES_PRE_SALES_SCORING_ADDON.format(lead_score_scale=lead_score_scale)}"
@@ -2510,18 +2622,26 @@ class TemplateRuntimeService:
                     },
                 }
             )
+        message_frame = build_sales_message_frame(
+            scenario=scenario,
+            user_message=user_message,
+            runtime_context=runtime_context,
+            source_channel=source_channel,
+            current_sales_state=current_sales_state,
+        )
+        screening_task = build_sales_unified_task_instruction(scenario=scenario)
+        screening_user_prompt = build_sales_llm_user_prompt(
+            scenario=scenario,
+            user_message=user_message,
+            context_list=None,
+            message_frame=message_frame,
+            task_instruction=screening_task,
+        )
         completion = await ai_client.chat.completions.create(
             model=model,
             messages=[
                 {"role": "system", "content": instruction},
-                {
-                    "role": "user",
-                    "content": (
-                        "Вот сообщение из чата потенциального клиента:\n"
-                        f"{user_message}\n\n"
-                        "Реши, стоит ли отписывать этому человеку в личку для продажи."
-                    ),
-                },
+                {"role": "user", "content": screening_user_prompt},
             ],
             tools=tools,
             tool_choice="auto",
@@ -2667,6 +2787,10 @@ class TemplateRuntimeService:
         chat_portrait: str | None = None,
         current_sales_state: str = "DISCOVERED",
         recent_history: list[dict[str, Any]] | None = None,
+        sales_scenario: str | None = None,
+        runtime_context: dict[str, Any] | None = None,
+        source_channel: str | None = None,
+        interaction_hint: str | None = None,
     ) -> str:
         model = str(template_config.get("generation_model") or "deepseek-chat").strip() or "deepseek-chat"
         product_name = str(template_config.get("sales_product_name") or "ваш продукт").strip() or "ваш продукт"
@@ -2674,11 +2798,6 @@ class TemplateRuntimeService:
         usp = str(template_config.get("sales_usp") or "").strip()
         stage_hint = str(qualification.get("stage_hint") or "first_touch").strip().lower()
         lead_profile_block = self._format_sales_lead_profile(qualification.get("lead_profile"))
-        context_parts = [
-            f"Источник: {c.get('source', 'Unknown')}\nТекст: {c.get('text', '')}"
-            for c in context_list
-        ]
-        context_text = "\n\n---\n\n".join(context_parts) if context_parts else "Контекст не найден."
         client_memory_section = build_client_memory_system_section(
             portrait=chat_portrait,
             history=recent_history,
@@ -2687,6 +2806,13 @@ class TemplateRuntimeService:
             current_sales_state=(current_sales_state or "DISCOVERED").strip().upper(),
             stage_hint=stage_hint,
         )
+        scenario = sales_scenario or resolve_sales_interaction_scenario(
+            runtime_context=runtime_context,
+            source_channel=source_channel,
+            current_sales_state=current_sales_state,
+            interaction_hint=interaction_hint,
+        )
+        scenario_addon = build_sales_scenario_system_addon(scenario=scenario)
 
         system_prompt = f"{prompt}\n\n{SALES_DM_COMPOSE_INSTRUCTION.format(
             product_name=product_name,
@@ -2694,22 +2820,29 @@ class TemplateRuntimeService:
             current_sales_state=(current_sales_state or 'DISCOVERED').strip().upper(),
             stage_instruction=stage_instruction,
         )}"
+        if scenario_addon:
+            system_prompt = f"{system_prompt}\n\n{scenario_addon}"
         if client_memory_section:
             system_prompt = f"{system_prompt}\n\n{client_memory_section}"
         if lead_profile_block:
             system_prompt = f"{system_prompt}\n\n{lead_profile_block}"
         if usp:
-            system_prompt = f"{system_prompt}\n\nКлючевое УТП:\n{usp}"
-        user_prompt = (
-            f"Исходное сообщение в чате:\n{user_message}\n\n"
-            f"Классификация:\n{json.dumps(qualification, ensure_ascii=False)}\n\n"
-            f"Контекст продукта (RAG):\n{context_text}\n\n"
-            "Сгенерируй следующее сообщение sales-диалога.\n"
-            "Если это первый контакт - используй мягкий старт формата: "
-            "'увидел ваше сообщение в чате, подскажите, вам интересно ...'.\n"
-            "Если это продолжение - выявляй боли, показывай что изменится после внедрения, "
-            "и подводи к передаче на ЛПР/заявку, когда клиент готов.\n"
-            "Длина: 1-4 предложения."
+            system_prompt = f"{system_prompt}\n\nКлючевое УТП (служебно, не цитировать дословно):\n{usp}"
+        message_frame = build_sales_message_frame(
+            scenario=scenario,
+            user_message=user_message,
+            runtime_context=runtime_context,
+            source_channel=source_channel,
+            current_sales_state=current_sales_state,
+        )
+        action_instruction = build_sales_compose_action_instruction(scenario=scenario)
+        user_prompt = build_sales_llm_user_prompt(
+            scenario=scenario,
+            user_message=user_message,
+            context_list=context_list,
+            message_frame=message_frame,
+            qualification=qualification,
+            task_instruction=action_instruction,
         )
         completion = await ai_client.chat.completions.create(
             model=model,
@@ -2756,10 +2889,10 @@ class TemplateRuntimeService:
             answer = composed_dm
         elif mode == "semi_auto":
             reason_code = "draft_requires_review"
-            answer = f"Требуется подтверждение владельца. Черновик:\n{composed_dm}"
+            answer = composed_dm or CLIENT_ACTION_PENDING_MESSAGE
         else:
             reason_code = "draft_requires_review"
-            answer = f"Черновик outreach (режим draft_only):\n{composed_dm}"
+            answer = composed_dm or CLIENT_ACTION_PENDING_MESSAGE
 
         event = {
             "tool_name": "sales_outreach_action",
