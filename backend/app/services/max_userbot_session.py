@@ -117,7 +117,28 @@ async def write_session_store(work_dir: str, bundle: dict[str, Any]) -> None:
         await store.close()
 
 
-def build_runtime_client(work_dir: str, bundle: dict[str, Any]):
+def parse_session_payload(session_payload: str) -> dict[str, Any]:
+    """Parse session JSON without opening a live MAX connection."""
+    raw = (session_payload or "").strip()
+    if not raw:
+        raise MaxUserbotSessionError("session_payload пустой")
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise MaxUserbotSessionError("session_payload должен быть JSON") from exc
+    if not isinstance(data, dict):
+        raise MaxUserbotSessionError("session_payload должен быть JSON-объектом")
+    bundle = normalize_bundle(data)
+    account_id = str(bundle.get("max_account_id") or "").strip()
+    return {
+        "account_id": account_id,
+        "max_account_id": account_id,
+        "session_payload": bundle_to_session_payload(bundle),
+        "bundle": bundle,
+    }
+
+
+def build_runtime_client(work_dir: str, bundle: dict[str, Any], *, reconnect: bool = True):
     from pymax import Client, ExtraConfig, WebClient
     from pymax.auth.base import AuthFlow
 
@@ -129,7 +150,7 @@ def build_runtime_client(work_dir: str, bundle: dict[str, Any]):
     extra = ExtraConfig(
         device_id=normalized["device_id"],
         mt_instance_id=normalized.get("mt_instance_id") or str(uuid4()),
-        reconnect=True,
+        reconnect=reconnect,
         reconnect_delay=5.0,
         log_level="WARNING",
         telemetry=False,
@@ -151,38 +172,62 @@ def build_runtime_client(work_dir: str, bundle: dict[str, Any]):
     )
 
 
-async def validate_session_bundle(bundle: dict[str, Any]) -> dict[str, Any]:
+async def validate_session_bundle(bundle: dict[str, Any], *, timeout_seconds: float = 45.0) -> dict[str, Any]:
+    account_id = str(bundle.get("max_account_id") or "").strip()
+    if account_id:
+        normalized = normalize_bundle({**bundle, "max_account_id": account_id})
+        return {
+            "account_id": account_id,
+            "max_account_id": account_id,
+            "session_payload": bundle_to_session_payload(normalized),
+            "display_name": account_id,
+            "phone_number": normalized.get("phone") or None,
+        }
+
     work_dir = tempfile.mkdtemp(prefix="rsd_max_validate_")
     try:
         await write_session_store(work_dir, bundle)
-        client = build_runtime_client(work_dir, bundle)
+        client = build_runtime_client(work_dir, bundle, reconnect=False)
         ready = asyncio.Event()
         profile_holder: dict[str, Any] = {}
+        error_holder: dict[str, Exception] = {}
 
         @client.on_start()
         async def on_start(active_client) -> None:
-            me = active_client.me
-            if me is None or me.contact is None:
-                raise MaxUserbotSessionError("MAX не вернул профиль аккаунта")
-            account_id = str(me.contact.id)
-            normalized = normalize_bundle(bundle)
-            normalized["max_account_id"] = account_id
-            profile_holder["account_id"] = account_id
-            profile_holder["display_name"] = profile_display_name(me)
-            profile_holder["phone_number"] = str(normalized.get("phone") or "")
-            profile_holder["session_payload"] = bundle_to_session_payload(normalized)
-            ready.set()
+            try:
+                me = active_client.me
+                if me is None or me.contact is None:
+                    raise MaxUserbotSessionError("MAX не вернул профиль аккаунта")
+                resolved_id = str(me.contact.id)
+                normalized = normalize_bundle({**bundle, "max_account_id": resolved_id})
+                profile_holder["account_id"] = resolved_id
+                profile_holder["max_account_id"] = resolved_id
+                profile_holder["display_name"] = profile_display_name(me)
+                profile_holder["phone_number"] = str(normalized.get("phone") or "")
+                profile_holder["session_payload"] = bundle_to_session_payload(normalized)
+            except Exception as exc:
+                error_holder["error"] = exc
+            finally:
+                ready.set()
 
         task = asyncio.create_task(client.start())
         try:
-            await asyncio.wait_for(ready.wait(), timeout=90)
+            await asyncio.wait_for(ready.wait(), timeout=timeout_seconds)
         except asyncio.TimeoutError as exc:
             raise MaxUserbotSessionError("Таймаут проверки сессии MAX") from exc
         finally:
-            await client.close()
+            with contextlib.suppress(Exception):
+                await client.close()
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
+        if error_holder.get("error"):
+            exc = error_holder["error"]
+            if isinstance(exc, MaxUserbotSessionError):
+                raise exc
+            raise MaxUserbotSessionError(f"Не удалось проверить сессию MAX: {exc}") from exc
+        if not profile_holder.get("account_id"):
+            raise MaxUserbotSessionError("MAX не вернул id аккаунта для сессии")
         return profile_holder
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
@@ -200,7 +245,7 @@ async def send_message_once(bundle: dict[str, Any], chat_id: str, text: str) -> 
     work_dir = tempfile.mkdtemp(prefix="rsd_max_send_")
     try:
         await write_session_store(work_dir, bundle)
-        client = build_runtime_client(work_dir, bundle)
+        client = build_runtime_client(work_dir, bundle, reconnect=False)
         done = asyncio.Event()
         error_holder: dict[str, Exception] = {}
 
@@ -215,11 +260,12 @@ async def send_message_once(bundle: dict[str, Any], chat_id: str, text: str) -> 
 
         task = asyncio.create_task(client.start())
         try:
-            await asyncio.wait_for(done.wait(), timeout=90)
+            await asyncio.wait_for(done.wait(), timeout=45)
         except asyncio.TimeoutError as exc:
             raise MaxUserbotSessionError("Таймаут отправки сообщения в MAX") from exc
         finally:
-            await client.close()
+            with contextlib.suppress(Exception):
+                await client.close()
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task

@@ -53,8 +53,40 @@ const runtimeSessions = new Map();
 const requestRate = new Map();
 const verifyRate = new Map();
 
+const RECONNECTABLE_DISCONNECT_CODES = new Set([
+  DisconnectReason.restartRequired,
+  DisconnectReason.connectionClosed,
+  DisconnectReason.connectionLost,
+  DisconnectReason.timedOut,
+  515,
+  505,
+  408,
+  428,
+]);
+
 function nowMs() {
   return Date.now();
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function disconnectStatusCode(error) {
+  return new Boom(error)?.output?.statusCode || 0;
+}
+
+function isConnectionClosedError(error) {
+  const code = disconnectStatusCode(error);
+  return (
+    code === 428
+    || code === DisconnectReason.connectionClosed
+    || String(error?.message || '').includes('Connection Closed')
+  );
+}
+
+function runtimeSessionKey(connectionId) {
+  return String(connectionId || '').trim();
 }
 
 function normalizePhone(phone) {
@@ -301,7 +333,8 @@ async function createAuthSocket(session) {
     ]);
     if (!reconnectable.has(statusCode)) return;
     if (session.expiresAt <= nowMs()) return;
-    if (sock.authState?.creds?.registered) return;
+    // После успешного pairing auth-флоу завершён; иначе 515 после скана QR требует реконнекта.
+    if (session.status === 'paired') return;
     session.reconnecting = true;
     session.status = 'reconnecting';
     try {
@@ -392,16 +425,71 @@ async function createAuthSession(phoneNumber, authMethod = 'qr') {
   return session;
 }
 
-async function connectRuntimeSession(connectionId, sessionString) {
-  const existing = runtimeSessions.get(connectionId);
-  if (existing?.sock) {
-    return existing;
+function enqueueRuntimeInbound(runtime, upsert) {
+  const uType = upsert?.type;
+  if (uType != null && uType !== 'notify') {
+    return;
   }
+  const items = Array.isArray(upsert?.messages) ? upsert.messages : [];
+  for (const item of items) {
+    const remoteJid = String(item?.key?.remoteJid || '').trim();
+    if (!remoteJid) continue;
+    const mid = item?.key?.id != null ? String(item.key.id) : '';
+    const dedupKey = mid ? `${remoteJid}\0${mid}` : '';
+    if (dedupKey) {
+      if (runtime.recentInboundKeySet.has(dedupKey)) {
+        continue;
+      }
+      runtime.recentInboundKeySet.add(dedupKey);
+      runtime.recentInboundKeys.push(dedupKey);
+      while (runtime.recentInboundKeys.length > INBOUND_DEDUP_MAX) {
+        const old = runtime.recentInboundKeys.shift();
+        if (old) runtime.recentInboundKeySet.delete(old);
+      }
+    }
+    runtime.queue.push({
+      id: item?.key?.id || null,
+      remote_jid: remoteJid,
+      from_me: Boolean(item?.key?.fromMe),
+      push_name: item?.pushName || null,
+      message_timestamp: item?.messageTimestamp || null,
+      message: item?.message || {},
+      wa_message: item,
+    });
+    if (runtime.queue.length > 1000) {
+      runtime.queue.splice(0, runtime.queue.length - 1000);
+    }
+  }
+}
 
-  const decoded = verifyAndDecodeBundle(sessionString);
-  const runtimeDir = path.join(DATA_DIR, `runtime_${connectionId}`);
-  await writeSessionFiles(runtimeDir, decoded.auth_files);
-  const { state, saveCreds } = await useMultiFileAuthState(runtimeDir);
+function attachRuntimeMessageHandler(sock, runtime) {
+  sock.ev.on('messages.upsert', (upsert) => {
+    enqueueRuntimeInbound(runtime, upsert);
+  });
+}
+
+async function destroyRuntimeSocket(runtime) {
+  const sock = runtime.sock;
+  runtime.sock = null;
+  if (!sock) return;
+  try {
+    sock.ev.removeAllListeners('connection.update');
+    sock.ev.removeAllListeners('creds.update');
+    sock.ev.removeAllListeners('messages.upsert');
+  } catch {
+    // ignore
+  }
+  try {
+    sock.end(new Error('runtime socket destroyed'));
+  } catch {
+    // ignore
+  }
+}
+
+async function openRuntimeSocket(runtime) {
+  await destroyRuntimeSocket(runtime);
+  runtime.status = 'connecting';
+  const { state, saveCreds } = await useMultiFileAuthState(runtime.sessionDir);
   const versionInfo = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 0] }));
   const sock = makeWASocket({
     auth: state,
@@ -411,74 +499,165 @@ async function connectRuntimeSession(connectionId, sessionString) {
     printQRInTerminal: false,
     browser: WA_BROWSER_SIGNATURE,
   });
+  runtime.sock = sock;
+
+  sock.ev.on('creds.update', saveCreds);
+  attachRuntimeMessageHandler(sock, runtime);
+  sock.ev.on('connection.update', async (update) => {
+    if (update.connection === 'open') {
+      runtime.status = 'online';
+      runtime.user = sock.user || null;
+      runtime.lastError = null;
+      runtime.lastDisconnectCode = null;
+      return;
+    }
+    if (update.connection !== 'close') {
+      return;
+    }
+    const statusCode = disconnectStatusCode(update.lastDisconnect?.error);
+    runtime.lastDisconnectCode = statusCode || null;
+    runtime.lastError = `disconnect (${statusCode || 'unknown'})`;
+    runtime.status = 'closed';
+    await runtimeReconnectIfNeeded(runtime, statusCode);
+  });
+
+  return sock;
+}
+
+async function startRuntimeSocket(runtime) {
+  if (runtime.reconnecting) {
+    return runtime.sock;
+  }
+  runtime.reconnecting = true;
+  try {
+    return await openRuntimeSocket(runtime);
+  } finally {
+    runtime.reconnecting = false;
+  }
+}
+
+async function runtimeReconnectIfNeeded(runtime, statusCode) {
+  if (runtime.reconnecting) return;
+  if (!RECONNECTABLE_DISCONNECT_CODES.has(statusCode)) return;
+  try {
+    await startRuntimeSocket(runtime);
+  } catch (error) {
+    runtime.status = 'closed';
+    runtime.lastError = `Reconnect failed: ${error?.message || error}`;
+    logger.warn(
+      { connectionId: runtime.connectionId, err: error },
+      'runtime reconnect failed',
+    );
+  }
+}
+
+async function waitForRuntimeOnline(runtime, timeoutMs = 30000) {
+  const started = nowMs();
+  while (nowMs() - started < timeoutMs) {
+    if (runtime.status === 'online' && runtime.sock) {
+      return true;
+    }
+    if (runtime.status === 'closed' && !runtime.reconnecting) {
+      try {
+        await startRuntimeSocket(runtime);
+      } catch (error) {
+        runtime.lastError = `Reconnect failed: ${error?.message || error}`;
+      }
+    }
+    await sleep(500);
+  }
+  return runtime.status === 'online' && Boolean(runtime.sock);
+}
+
+function getRuntimeSession(connectionId) {
+  return runtimeSessions.get(runtimeSessionKey(connectionId)) || null;
+}
+
+async function sendRuntimeMessage(runtime, toJid, text) {
+  const isOnline = await waitForRuntimeOnline(runtime, 30000);
+  if (!isOnline || !runtime.sock) {
+    const error = new Error('WhatsApp runtime session is not online');
+    error.status = 503;
+    throw error;
+  }
+  try {
+    await runtime.sock.sendMessage(toJid, { text });
+    return;
+  } catch (error) {
+    if (!isConnectionClosedError(error)) {
+      throw error;
+    }
+    runtime.status = 'closed';
+    runtime.lastError = `send failed: ${error?.message || error}`;
+    await startRuntimeSocket(runtime);
+    const retryOnline = await waitForRuntimeOnline(runtime, 20000);
+    if (!retryOnline || !runtime.sock) {
+      throw error;
+    }
+    await runtime.sock.sendMessage(toJid, { text });
+  }
+}
+
+async function connectRuntimeSession(connectionId, sessionString) {
+  const key = runtimeSessionKey(connectionId);
+  const existing = runtimeSessions.get(key);
+  if (existing) {
+    if (existing.status === 'online') {
+      return existing;
+    }
+    if (existing.status === 'connecting' || existing.status === 'reconnecting') {
+      await waitForRuntimeOnline(existing, 30000);
+      return existing;
+    }
+    await startRuntimeSocket(existing);
+    return existing;
+  }
+
+  const decoded = verifyAndDecodeBundle(sessionString);
+  const runtimeDir = path.join(DATA_DIR, `runtime_${key}`);
+  await writeSessionFiles(runtimeDir, decoded.auth_files);
 
   const runtime = {
-    connectionId,
+    connectionId: key,
     phoneNumber: decoded.phone_number || null,
     sessionDir: runtimeDir,
-    sock,
+    sock: null,
     queue: [],
     recentInboundKeys: [],
     recentInboundKeySet: new Set(),
     status: 'connecting',
     lastError: null,
+    lastDisconnectCode: null,
     user: null,
+    reconnecting: false,
   };
-  runtimeSessions.set(connectionId, runtime);
-
-  sock.ev.on('creds.update', saveCreds);
-  sock.ev.on('connection.update', (update) => {
-    if (update.connection === 'open') {
-      runtime.status = 'online';
-      runtime.user = sock.user || null;
-    } else if (update.connection === 'close') {
-      runtime.status = 'closed';
-      const statusCode = new Boom(update.lastDisconnect?.error)?.output?.statusCode;
-      runtime.lastError = statusCode ? `disconnect (${statusCode})` : 'disconnect';
-    }
-  });
-  sock.ev.on('messages.upsert', (upsert) => {
-    // Only real-time notifications — "append" / sync batches replay old messages and would
-    // duplicate bot replies (see Baileys messages.upsert types: notify vs append).
-    const uType = upsert?.type;
-    if (uType != null && uType !== 'notify') {
-      return;
-    }
-    const items = Array.isArray(upsert?.messages) ? upsert.messages : [];
-    for (const item of items) {
-      const remoteJid = String(item?.key?.remoteJid || '').trim();
-      if (!remoteJid) continue;
-      const mid = item?.key?.id != null ? String(item.key.id) : '';
-      const dedupKey = mid ? `${remoteJid}\0${mid}` : '';
-      if (dedupKey) {
-        if (runtime.recentInboundKeySet.has(dedupKey)) {
-          continue;
-        }
-        runtime.recentInboundKeySet.add(dedupKey);
-        runtime.recentInboundKeys.push(dedupKey);
-        while (runtime.recentInboundKeys.length > INBOUND_DEDUP_MAX) {
-          const old = runtime.recentInboundKeys.shift();
-          if (old) runtime.recentInboundKeySet.delete(old);
-        }
-      }
-      runtime.queue.push({
-        id: item?.key?.id || null,
-        remote_jid: remoteJid,
-        from_me: Boolean(item?.key?.fromMe),
-        push_name: item?.pushName || null,
-        message_timestamp: item?.messageTimestamp || null,
-        message: item?.message || {},
-        // Full WAMessage for downloadMediaMessage (image/audio/sticker).
-        wa_message: item,
-      });
-      if (runtime.queue.length > 1000) {
-        runtime.queue.splice(0, runtime.queue.length - 1000);
-      }
-    }
-  });
-
-  // Let socket establish in background; manager polls status/messages.
+  runtimeSessions.set(key, runtime);
+  await startRuntimeSocket(runtime);
   return runtime;
+}
+
+async function destroyRuntimeSession(connectionId, { logout = false } = {}) {
+  const key = runtimeSessionKey(connectionId);
+  const runtime = runtimeSessions.get(key);
+  if (!runtime) {
+    return false;
+  }
+  const sock = runtime.sock;
+  runtime.sock = null;
+  runtime.status = 'closed';
+  if (sock) {
+    try {
+      if (logout && typeof sock.logout === 'function') {
+        await sock.logout();
+      } else {
+        sock.end(new Error(logout ? 'runtime logout' : 'runtime disconnect'));
+      }
+    } catch {
+      // ignore
+    }
+  }
+  runtimeSessions.delete(key);
+  return true;
 }
 
 app.get('/health', (_req, res) => {
@@ -538,7 +717,8 @@ app.post('/auth/verify_code', enforceApiKey, async (req, res) => {
       authSessions.delete(authId);
       return res.status(429).json({ detail: 'Превышено число попыток подтверждения' });
     }
-    const isReady = await waitForSessionReady(session, 15000);
+    session.attemptsLeft -= 1;
+    const isReady = await waitForSessionReady(session, 30000);
     if (!isReady) {
       return res.status(409).json({
         detail: 'Подтверждение в WhatsApp еще не завершено. Отсканируйте QR на телефоне и повторите проверку.',
@@ -625,9 +805,13 @@ app.post('/session/download_media', enforceApiKey, async (req, res) => {
     if (!waMessage || typeof waMessage !== 'object') {
       return res.status(422).json({ detail: 'wa_message is required' });
     }
-    const runtime = runtimeSessions.get(connectionId);
-    if (!runtime?.sock) {
+    const runtime = getRuntimeSession(connectionId);
+    if (!runtime) {
       return res.status(404).json({ detail: 'Runtime session not found' });
+    }
+    const isOnline = await waitForRuntimeOnline(runtime, 20000);
+    if (!isOnline || !runtime.sock) {
+      return res.status(503).json({ detail: 'Runtime session is not online' });
     }
     const buffer = await downloadMediaMessage(
       waMessage,
@@ -671,15 +855,16 @@ app.post('/session/pull', enforceApiKey, async (req, res) => {
     if (!connectionId) {
       return res.status(422).json({ detail: 'connection_id is required' });
     }
-    const runtime = runtimeSessions.get(connectionId);
+    const runtime = getRuntimeSession(connectionId);
     if (!runtime) {
       return res.status(404).json({ detail: 'Runtime session not found' });
     }
     const messages = runtime.queue.splice(0, limit);
     return res.status(200).json({
-      connection_id: connectionId,
+      connection_id: runtimeSessionKey(connectionId),
       status: runtime.status,
       last_error: runtime.lastError,
+      last_disconnect_code: runtime.lastDisconnectCode || null,
       messages,
     });
   } catch (error) {
@@ -696,15 +881,95 @@ app.post('/session/send', enforceApiKey, async (req, res) => {
     if (!connectionId || !toJid || !text) {
       return res.status(422).json({ detail: 'connection_id, to_jid and text are required' });
     }
-    const runtime = runtimeSessions.get(connectionId);
-    if (!runtime?.sock) {
+    const runtime = getRuntimeSession(connectionId);
+    if (!runtime) {
       return res.status(404).json({ detail: 'Runtime session not found' });
     }
-    await runtime.sock.sendMessage(toJid, { text });
+    await sendRuntimeMessage(runtime, toJid, text);
     return res.status(200).json({ status: 'ok' });
   } catch (error) {
     logger.error({ err: error }, 'session/send failed');
     return res.status(error.status || 500).json({ detail: error.message || 'session/send failed' });
+  }
+});
+
+app.post('/session/typing', enforceApiKey, async (req, res) => {
+  try {
+    const connectionId = String(req.body?.connection_id || '').trim();
+    const toJid = String(req.body?.to_jid || '').trim();
+    const isTyping = Boolean(req.body?.is_typing);
+    if (!connectionId || !toJid) {
+      return res.status(422).json({ detail: 'connection_id and to_jid are required' });
+    }
+    const runtime = getRuntimeSession(connectionId);
+    if (!runtime) {
+      return res.status(404).json({ detail: 'Runtime session not found' });
+    }
+    const isOnline = await waitForRuntimeOnline(runtime, 10000);
+    if (!isOnline || !runtime.sock) {
+      return res.status(503).json({ detail: 'Runtime session is not online' });
+    }
+    await runtime.sock.sendPresenceUpdate(isTyping ? 'composing' : 'paused', toJid);
+    return res.status(200).json({ status: 'ok' });
+  } catch (error) {
+    logger.error({ err: error }, 'session/typing failed');
+    return res.status(error.status || 500).json({ detail: error.message || 'session/typing failed' });
+  }
+});
+
+app.post('/session/read', enforceApiKey, async (req, res) => {
+  try {
+    const connectionId = String(req.body?.connection_id || '').trim();
+    const remoteJid = String(req.body?.remote_jid || '').trim();
+    const messageId = String(req.body?.message_id || '').trim();
+    if (!connectionId || !remoteJid) {
+      return res.status(422).json({ detail: 'connection_id and remote_jid are required' });
+    }
+    const runtime = getRuntimeSession(connectionId);
+    if (!runtime) {
+      return res.status(404).json({ detail: 'Runtime session not found' });
+    }
+    const isOnline = await waitForRuntimeOnline(runtime, 10000);
+    if (!isOnline || !runtime.sock) {
+      return res.status(503).json({ detail: 'Runtime session is not online' });
+    }
+    if (messageId) {
+      await runtime.sock.readMessages([{ remoteJid, id: messageId, fromMe: false }]);
+    } else {
+      await runtime.sock.sendPresenceUpdate('available', remoteJid);
+    }
+    return res.status(200).json({ status: 'ok' });
+  } catch (error) {
+    logger.error({ err: error }, 'session/read failed');
+    return res.status(error.status || 500).json({ detail: error.message || 'session/read failed' });
+  }
+});
+
+app.post('/session/disconnect', enforceApiKey, async (req, res) => {
+  try {
+    const connectionId = String(req.body?.connection_id || '').trim();
+    if (!connectionId) {
+      return res.status(422).json({ detail: 'connection_id is required' });
+    }
+    const removed = await destroyRuntimeSession(connectionId, { logout: false });
+    return res.status(200).json({ status: 'ok', removed });
+  } catch (error) {
+    logger.error({ err: error }, 'session/disconnect failed');
+    return res.status(error.status || 500).json({ detail: error.message || 'session/disconnect failed' });
+  }
+});
+
+app.post('/session/logout', enforceApiKey, async (req, res) => {
+  try {
+    const connectionId = String(req.body?.connection_id || '').trim();
+    if (!connectionId) {
+      return res.status(422).json({ detail: 'connection_id is required' });
+    }
+    const removed = await destroyRuntimeSession(connectionId, { logout: true });
+    return res.status(200).json({ status: 'ok', removed });
+  } catch (error) {
+    logger.error({ err: error }, 'session/logout failed');
+    return res.status(error.status || 500).json({ detail: error.message || 'session/logout failed' });
   }
 });
 

@@ -215,7 +215,7 @@ async def _process_incoming(cfg: dict[str, Any], incoming: dict[str, Any]) -> No
     if not _is_private_whatsapp_jid(remote_jid):
         return
 
-    if str(incoming.get("from_me") or "").lower() == "true":
+    if bool(incoming.get("from_me")):
         return
 
     connection_id = int(cfg["connection_id"])
@@ -247,7 +247,7 @@ async def _process_incoming(cfg: dict[str, Any], incoming: dict[str, Any]) -> No
             await _bridge_post_best_effort(
                 "session/read",
                 {
-                    "connection_id": connection_id,
+                    "connection_id": str(connection_id),
                     "remote_jid": remote_jid,
                     "message_id": incoming.get("id"),
                 },
@@ -256,7 +256,7 @@ async def _process_incoming(cfg: dict[str, Any], incoming: dict[str, Any]) -> No
                 await _bridge_post(
                     "session/send",
                     {
-                        "connection_id": connection_id,
+                        "connection_id": str(connection_id),
                         "to_jid": remote_jid,
                         "text": _unsupported_media_reply,
                     },
@@ -288,7 +288,7 @@ async def _process_incoming(cfg: dict[str, Any], incoming: dict[str, Any]) -> No
                     await _bridge_post_best_effort(
                         "session/read",
                         {
-                            "connection_id": connection_id,
+                            "connection_id": str(connection_id),
                             "remote_jid": remote_jid,
                             "message_id": incoming.get("id"),
                         },
@@ -297,7 +297,7 @@ async def _process_incoming(cfg: dict[str, Any], incoming: dict[str, Any]) -> No
                         await _bridge_post(
                             "session/send",
                             {
-                                "connection_id": connection_id,
+                                "connection_id": str(connection_id),
                                 "to_jid": remote_jid,
                                 "text": (
                                     "Голосовые сообщения недоступны: не настроено распознавание речи "
@@ -346,7 +346,7 @@ async def _process_incoming(cfg: dict[str, Any], incoming: dict[str, Any]) -> No
     await _bridge_post_best_effort(
         "session/read",
         {
-            "connection_id": connection_id,
+            "connection_id": str(connection_id),
             "remote_jid": remote_jid,
             "message_id": incoming.get("id"),
         },
@@ -360,7 +360,7 @@ async def _process_incoming(cfg: dict[str, Any], incoming: dict[str, Any]) -> No
     await _bridge_post_best_effort(
         "session/typing",
         {
-            "connection_id": connection_id,
+            "connection_id": str(connection_id),
             "to_jid": remote_jid,
             "is_typing": True,
         },
@@ -386,7 +386,7 @@ async def _process_incoming(cfg: dict[str, Any], incoming: dict[str, Any]) -> No
         await _bridge_post(
             "session/send",
             {
-                "connection_id": connection_id,
+                "connection_id": str(connection_id),
                 "to_jid": remote_jid,
                 "text": response.text,
             },
@@ -397,7 +397,7 @@ async def _process_incoming(cfg: dict[str, Any], incoming: dict[str, Any]) -> No
         await _bridge_post_best_effort(
             "session/typing",
             {
-                "connection_id": connection_id,
+                "connection_id": str(connection_id),
                 "to_jid": remote_jid,
                 "is_typing": False,
             },
@@ -416,43 +416,81 @@ async def _run_one_client(cfg: dict[str, Any], stop: asyncio.Event) -> None:
         return
 
     connection_id = int(cfg["connection_id"])
-    try:
-        await _bridge_post(
-            "session/connect",
-            {
-                "connection_id": connection_id,
-                "session_string": session_string,
-            },
-        )
-        logger.info("whatsapp_userbot: connected connection_id=%s bot_id=%s", connection_id, cfg.get("bot_id"))
+    reconnect_delay = max(2, int(settings.WHATSAPP_USERBOT_RECONNECT_DELAY_SECONDS))
+    poll_interval = max(1, int(settings.WHATSAPP_USERBOT_POLL_INTERVAL_SECONDS))
+    closed_streak = 0
 
-        poll_interval = max(1, int(settings.WHATSAPP_USERBOT_POLL_INTERVAL_SECONDS))
-        while not stop.is_set():
-            payload = await _bridge_post(
-                "session/pull",
+    while not stop.is_set():
+        try:
+            await _bridge_post(
+                "session/connect",
                 {
-                    "connection_id": connection_id,
-                    "limit": 20,
+                    "connection_id": str(connection_id),
+                    "session_string": session_string,
                 },
             )
-            messages = payload.get("messages") if isinstance(payload, dict) else None
-            if isinstance(messages, list):
-                for item in messages:
-                    if not isinstance(item, dict):
-                        continue
-                    try:
-                        await _process_incoming(cfg, item)
-                    except Exception:
-                        logger.exception(
-                            "whatsapp_userbot: failed processing message connection_id=%s",
+            logger.info("whatsapp_userbot: connected connection_id=%s bot_id=%s", connection_id, cfg.get("bot_id"))
+            closed_streak = 0
+
+            while not stop.is_set():
+                payload = await _bridge_post(
+                    "session/pull",
+                    {
+                        "connection_id": str(connection_id),
+                        "limit": 20,
+                    },
+                )
+                runtime_status = str(payload.get("status") or "").strip().lower()
+                if runtime_status == "closed":
+                    closed_streak += 1
+                    last_error = payload.get("last_error")
+                    if closed_streak == 1:
+                        logger.warning(
+                            "whatsapp_userbot: runtime closed connection_id=%s last_error=%s",
+                            connection_id,
+                            last_error,
+                        )
+                    if closed_streak >= 3:
+                        logger.warning(
+                            "whatsapp_userbot: reconnecting after closed runtime connection_id=%s",
                             connection_id,
                         )
-            try:
-                await asyncio.wait_for(stop.wait(), timeout=poll_interval)
-            except asyncio.TimeoutError:
-                continue
-    finally:
-        await _bridge_post_best_effort("session/disconnect", {"connection_id": connection_id})
+                        break
+                else:
+                    closed_streak = 0
+
+                messages = payload.get("messages") if isinstance(payload, dict) else None
+                if isinstance(messages, list):
+                    for item in messages:
+                        if not isinstance(item, dict):
+                            continue
+                        try:
+                            await _process_incoming(cfg, item)
+                        except Exception:
+                            logger.exception(
+                                "whatsapp_userbot: failed processing message connection_id=%s",
+                                connection_id,
+                            )
+                try:
+                    await asyncio.wait_for(stop.wait(), timeout=poll_interval)
+                except asyncio.TimeoutError:
+                    continue
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("whatsapp_userbot: worker failed connection_id=%s", connection_id)
+        finally:
+            await _bridge_post_best_effort(
+                "session/disconnect",
+                {"connection_id": str(connection_id)},
+            )
+
+        if stop.is_set():
+            break
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=reconnect_delay)
+        except asyncio.TimeoutError:
+            continue
 
 
 class WhatsAppUserbotManager:

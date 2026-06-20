@@ -61,7 +61,7 @@ async def ensure_whatsapp_session(connection_id: int, encrypted_credentials: str
         raise RuntimeError("Отсутствует session_string WhatsApp")
     await wa_userbot_bridge_post(
         "session/connect",
-        {"connection_id": connection_id, "session_string": session_string},
+        {"connection_id": str(connection_id), "session_string": session_string},
     )
 
 
@@ -76,7 +76,7 @@ async def send_whatsapp_userbot_message(
     to_jid = whatsapp_user_external_to_jid(user_external_id)
     await wa_userbot_bridge_post(
         "session/send",
-        {"connection_id": connection_id, "to_jid": to_jid, "text": text},
+        {"connection_id": str(connection_id), "to_jid": to_jid, "text": text},
     )
 
 

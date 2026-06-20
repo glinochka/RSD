@@ -89,6 +89,7 @@ from ..services.max_userbot_session import (
     MaxUserbotSessionError,
     bundle_from_credentials,
     normalize_bundle,
+    parse_session_payload,
     send_message_once as max_send_message_once,
     validate_session_bundle,
 )
@@ -1970,7 +1971,7 @@ async def _ensure_whatsapp_userbot_session(connection_id: int, encrypted_credent
     await _wa_userbot_bridge_post(
         "session/connect",
         {
-            "connection_id": connection_id,
+            "connection_id": str(connection_id),
             "session_string": session_string,
         },
     )
@@ -1998,22 +1999,22 @@ async def _max_userbot_send_message(encrypted_credentials: str, text: str, *, ch
         ) from exc
 
 
-async def _validate_max_userbot_session_payload(session_payload: str) -> dict[str, Any]:
-    raw = (session_payload or "").strip()
-    if not raw:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="session_payload обязателен",
-        )
+async def _validate_max_userbot_session_payload(
+    session_payload: str,
+    *,
+    require_live_check: bool = False,
+) -> dict[str, Any]:
     try:
-        bundle = normalize_bundle(json.loads(raw))
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Некорректный session_payload MAX: {exc}",
-        ) from exc
+        parsed = parse_session_payload(session_payload)
+    except MaxUserbotSessionError as exc:
+        raise _max_userbot_session_http_error(exc) from exc
+
+    account_id = str(parsed.get("account_id") or parsed.get("max_account_id") or "").strip()
+    if account_id and not require_live_check:
+        return parsed
+
     try:
-        validated = await validate_session_bundle(bundle)
+        validated = await validate_session_bundle(parsed["bundle"])
     except MaxUserbotSessionError as exc:
         raise _max_userbot_session_http_error(exc) from exc
     return validated
@@ -2358,11 +2359,11 @@ async def _terminate_telegram_userbot_session(encrypted_bundle: str) -> None:
 
 async def _terminate_whatsapp_userbot_session(connection_id: int) -> None:
     try:
-        await _wa_userbot_bridge_post("session/disconnect", {"connection_id": connection_id})
+        await _wa_userbot_bridge_post("session/disconnect", {"connection_id": str(connection_id)})
     except Exception:
         logger.warning("whatsapp_userbot: failed to disconnect runtime session connection_id=%s", connection_id, exc_info=True)
     try:
-        await _wa_userbot_bridge_post("session/logout", {"connection_id": connection_id})
+        await _wa_userbot_bridge_post("session/logout", {"connection_id": str(connection_id)})
     except Exception:
         logger.debug("whatsapp_userbot: session/logout is unavailable for connection_id=%s", connection_id, exc_info=True)
 
@@ -5765,6 +5766,12 @@ async def add_agent_max_userbot_channel(
     payload: AddMaxUserbotChannel,
     current_user=Depends(get_current_user_required),
 ):
+    logger.info(
+        "add_agent_max_userbot_channel: start user_id=%s agent_id=%s bot_id=%s",
+        getattr(current_user, "id", None),
+        payload.agent_id,
+        payload.bot_id,
+    )
     validated = await _validate_max_userbot_session_payload(payload.session_payload)
     max_account_id = str(validated.get("account_id") or validated.get("max_account_id") or "").strip()
     session_payload = str(validated.get("session_payload") or payload.session_payload.strip())
@@ -5773,6 +5780,10 @@ async def add_agent_max_userbot_channel(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="MAX не вернул id аккаунта для сессии",
         )
+    logger.info(
+        "add_agent_max_userbot_channel: session validated account_id=%s",
+        max_account_id,
+    )
 
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
@@ -5849,6 +5860,11 @@ async def add_agent_max_userbot_channel(
                 )
             await _sync_agent_primary_fields(agent=agent, agent_dao=agent_dao, session=session)
             channels = await _list_agent_channels(session, agent.id)
+            logger.info(
+                "add_agent_max_userbot_channel: success agent_id=%s connection_id=%s",
+                agent.id,
+                created_connection.id,
+            )
             return JSONResponse(
                 content={
                     "agent_id": agent.id,
@@ -7403,7 +7419,7 @@ async def whatsapp_userbot_send_to_user_as_owner(
     await _wa_userbot_bridge_post(
         "session/send",
         {
-            "connection_id": connection_id,
+            "connection_id": str(connection_id),
             "to_jid": to_jid,
             "text": text,
         },
@@ -7735,7 +7751,7 @@ async def whatsapp_userbot_broadcast_as_owner(
             await _wa_userbot_bridge_post(
                 "session/send",
                 {
-                    "connection_id": connection_id,
+                    "connection_id": str(connection_id),
                     "to_jid": to_jid,
                     "text": text,
                 },

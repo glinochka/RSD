@@ -137,6 +137,7 @@ class Settings(BaseSettings):
     MAX_USERBOT_POLL_INTERVAL_SECONDS: int = 30
     MAX_USERBOT_RECONNECT_DELAY_SECONDS: int = 5
     WHATSAPP_USERBOT_POLL_INTERVAL_SECONDS: int = 5
+    WHATSAPP_USERBOT_RECONNECT_DELAY_SECONDS: int = 5
     WA_USERBOT_SESSION_SECRET: str = ""
     # Опционально: своя пара с my.telegram.org для всех userbot (иначе opentele official API).
     TELEGRAM_USERBOT_API_ID: int = 0
