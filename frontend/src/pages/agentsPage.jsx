@@ -21,6 +21,7 @@ import { useAuth } from '../context/useAuth';
 import { validateFile } from '../utils/validation';
 import DemoBadge, { TitleWithDemoBadge } from '../components/DemoBadge';
 import UserbotSessionFileUpload from '../components/UserbotSessionFileUpload';
+import MaxUserbotAuthPanel from '../components/MaxUserbotAuthPanel';
 import {
   TELEPHONY_PROVIDER,
   copyTextToClipboard,
@@ -672,7 +673,7 @@ const AgentsPageContent = () => {
   const [userbotSessionString, setUserbotSessionString] = useState('');
   const [userbotVerifiedLabel, setUserbotVerifiedLabel] = useState('');
   const [maxBotTokenDraft, setMaxBotTokenDraft] = useState('');
-  const [maxUserbotTokenDraft, setMaxUserbotTokenDraft] = useState('');
+  const [maxUserbotSessionPayload, setMaxUserbotSessionPayload] = useState('');
   const [isSendingUserbotCode, setIsSendingUserbotCode] = useState(false);
   const [isVerifyingUserbotCode, setIsVerifyingUserbotCode] = useState(false);
   const [isStartingUserbotQr, setIsStartingUserbotQr] = useState(false);
@@ -1766,7 +1767,7 @@ const AgentsPageContent = () => {
     setUserbotSessionString('');
     setUserbotVerifiedLabel('');
     setMaxBotTokenDraft('');
-    setMaxUserbotTokenDraft('');
+    setMaxUserbotSessionPayload('');
     setIsSendingUserbotCode(false);
     setIsVerifyingUserbotCode(false);
     setIsStartingUserbotQr(false);
@@ -2414,15 +2415,15 @@ const AgentsPageContent = () => {
 
   const handleAddMaxUserbotChannel = async () => {
     if (!selectedBotId) return;
-    if (!maxUserbotTokenDraft.trim()) {
-      showError('Введите MAX token');
+    if (!maxUserbotSessionPayload.trim()) {
+      showError('Сначала завершите вход (QR, код или импорт файла)');
       return;
     }
     setIsSavingChannel(true);
     try {
       const res = await agentService.addMaxUserbotChannel({
         agent_id: selectedBotId,
-        max_token: maxUserbotTokenDraft.trim(),
+        session_payload: maxUserbotSessionPayload.trim(),
         make_primary: makePrimaryChannel,
       });
       const list = res?.channels || [];
@@ -3707,13 +3708,16 @@ const AgentsPageContent = () => {
                   </div>
                 ) : channelModalTab === 'max_userbot' ? (
                   <div className="agent-management-block">
-                    <textarea
-                      className="input-main textarea"
-                      rows={4}
-                      placeholder="MAX token (из localStorage.__oneme_auth.token)"
-                      value={maxUserbotTokenDraft}
-                      onChange={(event) => setMaxUserbotTokenDraft(event.target.value)}
+                    <MaxUserbotAuthPanel
                       disabled={isSavingChannel}
+                      onSessionReady={({ session_payload }) => {
+                        setMaxUserbotSessionPayload(session_payload || '');
+                      }}
+                      onClear={() => {
+                        setMaxUserbotSessionPayload('');
+                      }}
+                      onError={showError}
+                      onSuccess={showSuccess}
                     />
                     <p className="help-text">
                       Будут обрабатываться все личные сообщения (ЛС) в MAX.
@@ -3731,7 +3735,7 @@ const AgentsPageContent = () => {
                       type="button"
                       className="btn btn-black"
                       onClick={handleAddMaxUserbotChannel}
-                      disabled={isSavingChannel}
+                      disabled={isSavingChannel || !maxUserbotSessionPayload.trim()}
                     >
                       {isSavingChannel ? 'Сохранение...' : 'Подключить MAX userbot'}
                     </button>

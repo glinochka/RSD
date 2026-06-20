@@ -76,6 +76,22 @@ from ..services.telegram_userbot_auth import (
     resolve_api_credentials,
     start_qr_login,
 )
+from ..services.max_userbot_auth import (
+    MaxUserbotAuthError,
+    complete_qr_2fa as max_complete_qr_2fa,
+    get_qr_status as max_get_qr_status,
+    import_session_file as max_import_session_file,
+    request_sms_code as max_request_sms_code,
+    start_qr_login as max_start_qr_login,
+    verify_sms_code as max_verify_sms_code,
+)
+from ..services.max_userbot_session import (
+    MaxUserbotSessionError,
+    bundle_from_credentials,
+    normalize_bundle,
+    send_message_once as max_send_message_once,
+    validate_session_bundle,
+)
 from ..services.youtube_client import get_youtube_client
 from ..utils.api_keys import generate_agent_external_api_key, hash_agent_external_api_key
 from ..utils.JWT import get_user_from_access_token
@@ -1961,48 +1977,20 @@ async def _ensure_whatsapp_userbot_session(connection_id: int, encrypted_credent
 
 
 async def _max_userbot_send_message(encrypted_credentials: str, text: str, *, chat_id: str | None = None) -> None:
-    try:
-        from ..channels.max_userbot_manager import MaxWsClient
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"MAX runtime недоступен: {exc}",
-        ) from exc
-
-    try:
-        bundle = json.loads(decrypt_token(encrypted_credentials))
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Не удалось декодировать MAX userbot credentials",
-        ) from exc
-
-    max_token = str(bundle.get("max_token") or "").strip()
     max_chat_id = str(chat_id or "").strip()
-    if not max_token:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="MAX token отсутствует в сохраненных credentials",
-        )
     if not max_chat_id:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="MAX chat id (user_external_id) обязателен для отправки",
         )
-
-    def _send_once():
-        client = MaxWsClient(max_token)
-        try:
-            client.connect()
-            client.auth()
-            client.send_message(max_chat_id, text)
-        finally:
-            client.close()
-
     try:
-        await asyncio.get_running_loop().run_in_executor(None, _send_once)
-    except HTTPException:
-        raise
+        bundle = bundle_from_credentials(encrypted_credentials)
+    except MaxUserbotSessionError as exc:
+        raise _max_userbot_session_http_error(exc) from exc
+    try:
+        await max_send_message_once(bundle, max_chat_id, text)
+    except MaxUserbotSessionError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -2010,38 +1998,25 @@ async def _max_userbot_send_message(encrypted_credentials: str, text: str, *, ch
         ) from exc
 
 
-async def _max_userbot_resolve_account_id(max_token: str) -> str:
-    try:
-        from ..channels.max_userbot_manager import MaxWsClient
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"MAX runtime недоступен: {exc}",
-        ) from exc
-
-    def _resolve() -> str:
-        client = MaxWsClient(max_token)
-        try:
-            client.connect()
-            client.auth()
-            account_id = str((((client.me or {}).get("profile") or {}).get("contact") or {}).get("id") or "").strip()
-            return account_id
-        finally:
-            client.close()
-
-    try:
-        account_id = await asyncio.get_running_loop().run_in_executor(None, _resolve)
-    except Exception as exc:
+async def _validate_max_userbot_session_payload(session_payload: str) -> dict[str, Any]:
+    raw = (session_payload or "").strip()
+    if not raw:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Не удалось авторизовать MAX token: {exc}",
-        ) from exc
-    if not account_id:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="MAX не вернул id аккаунта для token",
+            detail="session_payload обязателен",
         )
-    return account_id
+    try:
+        bundle = normalize_bundle(json.loads(raw))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Некорректный session_payload MAX: {exc}",
+        ) from exc
+    try:
+        validated = await validate_session_bundle(bundle)
+    except MaxUserbotSessionError as exc:
+        raise _max_userbot_session_http_error(exc) from exc
+    return validated
 
 
 async def _list_whatsapp_userbot_broadcast_recipients(session, analytics_namespace_id: int) -> list[dict]:
@@ -2754,6 +2729,47 @@ def _decode_userbot_qr_auth_token(auth_token: str) -> dict:
 
 def _userbot_auth_http_error(exc: TelegramUserbotAuthError) -> HTTPException:
     return HTTPException(status_code=exc.status_code, detail=str(exc))
+
+
+def _max_userbot_auth_http_error(exc: MaxUserbotAuthError) -> HTTPException:
+    return HTTPException(status_code=exc.status_code, detail=str(exc))
+
+
+def _max_userbot_session_http_error(exc: MaxUserbotSessionError) -> HTTPException:
+    return HTTPException(status_code=exc.status_code, detail=str(exc))
+
+
+def _create_max_userbot_auth_token(auth_id: str) -> str:
+    now = datetime.utcnow()
+    payload = {
+        "scope": "max_userbot_auth",
+        "auth_id": auth_id,
+        "exp": now + timedelta(minutes=USERBOT_AUTH_TOKEN_TTL_MINUTES),
+        "iat": now,
+    }
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+
+def _decode_max_userbot_auth_token(auth_token: str) -> str:
+    try:
+        data = jwt.decode(auth_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+    except InvalidTokenError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Невалидный или просроченный токен подтверждения MAX userbot",
+        )
+    if data.get("scope") != "max_userbot_auth":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Некорректный scope токена подтверждения MAX userbot",
+        )
+    auth_id = str(data.get("auth_id") or "").strip()
+    if not auth_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Токен MAX userbot не содержит auth_id",
+        )
+    return auth_id
 
 
 def _resolve_userbot_api_pair(
@@ -5608,13 +5624,155 @@ async def validate_agent_telephony_channel(
     }
 
 
+@router.post("/max_userbot/qr/start")
+async def max_userbot_qr_start(
+    payload: MaxUserbotQrStart,
+    current_user=Depends(get_current_user_required),
+):
+    if current_user.is_banned:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
+    try:
+        result = await max_start_qr_login()
+    except MaxUserbotAuthError as exc:
+        raise _max_userbot_auth_http_error(exc) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Не удалось начать QR-вход MAX: {exc}",
+        ) from exc
+    auth_token = _create_max_userbot_auth_token(str(result["auth_id"]))
+    return JSONResponse(
+        content={
+            "auth_token": auth_token,
+            "qr_url": result.get("qr_url") or "",
+            "qr_data_url": result.get("qr_data_url") or "",
+        },
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@router.post("/max_userbot/qr/status")
+async def max_userbot_qr_status(
+    payload: MaxUserbotQrStatus,
+    current_user=Depends(get_current_user_required),
+):
+    if current_user.is_banned:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
+    auth_id = _decode_max_userbot_auth_token(payload.auth_token.strip())
+    try:
+        qr_state = await max_get_qr_status(auth_id=auth_id)
+    except MaxUserbotAuthError as exc:
+        raise _max_userbot_auth_http_error(exc) from exc
+    return JSONResponse(content=qr_state, status_code=status.HTTP_200_OK)
+
+
+@router.post("/max_userbot/qr/verify_2fa")
+async def max_userbot_qr_verify_2fa(
+    payload: MaxUserbotQrVerify2fa,
+    current_user=Depends(get_current_user_required),
+):
+    if current_user.is_banned:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
+    auth_id = _decode_max_userbot_auth_token(payload.auth_token.strip())
+    try:
+        result = await max_complete_qr_2fa(auth_id=auth_id, password=payload.password)
+    except MaxUserbotAuthError as exc:
+        raise _max_userbot_auth_http_error(exc) from exc
+    return JSONResponse(content=result, status_code=status.HTTP_200_OK)
+
+
+@router.post("/max_userbot/request_code")
+async def max_userbot_request_code(
+    payload: MaxUserbotRequestCode,
+    current_user=Depends(get_current_user_required),
+):
+    if current_user.is_banned:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
+    try:
+        result = await max_request_sms_code(phone_number=payload.phone_number.strip())
+    except MaxUserbotAuthError as exc:
+        raise _max_userbot_auth_http_error(exc) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Не удалось отправить SMS-код MAX: {exc}",
+        ) from exc
+    auth_token = _create_max_userbot_auth_token(str(result["auth_id"]))
+    return JSONResponse(
+        content={
+            "auth_token": auth_token,
+            "phone_number": result.get("phone_number"),
+            "code_length": result.get("code_length"),
+        },
+        status_code=status.HTTP_200_OK,
+    )
+
+
+@router.post("/max_userbot/verify_code")
+async def max_userbot_verify_code(
+    payload: MaxUserbotVerifyCode,
+    current_user=Depends(get_current_user_required),
+):
+    if current_user.is_banned:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
+    auth_id = _decode_max_userbot_auth_token(payload.auth_token.strip())
+    try:
+        result = await max_verify_sms_code(
+            auth_id=auth_id,
+            code=payload.code,
+            password=payload.password,
+        )
+    except MaxUserbotAuthError as exc:
+        raise _max_userbot_auth_http_error(exc) from exc
+    if result.get("status") == "need_2fa":
+        return JSONResponse(content=result, status_code=status.HTTP_200_OK)
+    return JSONResponse(content=result, status_code=status.HTTP_200_OK)
+
+
+@router.post("/max_userbot/import_session")
+async def max_userbot_import_session(
+    session_file: UploadFile = File(...),
+    current_user=Depends(get_current_user_required),
+):
+    if current_user.is_banned:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
+    raw = await session_file.read()
+    if len(raw) > 25 * 1024 * 1024:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Файл сессии слишком большой (макс. 25 МБ)",
+        )
+    try:
+        result = await max_import_session_file(
+            filename=session_file.filename or "upload",
+            content=raw,
+        )
+    except MaxUserbotAuthError as exc:
+        raise _max_userbot_auth_http_error(exc) from exc
+    except MaxUserbotSessionError as exc:
+        raise _max_userbot_session_http_error(exc) from exc
+    except Exception as exc:
+        logger.warning("max_userbot import_session failed: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Не удалось импортировать сессию MAX: {exc}",
+        ) from exc
+    return JSONResponse(content=result, status_code=status.HTTP_200_OK)
+
+
 @router.post("/channels/by_max_userbot")
 async def add_agent_max_userbot_channel(
     payload: AddMaxUserbotChannel,
     current_user=Depends(get_current_user_required),
 ):
-    max_token = payload.max_token.strip()
-    max_account_id = await _max_userbot_resolve_account_id(max_token)
+    validated = await _validate_max_userbot_session_payload(payload.session_payload)
+    max_account_id = str(validated.get("account_id") or validated.get("max_account_id") or "").strip()
+    session_payload = str(validated.get("session_payload") or payload.session_payload.strip())
+    if not max_account_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="MAX не вернул id аккаунта для сессии",
+        )
 
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
@@ -5661,7 +5819,7 @@ async def add_agent_max_userbot_channel(
             encrypted_bundle = encrypt_token(
                 json.dumps(
                     {
-                        "max_token": max_token,
+                        "session_payload": session_payload,
                         "max_account_id": max_account_id,
                     },
                     ensure_ascii=False,
@@ -7424,7 +7582,7 @@ async def max_userbot_send_to_user_as_owner(
                 )
             encrypted_credentials = str(max_channel.encrypted_credentials or "")
 
-    await _max_userbot_send_message(encrypted_credentials, text)
+    await _max_userbot_send_message(encrypted_credentials, text, chat_id=user_external_id)
 
     async with async_session_maker() as session:
         async with session.begin():

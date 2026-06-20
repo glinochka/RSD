@@ -1,175 +1,39 @@
-"""MAX userbot manager based on web.max.ru websocket protocol."""
+"""MAX userbot manager based on PyMax (maxapi-python)."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
-import random
-import uuid
+import shutil
+import tempfile
 from typing import Any
 
+from pymax import Message
+from pymax.types.domain.enums import ChatType
 from sqlalchemy import select
-from websockets.sync.client import connect
 
 from ..alembic.database import async_session_maker
 from ..alembic.models import Agent, AgentChannelConnection
 from ..config import settings
-from ..utils.crypto import decrypt_token
-from .leader_lock import PgLeaderLock
 from ..services.human_delay import (
     get_online_delay,
     get_read_delay,
     get_typing_delay,
-    mark_activity,
     is_human_delay_enabled,
+    mark_activity,
 )
+from ..services.max_userbot_session import (
+    build_runtime_client,
+    bundle_from_credentials,
+    profile_display_name,
+    write_session_store,
+)
+from ..utils.crypto import decrypt_token
+from .leader_lock import PgLeaderLock
 from .message_processor import Channel, MessageRequest, ProcessingStatus, get_message_processor
 
 logger = logging.getLogger(__name__)
-
-
-class MaxWsClient:
-    ws_url = "wss://ws-api.oneme.ru/websocket"
-
-    def __init__(self, token: str) -> None:
-        self.token = token
-        self.websocket = None
-        self.seq = 0
-        self.me: dict[str, Any] = {}
-
-    def connect(self) -> None:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Origin": "https://web.max.ru",
-            "Pragma": "no-cache",
-            "Cache-Control": "no-cache",
-            "Accept-Language": "ru,en;q=0.9",
-        }
-        self.websocket = connect(
-            self.ws_url,
-            additional_headers=headers,
-            origin="https://web.max.ru",
-            ping_interval=20,
-            ping_timeout=20,
-        )
-
-    def auth(self) -> None:
-        connect_message = {
-            "ver": 11,
-            "cmd": 0,
-            "seq": self.seq,
-            "opcode": 6,
-            "payload": {
-                "userAgent": {
-                    "deviceType": "WEB",
-                    "locale": "ru",
-                    "deviceLocale": "ru",
-                    "osVersion": "Windows",
-                    "deviceName": "RSD Agent",
-                    "headerUserAgent": "Mozilla/5.0",
-                    "appVersion": "25.7.4",
-                    "screen": "1080x1920 1.0x",
-                    "timezone": "Europe/Moscow",
-                },
-                "deviceId": str(uuid.uuid4()),
-            },
-        }
-        self.send(connect_message)
-        _ = self.recv()
-
-        session_message = {
-            "ver": 11,
-            "cmd": 0,
-            "seq": self.seq,
-            "opcode": 19,
-            "payload": {
-                "interactive": True,
-                "token": self.token,
-                "chatsSync": 0,
-                "contactsSync": 0,
-                "presenceSync": 0,
-                "draftsSync": 0,
-                "chatsCount": 40,
-            },
-        }
-        self.send(session_message)
-        response_raw = self.recv()
-        if not response_raw:
-            raise RuntimeError("MAX auth failed: empty session response")
-        response = json.loads(response_raw)
-        self.me = response.get("payload") or {}
-
-    def send(self, payload: dict[str, Any]) -> None:
-        if self.websocket is None:
-            raise RuntimeError("MAX websocket is not connected")
-        self.websocket.send(json.dumps(payload, ensure_ascii=False))
-        self.seq += 1
-
-    def recv(self) -> str | None:
-        if self.websocket is None:
-            return None
-        try:
-            return self.websocket.recv(timeout=5)
-        except Exception:
-            return None
-
-    def heartbeat(self) -> None:
-        self.send(
-            {
-                "ver": 11,
-                "cmd": 0,
-                "seq": self.seq,
-                "opcode": 1,
-                "payload": {"interactive": False},
-            }
-        )
-
-    def send_message(self, chat_id: str, text: str) -> None:
-        self.send(
-            {
-                "ver": 11,
-                "cmd": 0,
-                "seq": self.seq,
-                "opcode": 64,
-                "payload": {
-                    "chatId": chat_id,
-                    "message": {
-                        "text": text,
-                        "cid": random.randint(423232424, 3242533566365),
-                        "elements": [],
-                        "attaches": [],
-                    },
-                    "notify": True,
-                },
-            }
-        )
-        _ = self.recv()
-
-    def get_user(self, contact_id: str | int) -> dict[str, Any]:
-        self.send(
-            {
-                "ver": 11,
-                "cmd": 0,
-                "seq": self.seq,
-                "opcode": 32,
-                "payload": {"contactIds": [contact_id]},
-            }
-        )
-        raw = self.recv()
-        if not raw:
-            return {}
-        try:
-            decoded = json.loads(raw)
-            return decoded if isinstance(decoded, dict) else {}
-        except Exception:
-            return {}
-
-    def close(self) -> None:
-        if self.websocket is not None:
-            try:
-                self.websocket.close()
-            except Exception:
-                pass
 
 
 async def _fetch_max_configs() -> list[dict[str, Any]]:
@@ -225,66 +89,87 @@ async def _fetch_max_configs() -> list[dict[str, Any]]:
     return configs
 
 
-def _extract_sender_name(user_payload: dict[str, Any]) -> str | None:
-    contacts = (user_payload.get("payload") or {}).get("contacts") or []
-    if not contacts:
+def _resolve_sender_name(message: Message, client) -> str | None:
+    sender_id = message.sender
+    if sender_id is None:
         return None
-    names = (contacts[0] or {}).get("names") or []
-    if not names:
-        return None
-    first = str((names[0] or {}).get("firstName") or "").strip()
-    last = str((names[0] or {}).get("lastName") or "").strip()
-    display = f"{first} {last}".strip()
-    return display or None
+    users = getattr(client, "users", None) or {}
+    user = users.get(sender_id)
+    if user is not None:
+        names = getattr(user, "names", None) or []
+        if names:
+            first = str(getattr(names[0], "first_name", "") or "").strip()
+            last = str(getattr(names[0], "last_name", "") or "").strip()
+            display = f"{first} {last}".strip()
+            if display:
+                return display
+    contacts = getattr(client, "contacts", None) or []
+    for contact in contacts:
+        if contact is None:
+            continue
+        if getattr(contact, "id", None) == sender_id:
+            names = getattr(contact, "names", None) or []
+            if names:
+                first = str(getattr(names[0], "first_name", "") or "").strip()
+                last = str(getattr(names[0], "last_name", "") or "").strip()
+                display = f"{first} {last}".strip()
+                if display:
+                    return display
+    return None
 
 
-async def _process_event(client: MaxWsClient, cfg: dict[str, Any], raw_event: str) -> None:
-    event = json.loads(raw_event)
-    if not isinstance(event, dict):
-        return
-    if int(event.get("opcode") or 0) != 128:
-        return
-    payload = event.get("payload") or {}
-    message = payload.get("message") or {}
-    sender = str(message.get("sender") or "").strip()
-    chat_id = str(payload.get("chatId") or "").strip()
-    if not sender or not chat_id:
-        return
-    chat_type = str(payload.get("chatType") or "").strip().lower()
-    if chat_type and chat_type not in {"private", "direct", "dialog"}:
-        return
-    my_id = str((((client.me or {}).get("profile") or {}).get("contact") or {}).get("id") or "").strip()
-    if my_id and sender == my_id:
-        return
-    status = str(message.get("status") or "").strip().upper()
-    if status == "REMOVED":
-        return
-    text = str(message.get("text") or "").strip()
+def _is_private_dialog(message: Message, client) -> bool:
+    chat_id = message.chat_id
+    if chat_id is None:
+        return False
+    chats = getattr(client, "chats", None) or []
+    for chat in chats:
+        if getattr(chat, "id", None) == chat_id:
+            chat_type = getattr(chat, "type", None)
+            if chat_type == ChatType.DIALOG:
+                return True
+            if isinstance(chat_type, str) and chat_type.upper() == "DIALOG":
+                return True
+            return bool(getattr(chat, "is_dialog", False))
+    # If chat list is incomplete, allow processing (PyMax may lazy-load chats).
+    return True
+
+
+async def _handle_message(message: Message, client, cfg: dict[str, Any]) -> None:
+    text = str(message.text or "").strip()
     if not text:
         return
+    if not _is_private_dialog(message, client):
+        return
 
-    sender_profile = await asyncio.to_thread(client.get_user, sender)
-    sender_name = _extract_sender_name(sender_profile)
+    my_id = None
+    if client.me and client.me.contact is not None:
+        my_id = client.me.contact.id
+    if my_id is not None and message.sender == my_id:
+        return
 
+    chat_id = message.chat_id
+    if chat_id is None:
+        return
+
+    sender_name = _resolve_sender_name(message, client)
     bot_id = int(cfg["bot_id"])
     agent_id = int(cfg.get("agent_id") or bot_id)
     template_config: dict[str, Any] = cfg.get("template_config") or {}
     human_delay = is_human_delay_enabled(template_config, Channel.MAX_USERBOT.value)
+    chat_key = str(chat_id)
 
-    # Phase 1: "come online" delay — skip for first-ever message in this conversation.
     if human_delay:
-        online_wait = await get_online_delay(agent_id, chat_id, Channel.MAX_USERBOT.value)
+        online_wait = await get_online_delay(agent_id, chat_key, Channel.MAX_USERBOT.value)
         if online_wait > 0:
             await asyncio.sleep(online_wait)
-
-    # Phase 2: reading pause proportional to incoming message length.
     if human_delay:
         await asyncio.sleep(get_read_delay(len(text)))
 
     request = MessageRequest(
         bot_id=bot_id,
         query=text,
-        user_external_id=chat_id,
+        user_external_id=chat_key,
         channel=Channel.MAX_USERBOT,
         system_prompt=cfg.get("system_prompt") or "",
         welcome_message=cfg.get("welcome_message"),
@@ -292,15 +177,14 @@ async def _process_event(client: MaxWsClient, cfg: dict[str, Any], raw_event: st
     )
     response = await get_message_processor().process(request)
 
-    # Phase 3: extra typing delay proportional to response length.
     if human_delay and response.delivers_reply():
         await asyncio.sleep(get_typing_delay(len(response.text or "")))
 
     if not response.delivers_reply():
         return
     if human_delay:
-        mark_activity(agent_id, chat_id, Channel.MAX_USERBOT.value)
-    await asyncio.to_thread(client.send_message, chat_id, response.text)
+        mark_activity(agent_id, chat_key, Channel.MAX_USERBOT.value)
+    await message.answer(response.text)
 
 
 async def _run_one_client(cfg: dict[str, Any], stop: asyncio.Event) -> None:
@@ -308,30 +192,56 @@ async def _run_one_client(cfg: dict[str, Any], stop: asyncio.Event) -> None:
     if not encrypted_bundle:
         logger.warning("max_userbot: missing encrypted credentials connection_id=%s", cfg.get("connection_id"))
         return
-    bundle = json.loads(decrypt_token(str(encrypted_bundle)))
-    max_token = str(bundle.get("max_token") or "").strip()
-    if not max_token:
-        logger.warning("max_userbot: empty token connection_id=%s", cfg.get("connection_id"))
-        return
 
     connection_id = int(cfg["connection_id"])
     reconnect_delay = max(2, int(settings.MAX_USERBOT_RECONNECT_DELAY_SECONDS))
+    work_dir = tempfile.mkdtemp(prefix=f"rsd_max_conn_{connection_id}_")
+
     while not stop.is_set():
-        client = MaxWsClient(max_token)
+        client = None
+        client_task: asyncio.Task[None] | None = None
         try:
-            await asyncio.to_thread(client.connect)
-            await asyncio.to_thread(client.auth)
-            logger.info(
-                "max_userbot: connected connection_id=%s bot_id=%s",
-                connection_id,
-                cfg.get("bot_id"),
+            bundle = bundle_from_credentials(str(encrypted_bundle))
+            await write_session_store(work_dir, bundle)
+            client = build_runtime_client(work_dir, bundle)
+            ready = asyncio.Event()
+            startup_error: dict[str, Exception] = {}
+
+            @client.on_start()
+            async def on_start(active_client) -> None:
+                me = active_client.me
+                if me is not None:
+                    logger.info(
+                        "max_userbot: connected connection_id=%s bot_id=%s account=%s",
+                        connection_id,
+                        cfg.get("bot_id"),
+                        profile_display_name(me) or getattr(me.contact, "id", "?"),
+                    )
+                ready.set()
+
+            @client.on_message()
+            async def on_message(message: Message, active_client) -> None:
+                try:
+                    await _handle_message(message, active_client, cfg)
+                except Exception:
+                    logger.exception("max_userbot: failed to process message connection_id=%s", connection_id)
+
+            client_task = asyncio.create_task(client.start())
+            try:
+                await asyncio.wait_for(ready.wait(), timeout=120)
+            except asyncio.TimeoutError as exc:
+                startup_error["error"] = exc
+                raise RuntimeError("MAX userbot startup timeout") from exc
+
+            stop_task = asyncio.create_task(stop.wait())
+            done, _pending = await asyncio.wait(
+                {client_task, stop_task},
+                return_when=asyncio.FIRST_COMPLETED,
             )
-            while not stop.is_set():
-                raw = await asyncio.to_thread(client.recv)
-                if raw:
-                    await _process_event(client, cfg, raw)
-                else:
-                    await asyncio.to_thread(client.heartbeat)
+            if stop_task in done:
+                stop_task.result()
+            elif client_task in done:
+                client_task.result()
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -343,7 +253,15 @@ async def _run_one_client(cfg: dict[str, Any], stop: asyncio.Event) -> None:
             except asyncio.TimeoutError:
                 pass
         finally:
-            await asyncio.to_thread(client.close)
+            if client is not None:
+                with contextlib.suppress(Exception):
+                    await client.close()
+            if client_task is not None:
+                client_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await client_task
+
+    shutil.rmtree(work_dir, ignore_errors=True)
 
 
 class MaxUserbotManager:
@@ -387,10 +305,8 @@ class MaxUserbotManager:
                             if connection_id not in wanted:
                                 task = self._tasks.pop(connection_id)
                                 task.cancel()
-                                try:
+                                with contextlib.suppress(asyncio.CancelledError):
                                     await task
-                                except asyncio.CancelledError:
-                                    pass
                                 logger.info("max_userbot: removed connection_id=%s", connection_id)
 
                         by_id = {
@@ -402,16 +318,13 @@ class MaxUserbotManager:
                             existing = self._tasks.get(connection_id)
                             if existing and existing.done():
                                 self._tasks.pop(connection_id, None)
-                                try:
+                                with contextlib.suppress(Exception):
                                     existing.result()
-                                except Exception:
-                                    logger.exception(
-                                        "max_userbot: previous worker crashed connection_id=%s",
-                                        connection_id,
-                                    )
                                 existing = None
                             if existing is None:
-                                self._tasks[connection_id] = asyncio.create_task(_run_one_client(cfg, self._stop))
+                                self._tasks[connection_id] = asyncio.create_task(
+                                    _run_one_client(cfg, self._stop)
+                                )
                                 logger.info("max_userbot: started worker connection_id=%s", connection_id)
                 except Exception:
                     logger.exception("MaxUserbotManager cycle failed")

@@ -18,6 +18,7 @@ import { formatMaintenancePrice } from '../utils/agentTemplatePricing';
 import { rubToMinor } from '../utils/bookingPrice';
 import DemoBadge, { TitleWithDemoBadge } from '../components/DemoBadge';
 import UserbotSessionFileUpload from '../components/UserbotSessionFileUpload';
+import MaxUserbotAuthPanel from '../components/MaxUserbotAuthPanel';
 import '../styles/createAgent.css';
 
 const fileIdentity = (file) => `${file.name}::${file.size}::${file.lastModified}`;
@@ -685,6 +686,7 @@ const CreateAgentContent = () => {
   const [useMaxBotChannel, setUseMaxBotChannel] = useState(false);
   const [useUserbotChannel, setUseUserbotChannel] = useState(false);
   const [useMaxUserbotChannel, setUseMaxUserbotChannel] = useState(false);
+  const [maxUserbotSessionPayload, setMaxUserbotSessionPayload] = useState('');
   const [useWhatsAppUserbotChannel, setUseWhatsAppUserbotChannel] = useState(false);
   const [useWhatsAppBusinessApiChannel, setUseWhatsAppBusinessApiChannel] = useState(false);
   const [useTelephonyChannel, setUseTelephonyChannel] = useState(false);
@@ -746,7 +748,6 @@ const CreateAgentContent = () => {
       password_2fa: '',
       session_string: '',
       max_bot_token: '',
-      max_token: '',
       whatsapp_userbot_phone_number: '',
       whatsapp_userbot_session_string: '',
       whatsapp_userbot_client_label: '',
@@ -850,8 +851,8 @@ const CreateAgentContent = () => {
           form.setFieldError('session_string', 'Сессия userbot неполная. Повторите вход.');
           return;
         }
-        if (!skipChannelSelection && isMaxUserbotMode && !values.max_token?.trim()) {
-          form.setFieldError('max_token', 'MAX token обязателен');
+        if (!skipChannelSelection && isMaxUserbotMode && !maxUserbotSessionPayload.trim()) {
+          showError('Сначала завершите вход в MAX (QR, код или импорт файла)');
           return;
         }
         if (!skipChannelSelection && isWhatsAppUserbotMode && !values.whatsapp_userbot_phone_number?.trim()) {
@@ -1159,7 +1160,7 @@ const CreateAgentContent = () => {
           if (isMaxUserbotMode) {
             await agentService.addMaxUserbotChannel({
               agent_id: agentId,
-              max_token: values.max_token.trim(),
+              session_payload: maxUserbotSessionPayload.trim(),
               make_primary: primaryProvider === 'max_userbot',
             });
             hasConnectedAtLeastOneChannel = true;
@@ -1357,8 +1358,7 @@ const CreateAgentContent = () => {
     setUseMaxUserbotChannel((prev) => {
       const next = !prev;
       if (!next) {
-        form.setFieldValue('max_token', '');
-        form.setFieldError('max_token', undefined);
+        setMaxUserbotSessionPayload('');
       }
       return next;
     });
@@ -1908,9 +1908,8 @@ const CreateAgentContent = () => {
     if (!isContentFactoryTemplate) return;
     if (!useMaxUserbotChannel) return;
     setUseMaxUserbotChannel(false);
-    form.setFieldValue('max_token', '');
-    form.setFieldError('max_token', undefined);
-  }, [form.setFieldValue, form.setFieldError, isContentFactoryTemplate, useMaxUserbotChannel]);
+    setMaxUserbotSessionPayload('');
+  }, [isContentFactoryTemplate, useMaxUserbotChannel]);
 
   useEffect(() => {
     if (!isContentFactoryTemplate) return;
@@ -2983,21 +2982,15 @@ const CreateAgentContent = () => {
             {useMaxUserbotChannel && (
               <div className="form-group">
                 <h3 className="agent-form-channel-title">MAX юзербот</h3>
-                <label htmlFor="max_token">MAX token:</label>
-                <textarea
-                  id="max_token"
-                  name="max_token"
-                  placeholder="Токен из localStorage.__oneme_auth.token"
-                  className={`input-main textarea ${form.errors.max_token ? 'error' : ''}`}
-                  value={form.values.max_token}
-                  onChange={form.handleChange}
+                <MaxUserbotAuthPanel
                   disabled={form.isSubmitting}
-                  rows="3"
-                ></textarea>
-                {form.errors.max_token && (
-                  <span className="error-message">{form.errors.max_token}</span>
-                )}
-
+                  onSessionReady={({ session_payload }) => {
+                    setMaxUserbotSessionPayload(session_payload || '');
+                  }}
+                  onClear={() => setMaxUserbotSessionPayload('')}
+                  onError={showError}
+                  onSuccess={showSuccess}
+                />
                 <p className="help-text">
                   Будут обрабатываться все личные сообщения (ЛС) в MAX.
                 </p>

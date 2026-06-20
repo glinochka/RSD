@@ -8,6 +8,7 @@ import { API_ROUTES } from '../config/constants';
 
 /** Telethon + SOCKS can exceed default API timeout (30s); avoid axios abort → nginx 499. */
 const USERBOT_TELETHON_TIMEOUT_MS = 120_000;
+const MAX_USERBOT_TIMEOUT_MS = 120_000;
 
 export const agentService = {
   /**
@@ -94,6 +95,51 @@ export const agentService = {
     return response.data;
   },
 
+  startMaxUserbotQr: async (data = {}) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_MAX_USERBOT_QR_START, data, {
+      timeout: MAX_USERBOT_TIMEOUT_MS,
+    });
+    return response.data;
+  },
+
+  maxUserbotQrStatus: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_MAX_USERBOT_QR_STATUS, data, {
+      timeout: MAX_USERBOT_TIMEOUT_MS,
+    });
+    return response.data;
+  },
+
+  verifyMaxUserbotQr2fa: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_MAX_USERBOT_QR_VERIFY_2FA, data, {
+      timeout: MAX_USERBOT_TIMEOUT_MS,
+    });
+    return response.data;
+  },
+
+  requestMaxUserbotCode: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_MAX_USERBOT_REQUEST_CODE, data, {
+      timeout: MAX_USERBOT_TIMEOUT_MS,
+    });
+    return response.data;
+  },
+
+  verifyMaxUserbotCode: async (data) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_MAX_USERBOT_VERIFY_CODE, data, {
+      timeout: MAX_USERBOT_TIMEOUT_MS,
+    });
+    return response.data;
+  },
+
+  importMaxUserbotSession: async ({ session_file }) => {
+    const formData = new FormData();
+    formData.append('session_file', session_file);
+    const response = await apiClient.post(API_ROUTES.AGENTS_MAX_USERBOT_IMPORT_SESSION, formData, {
+      timeout: MAX_USERBOT_TIMEOUT_MS,
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  },
+
   requestWhatsAppUserbotCode: async (data) => {
     const response = await apiClient.post(API_ROUTES.AGENTS_WHATSAPP_USERBOT_REQUEST_CODE, data);
     return response.data;
@@ -134,7 +180,9 @@ export const agentService = {
   },
 
   addMaxUserbotChannel: async (data) => {
-    const response = await apiClient.post(API_ROUTES.AGENTS_CHANNELS_ADD_MAX_USERBOT, data);
+    const response = await apiClient.post(API_ROUTES.AGENTS_CHANNELS_ADD_MAX_USERBOT, data, {
+      timeout: MAX_USERBOT_TIMEOUT_MS,
+    });
     return response.data;
   },
 

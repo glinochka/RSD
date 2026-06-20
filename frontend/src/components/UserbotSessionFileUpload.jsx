@@ -1,7 +1,13 @@
 import React, { useId } from 'react';
 import '../styles/userbotSessionFile.css';
 
-const UserbotSessionFileUpload = ({ disabled = false, isImporting = false, onFileSelect }) => {
+const UserbotSessionFileUpload = ({
+  disabled = false,
+  isImporting = false,
+  onFileSelect,
+  accept = '.zip,.session,.txt',
+  formatsHint = '.zip, .session или .txt',
+}) => {
   const inputId = useId();
   const isDisabled = disabled || isImporting;
 
@@ -10,7 +16,7 @@ const UserbotSessionFileUpload = ({ disabled = false, isImporting = false, onFil
       <input
         id={inputId}
         type="file"
-        accept=".zip,.session,.txt"
+        accept={accept}
         className="userbot-session-file-upload__input"
         disabled={isDisabled}
         onChange={(event) => {
@@ -41,7 +47,7 @@ const UserbotSessionFileUpload = ({ disabled = false, isImporting = false, onFil
         <span className="userbot-session-file-upload__title">
           {isImporting ? 'Импорт сессии…' : 'Выбрать файл сессии'}
         </span>
-        <span className="userbot-session-file-upload__formats">.zip, .session или .txt</span>
+        <span className="userbot-session-file-upload__formats">{formatsHint}</span>
       </label>
     </div>
   );

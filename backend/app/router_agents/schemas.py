@@ -233,13 +233,36 @@ class AddWhatsAppUserbotChannel(AgentLookup):
 
 
 class AddMaxUserbotChannel(AgentLookup):
-    max_token: str = Field(
+    session_payload: str = Field(
         ...,
         min_length=10,
         max_length=65535,
-        description="Токен авторизации MAX (из localStorage __oneme_auth.token)",
+        description="JSON-сессия PyMax (token, device_id, transport, sync)",
     )
     make_primary: bool = Field(default=False, description="Сделать канал основным")
+
+
+class MaxUserbotRequestCode(BaseModel):
+    phone_number: str = Field(..., min_length=5, max_length=32, description="Номер телефона MAX")
+
+
+class MaxUserbotVerifyCode(BaseModel):
+    auth_token: str = Field(..., min_length=20, max_length=4096, description="Временный auth token")
+    code: str = Field(..., min_length=3, max_length=12, description="SMS-код из MAX")
+    password: Optional[str] = Field(None, min_length=1, max_length=128, description="Пароль 2FA MAX")
+
+
+class MaxUserbotQrStart(BaseModel):
+    pass
+
+
+class MaxUserbotQrStatus(BaseModel):
+    auth_token: str = Field(..., min_length=20, max_length=4096, description="Временный QR auth token")
+
+
+class MaxUserbotQrVerify2fa(BaseModel):
+    auth_token: str = Field(..., min_length=20, max_length=4096, description="Временный QR auth token")
+    password: str = Field(..., min_length=1, max_length=128, description="Пароль 2FA MAX")
 
 
 class TelephonyChannelCredentialsInput(BaseModel):
