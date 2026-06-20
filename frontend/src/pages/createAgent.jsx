@@ -807,6 +807,19 @@ const CreateAgentContent = () => {
         const isTelephonyMode = useTelephonyChannel;
 
         if (
+          selectedTemplate === 'sales_manager'
+          && !isUserbotMode
+          && !isWhatsAppUserbotMode
+          && !isMaxUserbotMode
+        ) {
+          const message =
+            'Для шаблона «ИИ МОП» подключите Telegram userbot, WhatsApp userbot и/или MAX userbot.';
+          showError(message);
+          window.alert(message);
+          return;
+        }
+
+        if (
           !skipChannelSelection &&
           !isBotMode &&
           !isMaxBotMode &&
@@ -1960,16 +1973,15 @@ const CreateAgentContent = () => {
     if (!isSalesManagerTemplate) return;
     setUseBotChannel(false);
     setUseMaxBotChannel(false);
-    setUseMaxUserbotChannel(false);
     setUseWhatsAppBusinessApiChannel(false);
   }, [isSalesManagerTemplate]);
 
   useEffect(() => {
     if (!isSalesManagerTemplate) return;
-    if (!useUserbotChannel && !useWhatsAppUserbotChannel) {
+    if (!useUserbotChannel && !useWhatsAppUserbotChannel && !useMaxUserbotChannel) {
       setUseUserbotChannel(true);
     }
-  }, [isSalesManagerTemplate, useUserbotChannel, useWhatsAppUserbotChannel]);
+  }, [isSalesManagerTemplate, useUserbotChannel, useWhatsAppUserbotChannel, useMaxUserbotChannel]);
 
   return (
     <MainLayout>
@@ -2079,9 +2091,9 @@ const CreateAgentContent = () => {
                     </button>
                     <button
                       type="button"
-                      className={`connection-type-card connection-type-card--with-beta ${useMaxUserbotChannel ? 'active' : ''} ${isSalesManagerTemplate ? 'connection-type-card--disabled' : ''}`}
+                      className={`connection-type-card connection-type-card--with-beta ${useMaxUserbotChannel ? 'active' : ''}`}
                       onClick={toggleMaxUserbotChannel}
-                      disabled={form.isSubmitting || isSalesManagerTemplate}
+                      disabled={form.isSubmitting}
                     >
                       <span className="connection-type-card-label connection-type-card-label--stacked-wa-api">
                         <span className="connection-type-card-label__row">MAX юзербот</span>
@@ -2115,7 +2127,9 @@ const CreateAgentContent = () => {
                   </div>
                   {isSalesManagerTemplate ? (
                     <p className="help-text">
-                      Для шаблона «ИИ МОП» доступны Telegram юзербот и/или WhatsApp юзербот (личные чаты и рассылка по базе).
+                      Для шаблона «ИИ МОП» доступны Telegram userbot, WhatsApp userbot и/или MAX userbot
+                      (личные чаты, исходящие DM и рассылка по базе с телефонами).
+                      Сканирование групп — только в Telegram. Для MAX в Excel достаточно колонок с телефонами.
                     </p>
                   ) : null}
 

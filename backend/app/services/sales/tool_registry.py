@@ -44,7 +44,7 @@ class _CreateCrmLeadArgs(BaseModel):
 class _MarkContactedArgs(BaseModel):
     channel: str = Field(
         default="telegram_userbot",
-        pattern="^(telegram_userbot|whatsapp_userbot)$",
+        pattern="^(telegram_userbot|whatsapp_userbot|max_userbot)$",
     )
     campaign_id: str | None = Field(default=None, max_length=128)
 
@@ -117,6 +117,8 @@ class SalesToolRegistry:
         ch = (source_channel or "telegram_userbot").strip().lower()
         if ch == "whatsapp_userbot":
             self._outbound_channel = "whatsapp_userbot"
+        elif ch == "max_userbot":
+            self._outbound_channel = "max_userbot"
         else:
             self._outbound_channel = "telegram_userbot"
 

@@ -21,7 +21,11 @@ from ...config import settings
 from ..sales.outreach_scheduling import EXCEL_STAGGER_MAX_MINUTES, EXCEL_STAGGER_MIN_MINUTES
 from .lead_recovery import is_llm_balance_error, rollback_lead_after_llm_balance_error
 from .lead_status import mark_lead_failed, mark_lead_provisioned
-from .outreach import resolve_all_lead_messenger_channels, resolve_lead_contact_email, run_outreach_for_lead
+from .contact_discovery import discover_ai_mop_outreach_targets
+from .outreach import (
+    resolve_lead_contact_email_with_discovery,
+    run_outreach_for_lead,
+)
 from .pipeline_state import is_ai_mop_pipeline_paused
 from .provisioning import provision_lead_demo
 from .send_window import ai_mop_first_message_allowed_now
@@ -273,12 +277,13 @@ class AiMopWorker:
             if lead is None or agent is None:
                 raise AiMopPipelineError("provisioning", "Lead or agent not found")
 
-        contact_email = resolve_lead_contact_email(lead)
-        messengers = await resolve_all_lead_messenger_channels(agent_id=agent_id, lead=lead)
+        discovery = await discover_ai_mop_outreach_targets(agent_id=agent_id, lead=lead)
+        contact_email = resolve_lead_contact_email_with_discovery(lead, discovery)
+        messengers = discovery.messengers
         if not contact_email and not messengers:
             raise AiMopPipelineError(
                 "no_messenger",
-                "Нет email для рассылки и нет контактов Telegram/WhatsApp",
+                "Нет email для рассылки и нет контактов Telegram / WhatsApp / MAX",
             )
 
         try:

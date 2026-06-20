@@ -80,6 +80,23 @@ async def send_whatsapp_userbot_message(
     )
 
 
+async def send_max_userbot_message(
+    *,
+    encrypted_credentials: str,
+    user_external_id: str,
+    text: str,
+) -> str:
+    """Отправить DM через MAX userbot. Возвращает chat_id диалога."""
+    from ..max_userbot_session import bundle_from_credentials, send_outreach_message_once
+
+    bundle = bundle_from_credentials(encrypted_credentials)
+    return await send_outreach_message_once(
+        bundle,
+        target_external_id=user_external_id,
+        text=text,
+    )
+
+
 async def send_telegram_userbot_message(
     *,
     encrypted_credentials: str,

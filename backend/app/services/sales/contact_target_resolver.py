@@ -1,4 +1,4 @@
-"""Нормализация контактов из Excel для outreach в WhatsApp / Telegram userbot."""
+"""Нормализация контактов из Excel для outreach в WhatsApp / Telegram / MAX userbot."""
 
 from __future__ import annotations
 
@@ -271,14 +271,74 @@ def normalize_telegram_target(
     return primary, hint
 
 
+def collect_all_max_outreach_targets(
+    *,
+    messenger_max: str | None = None,
+    lpr_phone: str | None = None,
+    org_mobile: str | None = None,
+    org_phone: str | None = None,
+) -> list[tuple[str, dict[str, Any]]]:
+    """Телефоны для cold outreach в MAX (колонка Макс и/или lpr/org телефоны)."""
+    results: list[tuple[str, dict[str, Any]]] = []
+    seen: set[str] = set()
+
+    def _add_e164(e164: str, hint: dict[str, Any]) -> None:
+        if e164 in seen:
+            return
+        seen.add(e164)
+        results.append((e164, hint))
+
+    raw_max = _opt(messenger_max)
+    if raw_max:
+        digits = _normalize_ru_phone_digits(raw_max)
+        if digits:
+            _add_e164(
+                f"+{digits}",
+                {"source": "messenger_max", "raw": raw_max, "digits": digits, "channel": "max_userbot"},
+            )
+
+    for digits in _phone_targets_from_row(
+        lpr_phone=lpr_phone,
+        org_mobile=org_mobile,
+        org_phone=org_phone,
+    ):
+        _add_e164(f"+{digits}", {"source": "phone", "digits": digits, "channel": "max_userbot"})
+
+    return results
+
+
+def normalize_max_target(
+    *,
+    messenger_max: str | None = None,
+    lpr_phone: str | None = None,
+    org_mobile: str | None = None,
+    org_phone: str | None = None,
+) -> tuple[str | None, dict[str, Any]]:
+    targets = collect_all_max_outreach_targets(
+        messenger_max=messenger_max,
+        lpr_phone=lpr_phone,
+        org_mobile=org_mobile,
+        org_phone=org_phone,
+    )
+    if not targets:
+        return None, {}
+    primary, primary_hint = targets[0]
+    fallbacks = [target for target, _ in targets[1:]]
+    hint = dict(primary_hint)
+    if fallbacks:
+        hint["fallback_targets"] = fallbacks
+    return primary, hint
+
+
 def build_cross_messenger_fallbacks(
     row: dict[str, Any],
     *,
     primary_channel: str,
     whatsapp_available: bool,
     telegram_available: bool,
+    max_available: bool = False,
 ) -> list[dict[str, str]]:
-    """Запасные каналы при ошибке основного (WA↔TG по номеру из ссылки)."""
+    """Запасные каналы при ошибке основного (WA↔TG↔MAX по номеру)."""
     options: list[dict[str, str]] = []
     seen: set[str] = set()
 
@@ -292,9 +352,43 @@ def build_cross_messenger_fallbacks(
     if primary_channel == "whatsapp_userbot" and telegram_available:
         for digits in _phones_from_whatsapp_link(row.get("whatsapp")):
             _add("telegram_userbot", f"+{digits}")
+        for e164, _ in collect_all_max_outreach_targets(
+            messenger_max=row.get("messenger_max"),
+            lpr_phone=row.get("lpr_phone"),
+            org_mobile=row.get("org_mobile"),
+            org_phone=row.get("org_phone"),
+        ):
+            if max_available:
+                _add("max_userbot", e164)
     elif primary_channel == "telegram_userbot" and whatsapp_available:
         for digits in _phones_from_telegram_link(row.get("telegram")):
             _add("whatsapp_userbot", digits)
+        for e164, _ in collect_all_max_outreach_targets(
+            messenger_max=row.get("messenger_max"),
+            lpr_phone=row.get("lpr_phone"),
+            org_mobile=row.get("org_mobile"),
+            org_phone=row.get("org_phone"),
+        ):
+            if max_available:
+                _add("max_userbot", e164)
+    elif primary_channel == "max_userbot":
+        if whatsapp_available:
+            for target, _ in collect_all_whatsapp_outreach_targets(
+                whatsapp=row.get("whatsapp"),
+                lpr_phone=row.get("lpr_phone"),
+                org_mobile=row.get("org_mobile"),
+                org_phone=row.get("org_phone"),
+            ):
+                _add("whatsapp_userbot", target)
+        if telegram_available:
+            for target, _ in collect_all_telegram_outreach_targets(
+                telegram=row.get("telegram"),
+                lpr_phone=row.get("lpr_phone"),
+                org_mobile=row.get("org_mobile"),
+                org_phone=row.get("org_phone"),
+            ):
+                if target.startswith("+"):
+                    _add("telegram_userbot", target)
     return options
 
 
@@ -303,10 +397,12 @@ def pick_outreach_channel(
     *,
     whatsapp_available: bool,
     telegram_available: bool,
+    max_available: bool = False,
 ) -> tuple[str | None, str | None, dict[str, Any]]:
     """
     Выбор канала и target_external_id для строки Excel.
-    Приоритет: заполненная колонка WhatsApp / Telegram → телефон (WA, затем TG).
+    Приоритет: колонка WhatsApp / Telegram → телефоны (WA, TG, MAX).
+    MAX работает только по номерам из lpr_phone / org_mobile / org_phone.
     """
 
     def _with_cross(channel: str, target: str, hint: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
@@ -316,6 +412,7 @@ def pick_outreach_channel(
             primary_channel=channel,
             whatsapp_available=whatsapp_available,
             telegram_available=telegram_available,
+            max_available=max_available,
         )
         if cross:
             enriched["cross_channel_fallbacks"] = cross
@@ -364,6 +461,16 @@ def pick_outreach_channel(
         if tg_target:
             return _with_cross("telegram_userbot", tg_target, tg_hint)
 
+    if max_available:
+        max_target, max_hint = normalize_max_target(
+            messenger_max=row.get("messenger_max"),
+            lpr_phone=row.get("lpr_phone"),
+            org_mobile=row.get("org_mobile"),
+            org_phone=row.get("org_phone"),
+        )
+        if max_target:
+            return _with_cross("max_userbot", max_target, max_hint)
+
     return None, None, {}
 
 
@@ -401,6 +508,7 @@ def collect_all_messenger_channels(
     *,
     whatsapp_available: bool,
     telegram_available: bool,
+    max_available: bool = False,
 ) -> list[tuple[str, str, dict[str, Any]]]:
     """Все уникальные каналы outreach: каждая ссылка и каждый телефон — отдельная очередь."""
     channels: list[tuple[str, str, dict[str, Any]]] = []
@@ -433,6 +541,13 @@ def collect_all_messenger_channels(
         ):
             _append("telegram_userbot", target, hint)
 
+    if max_available:
+        for target, hint in collect_all_max_outreach_targets(
+            messenger_max=row.get("messenger_max"),
+            **phones,
+        ):
+            _append("max_userbot", target, hint)
+
     # Кросс-канал: номер из wa.me → Telegram (если ссылка WA актуальна).
     if telegram_available:
         for digits in _phones_from_whatsapp_link(row.get("whatsapp")):
@@ -448,6 +563,21 @@ def collect_all_messenger_channels(
             _append(
                 "whatsapp_userbot",
                 digits,
+                {"source": "cross_from_telegram", "digits": digits},
+            )
+
+    # Кросс-канал: телефон из wa.me / t.me → MAX (если подключён).
+    if max_available:
+        for digits in _phones_from_whatsapp_link(row.get("whatsapp")):
+            _append(
+                "max_userbot",
+                f"+{digits}",
+                {"source": "cross_from_whatsapp", "digits": digits},
+            )
+        for digits in _phones_from_telegram_link(row.get("telegram")):
+            _append(
+                "max_userbot",
+                f"+{digits}",
                 {"source": "cross_from_telegram", "digits": digits},
             )
 

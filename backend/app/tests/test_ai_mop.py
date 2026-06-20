@@ -372,3 +372,46 @@ async def test_template_runtime_ai_mop_pool_only_blocks_unknown_private(monkeypa
     assert result.discard_message is True
     assert result.tool_events[0]["tool_status"] == "contact_not_in_pool"
     assert find_mock.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_resolve_all_lead_messenger_channels_includes_max(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.services.ai_mop import contact_discovery as discovery_mod
+
+    async def _avail(agent_id: int):
+        del agent_id
+        return discovery_mod.AgentMessengerAvailability(
+            whatsapp=False,
+            telegram=False,
+            max_userbot=True,
+        )
+
+    async def _crm(org_name: str, *, limit: int = 5):
+        del org_name, limit
+        return []
+
+    async def _imp(agent_id: int, org_name: str, *, limit: int = 10):
+        del agent_id, org_name, limit
+        return []
+
+    monkeypatch.setattr(discovery_mod, "get_agent_messenger_availability", _avail)
+    monkeypatch.setattr(discovery_mod, "_fetch_crm_rows_for_org", _crm)
+    monkeypatch.setattr(discovery_mod, "_fetch_agent_imported_rows", _imp)
+
+    from app.services.ai_mop.outreach import resolve_all_lead_messenger_channels
+
+    lead = SimpleNamespace(
+        id=1,
+        org_name="ООО Тест",
+        lpr_name=None,
+        phone="+79991234567",
+        telegram=None,
+        whatsapp=None,
+        extra_json='{"messenger_max": "+79998887766"}',
+    )
+    channels = await resolve_all_lead_messenger_channels(agent_id=42, lead=lead)
+    pairs = {(c, t) for c, t, _ in channels}
+    assert ("max_userbot", "+79998887766") in pairs
+    assert all(c == "max_userbot" for c, _, _ in channels)

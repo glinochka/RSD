@@ -106,6 +106,21 @@ async def find_lead_for_contact(
         ).all()
 
     for lead in rows:
-        if _target_keys(lead.outreach_target) & incoming_keys:
+        if _all_outreach_target_keys(lead) & incoming_keys:
             return lead
     return None
+
+
+def _all_outreach_target_keys(lead: AiMopLead) -> set[str]:
+    """Все идентификаторы чатов, куда уже уходил outreach (primary + sent_channels)."""
+    keys = _target_keys(lead.outreach_target)
+    extra = parse_lead_extra(lead)
+    sent = extra.get("outreach_sent_channels")
+    if isinstance(sent, list):
+        for item in sent:
+            text = str(item or "").strip()
+            if ":" not in text:
+                continue
+            _channel, target = text.split(":", 1)
+            keys |= _target_keys(target.strip())
+    return keys

@@ -3498,9 +3498,9 @@ const AgentsPageContent = () => {
                   </button>
                   <button
                     type="button"
-                    className={`connection-type-card ${channelModalTab === 'max_userbot' ? 'active' : ''} ${isSalesManagerTemplate ? 'connection-type-card--disabled' : ''}`}
+                    className={`connection-type-card ${channelModalTab === 'max_userbot' ? 'active' : ''}`}
                     onClick={() => setChannelModalTab('max_userbot')}
-                    disabled={isSavingChannel || isSalesManagerTemplate}
+                    disabled={isSavingChannel}
                   >
                     MAX userbot
                   </button>
@@ -3540,7 +3540,9 @@ const AgentsPageContent = () => {
                 </div>
                 {isSalesManagerTemplate ? (
                   <p className="help-text">
-                    Для шаблона «ИИ МОП» доступны Telegram userbot и/или WhatsApp userbot. Сканирование групп — только в Telegram.
+                    Для шаблона «ИИ МОП» доступны Telegram userbot, WhatsApp userbot и/или MAX userbot.
+                    Сканирование групп — только в Telegram. Рассылка по Excel: телефоны из базы
+                    (MAX — только номера, без username).
                   </p>
                 ) : null}
 

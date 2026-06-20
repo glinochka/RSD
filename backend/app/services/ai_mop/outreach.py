@@ -1,4 +1,4 @@
-"""Outreach ИИ МОП: email с предложением + userbot (Telegram / WhatsApp)."""
+"""Outreach ИИ МОП: email с предложением + userbot (Telegram / WhatsApp / MAX)."""
 
 from __future__ import annotations
 
@@ -7,16 +7,15 @@ import logging
 import re
 from typing import Any
 
-from sqlalchemy import select
-
 from ...alembic.database import async_session_maker
-from ...alembic.models import Agent, AgentChannelConnection, AiMopLead
-from ..sales.contact_target_resolver import (
-    attach_target_hint_to_dm_meta,
-    collect_all_messenger_channels,
-)
+from ...alembic.models import Agent, AiMopLead
+from ..sales.contact_target_resolver import attach_target_hint_to_dm_meta
 from ..sales.dm_queue_service import get_dm_queue_service
 from ..sales.fsm import SalesFSMService
+from .contact_discovery import (
+    discover_ai_mop_outreach_targets,
+    resolve_all_lead_messenger_channels,
+)
 from .email_outreach import send_ai_mop_outreach_email
 from .llm_helpers import (
     build_lead_context,
@@ -156,7 +155,7 @@ def _legacy_completed_outreach_channels(lead: AiMopLead) -> set[str]:
     contact_email = resolve_lead_contact_email(lead)
     if contact_email and channel in ("email", "multi"):
         completed.add(channel_key(channel=OUTREACH_CHANNEL_EMAIL, target=contact_email))
-    if channel in ("telegram_userbot", "whatsapp_userbot") and target and lead.outreach_sent_at:
+    if channel in ("telegram_userbot", "whatsapp_userbot", "max_userbot") and target and lead.outreach_sent_at:
         completed.add(channel_key(channel=channel, target=target))
     return completed
 
@@ -176,54 +175,21 @@ def resolve_lead_contact_email(lead: AiMopLead) -> str | None:
     return personal[0][:255]
 
 
-def _lead_outreach_row(lead: AiMopLead) -> dict[str, Any]:
-    extra = parse_lead_extra_json(lead)
-    fallback_phone = str(lead.phone or "").strip() or None
-    return {
-        "org_name": lead.org_name,
-        "lpr_name": lead.lpr_name,
-        "lpr_phone": str(extra.get("lpr_phone") or "").strip() or fallback_phone,
-        "org_phone": str(extra.get("org_phone") or "").strip() or fallback_phone,
-        "org_mobile": str(extra.get("org_mobile") or "").strip() or fallback_phone,
-        "telegram": lead.telegram,
-        "whatsapp": lead.whatsapp,
-    }
-
-
-async def _agent_has_channel(agent_id: int, provider: str) -> bool:
-    async with async_session_maker() as session:
-        row = await session.scalar(
-            select(AgentChannelConnection.id).where(
-                AgentChannelConnection.agent_id == agent_id,
-                AgentChannelConnection.provider == provider,
-                AgentChannelConnection.is_active.is_(True),
-            )
-        )
-        return row is not None
-
-
-async def resolve_all_lead_messenger_channels(
-    *,
-    agent_id: int,
+def resolve_lead_contact_email_with_discovery(
     lead: AiMopLead,
-) -> list[tuple[str, str, dict[str, Any]]]:
-    wa_ok = await _agent_has_channel(agent_id, "whatsapp_userbot")
-    tg_ok = await _agent_has_channel(agent_id, "telegram_userbot")
-    if not wa_ok and not tg_ok:
-        return []
-    if not wa_ok:
-        logger.warning(
-            "AI MOP lead_id=%s agent_id=%s: WhatsApp userbot не подключён — WA-рассылка пропущена",
-            lead.id,
-            agent_id,
-        )
-
-    row = _lead_outreach_row(lead)
-    return collect_all_messenger_channels(
-        row,
-        whatsapp_available=wa_ok,
-        telegram_available=tg_ok,
-    )
+    discovery: "AiMopOutreachDiscovery | None" = None,
+) -> str | None:
+    """Email с учётом OSINT (CRM и др. источники из discovery)."""
+    candidates = collect_lead_contact_emails(lead)
+    if discovery is not None:
+        for raw in discovery.bundle.emails:
+            norm = str(raw or "").strip().casefold()
+            if norm and "@" in norm and norm not in candidates:
+                candidates.append(norm)
+    personal = [email for email in candidates if _is_personal_email(email)]
+    if not personal:
+        return None
+    return personal[0][:255]
 
 
 async def resolve_lead_outreach_channel(
@@ -235,7 +201,7 @@ async def resolve_lead_outreach_channel(
     channels = await resolve_all_lead_messenger_channels(agent_id=agent_id, lead=lead)
     if not channels:
         raise ValueError(
-            "У агента нет активного Telegram userbot и/или WhatsApp userbot для outreach"
+            "У агента нет активного Telegram / WhatsApp / MAX userbot для outreach"
         )
     channel, target, hint = channels[0]
     return channel, target, hint
@@ -378,8 +344,9 @@ async def run_outreach_for_lead(
             raise ValueError("Lead or agent not found")
 
     completed = _effective_completed_channels(lead)
-    contact_email = resolve_lead_contact_email(lead)
-    messengers = await resolve_all_lead_messenger_channels(agent_id=agent_id, lead=lead)
+    discovery = await discover_ai_mop_outreach_targets(agent_id=agent_id, lead=lead)
+    contact_email = resolve_lead_contact_email_with_discovery(lead, discovery)
+    messengers = discovery.messengers
 
     pending_email = (
         contact_email
@@ -402,7 +369,7 @@ async def run_outreach_for_lead(
                 "email_sent": False,
                 "skipped_already_sent": sorted(completed),
             }
-        raise ValueError("Нет email и нет контактов Telegram/WhatsApp для outreach")
+        raise ValueError("Нет email и нет контактов Telegram / WhatsApp / MAX для outreach")
 
     sent_channels: list[str] = []
     if pending_email and contact_email:

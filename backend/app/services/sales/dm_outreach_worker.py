@@ -16,13 +16,19 @@ from ...alembic.models import (
     Agent,
     AgentAnalyticsMessage,
     AgentChannelConnection,
+    AgentSalesContact,
     AgentSalesDmQueue,
     AgentSalesImportedContact,
     AiMopLead,
 )
 from .agent_outreach_service import mark_import_contact_sent
+from .agent_excel_import import EXCEL_IMPORT_SOURCE_CHAT_ID
 from .dm_queue_service import get_dm_queue_service
-from .outreach_send import send_telegram_userbot_message, send_whatsapp_userbot_message
+from .outreach_send import (
+    send_max_userbot_message,
+    send_telegram_userbot_message,
+    send_whatsapp_userbot_message,
+)
 from .agent_excel_import import EXCEL_IMPORT_SOURCE_CHAT_ID
 from .fsm import SalesFSMService
 from .sales_followup_service import (
@@ -33,6 +39,50 @@ from .sales_followup_service import (
 )
 
 logger = logging.getLogger(__name__)
+
+_USERBOT_CHANNELS = frozenset({"telegram_userbot", "whatsapp_userbot", "max_userbot"})
+
+
+def _provider_for_channel(channel: str) -> str:
+    normalized = str(channel or "").strip().lower()
+    if normalized in _USERBOT_CHANNELS:
+        return normalized
+    return "telegram_userbot"
+
+
+async def _rekey_max_excel_contact(
+    *,
+    agent_id: int,
+    old_external_id: str,
+    chat_external_id: str,
+    imported_contact_id: int | None,
+) -> None:
+    """После cold DM по телефону MAX привязываем FSM/импорт к chat_id диалога."""
+    old_id = str(old_external_id or "").strip()
+    new_id = str(chat_external_id or "").strip()
+    if not old_id or not new_id or old_id == new_id or not old_id.startswith("+"):
+        return
+    async with async_session_maker() as session:
+        async with session.begin():
+            fsm_row = await session.scalar(
+                select(AgentSalesContact).where(
+                    AgentSalesContact.agent_id == agent_id,
+                    AgentSalesContact.user_external_id == old_id,
+                    AgentSalesContact.source_chat_id == EXCEL_IMPORT_SOURCE_CHAT_ID,
+                )
+            )
+            if fsm_row is not None:
+                fsm_row.user_external_id = new_id
+                fsm_row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            if imported_contact_id is not None:
+                await session.execute(
+                    update(AgentSalesImportedContact)
+                    .where(AgentSalesImportedContact.id == int(imported_contact_id))
+                    .values(
+                        target_external_id=new_id[:256],
+                        updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                    )
+                )
 
 
 async def _latest_telegram_userbot_peer_access_hash(
@@ -165,6 +215,17 @@ class DmOutreachWorker:
                 "not on whatsapp",
             )
             return any(marker in low for marker in markers)
+        if channel == "max_userbot":
+            markers = (
+                "некорректный chat_id",
+                "не удалось отправить сообщение в max",
+                "не удалось найти пользователя max",
+                "пользователь max не найден",
+                "chat not found",
+                "forbidden",
+                "not found",
+            )
+            return any(marker in low for marker in markers)
         return False
 
     @staticmethod
@@ -182,7 +243,7 @@ class DmOutreachWorker:
                 continue
             channel = str(entry.get("channel") or "").strip().lower()
             target = str(entry.get("target") or "").strip()
-            if channel in {"telegram_userbot", "whatsapp_userbot"} and target:
+            if channel in _USERBOT_CHANNELS and target:
                 cleaned.append({"channel": channel, "target": target})
         return cleaned
 
@@ -206,11 +267,7 @@ class DmOutreachWorker:
                     agent = await session.scalar(select(Agent).where(Agent.id == item.agent_id))
                     if agent is None:
                         continue
-                    provider = (
-                        "whatsapp_userbot"
-                        if alt_channel == "whatsapp_userbot"
-                        else "telegram_userbot"
-                    )
+                    provider = _provider_for_channel(alt_channel)
                     channels = (
                         await session.execute(
                             select(AgentChannelConnection).where(
@@ -301,6 +358,14 @@ class DmOutreachWorker:
                         user_external_id=target,
                         text=message_text,
                     )
+                elif channel == "max_userbot":
+                    resolved_chat_id = await send_max_userbot_message(
+                        encrypted_credentials=encrypted_credentials,
+                        user_external_id=target,
+                        text=message_text,
+                    )
+                    if resolved_chat_id and resolved_chat_id != target:
+                        target = resolved_chat_id
                 else:
                     await send_telegram_userbot_message(
                         encrypted_credentials=encrypted_credentials,
@@ -559,6 +624,7 @@ class DmOutreachWorker:
         encrypted_credentials: str | None = None
         connection_id: int | None = None
         target_external = str(item.target_user_external_id or "").strip()
+        original_target_external = target_external
         metadata_changed = False
 
         async with async_session_maker() as session:
@@ -572,11 +638,7 @@ class DmOutreachWorker:
                     )
                     return
 
-                provider = (
-                    "whatsapp_userbot"
-                    if channel == "whatsapp_userbot"
-                    else "telegram_userbot"
-                )
+                provider = _provider_for_channel(channel)
                 channels = (
                     await session.execute(
                         select(AgentChannelConnection).where(
@@ -737,6 +799,21 @@ class DmOutreachWorker:
                 channel,
                 target_external,
             )
+            if (
+                channel == "max_userbot"
+                and original_target_external.startswith("+")
+                and target_external != original_target_external
+            ):
+                await _rekey_max_excel_contact(
+                    agent_id=int(item.agent_id),
+                    old_external_id=original_target_external,
+                    chat_external_id=target_external,
+                    imported_contact_id=(
+                        int(meta["imported_contact_id"])
+                        if meta.get("imported_contact_id") is not None
+                        else None
+                    ),
+                )
             await get_dm_queue_service().mark_sent(queue_id=item.id)
             self._last_send_by_account[account_key] = self._now_utc_naive()
 
@@ -806,6 +883,13 @@ class DmOutreachWorker:
                 non_retry_markers += (
                     "not on whatsapp",
                     "not registered on whatsapp",
+                )
+            if channel == "max_userbot":
+                non_retry_markers += (
+                    "некорректный chat_id",
+                    "не удалось отправить сообщение в max",
+                    "пользователь max не найден",
+                    "не удалось найти пользователя max",
                 )
             should_retry = "auth" not in low and not any(marker in low for marker in non_retry_markers)
 

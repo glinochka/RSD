@@ -5,6 +5,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -14,6 +15,8 @@ from uuid import uuid4
 from ..utils.crypto import decrypt_token
 
 logger = logging.getLogger(__name__)
+
+_PHONE_DIGITS_RE = re.compile(r"\D+")
 
 Transport = Literal["web", "mobile"]
 
@@ -233,7 +236,102 @@ async def validate_session_bundle(bundle: dict[str, Any], *, timeout_seconds: fl
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
-async def send_message_once(bundle: dict[str, Any], chat_id: str, text: str) -> None:
+def normalize_max_phone_e164(value: str | None) -> str | None:
+    """Нормализует российский/международный номер в формат +7XXXXXXXXXX."""
+    digits = _PHONE_DIGITS_RE.sub("", value or "")
+    if len(digits) < 10:
+        return None
+    if len(digits) >= 12 and digits.startswith("17"):
+        digits = digits[1:]
+    if len(digits) == 11 and digits.startswith("8"):
+        digits = "7" + digits[1:]
+    elif len(digits) == 10 and digits.startswith("9"):
+        digits = "7" + digits
+    if len(digits) < 11:
+        return None
+    return f"+{digits}"
+
+
+def is_max_phone_target(value: str) -> bool:
+    """Цель outreach по телефону (Excel) — с «+»; иначе считаем chat_id диалога."""
+    return str(value or "").strip().startswith("+")
+
+
+async def _run_max_client_once(
+    bundle: dict[str, Any],
+    *,
+    timeout_seconds: float = 45.0,
+    on_ready,
+) -> Any:
+    work_dir = tempfile.mkdtemp(prefix="rsd_max_send_")
+    try:
+        await write_session_store(work_dir, bundle)
+        client = build_runtime_client(work_dir, bundle, reconnect=False)
+        done = asyncio.Event()
+        error_holder: dict[str, Exception] = {}
+        result_holder: dict[str, Any] = {}
+
+        @client.on_start()
+        async def on_start(active_client) -> None:
+            try:
+                result_holder["value"] = await on_ready(active_client)
+            except Exception as exc:
+                error_holder["error"] = exc
+            finally:
+                done.set()
+
+        task = asyncio.create_task(client.start())
+        try:
+            await asyncio.wait_for(done.wait(), timeout=timeout_seconds)
+        except asyncio.TimeoutError as exc:
+            raise MaxUserbotSessionError("Таймаут операции MAX userbot") from exc
+        finally:
+            with contextlib.suppress(Exception):
+                await client.close()
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        if error_holder.get("error"):
+            exc = error_holder["error"]
+            if isinstance(exc, MaxUserbotSessionError):
+                raise exc
+            raise MaxUserbotSessionError(str(exc)) from exc
+        return result_holder.get("value")
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+async def resolve_max_dialog_chat_id_for_phone(bundle: dict[str, Any], phone_e164: str) -> str:
+    """Найти пользователя MAX по телефону и вычислить id личного диалога."""
+    normalized_phone = normalize_max_phone_e164(phone_e164)
+    if not normalized_phone:
+        raise MaxUserbotSessionError("Некорректный номер телефона для MAX")
+
+    async def _resolve(active_client) -> str:
+        me = active_client.me
+        if me is None or me.contact is None:
+            raise MaxUserbotSessionError("MAX не вернул профиль аккаунта")
+        my_id = int(me.contact.id)
+        try:
+            user = await active_client.search_by_phone(normalized_phone)
+        except Exception as exc:
+            low = str(exc).casefold()
+            if "not found" in low or "не найден" in low:
+                raise MaxUserbotSessionError(
+                    f"Пользователь MAX не найден по номеру {normalized_phone}"
+                ) from exc
+            raise MaxUserbotSessionError(
+                f"Не удалось найти пользователя MAX по номеру: {exc}"
+            ) from exc
+        user_id = int(user.id)
+        chat_id = int(active_client.get_chat_id(my_id, user_id))
+        return str(chat_id)
+
+    return str(await _run_max_client_once(bundle, on_ready=_resolve))
+
+
+async def send_message_once(bundle: dict[str, Any], chat_id: str, text: str) -> str:
+    """Отправить сообщение в известный chat_id. Возвращает chat_id."""
     normalized_text = (text or "").strip()
     if not normalized_text:
         raise MaxUserbotSessionError("Сообщение пустое")
@@ -242,37 +340,58 @@ async def send_message_once(bundle: dict[str, Any], chat_id: str, text: str) -> 
     except ValueError as exc:
         raise MaxUserbotSessionError("Некорректный chat_id MAX") from exc
 
-    work_dir = tempfile.mkdtemp(prefix="rsd_max_send_")
-    try:
-        await write_session_store(work_dir, bundle)
-        client = build_runtime_client(work_dir, bundle, reconnect=False)
-        done = asyncio.Event()
-        error_holder: dict[str, Exception] = {}
+    async def _send(active_client) -> str:
+        await active_client.api.messages.send_message(chat_id_int, normalized_text)
+        return str(chat_id_int)
 
-        @client.on_start()
-        async def on_start(active_client) -> None:
+    return str(await _run_max_client_once(bundle, on_ready=_send))
+
+
+async def send_outreach_message_once(
+    bundle: dict[str, Any],
+    *,
+    target_external_id: str,
+    text: str,
+) -> str:
+    """
+    Отправить outreach: по телефону (+7…) или в готовый chat_id.
+    Возвращает chat_id диалога (для аналитики и FSM).
+    """
+    target = str(target_external_id or "").strip()
+    normalized_text = (text or "").strip()
+    if not target:
+        raise MaxUserbotSessionError("Пустой идентификатор получателя MAX")
+    if not normalized_text:
+        raise MaxUserbotSessionError("Сообщение пустое")
+
+    if is_max_phone_target(target):
+        normalized_phone = normalize_max_phone_e164(target)
+        if not normalized_phone:
+            raise MaxUserbotSessionError("Некорректный номер телефона для MAX")
+
+        async def _send_by_phone(active_client) -> str:
+            me = active_client.me
+            if me is None or me.contact is None:
+                raise MaxUserbotSessionError("MAX не вернул профиль аккаунта")
+            my_id = int(me.contact.id)
             try:
-                await active_client.api.messages.send_message(chat_id_int, normalized_text)
+                user = await active_client.search_by_phone(normalized_phone)
             except Exception as exc:
-                error_holder["error"] = exc
-            finally:
-                done.set()
+                low = str(exc).casefold()
+                if "not found" in low or "не найден" in low:
+                    raise MaxUserbotSessionError(
+                        f"Пользователь MAX не найден по номеру {normalized_phone}"
+                    ) from exc
+                raise MaxUserbotSessionError(
+                    f"Не удалось найти пользователя MAX по номеру: {exc}"
+                ) from exc
+            chat_id = int(active_client.get_chat_id(my_id, int(user.id)))
+            await active_client.api.messages.send_message(chat_id, normalized_text)
+            return str(chat_id)
 
-        task = asyncio.create_task(client.start())
-        try:
-            await asyncio.wait_for(done.wait(), timeout=45)
-        except asyncio.TimeoutError as exc:
-            raise MaxUserbotSessionError("Таймаут отправки сообщения в MAX") from exc
-        finally:
-            with contextlib.suppress(Exception):
-                await client.close()
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
-        if error_holder.get("error"):
-            raise MaxUserbotSessionError(f"Не удалось отправить сообщение в MAX: {error_holder['error']}")
-    finally:
-        shutil.rmtree(work_dir, ignore_errors=True)
+        return str(await _run_max_client_once(bundle, on_ready=_send_by_phone))
+
+    return await send_message_once(bundle, target, normalized_text)
 
 
 async def load_bundle_from_upload(filename: str, content: bytes) -> dict[str, Any]:

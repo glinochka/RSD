@@ -125,15 +125,40 @@ function cleanupExpired() {
   const ts = nowMs();
   for (const [authId, session] of authSessions.entries()) {
     if (session.expiresAt <= ts) {
-      if (session.sock) {
-        try {
-          session.sock.end(new Error('auth expired'));
-        } catch {
-          // ignore
-        }
-      }
-      authSessions.delete(authId);
+      void destroyAuthSession(authId, session, { logoutRegistered: true });
     }
+  }
+}
+
+async function destroyAuthSession(authId, session, { logoutRegistered = false } = {}) {
+  authSessions.delete(authId);
+  const sock = session?.sock;
+  session.sock = null;
+  if (!sock) {
+    return;
+  }
+  const registered = Boolean(sock.authState?.creds?.registered);
+  try {
+    if (logoutRegistered && registered && typeof sock.logout === 'function') {
+      await sock.logout();
+    } else {
+      sock.end(new Error('auth session closed'));
+    }
+  } catch {
+    try {
+      sock.end(new Error('auth session closed'));
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function cancelAuthSessionsForPhone(phoneNumber, { exceptAuthId = null } = {}) {
+  for (const [authId, session] of authSessions.entries()) {
+    if (session.phoneNumber !== phoneNumber) continue;
+    if (exceptAuthId && authId === exceptAuthId) continue;
+    const registered = Boolean(session.sock?.authState?.creds?.registered);
+    void destroyAuthSession(authId, session, { logoutRegistered: registered });
   }
 }
 
@@ -380,7 +405,7 @@ async function createAuthSocket(session) {
       session.lastDisconnectCode = statusCode || null;
       session.lastError = `WhatsApp disconnect (${statusCode || 'unknown'})`;
       await reconnectIfNeeded(statusCode || 0);
-      if (!session.reconnecting) {
+      if (!session.reconnecting && session.status !== 'paired') {
         session.status = 'failed';
       }
     }
@@ -676,6 +701,9 @@ app.post('/auth/request_code', enforceApiKey, async (req, res) => {
       'Слишком много запросов кода для этого номера. Попробуйте позже.'
     );
 
+    // Снять зависшие auth-сессии этого номера (иначе на телефоне копятся «Ubuntu»-устройства).
+    cancelAuthSessionsForPhone(phoneNumber);
+
     const session = await createAuthSession(phoneNumber, 'qr');
     return res.status(200).json({
       auth_id: session.authId,
@@ -735,6 +763,8 @@ app.post('/auth/verify_code', enforceApiKey, async (req, res) => {
       phone_number: phoneNumber,
       auth_files: files,
     });
+    // Закрываем auth-сокет без logout: устройство остаётся привязанным, runtime подключится с теми же creds.
+    await destroyAuthSession(authId, session, { logoutRegistered: false });
     return res.status(200).json({
       session_string: sessionString,
       phone_number: phoneNumber,

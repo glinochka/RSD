@@ -76,3 +76,16 @@ async def test_sales_tool_registry_accepts_natural_yes_after_question(monkeypatc
         '{"text":"Здравствуйте!","target_user_external_id":"100"}',
     )
     assert result["ok"] is True
+
+
+def test_sales_tool_registry_max_userbot_outbound_channel():
+    registry = SalesToolRegistry(
+        allowed_tools=["schedule_dm"],
+        confirmation_policy="never_confirm",
+        user_message="подтверждаю",
+        agent_id=7,
+        user_external_id="12345",
+        mode="auto",
+        source_channel="max_userbot",
+    )
+    assert registry._outbound_channel == "max_userbot"

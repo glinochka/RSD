@@ -127,7 +127,7 @@ class TemplateRuntimeService:
     @staticmethod
     def _is_userbot_channel(source_channel: str) -> bool:
         normalized = (source_channel or "").strip().lower()
-        return normalized in {"telegram_userbot", "whatsapp_userbot"}
+        return normalized in {"telegram_userbot", "whatsapp_userbot", "max_userbot"}
 
     @staticmethod
     def _is_smart_search_enabled(template_config: dict[str, Any] | None) -> bool:

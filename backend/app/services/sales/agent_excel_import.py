@@ -52,9 +52,11 @@ async def import_agent_contacts_from_excel(
 
     wa_ok = await _agent_has_channel(session, agent_id, "whatsapp_userbot")
     tg_ok = await _agent_has_channel(session, agent_id, "telegram_userbot")
-    if not wa_ok and not tg_ok:
+    max_ok = await _agent_has_channel(session, agent_id, "max_userbot")
+    if not wa_ok and not tg_ok and not max_ok:
         raise ValueError(
-            "Подключите канал WhatsApp userbot и/или Telegram userbot, чтобы отправлять сообщения по базе."
+            "Подключите канал WhatsApp userbot, Telegram userbot и/или MAX userbot, "
+            "чтобы отправлять сообщения по базе."
         )
 
     batch_id = uuid.uuid4().hex
@@ -73,6 +75,7 @@ async def import_agent_contacts_from_excel(
             r,
             whatsapp_available=wa_ok,
             telegram_available=tg_ok,
+            max_available=max_ok,
         )
         if not channel or not target:
             skipped_no_messenger += 1
@@ -136,5 +139,9 @@ async def import_agent_contacts_from_excel(
         "skipped_no_messenger": skipped_no_messenger,
         "skipped_duplicate": skipped_duplicate,
         "total_parsed": len(rows),
-        "channels": {"whatsapp_userbot": wa_ok, "telegram_userbot": tg_ok},
+        "channels": {
+            "whatsapp_userbot": wa_ok,
+            "telegram_userbot": tg_ok,
+            "max_userbot": max_ok,
+        },
     }
