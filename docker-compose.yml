@@ -390,6 +390,8 @@ services:
         build: ./wa_bridge
         container_name: rsd_wa_bridge
         restart: unless-stopped
+        volumes:
+            - wa_bridge_data:/data/wa-auth
         environment:
             WA_USERBOT_ENV: ${WA_USERBOT_ENV:-production}
             WA_USERBOT_BRIDGE_API_KEY: ${WHATSAPP_USERBOT_BRIDGE_API_KEY:-}
@@ -429,3 +431,4 @@ volumes:
     fastembed_cache:
     postgres_data:
     qdrant_data:
+    wa_bridge_data:

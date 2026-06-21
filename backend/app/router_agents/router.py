@@ -2919,6 +2919,22 @@ async def _wa_userbot_bridge_post(path: str, payload: dict) -> dict:
     return result
 
 
+def _wa_userbot_bridge_http_status(exc: HTTPException) -> int | None:
+    """Extract upstream wa_bridge HTTP status from a 502 wrapper, if present."""
+    if exc.status_code != status.HTTP_502_BAD_GATEWAY:
+        return None
+    detail = str(exc.detail or "")
+    marker = "WhatsApp userbot bridge HTTP "
+    if marker not in detail:
+        return None
+    tail = detail.split(marker, 1)[1]
+    code_part = tail.split(":", 1)[0].strip()
+    try:
+        return int(code_part)
+    except ValueError:
+        return None
+
+
 def _validate_whatsapp_session_string(
     *,
     session_string: str,
@@ -4604,14 +4620,22 @@ async def verify_whatsapp_userbot_code(
     bridge_auth_id = decrypt_token(token_data["encrypted_bridge_auth_id"])
     code = payload.code.strip() if payload.code else ""
 
-    result = await _wa_userbot_bridge_post(
-        "auth/verify_code",
-        {
-            "auth_id": bridge_auth_id,
-            "phone_number": phone_number,
-            "code": code or None,
-        },
-    )
+    try:
+        result = await _wa_userbot_bridge_post(
+            "auth/verify_code",
+            {
+                "auth_id": bridge_auth_id,
+                "phone_number": phone_number,
+                "code": code or None,
+            },
+        )
+    except HTTPException as exc:
+        if _wa_userbot_bridge_http_status(exc) == 404:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Сессия подтверждения не найдена или истекла. Запросите новый QR-код.",
+            ) from exc
+        raise
     session_string = str(result.get("session_string") or "").strip()
     normalized_phone = str(result.get("phone_number") or phone_number).strip()
     normalized_phone, _ = _validate_whatsapp_session_string(
@@ -4644,12 +4668,25 @@ async def whatsapp_userbot_auth_status(
             detail="Токен подтверждения WhatsApp userbot принадлежит другому пользователю",
         )
     bridge_auth_id = decrypt_token(token_data["encrypted_bridge_auth_id"])
-    result = await _wa_userbot_bridge_post(
-        "auth/status",
-        {
-            "auth_id": bridge_auth_id,
-        },
-    )
+    try:
+        result = await _wa_userbot_bridge_post(
+            "auth/status",
+            {
+                "auth_id": bridge_auth_id,
+            },
+        )
+    except HTTPException as exc:
+        if _wa_userbot_bridge_http_status(exc) == 404:
+            return JSONResponse(
+                content={
+                    "status": "expired",
+                    "qr_data_url": None,
+                    "last_error": "Сессия подтверждения не найдена или истекла",
+                    "last_disconnect_code": None,
+                },
+                status_code=status.HTTP_200_OK,
+            )
+        raise
     return JSONResponse(
         content={
             "status": result.get("status") or "pending",

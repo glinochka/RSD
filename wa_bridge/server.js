@@ -745,7 +745,6 @@ app.post('/auth/verify_code', enforceApiKey, async (req, res) => {
       authSessions.delete(authId);
       return res.status(429).json({ detail: 'Превышено число попыток подтверждения' });
     }
-    session.attemptsLeft -= 1;
     const isReady = await waitForSessionReady(session, 30000);
     if (!isReady) {
       return res.status(409).json({
@@ -755,6 +754,7 @@ app.post('/auth/verify_code', enforceApiKey, async (req, res) => {
         last_disconnect_code: session.lastDisconnectCode || null,
       });
     }
+    session.attemptsLeft -= 1;
 
     const files = await readSessionFiles(session.sessionDir);
     const sessionString = signBundle({

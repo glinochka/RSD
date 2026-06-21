@@ -40,4 +40,9 @@ export function getApiErrorMessage(status, data, fallbacks = {}) {
   return fallbacks[status] ?? '';
 }
 
-export default { normalizeDetail, getApiErrorMessage };
+export function isWhatsappUserbotAuthSessionExpiredMessage(message) {
+  const lower = String(message || '').trim().toLowerCase();
+  return lower.includes('истекла') || lower.includes('не найдена') || lower.includes('expired');
+}
+
+export default { normalizeDetail, getApiErrorMessage, isWhatsappUserbotAuthSessionExpiredMessage };

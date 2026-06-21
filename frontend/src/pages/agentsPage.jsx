@@ -19,6 +19,7 @@ import { useNotification } from '../context/useNotification';
 import { NAVIGATION_ROUTES } from '../config/constants';
 import { useAuth } from '../context/useAuth';
 import { validateFile } from '../utils/validation';
+import { isWhatsappUserbotAuthSessionExpiredMessage } from '../utils/errorUtils';
 import DemoBadge, { TitleWithDemoBadge } from '../components/DemoBadge';
 import UserbotSessionFileUpload from '../components/UserbotSessionFileUpload';
 import MaxUserbotAuthPanel from '../components/MaxUserbotAuthPanel';
@@ -2562,10 +2563,16 @@ const AgentsPageContent = () => {
         setWhatsappUserbotPhone(response.phone_number);
       }
       setIsWhatsappUserbotVerified(true);
+      setWhatsappUserbotAuthToken('');
       showSuccess('WhatsApp userbot успешно инициализирован');
     } catch (error) {
       setIsWhatsappUserbotVerified(false);
-      showError(error?.message || 'Не удалось подтвердить код WhatsApp');
+      const message = String(error?.message || '');
+      if (isWhatsappUserbotAuthSessionExpiredMessage(message)) {
+        setWhatsappUserbotAuthToken('');
+        whatsappAutoVerifyAttemptedRef.current = false;
+      }
+      showError(message || 'Не удалось подтвердить код WhatsApp');
     } finally {
       setIsVerifyingWhatsappUserbotCode(false);
     }
@@ -2588,6 +2595,11 @@ const AgentsPageContent = () => {
         }
         const nextStatus = String(response?.status || '').trim().toLowerCase();
         const prevStatus = whatsappUserbotLastAuthStatusRef.current;
+        if (nextStatus === 'expired') {
+          showError(response?.last_error || 'Сессия подтверждения истекла. Запросите новый QR-код.');
+          setWhatsappUserbotAuthToken('');
+          return;
+        }
         if (nextStatus && nextStatus !== prevStatus) {
           if (nextStatus === 'failed') {
             showError(response?.last_error || 'Сессия WhatsApp завершилась с ошибкой. Запросите новый QR.');
@@ -2595,10 +2607,7 @@ const AgentsPageContent = () => {
         }
         whatsappUserbotLastAuthStatusRef.current = nextStatus;
 
-        if (
-          (nextStatus === 'paired' || nextStatus === 'connected')
-          && !whatsappAutoVerifyAttemptedRef.current
-        ) {
+        if (nextStatus === 'paired' && !whatsappAutoVerifyAttemptedRef.current) {
           whatsappAutoVerifyAttemptedRef.current = true;
           setIsVerifyingWhatsappUserbotCode(true);
           try {
@@ -2610,13 +2619,20 @@ const AgentsPageContent = () => {
             if (verifyResponse?.phone_number) {
               setWhatsappUserbotPhone(verifyResponse.phone_number);
             }
+            setWhatsappUserbotAuthToken('');
             setIsWhatsappUserbotVerified(true);
             showSuccess('WhatsApp userbot успешно инициализирован');
           } catch (error) {
-            whatsappAutoVerifyAttemptedRef.current = false;
             const message = String(error?.message || '');
-            if (!message.includes('еще не завершено') && !message.includes('ещё не завершено')) {
-              showError(message || 'Не удалось подтвердить подключение WhatsApp');
+            if (isWhatsappUserbotAuthSessionExpiredMessage(message)) {
+              setWhatsappUserbotAuthToken('');
+              whatsappAutoVerifyAttemptedRef.current = false;
+              showError(message || 'Сессия подтверждения истекла. Запросите новый QR-код.');
+            } else {
+              whatsappAutoVerifyAttemptedRef.current = false;
+              if (!message.includes('еще не завершено') && !message.includes('ещё не завершено')) {
+                showError(message || 'Не удалось подтвердить подключение WhatsApp');
+              }
             }
           } finally {
             if (!cancelled) {
