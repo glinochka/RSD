@@ -1,0 +1,17 @@
+# Local development only — copy to docker-compose.override.yml (gitignored).
+# Exposes backend/docs and Qdrant on localhost for debugging.
+#
+#   cp docker-compose.override.example.yml docker-compose.override.yml
+#   # In .env: ENVIRONMENT=development
+
+services:
+  backend:
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      ENVIRONMENT: development
+
+  qdrant:
+    ports:
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"

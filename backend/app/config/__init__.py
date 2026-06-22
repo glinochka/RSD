@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     SALES_DAY_TIMEZONE: str = "Europe/Moscow"
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
     QDRANT_API_KEY: str = ""
+    # production = no /docs or /openapi.json; development enables Swagger locally.
+    ENVIRONMENT: Literal["development", "staging", "production"] = "production"
     DEEPSEEK_API_KEY: str
     # Website Builder: HTML/layout generation (DeepSeek Chat recommended for creative design).
     # Note: deepseek-coder is optimized for code completion, while deepseek-chat

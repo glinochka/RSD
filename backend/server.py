@@ -249,7 +249,13 @@ async def lifespan(app: FastAPI):
 
 
 
-app = FastAPI(lifespan=lifespan)
+_expose_openapi = settings.ENVIRONMENT == "development"
+app = FastAPI(
+    lifespan=lifespan,
+    docs_url="/docs" if _expose_openapi else None,
+    redoc_url=None,
+    openapi_url="/openapi.json" if _expose_openapi else None,
+)
 
 
 @app.exception_handler(HTTPException)

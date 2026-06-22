@@ -57,6 +57,7 @@ services:
             DB_NAME: ${DB_NAME}
             SECRET_KEY: ${SECRET_KEY}
             ALGORITHM: ${ALGORITHM}
+            ENVIRONMENT: ${ENVIRONMENT:-production}
             ENCRYPTION_KEY: ${ENCRYPTION_KEY}
             BASE_URL: ${BASE_URL}
             QDRANT_URL: ${QDRANT_URL}
@@ -108,8 +109,7 @@ services:
             TELEPHONY_VOXIMPLANT_APPLICATION_ID: ${TELEPHONY_VOXIMPLANT_APPLICATION_ID:-}
             TELEPHONY_VOXIMPLANT_RULE_ID: ${TELEPHONY_VOXIMPLANT_RULE_ID:-}
             TELEPHONY_OPERATOR_TRANSFER_E164: ${TELEPHONY_OPERATOR_TRANSFER_E164:-}
-        ports:
-            - '8000:8000'
+        # No host ports: API is reached via frontend nginx (backend:8000 on rsd_network).
         depends_on:
             qdrant:
                 condition: service_started
@@ -191,8 +191,7 @@ services:
             WHATSAPP_USERBOT_BRIDGE_TIMEOUT_SECONDS: ${WHATSAPP_USERBOT_BRIDGE_TIMEOUT_SECONDS:-60}
         command: >
             python main.py
-        ports:
-            - "8002:8002"
+        # No host ports: Telegram webhooks via frontend nginx -> bot:8002.
         networks:
             - rsd_network
         volumes:
@@ -241,8 +240,7 @@ services:
             REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
             QDRANT_URL: ${QDRANT_URL}
             DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
-        ports:
-            - "8001:8001"
+        # No host ports: telephony_bridge -> telephony_worker:8001 on rsd_network.
         depends_on:
             postgres:
                 condition: service_healthy
@@ -273,8 +271,7 @@ services:
             TELEPHONY_BACKEND_URL: ${TELEPHONY_BACKEND_URL:-http://telephony_worker:8001}
             TELEPHONY_BRIDGE_CONTROL_ONLY: ${TELEPHONY_BRIDGE_CONTROL_ONLY:-true}
             PORT: "8100"
-        ports:
-            - "8100:8100"
+        # No host ports: Voximplant webhooks via frontend nginx -> telephony_bridge:8100.
         depends_on:
             redis:
                 condition: service_healthy
@@ -371,8 +368,7 @@ services:
             TELEPHONY_STT_LANGUAGE: ${TELEPHONY_STT_LANGUAGE:-ru-RU}
             TELEPHONY_BARGE_IN_ENABLED: ${TELEPHONY_BARGE_IN_ENABLED:-true}
             TELEPHONY_BARGE_IN_SPEECH_FRAMES: ${TELEPHONY_BARGE_IN_SPEECH_FRAMES:-2}
-        ports:
-            - "8200:8200"
+        # No host ports: media WS via frontend nginx -> telephony_media_gateway:8200.
         depends_on:
             redis:
                 condition: service_healthy
@@ -415,9 +411,9 @@ services:
         restart: unless-stopped
         image: qdrant/qdrant:latest
         container_name: rsd_qdrant
-        ports:
-            - "6333:6333"
-            - "6334:6334"
+        environment:
+            QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-}
+        # No host ports: backend uses http://qdrant:6333 on rsd_network only.
         volumes:
             - qdrant_data:/qdrant/storage
         networks:
