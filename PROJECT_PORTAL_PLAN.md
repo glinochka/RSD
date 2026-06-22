@@ -753,3 +753,98 @@ flowchart TD
 ---
 
 *Версия плана: 1.0 · Дата: 2026-06-21*
+
+
+
+Что сделать на VPS прямо сейчас
+Два шага: сначала экстренно закрыть (2 мин), потом задеплоить фикс из репозитория.
+
+Шаг 1. Экстренная блокировка (сделай первым делом)
+Зайди на VPS по SSH и выполни:
+
+# Узнать интерфейс (обычно eth0 или ens3)
+ip route get 1.1.1.1 | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}'
+Подставь интерфейс (допустим eth0):
+
+IFACE=eth0
+for PORT in 6333 6334 8000 8001 8002 8100 8200 8090; do
+  iptables -I DOCKER-USER -i $IFACE -p tcp --dport $PORT -j DROP
+done
+iptables -A DOCKER-USER -j RETURN
+Сохранить правила (чтобы пережили перезагрузку):
+
+apt install -y iptables-persistent
+netfilter-persistent save
+Проверка с Windows — все должны зависнуть/отказать:
+
+curl -sS -m 5 http://195.133.26.134:6333/collections
+curl -sS -m 5 http://195.133.26.134:8000/docs
+curl -sS -m 5 http://195.133.26.134:8002/health
+curl -sS -m 5 http://195.133.26.134:8100/health
+curl -sS -m 5 http://195.133.26.134:8200/health
+Сайт https://rsd-ai.ru при этом должен работать — блокируются только прямые порты на IP.
+
+Шаг 2. Постоянный фикс (после git pull)
+На VPS в папке проекта:
+
+cd /path/to/rsd   # твой путь к проекту
+git pull
+# Сгенерируй ключ для Qdrant (если ещё нет в .env)
+openssl rand -hex 32
+Добавь в .env на VPS:
+
+ENVIRONMENT=production
+QDRANT_API_KEY=<сгенерированный_ключ>
+Тот же ключ уже подхватится backend'ом (QDRANT_API_KEY в settings).
+
+Пересоздай контейнеры:
+
+docker compose up -d
+Проверь, что порты не слушают снаружи:
+
+ss -tlnp | grep -E '6333|8000|8001|8002|8100|8200'
+Должны остаться только 80 и 443 (frontend/nginx). Внутренние сервисы — только в docker-сети.
+
+Повтори curl с Windows — всё ещё должно быть закрыто.
+
+Что изменено в репозитории
+Файл	Изменение
+docker-compose.yml
+Убраны ports у backend, bot, telephony, qdrant — доступ только через nginx/docker-сеть
+docker-compose.yml
+Qdrant: QDRANT__SERVICE__API_KEY из .env
+backend/server.py
+/docs и /openapi.json только при ENVIRONMENT=development
+deployment/scripts/lock-exposed-docker-ports.sh
+Скрипт экстренной блокировки
+docker-compose.override.example.yml
+Для локальной разработки (localhost:8000, :6333)
+После git pull на VPS можно также:
+
+sudo bash deployment/scripts/lock-exposed-docker-ports.sh
+Почему это работает
+Было:  Интернет → 195.133.26.134:8000 → Docker (мимо UFW)
+Стало: Интернет → :443 → nginx → backend:8000 (только docker-сеть)
+UFW разрешал только SSH, но Docker сам открывал порты через iptables. Теперь порты не публикуются на хост вообще.
+
+Чеклист после фикса
+
+ curl http://IP:8000/docs — timeout/refused
+
+ curl http://IP:6333/collections — timeout/refused
+
+ https://rsd-ai.ru — 200 OK
+
+ https://rsd-ai.ru/api/... — API работает
+
+ Telegram-бот отвечает (webhook через nginx)
+
+ В .env: ENVIRONMENT=production, QDRANT_API_KEY задан
+Локальная разработка у тебя на ПК
+cp docker-compose.override.example.yml docker-compose.override.yml
+# В .env: ENVIRONMENT=development
+docker compose up -d
+Тогда http://127.0.0.1:8000/docs снова доступен только на твоей машине.
+
+Сейчас: выполни Шаг 1 на VPS и пришли результат curl с Windows — убедимся, что дыры закрыты. Потом git pull + Шаг 2.
+
