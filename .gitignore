@@ -5,7 +5,8 @@ temp_uploads/
 collect_code.py
 full_project_code.txt
 node_modules
-security-tools/
+security-tools/nuclei/
+security-tools/testssl.sh/
 security-audit-logs/
 testfail.txt
 
