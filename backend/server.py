@@ -12,11 +12,11 @@ from app.logger_config import setup_logger
 setup_logger()
 logger = getLogger(__name__)
 from app.services.error_log_service import record_error_log
-from fastapi.middleware.cors import CORSMiddleware
 from app.middleware import (
     CSPMiddleware,
     RateLimitMiddleware,
     SecurityAuditMiddleware,
+    SelectiveCORSMiddleware,
 )
 from app.router_users import router as users_router
 from app.router_agents import router as agents_router
@@ -30,7 +30,6 @@ from app.router_sales import router as sales_portal_router
 from app.router_telephony import router as telephony_router
 from app.router_websites.router import router as websites_router
 from app.router_websites.public_router import router as websites_public_router
-from app.origins import origins
 from app.config import settings
 from app.services.subscription_maintenance import downgrade_expired_subscriptions_once
 from app.services.agent_autopay import process_agent_autopay_renewals_once
@@ -286,29 +285,11 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     )
 
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins = origins,
-    allow_origin_regex=r"https?://.*",
-    allow_methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers = [
-        "Authorization",
-        "Content-Type",
-        "Accept",
-        "Origin",
-        "X-Requested-With",
-        "X-Internal-API-Key",
-        "X-Internal-Timestamp",
-        "X-Internal-Signature",
-        "X-Agent-API-Key",
-    ],
-    allow_credentials = True
-)
-
-# Security middleware
+# Security middleware (order: last added = outermost)
 app.add_middleware(SecurityAuditMiddleware)
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(CSPMiddleware)
+app.add_middleware(SelectiveCORSMiddleware)
 
 
 @app.middleware("http")

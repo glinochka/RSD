@@ -1,5 +1,6 @@
 """FastAPI middleware package."""
 
+from .cors import SelectiveCORSMiddleware
 from .security import (
     CSPMiddleware,
     RateLimitMiddleware,
@@ -11,5 +12,6 @@ __all__ = [
     "CSPMiddleware",
     "RateLimitMiddleware",
     "SecurityAuditMiddleware",
+    "SelectiveCORSMiddleware",
     "require_website_owner",
 ]

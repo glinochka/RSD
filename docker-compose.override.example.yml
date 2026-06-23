@@ -1,8 +1,13 @@
 # Local development only — copy to docker-compose.override.yml (gitignored).
-# Exposes backend/docs and Qdrant on localhost for debugging.
 #
 #   cp docker-compose.override.example.yml docker-compose.override.yml
 #   # In .env: ENVIRONMENT=development
+#
+# NEVER bind 0.0.0.0 for backend, qdrant, telephony on a VPS with a public IP.
+# Docker-published ports bypass UFW. On production use only docker-compose.yml
+# (no override) or delete docker-compose.override.yml entirely.
+#
+# See: deployment/VPS_STAGE2_DEPLOY.md
 
 services:
   backend:
@@ -15,3 +20,20 @@ services:
     ports:
       - "127.0.0.1:6333:6333"
       - "127.0.0.1:6334:6334"
+
+  # Optional: local telephony debugging (localhost only)
+  telephony_worker:
+    ports:
+      - "127.0.0.1:8001:8001"
+
+  telephony_bridge:
+    ports:
+      - "127.0.0.1:8100:8100"
+
+  telephony_media_gateway:
+    ports:
+      - "127.0.0.1:8200:8200"
+
+  bot:
+    ports:
+      - "127.0.0.1:8002:8002"
