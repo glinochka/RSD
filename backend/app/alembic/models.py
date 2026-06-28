@@ -993,6 +993,9 @@ class AiMopLead(Base):
     follow_up_month_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     import_batch_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    llm_prompt_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    llm_completion_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    llm_cost_cny_micros: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
 

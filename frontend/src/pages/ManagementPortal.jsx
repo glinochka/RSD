@@ -4312,6 +4312,26 @@ const ManagementPortal = () => {
                 <div className="management-stat-value">{leadStats.outreach_queued ?? 0}</div>
               </div>
               <div className="management-stat-card">
+                <div className="management-stat-label">Готово к отправке</div>
+                <div className="management-stat-value">
+                  {leadStats.ready_backlog ?? 0}
+                  {leadStats.ready_backlog_limit ? ` / ${leadStats.ready_backlog_limit}` : ''}
+                </div>
+              </div>
+              <div className="management-stat-card">
+                <div className="management-stat-label">Ср. стоимость лида</div>
+                <div className="management-stat-value">
+                  {aiMopDashboard?.llm_cost?.leads_with_usage
+                    ? `${aiMopDashboard.llm_cost.avg_cost_rub} ₽`
+                    : '—'}
+                </div>
+                {aiMopDashboard?.llm_cost?.leads_with_usage > 0 && (
+                  <div className="management-stat-hint" style={{ fontSize: '0.8rem', opacity: 0.75, marginTop: '0.25rem' }}>
+                    {aiMopDashboard.llm_cost.avg_cost_cny} ¥ · {aiMopDashboard.llm_cost.leads_with_usage} лид.
+                  </div>
+                )}
+              </div>
+              <div className="management-stat-card">
                 <div className="management-stat-label">Отправлено</div>
                 <div className="management-stat-value">{leadStats.outreach_sent ?? 0}</div>
               </div>

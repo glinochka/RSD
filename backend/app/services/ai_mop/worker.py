@@ -22,6 +22,7 @@ from ..sales.outreach_scheduling import EXCEL_STAGGER_MAX_MINUTES, EXCEL_STAGGER
 from .lead_recovery import is_llm_balance_error, rollback_lead_after_llm_balance_error
 from .lead_status import mark_lead_failed, mark_lead_provisioned
 from .contact_discovery import discover_ai_mop_outreach_targets
+from .llm_cost import ai_mop_lead_llm_scope
 from .outreach import (
     resolve_lead_contact_email_with_discovery,
     run_outreach_for_lead,
@@ -34,7 +35,24 @@ logger = logging.getLogger(__name__)
 
 _STAGGER_MIN = EXCEL_STAGGER_MIN_MINUTES
 _STAGGER_MAX = EXCEL_STAGGER_MAX_MINUTES
-_MAX_PROVISIONED_BACKLOG = max(1, int(settings.AI_MOP_MAX_PROVISIONED_BACKLOG))
+_MAX_SEND_BACKLOG = max(1, int(settings.AI_MOP_MAX_PROVISIONED_BACKLOG))
+
+
+async def _count_leads_by_status(session, *statuses: str) -> int:
+    return int(
+        await session.scalar(
+            select(func.count(AiMopLead.id)).where(AiMopLead.status.in_(statuses))
+        )
+        or 0
+    )
+
+
+async def _outreach_queued_count(session) -> int:
+    return await _count_leads_by_status(session, "outreach_queued")
+
+
+async def _ready_send_backlog_count(session) -> int:
+    return await _count_leads_by_status(session, "provisioned", "outreach_queued")
 
 
 class AiMopPipelineError(RuntimeError):
@@ -106,6 +124,9 @@ class AiMopWorker:
     async def _try_send_ready_lead(self) -> bool:
         now = _utc_now()
         async with async_session_maker() as session:
+            if await _outreach_queued_count(session) >= _MAX_SEND_BACKLOG:
+                return False
+
             assignment = await session.scalar(
                 select(AiMopAgentAssignment)
                 .where(
@@ -159,11 +180,12 @@ class AiMopWorker:
             await session.commit()
 
         try:
-            await run_outreach_for_lead(
-                lead_id=lead_id,
-                agent_id=agent_id,
-                provision=provision,
-            )
+            async with ai_mop_lead_llm_scope(lead_id):
+                await run_outreach_for_lead(
+                    lead_id=lead_id,
+                    agent_id=agent_id,
+                    provision=provision,
+                )
         except AiMopPipelineError as exc:
             logger.warning("AI MOP outreach failed lead_id=%s: %s", lead_id, exc)
             if is_llm_balance_error(str(exc)):
@@ -198,10 +220,7 @@ class AiMopWorker:
     async def _try_provision_next_lead(self) -> bool:
         now = _utc_now()
         async with async_session_maker() as session:
-            provisioned_backlog = await session.scalar(
-                select(func.count(AiMopLead.id)).where(AiMopLead.status == "provisioned")
-            )
-            if int(provisioned_backlog or 0) >= _MAX_PROVISIONED_BACKLOG:
+            if await _ready_send_backlog_count(session) >= _MAX_SEND_BACKLOG:
                 return False
 
             assignment = await session.scalar(
@@ -243,7 +262,8 @@ class AiMopWorker:
             await session.commit()
 
         try:
-            await self._provision_lead(lead_id=lead_id, agent_id=agent_id)
+            async with ai_mop_lead_llm_scope(lead_id):
+                await self._provision_lead(lead_id=lead_id, agent_id=agent_id)
         except AiMopPipelineError as exc:
             logger.warning("AI MOP lead %s failed at %s: %s", lead_id, exc.stage, exc)
             if is_llm_balance_error(str(exc)):

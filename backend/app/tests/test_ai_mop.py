@@ -204,6 +204,65 @@ def test_ai_mop_max_provisioned_backlog_default():
 
 
 @pytest.mark.asyncio
+async def test_ai_mop_worker_blocks_send_when_outreach_queue_full(monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.services.ai_mop.worker import AiMopWorker
+
+    worker = AiMopWorker()
+    session = MagicMock()
+    session.scalar = AsyncMock(side_effect=[10])  # outreach_queued count
+
+    class _Ctx:
+        async def __aenter__(self):
+            return session
+
+        async def __aexit__(self, *args):
+            return False
+
+    monkeypatch.setattr(
+        "app.services.ai_mop.worker.async_session_maker",
+        lambda: _Ctx(),
+    )
+    monkeypatch.setattr(
+        "app.services.ai_mop.worker.is_ai_mop_pipeline_paused",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(
+        "app.services.ai_mop.worker.ai_mop_first_message_allowed_now",
+        lambda: True,
+    )
+
+    assert await worker._try_send_ready_lead() is False
+    session.scalar.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_ai_mop_worker_blocks_provision_when_ready_backlog_full(monkeypatch):
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.services.ai_mop.worker import AiMopWorker
+
+    worker = AiMopWorker()
+    session = MagicMock()
+    session.scalar = AsyncMock(side_effect=[10])  # provisioned + outreach_queued
+
+    class _Ctx:
+        async def __aenter__(self):
+            return session
+
+        async def __aexit__(self, *args):
+            return False
+
+    monkeypatch.setattr(
+        "app.services.ai_mop.worker.async_session_maker",
+        lambda: _Ctx(),
+    )
+
+    assert await worker._try_provision_next_lead() is False
+
+
+@pytest.mark.asyncio
 async def test_ai_mop_worker_provisions_outside_send_window(monkeypatch):
     from unittest.mock import AsyncMock
 

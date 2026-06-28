@@ -75,6 +75,13 @@ class Settings(BaseSettings):
     AI_MOP_MAX_PROVISIONED_BACKLOG: int = 10
     # Домен для автогенерации login-email лидам без почты в базе (translit@domain).
     AI_MOP_ACCOUNT_EMAIL_DOMAIN: str = "rsd-ai.ru"
+    # Стоимость LLM (юани / 1M токенов) для учёта расхода на лида; курс для дашборда.
+    AI_MOP_LLM_INPUT_CNY_PER_MTOK: float = 1.0
+    AI_MOP_LLM_OUTPUT_CNY_PER_MTOK: float = 2.0
+    AI_MOP_LLM_CACHE_HIT_CNY_PER_MTOK: float = 0.02
+    AI_MOP_LLM_CODER_INPUT_CNY_PER_MTOK: float = 1.0
+    AI_MOP_LLM_CODER_OUTPUT_CNY_PER_MTOK: float = 2.0
+    AI_MOP_CNY_TO_RUB_RATE: float = 12.0
 
     QDRANT_URL: str
     DB_HOST: str

@@ -493,6 +493,62 @@ class DmOutreachWorker:
         finally:
             logger.info("DmOutreachWorker stopped")
 
+    async def _send_ai_mop_queued_email(
+        self,
+        *,
+        item: AgentSalesDmQueue,
+        meta: dict[str, Any],
+        message_text: str,
+    ) -> None:
+        from ..ai_mop.dm_hooks import on_dm_queue_sent
+        from ..ai_mop.email_outreach import send_ai_mop_outreach_email
+
+        to_email = str(item.target_user_external_id or "").strip()
+        subject = str(meta.get("email_subject") or "").strip()
+        html_body = str(meta.get("email_html") or "").strip()
+        if not to_email or not subject or not message_text:
+            await get_dm_queue_service().mark_failed(
+                queue_id=item.id,
+                error="Missing email fields in AI MOP queue item",
+                retry=False,
+            )
+            return
+
+        account_key = (int(item.agent_id), "email", 0)
+        timeout_seconds = self._resolve_account_timeout_seconds(meta)
+        now = self._now_utc_naive()
+        last_sent_at = self._last_send_by_account.get(account_key)
+        if last_sent_at is not None:
+            next_allowed_at = last_sent_at + timedelta(seconds=timeout_seconds)
+            if next_allowed_at > now:
+                await self._defer_queue_item(
+                    queue_id=int(item.id),
+                    scheduled_for=next_allowed_at,
+                    meta=meta,
+                )
+                logger.info(
+                    "Deferred AI MOP email by cooldown: queue_id=%d until=%s",
+                    item.id,
+                    next_allowed_at.isoformat(),
+                )
+                return
+
+        await send_ai_mop_outreach_email(
+            to_email=to_email,
+            subject=subject,
+            text=message_text,
+            html_body=html_body,
+        )
+        logger.info(
+            "Sent AI MOP email: queue_id=%d agent_id=%d to=%s",
+            item.id,
+            item.agent_id,
+            to_email,
+        )
+        await get_dm_queue_service().mark_sent(queue_id=item.id)
+        self._last_send_by_account[account_key] = self._now_utc_naive()
+        await on_dm_queue_sent(item)
+
     async def _process_batch(self) -> None:
         """Process one batch of pending messages."""
         service = get_dm_queue_service()
@@ -529,6 +585,10 @@ class DmOutreachWorker:
         message_text = (item.message_text or "").strip()
         imported_id = meta.get("imported_contact_id")
         follow_up_tier = str(meta.get("follow_up_tier") or "").strip().lower()
+
+        if channel == "email":
+            await self._send_ai_mop_queued_email(item=item, meta=meta, message_text=message_text)
+            return
 
         if meta.get("compose_at_send") or message_text == COMPOSE_AT_SEND_PLACEHOLDER:
             ai_mop_lead_id = meta.get("ai_mop_lead_id")

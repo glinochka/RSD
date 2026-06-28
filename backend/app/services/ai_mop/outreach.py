@@ -207,12 +207,12 @@ async def resolve_lead_outreach_channel(
     return channel, target, hint
 
 
-async def send_ai_mop_proposal_email(
+async def compose_ai_mop_email_content(
     *,
     lead: AiMopLead,
     provision: dict[str, Any],
     to_email: str,
-) -> None:
+) -> dict[str, str]:
     lead_context = str(provision.get("lead_context") or "").strip()
     if not lead_context:
         lead_context = build_lead_context(
@@ -223,11 +223,24 @@ async def send_ai_mop_proposal_email(
             address=lead.address,
             category=lead.category,
         )
-    email_content = await compose_outreach_email(
+    return await compose_outreach_email(
         lead_context=lead_context,
         website_url=str(provision["website_url"]),
         login_email=str(provision.get("login_email") or ""),
         temp_password=str(provision.get("temp_password") or ""),
+    )
+
+
+async def send_ai_mop_proposal_email(
+    *,
+    lead: AiMopLead,
+    provision: dict[str, Any],
+    to_email: str,
+) -> None:
+    email_content = await compose_ai_mop_email_content(
+        lead=lead,
+        provision=provision,
+        to_email=to_email,
     )
     await send_ai_mop_outreach_email(
         to_email=to_email,
@@ -266,19 +279,23 @@ async def enqueue_ai_mop_outreach(
     target: str,
     hint: dict[str, Any],
     message_text: str,
+    email_subject: str | None = None,
+    email_html: str | None = None,
 ) -> int:
     queue = get_dm_queue_service()
-    fsm = SalesFSMService()
 
-    meta: dict[str, Any] = attach_target_hint_to_dm_meta(
-        {
-            "channel": channel,
-            "ai_mop_lead_id": lead_id,
-            "org_name": "",
-            "source": "ai_mop",
-        },
-        hint,
-    )
+    meta: dict[str, Any] = {
+        "channel": channel,
+        "ai_mop_lead_id": lead_id,
+        "org_name": "",
+        "source": "ai_mop",
+    }
+    if channel != OUTREACH_CHANNEL_EMAIL:
+        meta = attach_target_hint_to_dm_meta(meta, hint)
+    if email_subject is not None:
+        meta["email_subject"] = email_subject
+    if email_html is not None:
+        meta["email_html"] = email_html
 
     async with async_session_maker() as session:
         lead = await session.get(AiMopLead, lead_id)
@@ -294,28 +311,30 @@ async def enqueue_ai_mop_outreach(
         metadata=meta,
     )
 
-    await fsm.get_or_create_contact(
-        agent_id=agent_id,
-        user_external_id=target,
-        source_chat_id=AI_MOP_SOURCE_CHAT_ID,
-    )
-    try:
-        await fsm.transition_contact(
+    if channel != OUTREACH_CHANNEL_EMAIL:
+        fsm = SalesFSMService()
+        await fsm.get_or_create_contact(
             agent_id=agent_id,
             user_external_id=target,
             source_chat_id=AI_MOP_SOURCE_CHAT_ID,
-            to_state="QUALIFIED",
-            reason="ai_mop_outreach",
         )
-        await fsm.transition_contact(
-            agent_id=agent_id,
-            user_external_id=target,
-            source_chat_id=AI_MOP_SOURCE_CHAT_ID,
-            to_state="QUEUED",
-            reason="ai_mop_outreach",
-        )
-    except Exception:
-        logger.debug("FSM transition skipped ai_mop lead_id=%s", lead_id, exc_info=True)
+        try:
+            await fsm.transition_contact(
+                agent_id=agent_id,
+                user_external_id=target,
+                source_chat_id=AI_MOP_SOURCE_CHAT_ID,
+                to_state="QUALIFIED",
+                reason="ai_mop_outreach",
+            )
+            await fsm.transition_contact(
+                agent_id=agent_id,
+                user_external_id=target,
+                source_chat_id=AI_MOP_SOURCE_CHAT_ID,
+                to_state="QUEUED",
+                reason="ai_mop_outreach",
+            )
+        except Exception:
+            logger.debug("FSM transition skipped ai_mop lead_id=%s", lead_id, exc_info=True)
 
     return int(item.id)
 
@@ -372,16 +391,28 @@ async def run_outreach_for_lead(
         raise ValueError("Нет email и нет контактов Telegram / WhatsApp / MAX для outreach")
 
     sent_channels: list[str] = []
+    queue_ids: list[int] = []
+    dm_channels: list[tuple[str, str]] = []
+
     if pending_email and contact_email:
-        await send_ai_mop_proposal_email(
+        email_content = await compose_ai_mop_email_content(
             lead=lead,
             provision=provision,
             to_email=contact_email,
         )
+        queue_id = await enqueue_ai_mop_outreach(
+            agent_id=agent_id,
+            lead_id=lead_id,
+            channel=OUTREACH_CHANNEL_EMAIL,
+            target=contact_email,
+            hint={},
+            message_text=email_content["text"],
+            email_subject=email_content["subject"],
+            email_html=email_content["html_body"],
+        )
+        queue_ids.append(queue_id)
         sent_channels.append(f"email:{contact_email}")
 
-    queue_ids: list[int] = []
-    dm_channels: list[tuple[str, str]] = []
     if pending_messengers:
         message_text = await compose_ai_mop_dm(
             agent=agent,
@@ -401,33 +432,31 @@ async def run_outreach_for_lead(
             dm_channels.append((channel, target))
             sent_channels.append(f"{channel}:{target}")
 
-    from .lead_status import mark_lead_email_outreach_sent, mark_lead_outreach_queued
+    from .lead_status import mark_lead_outreach_queued
 
-    if dm_channels:
-        primary_channel, primary_target = dm_channels[0]
-        if len(dm_channels) > 1 or (pending_email and contact_email):
-            channel_label = "multi"
+    if queue_ids:
+        if dm_channels:
+            primary_channel, primary_target = dm_channels[0]
+            if len(dm_channels) > 1 or (pending_email and contact_email):
+                channel_label = "multi"
+            else:
+                channel_label = primary_channel
         else:
-            channel_label = primary_channel
+            channel_label = OUTREACH_CHANNEL_EMAIL
+            primary_target = contact_email or ""
         await mark_lead_outreach_queued(
             lead_id=lead_id,
             agent_id=agent_id,
             channel=channel_label,
             target=primary_target,
-            dm_queue_id=queue_ids[0] if queue_ids else None,
-            provision=provision,
-        )
-    elif pending_email and contact_email:
-        await mark_lead_email_outreach_sent(
-            lead_id=lead_id,
-            agent_id=agent_id,
-            contact_email=contact_email,
+            dm_queue_id=queue_ids[0],
             provision=provision,
         )
 
     return {
         "sent_channels": sent_channels,
         "dm_queue_ids": queue_ids,
-        "email_sent": bool(pending_email and contact_email),
+        "email_sent": False,
+        "email_queued": bool(pending_email and contact_email),
         "skipped_already_sent": sorted(completed) if completed else [],
     }

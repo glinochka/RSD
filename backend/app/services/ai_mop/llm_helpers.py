@@ -7,8 +7,8 @@ import logging
 import re
 from typing import Any
 
-from ..ai_authoring import ai_client
 from ..admin_booking.domains import DOMAIN_REGISTRY
+from .llm_cost import ai_mop_chat_completion
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,7 @@ async def generate_provision_profile(*, lead_context: str) -> dict[str, Any]:
         f"Доступные domain_type: {domain_options}\n\n"
         f"{_PROVISION_SCHEMA}"
     )
-    response = await ai_client.chat.completions.create(
+    response = await ai_mop_chat_completion(
         model="deepseek-chat",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.4,
@@ -104,7 +104,7 @@ async def compose_outreach_email(
         f"Ссылка на демо: {website_url}\n\n"
         f"{_OUTREACH_SCHEMA}"
     )
-    response = await ai_client.chat.completions.create(
+    response = await ai_mop_chat_completion(
         model="deepseek-chat",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.9,
@@ -144,7 +144,7 @@ async def compose_outreach_dm(
         f"Компания «{org_name}»:\n{lead_context}\n\n"
         f"Ссылка на демо: {website_url}\n"
     )
-    response = await ai_client.chat.completions.create(
+    response = await ai_mop_chat_completion(
         model="deepseek-chat",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.95,

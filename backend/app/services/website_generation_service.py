@@ -18,6 +18,7 @@ from ..alembic.models import WebsiteBlock
 from ..router_websites.dao import WebsiteBlockDAO, WebsiteDAO
 from ..config import settings
 from .ai_authoring import ai_client
+from .ai_mop.llm_cost import record_completion_usage
 from .website_html_cleanup import strip_decorative_chat_widgets
 from .website_interactivity import inject_landing_interactivity_runtime
 from .website_sanitization_service import get_website_sanitization_service
@@ -826,6 +827,7 @@ class WebsiteGenerationService:
             temperature=temperature,
             max_tokens=max_tokens or self.max_generation_tokens,
         )
+        await record_completion_usage(response, model=target_model)
         content = response.choices[0].message.content
         if not content:
             raise ValueError("Empty response from AI")

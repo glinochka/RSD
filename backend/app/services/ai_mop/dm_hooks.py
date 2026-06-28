@@ -37,40 +37,49 @@ async def on_dm_queue_sent(item: AgentSalesDmQueue) -> None:
         return
     channel = str(meta.get("channel") or "telegram_userbot").strip().lower()
     target = str(item.target_user_external_id or "").strip()
+    is_follow_up = meta.get("message_kind") == "follow_up"
     try:
-        if meta.get("message_kind") != "follow_up" and target:
+        if not is_follow_up and target:
             await record_outreach_channel_sent(
                 lead_id=int(lead_id),
                 channel=channel,
                 target=target,
             )
+
+        pending = await count_pending_ai_mop_dm_for_lead(lead_id=int(lead_id))
+        if pending > 0:
+            return
+
+        if is_follow_up:
+            return
+
         await mark_lead_outreach_sent(lead_id=int(lead_id), agent_id=int(item.agent_id))
-        fsm = SalesFSMService()
-        try:
-            await fsm.transition_contact(
-                agent_id=item.agent_id,
-                user_external_id=str(item.target_user_external_id),
-                source_chat_id=AI_MOP_SOURCE_CHAT_ID,
-                to_state="SENT",
-                reason="ai_mop_first_message_sent",
-            )
-        except Exception:
-            logger.debug("FSM SENT transition skipped ai_mop lead_id=%s", lead_id, exc_info=True)
-
-        if meta.get("message_kind") != "follow_up":
-            from .followup_service import enqueue_ai_mop_follow_up_reminders
-
+        if channel != "email":
+            fsm = SalesFSMService()
             try:
-                await enqueue_ai_mop_follow_up_reminders(
-                    lead_id=int(lead_id),
-                    agent_id=int(item.agent_id),
+                await fsm.transition_contact(
+                    agent_id=item.agent_id,
+                    user_external_id=str(item.target_user_external_id),
+                    source_chat_id=AI_MOP_SOURCE_CHAT_ID,
+                    to_state="SENT",
+                    reason="ai_mop_first_message_sent",
                 )
             except Exception:
-                logger.warning(
-                    "Failed to enqueue AI MOP follow-ups lead_id=%s",
-                    lead_id,
-                    exc_info=True,
-                )
+                logger.debug("FSM SENT transition skipped ai_mop lead_id=%s", lead_id, exc_info=True)
+
+        from .followup_service import enqueue_ai_mop_follow_up_reminders
+
+        try:
+            await enqueue_ai_mop_follow_up_reminders(
+                lead_id=int(lead_id),
+                agent_id=int(item.agent_id),
+            )
+        except Exception:
+            logger.warning(
+                "Failed to enqueue AI MOP follow-ups lead_id=%s",
+                lead_id,
+                exc_info=True,
+            )
     except Exception:
         logger.warning("Failed to mark AI MOP lead sent lead_id=%s", lead_id, exc_info=True)
 

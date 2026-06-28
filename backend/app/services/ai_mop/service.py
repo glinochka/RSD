@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 from ...alembic.database import async_session_maker
 from ...alembic.models import Agent, AiMopAgentAssignment, AiMopLead, User
 from .lead_status import FAILURE_STAGE_LABELS
+from .llm_cost import aggregate_llm_cost_stats
 from .retry import GENERATION_RETRY_STAGES, OUTREACH_RETRY_STAGES
 from .pipeline_state import get_ai_mop_pipeline_state
 
@@ -52,6 +53,7 @@ async def get_dashboard_stats() -> dict[str, Any]:
         queued = await session.scalar(
             select(func.count(AiMopLead.id)).where(AiMopLead.status == "outreach_queued")
         ) or 0
+        ready_backlog = int(provisioned) + int(queued)
         assignments = (
             await session.scalars(
                 select(AiMopAgentAssignment)
@@ -82,6 +84,9 @@ async def get_dashboard_stats() -> dict[str, Any]:
     active_agents = len([a for a in agents_stats if a["is_enabled"] and not a["is_busy"]])
     if pipeline_paused:
         active_agents = 0
+    llm_cost = await aggregate_llm_cost_stats()
+    from ...config import settings
+
     return {
         "leads": {
             "total": int(total_leads),
@@ -89,9 +94,12 @@ async def get_dashboard_stats() -> dict[str, Any]:
             "processing": int(processing),
             "provisioned": int(provisioned),
             "outreach_queued": int(queued),
+            "ready_backlog": ready_backlog,
+            "ready_backlog_limit": int(settings.AI_MOP_MAX_PROVISIONED_BACKLOG),
             "outreach_sent": int(sent),
             "failed": int(failed),
         },
+        "llm_cost": llm_cost,
         "agents": agents_stats,
         "active_agents": active_agents,
         "pipeline_paused": pipeline_paused,

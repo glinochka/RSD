@@ -13,6 +13,7 @@ from .lead_recovery import (
     rollback_lead_after_llm_balance_error,
 )
 from .lead_status import mark_lead_failed
+from .llm_cost import ai_mop_lead_llm_scope
 from .outreach import run_outreach_for_lead
 from .provisioning import regenerate_lead_website
 
@@ -51,12 +52,13 @@ async def retry_lead_generation(*, lead_id: int) -> dict[str, Any]:
     if stage == "website" and lead.provisioned_website_id and lead.provisioned_agent_id:
         if await lead_has_completed_website(lead=lead):
             try:
-                provision = await regenerate_lead_website(lead_id=lead_id)
-                outreach = await run_outreach_for_lead(
-                    lead_id=lead_id,
-                    agent_id=int(agent_id),
-                    provision=provision,
-                )
+                async with ai_mop_lead_llm_scope(lead_id):
+                    provision = await regenerate_lead_website(lead_id=lead_id)
+                    outreach = await run_outreach_for_lead(
+                        lead_id=lead_id,
+                        agent_id=int(agent_id),
+                        provision=provision,
+                    )
                 return {"ok": True, "mode": "website_regen", "outreach": outreach}
             except Exception as exc:
                 if is_llm_balance_error(str(exc)):
@@ -118,11 +120,12 @@ async def retry_lead_outreach(*, lead_id: int) -> dict[str, Any]:
             provision["website_url"] = _website_public_url(str(website.slug))
 
     try:
-        outreach = await run_outreach_for_lead(
-            lead_id=lead_id,
-            agent_id=int(agent_id),
-            provision=provision,
-        )
+        async with ai_mop_lead_llm_scope(lead_id):
+            outreach = await run_outreach_for_lead(
+                lead_id=lead_id,
+                agent_id=int(agent_id),
+                provision=provision,
+            )
     except Exception as exc:
         if is_llm_balance_error(str(exc)):
             recovery = await rollback_lead_after_llm_balance_error(lead_id=lead_id)
