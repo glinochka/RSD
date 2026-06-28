@@ -8,6 +8,7 @@
 |-----------|------|
 | Factory | `backend/app/services/crm/factory.py` |
 | Tool registry | `backend/app/services/crm/tool_registry.py` |
+| **Shared registry core** | `backend/app/services/tool_registry_core.py` |
 | AmoCRM provider | `backend/app/services/crm/providers/amocrm.py` |
 | DAO агента | `backend/app/router_agents/dao.py` (`AgentCrmConnectionDAO`) |
 
@@ -15,6 +16,14 @@
 
 - Настройка CRM в кабинете агента (`/api/agents/...`)
 - Tool calls в `template_runtime` через `build_provider()`
+
+## Tool registry
+
+Доменный `crm/tool_registry.py` использует общий plumbing из `tool_registry_core.py`:
+
+- `IdempotencyCache` — per-registry instance (не глобальный)
+- `parse_tool_arguments`, `build_openai_tool_schema`, `ToolExecutionResult`
+- Бизнес-логика и CRM-specific safety остаются в `crm/tool_registry.py`
 
 ## Документация
 

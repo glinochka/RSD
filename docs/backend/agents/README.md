@@ -6,7 +6,10 @@
 
 | Компонент | Путь |
 |-----------|------|
-| API router (кабинет) | `backend/app/router_agents/router.py` |
+| API aggregator | `backend/app/router_agents/router.py` (~24 строки, `include_router`) |
+| Sub-routers | `core.py`, `crm.py`, `booking.py`, `integrations.py`, `internal.py`, `channels/` |
+| Карта маршрутов | [ROUTERS.md](./ROUTERS.md) |
+| Shared helpers | `backend/app/router_agents/shared.py` |
 | Публичный API | `backend/app/router_agents/public_router.py` |
 | DAO / схемы | `backend/app/router_agents/dao.py`, `schemas.py`, `public_schemas.py` |
 | Telephony-канал (UI) | `backend/app/router_agents/telephony_channel.py` |
@@ -22,6 +25,8 @@
 | Обработка сообщений | `backend/app/channels/message_processor.py` |
 | Промпты | `backend/app/prompts/` |
 | Ценообразование шаблонов | `backend/app/agent_template_pricing.py` |
+| Template config parser | `backend/app/utils/agent_template_config.py` |
+| Userbot JWT | `backend/app/utils/scoped_auth_token.py` |
 
 ## API
 
@@ -45,6 +50,7 @@
 | Артефакт | Файл | Статус |
 |----------|------|--------|
 | Обзор модуля | этот файл | готово |
+| Sub-routers `/api/agents` | `ROUTERS.md` | готово |
 | Runtime и tool calls | `RUNTIME.md` | TODO |
 | Модель каналов | `CHANNELS.md` | TODO |
 | Аналитика | `ANALYTICS.md` | TODO |

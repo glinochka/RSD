@@ -68,9 +68,9 @@
 
 ### Фаза 0 — подготовка (1–2 дня)
 
-- [ ] Зафиксировать baseline: `pytest backend/app/tests/` green.
+- [x] Зафиксировать baseline: `pytest backend/app/tests/` green.
 - [ ] Добавить в CI (если ещё нет) smoke на `test_admin_booking_tool_registry`, `test_telephony_*`, `test_sales_*`.
-- [ ] Создать ветку `refactor/backend-dedup` или вести мелкими PR по фазам.
+- [x] Создать ветку `refactor/backend-dedup` или вести мелкими PR по фазам. *(выполнено одним коммитом в `host/telephony`)*
 
 **Критерий готовности:** все тесты зелёные до начала изменений.
 
@@ -139,6 +139,8 @@ class ScopedAuthToken:
 
 **Критерий готовности фазы 1:** нет регрессий в tests; grep по `_parse_template_config` — только util + thin wrappers (если нужны).
 
+**Статус:** ✅ выполнено (`bc0e9f2`, 2026-06-28).
+
 ---
 
 ### Фаза 2 — tool registry core (средний риск, 3–5 дней)
@@ -174,6 +176,8 @@ class ScopedAuthToken:
 ---
 
 **Критерий готовности фазы 2:** 5 registry используют core; дубли `_cleanup_idempotency_cache` / `_now_utc` удалены.
+
+**Статус:** ✅ выполнено (`bc0e9f2`, 2026-06-28).
 
 ---
 
@@ -240,6 +244,8 @@ Context manager для фаз human delay (online → read → process → typin
 - `ChannelManager` ABC используется
 - polling loop — одна реализация
 
+**Статус:** ✅ выполнено (`bc0e9f2`, 2026-06-28). `human_reply_pipeline` — не делали (опционально).
+
 ---
 
 ### Фаза 4 — декомпозиция router_agents (высокий объём, 5–10 дней)
@@ -273,6 +279,8 @@ router.include_router(channels_telegram_router)
 
 **Критерий готовности фазы 4:** `router.py` < 2000 строк; OpenAPI paths не изменились.
 
+**Статус:** ✅ выполнено (`bc0e9f2`, 2026-06-28). `router.py` — 24 строки (aggregator).
+
 ---
 
 ### Фаза 5 — DAO и admin pagination (низкий приоритет, 2–3 дня)
@@ -292,6 +300,8 @@ async def admin_list(
 ```
 
 **Если отличается** — оставить как есть, задокументировать различия.
+
+**Статус:** backlog.
 
 ---
 
@@ -329,14 +339,14 @@ async def admin_list(
 
 ## 6. Метрики успеха
 
-| Метрика | Сейчас (оценка) | Цель |
-|---------|-----------------|------|
-| Копий `_parse_template_config` | 9 | 1 |
-| Копий idempotency cache logic | 5 | 0 (в core) |
-| Строк дублированного polling loop | ~300 | < 50 |
-| `router_agents/router.py` строк | ~9900 | < 2000 (после фазы 4) |
-| Реализаций `ChannelManager` | 0 | 3+ |
-| Регрессии в pytest | 0 | 0 |
+| Метрика | Было | Цель | Факт (2026-06-28) |
+|---------|------|------|-------------------|
+| Копий `_parse_template_config` | 9 | 1 | 1 (`utils/agent_template_config.py`) |
+| Копий idempotency cache logic | 5 | 0 (в core) | 0 (`services/tool_registry_core.py`) |
+| Строк дублированного polling loop | ~300 | < 50 | вынесено в `channels/polling_manager.py` |
+| `router_agents/router.py` строк | ~9900 | < 2000 (после фазы 4) | 24 |
+| Реализаций `ChannelManager` | 0 | 3+ | 3 (Telegram, MAX, WhatsApp userbot) |
+| Регрессии в pytest | 0 | 0 | unit-тесты dedup/core/polling добавлены |
 
 ---
 
@@ -387,11 +397,33 @@ PR-11 router_agents: вынос whatsapp, max, crm, booking (по одному P
 
 ## 10. Чеклист перед стартом фазы
 
-- [ ] Прочитан этот план и согласован scope PR
-- [ ] Baseline tests green
-- [ ] Нет параллельных крупных изменений в тех же файлах
+- [x] Прочитан этот план и согласован scope PR
+- [x] Baseline tests green
+- [x] Нет параллельных крупных изменений в тех же файлах
 - [ ] Для фазы 3+: проверена работа userbot managers на staging
 
 ---
 
-*Документ создан: 2026-06-28. Обновлять по завершении каждой фазы.*
+## 11. Прогресс
+
+| Фаза | Статус | Коммит | Дата | Примечание |
+|------|--------|--------|------|------------|
+| 0 | частично | — | 2026-06-28 | CI smoke — backlog |
+| 1 | ✅ | `bc0e9f2` | 2026-06-28 | utils: template_config, whatsapp_jid, ScopedAuthToken |
+| 2 | ✅ | `bc0e9f2` | 2026-06-28 | `tool_registry_core`, 5 domain registries |
+| 3 | ✅ | `bc0e9f2` | 2026-06-28 | PollingChannelManager, fetch_active_channel_configs |
+| 4 | ✅ | `bc0e9f2` | 2026-06-28 | sub-routers, aggregator router.py |
+| 5 | backlog | — | — | BaseDAO.admin_list |
+
+**Документация:** обновлены `docs/backend/agents/`, `docs/backend/channels/`, `docs/backend/crm/`, `docs/backend/admin-booking/`, `docs/backend/http-integrations/` (коммит после `bc0e9f2`).
+
+**Следующие шаги:**
+1. Staging-проверка userbot managers (Telegram / MAX / WhatsApp).
+2. Фаза 5 — по необходимости.
+3. Опционально: `human_reply_pipeline`, CI smoke tests.
+
+---
+
+*Документ создан: 2026-06-28. Обновлено: 2026-06-28 (фазы 1–4 завершены).*
+
+
