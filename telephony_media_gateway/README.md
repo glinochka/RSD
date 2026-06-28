@@ -55,4 +55,5 @@ Docker Compose: сервис `telephony_media_gateway` (порт `8200`).
 
 - [STREAMING_ARCHITECTURE.md](../docs/telephony/STREAMING_ARCHITECTURE.md)
 - [SESSION_PROTOCOL.md](../docs/telephony/SESSION_PROTOCOL.md)
-- [TELEPHONY_STREAMING_REFACTOR.md](../TELEPHONY_STREAMING_REFACTOR.md)
+- [TELEPHONY_ARCHITECTURE.md](../backlogs/TELEPHONY_ARCHITECTURE.md)
+- [docs/telephony/STREAMING_ARCHITECTURE.md](../docs/telephony/STREAMING_ARCHITECTURE.md)

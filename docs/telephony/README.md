@@ -53,7 +53,7 @@
 | Control-only bridge | `telephony_bridge/README.md` (без record/turn) |
 | Preview (без bridge) | API `source: browser_preview` — `telephony_preview.py` |
 
-План этапов: [TELEPHONY_STREAMING_REFACTOR.md](../../TELEPHONY_STREAMING_REFACTOR.md).
+План этапов и архитектура: [TELEPHONY_ARCHITECTURE.md](../../backlogs/TELEPHONY_ARCHITECTURE.md), [STREAMING_ARCHITECTURE.md](./STREAMING_ARCHITECTURE.md).
 
 ## Потоковый рефакторинг (этап 2 — VoxEngine + gateway audio)
 
@@ -65,4 +65,4 @@
 
 ## Следующий шаг
 
-Этап 3: VAD + streaming STT. Исторический MVP-план: [TELEPHONY_AI_OPERATOR_PLAN.md](../../TELEPHONY_AI_OPERATOR_PLAN.md).
+Этап 3: VAD + streaming STT. Оптимизация задержек: [TELEPHONY_LATENCY_OPTIMIZATION_PLAN.md](../../backlogs/TELEPHONY_LATENCY_OPTIMIZATION_PLAN.md).

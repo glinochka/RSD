@@ -1,6 +1,6 @@
 # Потоковая архитектура телефонии RSD
 
-Целевая модель после рефакторинга ([TELEPHONY_STREAMING_REFACTOR.md](../../TELEPHONY_STREAMING_REFACTOR.md)). Этап 1 фиксирует границы **control plane** (backend + сигнальный webhook) и **media plane** (`telephony_media_gateway`).
+Целевая модель после рефакторинга ([TELEPHONY_ARCHITECTURE.md](../../backlogs/TELEPHONY_ARCHITECTURE.md)). Этап 1 фиксирует границы **control plane** (backend + сигнальный webhook) и **media plane** (`telephony_media_gateway`).
 
 ## Диаграмма
 
