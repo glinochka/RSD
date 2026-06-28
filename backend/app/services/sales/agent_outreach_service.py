@@ -11,6 +11,7 @@ from sqlalchemy import select, update
 
 from ...alembic.database import async_session_maker
 from ...alembic.models import Agent, AgentSalesImportedContact
+from ...utils.agent_template_config import parse_agent_template_config
 from ..template_runtime import TemplateRuntimeService
 from .agent_excel_import import EXCEL_IMPORT_SOURCE_CHAT_ID
 from .dm_queue_service import get_dm_queue_service
@@ -26,18 +27,6 @@ DEFAULT_OUTREACH_BATCH_LIMIT = 200
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
-
-
-def _parse_template_config(agent: Agent) -> dict[str, Any]:
-    raw = agent.template_config
-    if not raw:
-        return {}
-    if isinstance(raw, dict):
-        return raw
-    try:
-        return json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        return {}
 
 
 def _cold_outreach_user_message(row: AgentSalesImportedContact) -> str:
@@ -77,7 +66,7 @@ async def schedule_outreach_for_import_batch(
             if not agent.is_active:
                 return {"error": "Агент выключен", "queued": 0}
 
-            template_config = _parse_template_config(agent)
+            template_config = parse_agent_template_config(agent.template_config)
             knowledge_scope_id = int(agent.bot_id if agent.bot_id is not None else agent.id)
             system_prompt = str(agent.system_prompt or "").strip()
 

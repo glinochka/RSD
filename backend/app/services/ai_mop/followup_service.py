@@ -11,6 +11,7 @@ from sqlalchemy import select, update
 from ...alembic.database import async_session_maker
 from ...alembic.models import Agent, AgentSalesDmQueue, AiMopLead
 from ...prompts.system_prompts import FOLLOW_UP_TIER_HINTS
+from ...utils.agent_template_config import parse_agent_template_config
 from ..sales.contact_pool import external_id_lookup_variants
 from ..sales.dm_queue_service import get_dm_queue_service
 from ..sales.outreach_scheduling import FOLLOW_UP_DELAYS, utc_now_naive
@@ -20,18 +21,6 @@ from .lead_lookup import find_lead_for_contact
 from .outreach import AI_MOP_SOURCE_CHAT_ID
 
 logger = logging.getLogger(__name__)
-
-
-def _parse_template_config(agent: Agent) -> dict[str, Any]:
-    raw = agent.template_config
-    if not raw:
-        return {}
-    if isinstance(raw, dict):
-        return raw
-    try:
-        return json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        return {}
 
 
 async def cancel_pending_ai_mop_follow_ups(
@@ -147,7 +136,7 @@ async def compose_ai_mop_follow_up_message(
     tier: str,
 ) -> str:
     runtime = TemplateRuntimeService()
-    template_config = _parse_template_config(agent)
+    template_config = parse_agent_template_config(agent.template_config)
     knowledge_scope_id = int(agent.bot_id if agent.bot_id is not None else agent.id)
     system_prompt = str(agent.system_prompt or "").strip()
     tier_hint = FOLLOW_UP_TIER_HINTS.get(tier, FOLLOW_UP_TIER_HINTS["day"])

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-import json
 from typing import Any, Callable
 
 from sqlalchemy import select
@@ -11,22 +10,13 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from ...alembic.database import async_session_maker
 from ...alembic.models import AdminAppointment, Agent, AgentCrmConnection
+from ...utils.agent_template_config import parse_agent_template_config
 from ...utils.crypto import decrypt_crm_credentials
 from ..crm import build_provider
 from .providers import BookingProvider, CrmBookingProvider, LocalBookingProvider
 
 CRM_MODES = {"disabled", "optional", "required"}
 BOOKING_BACKENDS = {"local", "crm", "auto"}
-
-
-def _parse_template_config(raw: str | None) -> dict[str, Any]:
-    if not raw:
-        return {}
-    try:
-        loaded = json.loads(raw)
-    except Exception:
-        return {}
-    return loaded if isinstance(loaded, dict) else {}
 
 
 @dataclass
@@ -57,7 +47,7 @@ class AdminBookingService:
                     crm_connected=False,
                 )
 
-            cfg = _parse_template_config(agent.template_config)
+            cfg = parse_agent_template_config(agent.template_config)
             crm_mode = str(cfg.get("crm_mode") or "optional").strip().lower()
             booking_backend = str(cfg.get("booking_backend") or "auto").strip().lower()
             crm_provider_name = str(cfg.get("crm_provider") or "amocrm").strip().lower()

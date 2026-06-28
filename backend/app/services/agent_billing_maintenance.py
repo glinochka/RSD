@@ -19,7 +19,7 @@ async def _disable_telegram_bot_webhook_for_agent(session, agent_id: int) -> Non
     try:
         from fastapi import HTTPException
 
-        from ..router_agents.router import (
+        from ..router_agents.shared import (
             _get_telegram_bot_channel_for_agent,
             _sync_telegram_bot_webhook,
         )

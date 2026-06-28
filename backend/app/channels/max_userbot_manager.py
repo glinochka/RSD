@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import logging
 import shutil
 import tempfile
@@ -11,11 +10,9 @@ from typing import Any
 
 from pymax import Message
 from pymax.types.domain.enums import ChatType
-from sqlalchemy import select
 
-from ..alembic.database import async_session_maker
-from ..alembic.models import Agent, AgentChannelConnection
 from ..config import settings
+from ..router_agents.dao import AgentChannelConnectionDAO
 from ..services.human_delay import (
     get_online_delay,
     get_read_delay,
@@ -29,66 +26,10 @@ from ..services.max_userbot_session import (
     profile_display_name,
     write_session_store,
 )
-from ..utils.crypto import decrypt_token
-from .leader_lock import PgLeaderLock
 from .message_processor import Channel, MessageRequest, ProcessingStatus, get_message_processor
+from .polling_manager import PollingChannelManager
 
 logger = logging.getLogger(__name__)
-
-
-async def _fetch_max_configs() -> list[dict[str, Any]]:
-    async with async_session_maker() as session:
-        async with session.begin():
-            rows = (
-                (
-                    await session.execute(
-                        select(
-                            Agent.id.label("agent_id"),
-                            Agent.bot_id,
-                            Agent.system_prompt,
-                            Agent.welcome_message,
-                            Agent.template_type,
-                            Agent.template_config,
-                            AgentChannelConnection.id.label("connection_id"),
-                            AgentChannelConnection.encrypted_credentials,
-                        )
-                        .join(AgentChannelConnection, AgentChannelConnection.agent_id == Agent.id)
-                        .where(
-                            Agent.is_active.is_(True),
-                            AgentChannelConnection.provider == "max_userbot",
-                            AgentChannelConnection.connection_type == "userbot",
-                            AgentChannelConnection.is_active.is_(True),
-                            AgentChannelConnection.encrypted_credentials.is_not(None),
-                        )
-                    )
-                )
-                .mappings()
-                .all()
-            )
-    configs: list[dict[str, Any]] = []
-    for row in rows:
-        template_config: dict[str, Any] = {}
-        raw_cfg = row.get("template_config")
-        if raw_cfg:
-            try:
-                loaded = json.loads(raw_cfg) if isinstance(raw_cfg, str) else raw_cfg
-                if isinstance(loaded, dict):
-                    template_config = loaded
-            except Exception:
-                template_config = {}
-        configs.append(
-            {
-                "agent_id": int(row["agent_id"]),
-                "bot_id": int(row["bot_id"] if row["bot_id"] is not None else row["agent_id"]),
-                "connection_id": int(row["connection_id"]),
-                "system_prompt": row["system_prompt"] or "",
-                "welcome_message": row["welcome_message"],
-                "template_type": str(row.get("template_type") or "qa").strip().lower(),
-                "template_config": template_config,
-                "encrypted_credentials": row["encrypted_credentials"],
-            }
-        )
-    return configs
 
 
 def _resolve_sender_name(message: Message, client) -> str | None:
@@ -280,92 +221,19 @@ async def _run_one_client(cfg: dict[str, Any], stop: asyncio.Event) -> None:
     shutil.rmtree(work_dir, ignore_errors=True)
 
 
-class MaxUserbotManager:
+class MaxUserbotManager(PollingChannelManager):
     def __init__(self) -> None:
-        self._stop = asyncio.Event()
-        self._tasks: dict[int, asyncio.Task[None]] = {}
-        self._config_fingerprints: dict[int, str] = {}
-        self._leader_lock = PgLeaderLock(20_003, "max_userbot_manager")
+        super().__init__(
+            lock_key=20_003,
+            lock_name="max_userbot_manager",
+            poll_interval_seconds=max(10, int(settings.MAX_USERBOT_POLL_INTERVAL_SECONDS)),
+            channel_name="MaxUserbotManager",
+            log_prefix="max_userbot",
+            restart_on_fingerprint_change=True,
+        )
 
-    async def _cancel_all_tasks(self) -> None:
-        for task in list(self._tasks.values()):
-            task.cancel()
-        if self._tasks:
-            await asyncio.gather(*self._tasks.values(), return_exceptions=True)
-        self._tasks.clear()
-        self._config_fingerprints.clear()
+    async def fetch_configs(self) -> list[dict[str, Any]]:
+        return await AgentChannelConnectionDAO.fetch_active_channel_configs("max_userbot")
 
-    async def shutdown(self) -> None:
-        self._stop.set()
-        await self._cancel_all_tasks()
-        await self._leader_lock.release()
-
-    async def run_forever(self) -> None:
-        interval = max(10, int(settings.MAX_USERBOT_POLL_INTERVAL_SECONDS))
-        logger.info("MaxUserbotManager polling every %s sec", interval)
-        try:
-            while not self._stop.is_set():
-                try:
-                    is_leader = await self._leader_lock.ensure_acquired()
-                    if not is_leader:
-                        if self._tasks:
-                            await self._cancel_all_tasks()
-                        logger.info("max_userbot: another replica holds leader lock, waiting")
-                    else:
-                        configs = await _fetch_max_configs()
-                        wanted = {
-                            int(c["connection_id"])
-                            for c in configs
-                            if c.get("connection_id") is not None
-                        }
-
-                        for connection_id in list(self._tasks):
-                            if connection_id not in wanted:
-                                task = self._tasks.pop(connection_id)
-                                self._config_fingerprints.pop(connection_id, None)
-                                task.cancel()
-                                with contextlib.suppress(asyncio.CancelledError):
-                                    await task
-                                logger.info("max_userbot: removed connection_id=%s", connection_id)
-
-                        by_id = {
-                            int(c["connection_id"]): c
-                            for c in configs
-                            if c.get("connection_id") is not None
-                        }
-                        for connection_id, cfg in by_id.items():
-                            fingerprint = json.dumps(cfg, sort_keys=True, ensure_ascii=False, default=str)
-                            existing = self._tasks.get(connection_id)
-                            if existing and existing.done():
-                                self._tasks.pop(connection_id, None)
-                                self._config_fingerprints.pop(connection_id, None)
-                                with contextlib.suppress(Exception):
-                                    existing.result()
-                                existing = None
-                            previous_fingerprint = self._config_fingerprints.get(connection_id)
-                            if existing and previous_fingerprint != fingerprint:
-                                logger.info(
-                                    "max_userbot: config changed, restarting worker connection_id=%s",
-                                    connection_id,
-                                )
-                                existing.cancel()
-                                with contextlib.suppress(asyncio.CancelledError):
-                                    await existing
-                                self._tasks.pop(connection_id, None)
-                                existing = None
-                            if existing is None:
-                                self._tasks[connection_id] = asyncio.create_task(
-                                    _run_one_client(cfg, self._stop)
-                                )
-                                self._config_fingerprints[connection_id] = fingerprint
-                                logger.info("max_userbot: started worker connection_id=%s", connection_id)
-                except Exception:
-                    logger.exception("MaxUserbotManager cycle failed")
-
-                try:
-                    await asyncio.wait_for(self._stop.wait(), timeout=interval)
-                except asyncio.TimeoutError:
-                    continue
-        finally:
-            await self._cancel_all_tasks()
-            await self._leader_lock.release()
+    async def run_worker(self, cfg: dict[str, Any], stop: asyncio.Event) -> None:
+        await _run_one_client(cfg, stop)

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timezone
 
@@ -11,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..alembic.models import Agent, AgentFrozenUser, User
 from ..services.agent_availability import agent_availability_allows_now
+from ..utils.agent_template_config import parse_agent_template_config
 
 logger = logging.getLogger(__name__)
 
@@ -48,15 +48,7 @@ async def is_user_frozen(session: AsyncSession, agent_id: int, caller_e164: str)
 
 
 def parse_template_config(raw: str | None) -> dict | None:
-    if not raw or not str(raw).strip():
-        return None
-    try:
-        loaded = json.loads(raw)
-        if isinstance(loaded, dict):
-            return loaded
-    except Exception:
-        return None
-    return None
+    return parse_agent_template_config(raw, none_if_empty=True)
 
 
 def availability_allows(template_config: dict | None) -> bool:

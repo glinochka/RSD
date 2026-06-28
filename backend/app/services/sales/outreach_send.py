@@ -2,56 +2,26 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import re
 from typing import Any
-from urllib.request import Request as UrlRequest, urlopen
 
-from ...config import settings
 from ...utils.crypto import decrypt_token
+from ...utils.whatsapp_jid import WhatsAppJidError, bridge_post, external_id_to_jid
 
 logger = logging.getLogger(__name__)
 
 
 def whatsapp_user_external_to_jid(user_external_id: str) -> str:
-    raw = (user_external_id or "").strip()
-    if not raw:
-        raise RuntimeError("Пустой идентификатор получателя WhatsApp")
-    if "@" in raw:
-        return raw
-    digits = "".join(ch for ch in raw if ch.isdigit())
-    if len(digits) < 5:
-        raise RuntimeError("Некорректный номер WhatsApp")
-    return f"{digits}@s.whatsapp.net"
+    try:
+        return external_id_to_jid(user_external_id)
+    except WhatsAppJidError as exc:
+        raise RuntimeError(str(exc)) from exc
 
 
 async def wa_userbot_bridge_post(path: str, payload: dict) -> dict:
-    base = (settings.WHATSAPP_USERBOT_BRIDGE_URL or "").strip().rstrip("/")
-    if not base:
-        raise RuntimeError("WhatsApp userbot bridge не настроен")
-    bridge_api_key = (settings.WHATSAPP_USERBOT_BRIDGE_API_KEY or "").strip()
-    if not bridge_api_key:
-        raise RuntimeError("WhatsApp userbot bridge API key не настроен")
-
-    url = f"{base}/{path.lstrip('/')}"
-    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    headers = {
-        "Content-Type": "application/json; charset=utf-8",
-        "Accept": "application/json",
-        "X-API-Key": bridge_api_key,
-    }
-    request = UrlRequest(url, data=body, headers=headers, method="POST")
-
-    def _post():
-        with urlopen(request, timeout=float(settings.WHATSAPP_USERBOT_BRIDGE_TIMEOUT_SECONDS)) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-
-    result = await asyncio.get_running_loop().run_in_executor(None, _post)
-    if not isinstance(result, dict):
-        raise RuntimeError("WhatsApp bridge вернул неожиданный ответ")
-    return result
+    return await bridge_post(path, payload)
 
 
 async def ensure_whatsapp_session(connection_id: int, encrypted_credentials: str) -> None:

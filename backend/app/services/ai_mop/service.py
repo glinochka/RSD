@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 
 from ...alembic.database import async_session_maker
 from ...alembic.models import Agent, AiMopAgentAssignment, AiMopLead, User
+from ...utils.agent_template_config import parse_agent_template_config
 from .lead_status import FAILURE_STAGE_LABELS
 from .llm_cost import aggregate_llm_cost_stats
 from .retry import GENERATION_RETRY_STAGES, OUTREACH_RETRY_STAGES
@@ -18,18 +19,6 @@ from .pipeline_state import get_ai_mop_pipeline_state
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
-
-
-def _parse_template_config(agent: Agent) -> dict[str, Any]:
-    raw = agent.template_config
-    if not raw:
-        return {}
-    if isinstance(raw, dict):
-        return raw
-    try:
-        return json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        return {}
 
 
 async def get_dashboard_stats() -> dict[str, Any]:
@@ -151,7 +140,7 @@ async def assign_agent_to_ai_mop(*, agent_id: int, enabled: bool = True) -> dict
             if agent is None or agent.template_type != "sales_manager":
                 raise ValueError("Agent not found or not sales_manager")
 
-            config = _parse_template_config(agent)
+            config = parse_agent_template_config(agent.template_config)
             config["custom_runtime"] = "ai_mop"
             config["allowed_tools"] = ["send_demo_credentials", "edit_demo_website"]
             agent.template_config = json.dumps(config, ensure_ascii=False)
@@ -180,7 +169,7 @@ async def unassign_agent_from_ai_mop(*, agent_id: int) -> None:
         async with session.begin():
             agent = await session.get(Agent, agent_id)
             if agent:
-                config = _parse_template_config(agent)
+                config = parse_agent_template_config(agent.template_config)
                 config.pop("custom_runtime", None)
                 if config.get("allowed_tools") == ["send_demo_credentials", "edit_demo_website"]:
                     config.pop("allowed_tools", None)

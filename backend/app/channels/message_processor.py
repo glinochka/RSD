@@ -1,7 +1,6 @@
 """Unified message processing for channel managers."""
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -14,7 +13,9 @@ from ..alembic.models import Agent, AgentAnalyticsMessage, AgentFrozenUser, User
 from ..services.agent_availability import agent_availability_allows_now
 from ..services.qa_handoff_service import EscalationType as QAEscalationType, get_qa_handoff_service
 from ..services.template_runtime import EscalationType, get_template_runtime
+from ..utils.agent_template_config import parse_agent_template_config
 from ..utils.pii import redact_pii_text
+from ..utils.whatsapp_jid import normalize_whatsapp_external_id
 logger = logging.getLogger(__name__)
 MAX_INT32 = 2_147_483_647
 
@@ -67,27 +68,10 @@ class MessageResponse:
 
 class MessageProcessor:
     @staticmethod
-    def _parse_template_config(raw: str | None) -> dict | None:
-        if not raw or not str(raw).strip():
-            return None
-        try:
-            loaded = json.loads(raw)
-            if isinstance(loaded, dict):
-                return loaded
-        except Exception:
-            return None
-        return None
-
-    @staticmethod
     def _normalize_user_external_id(channel: Channel, user_external_id: str) -> str:
         uid = (user_external_id or "").strip()
         if channel == Channel.WHATSAPP_USERBOT:
-            if "@" in uid:
-                return uid.lower()
-            digits = "".join(ch for ch in uid if ch.isdigit())
-            if digits:
-                return f"{digits}@s.whatsapp.net"
-            return uid.lower()
+            return normalize_whatsapp_external_id(uid)
         return uid
 
     @staticmethod
@@ -141,7 +125,10 @@ class MessageProcessor:
                     reply=False,
                 )
 
-            template_config = self._parse_template_config(resolved_agent.template_config)
+            template_config = parse_agent_template_config(
+                resolved_agent.template_config,
+                none_if_empty=True,
+            )
             if not agent_availability_allows_now(template_config):
                 return MessageResponse(text="", status=ProcessingStatus.DISCARDED)
 

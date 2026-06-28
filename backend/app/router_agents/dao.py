@@ -1,6 +1,10 @@
 
+from typing import Any
+
+from ..alembic.database import async_session_maker
 from ..alembic.models import Agent, AgentChannelConnection, AgentCrmConnection, AgentHttpIntegration, User
 from ..BaseDAO import BaseDAO
+from ..utils.agent_template_config import parse_agent_template_config
 from sqlalchemy import String, cast, desc, func, or_, select
 
 
@@ -66,6 +70,69 @@ class AgentDAO(BaseDAO):
 
 class AgentChannelConnectionDAO(BaseDAO):
     model = AgentChannelConnection
+
+    @staticmethod
+    def _map_channel_config_row(row: Any, provider: str) -> dict[str, Any]:
+        template_config = parse_agent_template_config(row.get("template_config"))
+        mapped: dict[str, Any] = {
+            "agent_id": int(row["agent_id"]),
+            "bot_id": int(row["bot_id"] if row["bot_id"] is not None else row["agent_id"]),
+            "connection_id": int(row["connection_id"]),
+            "system_prompt": row["system_prompt"] or "",
+            "welcome_message": row["welcome_message"],
+        }
+        if provider in {"telegram_userbot", "max_userbot", "whatsapp_userbot"}:
+            mapped["template_type"] = str(row.get("template_type") or "qa").strip().lower()
+            mapped["template_config"] = template_config
+        if provider == "telegram_userbot":
+            mapped["encrypted_userbot_bundle"] = row["encrypted_credentials"]
+        elif provider in {"max_userbot", "whatsapp_userbot", "max_bot"}:
+            mapped["encrypted_credentials"] = row["encrypted_credentials"]
+        if provider == "whatsapp_userbot":
+            mapped["phone_number"] = row.get("external_id") or ""
+        elif provider == "max_bot":
+            mapped["max_bot_id"] = str(row.get("external_id") or "").strip()
+        return mapped
+
+    @staticmethod
+    async def fetch_active_channel_configs(
+        provider: str,
+        *,
+        connection_type: str = "userbot",
+        template_types: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        stmt = (
+            select(
+                Agent.id.label("agent_id"),
+                Agent.bot_id,
+                Agent.system_prompt,
+                Agent.welcome_message,
+                Agent.template_type,
+                Agent.template_config,
+                AgentChannelConnection.id.label("connection_id"),
+                AgentChannelConnection.external_id,
+                AgentChannelConnection.encrypted_credentials,
+            )
+            .join(AgentChannelConnection, AgentChannelConnection.agent_id == Agent.id)
+            .where(
+                Agent.is_active.is_(True),
+                AgentChannelConnection.provider == provider,
+                AgentChannelConnection.connection_type == connection_type,
+                AgentChannelConnection.is_active.is_(True),
+                AgentChannelConnection.encrypted_credentials.is_not(None),
+            )
+        )
+        if template_types:
+            stmt = stmt.where(Agent.template_type.in_(template_types))
+
+        async with async_session_maker() as session:
+            async with session.begin():
+                rows = (await session.execute(stmt)).mappings().all()
+
+        return [
+            AgentChannelConnectionDAO._map_channel_config_row(row, provider)
+            for row in rows
+        ]
 
 
 class AgentCrmConnectionDAO(BaseDAO):

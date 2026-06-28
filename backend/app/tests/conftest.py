@@ -92,7 +92,7 @@ _ASYNC_SESSION_MAKER_PATCH_TARGETS = (
     "app.alembic.database.async_session_maker",
     "app.router_admin.router.async_session_maker",
     "app.router_users.router.async_session_maker",
-    "app.router_agents.router.async_session_maker",
+    "app.router_agents.shared.async_session_maker",
     "app.router_payments.router.async_session_maker",
     "app.router_documents.router.async_session_maker",
     "app.services.template_runtime.async_session_maker",

@@ -12,11 +12,8 @@ from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl.types import InputPeerUser, User
 
-from sqlalchemy import select
-
-from ..alembic.database import async_session_maker
-from ..alembic.models import Agent, AgentChannelConnection
 from ..config import settings
+from ..router_agents.dao import AgentChannelConnectionDAO
 from ..utils.crypto import decrypt_token
 from ..services.voice_transcription import is_voice_stt_configured, transcribe_voice_bytes
 from ..services.human_delay import (
@@ -26,8 +23,8 @@ from ..services.human_delay import (
     mark_activity,
     is_human_delay_enabled,
 )
-from .leader_lock import PgLeaderLock
 from .message_processor import Channel, MessageRequest, ProcessingStatus, get_message_processor
+from .polling_manager import PollingChannelManager
 
 logger = logging.getLogger(__name__)
 
@@ -167,51 +164,6 @@ def _is_message_matching_triggers(message_text: str, trigger_words: list[str]) -
             if _trigger_token_matches(token, trigger):
                 return True
     return False
-
-
-async def _fetch_userbot_configs() -> list[dict[str, Any]]:
-    """Fetch active userbot configurations including sales_manager template info."""
-    async with async_session_maker() as session:
-        async with session.begin():
-            rows = (
-                (
-                    await session.execute(
-                        select(
-                            Agent.id.label("agent_id"),
-                            Agent.bot_id,
-                            AgentChannelConnection.id.label("connection_id"),
-                            Agent.system_prompt,
-                            Agent.welcome_message,
-                            Agent.template_type,
-                            Agent.template_config,
-                            AgentChannelConnection.encrypted_credentials,
-                        )
-                        .join(AgentChannelConnection, AgentChannelConnection.agent_id == Agent.id)
-                        .where(
-                            Agent.is_active.is_(True),
-                            AgentChannelConnection.provider == "telegram_userbot",
-                            AgentChannelConnection.connection_type == "userbot",
-                            AgentChannelConnection.is_active.is_(True),
-                            AgentChannelConnection.encrypted_credentials.is_not(None),
-                        )
-                    )
-                )
-                .mappings()
-                .all()
-            )
-    return [
-        {
-            "agent_id": int(row["agent_id"]),
-            "bot_id": int(row["bot_id"] if row["bot_id"] is not None else row["agent_id"]),
-            "connection_id": int(row["connection_id"]),
-            "system_prompt": row["system_prompt"] or "",
-            "welcome_message": row["welcome_message"],
-            "template_type": str(row["template_type"] or "qa").strip().lower(),
-            "template_config": json.loads(row["template_config"]) if row["template_config"] else {},
-            "encrypted_userbot_bundle": row["encrypted_credentials"],
-        }
-        for row in rows
-    ]
 
 
 async def _handle_private_message(
@@ -637,104 +589,19 @@ async def _run_one_client(cfg: dict[str, Any]) -> None:
             await client.disconnect()
 
 
-class UserbotManager:
+class UserbotManager(PollingChannelManager):
     def __init__(self) -> None:
-        self._stop = asyncio.Event()
-        self._tasks: dict[int, asyncio.Task[None]] = {}
-        self._config_fingerprints: dict[int, str] = {}
-        self._leader_lock = PgLeaderLock(20_001, "telegram_userbot_manager")
+        super().__init__(
+            lock_key=20_001,
+            lock_name="telegram_userbot_manager",
+            poll_interval_seconds=max(10, int(settings.USERBOT_POLL_INTERVAL_SECONDS)),
+            channel_name="UserbotManager",
+            log_prefix="userbot",
+            restart_on_fingerprint_change=True,
+        )
 
-    async def _cancel_all_tasks(self) -> None:
-        for task in list(self._tasks.values()):
-            task.cancel()
-        if self._tasks:
-            await asyncio.gather(*self._tasks.values(), return_exceptions=True)
-        self._tasks.clear()
-        self._config_fingerprints.clear()
+    async def fetch_configs(self) -> list[dict[str, Any]]:
+        return await AgentChannelConnectionDAO.fetch_active_channel_configs("telegram_userbot")
 
-    async def shutdown(self) -> None:
-        self._stop.set()
-        await self._cancel_all_tasks()
-        await self._leader_lock.release()
-
-    async def run_forever(self) -> None:
-        interval = max(10, int(settings.USERBOT_POLL_INTERVAL_SECONDS))
-        logger.info("UserbotManager polling every %s sec", interval)
-        try:
-            while not self._stop.is_set():
-                try:
-                    is_leader = await self._leader_lock.ensure_acquired()
-                    if not is_leader:
-                        if self._tasks:
-                            await self._cancel_all_tasks()
-                        logger.info("userbot: another replica holds leader lock, waiting")
-                    else:
-                        configs = await _fetch_userbot_configs()
-                        wanted = {
-                            int(c["connection_id"])
-                            for c in configs
-                            if c.get("connection_id") is not None
-                        }
-
-                        for connection_id in list(self._tasks):
-                            if connection_id not in wanted:
-                                task = self._tasks.pop(connection_id)
-                                self._config_fingerprints.pop(connection_id, None)
-                                task.cancel()
-                                try:
-                                    await task
-                                except asyncio.CancelledError:
-                                    pass
-                                logger.info("userbot: removed connection_id=%s", connection_id)
-
-                        by_id = {
-                            int(c["connection_id"]): c
-                            for c in configs
-                            if c.get("connection_id") is not None
-                        }
-                        for connection_id, cfg in by_id.items():
-                            fingerprint = json.dumps(cfg, sort_keys=True, ensure_ascii=False, default=str)
-                            existing = self._tasks.get(connection_id)
-                            if existing and existing.done():
-                                self._tasks.pop(connection_id, None)
-                                self._config_fingerprints.pop(connection_id, None)
-                                try:
-                                    existing.result()
-                                except Exception:
-                                    logger.exception(
-                                        "userbot: previous worker crashed connection_id=%s",
-                                        connection_id,
-                                    )
-                                existing = None
-                            previous_fingerprint = self._config_fingerprints.get(connection_id)
-                            if existing and previous_fingerprint != fingerprint:
-                                logger.info(
-                                    "userbot: config changed, restarting worker connection_id=%s",
-                                    connection_id,
-                                )
-                                existing.cancel()
-                                try:
-                                    await existing
-                                except asyncio.CancelledError:
-                                    pass
-                                except Exception:
-                                    logger.exception(
-                                        "userbot: worker failed during restart connection_id=%s",
-                                        connection_id,
-                                    )
-                                self._tasks.pop(connection_id, None)
-                                existing = None
-                            if existing is None:
-                                self._tasks[connection_id] = asyncio.create_task(_run_one_client(cfg))
-                                self._config_fingerprints[connection_id] = fingerprint
-                                logger.info("userbot: started worker connection_id=%s", connection_id)
-                except Exception:
-                    logger.exception("UserbotManager cycle failed")
-
-                try:
-                    await asyncio.wait_for(self._stop.wait(), timeout=interval)
-                except asyncio.TimeoutError:
-                    continue
-        finally:
-            await self._cancel_all_tasks()
-            await self._leader_lock.release()
+    async def run_worker(self, cfg: dict[str, Any], stop: asyncio.Event) -> None:
+        await _run_one_client(cfg)

@@ -7,12 +7,8 @@ import json
 import logging
 from typing import Any
 
-import httpx
-from sqlalchemy import select
-
-from ..alembic.database import async_session_maker
-from ..alembic.models import Agent, AgentChannelConnection
 from ..config import settings
+from ..router_agents.dao import AgentChannelConnectionDAO
 from ..services.voice_transcription import is_voice_stt_configured, transcribe_voice_bytes
 from ..services.human_delay import (
     get_online_delay,
@@ -22,104 +18,18 @@ from ..services.human_delay import (
     is_human_delay_enabled,
 )
 from ..utils.crypto import decrypt_token
-from .leader_lock import PgLeaderLock
+from ..utils.whatsapp_jid import bridge_post, is_private_whatsapp_jid, jid_for_whatsapp_analytics
 from .message_processor import Channel, MessageRequest, ProcessingStatus, get_message_processor
+from .polling_manager import PollingChannelManager
 
 logger = logging.getLogger(__name__)
 
 
-def _bridge_headers() -> dict[str, str]:
-    api_key = (settings.WHATSAPP_USERBOT_BRIDGE_API_KEY or "").strip()
-    if not api_key:
-        raise RuntimeError("WHATSAPP_USERBOT_BRIDGE_API_KEY is not configured")
-    return {"X-API-Key": api_key}
-
-
-def _bridge_base_url() -> str:
-    base = (settings.WHATSAPP_USERBOT_BRIDGE_URL or "").strip().rstrip("/")
-    if not base:
-        raise RuntimeError("WHATSAPP_USERBOT_BRIDGE_URL is not configured")
-    return base
-
-
-async def _bridge_post(path: str, payload: dict[str, Any]) -> dict[str, Any]:
-    url = f"{_bridge_base_url()}/{path.lstrip('/')}"
-    timeout = httpx.Timeout(
-        float(settings.WHATSAPP_USERBOT_BRIDGE_TIMEOUT_SECONDS),
-        connect=min(20.0, float(settings.WHATSAPP_USERBOT_BRIDGE_TIMEOUT_SECONDS)),
-    )
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.post(url, json=payload, headers=_bridge_headers())
-    if not response.is_success:
-        raise RuntimeError(f"wa_bridge {path} failed: HTTP {response.status_code} {response.text[:300]}")
-    data = response.json()
-    if not isinstance(data, dict):
-        raise RuntimeError(f"wa_bridge {path} returned unexpected payload")
-    return data
-
-
 async def _bridge_post_best_effort(path: str, payload: dict[str, Any]) -> None:
     try:
-        await _bridge_post(path, payload)
+        await bridge_post(path, payload)
     except Exception:
         logger.debug("whatsapp_userbot: bridge call failed path=%s payload=%s", path, payload, exc_info=True)
-
-
-async def _fetch_whatsapp_configs() -> list[dict[str, Any]]:
-    async with async_session_maker() as session:
-        async with session.begin():
-            rows = (
-                (
-                    await session.execute(
-                        select(
-                            Agent.id.label("agent_id"),
-                            Agent.bot_id,
-                            Agent.system_prompt,
-                            Agent.welcome_message,
-                            Agent.template_type,
-                            Agent.template_config,
-                            AgentChannelConnection.id.label("connection_id"),
-                            AgentChannelConnection.external_id.label("phone_number"),
-                            AgentChannelConnection.encrypted_credentials,
-                        )
-                        .join(AgentChannelConnection, AgentChannelConnection.agent_id == Agent.id)
-                        .where(
-                            Agent.is_active.is_(True),
-                            AgentChannelConnection.provider == "whatsapp_userbot",
-                            AgentChannelConnection.connection_type == "userbot",
-                            AgentChannelConnection.is_active.is_(True),
-                            AgentChannelConnection.encrypted_credentials.is_not(None),
-                        )
-                    )
-                )
-                .mappings()
-                .all()
-            )
-    configs: list[dict[str, Any]] = []
-    for row in rows:
-        template_config: dict[str, Any] = {}
-        raw_cfg = row.get("template_config")
-        if raw_cfg:
-            try:
-                loaded = json.loads(raw_cfg) if isinstance(raw_cfg, str) else raw_cfg
-                if isinstance(loaded, dict):
-                    template_config = loaded
-            except Exception:
-                template_config = {}
-        configs.append(
-            {
-                "agent_id": int(row["agent_id"]),
-                "bot_id": int(row["bot_id"] if row["bot_id"] is not None else row["agent_id"]),
-                "connection_id": int(row["connection_id"]),
-                "phone_number": row["phone_number"] or "",
-                "system_prompt": row["system_prompt"] or "",
-                "welcome_message": row["welcome_message"],
-                "template_type": str(row.get("template_type") or "qa").strip().lower(),
-                "template_config": template_config,
-                "encrypted_credentials": row["encrypted_credentials"],
-            }
-        )
-    return configs
 
 
 def _extract_text(message: dict[str, Any]) -> str:
@@ -159,7 +69,7 @@ def _whatsapp_media_kind(inner: dict[str, Any]) -> str | None:
 
 async def _bridge_download_media(connection_id: int, wa_message: dict[str, Any]) -> tuple[bytes, str] | None:
     try:
-        data = await _bridge_post(
+        data = await bridge_post(
             "session/download_media",
             {
                 "connection_id": str(connection_id),
@@ -185,34 +95,13 @@ async def _bridge_download_media(connection_id: int, wa_message: dict[str, Any])
     return raw, mime
 
 
-def _user_external_id_for_whatsapp_analytics(remote_jid: str) -> str:
-    """Полный JID как во входящем сообщении Baileys (…@s.whatsapp.net или …@lid и т.д.).
-
-    Раньше сохранялась только локальная часть до «@» — при @lid или смене PN/LID
-    ответы с дашборда уходили на неверный JID (в мессенджере не появлялись).
-    """
-    jid = str(remote_jid or "").strip()
-    if len(jid) > 128:
-        return jid[:128]
-    return jid
-
-
-def _is_private_whatsapp_jid(jid: str) -> bool:
-    value = str(jid or "").strip().lower()
-    if not value:
-        return False
-    if value.endswith("@g.us") or value.endswith("@broadcast") or value == "status@broadcast":
-        return False
-    return ("@" in value) and (value.endswith("@s.whatsapp.net") or value.endswith("@lid"))
-
-
 async def _process_incoming(cfg: dict[str, Any], incoming: dict[str, Any]) -> None:
     remote_jid = str(incoming.get("remote_jid") or "").strip()
     if not remote_jid:
         return
 
     # Reply only in direct messages, never in groups/channels/broadcast chats.
-    if not _is_private_whatsapp_jid(remote_jid):
+    if not is_private_whatsapp_jid(remote_jid):
         return
 
     if bool(incoming.get("from_me")):
@@ -253,7 +142,7 @@ async def _process_incoming(cfg: dict[str, Any], incoming: dict[str, Any]) -> No
                 },
             )
             try:
-                await _bridge_post(
+                await bridge_post(
                     "session/send",
                     {
                         "connection_id": str(connection_id),
@@ -294,7 +183,7 @@ async def _process_incoming(cfg: dict[str, Any], incoming: dict[str, Any]) -> No
                         },
                     )
                     try:
-                        await _bridge_post(
+                        await bridge_post(
                             "session/send",
                             {
                                 "connection_id": str(connection_id),
@@ -333,7 +222,7 @@ async def _process_incoming(cfg: dict[str, Any], incoming: dict[str, Any]) -> No
     template_config: dict[str, Any] = cfg.get("template_config") or {}
     bot_id = int(cfg["bot_id"])
     agent_id = int(cfg.get("agent_id") or bot_id)
-    user_ext_id = _user_external_id_for_whatsapp_analytics(remote_jid)
+    user_ext_id = jid_for_whatsapp_analytics(remote_jid)
     human_delay = is_human_delay_enabled(template_config, Channel.WHATSAPP_USERBOT.value)
 
     # Phase 1: "come online" delay — skip for first-ever message in this conversation.
@@ -383,7 +272,7 @@ async def _process_incoming(cfg: dict[str, Any], incoming: dict[str, Any]) -> No
             await asyncio.sleep(get_typing_delay(len(response.text or "")))
         if not response.delivers_reply():
             return
-        await _bridge_post(
+        await bridge_post(
             "session/send",
             {
                 "connection_id": str(connection_id),
@@ -422,7 +311,7 @@ async def _run_one_client(cfg: dict[str, Any], stop: asyncio.Event) -> None:
 
     while not stop.is_set():
         try:
-            await _bridge_post(
+            await bridge_post(
                 "session/connect",
                 {
                     "connection_id": str(connection_id),
@@ -433,7 +322,7 @@ async def _run_one_client(cfg: dict[str, Any], stop: asyncio.Event) -> None:
             closed_streak = 0
 
             while not stop.is_set():
-                payload = await _bridge_post(
+                payload = await bridge_post(
                     "session/pull",
                     {
                         "connection_id": str(connection_id),
@@ -493,76 +382,19 @@ async def _run_one_client(cfg: dict[str, Any], stop: asyncio.Event) -> None:
             continue
 
 
-class WhatsAppUserbotManager:
+class WhatsAppUserbotManager(PollingChannelManager):
     def __init__(self) -> None:
-        self._stop = asyncio.Event()
-        self._tasks: dict[int, asyncio.Task[None]] = {}
-        self._leader_lock = PgLeaderLock(20_002, "whatsapp_userbot_manager")
+        super().__init__(
+            lock_key=20_002,
+            lock_name="whatsapp_userbot_manager",
+            poll_interval_seconds=max(10, int(settings.USERBOT_POLL_INTERVAL_SECONDS)),
+            channel_name="WhatsAppUserbotManager",
+            log_prefix="whatsapp_userbot",
+            restart_on_fingerprint_change=False,
+        )
 
-    async def _cancel_all_tasks(self) -> None:
-        for task in list(self._tasks.values()):
-            task.cancel()
-        if self._tasks:
-            await asyncio.gather(*self._tasks.values(), return_exceptions=True)
-        self._tasks.clear()
+    async def fetch_configs(self) -> list[dict[str, Any]]:
+        return await AgentChannelConnectionDAO.fetch_active_channel_configs("whatsapp_userbot")
 
-    async def shutdown(self) -> None:
-        self._stop.set()
-        await self._cancel_all_tasks()
-        await self._leader_lock.release()
-
-    async def run_forever(self) -> None:
-        interval = max(10, int(settings.USERBOT_POLL_INTERVAL_SECONDS))
-        logger.info("WhatsAppUserbotManager polling every %s sec", interval)
-        try:
-            while not self._stop.is_set():
-                try:
-                    is_leader = await self._leader_lock.ensure_acquired()
-                    if not is_leader:
-                        if self._tasks:
-                            await self._cancel_all_tasks()
-                        logger.info("whatsapp_userbot: another replica holds leader lock, waiting")
-                    else:
-                        configs = await _fetch_whatsapp_configs()
-                        wanted = {int(c["connection_id"]) for c in configs if c.get("connection_id") is not None}
-
-                        for connection_id in list(self._tasks):
-                            if connection_id not in wanted:
-                                task = self._tasks.pop(connection_id)
-                                task.cancel()
-                                try:
-                                    await task
-                                except asyncio.CancelledError:
-                                    pass
-                                logger.info("whatsapp_userbot: removed connection_id=%s", connection_id)
-
-                        by_id = {
-                            int(c["connection_id"]): c
-                            for c in configs
-                            if c.get("connection_id") is not None
-                        }
-                        for connection_id, cfg in by_id.items():
-                            existing = self._tasks.get(connection_id)
-                            if existing and existing.done():
-                                self._tasks.pop(connection_id, None)
-                                try:
-                                    existing.result()
-                                except Exception:
-                                    logger.exception(
-                                        "whatsapp_userbot: previous worker crashed connection_id=%s",
-                                        connection_id,
-                                    )
-                                existing = None
-                            if existing is None:
-                                self._tasks[connection_id] = asyncio.create_task(_run_one_client(cfg, self._stop))
-                                logger.info("whatsapp_userbot: started worker connection_id=%s", connection_id)
-                except Exception:
-                    logger.exception("WhatsAppUserbotManager cycle failed")
-
-                try:
-                    await asyncio.wait_for(self._stop.wait(), timeout=interval)
-                except asyncio.TimeoutError:
-                    continue
-        finally:
-            await self._cancel_all_tasks()
-            await self._leader_lock.release()
+    async def run_worker(self, cfg: dict[str, Any], stop: asyncio.Event) -> None:
+        await _run_one_client(cfg, stop)

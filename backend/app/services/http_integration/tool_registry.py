@@ -1,7 +1,6 @@
 """Configurable HTTP integrations exposed as LLM tools (crm_admin)."""
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import re
@@ -15,6 +14,11 @@ from ...alembic.models import AgentHttpIntegration
 from ...utils.crypto import decrypt_crm_credentials
 from .errors import HttpIntegrationNeedsConfirmationError, HttpIntegrationValidationError
 from ..tool_confirmation import TOOL_CONFIRMATION_REQUIRED_HINT, user_has_confirmed_action
+from ..tool_registry_core import (
+    HTTP_INTEGRATION_MAX_RAW_ARGUMENTS_BYTES,
+    canonical_tool_args_dict,
+    tool_args_hash,
+)
 from .executor import (
     assert_args_match_schema,
     assert_safe_relative_path,
@@ -26,7 +30,6 @@ from .executor import (
 logger = logging.getLogger(__name__)
 
 _MAX_TOOLS_TOTAL = 28
-_MAX_RAW_ARGUMENTS_BYTES = 24_000
 _TOOL_SLUG_RE = re.compile(r"^[a-z][a-z0-9_]{0,48}$")
 
 
@@ -189,11 +192,11 @@ class HttpIntegrationToolRegistry:
 
     @staticmethod
     def _canonical_args(payload: dict[str, Any]) -> str:
-        return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        return canonical_tool_args_dict(payload)
 
     @staticmethod
     def _tool_args_hash(canonical: str) -> str:
-        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        return tool_args_hash(canonical)
 
     def _confirmation_required(self, binding: _ToolBinding, bundle_tool: dict[str, Any]) -> bool:
         explicit = bundle_tool.get("requires_confirmation")
@@ -202,7 +205,7 @@ class HttpIntegrationToolRegistry:
         return binding.method.upper() != "GET"
 
     async def execute_tool(self, tool_name: str, raw_arguments: str) -> dict[str, Any]:
-        if len((raw_arguments or "").encode("utf-8")) > _MAX_RAW_ARGUMENTS_BYTES:
+        if len((raw_arguments or "").encode("utf-8")) > HTTP_INTEGRATION_MAX_RAW_ARGUMENTS_BYTES:
             raise HttpIntegrationValidationError("Tool arguments are too large")
         binding = self._bindings.get(tool_name)
         if binding is None:

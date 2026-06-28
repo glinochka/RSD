@@ -12,29 +12,25 @@ from yookassa import Configuration, Payment
 from yookassa.domain.exceptions import ApiError
 
 from ...config import settings
+from ..tool_registry_core import (
+    DEFAULT_MAX_RAW_ARGUMENTS_BYTES,
+    IdempotencyCache,
+    build_idempotency_key,
+    build_openai_tool_schema,
+    canonical_tool_args,
+    filter_allowed_tools,
+    parse_tool_arguments,
+    tool_args_hash,
+)
 from .payment_service import get_admin_booking_payment_service
 from .service import get_admin_booking_service
 
-_IDEMPOTENCY_TTL_SECONDS = 120
-_IDEMPOTENCY_CACHE: dict[str, tuple[datetime, dict[str, Any]]] = {}
-_MAX_RAW_ARGUMENTS_BYTES = 16_000
 # Only write/mutating operations are idempotency-protected; reads always get fresh data.
 _IDEMPOTENCY_PROTECTED_TOOLS = {"create_appointment", "reschedule_appointment", "cancel_appointment"}
 
 
 class AdminBookingNeedsConfirmationError(RuntimeError):
     pass
-
-
-def _now_utc() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def _cleanup_idempotency_cache() -> None:
-    now = _now_utc()
-    expired = [key for key, (expires_at, _) in _IDEMPOTENCY_CACHE.items() if expires_at <= now]
-    for key in expired:
-        _IDEMPOTENCY_CACHE.pop(key, None)
 
 
 def _parse_iso_datetime(raw: str) -> datetime:
@@ -475,49 +471,23 @@ class AdminBookingToolRegistry:
         paid_booking_enabled: bool = False,
         yookassa_api_key: str | None = None,
     ) -> None:
-        requested = [str(tool or "").strip() for tool in (allowed_tools or [])]
-        unique = []
-        for tool in requested:
-            if tool and tool in _TOOL_MODELS and tool not in unique:
-                unique.append(tool)
-        self._allowed_tools = unique or list(_TOOL_MODELS.keys())
+        self._allowed_tools = filter_allowed_tools(allowed_tools, _TOOL_MODELS)
         self._agent_id = agent_id
         self._user_external_id = (user_external_id or "").strip() or "anonymous"
         self._source_channel = (source_channel or "telegram").strip().lower() or "telegram"
         self._user_message = user_message or ""
         self._paid_booking_enabled = bool(paid_booking_enabled)
         self._yookassa_api_key = (yookassa_api_key or "").strip() or None
+        self._idempotency = IdempotencyCache()
 
     def tools_for_llm(self) -> list[dict[str, Any]]:
-        tools: list[dict[str, Any]] = []
-        for name in self._allowed_tools:
-            model = _TOOL_MODELS[name]
-            tools.append(
-                {
-                    "type": "function",
-                    "function": {
-                        "name": name,
-                        "description": _TOOL_DESCRIPTIONS[name],
-                        "parameters": model.model_json_schema(),
-                    },
-                }
-            )
-        return tools
+        return [
+            build_openai_tool_schema(name, _TOOL_MODELS[name], _TOOL_DESCRIPTIONS[name])
+            for name in self._allowed_tools
+        ]
 
     def has_tool(self, tool_name: str) -> bool:
         return tool_name in self._allowed_tools
-
-    @staticmethod
-    def _canonical_args(model: BaseModel) -> str:
-        return json.dumps(model.model_dump(), ensure_ascii=False, sort_keys=True)
-
-    @staticmethod
-    def _tool_args_hash(canonical_args: str) -> str:
-        return hashlib.sha256(canonical_args.encode("utf-8")).hexdigest()
-
-    def _idempotency_key(self, tool_name: str, canonical_args: str) -> str:
-        raw = f"{self._agent_id}:{self._user_external_id}:{tool_name}:{canonical_args}"
-        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     def _parse_yookassa_credentials(self) -> tuple[str, str]:
         raw = (self._yookassa_api_key or "").strip()
@@ -605,36 +575,36 @@ class AdminBookingToolRegistry:
         )
 
     async def execute_tool(self, tool_name: str, raw_arguments: str) -> dict[str, Any]:
-        if len((raw_arguments or "").encode("utf-8")) > _MAX_RAW_ARGUMENTS_BYTES:
-            raise RuntimeError("Tool arguments payload is too large")
         if tool_name not in self._allowed_tools:
             raise RuntimeError(f"Tool '{tool_name}' is not allowed")
         model_type = _TOOL_MODELS.get(tool_name)
         if not model_type:
             raise RuntimeError(f"Tool '{tool_name}' is not implemented")
-        try:
-            payload = json.loads(raw_arguments or "{}")
-        except Exception as exc:
-            raise RuntimeError(f"Invalid JSON arguments for tool '{tool_name}': {exc}")
-        try:
-            args = model_type.model_validate(payload)
-        except ValidationError as exc:
-            raise RuntimeError(f"Validation failed for tool '{tool_name}': {exc}")
+        args = parse_tool_arguments(
+            raw_arguments,
+            model_type,
+            tool_name=tool_name,
+            max_bytes=DEFAULT_MAX_RAW_ARGUMENTS_BYTES,
+        )
 
-        canonical_args = self._canonical_args(args)
-        tool_args_hash = self._tool_args_hash(canonical_args)
+        canonical_args = canonical_tool_args(args)
+        tool_args_hash_value = tool_args_hash(canonical_args)
         use_idempotency = tool_name in _IDEMPOTENCY_PROTECTED_TOOLS
-        _cleanup_idempotency_cache()
-        idempotency_key = self._idempotency_key(tool_name, canonical_args)
+        self._idempotency.cleanup()
+        idempotency_key = build_idempotency_key(
+            self._agent_id,
+            self._user_external_id,
+            tool_name,
+            canonical_args,
+        )
         if use_idempotency:
-            cached = _IDEMPOTENCY_CACHE.get(idempotency_key)
+            cached = self._idempotency.get(idempotency_key)
             if cached:
-                _, value = cached
-                cached_result = value.get("result") if isinstance(value, dict) else value
+                cached_result = cached.get("result") if isinstance(cached, dict) else cached
                 return {
                     "ok": True,
                     "tool_name": tool_name,
-                    "tool_args_hash": tool_args_hash,
+                    "tool_args_hash": tool_args_hash_value,
                     "tool_status": "success",
                     "crm_provider": "booking",
                     "latency_ms": 0,
@@ -1033,15 +1003,15 @@ class AdminBookingToolRegistry:
             raise RuntimeError(f"Tool '{tool_name}' is not supported")
 
         if use_idempotency:
-            _IDEMPOTENCY_CACHE[idempotency_key] = (
-                _now_utc() + timedelta(seconds=_IDEMPOTENCY_TTL_SECONDS),
+            self._idempotency.set(
+                idempotency_key,
                 {"tool": tool_name, "result": result},
             )
         latency_ms = max(0, int((time.perf_counter() - started) * 1000))
         return {
             "ok": True,
             "tool_name": tool_name,
-            "tool_args_hash": tool_args_hash,
+            "tool_args_hash": tool_args_hash_value,
             "tool_status": "success",
             "crm_provider": "booking",
             "latency_ms": latency_ms,

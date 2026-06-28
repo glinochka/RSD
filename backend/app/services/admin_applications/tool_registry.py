@@ -1,18 +1,21 @@
 """LLM tool registry for application intake workflow."""
 from __future__ import annotations
 
-import hashlib
 import json
 import time
 from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
 
+from ..tool_registry_core import (
+    IdempotencyCache,
+    build_idempotency_key_from_payload,
+    build_openai_tool_schema,
+    filter_allowed_tools,
+)
 from .fields import fields_schema_for_prompt
 from .service import get_admin_application_service
 
-_IDEMPOTENCY_TTL_SECONDS = 120
-_IDEMPOTENCY_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 _IDEMPOTENCY_PROTECTED_TOOLS = {"create_application"}
 
 
@@ -54,22 +57,6 @@ _TOOL_DESCRIPTIONS: dict[str, str] = {
 }
 
 
-def _cleanup_idempotency_cache() -> None:
-    now = time.time()
-    expired = [key for key, (expires_at, _) in _IDEMPOTENCY_CACHE.items() if expires_at <= now]
-    for key in expired:
-        _IDEMPOTENCY_CACHE.pop(key, None)
-
-
-def _idempotency_key(agent_id: int, user_external_id: str, tool_name: str, args: dict[str, Any]) -> str:
-    payload = json.dumps(
-        {"agent_id": agent_id, "user": user_external_id, "tool": tool_name, "args": args},
-        ensure_ascii=False,
-        sort_keys=True,
-    )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
 class AdminApplicationToolRegistry:
     def __init__(
         self,
@@ -80,33 +67,19 @@ class AdminApplicationToolRegistry:
         template_config: dict[str, Any] | None,
         allowed_tools: list[str] | None = None,
     ) -> None:
-        requested = [str(tool or "").strip() for tool in (allowed_tools or [])]
-        unique: list[str] = []
-        for tool in requested:
-            if tool and tool in _TOOL_MODELS and tool not in unique:
-                unique.append(tool)
-        self._allowed_tools = unique or list(_TOOL_MODELS.keys())
+        self._allowed_tools = filter_allowed_tools(allowed_tools, _TOOL_MODELS)
         self._agent_id = agent_id
         self._user_external_id = (user_external_id or "").strip() or "anonymous"
         self._source_channel = (source_channel or "telegram").strip().lower() or "telegram"
         self._template_config = template_config if isinstance(template_config, dict) else {}
         self._fields_schema = get_admin_application_service().get_fields_schema(self._template_config)
+        self._idempotency = IdempotencyCache()
 
     def tools_for_llm(self) -> list[dict[str, Any]]:
-        tools: list[dict[str, Any]] = []
-        for name in self._allowed_tools:
-            model = _TOOL_MODELS[name]
-            tools.append(
-                {
-                    "type": "function",
-                    "function": {
-                        "name": name,
-                        "description": _TOOL_DESCRIPTIONS.get(name, name),
-                        "parameters": model.model_json_schema(),
-                    },
-                }
-            )
-        return tools
+        return [
+            build_openai_tool_schema(name, _TOOL_MODELS[name], _TOOL_DESCRIPTIONS.get(name, name))
+            for name in self._allowed_tools
+        ]
 
     def has_tool(self, name: str) -> bool:
         return str(name or "").strip() in self._allowed_tools
@@ -135,16 +108,19 @@ class AdminApplicationToolRegistry:
 
         idem_key: str | None = None
         if name in _IDEMPOTENCY_PROTECTED_TOOLS:
-            _cleanup_idempotency_cache()
-            idem_key = _idempotency_key(self._agent_id, self._user_external_id, name, args_dict)
-            cached = _IDEMPOTENCY_CACHE.get(idem_key)
+            self._idempotency.cleanup()
+            idem_key = build_idempotency_key_from_payload(
+                self._agent_id,
+                self._user_external_id,
+                name,
+                args_dict,
+            )
+            cached = self._idempotency.get(idem_key)
             if cached:
-                expires_at, cached_result = cached
-                if expires_at > time.time():
-                    replay = dict(cached_result)
-                    replay["idempotent_replay"] = True
-                    replay["idempotency_key"] = idem_key
-                    return replay
+                replay = dict(cached)
+                replay["idempotent_replay"] = True
+                replay["idempotency_key"] = idem_key
+                return replay
 
         from ...alembic.database import async_session_maker
 
@@ -190,5 +166,5 @@ class AdminApplicationToolRegistry:
             "tool_args_summary": json.dumps(args_dict, ensure_ascii=False)[:500],
         }
         if idem_key and name in _IDEMPOTENCY_PROTECTED_TOOLS:
-            _IDEMPOTENCY_CACHE[idem_key] = (time.time() + _IDEMPOTENCY_TTL_SECONDS, dict(payload))
+            self._idempotency.set(idem_key, dict(payload))
         return payload

@@ -11,6 +11,7 @@ from sqlalchemy import and_, select
 
 from ..alembic.database import async_session_maker
 from ..alembic.models import Agent, AgentChannelConnection, AgentContentJob
+from ..utils.agent_template_config import parse_agent_template_config
 from ..utils.crypto import decrypt_token, encrypt_token
 from .youtube_client import get_youtube_client
 
@@ -73,16 +74,6 @@ def _resolve_timezone(name: str | None) -> timezone | ZoneInfo:
         return timezone.utc
 
 
-def _parse_template_config(raw: str | None) -> dict[str, Any]:
-    if not raw:
-        return {}
-    try:
-        loaded = json.loads(raw)
-    except Exception:
-        return {}
-    return loaded if isinstance(loaded, dict) else {}
-
-
 def _parse_daily_time(raw: str | None) -> time:
     value = str(raw or "10:00").strip() or "10:00"
     try:
@@ -117,7 +108,7 @@ class ContentJobService:
                 ).scalars().all()
 
                 for agent in agents:
-                    cfg = _parse_template_config(agent.template_config)
+                    cfg = parse_agent_template_config(agent.template_config)
                     if not bool(cfg.get("daily_posting_enabled", True)):
                         continue
 
@@ -303,7 +294,7 @@ class ContentJobService:
                 except Exception:
                     raise RuntimeError("YouTube OAuth credentials bundle is invalid")
 
-                cfg = _parse_template_config(agent.template_config)
+                cfg = parse_agent_template_config(agent.template_config)
                 company_name = str(cfg.get("company_name") or "").strip() or "AI Content"
                 content_meta = {}
                 if row.metadata_json:
