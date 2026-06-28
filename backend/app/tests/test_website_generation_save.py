@@ -2,7 +2,6 @@
 
 from app.services.website_generation_service import (
     _build_meta_from_html,
-    _build_polish_user_prompt,
     _edit_prompt_needs_clarification,
     _normalize_website_meta,
     _prepare_html_for_db_storage,
@@ -42,20 +41,6 @@ def test_build_meta_from_html_respects_column_limits():
 def test_prepare_html_for_db_storage_strips_null_bytes():
     html = "<div>ok\x00bad</div>"
     assert _prepare_html_for_db_storage(html) == "<div>okbad</div>"
-
-
-def test_build_polish_user_prompt_includes_html_and_context():
-    prompt = _build_polish_user_prompt(
-        html_content="<section>hero</section>",
-        business_name="Дентриум",
-        dark_mode=True,
-        primary_color="#112233",
-    )
-    assert "Дентриум" in prompt
-    assert "dark" in prompt
-    assert "#112233" in prompt
-    assert "<section>hero</section>" in prompt
-    assert "footer" in prompt.lower()
 
 
 def test_edit_prompt_needs_clarification_for_vague_short_requests():

@@ -300,49 +300,104 @@ OUTPUT FORMAT:
 Provide ONLY the SEARCH/REPLACE blocks, no other text or explanations.
 """
 
-WEBSITE_POLISH_SYSTEM_PROMPT = """\
-You are a senior frontend specialist performing a single production polish pass on a \
-landing page HTML.
+WEBSITE_REFINE_SYSTEM_PROMPT = """\
+You are a senior frontend code reviewer. You receive HTML of a landing page and must \
+improve it for production quality.
 
-Output ONLY the polished HTML (body content only, no wrappers).
+Output ONLY the improved HTML (body content only, no wrappers).
 
-VISUAL QUALITY:
-- Consistent color palette across all sections
+CHECK AND FIX:
+- Mobile responsiveness (ensure all sections work on small screens)
+- Consistent color palette usage across all sections
 - Proper hover/focus states on interactive elements
-- Adequate spacing and padding (px-4, py-8, etc.)
+- Adequate spacing and padding (especially on mobile with px-4, py-8, etc.)
 - Section variety (different layouts for different sections)
 - Accessibility basics (alt attributes, semantic structure, contrast)
 - Remove any empty or placeholder content
 - Ensure navigation anchors work correctly
 - Fix any Tailwind class typos or conflicts
 - Make CTAs stand out visually
+- ALL interactive elements work: burger menu (data-menu-toggle), carousel (data-carousel), FAQ (data-accordion or details/summary)
 
-RESPONSIVE (mobile <=640px, tablet 641-1024px, preserve desktop lg/xl):
-- All sections work on small screens; typography scales (no oversized headings on mobile)
-- Sensible vertical rhythm; prevent horizontal scrolling and content overflow
-- Cards/sections stack naturally where needed; comfortable tap targets
-- Do not degrade desktop layout, spacing, or section composition
+PRESERVATION RULES:
+- Keep ALL existing content sections
+- Keep ALL data-* attributes for interactivity (data-menu-toggle, data-mobile-menu, data-carousel, data-slide, data-accordion-trigger, data-accordion-panel, etc.)
+- Only apply visual/layout improvements
+- Do not remove footer, navigation, or any other sections
+- Do NOT remove or break interactive markup — if missing, ADD it using data-* patterns
+
+DO NOT:
+- Change the overall design direction
+- Remove content sections
+- Change language from Russian
+- Remove data-* interactivity attributes
+- Replace working data-* patterns with onclick handlers or non-functional decorative buttons
+"""
+
+WEBSITE_ADAPTIVE_SYSTEM_PROMPT = """\
+You are a frontend specialist focused on responsive adaptation.
+
+You receive already refined HTML for a landing page.
+Your task is to improve rendering for tablets and mobile devices without breaking desktop.
+
+Output ONLY adapted HTML (body content only, no wrappers).
+
+ADAPTATION GOALS:
+- Improve layout for mobile (<=640px) and tablet (641-1024px) viewports
+- Ensure typography scales properly (avoid oversized headings on small screens)
+- Improve spacing on smaller viewports (px-4/px-5, sensible vertical rhythm)
+- Prevent horizontal scrolling and content overflow
+- Make cards/sections stack naturally where needed
+- Keep tap targets comfortable on touch devices
+- Ensure navigation remains usable on small screens (preserve data-menu-toggle + data-mobile-menu)
+- Preserve carousel and FAQ interactivity on mobile
+
+DESKTOP SAFETY RULES (CRITICAL):
+- Do not degrade desktop layout (lg/xl) visual hierarchy
+- Keep desktop spacing and section composition close to the original
 - Avoid drastic redesign or section reordering
+- Preserve business copy and CTA intent
+- Preserve ALL data-* interactivity attributes (menus, carousels, FAQ accordions)
 
-INTERACTIVITY QA:
-- Burger menu: data-menu-toggle + data-mobile-menu present and correct
-- Carousel (if testimonials exist): data-carousel + data-slide + prev/next buttons
-- FAQ (if FAQ section exists): data-accordion or native <details>/<summary>
-- If interactive markup is missing but the section implies it, ADD data-* patterns
+PRESERVATION RULES:
+- Keep ALL content sections exactly as provided
+- Keep ALL data-* attributes for platform interactivity runtime
+- Only modify CSS classes for responsive behavior
+
+DO NOT:
+- Change language from Russian
+- Remove major sections
+- Remove data-* interactivity attributes or break accordion/carousel/menu markup
+"""
+
+WEBSITE_FINAL_QA_SYSTEM_PROMPT = """\
+You are a strict frontend QA reviewer for a production landing page.
+
+Output ONLY final HTML (body content only, no wrappers).
+
+CHECKLIST:
+- Desktop layout quality remains strong (no regressions after adaptation)
+- Tablet and mobile layouts are clean and readable
+- No horizontal overflow on common breakpoints
+- Navigation anchors still work and ids are preserved
+- CTA buttons are visible and accessible on all viewports
 - No placeholder/template text or fake contacts
+- Tailwind classes look valid and consistent
+- ALL content sections from original are present (header, nav, sections, footer)
+- Burger menu works: data-menu-toggle + data-mobile-menu present and correct
+- Carousel works (if testimonials exist): data-carousel + data-slide + prev/next buttons
+- FAQ accordion works (if FAQ exists): data-accordion or native <details>/<summary>
+- Contact/lead form present with data-rsd-form="lead", fio and phone fields
 
-COMPLETENESS (CRITICAL):
-- ALL content sections must be present: header, nav, content sections, CTA, contact form, footer
-- Contact/lead form with data-rsd-form="lead", name="fio" and name="phone" fields
+CRITICAL PRESERVATION:
+- Keep ALL content sections exactly as in the input
+- Keep ALL data-* interactivity attributes intact
+- Do not remove footer, navigation, contact form, or any other section
+- If interactive markup is missing but section implies it (FAQ, reviews), ADD data-* patterns
 - If footer or contact form is missing, ADD them matching the existing design language
 
-PRESERVATION (CRITICAL):
-- Keep ALL content sections exactly as provided unless adding missing footer/form
-- Keep ALL data-* interactivity attributes intact
-- Preserve business copy and CTA intent
-- Only apply targeted visual/layout/responsive fixes — do not redesign the page
-- Do not change language from Russian
-- Do not replace data-* patterns with onclick handlers or non-functional buttons
+Apply only minimal, targeted fixes needed to pass the checklist.
+Do not redesign the page.
 """
 
 
@@ -411,23 +466,6 @@ def _build_generation_user_prompt(
     parts.append("\nOutput ONLY the HTML code (body content). No markdown fences, no explanations.")
 
     return "\n".join(parts)
-
-
-def _build_polish_user_prompt(
-    *,
-    html_content: str,
-    business_name: str,
-    dark_mode: bool,
-    primary_color: str | None,
-) -> str:
-    """User prompt for the single post-generation polish pass."""
-    return (
-        f"Business: {business_name}\n"
-        f"Theme: {'dark' if dark_mode else 'light'}\n"
-        f"Brand color: {primary_color or 'auto'}\n\n"
-        f"Polish this landing page HTML for production quality, responsive layout, "
-        f"interactive QA, and completeness (footer + lead form):\n\n{html_content}"
-    )
 
 
 def _edit_prompt_needs_clarification(raw_prompt: str) -> bool:
@@ -733,7 +771,7 @@ class GenerationResult:
     raw_response: str | None
 
 
-# Primary full-page synthesis (generate + polish). API max output for deepseek-v4-flash/pro is 384K.
+# Primary full-page synthesis (4 LLM passes). API max output for deepseek-v4-flash/pro is 384K.
 _PRIMARY_GENERATION_MAX_OUTPUT_TOKENS = 384_000
 _EDIT_MAX_OUTPUT_TOKENS = 16_000
 
@@ -871,32 +909,86 @@ class WebsiteGenerationService:
 
                 logger.info("[WebsiteGen] HTML validation passed")
 
-                # Step 2: Single polish pass (visual + responsive + interactivity + completeness QA)
-                logger.info("[WebsiteGen] Starting polish pass")
-                polish_prompt = _build_polish_user_prompt(
-                    html_content=html_content,
-                    business_name=business_name,
-                    dark_mode=dark_mode,
-                    primary_color=primary_color,
+                # Step 2: Quality refinement pass
+                logger.info("[WebsiteGen] Starting refinement pass")
+                refine_prompt = (
+                    f"Business: {business_name}\n"
+                    f"Theme: {'dark' if dark_mode else 'light'}\n"
+                    f"Brand color: {primary_color or 'auto'}\n\n"
+                    f"Review and improve this HTML:\n\n{html_content}"
                 )
-                polish_raw = await self._call_ai(
-                    system_prompt=WEBSITE_POLISH_SYSTEM_PROMPT,
-                    user_prompt=polish_prompt,
+                refined_raw = await self._call_ai(
+                    system_prompt=WEBSITE_REFINE_SYSTEM_PROMPT,
+                    user_prompt=refine_prompt,
                     model=self.generation_model,
-                    temperature=0.25,
+                    temperature=0.3,
                     max_tokens=self.max_primary_generation_tokens,
                 )
-                polished_html = _extract_html_from_response(polish_raw)
-                logger.info(f"[WebsiteGen] Polished HTML length: {len(polished_html)} chars")
+                refined_html = _extract_html_from_response(refined_raw)
+                logger.info(f"[WebsiteGen] Refined HTML length: {len(refined_html)} chars")
 
-                if _contains_generic_placeholder_content(polished_html):
-                    raise ValueError("Polished HTML contains generic placeholder/template content")
+                if _contains_generic_placeholder_content(refined_html):
+                    raise ValueError("Refined HTML contains generic placeholder/template content")
 
-                if len(polished_html) >= len(html_content) * 0.7:
-                    html_content = polished_html
-                    logger.info("[WebsiteGen] Using polished HTML")
+                if len(refined_html) >= len(html_content) * 0.7:
+                    html_content = refined_html
+                    logger.info("[WebsiteGen] Using refined HTML")
                 else:
-                    logger.info("[WebsiteGen] Polished HTML too short, using original")
+                    logger.info("[WebsiteGen] Refined HTML too short, using original")
+
+                # Step 3: Adaptive pass for mobile/tablet (desktop-safe)
+                logger.info("[WebsiteGen] Starting adaptive pass")
+                adaptive_prompt = (
+                    f"Business: {business_name}\n"
+                    f"Theme: {'dark' if dark_mode else 'light'}\n"
+                    f"Brand color: {primary_color or 'auto'}\n\n"
+                    f"Adapt this HTML for mobile/tablet without breaking desktop:\n\n{html_content}"
+                )
+                adaptive_raw = await self._call_ai(
+                    system_prompt=WEBSITE_ADAPTIVE_SYSTEM_PROMPT,
+                    user_prompt=adaptive_prompt,
+                    model=self.generation_model,
+                    temperature=0.2,
+                    max_tokens=self.max_primary_generation_tokens,
+                )
+                adaptive_html = _extract_html_from_response(adaptive_raw)
+                logger.info(f"[WebsiteGen] Adaptive HTML length: {len(adaptive_html)} chars")
+
+                if _contains_generic_placeholder_content(adaptive_html):
+                    raise ValueError("Adaptive HTML contains generic placeholder/template content")
+
+                if len(adaptive_html) >= len(html_content) * 0.75:
+                    html_content = adaptive_html
+                    logger.info("[WebsiteGen] Using adaptive HTML")
+                else:
+                    logger.info("[WebsiteGen] Adaptive HTML too short, keeping previous version")
+
+                # Step 4: Final QA pass
+                logger.info("[WebsiteGen] Starting final QA pass")
+                final_qa_prompt = (
+                    f"Business: {business_name}\n"
+                    f"Theme: {'dark' if dark_mode else 'light'}\n"
+                    f"Brand color: {primary_color or 'auto'}\n\n"
+                    f"Run final QA and apply minimal fixes to this HTML:\n\n{html_content}"
+                )
+                final_qa_raw = await self._call_ai(
+                    system_prompt=WEBSITE_FINAL_QA_SYSTEM_PROMPT,
+                    user_prompt=final_qa_prompt,
+                    model=self.generation_model,
+                    temperature=0.15,
+                    max_tokens=self.max_primary_generation_tokens,
+                )
+                final_qa_html = _extract_html_from_response(final_qa_raw)
+                logger.info(f"[WebsiteGen] Final QA HTML length: {len(final_qa_html)} chars")
+
+                if _contains_generic_placeholder_content(final_qa_html):
+                    raise ValueError("Final QA HTML contains generic placeholder/template content")
+
+                if len(final_qa_html) >= len(html_content) * 0.75:
+                    html_content = final_qa_html
+                    logger.info("[WebsiteGen] Using final QA HTML")
+                else:
+                    logger.info("[WebsiteGen] Final QA HTML too short, keeping previous version")
 
                 # Apply brand color safety net
                 html_content = _inject_tailwind_color(html_content, primary_color)
