@@ -331,8 +331,13 @@ INTERACTIVITY QA:
 - If interactive markup is missing but the section implies it, ADD data-* patterns
 - No placeholder/template text or fake contacts
 
+COMPLETENESS (CRITICAL):
+- ALL content sections must be present: header, nav, content sections, CTA, contact form, footer
+- Contact/lead form with data-rsd-form="lead", name="fio" and name="phone" fields
+- If footer or contact form is missing, ADD them matching the existing design language
+
 PRESERVATION (CRITICAL):
-- Keep ALL content sections exactly as provided (header, nav, sections, footer)
+- Keep ALL content sections exactly as provided unless adding missing footer/form
 - Keep ALL data-* interactivity attributes intact
 - Preserve business copy and CTA intent
 - Only apply targeted visual/layout/responsive fixes — do not redesign the page
@@ -394,6 +399,13 @@ def _build_generation_user_prompt(
     parts.append(
         "Sections must be tailored to this exact business context (problem, offer, process, trust, CTA)."
     )
+    parts.append(
+        "\nINTERACTIVITY CHECKLIST (all must work on first load):"
+        "\n- Working mobile burger menu (data-menu-toggle + data-mobile-menu)"
+        "\n- If testimonials/reviews section → working carousel (data-carousel + data-slide + prev/next)"
+        "\n- If FAQ section → working accordion (data-accordion) or native <details>/<summary>"
+        "\n- No onclick handlers, no custom scripts for UI — platform runtime handles data-* elements"
+    )
     parts.append("\nREMEMBER: All visible text on the page must be in RUSSIAN. Make it professional, compelling, and conversion-focused.")
     parts.append("The design must feel CUSTOM-MADE for this specific business, not a generic template.")
     parts.append("\nOutput ONLY the HTML code (body content). No markdown fences, no explanations.")
@@ -414,7 +426,7 @@ def _build_polish_user_prompt(
         f"Theme: {'dark' if dark_mode else 'light'}\n"
         f"Brand color: {primary_color or 'auto'}\n\n"
         f"Polish this landing page HTML for production quality, responsive layout, "
-        f"and interactive QA:\n\n{html_content}"
+        f"interactive QA, and completeness (footer + lead form):\n\n{html_content}"
     )
 
 
@@ -721,6 +733,10 @@ class GenerationResult:
     raw_response: str | None
 
 
+# Primary full-page synthesis (generate + polish). API max output for deepseek-v4-flash/pro is 384K.
+_PRIMARY_GENERATION_MAX_OUTPUT_TOKENS = 384_000
+_EDIT_MAX_OUTPUT_TOKENS = 16_000
+
 # ---------------------------------------------------------------------------
 # Main Service
 # ---------------------------------------------------------------------------
@@ -742,10 +758,15 @@ class WebsiteGenerationService:
         self.generation_model = configured_generation_model.strip()
         self.edit_model = configured_edit_model.strip()
         self.max_retries = 2
+        self.max_primary_generation_tokens = _PRIMARY_GENERATION_MAX_OUTPUT_TOKENS
+        self.max_generation_tokens = _EDIT_MAX_OUTPUT_TOKENS
         logger.info(
-            "[WebsiteGenService] Initialized models: generation=%s, edit=%s",
+            "[WebsiteGenService] Initialized models: generation=%s, edit=%s, "
+            "primary_max_tokens=%s, edit_max_tokens=%s",
             self.generation_model,
             self.edit_model,
+            self.max_primary_generation_tokens,
+            self.max_generation_tokens,
         )
 
     async def _call_ai(
@@ -755,6 +776,7 @@ class WebsiteGenerationService:
         user_prompt: str,
         model: str | None = None,
         temperature: float = 0.7,
+        max_tokens: int | None = None,
     ) -> str:
         target_model = (model or self.generation_model).strip()
         response = await self.ai_client.chat.completions.create(
@@ -764,6 +786,7 @@ class WebsiteGenerationService:
                 {"role": "user", "content": user_prompt},
             ],
             temperature=temperature,
+            max_tokens=max_tokens or self.max_generation_tokens,
         )
         content = response.choices[0].message.content
         if not content:
@@ -820,6 +843,7 @@ class WebsiteGenerationService:
                     user_prompt=user_prompt,
                     model=self.generation_model,
                     temperature=0.75,
+                    max_tokens=self.max_primary_generation_tokens,
                 )
                 logger.info(f"[WebsiteGen] AI response received, length: {len(raw_response or '')} chars")
 
@@ -847,7 +871,7 @@ class WebsiteGenerationService:
 
                 logger.info("[WebsiteGen] HTML validation passed")
 
-                # Step 2: Single polish pass (visual quality + responsive + interactivity QA)
+                # Step 2: Single polish pass (visual + responsive + interactivity + completeness QA)
                 logger.info("[WebsiteGen] Starting polish pass")
                 polish_prompt = _build_polish_user_prompt(
                     html_content=html_content,
@@ -860,6 +884,7 @@ class WebsiteGenerationService:
                     user_prompt=polish_prompt,
                     model=self.generation_model,
                     temperature=0.25,
+                    max_tokens=self.max_primary_generation_tokens,
                 )
                 polished_html = _extract_html_from_response(polish_raw)
                 logger.info(f"[WebsiteGen] Polished HTML length: {len(polished_html)} chars")
@@ -1020,6 +1045,7 @@ class WebsiteGenerationService:
             user_prompt=user_message,
             model=self.edit_model,
             temperature=0.3,
+            max_tokens=400,
         )
         cleaned = (improved or "").strip()
         return cleaned or raw_prompt.strip()
@@ -1073,6 +1099,7 @@ class WebsiteGenerationService:
                     user_prompt=user_message_smart,
                     model=self.edit_model,
                     temperature=0.2,  # Lower temperature for precise edits
+                    max_tokens=self.max_generation_tokens,
                 )
                 
                 # Try to apply smart merge
@@ -1108,6 +1135,7 @@ class WebsiteGenerationService:
             user_prompt=user_message,
             model=self.edit_model,
             temperature=0.4,
+            max_tokens=self.max_generation_tokens,
         )
 
         # Use smart merge to validate and potentially fix the AI output
@@ -1182,6 +1210,7 @@ class WebsiteGenerationService:
                 {"role": "user", "content": user_message},
             ],
             temperature=0.5,
+            max_tokens=2000,
         )
 
         raw = response.choices[0].message.content

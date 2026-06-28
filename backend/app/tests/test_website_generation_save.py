@@ -55,6 +55,7 @@ def test_build_polish_user_prompt_includes_html_and_context():
     assert "dark" in prompt
     assert "#112233" in prompt
     assert "<section>hero</section>" in prompt
+    assert "footer" in prompt.lower()
 
 
 def test_edit_prompt_needs_clarification_for_vague_short_requests():
