@@ -572,6 +572,10 @@ const FORM_RUNTIME_BODY = `
 
     form.dataset.rsdFormBound = '1';
 
+    form.setAttribute('method', 'post');
+
+    form.removeAttribute('action');
+
     form.addEventListener('submit', function(e) {
 
       e.preventDefault();
@@ -655,8 +659,6 @@ const FORM_RUNTIME_BODY = `
     document.querySelectorAll('form').forEach(function(form) {
 
       if (form.dataset.rsdFormBound) return;
-
-      if ((form.getAttribute('method') || '').toLowerCase() === 'get') return;
 
       if (form.querySelector('input[type="search"]')) return;
 

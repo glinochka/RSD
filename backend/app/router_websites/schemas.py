@@ -220,7 +220,9 @@ class WebsiteSchemaAgentEmbed(BaseModel):
     logo_url: str | None = None
     template_type: str
     is_admin_template: bool = False
+    workflow_mode: str | None = None
     has_booking: bool = False
+    has_applications: bool = False
     services: list[dict] = Field(default_factory=list)
     contacts: dict = Field(default_factory=dict)
     widget_api_key: str | None = None

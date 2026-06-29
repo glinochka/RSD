@@ -12,7 +12,6 @@ import { blockStylesToCss } from '../utils/styleUtils';
 import { scopeCSS, generateScopedClass } from '../utils/security';
 import { resolveWebsiteAssetUrl } from '../utils/assetUrl';
 import FullpageRenderer from './FullpageRenderer';
-import { useWebsiteAgent } from '../context/WebsiteAgentContext';
 
 // Import all block components
 import {
@@ -218,7 +217,6 @@ const WebsiteRenderer = ({
   onContentChange = null,
   placeholderVars = {},
 }) => {
-  const websiteAgent = useWebsiteAgent();
   const {
     id,
     slug,
@@ -243,7 +241,10 @@ const WebsiteRenderer = ({
     const fullpageBlock = blocks?.find((b) => b.type === 'fullpage');
     const htmlContent = fullpageBlock?.content?.html || '';
     const resolvedFaviconUrl = resolveWebsiteAssetUrl(favicon_url);
-    const formsEnabled = Boolean(agent_id) && websiteAgent?.hasApplications !== false;
+    // Inject lead-form runtime whenever the site is linked to an agent.
+    // Backend validates lead intake; gating on hasApplications broke when the schema
+    // omitted has_applications and the native HTML form fell back to GET submit.
+    const formsEnabled = Boolean(agent_id);
 
     return (
       <>
