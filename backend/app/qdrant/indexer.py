@@ -30,7 +30,7 @@ def get_chunk_limit_by_plan(plan_code: str) -> int:
     return int(limit)
 
 # Инициализация клиентов
-qdrant_client = AsyncQdrantClient(url=settings.QDRANT_URL)
+qdrant_client = AsyncQdrantClient(url=settings.QDRANT_URL, api_key=settings.QDRANT_API_KEY)
 
 indexing_semaphore = asyncio.Semaphore(settings.EMBEDDING_MAX_CONCURRENT_DOCUMENTS)
 

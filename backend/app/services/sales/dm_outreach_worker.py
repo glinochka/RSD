@@ -41,6 +41,7 @@ from .sales_followup_service import (
 logger = logging.getLogger(__name__)
 
 _USERBOT_CHANNELS = frozenset({"telegram_userbot", "whatsapp_userbot", "max_userbot"})
+_PIPELINE_PAUSED_POLL_SECONDS = 30
 
 
 def _provider_for_channel(channel: str) -> str:
@@ -439,33 +440,6 @@ class DmOutreachWorker:
         )
         return True
 
-    async def _defer_if_ai_mop_pipeline_paused(
-        self,
-        *,
-        item: AgentSalesDmQueue,
-        meta: dict[str, Any],
-    ) -> bool:
-        if not _is_ai_mop_queue_item(meta):
-            return False
-
-        from ..ai_mop.pipeline_state import is_ai_mop_pipeline_paused
-
-        if not await is_ai_mop_pipeline_paused():
-            return False
-
-        scheduled_for = self._now_utc_naive() + timedelta(minutes=1)
-        await self._defer_queue_item(
-            queue_id=int(item.id),
-            scheduled_for=scheduled_for,
-            meta=meta,
-        )
-        logger.info(
-            "Deferred AI MOP message while pipeline paused: queue_id=%d until=%s",
-            item.id,
-            scheduled_for.isoformat(),
-        )
-        return True
-
     async def shutdown(self) -> None:
         """Stop the worker."""
         self._stop.set()
@@ -473,12 +447,14 @@ class DmOutreachWorker:
     async def run_forever(self) -> None:
         """Main worker loop."""
         logger.info("DmOutreachWorker starting")
-        interval_seconds = 2
 
         try:
             while not self._stop.is_set():
+                interval_seconds = 2
                 try:
-                    await self._process_batch()
+                    outcome = await self._process_batch()
+                    if outcome == "paused_skip":
+                        interval_seconds = _PIPELINE_PAUSED_POLL_SECONDS
                 except Exception as exc:
                     logger.exception("DmOutreachWorker batch error: %s", exc)
 
@@ -549,38 +525,56 @@ class DmOutreachWorker:
         self._last_send_by_account[account_key] = self._now_utc_naive()
         await on_dm_queue_sent(item)
 
-    async def _process_batch(self) -> None:
-        """Process one batch of pending messages."""
+    async def _process_batch(self) -> str | None:
+        """Process one batch of pending messages.
+
+        Returns ``None`` when the queue is empty, ``paused_skip`` when AI MOP items
+        were skipped due to global pipeline pause, or ``work`` after handling a batch.
+        """
+        from ..ai_mop.pipeline_state import is_ai_mop_pipeline_paused
+
         service = get_dm_queue_service()
-        pending = await service.get_pending_messages(limit=self.batch_size)
+        pipeline_paused = await is_ai_mop_pipeline_paused()
+        fetch_limit = self.batch_size * 10 if pipeline_paused else self.batch_size
+        pending = await service.get_pending_messages(limit=fetch_limit)
 
         if not pending:
-            return
+            return None
+
+        if pipeline_paused:
+            pending = [
+                item
+                for item in pending
+                if not _is_ai_mop_queue_item(_parse_queue_metadata(item))
+            ]
+            if not pending:
+                return "paused_skip"
+            pending = pending[: self.batch_size]
 
         logger.info("Processing %d queued DM messages", len(pending))
 
         for item in pending:
             try:
-                logger.info(
-                    "Sending DM: queue_id=%d agent_id=%d user_id=%s text_preview=%s",
-                    item.id,
-                    item.agent_id,
-                    item.target_user_external_id,
-                    item.message_text[:50] if len(item.message_text) > 50 else item.message_text,
-                )
                 await self._send_message(item)
                 await asyncio.sleep(self.min_interval_seconds)
             except Exception as exc:
                 logger.exception("Error sending DM queue_id=%d: %s", item.id, exc)
                 await service.mark_failed(queue_id=item.id, error=str(exc)[:500], retry=True)
 
+        return "work"
+
     async def _send_message(self, item: AgentSalesDmQueue) -> None:
         """Send a single queued message via userbot (Telegram or WhatsApp)."""
         meta = _parse_queue_metadata(item)
-        if await self._defer_if_ai_mop_pipeline_paused(item=item, meta=meta):
-            return
         if await self._defer_if_outside_ai_mop_send_window(item=item, meta=meta):
             return
+        logger.info(
+            "Sending DM: queue_id=%d agent_id=%d user_id=%s text_preview=%s",
+            item.id,
+            item.agent_id,
+            item.target_user_external_id,
+            item.message_text[:50] if len(item.message_text) > 50 else item.message_text,
+        )
         channel = str(meta.get("channel") or "telegram_userbot").strip().lower()
         message_text = (item.message_text or "").strip()
         imported_id = meta.get("imported_contact_id")

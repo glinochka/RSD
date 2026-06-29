@@ -61,6 +61,7 @@ services:
             ENCRYPTION_KEY: ${ENCRYPTION_KEY}
             BASE_URL: ${BASE_URL}
             QDRANT_URL: ${QDRANT_URL}
+            QDRANT_API_KEY: ${QDRANT_API_KEY:-}
             DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
             INTERNAL_API_KEY: ${INTERNAL_API_KEY}
             WHATSAPP_USERBOT_BRIDGE_URL: ${WHATSAPP_USERBOT_BRIDGE_URL:-http://wa_bridge:8090}
@@ -239,6 +240,7 @@ services:
             TELEPHONY_SSML_ENABLED: ${TELEPHONY_SSML_ENABLED:-true}
             REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
             QDRANT_URL: ${QDRANT_URL}
+            QDRANT_API_KEY: ${QDRANT_API_KEY:-}
             DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
         # No host ports: telephony_bridge -> telephony_worker:8001 on rsd_network.
         depends_on:
@@ -323,6 +325,7 @@ services:
             OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
             REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
             QDRANT_URL: ${QDRANT_URL}
+            QDRANT_API_KEY: ${QDRANT_API_KEY:-}
             DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
         depends_on:
             postgres:

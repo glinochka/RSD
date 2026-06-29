@@ -123,7 +123,7 @@ async def plan_rag_queries(original_query: str, *, max_queries: int = 3) -> list
 
 
 # Инициализируем асинхронный клиент
-q_client = AsyncQdrantClient(url=settings.QDRANT_URL)
+q_client = AsyncQdrantClient(url=settings.QDRANT_URL, api_key=settings.QDRANT_API_KEY)
 
 async def search_knowledge_base(
     query: str,
