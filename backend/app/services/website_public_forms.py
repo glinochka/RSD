@@ -114,30 +114,30 @@ async def submit_website_lead(
     fields: dict[str, Any] | None,
     notes: str | None = None,
 ) -> dict[str, Any]:
+    schema = resolve_website_lead_fields()
+    mapped = map_website_form_payload(fields)
+    resolved_name = _client_name_from_mapped(mapped, client_name)
+    if resolved_name and not mapped.get("fio"):
+        mapped["fio"] = resolved_name
+
+    validated = validate_field_values(schema, mapped)
+    if not validated:
+        raise ValueError("Заполните обязательные поля: ФИО и телефон")
+
+    client_external_id = f"web_{uuid.uuid4().hex[:16]}"
+    name = resolved_name or str(validated.get("fio") or "").strip() or None
+
     async with async_session_maker() as session:
-        agent = await session.get(Agent, agent_id)
-        if not agent or not agent.is_active:
-            raise ValueError("Agent not found")
-
-        schema = resolve_website_lead_fields(agent)
-        mapped = map_website_form_payload(fields)
-        resolved_name = _client_name_from_mapped(mapped, client_name)
-        if resolved_name and not mapped.get("fio"):
-            mapped["fio"] = resolved_name
-
-        validated = validate_field_values(schema, mapped)
-        if not validated:
-            raise ValueError("Заполните обязательные поля: ФИО и телефон")
-
-        client_external_id = f"web_{uuid.uuid4().hex[:16]}"
-        name = resolved_name or str(validated.get("fio") or "").strip() or None
-        template_config = {
-            **_load_template_config(agent),
-            "application_fields": schema,
-        }
-
         async with session.begin():
-            row = await get_admin_application_service().create_application(
+            agent = await session.get(Agent, agent_id)
+            if not agent or not agent.is_active:
+                raise ValueError("Agent not found")
+
+            template_config = {
+                **_load_template_config(agent),
+                "application_fields": schema,
+            }
+            return await get_admin_application_service().create_application(
                 session,
                 agent_id=agent_id,
                 template_config=template_config,
@@ -147,4 +147,3 @@ async def submit_website_lead(
                 source_channel="website",
                 notes=notes,
             )
-        return row

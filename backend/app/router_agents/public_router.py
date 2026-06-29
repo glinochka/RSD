@@ -1,6 +1,7 @@
 """Public agent endpoints for website builder (stage 5)."""
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
@@ -27,6 +28,8 @@ from .public_schemas import (
 )
 
 router = APIRouter(prefix="/api/v1/agents")
+
+logger = logging.getLogger(__name__)
 
 _PUBLIC_RATE = Depends(rate_limit(max_requests=100, window_seconds=60, scope="agents_public"))
 
@@ -172,11 +175,12 @@ async def create_website_lead(
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
-    except Exception as e:
+    except Exception:
+        logger.exception("website lead submission failed agent_id=%s", agent_id)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Не удалось отправить заявку. Попробуйте позже.",
-        ) from e
+        )
 
     return PublicWebsiteLeadResponse(
         id=row["id"],
