@@ -12,12 +12,14 @@ from .crm import router as crm_router
 from .integrations import router as integrations_router
 from .internal import router as internal_router
 
-router = APIRouter(prefix="/api/agents")
-router.include_router(internal_router)
-router.include_router(crm_router)
-router.include_router(integrations_router)
-router.include_router(core_router)
-router.include_router(channels_telegram_router)
-router.include_router(channels_whatsapp_router)
-router.include_router(channels_max_router)
-router.include_router(booking_router)
+_AGENTS_PREFIX = "/api/agents"
+
+router = APIRouter()
+router.include_router(internal_router, prefix=_AGENTS_PREFIX)
+router.include_router(crm_router, prefix=_AGENTS_PREFIX)
+router.include_router(integrations_router, prefix=_AGENTS_PREFIX)
+router.include_router(core_router, prefix=_AGENTS_PREFIX)
+router.include_router(channels_telegram_router, prefix=_AGENTS_PREFIX)
+router.include_router(channels_whatsapp_router, prefix=_AGENTS_PREFIX)
+router.include_router(channels_max_router, prefix=_AGENTS_PREFIX)
+router.include_router(booking_router, prefix=_AGENTS_PREFIX)
