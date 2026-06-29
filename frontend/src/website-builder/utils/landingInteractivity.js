@@ -102,15 +102,21 @@ const LANDING_UI_RUNTIME_BODY = `
 
 
 
-    document.querySelectorAll('header button, nav button').forEach(function(btn) {
+    document.querySelectorAll('button').forEach(function(btn) {
 
       if (btn.dataset.rsdMenuBound || btn.type === 'submit') return;
 
       var label = (btn.getAttribute('aria-label') || btn.textContent || '').toLowerCase();
 
+      var className = String(btn.className || '');
+
+      var inNavigation = !!btn.closest('header, nav, [class*="nav"], [id*="nav"], [class*="menu"], [id*="menu"]');
+
       var looksLikeBurger = label.indexOf('меню') >= 0 || label.indexOf('menu') >= 0
 
-        || btn.querySelector('svg') || (btn.className && /burger|hamburger|menu-toggle/i.test(btn.className));
+        || /burger|hamburger|menu-toggle/i.test(className)
+
+        || (btn.hasAttribute('aria-controls') && inNavigation);
 
       if (!looksLikeBurger) return;
 
@@ -148,7 +154,7 @@ const LANDING_UI_RUNTIME_BODY = `
 
   function initCarousels() {
 
-    document.querySelectorAll('[data-carousel], [data-slider], .carousel, .slider, [class*="carousel"], [class*="slider"]').forEach(function(root) {
+    document.querySelectorAll('[data-carousel], [data-slider], .carousel, .slider, [class*="carousel"], [class*="slider"], [id*="review"], [id*="testimonial"], [class*="review"], [class*="testimonial"]').forEach(function(root) {
 
       if (root.dataset.rsdCarouselBound) return;
 
@@ -333,6 +339,56 @@ const LANDING_UI_RUNTIME_BODY = `
       if (panel && (panel.matches('[data-faq-panel]') || panel.matches('[data-accordion-panel]'))) {
 
         bindAccordionTrigger(trigger, panel, null);
+
+      }
+
+    });
+
+    document.querySelectorAll('section, div').forEach(function(root) {
+
+      if (root.dataset.rsdGenericAccordionBound) return;
+
+      var marker = ((root.id || '') + ' ' + (root.className || '')).toLowerCase();
+
+      if (marker.indexOf('faq') < 0 && marker.indexOf('accordion') < 0 && marker.indexOf('вопрос') < 0) return;
+
+      var triggers = root.querySelectorAll('button');
+
+      if (triggers.length < 2 || triggers.length > 30) return;
+
+      var bound = 0;
+
+      triggers.forEach(function(trigger) {
+
+        if (trigger.dataset.rsdAccordionBound) return;
+
+        var panel = trigger.nextElementSibling;
+
+        if (!panel || panel.tagName === 'BUTTON') return;
+
+        if (!panel.matches('div, section, article, p, ul, ol')) return;
+
+        trigger.setAttribute('data-accordion-trigger', '');
+
+        panel.setAttribute('data-accordion-panel', '');
+
+        var expanded = trigger.getAttribute('aria-expanded') === 'true';
+
+        if (!expanded && !panel.classList.contains('hidden')) panel.classList.add('hidden');
+
+        bindAccordionTrigger(trigger, panel, root);
+
+        if (expanded) setElementVisible(panel, true);
+
+        bound += 1;
+
+      });
+
+      if (bound > 0) {
+
+        root.dataset.rsdGenericAccordionBound = '1';
+
+        root.setAttribute('data-accordion', '');
 
       }
 

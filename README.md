@@ -250,7 +250,7 @@ Swagger (`/docs`) доступен только при `ENVIRONMENT=development`
 | [docs/README.md](docs/README.md) | Карта всей документации |
 | [docs/backend/README.md](docs/backend/README.md) | Модули backend, API surface |
 | [docs/telephony/README.md](docs/telephony/README.md) | Телефония: Voximplant, streaming, env |
-| [docs/website-builder/README.md](docs/website-builder/README.md) | Website Builder |
+| [docs/website-builder/README.md](docs/website-builder/README.md) | Website Builder (production-ready) |
 
 ### Backlogs (планы и оценки)
 

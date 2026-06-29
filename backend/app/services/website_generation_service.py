@@ -30,20 +30,17 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 WEBSITE_INTERACTIVITY_INSTRUCTIONS = """\
-INTERACTIVITY (MANDATORY — page must be fully functional on first load, no manual fixes):
-The platform automatically injects a JavaScript runtime that activates elements \
-with data-* attributes. The platform also injects a floating AI chat widget after publish — \
-never add chat sections, messenger mockups, or chat input fields to the HTML. \
-Use ONLY these patterns — do NOT write custom <script> \
-for menus, carousels, FAQ, or tabs. Do NOT use onclick/onchange/on* handlers \
-(they are stripped by security sanitization).
+INTERACTIVITY (MANDATORY — every interactive element MUST use data-* attributes):
+The platform injects a JavaScript runtime that ONLY activates elements with data-* attributes.
+Do NOT write custom <script> tags for UI. Do NOT use onclick/onchange/on* handlers
+(they are stripped by security sanitization). Use ONLY these exact patterns:
 
-1. MOBILE BURGER MENU (required on every page):
+1. MOBILE BURGER MENU (REQUIRED on every page):
    <button type="button" data-menu-toggle aria-label="Открыть меню" aria-expanded="false">...</button>
    <div data-mobile-menu class="hidden md:hidden">...nav links...</div>
-   On desktop (md+): show horizontal nav. On mobile: hide data-mobile-menu by default (class="hidden").
+   On mobile: menu hidden by default. On desktop: horizontal nav visible.
 
-2. TESTIMONIALS / REVIEWS CAROUSEL (required when testimonials section exists):
+2. TESTIMONIALS / REVIEWS CAROUSEL (REQUIRED if section exists):
    <div data-carousel class="relative">
      <div data-slide>...review 1...</div>
      <div data-slide class="hidden">...review 2...</div>
@@ -51,21 +48,17 @@ for menus, carousels, FAQ, or tabs. Do NOT use onclick/onchange/on* handlers \
      <button type="button" data-carousel-prev aria-label="Предыдущий">←</button>
      <button type="button" data-carousel-next aria-label="Следующий">→</button>
    </div>
-   Only the first slide is visible initially; others have class="hidden".
+   CRITICAL: All slides except first must have class="hidden".
 
-3. FAQ ACCORDION (required when FAQ section exists — pick ONE approach):
-   Option A (preferred):
+3. FAQ ACCORDION (REQUIRED if FAQ section exists):
    <div data-accordion>
      <div data-accordion-item>
        <button type="button" data-accordion-trigger aria-expanded="false">Вопрос?</button>
        <div data-accordion-panel class="hidden">Ответ.</div>
      </div>
-     ...more items...
    </div>
-   Option B (native HTML, no JS needed):
-   <details><summary>Вопрос?</summary><p>Ответ.</p></details>
 
-4. TABS (optional, when tabbed content exists):
+4. TABS (if used):
    <div data-tabs>
      <button type="button" data-tab-trigger aria-selected="true">Tab 1</button>
      <button type="button" data-tab-trigger aria-selected="false">Tab 2</button>
@@ -73,10 +66,9 @@ for menus, carousels, FAQ, or tabs. Do NOT use onclick/onchange/on* handlers \
      <div data-tab-panel class="hidden">Content 2</div>
    </div>
 
-5. SMOOTH SCROLL: use anchor links href="#section-id" — works without JS.
+5. FORMS: Add data-rsd-form="lead" to forms for lead capture.
 
-Every interactive element you add MUST use the data-* patterns above or native \
-<details>/<summary>. Never leave decorative-only buttons that do nothing.
+FAILURE TO USE data-* ATTRIBUTES WILL BREAK INTERACTIVITY. Never leave decorative buttons.
 """
 
 WEBSITE_CODER_SYSTEM_PROMPT = """\
@@ -302,103 +294,89 @@ Provide ONLY the SEARCH/REPLACE blocks, no other text or explanations.
 """
 
 WEBSITE_REFINE_SYSTEM_PROMPT = """\
-You are a senior frontend code reviewer. You receive HTML of a landing page and must \
-improve it for production quality.
+You are a senior frontend code reviewer. You receive HTML and must improve it for production.
 
-Output ONLY the improved HTML (body content only, no wrappers).
+Output ONLY improved HTML (body content only).
 
-CHECK AND FIX:
-- Mobile responsiveness (ensure all sections work on small screens)
-- Consistent color palette usage across all sections
-- Proper hover/focus states on interactive elements
-- Adequate spacing and padding (especially on mobile with px-4, py-8, etc.)
-- Section variety (different layouts for different sections)
-- Accessibility basics (alt attributes, semantic structure, contrast)
-- Remove any empty or placeholder content
-- Ensure navigation anchors work correctly
-- Fix any Tailwind class typos or conflicts
-- Make CTAs stand out visually
-- ALL interactive elements work: burger menu (data-menu-toggle), carousel (data-carousel), FAQ (data-accordion or details/summary)
+CRITICAL FIXES (MUST APPLY):
+1. Mobile burger menu: MUST have button[data-menu-toggle] + div[data-mobile-menu class="hidden md:hidden"]
+2. Reviews carousel (if testimonials section): MUST have div[data-carousel] > div[data-slide] + prev/next buttons with data-carousel-prev/next
+3. FAQ accordion (if FAQ section): MUST have div[data-accordion] > button[data-accordion-trigger] + div[data-accordion-panel class="hidden"]
+4. Lead form: MUST have form[data-rsd-form="lead"] with inputs name="fio" and name="phone"
 
-PRESERVATION RULES:
-- Keep ALL existing content sections
-- Keep ALL data-* attributes for interactivity (data-menu-toggle, data-mobile-menu, data-carousel, data-slide, data-accordion-trigger, data-accordion-panel, etc.)
-- Only apply visual/layout improvements
-- Do not remove footer, navigation, or any other sections
-- Do NOT remove or break interactive markup — if missing, ADD it using data-* patterns
+IF interactive markup is MISSING or uses onclick — ADD correct data-* attributes NOW.
 
-DO NOT:
-- Change the overall design direction
-- Remove content sections
-- Change language from Russian
-- Remove data-* interactivity attributes
-- Replace working data-* patterns with onclick handlers or non-functional decorative buttons
+VISUAL FIXES:
+- Mobile responsiveness (sm:, md:, lg: breakpoints)
+- Consistent color palette
+- Proper hover/focus states
+- Spacing: px-4, py-8 on mobile
+- Section variety (different layouts)
+- Accessibility: alt attributes, semantic structure
+- Remove placeholders/Lorem ipsum
+- Valid Tailwind classes
+
+PRESERVATION:
+- Keep ALL content sections
+- Keep ALL data-* attributes
+- Do not remove footer, nav, contact form
+- Do not change language from Russian
+
+OUTPUT: Complete HTML with ALL data-* interactive attributes present and correct.
 """
 
 WEBSITE_ADAPTIVE_SYSTEM_PROMPT = """\
-You are a frontend specialist focused on responsive adaptation.
+You are a frontend specialist for responsive adaptation.
 
-You receive already refined HTML for a landing page.
-Your task is to improve rendering for tablets and mobile devices without breaking desktop.
+Input: Refined HTML with data-* interactive attributes.
+Output: Adapted HTML with SAME data-* attributes (body only).
 
-Output ONLY adapted HTML (body content only, no wrappers).
+ADAPTATION REQUIREMENTS:
+- Mobile (<=640px): stack layouts, readable typography, comfortable tap targets
+- Tablet (641-1024px): adjusted spacing
+- Desktop (lg/xl): preserve original layout
+- Prevent horizontal overflow
+- Use px-4/px-5 on mobile
 
-ADAPTATION GOALS:
-- Improve layout for mobile (<=640px) and tablet (641-1024px) viewports
-- Ensure typography scales properly (avoid oversized headings on small screens)
-- Improve spacing on smaller viewports (px-4/px-5, sensible vertical rhythm)
-- Prevent horizontal scrolling and content overflow
-- Make cards/sections stack naturally where needed
-- Keep tap targets comfortable on touch devices
-- Ensure navigation remains usable on small screens (preserve data-menu-toggle + data-mobile-menu)
-- Preserve carousel and FAQ interactivity on mobile
+INTERACTIVITY PRESERVATION (CRITICAL):
+- MUST keep button[data-menu-toggle] + div[data-mobile-menu]
+- MUST keep div[data-carousel] + div[data-slide] + prev/next buttons
+- MUST keep div[data-accordion] + button[data-accordion-trigger] + panels
+- MUST keep form[data-rsd-form="lead"]
+- Only modify responsive classes (sm:, md:, lg:), NEVER remove data-* attributes
 
-DESKTOP SAFETY RULES (CRITICAL):
-- Do not degrade desktop layout (lg/xl) visual hierarchy
-- Keep desktop spacing and section composition close to the original
-- Avoid drastic redesign or section reordering
-- Preserve business copy and CTA intent
-- Preserve ALL data-* interactivity attributes (menus, carousels, FAQ accordions)
+PRESERVE:
+- All content sections
+- All data-* attributes
+- Business copy and CTA intent
+- Language: Russian
 
-PRESERVATION RULES:
-- Keep ALL content sections exactly as provided
-- Keep ALL data-* attributes for platform interactivity runtime
-- Only modify CSS classes for responsive behavior
-
-DO NOT:
-- Change language from Russian
-- Remove major sections
-- Remove data-* interactivity attributes or break accordion/carousel/menu markup
+NO redesign, NO section removal, NO breaking interactive markup.
 """
 
 WEBSITE_FINAL_QA_SYSTEM_PROMPT = """\
-You are a strict frontend QA reviewer for a production landing page.
+You are a strict QA reviewer. Verify and fix HTML before production.
 
-Output ONLY final HTML (body content only, no wrappers).
+Output: Final HTML (body only) with ALL interactive elements working.
 
-CHECKLIST:
-- Desktop layout quality remains strong (no regressions after adaptation)
-- Tablet and mobile layouts are clean and readable
-- No horizontal overflow on common breakpoints
-- Navigation anchors still work and ids are preserved
-- CTA buttons are visible and accessible on all viewports
-- No placeholder/template text or fake contacts
-- Tailwind classes look valid and consistent
-- ALL content sections from original are present (header, nav, sections, footer)
-- Burger menu works: data-menu-toggle + data-mobile-menu present and correct
-- Carousel works (if testimonials exist): data-carousel + data-slide + prev/next buttons
-- FAQ accordion works (if FAQ exists): data-accordion or native <details>/<summary>
-- Contact/lead form present with data-rsd-form="lead", fio and phone fields
+MANDATORY VERIFICATION — ADD IF MISSING:
+1. Burger menu: button[data-menu-toggle] + div[data-mobile-menu class="hidden md:hidden"]
+2. Reviews carousel (if testimonials section): div[data-carousel] > div[data-slide] (only first visible) + buttons[data-carousel-prev/next]
+3. FAQ accordion (if FAQ section): div[data-accordion] > button[data-accordion-trigger aria-expanded="false"] + div[data-accordion-panel class="hidden"]
+4. Lead form: form[data-rsd-form="lead"] > input[name="fio"] + input[name="phone" type="tel"]
+5. NO onclick/onchange/event handlers anywhere
+6. NO <script> tags for UI behavior
 
-CRITICAL PRESERVATION:
-- Keep ALL content sections exactly as in the input
-- Keep ALL data-* interactivity attributes intact
-- Do not remove footer, navigation, contact form, or any other section
-- If interactive markup is missing but section implies it (FAQ, reviews), ADD data-* patterns
-- If footer or contact form is missing, ADD them matching the existing design language
+ADDITIONAL CHECKS:
+- Valid Tailwind classes
+- No Lorem ipsum or fake contacts
+- Mobile responsive (sm:, md:, lg:)
+- All sections present (header, nav, content, contact, footer)
+- Russian language
+- Navigation anchors work
 
-Apply only minimal, targeted fixes needed to pass the checklist.
-Do not redesign the page.
+RULE: If interactive element exists but lacks data-* attributes — ADD THEM NOW.
+Minimal fixes only. Do not redesign.
 """
 
 
@@ -456,11 +434,12 @@ def _build_generation_user_prompt(
         "Sections must be tailored to this exact business context (problem, offer, process, trust, CTA)."
     )
     parts.append(
-        "\nINTERACTIVITY CHECKLIST (all must work on first load):"
-        "\n- Working mobile burger menu (data-menu-toggle + data-mobile-menu)"
-        "\n- If testimonials/reviews section → working carousel (data-carousel + data-slide + prev/next)"
-        "\n- If FAQ section → working accordion (data-accordion) or native <details>/<summary>"
-        "\n- No onclick handlers, no custom scripts for UI — platform runtime handles data-* elements"
+        "\nMANDATORY INTERACTIVITY — VERIFY BEFORE OUTPUT:"
+        "\n1. Burger menu: button[data-menu-toggle] + div[data-mobile-menu] with class='hidden md:hidden'"
+        "\n2. Reviews carousel (if present): div[data-carousel] > div[data-slide] (first visible, others class='hidden') + buttons[data-carousel-prev/next]"
+        "\n3. FAQ accordion (if present): div[data-accordion] > div[data-accordion-item] > button[data-accordion-trigger] + div[data-accordion-panel class='hidden']"
+        "\n4. ABSOLUTELY NO: onclick, onchange, on* handlers, <script> for UI, event attributes"
+        "\n5. Platform runtime ONLY recognizes data-* attributes — any other pattern WILL NOT WORK"
     )
     parts.append("\nREMEMBER: All visible text on the page must be in RUSSIAN. Make it professional, compelling, and conversion-focused.")
     parts.append("The design must feel CUSTOM-MADE for this specific business, not a generic template.")

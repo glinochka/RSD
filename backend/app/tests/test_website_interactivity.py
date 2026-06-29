@@ -62,6 +62,10 @@ def test_inject_landing_interactivity_runtime_adds_script_once():
     assert RUNTIME_MARKER in injected
     assert injected.count(RUNTIME_MARKER) == 1
     assert 'initAccordions' in injected
+    # Keep broad fallbacks for imperfect AI markup (FAQ/reviews/menu without data-*).
+    assert 'rsdGenericAccordionBound' in injected
+    assert '[class*="testimonial"]' in injected
+    assert "document.querySelectorAll('button')" in injected
 
 
 def test_inject_landing_interactivity_runtime_is_idempotent():

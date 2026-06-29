@@ -18,7 +18,7 @@
 | Админ-панель | [backend/admin](./backend/admin/) | `/api/admin/*`, рассылки, модерация |
 | Sales CRM | [backend/sales](./backend/sales/) | Портал продаж, воронка, контакты |
 | Телефония | [telephony](./telephony/) | Voximplant, streaming, internal API |
-| Website Builder | [website-builder](./website-builder/) | Генерация сайтов, домены, SEO |
+| Website Builder | [website-builder](./website-builder/) | AI-лендинги, конструктор, заявки, SEO — **production-ready** |
 | CRM-интеграции | [backend/crm](./backend/crm/) | AmoCRM и провайдеры |
 | Запись (booking) | [backend/admin-booking](./backend/admin-booking/) | Слоты, услуги, напоминания |
 | Заявки (applications) | [backend/admin-applications](./backend/admin-applications/) | Формы заявок агента |
