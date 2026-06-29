@@ -305,7 +305,7 @@ async def enforce_secure_transport_for_credentials(request: Request, call_next):
 
 
 app.include_router(users_router.router)
-app.include_router(agents_router.router)
+app.include_router(agents_router)
 app.include_router(agents_public_router)
 app.include_router(documents_router.router)
 app.include_router(payments_router.router)
