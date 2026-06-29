@@ -39,7 +39,7 @@ internal → crm → integrations → core → channels/telegram → channels/wh
 
 | Файл | Префикс |
 |------|---------|
-| `public_router.py` | `/api/v1/agents` — public-data, booking slots/appointments, website leads |
+| `public_router.py` | `/api/v1/agents` — public-data, booking slots/appointments, [website leads](../../website-builder/PUBLIC_FORMS.md) |
 
 ## Utils, вынесенные из router
 

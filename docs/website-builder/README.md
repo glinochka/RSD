@@ -17,6 +17,8 @@
 | Interactivity | `backend/app/services/website_interactivity.py` |
 | Export | `backend/app/services/website_export_service.py` |
 | Public forms | `backend/app/services/website_public_forms.py` |
+| Form runtime (frontend) | `frontend/src/website-builder/utils/landingInteractivity.js` |
+| Fullpage renderer | `frontend/src/website-builder/components/FullpageRenderer.jsx` |
 | Static assets | mount `/assets/websites` в `server.py` |
 
 ## API
@@ -25,6 +27,7 @@
 |---------|----------|
 | `/api/v1/websites` | CRUD сайтов, блоки, домены, publish |
 | `/public-website` | Публичная отдача опубликованных сайтов |
+| `/api/v1/agents/{id}/website/leads` | Заявки с публичного лендинга → `admin_applications` |
 | `/assets/websites` | Статика (изображения и т.д.) |
 
 ## Документация по этапам
@@ -36,7 +39,7 @@
 | Безопасность | [STAGE_9_SECURITY.md](./STAGE_9_SECURITY.md) | есть |
 | Генерация (LLM) | `STAGE_GENERATION.md` | TODO |
 | Блоки и шаблоны | `BLOCKS.md` | TODO |
-| Публичные формы | `PUBLIC_FORMS.md` | TODO |
+| Public forms | [PUBLIC_FORMS.md](./PUBLIC_FORMS.md) | есть |
 | Переменные окружения | `ENV_VARIABLES.md` | TODO |
 
 ## Связанные модули

@@ -108,6 +108,8 @@ _ASYNC_SESSION_MAKER_PATCH_TARGETS = (
     "app.services.http_integration.tool_registry.async_session_maker",
     "app.services.admin_booking.providers.local.async_session_maker",
     "app.telephony.orchestrator_worker.async_session_maker",
+    "app.services.website_public_forms.async_session_maker",
+    "app.services.agent_public_data.async_session_maker",
 )
 
 
