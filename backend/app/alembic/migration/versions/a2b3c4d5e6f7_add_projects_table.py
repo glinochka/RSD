@@ -1,7 +1,7 @@
 """add_projects_table
 
 Revision ID: a2b3c4d5e6f7
-Revises: z6a7b8c9d0e1
+Revises: d3e4f5a6b7c8
 Create Date: 2026-06-30 12:00:00.000000
 
 """
@@ -11,7 +11,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision = 'a2b3c4d5e6f7'
-down_revision = 'z6a7b8c9d0e1'
+down_revision = 'd3e4f5a6b7c8'
 branch_labels = None
 depends_on = None
 
