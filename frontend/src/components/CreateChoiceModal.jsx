@@ -102,7 +102,7 @@ const CreateChoiceModal = ({ isOpen, onClose }) => {
       <div className="create-choice-modal">
         <div className="create-choice-modal-header">
           <h2 id="create-choice-title" className="create-choice-modal-title">
-            Новый инструмент
+            Новое решение
           </h2>
           <button
             ref={closeButtonRef}

@@ -1,4 +1,4 @@
-/** Projects List Page Styles */
+/** Solutions List Page Styles */
 
 .projects-page {
   max-width: 1200px;
@@ -45,30 +45,47 @@
   gap: var(--spacing-lg);
 }
 
-/* Grid */
-.projects-grid {
+/* Solutions layout */
+.solutions-layout {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--spacing-lg);
+  align-items: start;
 }
 
-/* Project Card */
+.solutions-layout--with-panel {
+  grid-template-columns: minmax(0, 1fr) 380px;
+}
+
+.solutions-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  transition: all 0.2s ease;
+}
+
+.solutions-list--compact .solution-card:not(.solution-card--selected) {
+  transform: scaleX(0.985);
+  opacity: 0.88;
+}
+
+/* Solution Card */
 .project-card {
   background: #fff;
   border: 1px solid var(--color-border);
   border-radius: 12px;
-  padding: var(--spacing-lg);
+  padding: var(--spacing-md) var(--spacing-lg);
   cursor: pointer;
   transition: all 0.2s ease;
   display: flex;
   flex-direction: column;
-  min-height: 200px;
+  min-height: 144px;
 }
 
 .project-card:hover {
   border-color: var(--color-primary);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-  transform: translateY(-2px);
+  transform: translateY(-1px);
 }
 
 .project-card:focus {
@@ -83,6 +100,7 @@
   background: #fafafa;
   align-items: center;
   justify-content: center;
+  min-height: 108px;
 }
 
 .project-card--add:hover {
@@ -161,9 +179,7 @@
 }
 
 /* Card Content */
-.project-card-content {
-  flex: 1;
-}
+.project-card-content { flex: 1; }
 
 .project-card-name {
   font-size: 1.125rem;
@@ -187,29 +203,121 @@
   margin: 0;
 }
 
-/* Card Footer */
-.project-card-footer {
-  margin-top: var(--spacing-md);
-  padding-top: var(--spacing-md);
-  border-top: 1px solid var(--color-border-light);
+.solution-card--selected {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
 }
 
-.project-card-stats {
+.solution-card-project-action {
+  margin-top: var(--spacing-sm);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #2563eb;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.solution-details-panel {
+  border: 1px solid var(--color-border);
+  background: #fff;
+  border-radius: 12px;
+  padding: var(--spacing-lg);
+  position: sticky;
+  top: 96px;
+}
+
+.solution-details-loading,
+.solution-details-empty {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-xs);
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-md);
+  color: var(--color-text-secondary);
+  min-height: 280px;
+  text-align: center;
 }
 
-.project-card-stat {
+.solution-details-content {
   display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  font-size: 0.8125rem;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.solution-details-title {
+  margin: 0;
+  font-size: 0.875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+}
+
+.solution-details-name {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.solution-details-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.875rem;
   color: var(--color-text-secondary);
 }
 
-.project-card-stat svg {
-  color: var(--color-text-muted);
+.solution-details-list p {
+  margin: 0;
+}
+
+.solution-details-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.solution-details-applications {
+  border-top: 1px solid var(--color-border-light);
+  padding-top: var(--spacing-md);
+}
+
+.solution-details-applications h4 {
+  margin: 0 0 10px 0;
+  font-size: 0.95rem;
+}
+
+.solution-details-muted {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+
+.solution-applications-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.solution-application-item {
+  border: 1px solid var(--color-border-light);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.solution-application-title {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.solution-application-meta {
+  margin: 4px 0 0 0;
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
 }
 
 /* Empty State */
@@ -272,8 +380,18 @@
     font-size: 1.5rem;
   }
 
-  .projects-grid {
-    grid-template-columns: 1fr;
+  .solutions-layout--with-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .solution-details-panel {
+    position: static;
+    order: -1;
+  }
+
+  .solutions-list--compact .solution-card:not(.solution-card--selected) {
+    transform: none;
+    opacity: 1;
   }
 }
 

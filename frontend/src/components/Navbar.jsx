@@ -314,7 +314,7 @@ const Navbar = () => {
           }}
         >
           {isAuthenticated ? (
-            <Link to={NAVIGATION_ROUTES.PROJECTS_LIST}>Инструменты</Link>
+            <Link to={NAVIGATION_ROUTES.PROJECTS_LIST}>Решения</Link>
           ) : (
             <Link to={NAVIGATION_ROUTES.AGENTS}>Мои агенты</Link>
           )}
@@ -323,7 +323,7 @@ const Navbar = () => {
             className="navbar-link-button"
             onClick={() => setIsCreateChoiceOpen(true)}
           >
-            Новый инструмент
+            Новое решение
           </button>
           <Link to={NAVIGATION_ROUTES.DOCUMENTATION}>Документация</Link>
           <Link to={NAVIGATION_ROUTES.PRICING}>Цены</Link>
@@ -400,7 +400,7 @@ const Navbar = () => {
                 {displayName}
               </p>
               <p className="profile-drawer-hint">
-                Управляйте ИИ-агентами и сайтами в разделе «Инструменты».
+                Управляйте ИИ-агентами и сайтами в разделе «Решения».
               </p>
               <div className="profile-telegram-link-box">
                 <p className="profile-telegram-link-title">Связь с мастер-ботом</p>
