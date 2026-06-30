@@ -170,9 +170,7 @@ const ProjectLayout = ({ children }) => {
     return !item.hidden;
   });
 
-  const isActive = (path) => {
-    return location.pathname === path || location.pathname.startsWith(`${path}/`);
-  };
+  const isActive = (path) => location.pathname === path;
 
   const handleBackToProjects = () => {
     navigate(NAVIGATION_ROUTES.PROJECTS_LIST);

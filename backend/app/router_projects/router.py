@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import and_, func, select
+from sqlalchemy.orm import selectinload
 
 from .schemas import (
     ProjectCreate,
@@ -389,9 +390,11 @@ async def get_project_dashboard(
             # Get project summary
             project_summary = await _get_project_summary(session, project)
             
-            # Count active agents
+            # Count active agents with eager-loaded channel connections
             agents_result = await session.execute(
-                select(Agent).where(
+                select(Agent)
+                .options(selectinload(Agent.channel_connections))
+                .where(
                     and_(
                         Agent.project_id == project_id,
                         Agent.is_active == True,

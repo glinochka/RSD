@@ -589,7 +589,7 @@ const AgentCard = ({ agent, isSelected, onManage, onDelete, onToggle }) => {
         ></span>
         <div className="agent-details">
           <h3 className="agent-name">{agentName}</h3>
-          <p className="agent-role">{isActive ? 'Активен' : 'Не активен'}</p>
+          <p className="agent-role">Агент · {isActive ? 'Активен' : 'Не активен'}</p>
         </div>
       </div>
       <div className="agent-actions">
@@ -922,7 +922,9 @@ const AgentsPageContent = () => {
         ]);
         if (cancelled) return;
         setSolutionWebsites(Array.isArray(wRes?.items) ? wRes.items : []);
-        setSolutionProjects(Array.isArray(pRes?.items) ? pRes.items : []);
+        setSolutionProjects(
+          (Array.isArray(pRes?.items) ? pRes.items : []).filter((p) => !p.is_default),
+        );
       } catch {
         // non-critical: agents list still works
       }
@@ -958,9 +960,14 @@ const AgentsPageContent = () => {
     return () => { cancelled = true; };
   }, [selectedSolutionType, panelWebsite?.agent_id]);
 
-  const handleSelectWebsite = (website) => {
+  const handleSelectWebsite = async (website) => {
     setSelectedSolutionType('website');
-    setPanelWebsite(website);
+    try {
+      const detailedWebsite = await websiteService.getById(website.id);
+      setPanelWebsite(detailedWebsite || website);
+    } catch {
+      setPanelWebsite(website);
+    }
     setPanelWebsiteLeads([]);
     // Deselect any agent
     setSelectedBotId(null);
@@ -2874,31 +2881,52 @@ const AgentsPageContent = () => {
         ) : (
           <div className="agents-layout">
             <div className="agents-list">
-              {displayAgents.map((agent) => (
-                <AgentCard
-                  key={agent.id}
-                  agent={agent}
-                  isSelected={selectedSolutionType === 'agent' && selectedBotId === agent.id}
-                  onManage={(id) => { setSelectedSolutionType('agent'); loadAgentDetails(id); }}
-                  onDelete={handleDeleteAgent}
-                  onToggle={handleToggleAgent}
-                />
-              ))}
-              {solutionWebsites.map((website) => (
-                <WebsiteCard
-                  key={`w-${website.id}`}
-                  website={website}
-                  isSelected={selectedSolutionType === 'website' && panelWebsite?.id === website.id}
-                  onClick={() => handleSelectWebsite(website)}
-                />
-              ))}
-              {solutionProjects.map((project) => (
-                <ProjectCard
-                  key={`p-${project.id}`}
-                  project={project}
-                  onClick={() => navigate(NAVIGATION_ROUTES.PROJECT_DETAIL(project.id))}
-                />
-              ))}
+              {solutionProjects.length > 0 && (
+                <>
+                  <div className="solutions-group-heading">Проекты</div>
+                  {solutionProjects.map((project) => (
+                    <ProjectCard
+                      key={`p-${project.id}`}
+                      project={project}
+                      onClick={() => navigate(NAVIGATION_ROUTES.PROJECT_DETAIL(project.id))}
+                    />
+                  ))}
+                </>
+              )}
+
+              {displayAgents.length > 0 && (
+                <>
+                  {solutionProjects.length > 0 && <div className="solutions-group-divider" />}
+                  <div className="solutions-group-heading">Агенты</div>
+                  {displayAgents.map((agent) => (
+                    <AgentCard
+                      key={agent.id}
+                      agent={agent}
+                      isSelected={selectedSolutionType === 'agent' && selectedBotId === agent.id}
+                      onManage={(id) => { setSelectedSolutionType('agent'); loadAgentDetails(id); }}
+                      onDelete={handleDeleteAgent}
+                      onToggle={handleToggleAgent}
+                    />
+                  ))}
+                </>
+              )}
+
+              {solutionWebsites.length > 0 && (
+                <>
+                  {(solutionProjects.length > 0 || displayAgents.length > 0) && (
+                    <div className="solutions-group-divider" />
+                  )}
+                  <div className="solutions-group-heading">Сайты</div>
+                  {solutionWebsites.map((website) => (
+                    <WebsiteCard
+                      key={`w-${website.id}`}
+                      website={website}
+                      isSelected={selectedSolutionType === 'website' && panelWebsite?.id === website.id}
+                      onClick={() => handleSelectWebsite(website)}
+                    />
+                  ))}
+                </>
+              )}
             </div>
 
             <div className="agent-management-card">

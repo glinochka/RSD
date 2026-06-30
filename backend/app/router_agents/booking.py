@@ -698,23 +698,33 @@ async def admin_template_applications_stats(
 ):
     if agent_id is None and bot_id is None:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="agent_id or bot_id is required")
+    channel = str(source_channel or "").strip().lower() or None
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
         async with session.begin():
-            agent, cfg = await _find_admin_template_agent(
-                session=session,
-                agent_dao=agent_dao,
-                current_user=current_user,
-                agent_id=agent_id,
-                bot_id=bot_id,
-            )
-            workflow_mode = str(cfg.get("workflow_mode") or "booking").strip().lower()
-            channel = str(source_channel or "").strip().lower() or None
-            if workflow_mode != "applications" and channel != "website":
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Applications API is available only for agents with workflow_mode=applications",
+            if channel == "website":
+                # Website form leads can exist for any agent type.
+                agent = await _find_agent_with_access(
+                    agent_dao,
+                    agent_id=agent_id,
+                    bot_id=bot_id,
+                    session=session,
+                    current_user=current_user,
                 )
+            else:
+                agent, cfg = await _find_admin_template_agent(
+                    session=session,
+                    agent_dao=agent_dao,
+                    current_user=current_user,
+                    agent_id=agent_id,
+                    bot_id=bot_id,
+                )
+                workflow_mode = str(cfg.get("workflow_mode") or "booking").strip().lower()
+                if workflow_mode != "applications":
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail="Applications API is available only for agents with workflow_mode=applications",
+                    )
             counts = await get_admin_application_service().count_by_status(
                 session,
                 agent_id=agent.id,

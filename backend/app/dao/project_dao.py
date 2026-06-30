@@ -16,16 +16,17 @@ class ProjectDAO:
 
     @staticmethod
     async def list_by_user(session: AsyncSession, user_id: int) -> list[Project]:
-        """List all non-archived projects for a user."""
+        """List all non-archived, user-created projects (excludes auto-default stubs)."""
         result = await session.execute(
             select(Project)
             .where(
                 and_(
                     Project.user_id == user_id,
                     Project.status != "archived",
+                    Project.is_default == False,
                 )
             )
-            .order_by(Project.is_default.desc(), Project.created_at.desc())
+            .order_by(Project.created_at.desc())
         )
         return result.scalars().all()
 
