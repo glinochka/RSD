@@ -251,9 +251,15 @@ def get_auth_data(token_kind: Literal["user", "admin", "sales_staff"] = "user"):
     if token_kind == "admin":
         secret_key = settings.ADMIN_JWT_SECRET_KEY.strip()
         if not secret_key:
+            # Fallback to legacy SECRET_KEY for backward compatibility
+            secret_key = settings.SECRET_KEY.strip()
+        if not secret_key:
             raise RuntimeError("ADMIN_JWT_SECRET_KEY is not configured")
     else:
         secret_key = settings.USER_JWT_SECRET_KEY.strip()
+        if not secret_key:
+            # Fallback to legacy SECRET_KEY for backward compatibility
+            secret_key = settings.SECRET_KEY.strip()
         if not secret_key:
             raise RuntimeError("USER_JWT_SECRET_KEY is not configured")
 
