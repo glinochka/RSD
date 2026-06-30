@@ -4,6 +4,7 @@ import hashlib
 from datetime import datetime, timezone
 from typing import Optional, List
 from pathlib import Path
+from logging import getLogger
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Form
 from fastapi.responses import JSONResponse
@@ -31,6 +32,7 @@ from ..utils.JWT import get_user_from_access_token
 from ..utils.rate_limit import rate_limit
 from ..config import settings
 
+logger = getLogger(__name__)
 router = APIRouter(prefix="/api/projects")
 http_bearer = HTTPBearer(auto_error=False)
 
@@ -74,13 +76,21 @@ async def get_current_user_from_token(
             detail="Authorization header required",
         )
 
+    token = authorization.credentials
+    # Debug logging
+    logger.warning(f"[PROJECTS AUTH] token type={type(token)}, len={len(token)}, preview={token[:20]}...")
+
     async with async_session_maker() as session:
         from ..router_users.dao import UserDAO
         user_dao = UserDAO(session)
         try:
-            user = await get_user_from_access_token(authorization.credentials, user_dao)
-            return user
+            async with session.begin():
+                user = await get_user_from_access_token(token, user_dao)
+                return user
+        except HTTPException:
+            raise
         except Exception as e:
+            logger.error(f"[PROJECTS AUTH] Error validating token: {e}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid or expired token",

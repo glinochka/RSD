@@ -52,6 +52,9 @@ def decode_access_token_payload(token: str, token_kind: Literal["user", "admin",
     secret_key = auth_data["secret_key"]
     algorithm = auth_data["algorithm"]
 
+    # Debug: log token info (first 30 chars only for security)
+    logger.warning(f"[JWT DECODE] raw_token_preview={token[:30]}..., token_len={len(token)}, token_kind={token_kind}")
+
     logger.info(f"[JWT DECODE] token_kind={token_kind}, key_len={len(secret_key)}, key_preview={secret_key[:10]}...")
 
     try:
