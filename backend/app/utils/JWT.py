@@ -39,10 +39,6 @@ def create_access_token(
     secret_key = auth_data['secret_key']
     algorithm = auth_data['algorithm']
 
-    # PyJWT принимает ключ как строку или байты; оставим преобразование для совместимости
-    if isinstance(secret_key, str):
-        secret_key = secret_key.encode('utf-8')
-
     encode_jwt = jwt.encode(to_encode, secret_key, algorithm=algorithm)
     return encode_jwt
 
@@ -52,9 +48,6 @@ def decode_access_token_payload(token: str, token_kind: Literal["user", "admin",
         auth_data = get_auth_data(token_kind)
         secret_key = auth_data["secret_key"]
         algorithm = auth_data["algorithm"]
-
-        if isinstance(secret_key, str):
-            secret_key = secret_key.encode("utf-8")
 
         data = jwt.decode(token, secret_key, algorithms=[algorithm])
         if data.get("token_kind") != token_kind:
