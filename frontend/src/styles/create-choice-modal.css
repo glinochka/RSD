@@ -133,6 +133,10 @@
   color: #10b981;
 }
 
+.create-choice-option--website .create-choice-option-icon {
+  color: #8b5cf6;
+}
+
 .create-choice-option-content {
   flex: 1;
   min-width: 0;

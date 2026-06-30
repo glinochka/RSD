@@ -38,7 +38,6 @@ import ProjectSettingsPage from './pages/projects/ProjectSettingsPage';
 import ProjectCreatePage from './pages/projects/ProjectCreatePage';
 import ProjectContentPage from './pages/projects/ProjectContentPage';
 import ProjectManagerPage from './pages/projects/ProjectManagerPage';
-import AgentsRedirect from './pages/AgentsRedirect';
 
 // Website Builder Pages
 import { PreviewPage, WebsitePublicPage, ConstructorPage } from './website-builder/pages';
@@ -68,9 +67,8 @@ const App = () => {
                 />
 
                 {/* Protected routes */}
-                {/* Legacy redirect: /agents -> /projects/:lastProjectId/agents */}
-                <Route path={NAVIGATION_ROUTES.AGENTS} element={<AgentsRedirect />} />
-                <Route path="/agents/:id" element={<AgentsRedirect />} />
+                <Route path={NAVIGATION_ROUTES.AGENTS} element={<AgentsPage />} />
+                <Route path="/agents/:id" element={<Navigate to={NAVIGATION_ROUTES.AGENTS} replace />} />
                 <Route
                   path={NAVIGATION_ROUTES.AGENT_ANALYTICS(':id')}
                   element={<AgentDetailedAnalyticsPage />}

@@ -800,6 +800,19 @@ const AgentsPageContent = () => {
     };
   }, [isChannelsModalOpen]);
 
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const createType = String(searchParams.get('create') || '').trim().toLowerCase();
+    if (createType !== 'website') return;
+
+    setIsCreateChoiceModalOpen(false);
+    setIsWebsiteWizardOpen(true);
+
+    const next = new URLSearchParams(searchParams);
+    next.delete('create');
+    setSearchParams(next, { replace: true });
+  }, [isAuthenticated, searchParams, setSearchParams]);
+
   const handleCreateAgent = () => {
     setIsCreateChoiceModalOpen(true);
   };

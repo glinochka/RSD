@@ -1,6 +1,6 @@
 /**
  * CreateChoiceModal Component
- * Modal for choosing between creating an AI Agent or a Project
+ * Modal for choosing what tool to create
  */
 
 import React, { useEffect, useRef } from 'react';
@@ -24,6 +24,15 @@ const BriefcaseIcon = () => (
   <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
     <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
     <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
+  </svg>
+);
+
+// Globe icon for Website option
+const GlobeIcon = () => (
+  <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="12" cy="12" r="10" />
+    <line x1="2" y1="12" x2="22" y2="12" />
+    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
   </svg>
 );
 
@@ -74,6 +83,11 @@ const CreateChoiceModal = ({ isOpen, onClose }) => {
     navigate(NAVIGATION_ROUTES.PROJECT_CREATE);
   };
 
+  const handleCreateWebsite = () => {
+    onClose();
+    navigate(`${NAVIGATION_ROUTES.AGENTS}?create=website`);
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -88,7 +102,7 @@ const CreateChoiceModal = ({ isOpen, onClose }) => {
       <div className="create-choice-modal">
         <div className="create-choice-modal-header">
           <h2 id="create-choice-title" className="create-choice-modal-title">
-            Что вы хотите создать?
+            Новый инструмент
           </h2>
           <button
             ref={closeButtonRef}
@@ -121,6 +135,23 @@ const CreateChoiceModal = ({ isOpen, onClose }) => {
               </div>
             </button>
 
+            {/* Website Option */}
+            <button
+              type="button"
+              className="create-choice-option create-choice-option--website"
+              onClick={handleCreateWebsite}
+            >
+              <div className="create-choice-option-icon">
+                <GlobeIcon />
+              </div>
+              <div className="create-choice-option-content">
+                <h3 className="create-choice-option-title">Сайт</h3>
+                <p className="create-choice-option-description">
+                  Лендинг или сайт компании с генерацией контента и публикацией.
+                </p>
+              </div>
+            </button>
+
             {/* Project Option */}
             <button
               type="button"
@@ -133,8 +164,7 @@ const CreateChoiceModal = ({ isOpen, onClose }) => {
               <div className="create-choice-option-content">
                 <h3 className="create-choice-option-title">Проект</h3>
                 <p className="create-choice-option-description">
-                  Цифровизация бизнеса целиком: набор агентов, CRM, сайт, база знаний и
-                  дашборд в одном пространстве.
+                  Единое рабочее пространство: набор агентов, CRM, сайт и база знаний.
                 </p>
               </div>
             </button>

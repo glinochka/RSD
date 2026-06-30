@@ -117,17 +117,14 @@ async def create_empty_agent(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
-        from ..dao.project_dao import ProjectDAO
-        project_dao = ProjectDAO(session)
-        
+
         async with session.begin():
-            # Determine project_id: use provided, or find/create default
+            # Keep legacy project linkage optional only when explicitly provided.
+            # New agents are no longer auto-attached to a default project.
             project_id = payload.project_id
-            if project_id is None:
-                default_project = await project_dao.get_default_for_user(session, current_user.id)
-                if default_project:
-                    project_id = default_project.id
-            else:
+            if project_id is not None:
+                from ..dao.project_dao import ProjectDAO
+                project_dao = ProjectDAO(session)
                 # Validate that project exists and belongs to user
                 project = await project_dao.get_by_id(session, project_id)
                 if not project or project.user_id != current_user.id:
