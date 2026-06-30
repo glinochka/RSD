@@ -15,6 +15,15 @@ class AgentDAO(BaseDAO):
         query = select(self.model).where(self.model.user_id == user_id)
         return await self.list_scalars(query)
 
+    async def find_all_by_user_id_and_project(
+        self, user_id: int, project_id: int | None = None
+    ) -> list[Agent]:
+        """Get agents for user, optionally filtered by project_id."""
+        query = select(self.model).where(self.model.user_id == user_id)
+        if project_id is not None:
+            query = query.where(self.model.project_id == project_id)
+        return await self.list_scalars(query)
+
     async def count_all(self) -> int:
         query = select(func.count(self.model.id))
         return await self.scalar_or_default(query, 0)

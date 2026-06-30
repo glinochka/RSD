@@ -1,0 +1,46 @@
+/** Project Placeholder Page Styles */
+
+.project-placeholder {
+  background: #fff;
+  border-radius: 12px;
+  padding: var(--spacing-xl);
+  text-align: center;
+}
+
+.project-placeholder h2 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0 0 var(--spacing-sm) 0;
+}
+
+.project-placeholder > p {
+  color: var(--color-text-secondary);
+  margin: 0 0 var(--spacing-xl) 0;
+}
+
+.project-placeholder-content {
+  max-width: 400px;
+  margin: 0 auto;
+  text-align: left;
+  background: #f9fafb;
+  border-radius: 8px;
+  padding: var(--spacing-lg);
+}
+
+.project-placeholder-content p {
+  font-weight: 500;
+  color: var(--color-text);
+  margin: 0 0 var(--spacing-sm) 0;
+}
+
+.project-placeholder-content ul {
+  margin: 0;
+  padding-left: var(--spacing-lg);
+  color: var(--color-text-secondary);
+}
+
+.project-placeholder-content li {
+  margin-bottom: var(--spacing-xs);
+  line-height: 1.5;
+}

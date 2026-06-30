@@ -149,6 +149,10 @@ class CreateEmptyAgent(BaseModel):
         default=None,
         description="Конфигурация шаблона (JSON)",
     )
+    project_id: Optional[int] = Field(
+        default=None,
+        description="ID проекта для привязки агента (опционально, используется default проект если не указан)",
+    )
 
 
 class AgentChannelsByBotId(AgentLookup):

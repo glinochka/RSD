@@ -20,6 +20,16 @@ export const agentService = {
   },
 
   /**
+   * Get agents filtered by project ID
+   */
+  getAgentsByProject: async (projectId) => {
+    const response = await apiClient.get(API_ROUTES.AGENTS_LIST, {
+      params: { project_id: projectId },
+    });
+    return response.data;
+  },
+
+  /**
    * Get agent by ID
    */
   getById: async (id) => {

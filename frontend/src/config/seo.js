@@ -61,7 +61,7 @@ const ROUTES = {
   },
 };
 
-const PRIVATE_PREFIXES = ['/agents', '/create-agent'];
+const PRIVATE_PREFIXES = ['/agents', '/create-agent', '/projects'];
 const WEBSITE_BUILDER_PREFIXES = ['/w/', '/preview/', '/websites/'];
 
 export function getSeoForPath(pathname) {

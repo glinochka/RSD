@@ -9,6 +9,7 @@ import { useAuth } from '../context/useAuth';
 import { useNotification } from '../context/useNotification';
 import MainLayout from '../components/Layout';
 import AgentChatShowcase from '../components/AgentChatShowcase';
+import CreateChoiceModal from '../components/CreateChoiceModal';
 import { NAVIGATION_ROUTES, VALIDATION } from '../config/constants';
 import pricingService from '../services/pricingService';
 import '../styles/main.css';
@@ -353,6 +354,7 @@ const Main = () => {
     email: '',
     employeeRequest: '',
   });
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const mainContentRef = useRef(null);
   const floatingPhraseTimeoutsRef = useRef(new Set());
   const floatingLaneReleaseTimeoutsRef = useRef(new Set());
@@ -470,9 +472,9 @@ const Main = () => {
     };
   }, []);
 
-  const handleCreateAgent = () => {
+  const handleCreateClick = () => {
     if (isAuthenticated) {
-      navigate(NAVIGATION_ROUTES.CREATE_AGENT);
+      setIsCreateModalOpen(true);
     } else {
       navigate(NAVIGATION_ROUTES.AUTH);
     }
@@ -544,21 +546,21 @@ const Main = () => {
         <section className="hero" aria-labelledby="hero-heading">
           <div className="hero-content reveal-on-scroll reveal-from-left">
             <h1 id="hero-heading">
-              Создайте персонального ИИ‑агента за <span className="hero-accent">5 минут</span>!
+              Портал цифровизации вашего <span className="hero-accent">бизнеса</span>
             </h1>
             <p className="description">
-              RSD — no-code платформа для ИИ-агентов под поддержку, продажи и внутренние процессы. Соберите сценарий без
-              разработчиков: ответы опираются на ваши документы и тон общения, который вы задаёте сами.
+              RSD — no-code платформа для ИИ-агентов, сайтов и автоматизации. Создайте проект, подключите ИИ-ассистентов,
+              загрузите базу знаний и запустите цифровое присутствие за минуты, не привлекая разработчиков.
             </p>
             <p className="description-lead">
               Меньше ожидания в чатах и проще онбординг — при этом вы по-прежнему контролируете, что именно говорит агент.
             </p>
             <div className="hero-actions">
-              <button type="button" className="btn btn-black" onClick={handleCreateAgent}>
-                Создать агента
+              <button type="button" className="btn btn-black" onClick={handleCreateClick}>
+                Создать проект
               </button>
-              <button type="button" className="btn btn-outline hero-actions-secondary" onClick={handleTurnkey}>
-                Агент под ключ
+              <button type="button" className="btn btn-outline hero-actions-secondary" onClick={handleCreateClick}>
+                Создать агента
               </button>
             </div>
           </div>
@@ -903,8 +905,8 @@ const Main = () => {
               сравнить цены на шаблоны — загляните в раздел с тарифами.
             </p>
             <div className="cta-band-actions">
-              <button type="button" className="btn btn-black" onClick={handleCreateAgent}>
-                Создать агента
+              <button type="button" className="btn btn-black" onClick={handleCreateClick}>
+                Создать проект
               </button>
               <button type="button" className="btn btn-outline" onClick={handlePricing}>
                 Посмотреть тарифы
@@ -913,6 +915,11 @@ const Main = () => {
           </div>
         </section>
       </div>
+
+      <CreateChoiceModal
+        isOpen={isCreateModalOpen}
+        onClose={() => setIsCreateModalOpen(false)}
+      />
     </MainLayout>
   );
 };

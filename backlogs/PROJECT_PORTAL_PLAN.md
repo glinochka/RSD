@@ -39,6 +39,20 @@
 
 Агент остаётся отдельной сущностью с `template_type` (`qa`, `crm_admin`, `sales_manager`, `content_factory`, `ai_manager`), своими каналами и биллингом. Проект **владеет** агентами через `project_id`, но не меняет их внутреннюю логику.
 
+### 1.4. Что остаётся без изменений (100% сохранение функционала)
+
+| Функция | URL | Примечание |
+|---------|-----|------------|
+| Создание агента | `/create-agent` | + принимает `?projectId=` для привязки к проекту |
+| Редактирование агента | `/agents/:id/edit` | Без изменений, доступно из проекта |
+| Аналитика агента | `/agents/:id/analytics` | Без изменений |
+| Конструктор сайта | `/websites/:id/edit` | Без изменений — полный редактор |
+| Превью сайта | `/preview/:id` | Без изменений |
+| Публичный сайт | `/w/:slug` | Без изменений |
+| Все API агентов | `/api/agents/*` | Без изменений, добавляется опциональный `project_id` |
+| Все API сайтов | `/api/v1/websites/*` | + поле `project_id` в request/response |
+| Старый список агентов | `/agents` | Legacy-роут, редиректит на `/projects` или последний проект |
+
 ---
 
 ## 2. UX-логика
@@ -68,6 +82,8 @@
 │              [ Отмена ]                 │
 └─────────────────────────────────────────┘
 ```
+
+**Иконки в UI (без эмодзи):** Использовать `Bot` для ИИ-агента, `Briefcase` или `LayoutTemplate` для Проекта.
 
 **Поведение:**
 - **ИИ-агент** → текущий флоу `/create-agent` без изменений.
@@ -138,16 +154,18 @@
 └────┴─────────────────────────────────────────────┘
 ```
 
-| Иконка | Раздел | Route | MVP |
-|--------|--------|-------|-----|
-| 📊 | Дашборд | `/projects/:id` | да |
-| 🤖 | Агенты | `/projects/:id/agents` | да |
-| 📚 | База знаний | `/projects/:id/knowledge` | да |
-| 👥 | CRM | `/projects/:id/crm` | да |
-| 🌐 | Сайт | `/projects/:id/website` | да |
-| 📹 | Контент-завод | `/projects/:id/content` | если есть агент |
-| 📞 | ИИ-менеджер | `/projects/:id/manager` | заглушка / feature flag |
-| ⚙️ | Настройки | `/projects/:id/settings` | да |
+*(Эмодзи в схеме — для наглядности в документации. В реальном UI использовать иконки из библиотеки, см. таблицу ниже.)*
+
+| Иконка (в плане) | Раздел | Route | MVP | Реальная иконка (пример) |
+|------------------|--------|-------|-----|------------------------|
+| 📊 | Дашборд | `/projects/:id` | да | `LayoutDashboard` (Lucide) |
+| 🤖 | Агенты | `/projects/:id/agents` | да | `Bot` (Lucide) |
+| 📚 | База знаний | `/projects/:id/knowledge` | да | `BookOpen` (Lucide) |
+| 👥 | CRM | `/projects/:id/crm` | да | `Users` (Lucide) |
+| 🌐 | Сайт | `/projects/:id/website` | да | `Globe` (Lucide) |
+| 📹 | Контент-завод | `/projects/:id/content` | если есть агент | `Video` (Lucide) |
+| 📞 | ИИ-менеджер | `/projects/:id/manager` | заглушка | `Phone` (Lucide) |
+| ⚙️ | Настройки | `/projects/:id/settings` | да | `Settings` (Lucide) |
 
 На мобиле — bottom bar или hamburger с теми же пунктами.
 
@@ -167,8 +185,14 @@
 | Старый URL | Поведение |
 |------------|-----------|
 | `/agents` | Редирект на `/projects` или `/projects/:defaultId/agents` |
-| `/create-agent` | Без изменений (прямой deep link) |
-| `/websites/*` | Работает; из проекта — ссылки в раздел «Сайт» |
+| `/agents/:id/analytics` | ✅ Без изменений — прямая ссылка работает |
+| `/agents/:id/edit` | ✅ Без изменений — редактирование агента |
+| `/create-agent` | ✅ Без изменений (прямой deep link), + поддержка `?projectId=` |
+| `/websites/:id/edit` | ✅ Без изменений — конструктор сайта (полный редактор) |
+| `/w/:slug` | ✅ Без изменений — публичный сайт |
+| `/preview/:id` | ✅ Без изменений — превью сайта |
+
+**Примечание:** Раздел `/projects/:id/website` — это **дашборд сайта** (статус + ссылки), а не конструктор. Конструктор остаётся по `/websites/:id/edit`.
 
 ---
 
@@ -290,9 +314,13 @@ Website.project_id: FK → projects.id (SET NULL), nullable, index
 1. Создать `Project` (status=`active`).
 2. Для каждого агента из плана → вызвать ту же логику, что `POST /api/agents` (`create_empty_agent`): `template_type`, `system_prompt`, `template_config`, `project_id`, billing fields.
 3. Сохранить `welcome_message` в `template_config` или отдельное поле агента (как сейчас принято в шаблоне).
-4. Если `website.enabled` → `POST` логика `generate/create-and-generate` с привязкой к первому `crm_admin` или `qa` агенту и `project_id`.
+4. Если `website.enabled` → вызвать существующий `POST /api/v1/websites/generate/create-and-generate` с дополнительным `project_id` в payload.
 5. Записать `ai_plan_json` в проект.
 6. Вернуть `{ project_id, agent_ids[], website_id? }`.
+
+**Переиспользование существующего кода:**
+- Создание агента — вызвать `create_empty_agent` из `router_agents/core.py`
+- Создание сайта — вызвать `create_and_generate_website` из `router_websites/router.py`
 
 **Транзакция:** project + agents в одной DB-транзакции; website generation — background task (как сейчас).
 
@@ -300,7 +328,9 @@ Website.project_id: FK → projects.id (SET NULL), nullable, index
 
 ### 3.6. База знаний проекта
 
-**MVP (Этап 11):** таблица `ProjectDocument` — зеркало `AgentDocument`, но с `project_id`.
+**MVP (Этап 12):** таблица `project_documents` — зеркало `agent_documents`, но с `project_id`.
+
+**Примечание:** Существующие `AgentDocument` остаются без изменений. Агенты используют свои документы + могут читать документы проекта (опционально, Этап 12b).
 
 | Поле | Назначение |
 |------|------------|
@@ -333,7 +363,7 @@ UI: табы «Заявки», «Контакты», «Сделки» — дан
 - Активные агенты / всего
 - Диалоги за 7 дней (сумма по агентам проекта)
 - Новые лиды / записи за период
-- Статус сайта (draft / published / generating)
+- Статус сайта (draft / published / generating) + ссылка «Редактировать» (→ `/websites/:id/edit`) или кнопка «Создать сайт»
 - Чеклист онбординга: «Подключите Telegram», «Загрузите прайс», «Опубликуйте сайт»
 
 ### 3.9. Биллинг
@@ -349,11 +379,24 @@ Project-level billing — вне scope этого плана (future).
 ### 4.1. Frontend
 
 - React, существующие паттерны: `services/`, `hooks/`, `context/`, CSS рядом в `styles/`.
-- Константы маршрутов — `frontend/src/config/constants.js` → блок `NAVIGATION_ROUTES.PROJECTS_*`.
+- Константы маршрутов — `frontend/src/config/constants.js` → блок `NAVIGATION_ROUTES.PROJECTS_*`:
+  ```javascript
+  PROJECTS_LIST: '/projects',
+  PROJECT_CREATE: '/projects/create',
+  PROJECT_DETAIL: (id) => `/projects/${id}`,
+  PROJECT_AGENTS: (id) => `/projects/${id}/agents`,
+  PROJECT_KNOWLEDGE: (id) => `/projects/${id}/knowledge`,
+  PROJECT_CRM: (id) => `/projects/${id}/crm`,
+  PROJECT_WEBSITE: (id) => `/projects/${id}/website`,
+  PROJECT_CONTENT: (id) => `/projects/${id}/content`,
+  PROJECT_MANAGER: (id) => `/projects/${id}/manager`,
+  PROJECT_SETTINGS: (id) => `/projects/${id}/settings`,
+  ```
 - Новые страницы: `frontend/src/pages/projects/`.
 - Layout: `frontend/src/components/projects/ProjectLayout.jsx`.
 - Модалка: `frontend/src/components/CreateChoiceModal.jsx`.
 - Сервис: `frontend/src/services/projectService.js`.
+- **SEO:** В `seo.js` добавить `/projects/*` в `PRIVATE_PREFIXES`.
 
 ### 4.2. Backend
 
@@ -368,6 +411,7 @@ Project-level billing — вне scope этого плана (future).
 - Переиспользовать `.btn`, `.btn-black`, карточки из `agents-page` / `main.css`.
 - Sidebar: 56–64px иконки, tooltip при hover, активный пункт — accent border слева.
 - Не ломать `MainLayout` для публичных страниц.
+- **Иконки:** использовать библиотеку (например, Lucide, Heroicons или встроенные SVG), **строго без эмодзи**. В плане эмодзи используются только для наглядности в документации — в коде заменять на иконки.
 
 ### 4.4. Feature flags
 
@@ -458,6 +502,10 @@ Project-level billing — вне scope этого плана (future).
 4. Скрытие пунктов content/manager по feature flag / наличию агентов (пока можно скрывать всегда).
 5. Адаптив: sidebar → drawer на `<768px`.
 6. Сохранение `lastProjectId` при входе в проект.
+
+**Примечание по разделу «Сайт»:**
+- `/projects/:id/website` показывает: статус сайта (draft/published/generating), кнопку «Редактировать» (→ `/websites/:id/edit`), или кнопку «Создать сайт».
+- Конструктор остаётся по `/websites/:id/edit` — не дублируем его функционал.
 
 **Не делать:** наполнение разделов данными.
 

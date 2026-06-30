@@ -8,6 +8,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 import { useNotification } from '../context/useNotification';
 import MainLayout from '../components/Layout';
+import CreateChoiceModal from '../components/CreateChoiceModal';
 import { NAVIGATION_ROUTES, VALIDATION } from '../config/constants';
 import pricingService from '../services/pricingService';
 import {
@@ -61,6 +62,7 @@ const PriceList = () => {
   const [policyNotes, setPolicyNotes] = useState(POLICY_NOTES);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
+  const [isCreateChoiceOpen, setIsCreateChoiceOpen] = useState(false);
   const [requestModalConfig, setRequestModalConfig] = useState({
     title: 'Заявка на тариф «Агент под ключ»',
     requestPlaceholder: 'Опишите роли, задачи и сценарии работы сотрудника',
@@ -128,7 +130,13 @@ const PriceList = () => {
       return;
     }
 
-    navigate(isAuthenticated ? NAVIGATION_ROUTES.CREATE_AGENT : NAVIGATION_ROUTES.AUTH);
+    if (!isAuthenticated) {
+      navigate(NAVIGATION_ROUTES.AUTH);
+      return;
+    }
+
+    // Open choice modal for authenticated users
+    setIsCreateChoiceOpen(true);
   };
 
   const handleSubmitPurchase = async () => {
@@ -599,6 +607,11 @@ const PriceList = () => {
           </div>
         </div>
       )}
+
+      <CreateChoiceModal
+        isOpen={isCreateChoiceOpen}
+        onClose={() => setIsCreateChoiceOpen(false)}
+      />
     </MainLayout>
   );
 };

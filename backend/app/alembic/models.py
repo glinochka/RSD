@@ -78,6 +78,10 @@ class User(Base):
     )
 
     agents: Mapped[list['Agent']] = relationship(back_populates='user', cascade="all, delete-orphan")
+    projects: Mapped[list['Project']] = relationship(
+        back_populates='user',
+        cascade="all, delete-orphan",
+    )
     payment_methods: Mapped[list['UserPaymentMethod']] = relationship(
         back_populates='user',
         cascade='all, delete-orphan',
@@ -151,6 +155,14 @@ class Agent(Base):
 
     user: Mapped['User'] = relationship(back_populates='agents')
     user_id: Mapped[int] = mapped_column(ForeignKey('users.id', ondelete="CASCADE"))
+
+    # Project relationship (nullable для обратной совместимости)
+    project_id: Mapped[int | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    project: Mapped["Project | None"] = relationship(back_populates="agents")
     
     bot_username: Mapped[str] = mapped_column(String(100), nullable=True)
     encrypted_token: Mapped[str] = mapped_column(Text, unique=True)
@@ -1134,6 +1146,73 @@ class AgentDocument(Base):
     agent: Mapped["Agent"] = relationship(back_populates="documents")
 
 
+class ProjectDocument(Base):
+    """Documents at project level - shared across all project agents."""
+
+    __tablename__ = "project_documents"
+    __table_args__ = (
+        Index("ix_project_documents_project_id", "project_id"),
+        Index("ix_project_documents_content_hash", "content_hash"),
+        Index("ix_project_documents_status", "status"),
+        Index("ix_project_documents_project_status", "project_id", "status"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    embedding_profile_key: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default="bge_m3_v1",
+        server_default="bge_m3_v1",
+    )
+    embedding_schema_version: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=1,
+        server_default="1",
+    )
+    embedding_model_name: Mapped[str] = mapped_column(
+        String(128),
+        nullable=False,
+        default="BAAI/bge-m3",
+        server_default="BAAI/bge-m3",
+    )
+    chunk_size: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=1000,
+        server_default="1000",
+    )
+    chunk_overlap: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=100,
+        server_default="100",
+    )
+    status: Mapped[str] = mapped_column(
+        String(15),
+        nullable=False,
+        default="processing",
+        server_default="processing",
+    )  # processing, ready, error
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=_utc_now_naive,
+        index=True,
+    )
+
+    project: Mapped["Project"] = relationship(back_populates="documents")
+
+
 class ReindexJob(Base):
     __tablename__ = "reindex_jobs"
     __table_args__ = {"extend_existing": True}
@@ -1349,6 +1428,82 @@ class ApplicationErrorLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
 
     user: Mapped["User | None"] = relationship()
+
+
+# ---------------------------------------------------------------------------
+# Project — контейнер цифровизации бизнеса
+# ---------------------------------------------------------------------------
+
+class Project(Base):
+    """Проект — контейнер цифровизации малого/среднего бизнеса или отдела."""
+
+    __tablename__ = "projects"
+    __table_args__ = (
+        UniqueConstraint("user_id", "slug", name="uq_project_user_slug"),
+        Index("ix_projects_user_id_status", "user_id", "status"),
+        Index("ix_projects_is_default", "user_id", "is_default"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # Основные поля
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    slug: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    industry: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # JSON поля для AI-плана
+    brief_json: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    ai_plan_json: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+
+    # Статус
+    status: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="active",
+        server_default="active",
+        index=True,
+    )  # draft | active | archived
+
+    is_default: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=_utc_now_naive, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=_utc_now_naive
+    )
+
+    # Relationships
+    user: Mapped["User"] = relationship(back_populates="projects")
+    agents: Mapped[list["Agent"]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
+    websites: Mapped[list["Website"]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
+    documents: Mapped[list["ProjectDocument"]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1586,12 +1741,20 @@ class Website(Base):
         UniqueConstraint("slug", name="uq_website_slug"),
         Index("ix_website_owner_status", "owner_id", "status"),
         Index("ix_website_agent", "agent_id"),
+        Index("ix_website_project", "project_id"),
         {"extend_existing": True},
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     agent_id: Mapped[int | None] = mapped_column(ForeignKey("agents.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    # Project relationship (nullable для обратной совместимости)
+    project_id: Mapped[int | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     template_id: Mapped[int | None] = mapped_column(ForeignKey("website_templates.id", ondelete="SET NULL"), nullable=True)
 
     # URL и идентификация
@@ -1631,6 +1794,7 @@ class Website(Base):
     # Relationships
     owner: Mapped["User"] = relationship()
     agent: Mapped["Agent | None"] = relationship()
+    project: Mapped["Project | None"] = relationship(back_populates="websites")
     template: Mapped["WebsiteTemplate | None"] = relationship()
     blocks: Mapped[list["WebsiteBlock"]] = relationship(
         back_populates="website",

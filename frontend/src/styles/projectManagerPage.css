@@ -1,0 +1,336 @@
+/** Project Manager Page Styles */
+
+.project-manager-page {
+  padding: var(--spacing-lg);
+}
+
+/* Header */
+.manager-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--spacing-xl);
+  padding-bottom: var(--spacing-md);
+  border-bottom: 1px solid var(--color-border);
+}
+
+@media (max-width: 768px) {
+  .manager-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--spacing-md);
+  }
+}
+
+.manager-title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0 0 var(--spacing-xs) 0;
+}
+
+.manager-subtitle {
+  font-size: 0.9375rem;
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+.manager-actions .btn {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+/* Loading */
+.project-manager-page--loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 400px;
+}
+
+.manager-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-md);
+  color: var(--color-text-secondary);
+}
+
+.manager-loading .spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid #e5e7eb;
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Empty State */
+.manager-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: var(--spacing-3xl);
+  background: #f9fafb;
+  border: 1px dashed var(--color-border);
+  border-radius: 12px;
+}
+
+.manager-empty-icon {
+  width: 80px;
+  height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #eff6ff;
+  border-radius: 50%;
+  color: #3b82f6;
+  margin-bottom: var(--spacing-lg);
+}
+
+.manager-empty-icon svg {
+  width: 40px;
+  height: 40px;
+}
+
+.manager-empty-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0 0 var(--spacing-sm) 0;
+}
+
+.manager-empty-description {
+  font-size: 0.9375rem;
+  color: var(--color-text-secondary);
+  margin: 0 0 var(--spacing-xl) 0;
+  max-width: 400px;
+}
+
+.manager-empty .btn {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+/* Coming Soon */
+.manager-coming-soon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: var(--spacing-3xl);
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+}
+
+.manager-coming-soon-icon {
+  width: 64px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #eff6ff;
+  border-radius: 50%;
+  color: #3b82f6;
+  margin-bottom: var(--spacing-lg);
+}
+
+.manager-coming-soon-icon svg {
+  width: 32px;
+  height: 32px;
+}
+
+.manager-coming-soon-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0 0 var(--spacing-sm) 0;
+}
+
+.manager-coming-soon-description {
+  font-size: 0.9375rem;
+  color: var(--color-text-secondary);
+  margin: 0;
+  max-width: 400px;
+}
+
+/* Analytics Grid */
+.manager-analytics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--spacing-lg);
+  margin-bottom: var(--spacing-xl);
+}
+
+.manager-analytics-card {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  padding: var(--spacing-lg);
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+}
+
+.manager-analytics-icon {
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+
+.manager-analytics-icon svg {
+  width: 24px;
+  height: 24px;
+}
+
+.manager-analytics-icon--blue {
+  background: #eff6ff;
+  color: #3b82f6;
+}
+
+.manager-analytics-icon--green {
+  background: #f0fdf4;
+  color: #10b981;
+}
+
+.manager-analytics-icon--purple {
+  background: #faf5ff;
+  color: #a855f7;
+}
+
+.manager-analytics-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.manager-analytics-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.manager-analytics-label {
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+}
+
+/* Sections */
+.manager-section {
+  margin-bottom: var(--spacing-xl);
+}
+
+.manager-section-title {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0 0 var(--spacing-md) 0;
+}
+
+/* Agents List */
+.manager-agents-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--spacing-md);
+}
+
+.manager-agent-card {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  padding: var(--spacing-md);
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+
+.manager-agent-icon {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #eff6ff;
+  border-radius: 8px;
+  color: #3b82f6;
+  flex-shrink: 0;
+}
+
+.manager-agent-icon svg {
+  width: 24px;
+  height: 24px;
+}
+
+.manager-agent-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.manager-agent-name {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0 0 var(--spacing-xs) 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.manager-agent-status {
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+/* Owner Panel */
+.manager-owner-panel {
+  background: #f9fafb;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: var(--spacing-lg);
+}
+
+.manager-owner-description {
+  font-size: 0.9375rem;
+  color: var(--color-text-secondary);
+  margin: 0 0 var(--spacing-md) 0;
+}
+
+.manager-owner-actions {
+  display: flex;
+  gap: var(--spacing-sm);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .project-manager-page {
+    padding: var(--spacing-md);
+  }
+
+  .manager-analytics-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .manager-agents-list {
+    grid-template-columns: 1fr;
+  }
+
+  .manager-owner-actions {
+    flex-direction: column;
+  }
+}

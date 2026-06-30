@@ -30,6 +30,7 @@ from app.router_sales import router as sales_portal_router
 from app.router_telephony import router as telephony_router
 from app.router_websites.router import router as websites_router
 from app.router_websites.public_router import router as websites_public_router
+from app.router_projects import router as projects_router
 from app.config import settings
 from app.services.subscription_maintenance import downgrade_expired_subscriptions_once
 from app.services.agent_autopay import process_agent_autopay_renewals_once
@@ -316,6 +317,7 @@ app.include_router(sales_management_router, prefix="/api/sales/management")
 app.include_router(telephony_router)
 app.include_router(websites_router)
 app.include_router(websites_public_router, prefix="/public-website")
+app.include_router(projects_router)
 
 website_assets_path = os.getenv("WEBSITE_ASSETS_PATH", "/tmp/website_assets")
 Path(website_assets_path).mkdir(parents=True, exist_ok=True)

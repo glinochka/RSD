@@ -12,6 +12,7 @@ import errorReportService from '../services/errorReportService';
 import { NAVIGATION_ROUTES } from '../config/constants';
 import { normalizeDetail } from '../utils/errorUtils';
 import PaymentMethodsModal from './PaymentMethodsModal';
+import CreateChoiceModal from './CreateChoiceModal';
 import '../styles/navbar.css';
 
 const PROFILE_DRAWER_CLOSE_MS = 380;
@@ -44,6 +45,7 @@ const Navbar = () => {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isProfileClosing, setIsProfileClosing] = useState(false);
   const [isPaymentMethodsOpen, setIsPaymentMethodsOpen] = useState(false);
+  const [isCreateChoiceOpen, setIsCreateChoiceOpen] = useState(false);
   const [isTelegramLinked, setIsTelegramLinked] = useState(!!user?.telegram_id);
   const [isTelegramFormOpen, setIsTelegramFormOpen] = useState(false);
   const [telegramUsernameInput, setTelegramUsernameInput] = useState('');
@@ -311,8 +313,18 @@ const Navbar = () => {
             if (e.target.closest('a')) closeMobileNav();
           }}
         >
-          <Link to={NAVIGATION_ROUTES.AGENTS}>Мои агенты</Link>
-          <Link to={NAVIGATION_ROUTES.CREATE_AGENT}>Создать агента</Link>
+          {isAuthenticated ? (
+            <Link to={NAVIGATION_ROUTES.PROJECTS_LIST}>Проекты</Link>
+          ) : (
+            <Link to={NAVIGATION_ROUTES.AGENTS}>Мои агенты</Link>
+          )}
+          <button
+            type="button"
+            className="navbar-link-button"
+            onClick={() => setIsCreateChoiceOpen(true)}
+          >
+            Создать
+          </button>
           <Link to={NAVIGATION_ROUTES.DOCUMENTATION}>Документация</Link>
           <Link to={NAVIGATION_ROUTES.PRICING}>Цены</Link>
         </nav>
@@ -568,6 +580,11 @@ const Navbar = () => {
       <PaymentMethodsModal
         isOpen={isPaymentMethodsOpen}
         onClose={() => setIsPaymentMethodsOpen(false)}
+      />
+
+      <CreateChoiceModal
+        isOpen={isCreateChoiceOpen}
+        onClose={() => setIsCreateChoiceOpen(false)}
       />
     </>
   );

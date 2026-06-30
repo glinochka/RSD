@@ -27,6 +27,18 @@ import PublicOfferPage from './pages/PublicOfferPage';
 import UserAgreementPage from './pages/UserAgreementPage';
 import PrivacyPolicyPage from './pages/PrivacyPolicyPage';
 import PartnerPage from './pages/PartnerPage';
+import ProjectsListPage from './pages/projects/ProjectsListPage';
+import ProjectLayout from './components/projects/ProjectLayout';
+import ProjectDashboardPage from './pages/projects/ProjectDashboardPage';
+import ProjectAgentsPage from './pages/projects/ProjectAgentsPage';
+import ProjectKnowledgePage from './pages/projects/ProjectKnowledgePage';
+import ProjectCRMPage from './pages/projects/ProjectCRMPage';
+import ProjectWebsitePage from './pages/projects/ProjectWebsitePage';
+import ProjectSettingsPage from './pages/projects/ProjectSettingsPage';
+import ProjectCreatePage from './pages/projects/ProjectCreatePage';
+import ProjectContentPage from './pages/projects/ProjectContentPage';
+import ProjectManagerPage from './pages/projects/ProjectManagerPage';
+import AgentsRedirect from './pages/AgentsRedirect';
 
 // Website Builder Pages
 import { PreviewPage, WebsitePublicPage, ConstructorPage } from './website-builder/pages';
@@ -56,7 +68,9 @@ const App = () => {
                 />
 
                 {/* Protected routes */}
-                <Route path={NAVIGATION_ROUTES.AGENTS} element={<AgentsPage />} />
+                {/* Legacy redirect: /agents -> /projects/:lastProjectId/agents */}
+                <Route path={NAVIGATION_ROUTES.AGENTS} element={<AgentsRedirect />} />
+                <Route path="/agents/:id" element={<AgentsRedirect />} />
                 <Route
                   path={NAVIGATION_ROUTES.AGENT_ANALYTICS(':id')}
                   element={<AgentDetailedAnalyticsPage />}
@@ -65,6 +79,47 @@ const App = () => {
                 <Route
                   path={`${NAVIGATION_ROUTES.CREATE_AGENT}/:id`}
                   element={<CreateAgent />}
+                />
+
+                {/* Projects (Portal) Routes - Stage 3 */}
+                <Route path={NAVIGATION_ROUTES.PROJECTS_LIST} element={<ProjectsListPage />} />
+                {/* Project Detail Routes with ProjectLayout - Stage 4 */}
+                <Route
+                  path={`${NAVIGATION_ROUTES.PROJECT_DETAIL(':projectId')}`}
+                  element={<ProjectLayout><ProjectDashboardPage /></ProjectLayout>}
+                />
+                <Route
+                  path={`${NAVIGATION_ROUTES.PROJECT_AGENTS(':projectId')}`}
+                  element={<ProjectLayout><ProjectAgentsPage /></ProjectLayout>}
+                />
+                <Route
+                  path={`${NAVIGATION_ROUTES.PROJECT_KNOWLEDGE(':projectId')}`}
+                  element={<ProjectLayout><ProjectKnowledgePage /></ProjectLayout>}
+                />
+                <Route
+                  path={`${NAVIGATION_ROUTES.PROJECT_CRM(':projectId')}`}
+                  element={<ProjectLayout><ProjectCRMPage /></ProjectLayout>}
+                />
+                <Route
+                  path={`${NAVIGATION_ROUTES.PROJECT_WEBSITE(':projectId')}`}
+                  element={<ProjectLayout><ProjectWebsitePage /></ProjectLayout>}
+                />
+                <Route
+                  path={`${NAVIGATION_ROUTES.PROJECT_SETTINGS(':projectId')}`}
+                  element={<ProjectLayout><ProjectSettingsPage /></ProjectLayout>}
+                />
+                <Route
+                  path={`${NAVIGATION_ROUTES.PROJECT_CONTENT(':projectId')}`}
+                  element={<ProjectLayout><ProjectContentPage /></ProjectLayout>}
+                />
+                <Route
+                  path={`${NAVIGATION_ROUTES.PROJECT_MANAGER(':projectId')}`}
+                  element={<ProjectLayout><ProjectManagerPage /></ProjectLayout>}
+                />
+                {/* Project Create - Stage 5 */}
+                <Route
+                  path={`${NAVIGATION_ROUTES.PROJECT_CREATE}`}
+                  element={<ProjectCreatePage />}
                 />
 
                 {/* Website Builder Routes */}

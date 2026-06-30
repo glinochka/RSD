@@ -1,0 +1,73 @@
+/** Project Error Boundary Styles */
+
+.project-error-boundary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: var(--spacing-lg);
+  background: #f9fafb;
+}
+
+.project-error-content {
+  max-width: 480px;
+  text-align: center;
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  padding: var(--spacing-3xl);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+}
+
+.project-error-icon {
+  font-size: 4rem;
+  margin-bottom: var(--spacing-lg);
+}
+
+.project-error-title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0 0 var(--spacing-md) 0;
+}
+
+.project-error-description {
+  font-size: 1rem;
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+  margin: 0 0 var(--spacing-xl) 0;
+}
+
+.project-error-details {
+  text-align: left;
+  background: #f3f4f6;
+  border-radius: 8px;
+  padding: var(--spacing-md);
+  font-size: 0.8125rem;
+  font-family: monospace;
+  color: #991b1b;
+  margin-bottom: var(--spacing-lg);
+  overflow-x: auto;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.project-error-actions {
+  display: flex;
+  gap: var(--spacing-md);
+  justify-content: center;
+}
+
+@media (max-width: 768px) {
+  .project-error-content {
+    padding: var(--spacing-xl);
+  }
+
+  .project-error-actions {
+    flex-direction: column;
+  }
+
+  .project-error-actions .btn {
+    width: 100%;
+  }
+}

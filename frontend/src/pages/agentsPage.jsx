@@ -9,6 +9,7 @@ import MainLayout from '../components/Layout';
 import Loading from '../components/Loading';
 import AgentsEmptyState from '../components/AgentsEmptyState';
 import AgentContractPaymentModal from '../components/AgentContractPaymentModal';
+import CreateChoiceModal from '../components/CreateChoiceModal';
 import { WebsiteBuilderWizard } from '../website-builder/components';
 import { useAsync } from '../hooks/useAsync';
 import agentService from '../services/agentService';
@@ -656,6 +657,7 @@ const AgentsPageContent = () => {
   const [welcomeDraft, setWelcomeDraft] = useState('');
   const [channels, setChannels] = useState([]);
   const [isChannelsModalOpen, setIsChannelsModalOpen] = useState(false);
+  const [isCreateChoiceModalOpen, setIsCreateChoiceModalOpen] = useState(false);
   const [channelModalTab, setChannelModalTab] = useState('bot');
   const [isLoadingChannels, setIsLoadingChannels] = useState(false);
   const [isSavingChannel, setIsSavingChannel] = useState(false);
@@ -799,7 +801,7 @@ const AgentsPageContent = () => {
   }, [isChannelsModalOpen]);
 
   const handleCreateAgent = () => {
-    navigate(NAVIGATION_ROUTES.CREATE_AGENT);
+    setIsCreateChoiceModalOpen(true);
   };
 
   const handleOpenDetailedAnalytics = () => {
@@ -4102,6 +4104,11 @@ const AgentsPageContent = () => {
         onClose={handleWebsiteWizardClose}
         agent={selectedAgent}
         onSuccess={handleWebsiteWizardSuccess}
+      />
+
+      <CreateChoiceModal
+        isOpen={isCreateChoiceModalOpen}
+        onClose={() => setIsCreateChoiceModalOpen(false)}
       />
     </div>
   );

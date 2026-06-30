@@ -236,6 +236,31 @@ export const API_ROUTES = {
   AGENT_PUBLIC_DATA: (id) => `/api/v1/agents/${id}/public-data`,
   AGENT_BOOKING_SLOTS: (id) => `/api/v1/agents/${id}/booking/slots`,
   AGENT_BOOKING_APPOINTMENTS: (id) => `/api/v1/agents/${id}/booking/appointments`,
+
+  // Projects (Portal)
+  PROJECTS_LIST: '/api/projects',
+  PROJECT_DETAIL: (id) => `/api/projects/${id}`,
+  PROJECT_CREATE: '/api/projects',
+  PROJECT_UPDATE: (id) => `/api/projects/${id}`,
+  PROJECT_ARCHIVE: (id) => `/api/projects/${id}`,
+  PROJECT_AI_GENERATE_PLAN: '/api/projects/ai/generate-plan',
+  PROJECT_AI_APPLY_PLAN: '/api/projects/ai/apply-plan',
+  PROJECT_DASHBOARD: (id) => `/api/projects/${id}/dashboard`,
+  // Project Documents (Knowledge Base)
+  PROJECT_DOCUMENTS: (projectId) => `/api/projects/${projectId}/documents`,
+  PROJECT_DOCUMENTS_LINK: (projectId) => `/api/projects/${projectId}/documents/link`,
+  PROJECT_DOCUMENT: (projectId, docId) => `/api/projects/${projectId}/documents/${docId}`,
+  PROJECT_DOCUMENT_REINDEX: (projectId, docId) => `/api/projects/${projectId}/documents/${docId}/reindex`,
+  // Project Related Agents
+  PROJECT_AGENTS: (projectId) => `/api/agents/allBy_tgID?project_id=${projectId}`,
+  // Project Website
+  PROJECT_WEBSITE: (projectId) => `/api/projects/${projectId}/website`,
+  // Project CRM
+  PROJECT_CRM: (projectId) => `/api/projects/${projectId}/crm/summary`,
+  // Project Content
+  PROJECT_CONTENT_DATA: (projectId) => `/api/projects/${projectId}/content`,
+  // Project AI Manager
+  PROJECT_AI_MANAGER: (projectId) => `/api/projects/${projectId}/ai-manager`,
 };
 
 export const AGENT_ROLES = {
@@ -273,6 +298,17 @@ export const NAVIGATION_ROUTES = {
   WEBSITE_EDITOR: (id) => `/websites/${id}/edit`,
   WEBSITES_LIST: '/websites',
   WEBSITE_CREATE: '/websites/create',
+  // Projects (Portal)
+  PROJECTS_LIST: '/projects',
+  PROJECT_CREATE: '/projects/create',
+  PROJECT_DETAIL: (id) => `/projects/${id}`,
+  PROJECT_AGENTS: (id) => `/projects/${id}/agents`,
+  PROJECT_KNOWLEDGE: (id) => `/projects/${id}/knowledge`,
+  PROJECT_CRM: (id) => `/projects/${id}/crm`,
+  PROJECT_WEBSITE: (id) => `/projects/${id}/website`,
+  PROJECT_CONTENT: (id) => `/projects/${id}/content`,
+  PROJECT_MANAGER: (id) => `/projects/${id}/manager`,
+  PROJECT_SETTINGS: (id) => `/projects/${id}/settings`,
 };
 
 // User-facing messages; backend detail (FastAPI) is preferred when present (see errorUtils).

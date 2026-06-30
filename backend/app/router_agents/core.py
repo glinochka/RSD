@@ -65,12 +65,14 @@ async def read_agent(
 @router.get("/allBy_tgID")
 async def read_all_agents(
     tg_id: int | None = Query(default=None, alias="id"),
+    project_id: int | None = Query(default=None, description="Filter agents by project_id"),
     current_user=Depends(get_current_user_optional),
     internal: bool = Depends(is_internal_request),
 ):
     _assert_access(current_user, internal)
     async with async_session_maker() as session:
         user_dao = UserDAO(session)
+        agent_dao = AgentDAO(session)
         async with session.begin():
             if current_user:
                 user = await user_dao.find_one_by_filter(load_relations=True, id=current_user.id)
@@ -85,9 +87,15 @@ async def read_all_agents(
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
             from ..services.agent_billing import enforce_expired_maintenance
 
-            agent_dao = AgentDAO(session)
             serialized_agents = []
-            for agent in user.agents or []:
+            
+            # Use DAO method for project filtering
+            if project_id is not None:
+                agents = await agent_dao.find_all_by_user_id_and_project(user.id, project_id)
+            else:
+                agents = user.agents or []
+            
+            for agent in agents:
                 await enforce_expired_maintenance(agent_dao, agent)
                 serialized_agents.append(
                     _serialize_agent(agent, user=user, include_encrypted_token=internal)
@@ -109,26 +117,49 @@ async def create_empty_agent(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
     async with async_session_maker() as session:
         agent_dao = AgentDAO(session)
+        from ..dao.project_dao import ProjectDAO
+        project_dao = ProjectDAO(session)
+        
         async with session.begin():
+            # Determine project_id: use provided, or find/create default
+            project_id = payload.project_id
+            if project_id is None:
+                default_project = await project_dao.get_default_for_user(session, current_user.id)
+                if default_project:
+                    project_id = default_project.id
+            else:
+                # Validate that project exists and belongs to user
+                project = await project_dao.get_by_id(session, project_id)
+                if not project or project.user_id != current_user.id:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Invalid project_id",
+                    )
+            
             template_type = _normalize_template_type(payload.template_type)
             template_config = _normalize_template_config(template_type, payload.template_config)
             external_api_key = generate_agent_external_api_key()
-            created_agent = await agent_dao.add(
-                {
-                    "user_id": current_user.id,
-                    "bot_id": None,
-                    "primary_provider": "none",
-                    "template_type": template_type,
-                    "template_config": template_config,
-                    "encrypted_token": encrypt_token(f"agent:{current_user.id}:{datetime.utcnow().timestamp()}"),
-                    "encrypted_external_api_key": encrypt_token(external_api_key),
-                    "external_api_key_hash": hash_agent_external_api_key(external_api_key),
-                    "bot_username": None,
-                    "system_prompt": payload.system_prompt.strip(),
-                    "is_active": True,
-                    **_initial_agent_billing_fields(template_type, user=current_user),
-                }
-            )
+            
+            agent_data = {
+                "user_id": current_user.id,
+                "bot_id": None,
+                "primary_provider": "none",
+                "template_type": template_type,
+                "template_config": template_config,
+                "encrypted_token": encrypt_token(f"agent:{current_user.id}:{datetime.utcnow().timestamp()}"),
+                "encrypted_external_api_key": encrypt_token(external_api_key),
+                "external_api_key_hash": hash_agent_external_api_key(external_api_key),
+                "bot_username": None,
+                "system_prompt": payload.system_prompt.strip(),
+                "is_active": True,
+                **_initial_agent_billing_fields(template_type, user=current_user),
+            }
+            
+            # Add project_id if determined
+            if project_id:
+                agent_data["project_id"] = project_id
+            
+            created_agent = await agent_dao.add(agent_data)
             await session.flush()
             if template_type == "sales_manager":
                 background_tasks.add_task(

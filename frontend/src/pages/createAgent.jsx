@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import MainLayout from '../components/Layout';
 import { useForm } from '../hooks/useForm';
 import { useNotification } from '../context/useNotification';
@@ -676,6 +676,8 @@ const FeatureToggle = ({ checked, onChange, disabled, title, accessibilityTitle,
 const CreateAgentContent = () => {
   const navigate = useNavigate();
   const { id: agentId } = useParams();
+  const [searchParams] = useSearchParams();
+  const projectIdFromQuery = searchParams.get('projectId');
   const { showError, showSuccess } = useNotification();
   const { isAuthenticated } = useAuth();
   const [uploadedFiles, setUploadedFiles] = useState([]);
@@ -1075,6 +1077,7 @@ const CreateAgentContent = () => {
           system_prompt: finalSystemPrompt,
           template_type: selectedTemplate,
           template_config: templateConfig,
+          project_id: projectIdFromQuery ? parseInt(projectIdFromQuery, 10) : undefined,
         });
         const agentId = createdAgent?.id;
         if (!Number.isFinite(agentId)) {
@@ -1236,7 +1239,12 @@ const CreateAgentContent = () => {
 
         showSuccess('Агент успешно создан!');
 
-        navigate(NAVIGATION_ROUTES.AGENTS);
+        // Redirect to project agents page if created from project context
+        if (projectIdFromQuery) {
+          navigate(NAVIGATION_ROUTES.PROJECT_AGENTS(projectIdFromQuery));
+        } else {
+          navigate(NAVIGATION_ROUTES.AGENTS);
+        }
       } catch (error) {
         if (Number.isFinite(createdAgentId) && !hasConnectedAtLeastOneChannel) {
           try {
