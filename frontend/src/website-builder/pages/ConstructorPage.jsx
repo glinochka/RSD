@@ -140,7 +140,7 @@ const ConstructorPageContent = () => {
       setActionError(null);
       setDeletingWebsite(true);
       await deleteWebsite();
-      navigate(NAVIGATION_ROUTES.AGENTS);
+      navigate(NAVIGATION_ROUTES.PROJECTS_LIST);
     } catch (e) {
       setActionError(
         normalizeDetail(e.response?.data?.detail) || e.message || 'Не удалось удалить сайт'

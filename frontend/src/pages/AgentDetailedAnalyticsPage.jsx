@@ -909,7 +909,7 @@ const AgentDetailedAnalyticsPageContent = () => {
   useEffect(() => {
     if (!Number.isFinite(botId) || botId <= 0) {
       showError('Некорректный id агента');
-      navigate(NAVIGATION_ROUTES.AGENTS);
+      navigate(NAVIGATION_ROUTES.PROJECTS_LIST);
       return;
     }
 
@@ -932,7 +932,7 @@ const AgentDetailedAnalyticsPageContent = () => {
         setCrmActionMetrics(buildCrmActionMetrics(crmActionsPayload));
       } catch (error) {
         showError(error?.message || 'Не удалось загрузить аналитику агента');
-        navigate(NAVIGATION_ROUTES.AGENTS);
+        navigate(NAVIGATION_ROUTES.PROJECTS_LIST);
       } finally {
         setIsLoading(false);
       }
@@ -1869,7 +1869,7 @@ const AgentDetailedAnalyticsPageContent = () => {
         <button
           type="button"
           className="btn btn-outline agent-analytics-back-btn"
-          onClick={() => navigate(NAVIGATION_ROUTES.AGENTS)}
+          onClick={() => navigate(NAVIGATION_ROUTES.PROJECTS_LIST)}
         >
           ← Назад к управлению агентами
         </button>

@@ -224,14 +224,14 @@ const Auth = () => {
         if (isLogin) {
           await login(values.name, values.password);
           showSuccess(SUCCESS_MESSAGES.LOGIN_SUCCESS, 3000);
-          navigate(NAVIGATION_ROUTES.AGENTS);
+          navigate(NAVIGATION_ROUTES.PROJECTS_LIST);
         } else {
           if (!isAwaitingEmailCode) {
             const registerResult = await register(values.email, values.password);
             if (registerResult?.token) {
               reachYandexGoal(YM_GOALS.REGISTRATION_SUCCESS);
               showSuccess('Регистрация успешна!', 3000);
-              navigate(NAVIGATION_ROUTES.AGENTS);
+              navigate(NAVIGATION_ROUTES.PROJECTS_LIST);
               return;
             }
             setIsAwaitingEmailCode(true);
@@ -245,7 +245,7 @@ const Auth = () => {
           await verifyRegistrationCode(values.email, values.verificationCode);
           reachYandexGoal(YM_GOALS.REGISTRATION_SUCCESS);
           showSuccess('Регистрация успешна!', 3000);
-          navigate(NAVIGATION_ROUTES.AGENTS);
+          navigate(NAVIGATION_ROUTES.PROJECTS_LIST);
         }
       } catch (error) {
         if (isLogin && isUserNotFoundAuthError(error)) {
@@ -260,7 +260,7 @@ const Auth = () => {
               if (registerResult?.token) {
                 reachYandexGoal(YM_GOALS.REGISTRATION_SUCCESS);
                 showSuccess('Аккаунт создан. Регистрация успешна!', 5000);
-                navigate(NAVIGATION_ROUTES.AGENTS);
+                navigate(NAVIGATION_ROUTES.PROJECTS_LIST);
                 return;
               }
               setIsAwaitingEmailCode(true);
@@ -424,7 +424,7 @@ const Auth = () => {
                 consentTerms: true,
               });
               showSuccess(SUCCESS_MESSAGES.LOGIN_SUCCESS, 3000);
-              navigate(NAVIGATION_ROUTES.AGENTS);
+              navigate(NAVIGATION_ROUTES.PROJECTS_LIST);
             } catch (error) {
               console.error('Google login failed:', error);
               showError(getAuthErrorMessage(error));

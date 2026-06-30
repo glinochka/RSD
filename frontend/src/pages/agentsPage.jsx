@@ -15,6 +15,7 @@ import { useAsync } from '../hooks/useAsync';
 import agentService from '../services/agentService';
 import pricingService from '../services/pricingService';
 import websiteService from '../services/websiteService';
+import projectService from '../services/projectService';
 import { formatRubPrice } from '../utils/agentTemplatePricing';
 import { useNotification } from '../context/useNotification';
 import { NAVIGATION_ROUTES } from '../config/constants';
@@ -630,6 +631,93 @@ const AgentCard = ({ agent, isSelected, onManage, onDelete, onToggle }) => {
   );
 };
 
+const WebsiteDashboardPanel = ({ website, leads, isLeadsLoading, onEditor, onPublic }) => {
+  const statusLabel = website.status === 'published' ? 'Опубликован' : website.generation_status === 'queued' || website.generation_status === 'generating' ? 'Генерируется' : 'Черновик';
+  return (
+    <div className="solution-website-panel">
+      <div className="agent-management-header">
+        <h3>{website.title || `Сайт #${website.id}`}</h3>
+        <p>/{website.slug || 'website'} · {statusLabel}</p>
+        {website.agent_id && <p style={{ fontSize: '0.8125rem', color: 'var(--color-text-light)' }}>Связан с агентом #{website.agent_id}</p>}
+        <button type="button" className="btn btn-black analytics-btn" onClick={onEditor}>
+          Конструктор сайта
+        </button>
+        {website.status === 'published' && (
+          <button type="button" className="btn btn-outline agent-extend-contract-btn" onClick={onPublic}>
+            Открыть сайт
+          </button>
+        )}
+      </div>
+
+      <div className="agent-management-block">
+        <label>Заявки с форм сайта</label>
+        {!website.agent_id ? (
+          <p className="help-text">Привяжите агента, чтобы принимать и обрабатывать заявки.</p>
+        ) : isLeadsLoading ? (
+          <p className="help-text">Загрузка заявок...</p>
+        ) : leads.length === 0 ? (
+          <p className="help-text">Заявок пока нет.</p>
+        ) : (
+          <div className="docs-list-web">
+            {leads.slice(0, 10).map((item) => (
+              <div key={item.id} className="doc-row">
+                <div className="doc-meta">
+                  <span className="doc-name">{item.client_name || `Заявка #${item.id}`}</span>
+                  <span className="doc-status">{item.status || 'new'}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const WebsiteCard = ({ website, isSelected, onClick }) => {
+  const statusLabel = website.status === 'published' ? 'Опубликован' : website.generation_status === 'queued' || website.generation_status === 'generating' ? 'Генерируется' : 'Черновик';
+  return (
+    <div
+      className={`agent-item${isSelected ? ' agent-item--selected' : ''}`}
+      onClick={onClick}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
+      role="button"
+      tabIndex={0}
+      aria-label={`Выбрать сайт ${website.title || website.slug}`}
+    >
+      <div className="agent-info">
+        <span className="agent-status-dot" style={{ background: website.status === 'published' ? 'var(--color-success)' : '#8b5cf6' }} title={statusLabel} />
+        <div className="agent-details">
+          <h3 className="agent-name">{website.title || `Сайт #${website.id}`}</h3>
+          <p className="agent-role">Сайт · {statusLabel}</p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const ProjectCard = ({ project, onClick }) => (
+  <div
+    className="agent-item"
+    onClick={onClick}
+    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
+    role="button"
+    tabIndex={0}
+    aria-label={`Открыть проект ${project.name}`}
+  >
+    <div className="agent-info">
+      <span className="agent-status-dot" style={{ background: '#10b981' }} title="Проект" />
+      <div className="agent-details">
+        <h3 className="agent-name">{project.name || `Проект #${project.id}`}</h3>
+        <p className="agent-role">Проект · {project.industry || 'Открыть пространство'}</p>
+      </div>
+    </div>
+    <div className="agent-actions">
+      <span style={{ fontSize: '0.75rem', color: 'var(--color-text-light)' }}>→</span>
+    </div>
+  </div>
+);
+
 const AgentsPageContent = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -741,6 +829,15 @@ const AgentsPageContent = () => {
   const [contractModalAgent, setContractModalAgent] = useState(null);
   const [contractModalTitle, setContractModalTitle] = useState('');
   const [isContractPaymentProcessing, setIsContractPaymentProcessing] = useState(false);
+
+  // Solutions: stand-alone websites and projects shown in the left panel
+  const [solutionWebsites, setSolutionWebsites] = useState([]);
+  const [solutionProjects, setSolutionProjects] = useState([]);
+  const [selectedSolutionType, setSelectedSolutionType] = useState('agent'); // 'agent' | 'website'
+  const [panelWebsite, setPanelWebsite] = useState(null);
+  const [panelWebsiteLeads, setPanelWebsiteLeads] = useState([]);
+  const [isPanelWebsiteLeadsLoading, setIsPanelWebsiteLeadsLoading] = useState(false);
+
   const { data: agents, isLoading, execute } = useAsync(
     () => agentService.getAll(),
     false
@@ -812,6 +909,63 @@ const AgentsPageContent = () => {
     next.delete('create');
     setSearchParams(next, { replace: true });
   }, [isAuthenticated, searchParams, setSearchParams]);
+
+  // Fetch websites and projects for the unified solutions list
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const [wRes, pRes] = await Promise.all([
+          websiteService.list({ page: 1, page_size: 100 }),
+          projectService.listProjects(),
+        ]);
+        if (cancelled) return;
+        setSolutionWebsites(Array.isArray(wRes?.items) ? wRes.items : []);
+        setSolutionProjects(Array.isArray(pRes?.items) ? pRes.items : []);
+      } catch {
+        // non-critical: agents list still works
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [isAuthenticated]);
+
+  // Load website leads when a standalone website is selected in the panel
+  useEffect(() => {
+    if (selectedSolutionType !== 'website' || !panelWebsite?.agent_id) {
+      setPanelWebsiteLeads([]);
+      return;
+    }
+    let cancelled = false;
+    const load = async () => {
+      setIsPanelWebsiteLeadsLoading(true);
+      try {
+        const res = await agentService.listAdminTemplateApplications({
+          agent_id: panelWebsite.agent_id,
+          source_channel: 'website',
+          limit: 20,
+          offset: 0,
+        });
+        if (!cancelled) setPanelWebsiteLeads(Array.isArray(res?.items) ? res.items : []);
+      } catch {
+        if (!cancelled) setPanelWebsiteLeads([]);
+      } finally {
+        if (!cancelled) setIsPanelWebsiteLeadsLoading(false);
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [selectedSolutionType, panelWebsite?.agent_id]);
+
+  const handleSelectWebsite = (website) => {
+    setSelectedSolutionType('website');
+    setPanelWebsite(website);
+    setPanelWebsiteLeads([]);
+    // Deselect any agent
+    setSelectedBotId(null);
+    setSelectedAgent(null);
+  };
 
   const handleCreateAgent = () => {
     setIsCreateChoiceModalOpen(true);
@@ -1012,7 +1166,7 @@ const AgentsPageContent = () => {
     if (isContractPaymentProcessing) return;
     setIsContractPaymentProcessing(true);
     try {
-      const returnUrl = `${window.location.origin}${NAVIGATION_ROUTES.AGENTS}?agent_payment=1`;
+      const returnUrl = `${window.location.origin}${NAVIGATION_ROUTES.PROJECTS_LIST}?agent_payment=1`;
       const payment = await pricingService.createAgentBillingPayment({
         agent_id: agentId,
         payment_kind: 'agent_maintenance',
@@ -2699,15 +2853,15 @@ const AgentsPageContent = () => {
   }
 
   const displayAgents = agents || [];
-  const showEmptyAgentsList = !isAuthenticated || displayAgents.length === 0;
+  const showEmptyAgentsList = !isAuthenticated || (displayAgents.length === 0 && solutionWebsites.length === 0 && solutionProjects.length === 0);
 
   return (
     <div className="agents-page-content">
       <section className="agents-section">
         <div className="section-header">
-          <h2 className="section-title">Ваши агенты:</h2>
+          <h2 className="section-title">Мои решения</h2>
           <button type="button" className="btn btn-black btn-add" onClick={handleCreateAgent}>
-            + Новый агент
+            + Новое решение
           </button>
         </div>
 
@@ -2724,18 +2878,41 @@ const AgentsPageContent = () => {
                 <AgentCard
                   key={agent.id}
                   agent={agent}
-                  isSelected={selectedBotId === agent.id}
-                  onManage={loadAgentDetails}
+                  isSelected={selectedSolutionType === 'agent' && selectedBotId === agent.id}
+                  onManage={(id) => { setSelectedSolutionType('agent'); loadAgentDetails(id); }}
                   onDelete={handleDeleteAgent}
                   onToggle={handleToggleAgent}
+                />
+              ))}
+              {solutionWebsites.map((website) => (
+                <WebsiteCard
+                  key={`w-${website.id}`}
+                  website={website}
+                  isSelected={selectedSolutionType === 'website' && panelWebsite?.id === website.id}
+                  onClick={() => handleSelectWebsite(website)}
+                />
+              ))}
+              {solutionProjects.map((project) => (
+                <ProjectCard
+                  key={`p-${project.id}`}
+                  project={project}
+                  onClick={() => navigate(NAVIGATION_ROUTES.PROJECT_DETAIL(project.id))}
                 />
               ))}
             </div>
 
             <div className="agent-management-card">
-              {!selectedAgent || isLoadingDetails ? (
+              {selectedSolutionType === 'website' && panelWebsite ? (
+                <WebsiteDashboardPanel
+                  website={panelWebsite}
+                  leads={panelWebsiteLeads}
+                  isLeadsLoading={isPanelWebsiteLeadsLoading}
+                  onEditor={() => navigate(NAVIGATION_ROUTES.WEBSITE_EDITOR(panelWebsite.id))}
+                  onPublic={() => window.open(NAVIGATION_ROUTES.WEBSITE_PUBLIC(panelWebsite.slug), '_blank', 'noopener,noreferrer')}
+                />
+              ) : !selectedAgent || isLoadingDetails ? (
                 <div className="agent-management-empty">
-                  {isLoadingDetails ? 'Загрузка карточки агента...' : 'Выберите агента для управления'}
+                  {isLoadingDetails ? 'Загрузка карточки агента...' : 'Выберите решение для управления'}
                 </div>
               ) : (
                 <>
@@ -4127,6 +4304,12 @@ const AgentsPageContent = () => {
   );
 };
 
+/**
+ * @deprecated AgentsPage (/agents) is archived.
+ * The route is no longer registered. Use /projects (ProjectsListPage) instead.
+ * AgentsPageContent is exported and re-used by ProjectsListPage.
+ * Do NOT delete this file — it contains the full agent management implementation.
+ */
 const AgentsPage = () => {
   return (
     <MainLayout>
@@ -4135,4 +4318,5 @@ const AgentsPage = () => {
   );
 };
 
+export { AgentsPageContent };
 export default AgentsPage;

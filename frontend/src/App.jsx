@@ -18,7 +18,9 @@ import ReferralCapture from './components/ReferralCapture';
 import Main from './pages/Main';
 import Auth from './pages/Auth';
 import PriceList from './pages/PriceList';
-import AgentsPage from './pages/agentsPage';
+// AgentsPage is archived — the /agents route is no longer registered.
+// All agent management is now at /projects (ProjectsListPage → AgentsPageContent).
+// import AgentsPage from './pages/agentsPage';
 import AgentDetailedAnalyticsPage from './pages/AgentDetailedAnalyticsPage';
 import CreateAgent from './pages/createAgent';
 import ManagementPortal from './pages/ManagementPortal';
@@ -66,9 +68,9 @@ const App = () => {
                   element={<ManagementPortal />}
                 />
 
-                {/* Protected routes */}
-                <Route path={NAVIGATION_ROUTES.AGENTS} element={<AgentsPage />} />
-                <Route path="/agents/:id" element={<Navigate to={NAVIGATION_ROUTES.AGENTS} replace />} />
+                {/* /agents is archived — redirect to /projects */}
+                <Route path={NAVIGATION_ROUTES.AGENTS} element={<Navigate to={NAVIGATION_ROUTES.PROJECTS_LIST} replace />} />
+                <Route path="/agents/:id" element={<Navigate to={NAVIGATION_ROUTES.PROJECTS_LIST} replace />} />
                 <Route
                   path={NAVIGATION_ROUTES.AGENT_ANALYTICS(':id')}
                   element={<AgentDetailedAnalyticsPage />}

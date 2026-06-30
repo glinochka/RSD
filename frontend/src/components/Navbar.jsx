@@ -316,7 +316,7 @@ const Navbar = () => {
           {isAuthenticated ? (
             <Link to={NAVIGATION_ROUTES.PROJECTS_LIST}>Решения</Link>
           ) : (
-            <Link to={NAVIGATION_ROUTES.AGENTS}>Мои агенты</Link>
+            <Link to={NAVIGATION_ROUTES.PROJECTS_LIST}>Мои агенты</Link>
           )}
           <button
             type="button"

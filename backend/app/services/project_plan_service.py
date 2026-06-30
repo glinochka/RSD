@@ -27,10 +27,10 @@ class ProjectPlanService:
 
     def __init__(self):
         self.client = AsyncOpenAI(
-            api_key=settings.LLM_API_KEY,
-            base_url=settings.LLM_BASE_URL,
+            api_key=settings.DEEPSEEK_API_KEY,
+            base_url="https://api.deepseek.com",
         )
-        self.model = settings.MAIN_LLM_MODEL or "deepseek-chat"
+        self.model = settings.WEBSITE_GENERATION_MODEL or "deepseek-chat"
 
     async def generate_plan(
         self,

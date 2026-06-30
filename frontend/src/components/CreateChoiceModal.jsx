@@ -85,7 +85,7 @@ const CreateChoiceModal = ({ isOpen, onClose }) => {
 
   const handleCreateWebsite = () => {
     onClose();
-    navigate(`${NAVIGATION_ROUTES.AGENTS}?create=website`);
+    navigate(`${NAVIGATION_ROUTES.PROJECTS_LIST}?create=website`);
   };
 
   if (!isOpen) return null;

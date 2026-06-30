@@ -1243,7 +1243,7 @@ const CreateAgentContent = () => {
         if (projectIdFromQuery) {
           navigate(NAVIGATION_ROUTES.PROJECT_AGENTS(projectIdFromQuery));
         } else {
-          navigate(NAVIGATION_ROUTES.AGENTS);
+          navigate(NAVIGATION_ROUTES.PROJECTS_LIST);
         }
       } catch (error) {
         if (Number.isFinite(createdAgentId) && !hasConnectedAtLeastOneChannel) {
