@@ -12,6 +12,7 @@ from ..config import get_auth_data, settings, sales_staff_token_expire_delta
 from ..alembic.models import User, UserAuthSession
 from ..router_users.dao import UserDAO
 
+
 def create_access_token(
     data: dict,
     expires_delta: timedelta | None = None,
@@ -39,25 +40,57 @@ def create_access_token(
     secret_key = auth_data['secret_key']
     algorithm = auth_data['algorithm']
 
+    logger.info(f"[JWT CREATE] token_kind={token_kind}, key_len={len(secret_key)}, key_preview={secret_key[:10]}...")
+
     encode_jwt = jwt.encode(to_encode, secret_key, algorithm=algorithm)
     return encode_jwt
 
 
-def decode_access_token_payload(token: str, token_kind: Literal["user", "admin", "sales_staff"]) -> dict:
-    try:
-        auth_data = get_auth_data(token_kind)
-        secret_key = auth_data["secret_key"]
-        algorithm = auth_data["algorithm"]
+def decode_access_token_payload(token: str, token_kind: Literal["user", "admin", "sales_staff"] = "user") -> dict:
+    # Пробуем основной ключ
+    auth_data = get_auth_data(token_kind)
+    secret_key = auth_data["secret_key"]
+    algorithm = auth_data["algorithm"]
 
+    logger.info(f"[JWT DECODE] token_kind={token_kind}, key_len={len(secret_key)}, key_preview={secret_key[:10]}...")
+
+    try:
         data = jwt.decode(token, secret_key, algorithms=[algorithm])
         if data.get("token_kind") != token_kind:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Токен не валиден",
             )
+        logger.info(f"[JWT DECODE] Success with primary key")
         return data
     except InvalidTokenError as e:
-        logger.info("Токен не валиден: %s", e)
+        logger.info(f"[JWT DECODE] Failed with primary key: {e}")
+
+        # Пробуем fallback ключ только для user
+        if token_kind == "user" and settings.USER_JWT_SECRET_KEY_FALLBACK:
+            fallback_key = settings.USER_JWT_SECRET_KEY_FALLBACK.strip()
+            if fallback_key:
+                logger.info(f"[JWT DECODE] Trying fallback key, len={len(fallback_key)}, preview={fallback_key[:10]}...")
+                try:
+                    data = jwt.decode(token, fallback_key, algorithms=[algorithm])
+                    if data.get("token_kind") == token_kind:
+                        logger.info(f"[JWT DECODE] Success with fallback key!")
+                        return data
+                except InvalidTokenError as e2:
+                    logger.info(f"[JWT DECODE] Fallback key also failed: {e2}")
+
+        # Пробуем legacy SECRET_KEY
+        legacy_key = settings.SECRET_KEY.strip()
+        if legacy_key and legacy_key != secret_key:
+            logger.info(f"[JWT DECODE] Trying legacy SECRET_KEY, len={len(legacy_key)}, preview={legacy_key[:10]}...")
+            try:
+                data = jwt.decode(token, legacy_key, algorithms=[algorithm])
+                if data.get("token_kind") == token_kind:
+                    logger.info(f"[JWT DECODE] Success with legacy SECRET_KEY!")
+                    return data
+            except InvalidTokenError as e3:
+                logger.info(f"[JWT DECODE] Legacy key also failed: {e3}")
+
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Токен не валиден",
