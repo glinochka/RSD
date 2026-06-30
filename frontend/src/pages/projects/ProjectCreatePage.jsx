@@ -6,6 +6,7 @@
 import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import MainLayout from '../../components/Layout';
+import CustomSelect from '../../components/CustomSelect';
 import { useAuth } from '../../context/useAuth';
 import { useNotification } from '../../context/useNotification';
 import { NAVIGATION_ROUTES } from '../../config/constants';
@@ -25,30 +26,6 @@ const INDUSTRY_OPTIONS = [
   { value: 'real_estate', label: 'Недвижимость' },
   { value: 'finance', label: 'Финансы / Страхование' },
   { value: 'other', label: 'Другое' },
-];
-
-// Automation goals
-const AUTOMATION_GOALS = [
-  { value: 'support', label: 'Поддержка клиентов' },
-  { value: 'booking', label: 'Запись / Бронирование' },
-  { value: 'sales', label: 'Продажи / Консультации' },
-  { value: 'content', label: 'Контент / Маркетинг' },
-  { value: 'website', label: 'Сайт' },
-];
-
-// Communication channels
-const CHANNEL_OPTIONS = [
-  { value: 'telegram', label: 'Telegram' },
-  { value: 'whatsapp', label: 'WhatsApp' },
-  { value: 'website', label: 'Сайт (виджет)' },
-  { value: 'phone', label: 'Телефония' },
-];
-
-// Communication tones
-const TONE_OPTIONS = [
-  { value: 'friendly', label: 'Дружелюбный' },
-  { value: 'business', label: 'Деловой' },
-  { value: 'premium', label: 'Премиум' },
 ];
 
 // Steps
@@ -115,11 +92,8 @@ const ProjectCreatePage = () => {
   const [formData, setFormData] = useState({
     name: '',
     industry: '',
-    automation_goals: [],
-    channels: [],
+    industry_custom: '',
     description: '',
-    communication_tone: '',
-    city: '',
   });
 
   // Redirect if not authenticated
@@ -132,21 +106,21 @@ const ProjectCreatePage = () => {
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
-  const handleCheckboxChange = (field, value) => {
-    setFormData((prev) => {
-      const current = prev[field] || [];
-      if (current.includes(value)) {
-        return { ...prev, [field]: current.filter((v) => v !== value) };
-      }
-      return { ...prev, [field]: [...current, value] };
-    });
-  };
+  const getBriefPayload = () => ({
+    name: formData.name.trim(),
+    industry: formData.industry === 'other'
+      ? formData.industry_custom.trim()
+      : formData.industry,
+    description: formData.description.trim(),
+  });
 
   const isBriefValid = () => {
+    const industryValid = formData.industry
+      && (formData.industry !== 'other' || formData.industry_custom.trim().length >= 2);
+
     return (
       formData.name.trim().length >= 2 &&
-      formData.industry &&
-      formData.automation_goals.length > 0 &&
+      industryValid &&
       formData.description.trim().length >= 50
     );
   };
@@ -164,7 +138,7 @@ const ProjectCreatePage = () => {
 
     try {
       // Call real API
-      const plan = await projectService.generatePlan(formData);
+      const plan = await projectService.generatePlan(getBriefPayload());
       
       // Calculate generation time
       const elapsed = ((Date.now() - generationStartTime.current) / 1000).toFixed(1);
@@ -234,7 +208,7 @@ const ProjectCreatePage = () => {
       };
 
       // Call API to apply plan
-      const result = await projectService.applyPlan(formData, filteredPlan, idempotencyKey);
+      const result = await projectService.applyPlan(getBriefPayload(), filteredPlan, idempotencyKey);
 
       // Show onboarding toast
       if (result.status === 'partial') {
@@ -292,53 +266,38 @@ const ProjectCreatePage = () => {
           <label htmlFor="industry">
             Отрасль <span className="required">*</span>
           </label>
-          <select
+          <CustomSelect
             id="industry"
+            name="industry"
             value={formData.industry}
-            onChange={(e) => handleInputChange('industry', e.target.value)}
-          >
-            <option value="">Выберите отрасль</option>
-            {INDUSTRY_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
+            placeholder="Выберите отрасль"
+            options={INDUSTRY_OPTIONS}
+            onChange={(e) => {
+              const value = e.target.value;
+              setFormData((prev) => ({
+                ...prev,
+                industry: value,
+                industry_custom: value === 'other' ? prev.industry_custom : '',
+              }));
+            }}
+          />
         </div>
 
-        <div className="form-group">
-          <label>
-            Что автоматизируем <span className="required">*</span>
-          </label>
-          <div className="checkbox-group">
-            {AUTOMATION_GOALS.map((goal) => (
-              <label key={goal.value} className="checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={formData.automation_goals.includes(goal.value)}
-                  onChange={() => handleCheckboxChange('automation_goals', goal.value)}
-                />
-                <span>{goal.label}</span>
-              </label>
-            ))}
+        {formData.industry === 'other' && (
+          <div className="form-group">
+            <label htmlFor="industry_custom">
+              Укажите отрасль <span className="required">*</span>
+            </label>
+            <input
+              type="text"
+              id="industry_custom"
+              value={formData.industry_custom}
+              onChange={(e) => handleInputChange('industry_custom', e.target.value)}
+              placeholder="Например: Автосервис"
+              maxLength={64}
+            />
           </div>
-        </div>
-
-        <div className="form-group">
-          <label>Каналы связи</label>
-          <div className="checkbox-group">
-            {CHANNEL_OPTIONS.map((channel) => (
-              <label key={channel.value} className="checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={formData.channels.includes(channel.value)}
-                  onChange={() => handleCheckboxChange('channels', channel.value)}
-                />
-                <span>{channel.label}</span>
-              </label>
-            ))}
-          </div>
-        </div>
+        )}
 
         <div className="form-group">
           <label htmlFor="description">
@@ -349,41 +308,13 @@ const ProjectCreatePage = () => {
             id="description"
             value={formData.description}
             onChange={(e) => handleInputChange('description', e.target.value)}
-            placeholder="Опишите, чем занимается бизнес, какие услуги, кто клиенты..."
+            placeholder="Опишите, чем занимается бизнес, какие услуги, кто клиенты, город или регион (например: Москва)..."
             rows={4}
             maxLength={800}
           />
           <div className="char-count">
             {formData.description.length} / 800
           </div>
-        </div>
-
-        <div className="form-group">
-          <label htmlFor="communication_tone">Тон общения</label>
-          <select
-            id="communication_tone"
-            value={formData.communication_tone}
-            onChange={(e) => handleInputChange('communication_tone', e.target.value)}
-          >
-            <option value="">Выберите тон</option>
-            {TONE_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="form-group">
-          <label htmlFor="city">Город / регион</label>
-          <input
-            type="text"
-            id="city"
-            value={formData.city}
-            onChange={(e) => handleInputChange('city', e.target.value)}
-            placeholder="Например: Москва"
-            maxLength={100}
-          />
         </div>
       </div>
 
@@ -468,7 +399,7 @@ const ProjectCreatePage = () => {
             </div>
             <div className="project-preview-field">
               <label>Отрасль:</label>
-              <span>{generatedPlan.project?.industry || formData.industry}</span>
+              <span>{generatedPlan.project?.industry || getBriefPayload().industry}</span>
             </div>
           </div>
 
@@ -482,11 +413,14 @@ const ProjectCreatePage = () => {
                   className={`project-preview-agent-card ${selectedAgents.includes(index) ? '' : 'project-preview-agent-card--disabled'}`}
                 >
                   <label className="project-preview-agent-checkbox">
-                    <input
-                      type="checkbox"
-                      checked={selectedAgents.includes(index)}
-                      onChange={() => handleToggleAgent(index)}
-                    />
+                    <span className="custom-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={selectedAgents.includes(index)}
+                        onChange={() => handleToggleAgent(index)}
+                      />
+                      <span className="custom-checkbox-mark" />
+                    </span>
                     <BotIcon />
                   </label>
                   <div className="project-preview-agent-info">
@@ -507,11 +441,14 @@ const ProjectCreatePage = () => {
               <h3>Сайт</h3>
               <div className={`project-preview-website-card ${includeWebsite ? '' : 'project-preview-website-card--disabled'}`}>
                 <label className="project-preview-website-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={includeWebsite}
-                    onChange={() => setIncludeWebsite(!includeWebsite)}
-                  />
+                  <span className="custom-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={includeWebsite}
+                      onChange={() => setIncludeWebsite(!includeWebsite)}
+                    />
+                    <span className="custom-checkbox-mark" />
+                  </span>
                   <GlobeIcon />
                 </label>
                 <div className="project-preview-website-info">

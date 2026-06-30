@@ -140,13 +140,13 @@ class ProjectPlanService:
             if template_type not in ALLOWED_TEMPLATE_TYPES:
                 template_type = "qa"
             
-            # Don't suggest template types not in goals
-            if template_type == "crm_admin" and "booking" not in brief.automation_goals:
-                # Still allow if description mentions booking keywords
+            # Trust LLM choice; only downgrade if goals explicitly exclude the type
+            goals = brief.automation_goals or []
+            if goals and template_type == "crm_admin" and "booking" not in goals:
                 if not any(kw in brief.description.lower() for kw in ["запись", "бронирование", "crm"]):
                     template_type = "qa"
-            
-            if template_type == "sales_manager" and "sales" not in brief.automation_goals:
+
+            if goals and template_type == "sales_manager" and "sales" not in goals:
                 if not any(kw in brief.description.lower() for kw in ["продаж", "лид", "клиент"]):
                     template_type = "qa"
             
@@ -180,8 +180,12 @@ class ProjectPlanService:
         
         plan_data["agents"] = sanitized_agents
         
-        # Sanitize website
-        include_website = "website" in brief.automation_goals
+        # Sanitize website — trust LLM when no explicit goals, otherwise respect goals
+        goals = brief.automation_goals or []
+        if goals:
+            include_website = "website" in goals
+        else:
+            include_website = True
         website_data = plan_data.get("website", {})
         
         if not isinstance(website_data, dict):
@@ -279,18 +283,20 @@ class ProjectPlanService:
     def _generate_default_knowledge_recs(self, brief: ProjectBriefRequest) -> List[str]:
         """Generate default knowledge recommendations."""
         recs = ["Описание услуг и цен"]
-        
-        if "booking" in brief.automation_goals:
+        desc = brief.description.lower()
+        goals = brief.automation_goals or []
+
+        if "booking" in goals or any(kw in desc for kw in ["запись", "бронирован"]):
             recs.append("Регламент записи и отмены")
-        
-        if "support" in brief.automation_goals:
+
+        if "support" in goals or any(kw in desc for kw in ["поддержк", "вопрос", "faq"]):
             recs.append("Часто задаваемые вопросы (FAQ)")
-        
-        if "sales" in brief.automation_goals:
+
+        if "sales" in goals or any(kw in desc for kw in ["продаж", "прайс", "цен"]):
             recs.append("Описание продуктов и прайс-лист")
-        
+
         recs.append("Контактная информация и адреса")
-        
+
         return recs
 
 

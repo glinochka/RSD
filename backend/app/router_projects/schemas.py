@@ -59,11 +59,11 @@ class ProjectBriefRequest(BaseModel):
     """AI-first project creation brief."""
     name: str = Field(..., min_length=1, max_length=200, description="Название бизнеса / отдела")
     industry: str = Field(..., description="Отрасль бизнеса")
-    automation_goals: List[str] = Field(..., description="Что автоматизируем: поддержка, запись, продажи, контент, сайт")
-    channels: List[str] = Field(default=[], description="Каналы связи: telegram, whatsapp, сайт, телефон")
+    automation_goals: List[str] = Field(default=[], description="Что автоматизируем (определяется AI из описания)")
+    channels: List[str] = Field(default=[], description="Каналы связи (подключаются позже)")
     description: str = Field(..., min_length=50, max_length=800, description="Краткое описание бизнеса")
-    communication_tone: Optional[str] = Field(None, description="Тон общения: friendly, business, premium")
-    city: Optional[str] = Field(None, max_length=100, description="Город / регион")
+    communication_tone: Optional[str] = Field(None, description="Тон общения (определяется AI)")
+    city: Optional[str] = Field(None, max_length=100, description="Город / регион (указывается в описании)")
 
 
 class AgentPlanItem(BaseModel):

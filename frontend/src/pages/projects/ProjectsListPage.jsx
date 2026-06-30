@@ -1,6 +1,6 @@
 /**
  * Solutions List Page
- * Unified list of projects, agents and websites with right-side quick dashboard
+ * Horizontal rows list + right-side mini-dashboard for agents and websites
  */
 
 import { useEffect, useState } from 'react';
@@ -17,25 +17,15 @@ import { NAVIGATION_ROUTES } from '../../config/constants';
 import '../../styles/projectsListPage.css';
 
 const PlusIcon = () => (
-  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <line x1="12" y1="5" x2="12" y2="19" />
     <line x1="5" y1="12" x2="19" y2="12" />
   </svg>
 );
 
-const BotIcon = () => (
-  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <rect x="3" y="11" width="18" height="10" rx="2" />
-    <circle cx="12" cy="5" r="2" />
-    <path d="M12 7v4" />
-  </svg>
-);
-
-const GlobeIcon = () => (
-  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <circle cx="12" cy="12" r="10" />
-    <line x1="2" y1="12" x2="22" y2="12" />
-    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+const ChevronRightIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="9 18 15 12 9 6" />
   </svg>
 );
 
@@ -47,19 +37,24 @@ const EmptyStateIcon = () => (
   </svg>
 );
 
-const BriefcaseIcon = () => (
-  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
-    <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
-  </svg>
-);
+const TEMPLATE_LABELS = {
+  qa: 'Поддержка',
+  assistant: 'Ассистент',
+  sales_manager: 'Продажи',
+  crm_admin: 'Администратор',
+  content_factory: 'Контент',
+};
 
-const ArrowRightIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <line x1="5" y1="12" x2="19" y2="12" />
-    <polyline points="12 5 19 12 12 19" />
-  </svg>
-);
+const formatDate = (dateString) => {
+  if (!dateString) {
+    return '';
+  }
+  return new Date(dateString).toLocaleDateString('ru-RU', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
+};
 
 const ProjectsListPage = () => {
   const navigate = useNavigate();
@@ -71,12 +66,13 @@ const ProjectsListPage = () => {
   const [websites, setWebsites] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isCreateChoiceOpen, setIsCreateChoiceOpen] = useState(false);
-  const [selectedSolution, setSelectedSolution] = useState(null);
-  const [selectedAgent, setSelectedAgent] = useState(null);
-  const [selectedWebsite, setSelectedWebsite] = useState(null);
-  const [isDetailsLoading, setIsDetailsLoading] = useState(false);
-  const [websiteApplications, setWebsiteApplications] = useState([]);
-  const [isApplicationsLoading, setIsApplicationsLoading] = useState(false);
+
+  const [selectedKey, setSelectedKey] = useState(null); // "agent-123" | "website-456"
+  const [panelAgent, setPanelAgent] = useState(null);
+  const [panelWebsite, setPanelWebsite] = useState(null);
+  const [isPanelLoading, setIsPanelLoading] = useState(false);
+  const [webLeads, setWebLeads] = useState([]);
+  const [isLeadsLoading, setIsLeadsLoading] = useState(false);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -88,215 +84,135 @@ const ProjectsListPage = () => {
     if (!isAuthenticated) {
       return;
     }
-
-    const fetchSolutions = async () => {
+    const load = async () => {
       try {
         setIsLoading(true);
-        const [projectsResponse, agentsResponse, websitesResponse] = await Promise.all([
+        const [pRes, aRes, wRes] = await Promise.all([
           projectService.listProjects(),
           agentService.getAll(),
           websiteService.list({ page: 1, page_size: 100 }),
         ]);
-        setProjects(Array.isArray(projectsResponse?.items) ? projectsResponse.items : []);
-        setAgents(Array.isArray(agentsResponse) ? agentsResponse : []);
-        setWebsites(Array.isArray(websitesResponse?.items) ? websitesResponse.items : []);
-      } catch (error) {
-        console.error('Failed to load solutions:', error);
-        showError(error.message || 'Не удалось загрузить решения');
+        setProjects(Array.isArray(pRes?.items) ? pRes.items : []);
+        setAgents(Array.isArray(aRes) ? aRes : []);
+        setWebsites(Array.isArray(wRes?.items) ? wRes.items : []);
+      } catch (err) {
+        showError(err?.message || 'Не удалось загрузить решения');
       } finally {
         setIsLoading(false);
       }
     };
-
-    fetchSolutions();
+    load();
   }, [isAuthenticated, showError]);
 
+  // Load panel details when selection changes
   useEffect(() => {
-    if (!selectedSolution) {
-      setSelectedAgent(null);
-      setSelectedWebsite(null);
-      setWebsiteApplications([]);
+    if (!selectedKey) {
+      setPanelAgent(null);
+      setPanelWebsite(null);
+      setWebLeads([]);
       return;
     }
 
-    const loadDetails = async () => {
-      setIsDetailsLoading(true);
-      setWebsiteApplications([]);
-      try {
-        if (selectedSolution.type === 'agent') {
-          const agentDetails = await agentService.getById(selectedSolution.id);
-          setSelectedAgent(agentDetails || null);
-          setSelectedWebsite(null);
-          return;
-        }
-        if (selectedSolution.type === 'website') {
-          const websiteDetails = await websiteService.getById(selectedSolution.id);
-          setSelectedWebsite(websiteDetails || null);
-          setSelectedAgent(null);
-          return;
-        }
-      } catch (error) {
-        showError(error?.message || 'Не удалось загрузить детали');
-        setSelectedAgent(null);
-        setSelectedWebsite(null);
-      } finally {
-        setIsDetailsLoading(false);
-      }
-    };
-
-    loadDetails();
-  }, [selectedSolution, showError]);
-
-  useEffect(() => {
-    if (!selectedWebsite?.agent_id) {
-      setWebsiteApplications([]);
-      return;
-    }
-
+    const [type, idStr] = selectedKey.split('-');
+    const id = Number(idStr);
     let cancelled = false;
-    const loadApplications = async () => {
-      setIsApplicationsLoading(true);
+
+    const loadPanel = async () => {
+      setIsPanelLoading(true);
+      setPanelAgent(null);
+      setPanelWebsite(null);
+      setWebLeads([]);
       try {
-        const response = await agentService.listAdminTemplateApplications({
-          agent_id: selectedWebsite.agent_id,
-          limit: 20,
-          offset: 0,
-        });
-        if (cancelled) {
-          return;
+        if (type === 'agent') {
+          const detail = await agentService.getById(id);
+          if (!cancelled) {
+            setPanelAgent(detail || null);
+          }
+        } else if (type === 'website') {
+          const detail = await websiteService.getById(id);
+          if (!cancelled) {
+            setPanelWebsite(detail || null);
+          }
         }
-        setWebsiteApplications(Array.isArray(response?.items) ? response.items : []);
-      } catch (error) {
+      } catch (err) {
         if (!cancelled) {
-          showError(error?.message || 'Не удалось загрузить заявки сайта');
+          showError(err?.message || 'Не удалось загрузить детали');
         }
       } finally {
         if (!cancelled) {
-          setIsApplicationsLoading(false);
+          setIsPanelLoading(false);
         }
       }
     };
 
-    loadApplications();
+    loadPanel();
     return () => {
       cancelled = true;
     };
-  }, [selectedWebsite?.agent_id, showError]);
+  }, [selectedKey, showError]);
 
-  const formatDate = (dateString) => {
-    if (!dateString) {
-      return 'Дата не указана';
-    }
-    const date = new Date(dateString);
-    return date.toLocaleDateString('ru-RU', {
-      day: 'numeric',
-      month: 'long',
-      year: 'numeric',
-    });
-  };
-
-  const onProjectClick = (projectId) => {
-    navigate(NAVIGATION_ROUTES.PROJECT_DETAIL(projectId));
-  };
-
-  const onAgentClick = (agentId) => {
-    setSelectedSolution({ type: 'agent', id: agentId });
-  };
-
-  const onWebsiteClick = (websiteId) => {
-    setSelectedSolution({ type: 'website', id: websiteId });
-  };
-
-  const openAgentManagement = () => {
-    navigate(NAVIGATION_ROUTES.AGENTS);
-  };
-
-  const openWebsiteEditor = () => {
-    if (!selectedWebsite?.id) {
+  // Load website form leads when website panel with agent_id is shown
+  useEffect(() => {
+    if (!panelWebsite?.agent_id) {
+      setWebLeads([]);
       return;
     }
-    navigate(NAVIGATION_ROUTES.WEBSITE_EDITOR(selectedWebsite.id));
+    let cancelled = false;
+    const loadLeads = async () => {
+      setIsLeadsLoading(true);
+      try {
+        const res = await agentService.listAdminTemplateApplications({
+          agent_id: panelWebsite.agent_id,
+          source_channel: 'website',
+          limit: 20,
+          offset: 0,
+        });
+        if (!cancelled) {
+          setWebLeads(Array.isArray(res?.items) ? res.items : []);
+        }
+      } catch {
+        // Leads unavailable for this agent type — silently show empty
+        if (!cancelled) {
+          setWebLeads([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLeadsLoading(false);
+        }
+      }
+    };
+    loadLeads();
+    return () => {
+      cancelled = true;
+    };
+  }, [panelWebsite?.agent_id]);
+
+  const selectRow = (key) => {
+    setSelectedKey((prev) => (prev === key ? null : key));
   };
 
-  const openWebsitePublic = () => {
-    if (!selectedWebsite?.slug) {
-      return;
-    }
-    window.open(NAVIGATION_ROUTES.WEBSITE_PUBLIC(selectedWebsite.slug), '_blank', 'noopener,noreferrer');
-  };
+  const hasPanel = selectedKey !== null;
 
-  const projectItems = projects.map((project) => ({
-      id: project.id,
-      type: 'project',
-      created_at: project.created_at,
-      title: project.name || `Проект #${project.id}`,
-      subtitle: project.industry || 'Проект',
-      description: project.description || 'Открыть пространство проекта',
-      badge: 'Проект',
-      icon: BriefcaseIcon,
-      onClick: () => onProjectClick(project.id),
-    }));
+  const allRows = [
+    ...projects.map((p) => ({ key: `project-${p.id}`, type: 'project', id: p.id, created_at: p.created_at, title: p.name || `Проект #${p.id}`, sub: p.industry || 'Проект', status: p.description ? p.description.slice(0, 60) : null })),
+    ...agents.map((a) => ({ key: `agent-${a.id}`, type: 'agent', id: a.id, created_at: a.created_at, title: a.bot_username ? `@${a.bot_username}` : `Агент #${a.id}`, sub: TEMPLATE_LABELS[a.template_type] || a.template_type || 'Агент', status: a.is_active ? 'active' : 'inactive' })),
+    ...websites.map((w) => ({ key: `website-${w.id}`, type: 'website', id: w.id, created_at: w.created_at, title: w.title || `Сайт #${w.id}`, sub: `/${w.slug || ''}`, status: w.status === 'published' ? 'published' : w.generation_status === 'generating' || w.generation_status === 'queued' ? 'generating' : 'draft' })),
+  ].sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
 
-  const agentItems = agents.map((agent) => ({
-      id: agent.id,
-      type: 'agent',
-      created_at: agent.created_at,
-      title: agent.bot_username ? `@${agent.bot_username}` : `Агент #${agent.id}`,
-      subtitle: agent.template_type || 'assistant',
-      description: agent.is_active ? 'Активен и готов к работе' : 'Отключен',
-      badge: 'ИИ-агент',
-      icon: BotIcon,
-      onClick: () => onAgentClick(agent.id),
-    }));
-
-  const websiteItems = websites.map((website) => ({
-      id: website.id,
-      type: 'website',
-      created_at: website.created_at,
-      title: website.title || `Сайт #${website.id}`,
-      subtitle: `/${website.slug || 'website'}`,
-      description:
-        website.status === 'published'
-          ? 'Опубликован'
-          : website.generation_status === 'queued' || website.generation_status === 'generating'
-            ? 'Генерируется'
-            : 'Черновик',
-      badge: 'Сайт',
-      icon: GlobeIcon,
-      onClick: () => onWebsiteClick(website.id),
-    }));
-
-  const solutions = [...projectItems, ...agentItems, ...websiteItems]
-    .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
-
-  const totalTools = solutions.length;
-  const hasRightPanel = selectedSolution?.type === 'agent' || selectedSolution?.type === 'website';
-
-  if (!isLoading && totalTools === 0) {
+  if (!isLoading && allRows.length === 0) {
     return (
       <MainLayout>
         <div className="projects-page">
           <div className="projects-empty-state">
-            <div className="projects-empty-icon">
-              <EmptyStateIcon />
-            </div>
+            <div className="projects-empty-icon"><EmptyStateIcon /></div>
             <h2 className="projects-empty-title">У вас пока нет решений</h2>
-            <p className="projects-empty-description">
-              Создайте первое решение: отдельный ИИ-агент, сайт или проект.
-            </p>
-            <button
-              type="button"
-              className="btn btn-black"
-              onClick={() => setIsCreateChoiceOpen(true)}
-            >
+            <p className="projects-empty-description">Создайте первое решение: отдельный ИИ-агент, сайт или проект.</p>
+            <button type="button" className="btn btn-black" onClick={() => setIsCreateChoiceOpen(true)}>
               <PlusIcon />
               Новое решение
             </button>
           </div>
-          <CreateChoiceModal
-            isOpen={isCreateChoiceOpen}
-            onClose={() => setIsCreateChoiceOpen(false)}
-          />
+          <CreateChoiceModal isOpen={isCreateChoiceOpen} onClose={() => setIsCreateChoiceOpen(false)} />
         </div>
       </MainLayout>
     );
@@ -308,15 +224,9 @@ const ProjectsListPage = () => {
         <div className="projects-header">
           <div className="projects-header-content">
             <h1 className="projects-title">Мои решения</h1>
-            <p className="projects-subtitle">
-              ИИ-агенты и сайты в одном месте
-            </p>
+            <p className="projects-subtitle">ИИ-агенты, сайты и проекты</p>
           </div>
-          <button
-            type="button"
-            className="btn btn-black"
-            onClick={() => setIsCreateChoiceOpen(true)}
-          >
+          <button type="button" className="btn btn-black" onClick={() => setIsCreateChoiceOpen(true)}>
             <PlusIcon />
             Новое решение
           </button>
@@ -328,169 +238,223 @@ const ProjectsListPage = () => {
             <p>Загрузка решений...</p>
           </div>
         ) : (
-          <div className={`solutions-layout ${hasRightPanel ? 'solutions-layout--with-panel' : ''}`}>
-            <div className={`solutions-list ${hasRightPanel ? 'solutions-list--compact' : ''}`}>
-              {solutions.map((solution) => {
-                const Icon = solution.icon;
-                const isSelected =
-                  selectedSolution?.type === solution.type && selectedSolution?.id === solution.id;
-                const isProject = solution.type === 'project';
+          <div className={`sl-layout${hasPanel ? ' sl-layout--panel' : ''}`}>
+            {/* Left: solution rows */}
+            <div className="sl-list">
+              {allRows.map((row) => {
+                const isSelected = selectedKey === row.key;
+                const isProject = row.type === 'project';
                 return (
                   <div
-                    key={`${solution.type}-${solution.id}`}
-                    className={`project-card solution-card ${isSelected ? 'solution-card--selected' : ''} ${
-                      isProject ? 'solution-card--project' : ''
-                    }`}
-                    onClick={solution.onClick}
+                    key={row.key}
+                    className={`sl-row sl-row--${row.type}${isSelected ? ' sl-row--selected' : ''}`}
                     role="button"
                     tabIndex={0}
+                    onClick={() => {
+                      if (isProject) {
+                        navigate(NAVIGATION_ROUTES.PROJECT_DETAIL(row.id));
+                      } else {
+                        selectRow(row.key);
+                      }
+                    }}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' || e.key === ' ') {
-                        solution.onClick();
+                        if (isProject) {
+                          navigate(NAVIGATION_ROUTES.PROJECT_DETAIL(row.id));
+                        } else {
+                          selectRow(row.key);
+                        }
                       }
                     }}
                   >
-                    <div className="project-card-header">
-                      <div className="project-card-icon">
-                        <Icon />
-                      </div>
-                      <div className="project-card-meta">
-                        <span className="project-card-date">
-                          {formatDate(solution.created_at)}
-                        </span>
-                        <span className="project-card-badge project-card-badge--default">
-                          {solution.badge}
-                        </span>
-                      </div>
+                    <span className="sl-row__dot" />
+                    <div className="sl-row__body">
+                      <span className="sl-row__title">{row.title}</span>
+                      <span className="sl-row__sub">{row.sub}</span>
                     </div>
-
-                    <div className="project-card-content">
-                      <h3 className="project-card-name">
-                        {solution.title}
-                      </h3>
-                      <p className="project-card-industry">
-                        {solution.subtitle}
-                      </p>
-                      <p className="project-card-description">
-                        {solution.description}
-                      </p>
+                    <div className="sl-row__right">
+                      {row.type === 'agent' && (
+                        <span className={`sl-status sl-status--${row.status}`}>
+                          {row.status === 'active' ? 'Активен' : 'Отключён'}
+                        </span>
+                      )}
+                      {row.type === 'website' && (
+                        <span className={`sl-status sl-status--${row.status}`}>
+                          {row.status === 'published' ? 'Опубликован' : row.status === 'generating' ? 'Генерируется' : 'Черновик'}
+                        </span>
+                      )}
+                      <span className="sl-row__date">{formatDate(row.created_at)}</span>
+                      <ChevronRightIcon />
                     </div>
-
-                    {isProject && (
-                      <div className="solution-card-project-action">
-                        <span>Открыть проект</span>
-                        <ArrowRightIcon />
-                      </div>
-                    )}
                   </div>
                 );
               })}
 
+              {/* Add row */}
               <div
-                className="project-card project-card--add solution-card"
-                onClick={() => setIsCreateChoiceOpen(true)}
+                className="sl-row sl-row--add"
                 role="button"
                 tabIndex={0}
+                onClick={() => setIsCreateChoiceOpen(true)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     setIsCreateChoiceOpen(true);
                   }
                 }}
               >
-                <div className="project-card-add-content">
-                  <div className="project-card-add-icon">
-                    <PlusIcon />
-                  </div>
-                  <p className="project-card-add-text">Создать новое решение</p>
-                </div>
+                <span className="sl-row__dot sl-row__dot--add" />
+                <span className="sl-row__add-label">Создать новое решение</span>
               </div>
             </div>
 
-            {hasRightPanel && (
-              <aside className="solution-details-panel">
-                {isDetailsLoading ? (
-                  <div className="solution-details-loading">
+            {/* Right: mini-dashboard */}
+            {hasPanel && (
+              <aside className="sl-panel">
+                {isPanelLoading ? (
+                  <div className="sl-panel__loading">
                     <Loading />
-                    <p>Загрузка мини-дашборда...</p>
                   </div>
-                ) : selectedSolution?.type === 'agent' && selectedAgent ? (
-                  <div className="solution-details-content">
-                    <h3 className="solution-details-title">ИИ-агент</h3>
-                    <p className="solution-details-name">
-                      {selectedAgent.bot_username ? `@${selectedAgent.bot_username}` : `Агент #${selectedAgent.id}`}
-                    </p>
-                    <div className="solution-details-list">
-                      <p><strong>Тип:</strong> {selectedAgent.template_type || 'assistant'}</p>
-                      <p><strong>Статус:</strong> {selectedAgent.is_active ? 'Активен' : 'Отключен'}</p>
-                      <p><strong>ID:</strong> {selectedAgent.id}</p>
-                    </div>
-                    <button type="button" className="btn btn-black" onClick={openAgentManagement}>
-                      Открыть управление агентом
-                    </button>
-                  </div>
-                ) : selectedSolution?.type === 'website' && selectedWebsite ? (
-                  <div className="solution-details-content">
-                    <h3 className="solution-details-title">Сайт</h3>
-                    <p className="solution-details-name">{selectedWebsite.title || `Сайт #${selectedWebsite.id}`}</p>
-                    <div className="solution-details-list">
-                      <p><strong>URL:</strong> /{selectedWebsite.slug || 'website'}</p>
-                      <p><strong>Статус:</strong> {selectedWebsite.status || 'draft'}</p>
-                      <p><strong>Генерация:</strong> {selectedWebsite.generation_status || 'idle'}</p>
-                      <p><strong>Привязан к агенту:</strong> {selectedWebsite.agent_id ? `Да (#${selectedWebsite.agent_id})` : 'Нет'}</p>
-                    </div>
-                    <div className="solution-details-actions">
-                      <button type="button" className="btn btn-black" onClick={openWebsiteEditor}>
-                        Открыть конструктор
-                      </button>
-                      {selectedWebsite.status === 'published' && (
-                        <button type="button" className="btn btn-outline" onClick={openWebsitePublic}>
-                          Открыть опубликованный сайт
-                        </button>
-                      )}
-                    </div>
-
-                    <div className="solution-details-applications">
-                      <h4>Заявки с форм сайта</h4>
-                      {!selectedWebsite.agent_id ? (
-                        <p className="solution-details-muted">
-                          Для приёма и обработки заявок привяжите сайт к ИИ-агенту.
-                        </p>
-                      ) : isApplicationsLoading ? (
-                        <p className="solution-details-muted">Загрузка заявок...</p>
-                      ) : websiteApplications.length === 0 ? (
-                        <p className="solution-details-muted">Пока нет заявок.</p>
-                      ) : (
-                        <div className="solution-applications-list">
-                          {websiteApplications.slice(0, 10).map((item) => (
-                            <div key={item.id} className="solution-application-item">
-                              <p className="solution-application-title">
-                                {item.client_name || `Заявка #${item.id}`}
-                              </p>
-                              <p className="solution-application-meta">
-                                {item.status || 'new'} {item.created_at ? `• ${formatDate(item.created_at)}` : ''}
-                              </p>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="solution-details-empty">
-                    <p>Выберите агента или сайт для быстрого мини-дашборда.</p>
-                  </div>
-                )}
+                ) : panelAgent ? (
+                  <AgentPanel
+                    agent={panelAgent}
+                    onManage={() => navigate(NAVIGATION_ROUTES.AGENTS)}
+                    onAnalytics={() => navigate(NAVIGATION_ROUTES.AGENT_ANALYTICS(panelAgent.id))}
+                    onEdit={() => navigate(`${NAVIGATION_ROUTES.CREATE_AGENT}/${panelAgent.id}`)}
+                  />
+                ) : panelWebsite ? (
+                  <WebsitePanel
+                    website={panelWebsite}
+                    leads={webLeads}
+                    isLeadsLoading={isLeadsLoading}
+                    onEditor={() => navigate(NAVIGATION_ROUTES.WEBSITE_EDITOR(panelWebsite.id))}
+                    onPublic={() => window.open(NAVIGATION_ROUTES.WEBSITE_PUBLIC(panelWebsite.slug), '_blank', 'noopener,noreferrer')}
+                  />
+                ) : null}
               </aside>
             )}
           </div>
         )}
       </div>
 
-      <CreateChoiceModal
-        isOpen={isCreateChoiceOpen}
-        onClose={() => setIsCreateChoiceOpen(false)}
-      />
+      <CreateChoiceModal isOpen={isCreateChoiceOpen} onClose={() => setIsCreateChoiceOpen(false)} />
     </MainLayout>
+  );
+};
+
+/* ── Agent mini-dashboard ── */
+const AgentPanel = ({ agent, onManage, onAnalytics, onEdit }) => {
+  const channels = Array.isArray(agent.channels) ? agent.channels : [];
+  const activeChannels = channels.filter((c) => c.is_active);
+
+  return (
+    <div className="sl-panel__content">
+      <div className="sl-panel__header">
+        <div>
+          <p className="sl-panel__label">ИИ-агент</p>
+          <h3 className="sl-panel__name">
+            {agent.bot_username ? `@${agent.bot_username}` : `Агент #${agent.id}`}
+          </h3>
+        </div>
+        <span className={`sl-status sl-status--${agent.is_active ? 'active' : 'inactive'}`}>
+          {agent.is_active ? 'Активен' : 'Отключён'}
+        </span>
+      </div>
+
+      <div className="sl-panel__meta">
+        <span className="sl-panel__tag">{TEMPLATE_LABELS[agent.template_type] || agent.template_type || 'assistant'}</span>
+        <span className="sl-panel__tag sl-panel__tag--id">ID {agent.id}</span>
+      </div>
+
+      {agent.system_prompt ? (
+        <div className="sl-panel__prompt">
+          <p className="sl-panel__prompt-label">Системный промпт</p>
+          <p className="sl-panel__prompt-text">
+            {agent.system_prompt.length > 240
+              ? `${agent.system_prompt.slice(0, 240)}…`
+              : agent.system_prompt}
+          </p>
+        </div>
+      ) : null}
+
+      {activeChannels.length > 0 && (
+        <div className="sl-panel__channels">
+          <p className="sl-panel__channels-label">Каналы ({activeChannels.length})</p>
+          <div className="sl-panel__channels-list">
+            {activeChannels.map((ch) => (
+              <span key={ch.id || ch.provider} className="sl-channel-tag">
+                {ch.provider === 'telegram_bot' ? 'Telegram Бот' : ch.provider === 'telegram_userbot' ? 'Telegram Userbot' : ch.provider === 'max_bot' ? 'MAX Bot' : ch.provider === 'whatsapp_userbot' ? 'WhatsApp' : ch.provider === 'telephony' ? 'Телефония' : ch.provider}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="sl-panel__actions">
+        <button type="button" className="btn btn-black" onClick={onManage}>
+          Управление
+        </button>
+        <button type="button" className="btn btn-outline" onClick={onEdit}>
+          Настроить
+        </button>
+        <button type="button" className="btn btn-outline" onClick={onAnalytics}>
+          Аналитика
+        </button>
+      </div>
+    </div>
+  );
+};
+
+/* ── Website mini-dashboard ── */
+const WebsitePanel = ({ website, leads, isLeadsLoading, onEditor, onPublic }) => {
+  const statusLabel = website.status === 'published' ? 'Опубликован' : website.generation_status === 'queued' || website.generation_status === 'generating' ? 'Генерируется' : 'Черновик';
+  const statusKey = website.status === 'published' ? 'published' : website.generation_status === 'queued' || website.generation_status === 'generating' ? 'generating' : 'draft';
+
+  return (
+    <div className="sl-panel__content">
+      <div className="sl-panel__header">
+        <div>
+          <p className="sl-panel__label">Сайт</p>
+          <h3 className="sl-panel__name">{website.title || `Сайт #${website.id}`}</h3>
+        </div>
+        <span className={`sl-status sl-status--${statusKey}`}>{statusLabel}</span>
+      </div>
+
+      <div className="sl-panel__meta">
+        <span className="sl-panel__tag">/{website.slug || 'website'}</span>
+        {website.agent_id && <span className="sl-panel__tag">Агент #{website.agent_id}</span>}
+      </div>
+
+      <div className="sl-panel__actions">
+        <button type="button" className="btn btn-black" onClick={onEditor}>
+          Конструктор
+        </button>
+        {website.status === 'published' && (
+          <button type="button" className="btn btn-outline" onClick={onPublic}>
+            Открыть сайт
+          </button>
+        )}
+      </div>
+
+      <div className="sl-panel__leads">
+        <p className="sl-panel__leads-title">Заявки с форм</p>
+        {!website.agent_id ? (
+          <p className="sl-panel__leads-empty">Привяжите агента, чтобы принимать заявки.</p>
+        ) : isLeadsLoading ? (
+          <p className="sl-panel__leads-empty">Загрузка…</p>
+        ) : leads.length === 0 ? (
+          <p className="sl-panel__leads-empty">Заявок пока нет.</p>
+        ) : (
+          <div className="sl-leads-list">
+            {leads.slice(0, 10).map((item) => (
+              <div key={item.id} className="sl-lead-item">
+                <span className="sl-lead-item__name">{item.client_name || `Заявка #${item.id}`}</span>
+                <span className={`sl-status sl-status--lead-${item.status || 'new'}`}>{item.status || 'new'}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
   );
 };
 
