@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Form
 from fastapi.responses import JSONResponse
-from fastapi.security import HTTPBearer
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import and_, func, select
 
 from .schemas import (
@@ -65,7 +65,7 @@ def slugify(text: str) -> str:
 
 
 async def get_current_user_from_token(
-    authorization: Optional[str] = Depends(http_bearer),
+    authorization: HTTPAuthorizationCredentials | None = Depends(http_bearer),
 ) -> Optional[User]:
     """Extract and validate user from JWT token."""
     if not authorization or not authorization.credentials:
@@ -73,7 +73,7 @@ async def get_current_user_from_token(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authorization header required",
         )
-    
+
     async with async_session_maker() as session:
         from ..router_users.dao import UserDAO
         user_dao = UserDAO(session)

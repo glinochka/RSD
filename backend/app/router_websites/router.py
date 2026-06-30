@@ -8,7 +8,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, status, Response, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
-from fastapi.security import HTTPBearer
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
@@ -216,7 +216,7 @@ router = APIRouter(prefix="/api/v1/websites")
 http_bearer = HTTPBearer(auto_error=False)
 
 
-async def get_current_user(credentials: Annotated[HTTPBearer, Depends(http_bearer)]) -> User:
+async def get_current_user(credentials: Annotated[HTTPAuthorizationCredentials, Depends(http_bearer)]) -> User:
     """Dependency to get the current authenticated user."""
     if not credentials or not credentials.credentials:
         raise HTTPException(
@@ -225,10 +225,6 @@ async def get_current_user(credentials: Annotated[HTTPBearer, Depends(http_beare
         )
 
     token = credentials.credentials
-
-    # Skip JWT prefix if present
-    if token.lower().startswith("bearer "):
-        token = token[7:]
 
     async with async_session_maker() as session:
         user_dao = UserDAO(session)
