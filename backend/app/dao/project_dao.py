@@ -9,6 +9,11 @@ from app.alembic.models import Project, Agent, Website
 class ProjectDAO:
     """DAO for Project CRUD operations."""
 
+    def __init__(self, session: AsyncSession | None = None):
+        # Backward compatibility: many call sites instantiate DAO with session,
+        # while methods still accept explicit session arguments.
+        self.session = session
+
     @staticmethod
     async def list_by_user(session: AsyncSession, user_id: int) -> list[Project]:
         """List all non-archived projects for a user."""
