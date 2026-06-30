@@ -499,7 +499,6 @@ def _build_onboarding_checklist(project, agents, website) -> list:
 from fastapi import Response, UploadFile, File, Form
 from typing import List, Optional
 from app.alembic.models import ProjectDocument, AgentContentJob
-from app.qdrant.embeddings import process_and_store_file
 
 
 @router.get("/{project_id}/documents", response_model=List[dict])
