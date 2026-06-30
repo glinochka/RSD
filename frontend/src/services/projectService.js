@@ -4,12 +4,18 @@
  */
 
 import { API_ROUTES } from '../config/constants';
+import { getAccessToken } from '../utils/authToken';
 
 /**
  * Get authentication headers
  */
 const getAuthHeaders = () => {
-  const token = localStorage.getItem('token');
+  const token = getAccessToken();
+  if (!token) {
+    return {
+      'Content-Type': 'application/json',
+    };
+  }
   return {
     'Content-Type': 'application/json',
     Authorization: `Bearer ${token}`,
@@ -147,7 +153,10 @@ const projectService = {
     const formData = new FormData();
     formData.append('file', file);
 
-    const token = localStorage.getItem('token');
+    const token = getAccessToken();
+    if (!token) {
+      throw new Error('Authentication required');
+    }
     const response = await fetch(API_ROUTES.PROJECT_DOCUMENTS(projectId), {
       method: 'POST',
       headers: {
