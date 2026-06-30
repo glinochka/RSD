@@ -56,6 +56,8 @@ services:
             DB_PASSWORD: ${DB_PASSWORD}
             DB_NAME: ${DB_NAME}
             SECRET_KEY: ${SECRET_KEY}
+            USER_JWT_SECRET_KEY: ${USER_JWT_SECRET_KEY}
+            ADMIN_JWT_SECRET_KEY: ${ADMIN_JWT_SECRET_KEY}
             ALGORITHM: ${ALGORITHM}
             ENVIRONMENT: ${ENVIRONMENT:-production}
             ENCRYPTION_KEY: ${ENCRYPTION_KEY}
