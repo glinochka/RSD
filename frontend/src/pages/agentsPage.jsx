@@ -2883,7 +2883,6 @@ const AgentsPageContent = () => {
             <div className="agents-list">
               {solutionProjects.length > 0 && (
                 <>
-                  <div className="solutions-group-heading">Проекты</div>
                   {solutionProjects.map((project) => (
                     <ProjectCard
                       key={`p-${project.id}`}
@@ -2897,7 +2896,6 @@ const AgentsPageContent = () => {
               {displayAgents.length > 0 && (
                 <>
                   {solutionProjects.length > 0 && <div className="solutions-group-divider" />}
-                  <div className="solutions-group-heading">Агенты</div>
                   {displayAgents.map((agent) => (
                     <AgentCard
                       key={agent.id}
@@ -2916,7 +2914,6 @@ const AgentsPageContent = () => {
                   {(solutionProjects.length > 0 || displayAgents.length > 0) && (
                     <div className="solutions-group-divider" />
                   )}
-                  <div className="solutions-group-heading">Сайты</div>
                   {solutionWebsites.map((website) => (
                     <WebsiteCard
                       key={`w-${website.id}`}

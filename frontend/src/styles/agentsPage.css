@@ -40,14 +40,6 @@
   min-width: 0;
 }
 
-.solutions-group-heading {
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text-light);
-  letter-spacing: 0.02em;
-  margin: var(--spacing-xs) 0;
-}
-
 .solutions-group-divider {
   height: 1px;
   width: 100%;
