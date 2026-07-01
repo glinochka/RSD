@@ -700,6 +700,125 @@ async def delete_by_bot_id(
 
 
 
+def _extract_json_object(raw_text: str) -> dict:
+    content = (raw_text or "").strip()
+    if not content:
+        raise ValueError("Empty AI response")
+    content = re.sub(r"^```json\s*", "", content)
+    content = re.sub(r"^```\s*", "", content)
+    content = re.sub(r"\s*```$", "", content)
+    match = re.search(r"\{[\s\S]*\}", content)
+    if match:
+        content = match.group(0)
+    return json.loads(content)
+
+
+def _sanitize_agent_ai_draft(payload: AgentAIDraftRequest, draft_raw: dict) -> AgentAIDraftResponse:
+    suggested_name = str(draft_raw.get("suggested_name") or "").strip()
+    template_type = str(draft_raw.get("template_type") or "qa").strip().lower()
+    system_prompt = str(draft_raw.get("system_prompt") or "").strip()
+    welcome_message = str(draft_raw.get("welcome_message") or "").strip()
+    template_config_raw = draft_raw.get("template_config")
+
+    if not suggested_name:
+        suggested_name = "ИИ-ассистент"
+
+    normalized_template = _normalize_template_type(template_type)
+    if normalized_template not in {"qa", "crm_admin", "sales_manager"}:
+        normalized_template = "qa"
+
+    if len(system_prompt) < 80:
+        context = payload.project_context.strip() if payload.project_context else "вашего бизнеса"
+        system_prompt = (
+            f"Ты — AI-агент для {context}. Твоя задача: {payload.brief.strip()}. "
+            "Отвечай по делу, уточняй детали, предлагай следующий шаг, не выдумывай факты."
+        )
+    if len(system_prompt) > 5000:
+        system_prompt = system_prompt[:5000]
+
+    # Remove unresolved placeholders from model output.
+    system_prompt = re.sub(r"\{\{[^}]+\}\}", "", system_prompt)
+    system_prompt = re.sub(r"\$\{[^}]+\}", "", system_prompt)
+    system_prompt = re.sub(r"\s{2,}", " ", system_prompt).strip()
+
+    if not welcome_message:
+        welcome_message = "Здравствуйте! Чем могу помочь?"
+    if len(welcome_message) > 500:
+        welcome_message = welcome_message[:500]
+
+    if isinstance(template_config_raw, dict):
+        normalized_config_json = _normalize_template_config(normalized_template, template_config_raw)
+    else:
+        normalized_config_json = _normalize_template_config(normalized_template, {})
+    template_config = json.loads(normalized_config_json) if normalized_config_json else None
+
+    return AgentAIDraftResponse(
+        suggested_name=suggested_name[:100],
+        template_type=normalized_template,
+        system_prompt=system_prompt,
+        welcome_message=welcome_message,
+        template_config=template_config,
+    )
+
+
+@router.post(
+    "/ai/generate-draft",
+    response_model=AgentAIDraftResponse,
+    dependencies=[Depends(rate_limit(max_requests=10, window_seconds=60, scope="agent_ai_generate_draft"))],
+)
+async def ai_generate_draft(
+    payload: AgentAIDraftRequest,
+    current_user=Depends(get_current_user_required),
+):
+    if current_user.is_banned:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Пользователь заблокирован")
+
+    context_line = f"Контекст проекта: {payload.project_context.strip()}" if payload.project_context else ""
+    system_prompt = (
+        "Ты senior AI architect. Сгенерируй JSON для создания одного агента.\n"
+        "Только valid JSON, без markdown.\n"
+        "template_type выбирай только из: qa, crm_admin, sales_manager.\n"
+        "system_prompt: 400-1800 символов, русский язык, без {{placeholders}}.\n"
+        "welcome_message: 1-2 коротких предложения.\n"
+        "template_config: объект под выбранный template_type (можно пустой объект).\n"
+    )
+    user_prompt = (
+        f"Задача пользователя:\n{payload.brief.strip()}\n\n"
+        f"{context_line}\n\n"
+        "Верни JSON формата:\n"
+        "{\n"
+        '  "suggested_name": "...",\n'
+        '  "template_type": "qa|crm_admin|sales_manager",\n'
+        '  "system_prompt": "...",\n'
+        '  "welcome_message": "...",\n'
+        '  "template_config": {}\n'
+        "}"
+    )
+
+    try:
+        response = await ai_client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.4,
+            max_tokens=1800,
+            response_format={"type": "json_object"},
+        )
+        raw_content = response.choices[0].message.content or ""
+        parsed = _extract_json_object(raw_content)
+        return _sanitize_agent_ai_draft(payload, parsed)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Failed to generate AI draft for agent")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Не удалось сгенерировать заготовку агента через ИИ",
+        )
+
+
 @router.post("/ai/improve_prompt")
 async def ai_improve_prompt(
     payload: AgentAIAction,

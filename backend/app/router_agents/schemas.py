@@ -389,6 +389,31 @@ class AgentAIAction(AgentLookup):
     pass
 
 
+class AgentAIDraftRequest(BaseModel):
+    brief: str = Field(
+        ...,
+        min_length=20,
+        max_length=1200,
+        description="Краткое описание задач агента",
+    )
+    project_context: Optional[str] = Field(
+        default=None,
+        max_length=200,
+        description="Опционально: контекст проекта/бизнеса",
+    )
+
+
+class AgentAIDraftResponse(BaseModel):
+    suggested_name: str = Field(..., min_length=1, max_length=100)
+    template_type: str = Field(
+        ...,
+        pattern="^(qa|crm_admin|sales_manager)$",
+    )
+    system_prompt: str = Field(..., min_length=80, max_length=5000)
+    welcome_message: str = Field(..., min_length=1, max_length=500)
+    template_config: Optional[dict] = Field(default=None)
+
+
 class ExternalAgentChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=4000, description="Запрос для агента")
     external_user_id: Optional[str] = Field(

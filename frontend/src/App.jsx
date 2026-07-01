@@ -23,6 +23,7 @@ import PriceList from './pages/PriceList';
 // import AgentsPage from './pages/agentsPage';
 import AgentDetailedAnalyticsPage from './pages/AgentDetailedAnalyticsPage';
 import CreateAgent from './pages/createAgent';
+import AgentCreateAiPage from './pages/AgentCreateAiPage';
 import ManagementPortal from './pages/ManagementPortal';
 import DocumentationPage from './pages/DocumentationPage';
 import PublicOfferPage from './pages/PublicOfferPage';
@@ -76,6 +77,7 @@ const App = () => {
                   element={<AgentDetailedAnalyticsPage />}
                 />
                 <Route path={NAVIGATION_ROUTES.CREATE_AGENT} element={<CreateAgent />} />
+                <Route path={NAVIGATION_ROUTES.CREATE_AGENT_AI} element={<AgentCreateAiPage />} />
                 <Route
                   path={`${NAVIGATION_ROUTES.CREATE_AGENT}/:id`}
                   element={<CreateAgent />}

@@ -3,7 +3,7 @@
  * Modal for choosing what tool to create
  */
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { NAVIGATION_ROUTES } from '../config/constants';
 import '../styles/create-choice-modal.css';
@@ -40,6 +40,7 @@ const CreateChoiceModal = ({ isOpen, onClose }) => {
   const navigate = useNavigate();
   const modalRef = useRef(null);
   const closeButtonRef = useRef(null);
+  const [createTarget, setCreateTarget] = useState(null);
 
   // Focus management and escape key handling
   useEffect(() => {
@@ -73,14 +74,30 @@ const CreateChoiceModal = ({ isOpen, onClose }) => {
     }
   };
 
-  const handleCreateAgent = () => {
+  useEffect(() => {
+    if (!isOpen) {
+      setCreateTarget(null);
+    }
+  }, [isOpen]);
+
+  const handleCreateAgentManual = () => {
     onClose();
     navigate(NAVIGATION_ROUTES.CREATE_AGENT);
   };
 
-  const handleCreateProject = () => {
+  const handleCreateAgentAI = () => {
     onClose();
-    navigate(NAVIGATION_ROUTES.PROJECT_CREATE);
+    navigate(NAVIGATION_ROUTES.CREATE_AGENT_AI);
+  };
+
+  const handleCreateProjectManual = () => {
+    onClose();
+    navigate(`${NAVIGATION_ROUTES.PROJECT_CREATE}?mode=manual`);
+  };
+
+  const handleCreateProjectAI = () => {
+    onClose();
+    navigate(`${NAVIGATION_ROUTES.PROJECT_CREATE}?mode=ai`);
   };
 
   const handleCreateWebsite = () => {
@@ -116,69 +133,108 @@ const CreateChoiceModal = ({ isOpen, onClose }) => {
         </div>
 
         <div className="create-choice-modal-body">
-          <div className="create-choice-options">
-            {/* AI Agent Option */}
-            <button
-              type="button"
-              className="create-choice-option create-choice-option--agent"
-              onClick={handleCreateAgent}
-            >
-              <div className="create-choice-option-icon">
-                <BotIcon />
-              </div>
-              <div className="create-choice-option-content">
-                <h3 className="create-choice-option-title">ИИ-агент</h3>
-                <p className="create-choice-option-description">
-                  Один специализированный помощник: поддержка, продажи, администратор.
-                  Подключается к мессенджерам и сайту.
-                </p>
-              </div>
-            </button>
+          {createTarget ? (
+            <div className="create-choice-options">
+              <button
+                type="button"
+                className="create-choice-option"
+                onClick={createTarget === 'agent' ? handleCreateAgentAI : handleCreateProjectAI}
+              >
+                <div className="create-choice-option-content">
+                  <h3 className="create-choice-option-title">Создать с ИИ</h3>
+                  <p className="create-choice-option-description">
+                    {createTarget === 'agent'
+                      ? 'Коротко описываете задачу, получаете готовый шаблон и промпт.'
+                      : 'ИИ соберет проектный план: агенты, сайт и рекомендации по запуску.'}
+                  </p>
+                </div>
+              </button>
+              <button
+                type="button"
+                className="create-choice-option"
+                onClick={createTarget === 'agent' ? handleCreateAgentManual : handleCreateProjectManual}
+              >
+                <div className="create-choice-option-content">
+                  <h3 className="create-choice-option-title">Создать вручную</h3>
+                  <p className="create-choice-option-description">
+                    {createTarget === 'agent'
+                      ? 'Пустой агент: полностью ручная настройка каналов, промпта и логики.'
+                      : 'Пустой проект: добавляете сайт, агентов и базу знаний самостоятельно.'}
+                  </p>
+                </div>
+              </button>
+            </div>
+          ) : (
+            <div className="create-choice-options">
+              <button
+                type="button"
+                className="create-choice-option create-choice-option--agent"
+                onClick={() => setCreateTarget('agent')}
+              >
+                <div className="create-choice-option-icon">
+                  <BotIcon />
+                </div>
+                <div className="create-choice-option-content">
+                  <h3 className="create-choice-option-title">ИИ-агент</h3>
+                  <p className="create-choice-option-description">
+                    Один специализированный помощник: поддержка, продажи, администратор.
+                  </p>
+                </div>
+              </button>
 
-            {/* Website Option */}
-            <button
-              type="button"
-              className="create-choice-option create-choice-option--website"
-              onClick={handleCreateWebsite}
-            >
-              <div className="create-choice-option-icon">
-                <GlobeIcon />
-              </div>
-              <div className="create-choice-option-content">
-                <h3 className="create-choice-option-title">Сайт</h3>
-                <p className="create-choice-option-description">
-                  Лендинг или сайт компании с генерацией контента и публикацией.
-                </p>
-              </div>
-            </button>
+              <button
+                type="button"
+                className="create-choice-option create-choice-option--website"
+                onClick={handleCreateWebsite}
+              >
+                <div className="create-choice-option-icon">
+                  <GlobeIcon />
+                </div>
+                <div className="create-choice-option-content">
+                  <h3 className="create-choice-option-title">Сайт</h3>
+                  <p className="create-choice-option-description">
+                    Лендинг или сайт компании с генерацией контента и публикацией.
+                  </p>
+                </div>
+              </button>
 
-            {/* Project Option */}
-            <button
-              type="button"
-              className="create-choice-option create-choice-option--project"
-              onClick={handleCreateProject}
-            >
-              <div className="create-choice-option-icon">
-                <BriefcaseIcon />
-              </div>
-              <div className="create-choice-option-content">
-                <h3 className="create-choice-option-title">Проект</h3>
-                <p className="create-choice-option-description">
-                  Единое рабочее пространство: набор агентов, CRM, сайт и база знаний.
-                </p>
-              </div>
-            </button>
-          </div>
+              <button
+                type="button"
+                className="create-choice-option create-choice-option--project"
+                onClick={() => setCreateTarget('project')}
+              >
+                <div className="create-choice-option-icon">
+                  <BriefcaseIcon />
+                </div>
+                <div className="create-choice-option-content">
+                  <h3 className="create-choice-option-title">Проект</h3>
+                  <p className="create-choice-option-description">
+                    Единое рабочее пространство: набор агентов, CRM, сайт и база знаний.
+                  </p>
+                </div>
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="create-choice-modal-footer">
-          <button
-            type="button"
-            className="btn btn-outline"
-            onClick={onClose}
-          >
-            Отмена
-          </button>
+          {createTarget ? (
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={() => setCreateTarget(null)}
+            >
+              Назад
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={onClose}
+            >
+              Отмена
+            </button>
+          )}
         </div>
       </div>
     </div>

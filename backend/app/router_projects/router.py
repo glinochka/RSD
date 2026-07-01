@@ -489,7 +489,7 @@ def _build_onboarding_checklist(project, agents, website) -> list:
     ))
     
     # Check 3: Publish website
-    website_published = website and website.status == "published"
+    website_published = bool(website and website.status == "published")
     checklist.append(OnboardingChecklistItem(
         id="publish_website",
         label="Опубликовать сайт",

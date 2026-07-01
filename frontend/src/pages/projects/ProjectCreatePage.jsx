@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import MainLayout from '../../components/Layout';
 import CustomSelect from '../../components/CustomSelect';
 import { useAuth } from '../../context/useAuth';
@@ -73,8 +73,10 @@ const GlobeIcon = () => (
 
 const ProjectCreatePage = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { isAuthenticated } = useAuth();
   const { showError, showInfo } = useNotification();
+  const createMode = searchParams.get('mode') === 'manual' ? 'manual' : 'ai';
 
   const [currentStep, setCurrentStep] = useState(STEPS.BRIEF);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -87,6 +89,7 @@ const ProjectCreatePage = () => {
   const [generationTime, setGenerationTime] = useState(null);
   const [generationError, setGenerationError] = useState(null);
   const generationStartTime = useRef(null);
+  const [isCreatingManual, setIsCreatingManual] = useState(false);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -236,6 +239,30 @@ const ProjectCreatePage = () => {
   const handleBack = () => {
     if (currentStep === STEPS.PREVIEW) {
       setCurrentStep(STEPS.BRIEF);
+    }
+  };
+
+  const handleCreateManual = async () => {
+    const industry = formData.industry === 'other'
+      ? formData.industry_custom.trim()
+      : formData.industry;
+    if (formData.name.trim().length < 2) {
+      showError('Укажите название проекта');
+      return;
+    }
+    setIsCreatingManual(true);
+    try {
+      const created = await projectService.createProject({
+        name: formData.name.trim(),
+        industry: industry || undefined,
+        description: formData.description.trim() || undefined,
+      });
+      showInfo('Пустой проект создан. Добавьте сайт и агентов вручную.');
+      navigate(NAVIGATION_ROUTES.PROJECT_DETAIL(created.id));
+    } catch (error) {
+      showError(error.message || 'Не удалось создать проект');
+    } finally {
+      setIsCreatingManual(false);
     }
   };
 
@@ -511,38 +538,126 @@ const ProjectCreatePage = () => {
     </div>
   );
 
+  const renderManualStep = () => (
+    <div className="project-create-step">
+      <div className="project-create-step-header">
+        <h2>Создание проекта вручную</h2>
+        <p>Создается пустой проект. Сайт, агентов и базу знаний вы настроите сами.</p>
+      </div>
+
+      <div className="project-create-form">
+        <div className="form-group">
+          <label htmlFor="name-manual">
+            Название проекта <span className="required">*</span>
+          </label>
+          <input
+            type="text"
+            id="name-manual"
+            value={formData.name}
+            onChange={(e) => handleInputChange('name', e.target.value)}
+            placeholder="Например: Отдел продаж"
+            maxLength={200}
+          />
+        </div>
+
+        <div className="form-group">
+          <label htmlFor="industry-manual">Отрасль</label>
+          <CustomSelect
+            id="industry-manual"
+            name="industry-manual"
+            value={formData.industry}
+            placeholder="Выберите отрасль"
+            options={INDUSTRY_OPTIONS}
+            onChange={(e) => {
+              const value = e.target.value;
+              setFormData((prev) => ({
+                ...prev,
+                industry: value,
+                industry_custom: value === 'other' ? prev.industry_custom : '',
+              }));
+            }}
+          />
+        </div>
+
+        {formData.industry === 'other' && (
+          <div className="form-group">
+            <label htmlFor="industry_custom_manual">Укажите отрасль</label>
+            <input
+              type="text"
+              id="industry_custom_manual"
+              value={formData.industry_custom}
+              onChange={(e) => handleInputChange('industry_custom', e.target.value)}
+              placeholder="Например: Производство"
+              maxLength={64}
+            />
+          </div>
+        )}
+
+        <div className="form-group">
+          <label htmlFor="description-manual">Описание (опционально)</label>
+          <textarea
+            id="description-manual"
+            value={formData.description}
+            onChange={(e) => handleInputChange('description', e.target.value)}
+            placeholder="Коротко о проекте и задачах команды"
+            rows={4}
+            maxLength={800}
+          />
+        </div>
+      </div>
+
+      <div className="project-create-actions">
+        <button
+          type="button"
+          className="btn btn-black"
+          onClick={handleCreateManual}
+          disabled={isCreatingManual || formData.name.trim().length < 2}
+        >
+          {isCreatingManual ? 'Создаем...' : 'Создать пустой проект'}
+        </button>
+      </div>
+    </div>
+  );
+
   return (
     <MainLayout>
       <div className="project-create-page">
-        {/* Progress indicator */}
-        <div className="project-create-progress-steps">
-          <div className={`progress-step ${currentStep !== STEPS.BRIEF ? 'progress-step--completed' : ''} ${currentStep === STEPS.BRIEF ? 'progress-step--active' : ''}`}>
-            <div className="progress-step-number">1</div>
-            <span>Бриф</span>
+        {createMode === 'ai' ? (
+          <div className="project-create-progress-steps">
+            <div className={`progress-step ${currentStep !== STEPS.BRIEF ? 'progress-step--completed' : ''} ${currentStep === STEPS.BRIEF ? 'progress-step--active' : ''}`}>
+              <div className="progress-step-number">1</div>
+              <span>Бриф</span>
+            </div>
+            <div className="progress-step-line" />
+            <div className={`progress-step ${currentStep === STEPS.PREVIEW || currentStep === STEPS.APPLYING ? 'progress-step--completed' : ''} ${currentStep === STEPS.GENERATING ? 'progress-step--active' : ''}`}>
+              <div className="progress-step-number">2</div>
+              <span>Генерация</span>
+            </div>
+            <div className="progress-step-line" />
+            <div className={`progress-step ${currentStep === STEPS.APPLYING ? 'progress-step--completed' : ''} ${currentStep === STEPS.PREVIEW ? 'progress-step--active' : ''}`}>
+              <div className="progress-step-number">3</div>
+              <span>Предпросмотр</span>
+            </div>
+            <div className="progress-step-line" />
+            <div className={`progress-step ${currentStep === STEPS.APPLYING ? 'progress-step--active' : ''}`}>
+              <div className="progress-step-number">4</div>
+              <span>Запуск</span>
+            </div>
           </div>
-          <div className="progress-step-line" />
-          <div className={`progress-step ${currentStep === STEPS.PREVIEW || currentStep === STEPS.APPLYING ? 'progress-step--completed' : ''} ${currentStep === STEPS.GENERATING ? 'progress-step--active' : ''}`}>
-            <div className="progress-step-number">2</div>
-            <span>Генерация</span>
-          </div>
-          <div className="progress-step-line" />
-          <div className={`progress-step ${currentStep === STEPS.APPLYING ? 'progress-step--completed' : ''} ${currentStep === STEPS.PREVIEW ? 'progress-step--active' : ''}`}>
-            <div className="progress-step-number">3</div>
-            <span>Предпросмотр</span>
-          </div>
-          <div className="progress-step-line" />
-          <div className={`progress-step ${currentStep === STEPS.APPLYING ? 'progress-step--active' : ''}`}>
-            <div className="progress-step-number">4</div>
-            <span>Запуск</span>
-          </div>
-        </div>
+        ) : null}
 
         {/* Step content */}
         <div className="project-create-container">
-          {currentStep === STEPS.BRIEF && renderBriefStep()}
-          {currentStep === STEPS.GENERATING && renderGeneratingStep()}
-          {currentStep === STEPS.PREVIEW && renderPreviewStep()}
-          {currentStep === STEPS.APPLYING && renderApplyingStep()}
+          {createMode === 'manual' ? (
+            renderManualStep()
+          ) : (
+            <>
+              {currentStep === STEPS.BRIEF && renderBriefStep()}
+              {currentStep === STEPS.GENERATING && renderGeneratingStep()}
+              {currentStep === STEPS.PREVIEW && renderPreviewStep()}
+              {currentStep === STEPS.APPLYING && renderApplyingStep()}
+            </>
+          )}
         </div>
       </div>
     </MainLayout>

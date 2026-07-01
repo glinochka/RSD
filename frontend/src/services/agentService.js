@@ -290,6 +290,11 @@ export const agentService = {
     return response.data;
   },
 
+  aiGenerateDraft: async (payload) => {
+    const response = await apiClient.post(API_ROUTES.AGENTS_AI_GENERATE_DRAFT, payload);
+    return response.data;
+  },
+
   externalChat: async (message, apiKey) => {
     const response = await apiClient.post(
       API_ROUTES.AGENTS_EXTERNAL_CHAT,

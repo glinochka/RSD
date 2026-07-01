@@ -1,0 +1,42 @@
+.agent-ai-create-page {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+  display: grid;
+  gap: 16px;
+}
+
+.agent-ai-create-card {
+  background: #fff;
+  border: 1px solid #eceff3;
+  border-radius: 12px;
+  padding: 20px;
+  display: grid;
+  gap: 10px;
+}
+
+.agent-ai-create-subtitle {
+  margin: 0 0 4px;
+  color: #596273;
+}
+
+.agent-ai-create-meta {
+  text-align: right;
+  color: #8a94a6;
+  font-size: 12px;
+  margin-top: -4px;
+}
+
+.agent-ai-create-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 6px;
+}
+
+@media (max-width: 700px) {
+  .agent-ai-create-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
