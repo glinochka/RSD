@@ -1,7 +1,7 @@
 """add project integrations, external events and checklist_hidden flag
 
 Revision ID: b1c2d3e4f5g6
-Revises: c1f4a8e2d7b9, d2f6a1b3c9e8, d3e4f5a6b7c8, s9t0u1v2w3x4
+Revises: c1f4a8e2d7b9, c4d5e6f7g8h9, d2f6a1b3c9e8, d3e4f5a6b7c8, s9t0u1v2w3x4
 Create Date: 2026-07-03
 """
 
@@ -13,7 +13,7 @@ from sqlalchemy.dialects import postgresql
 
 
 revision: str = "b1c2d3e4f5g6"
-down_revision: Union[str, Sequence[str], None] = ("c1f4a8e2d7b9", "d2f6a1b3c9e8", "d3e4f5a6b7c8", "s9t0u1v2w3x4")
+down_revision: Union[str, Sequence[str], None] = ("c1f4a8e2d7b9", "c4d5e6f7g8h9", "d2f6a1b3c9e8", "d3e4f5a6b7c8", "s9t0u1v2w3x4")
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
