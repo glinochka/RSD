@@ -262,6 +262,18 @@ export const API_ROUTES = {
   PROJECT_CONTENT_DATA: (projectId) => `/api/projects/${projectId}/content`,
   // Project AI Manager
   PROJECT_AI_MANAGER: (projectId) => `/api/projects/${projectId}/ai-manager`,
+  PROJECT_AI_MANAGER_CHAT: (projectId) => `/api/projects/${projectId}/ai-manager/chat`,
+  // Project Checklist visibility
+  PROJECT_CHECKLIST_VISIBILITY: (projectId) => `/api/projects/${projectId}/checklist-visibility`,
+  // Project Websites
+  PROJECT_WEBSITES: (projectId) => `/api/projects/${projectId}/websites`,
+  PROJECT_CREATE_WEBSITE: (projectId) => `/api/projects/${projectId}/websites`,
+  // Project Integrations
+  PROJECT_INTEGRATIONS: (projectId) => `/api/projects/${projectId}/integrations`,
+  PROJECT_INTEGRATION: (projectId, integrationId) => `/api/projects/${projectId}/integrations/${integrationId}`,
+  PROJECT_INTEGRATION_ROTATE_TOKEN: (projectId, integrationId) =>
+    `/api/projects/${projectId}/integrations/${integrationId}/rotate-token`,
+  PROJECT_INTEGRATION_WEBHOOK: (projectId, token) => `/api/projects/${projectId}/integrations/webhook/${token}`,
 };
 
 export const AGENT_ROLES = {
@@ -311,6 +323,7 @@ export const NAVIGATION_ROUTES = {
   PROJECT_CONTENT: (id) => `/projects/${id}/content`,
   PROJECT_MANAGER: (id) => `/projects/${id}/manager`,
   PROJECT_SETTINGS: (id) => `/projects/${id}/settings`,
+  PROJECT_INTEGRATIONS: (id) => `/projects/${id}/integrations`,
 };
 
 // User-facing messages; backend detail (FastAPI) is preferred when present (see errorUtils).
@@ -345,7 +358,7 @@ export const VALIDATION = {
   AGENT_NAME_MIN_LENGTH: 2,
   AGENT_NAME_MAX_LENGTH: 50,
   FILE_MAX_SIZE: 10 * 1024 * 1024, // 10MB
-  ALLOWED_FILE_EXTENSIONS: ['pdf', 'docx', 'doc', 'txt'],
+  ALLOWED_FILE_EXTENSIONS: ['pdf', 'docx', 'doc', 'txt', 'md'],
 };
 
 export const DEBOUNCE_DELAY = {

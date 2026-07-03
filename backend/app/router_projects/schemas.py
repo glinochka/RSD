@@ -130,4 +130,72 @@ class ProjectDashboardResponse(BaseModel):
     project: ProjectSummaryResponse
     summary: ProjectSummaryWidget
     onboarding_checklist: List[OnboardingChecklistItem]
+    checklist_hidden: bool
     quick_actions: List[Dict[str, Any]]
+    charts: Dict[str, Any] = Field(default_factory=dict)
+    integrations: List[Dict[str, Any]] = Field(default_factory=list)
+    ai_manager: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectChecklistVisibilityUpdate(BaseModel):
+    """Request to hide/show onboarding checklist."""
+    checklist_hidden: bool
+
+
+class ProjectIntegrationCreate(BaseModel):
+    """Create a project integration."""
+    name: str = Field(..., min_length=1, max_length=64)
+    type: str = Field(..., min_length=1, max_length=32)
+    config: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    credentials: Optional[Dict[str, Any]] = Field(default_factory=dict)
+
+
+class ProjectIntegrationUpdate(BaseModel):
+    """Update a project integration."""
+    name: Optional[str] = Field(None, min_length=1, max_length=64)
+    type: Optional[str] = Field(None, min_length=1, max_length=32)
+    config: Optional[Dict[str, Any]] = None
+    credentials: Optional[Dict[str, Any]] = None
+    is_active: Optional[bool] = None
+
+
+class ProjectIntegrationResponse(BaseModel):
+    """Public integration response."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    project_id: int
+    name: str
+    type: str
+    config: Dict[str, Any]
+    webhook_url: str
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class ProjectIntegrationListResponse(BaseModel):
+    """List of project integrations."""
+    items: List[ProjectIntegrationResponse]
+    total: int
+
+
+class ProjectExternalEventResponse(BaseModel):
+    """External event received via integration."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    project_id: int
+    integration_id: Optional[int]
+    event_type: str
+    source: str
+    payload: Dict[str, Any]
+    received_at: datetime
+    created_at: datetime
+
+
+class ProjectWebhookPayload(BaseModel):
+    """Generic webhook payload accepted by project integrations."""
+    event_type: Optional[str] = Field(default=None, max_length=32)
+    source: Optional[str] = Field(default="webhook", max_length=64)
+    data: Optional[Dict[str, Any]] = Field(default_factory=dict)

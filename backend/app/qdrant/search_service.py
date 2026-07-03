@@ -127,18 +127,25 @@ q_client = AsyncQdrantClient(url=settings.QDRANT_URL, api_key=settings.QDRANT_AP
 
 async def search_knowledge_base(
     query: str,
-    agent_id: int,
+    agent_id: int | None = None,
     limit: int = 5,
     *,
+    project_id: int | None = None,
     max_queries: int = 3,
     max_chunks_per_query: int = 2,
     use_smart_search: bool = True,
     min_score: float | None = None,
 ) -> List[Dict[str, Any]]:
-    """Поиск по базе знаний с использованием актуального API query_points."""
+    """Поиск по базе знаний с использованием актуального API query_points.
+
+    Поддерживает поиск по агенту (agent_id) и/или по проекту (project_id).
+    """
     try:
         raw_query = (query or "").strip()
         if not raw_query:
+            return []
+
+        if agent_id is None and project_id is None:
             return []
 
         planned_queries = (
@@ -162,18 +169,36 @@ async def search_knowledge_base(
         for planned_query in planned_queries[:max_planned_queries]:
             dense_vector = await run_in_cpu_pool(embed_dense_for_query, planned_query)
 
-            search_filter = models.Filter(
-                must=[
+            must_conditions = [
+                models.FieldCondition(
+                    key="embedding_profile_key",
+                    match=models.MatchValue(value=embedding_profile["profile_key"]),
+                )
+            ]
+            scope_conditions = []
+            if agent_id is not None:
+                scope_conditions.append(
                     models.FieldCondition(
                         key="agent_id",
-                        match=models.MatchValue(value=agent_id)
-                    ),
-                    models.FieldCondition(
-                        key="embedding_profile_key",
-                        match=models.MatchValue(value=embedding_profile["profile_key"]),
+                        match=models.MatchValue(value=agent_id),
                     )
-                ]
-            )
+                )
+            if project_id is not None:
+                scope_conditions.append(
+                    models.FieldCondition(
+                        key="project_id",
+                        match=models.MatchValue(value=project_id),
+                    )
+                )
+            if scope_conditions:
+                must_conditions.append(
+                    models.Filter(
+                        should=scope_conditions,
+                        min_should=len(scope_conditions) - 1 if len(scope_conditions) > 1 else 1,
+                    )
+                )
+
+            search_filter = models.Filter(must=must_conditions)
 
             response = await q_client.query_points(
                 collection_name="agent_documents",
@@ -184,14 +209,12 @@ async def search_knowledge_base(
             )
 
             if not response.points:
-                legacy_filter = models.Filter(
-                    must=[
-                        models.FieldCondition(
-                            key="agent_id",
-                            match=models.MatchValue(value=agent_id)
-                        )
-                    ]
-                )
+                # Legacy fallback: old points may not have embedding_profile_key.
+                legacy_must = [
+                    cond for cond in must_conditions
+                    if isinstance(cond, models.FieldCondition) and getattr(cond, "key", None) != "embedding_profile_key"
+                ]
+                legacy_filter = models.Filter(must=legacy_must)
                 response = await q_client.query_points(
                     collection_name="agent_documents",
                     query=dense_vector,

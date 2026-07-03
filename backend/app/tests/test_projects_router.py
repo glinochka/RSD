@@ -131,13 +131,78 @@ async def test_get_project_documents(auth_client: AsyncClient, test_user):
     response = await auth_client.post("/api/projects", json=create_data)
     assert response.status_code == status.HTTP_201_CREATED
     project = response.json()
-    
+
     # List documents (empty initially)
     response = await auth_client.get(f"/api/projects/{project['id']}/documents")
     assert response.status_code == status.HTTP_200_OK
     data = response.json()
     assert isinstance(data, list)
     assert len(data) == 0
+
+
+@pytest.mark.asyncio
+async def test_upload_project_document(auth_client: AsyncClient, test_user, monkeypatch):
+    """Test uploading a file to project knowledge base."""
+    from io import BytesIO
+
+    create_data = {"name": "Upload Doc Test Project"}
+    response = await auth_client.post("/api/projects", json=create_data)
+    assert response.status_code == status.HTTP_201_CREATED
+    project = response.json()
+
+    # Avoid actual background processing/Qdrant calls in tests.
+    monkeypatch.setattr(
+        "app.router_projects.router.process_project_document",
+        lambda *args, **kwargs: None,
+    )
+
+    file_content = b"This is a test knowledge base document."
+    response = await auth_client.post(
+        f"/api/projects/{project['id']}/documents",
+        files={"file": ("test_doc.txt", BytesIO(file_content), "text/plain")},
+    )
+    assert response.status_code == status.HTTP_200_OK
+    data = response.json()
+    assert data["status"] == "limit_ok"
+
+    # Document should appear in the list
+    response = await auth_client.get(f"/api/projects/{project['id']}/documents")
+    assert response.status_code == status.HTTP_200_OK
+    docs = response.json()
+    assert len(docs) == 1
+    assert docs[0]["file_name"] == "test_doc.txt"
+
+
+@pytest.mark.asyncio
+async def test_upload_project_link(auth_client: AsyncClient, test_user, monkeypatch):
+    """Test adding a public link to project knowledge base."""
+    create_data = {"name": "Link Doc Test Project"}
+    response = await auth_client.post("/api/projects", json=create_data)
+    assert response.status_code == status.HTTP_201_CREATED
+    project = response.json()
+
+    monkeypatch.setattr(
+        "app.router_projects.router.fetch_public_url_text",
+        lambda url: "Sample text from a public URL.",
+    )
+    monkeypatch.setattr(
+        "app.router_projects.router.process_project_text_source",
+        lambda *args, **kwargs: None,
+    )
+
+    response = await auth_client.post(
+        f"/api/projects/{project['id']}/documents/link",
+        json={"url": "https://example.com/sample-doc.txt"},
+    )
+    assert response.status_code == status.HTTP_200_OK
+    data = response.json()
+    assert data["status"] == "limit_ok"
+
+    response = await auth_client.get(f"/api/projects/{project['id']}/documents")
+    assert response.status_code == status.HTTP_200_OK
+    docs = response.json()
+    assert len(docs) == 1
+    assert docs[0]["file_name"] == "https://example.com/sample-doc.txt"
 
 
 @pytest.mark.asyncio

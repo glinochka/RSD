@@ -159,6 +159,9 @@
 
 .dashboard-section-header {
   margin-bottom: var(--spacing-md);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .dashboard-section-title {
@@ -171,6 +174,10 @@
   gap: var(--spacing-sm);
 }
 
+.dashboard-section-title svg {
+  color: #8b5cf6;
+}
+
 .dashboard-section-badge {
   font-size: 0.75rem;
   font-weight: 500;
@@ -178,6 +185,25 @@
   background: #6b7280;
   padding: 2px 8px;
   border-radius: 999px;
+}
+
+.dashboard-checklist-close {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: #9ca3af;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.15s;
+}
+
+.dashboard-checklist-close:hover {
+  background: #fee2e2;
+  color: #991b1b;
 }
 
 /* Checklist */
@@ -363,6 +389,90 @@
   text-align: center;
   padding: var(--spacing-3xl);
   color: var(--color-text-secondary);
+}
+
+/* Charts */
+.dashboard-grid--wide {
+  grid-template-columns: 2fr 1fr;
+}
+
+.dashboard-charts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--spacing-lg);
+}
+
+.dashboard-chart {
+  background: #f9fafb;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: var(--spacing-md);
+}
+
+.dashboard-chart-title {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  margin: 0 0 var(--spacing-md) 0;
+  color: var(--color-text);
+}
+
+.dashboard-chart-svg {
+  width: 100%;
+  height: auto;
+}
+
+.dashboard-chart-label {
+  font-size: 0.625rem;
+  fill: #6b7280;
+}
+
+.dashboard-chart-bar {
+  transition: opacity 0.15s;
+}
+
+.dashboard-chart-bar:hover {
+  opacity: 0.8;
+}
+
+.dashboard-chart-legend {
+  display: flex;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-sm);
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+}
+
+.dashboard-chart-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.dashboard-chart-legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+/* AI Manager block */
+.dashboard-ai-manager {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.dashboard-ai-manager-text {
+  font-size: 0.9375rem;
+  color: var(--color-text-secondary);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.dashboard-ai-manager .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  width: fit-content;
 }
 
 /* Responsive */

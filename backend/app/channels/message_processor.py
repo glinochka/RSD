@@ -180,6 +180,7 @@ class MessageProcessor:
                 prompt=request.system_prompt or (resolved_agent.system_prompt or ""),
                 user_message=request.query,
                 knowledge_scope_id=resolved_agent.bot_id or resolved_agent.id,
+                knowledge_project_id=resolved_agent.project_id,
                 agent_id=resolved_agent.id,
                 user_external_id=normalized_user_external_id,
                 template_config=template_config,

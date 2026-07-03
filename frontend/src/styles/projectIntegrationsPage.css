@@ -1,0 +1,233 @@
+.project-integrations-page {
+  padding: var(--spacing-lg);
+}
+
+.project-integrations-page--loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 400px;
+  gap: var(--spacing-md);
+  color: var(--color-text-secondary);
+}
+
+.integrations-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-xl);
+  padding-bottom: var(--spacing-md);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.integrations-title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0 0 var(--spacing-xs) 0;
+}
+
+.integrations-subtitle {
+  font-size: 0.9375rem;
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+.integrations-form {
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: var(--spacing-lg);
+  margin-bottom: var(--spacing-xl);
+}
+
+.integrations-form-title {
+  font-size: 1.125rem;
+  font-weight: 600;
+  margin: 0 0 var(--spacing-md) 0;
+}
+
+.integrations-form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-md);
+}
+
+@media (max-width: 640px) {
+  .integrations-form-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.integrations-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  margin-bottom: var(--spacing-md);
+}
+
+.integrations-field span {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.integrations-field input,
+.integrations-field select,
+.integrations-field textarea {
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  font-size: 0.9375rem;
+  background: #fff;
+  color: var(--color-text);
+}
+
+.integrations-field textarea {
+  font-family: monospace;
+  resize: vertical;
+}
+
+.integrations-field--checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.integrations-field--checkbox input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+
+.integrations-form-actions {
+  display: flex;
+  gap: var(--spacing-sm);
+}
+
+.integrations-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.integrations-empty {
+  text-align: center;
+  padding: var(--spacing-3xl);
+  color: var(--color-text-secondary);
+  background: #f9fafb;
+  border: 1px dashed var(--color-border);
+  border-radius: 12px;
+}
+
+.integration-card {
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: var(--spacing-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.integration-card-main {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+}
+
+.integration-card-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  background: #eff6ff;
+  flex-shrink: 0;
+}
+
+.integration-card-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.integration-card-name {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.integration-card-type {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #6b7280;
+}
+
+.integration-card-status {
+  font-size: 0.75rem;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 999px;
+  width: fit-content;
+  margin-top: 2px;
+}
+
+.integration-card-status.active {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.integration-card-status.inactive {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.integration-card-webhook {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+  padding: var(--spacing-sm);
+  background: #f9fafb;
+  border-radius: 8px;
+  font-size: 0.875rem;
+}
+
+.integration-card-webhook code {
+  background: #fff;
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+  word-break: break-all;
+  flex: 1;
+  font-family: monospace;
+}
+
+.integration-card-actions {
+  display: flex;
+  gap: var(--spacing-sm);
+}
+
+.btn-danger {
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fecaca;
+}
+
+.btn-danger:hover {
+  background: #fecaca;
+}
+
+.btn-sm {
+  padding: 6px 12px;
+  font-size: 0.8125rem;
+}

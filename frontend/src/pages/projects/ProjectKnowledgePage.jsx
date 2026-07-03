@@ -132,8 +132,8 @@ const ProjectKnowledgePage = () => {
     if (!file) return;
 
     const validation = validateFile(file);
-    if (!validation.valid) {
-      showError(validation.error);
+    if (!validation.isValid) {
+      showError(validation.errors[0]);
       return;
     }
 

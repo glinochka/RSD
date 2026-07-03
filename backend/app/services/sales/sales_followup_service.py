@@ -137,6 +137,7 @@ async def compose_follow_up_message(
     runtime = TemplateRuntimeService()
     template_config = parse_agent_template_config(agent.template_config)
     knowledge_scope_id = int(agent.bot_id if agent.bot_id is not None else agent.id)
+    knowledge_project_id = agent.project_id
     system_prompt = str(agent.system_prompt or "").strip()
     tier_hint = FOLLOW_UP_TIER_HINTS.get(tier, FOLLOW_UP_TIER_HINTS["day"])
     user_message = (
@@ -157,6 +158,7 @@ async def compose_follow_up_message(
     context_list, _ = await runtime.retrieve_offer_context(
         user_message=user_message,
         knowledge_scope_id=knowledge_scope_id,
+        knowledge_project_id=knowledge_project_id,
         enable_smart_search=runtime._is_smart_search_enabled(template_config),
     )
     return await runtime.compose_dm(

@@ -298,6 +298,7 @@ async def process_phone_turn(
             prompt=prompt,
             user_message=transcript,
             knowledge_scope_id=agent.bot_id or agent.id,
+            knowledge_project_id=agent.project_id,
             agent_id=agent.id,
             user_external_id=caller_e164.strip(),
             template_config=template_config,

@@ -2064,6 +2064,7 @@ async def external_chat(
             )
 
     knowledge_scope_id = agent.bot_id if agent.bot_id is not None else agent.id
+    knowledge_project_id = agent.project_id
     template_config = _decode_template_config(
         agent.template_config,
         template_type=agent.template_type,
@@ -2103,6 +2104,7 @@ async def external_chat(
             prompt=agent.system_prompt or DEFAULT_AGENT_SYSTEM_PROMPT,
             user_message=message,
             knowledge_scope_id=knowledge_scope_id,
+            knowledge_project_id=knowledge_project_id,
             agent_id=agent.id,
             user_external_id=external_user_id,
             template_config=template_config,

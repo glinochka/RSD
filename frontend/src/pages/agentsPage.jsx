@@ -10,7 +10,6 @@ import Loading from '../components/Loading';
 import AgentsEmptyState from '../components/AgentsEmptyState';
 import AgentContractPaymentModal from '../components/AgentContractPaymentModal';
 import CreateChoiceModal from '../components/CreateChoiceModal';
-import { WebsiteBuilderWizard } from '../website-builder/components';
 import { useAsync } from '../hooks/useAsync';
 import agentService from '../services/agentService';
 import pricingService from '../services/pricingService';
@@ -823,7 +822,6 @@ const AgentsPageContent = () => {
   const [agentWebsite, setAgentWebsite] = useState(null);
   const [isWebsiteLoading, setIsWebsiteLoading] = useState(false);
   const [isWebsiteBuilding, setIsWebsiteBuilding] = useState(false);
-  const [isWebsiteWizardOpen, setIsWebsiteWizardOpen] = useState(false);
   const websiteGenerationPollRef = useRef(null);
   const detailsRequestIdRef = useRef(0);
   const [contractModalAgent, setContractModalAgent] = useState(null);
@@ -896,19 +894,6 @@ const AgentsPageContent = () => {
       document.body.style.overflow = previousOverflow;
     };
   }, [isChannelsModalOpen]);
-
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    const createType = String(searchParams.get('create') || '').trim().toLowerCase();
-    if (createType !== 'website') return;
-
-    setIsCreateChoiceModalOpen(false);
-    setIsWebsiteWizardOpen(true);
-
-    const next = new URLSearchParams(searchParams);
-    next.delete('create');
-    setSearchParams(next, { replace: true });
-  }, [isAuthenticated, searchParams, setSearchParams]);
 
   // Fetch websites and projects for the unified solutions list
   useEffect(() => {
@@ -1103,19 +1088,7 @@ const AgentsPageContent = () => {
 
   const handleStartWebsiteBuilder = () => {
     if (!selectedAgent || isWebsiteBuilding) return;
-    setIsWebsiteWizardOpen(true);
-  };
-
-  const handleWebsiteWizardClose = () => {
-    setIsWebsiteWizardOpen(false);
-  };
-
-  const handleWebsiteWizardSuccess = (websiteId) => {
-    setIsWebsiteWizardOpen(false);
-    setIsWebsiteBuilding(true);
-    showSuccess('Запустили сборку сайта. Обычно это занимает несколько минут.');
-    loadAgentWebsite(selectedAgent?.id);
-    startWebsiteGenerationPoll(websiteId);
+    navigate(`${NAVIGATION_ROUTES.WEBSITE_CREATE}?mode=ai&agent_id=${selectedAgent.id}`);
   };
 
   const handleOpenWebsiteConstructor = () => {
@@ -4312,13 +4285,6 @@ const AgentsPageContent = () => {
         onClose={closeContractPaymentModal}
         onSubmit={handleContractPaymentSubmit}
         isProcessing={isContractPaymentProcessing}
-      />
-
-      <WebsiteBuilderWizard
-        isOpen={isWebsiteWizardOpen}
-        onClose={handleWebsiteWizardClose}
-        agent={selectedAgent}
-        onSuccess={handleWebsiteWizardSuccess}
       />
 
       <CreateChoiceModal

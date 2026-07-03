@@ -257,6 +257,113 @@ const projectService = {
   },
 
   /**
+   * Send a message to the project AI Manager chat
+   */
+  async chatWithProjectAiManager(projectId, message, history = []) {
+    const response = await fetch(API_ROUTES.PROJECT_AI_MANAGER_CHAT(projectId), {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ message, history }),
+    });
+    return handleResponse(response);
+  },
+
+  /**
+   * Update checklist visibility (hide/show)
+   */
+  async updateProjectChecklistVisibility(projectId, checklistHidden) {
+    const response = await fetch(API_ROUTES.PROJECT_CHECKLIST_VISIBILITY(projectId), {
+      method: 'PATCH',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ checklist_hidden: checklistHidden }),
+    });
+    return handleResponse(response);
+  },
+
+  /**
+   * Get project websites list
+   */
+  async getProjectWebsites(projectId) {
+    const response = await fetch(API_ROUTES.PROJECT_WEBSITES(projectId), {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+    return handleResponse(response);
+  },
+
+  /**
+   * Create a project website (enforces max 3)
+   */
+  async createProjectWebsite(projectId, payload) {
+    const response = await fetch(API_ROUTES.PROJECT_CREATE_WEBSITE(projectId), {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+    return handleResponse(response);
+  },
+
+  /**
+   * Get project integrations
+   */
+  async getProjectIntegrations(projectId) {
+    const response = await fetch(API_ROUTES.PROJECT_INTEGRATIONS(projectId), {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+    return handleResponse(response);
+  },
+
+  /**
+   * Create project integration
+   */
+  async createProjectIntegration(projectId, payload) {
+    const response = await fetch(API_ROUTES.PROJECT_INTEGRATIONS(projectId), {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+    return handleResponse(response);
+  },
+
+  /**
+   * Update project integration
+   */
+  async updateProjectIntegration(projectId, integrationId, payload) {
+    const response = await fetch(API_ROUTES.PROJECT_INTEGRATION(projectId, integrationId), {
+      method: 'PATCH',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+    return handleResponse(response);
+  },
+
+  /**
+   * Delete project integration
+   */
+  async deleteProjectIntegration(projectId, integrationId) {
+    const response = await fetch(API_ROUTES.PROJECT_INTEGRATION(projectId, integrationId), {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    });
+    return handleResponse(response);
+  },
+
+  /**
+   * Rotate project integration webhook token
+   */
+  async rotateProjectIntegrationToken(projectId, integrationId) {
+    const response = await fetch(
+      API_ROUTES.PROJECT_INTEGRATION_ROTATE_TOKEN(projectId, integrationId),
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  /**
    * Get settings (for feature flags)
    */
   async getSettings() {

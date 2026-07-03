@@ -295,6 +295,7 @@ class TemplateRuntimeService:
         prompt: str,
         user_message: str,
         knowledge_scope_id: int,
+        knowledge_project_id: int | None = None,
         agent_id: int | None = None,
         user_external_id: str | None = None,
         template_config: dict[str, Any] | None = None,
@@ -322,6 +323,7 @@ class TemplateRuntimeService:
                 prompt=prompt,
                 user_message=user_message,
                 knowledge_scope_id=knowledge_scope_id,
+                knowledge_project_id=knowledge_project_id,
                 agent_id=agent_id,
                 user_external_id=user_external_id,
                 source_channel=source_channel,
@@ -339,6 +341,7 @@ class TemplateRuntimeService:
                 prompt=prompt,
                 user_message=user_message,
                 knowledge_scope_id=knowledge_scope_id,
+                knowledge_project_id=knowledge_project_id,
                 template_config=template_config or {},
                 source_channel=source_channel or "telegram",
                 user_external_id=user_external_id,
@@ -353,6 +356,7 @@ class TemplateRuntimeService:
                 prompt=prompt,
                 user_message=user_message,
                 knowledge_scope_id=knowledge_scope_id,
+                knowledge_project_id=knowledge_project_id,
                 agent_id=agent_id,
                 user_external_id=user_external_id,
                 source_channel=source_channel,
@@ -367,6 +371,7 @@ class TemplateRuntimeService:
                 prompt=prompt,
                 user_message=user_message,
                 knowledge_scope_id=knowledge_scope_id,
+                knowledge_project_id=knowledge_project_id,
                 agent_id=agent_id,
                 user_external_id=user_external_id,
                 source_channel=source_channel,
@@ -384,6 +389,7 @@ class TemplateRuntimeService:
                 prompt=prompt,
                 user_message=user_message,
                 knowledge_scope_id=knowledge_scope_id,
+                knowledge_project_id=knowledge_project_id,
                 agent_id=agent_id,
                 user_external_id=user_external_id,
                 source_channel=source_channel,
@@ -401,6 +407,7 @@ class TemplateRuntimeService:
             prompt=prompt,
             user_message=user_message,
             knowledge_scope_id=knowledge_scope_id,
+            knowledge_project_id=knowledge_project_id,
             agent_id=agent_id,
             user_external_id=user_external_id,
             source_channel=source_channel,
@@ -1503,6 +1510,7 @@ class TemplateRuntimeService:
         prompt: str,
         user_message: str,
         knowledge_scope_id: int,
+        knowledge_project_id: int | None = None,
         agent_id: int | None = None,
         user_external_id: str | None = None,
         source_channel: str | None = None,
@@ -1517,11 +1525,16 @@ class TemplateRuntimeService:
         chat_model = str(cfg.get("generation_model") or "").strip() or None
 
         if enable_smart_search:
-            context = await search_knowledge_base(user_message, agent_id=knowledge_scope_id)
+            context = await search_knowledge_base(
+                user_message,
+                agent_id=knowledge_scope_id,
+                project_id=knowledge_project_id,
+            )
         else:
             context = await search_knowledge_base(
                 user_message,
                 agent_id=knowledge_scope_id,
+                project_id=knowledge_project_id,
                 limit=6,
                 use_smart_search=False,
             )
@@ -1646,6 +1659,7 @@ class TemplateRuntimeService:
         prompt: str,
         user_message: str,
         knowledge_scope_id: int,
+        knowledge_project_id: int | None = None,
         agent_id: int | None = None,
         user_external_id: str | None = None,
         source_channel: str | None = None,
@@ -1659,6 +1673,7 @@ class TemplateRuntimeService:
                 prompt=prompt,
                 user_message=user_message,
                 knowledge_scope_id=knowledge_scope_id,
+                knowledge_project_id=knowledge_project_id,
                 agent_id=agent_id,
                 user_external_id=user_external_id,
                 source_channel=source_channel,
@@ -1724,6 +1739,7 @@ class TemplateRuntimeService:
         prompt: str,
         user_message: str,
         knowledge_scope_id: int,
+        knowledge_project_id: int | None = None,
         template_config: dict[str, Any],
         source_channel: str,
         user_external_id: str | None,
@@ -1733,6 +1749,7 @@ class TemplateRuntimeService:
         context_list, sources = await self.retrieve_offer_context(
             user_message=user_message,
             knowledge_scope_id=knowledge_scope_id,
+            knowledge_project_id=knowledge_project_id,
             enable_smart_search=self._is_smart_search_enabled(template_config),
         )
         raw_comment = await self._compose_neuro_channel_comment(
@@ -1767,6 +1784,7 @@ class TemplateRuntimeService:
         prompt: str,
         user_message: str,
         knowledge_scope_id: int,
+        knowledge_project_id: int | None = None,
         template_config: dict[str, Any],
         source_channel: str,
         user_external_id: str | None,
@@ -1814,6 +1832,7 @@ class TemplateRuntimeService:
                 prompt=prompt,
                 user_message=user_message,
                 knowledge_scope_id=knowledge_scope_id,
+                knowledge_project_id=knowledge_project_id,
                 template_config=template_config,
                 source_channel=source_channel,
                 user_external_id=user_external_id,
@@ -1915,6 +1934,7 @@ class TemplateRuntimeService:
         context_list, sources = await self.retrieve_offer_context(
             user_message=user_message,
             knowledge_scope_id=knowledge_scope_id,
+            knowledge_project_id=knowledge_project_id,
             enable_smart_search=self._is_smart_search_enabled(template_config),
         )
         if lead_initiated_private_dialog:
@@ -2068,6 +2088,7 @@ class TemplateRuntimeService:
                     prompt=prompt,
                     user_message=user_message,
                     knowledge_scope_id=knowledge_scope_id,
+                    knowledge_project_id=knowledge_project_id,
                     agent_id=agent_id,
                     user_external_id=user_external_id,
                     source_channel=source_channel,
@@ -2768,14 +2789,20 @@ class TemplateRuntimeService:
         *,
         user_message: str,
         knowledge_scope_id: int,
+        knowledge_project_id: int | None = None,
         enable_smart_search: bool = True,
     ) -> tuple[list[dict[str, Any]], list[str]]:
         if enable_smart_search:
-            context = await search_knowledge_base(user_message, agent_id=knowledge_scope_id)
+            context = await search_knowledge_base(
+                user_message,
+                agent_id=knowledge_scope_id,
+                project_id=knowledge_project_id,
+            )
         else:
             context = await search_knowledge_base(
                 user_message,
                 agent_id=knowledge_scope_id,
+                project_id=knowledge_project_id,
                 limit=6,
                 use_smart_search=False,
             )

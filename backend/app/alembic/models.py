@@ -1162,11 +1162,10 @@ class ProjectDocument(Base):
     project_id: Mapped[int] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
 
     file_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     embedding_profile_key: Mapped[str] = mapped_column(
         String(64),
         nullable=False,
@@ -1482,6 +1481,14 @@ class Project(Base):
         server_default="false",
     )
 
+    # Dashboard preferences
+    checklist_hidden: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=_utc_now_naive, index=True
@@ -1503,6 +1510,103 @@ class Project(Base):
     documents: Mapped[list["ProjectDocument"]] = relationship(
         back_populates="project",
         cascade="all, delete-orphan",
+    )
+    integrations: Mapped[list["ProjectIntegration"]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
+    external_events: Mapped[list["ProjectExternalEvent"]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Project Integrations — webhooks, external CRMs and business data
+# ---------------------------------------------------------------------------
+
+class ProjectIntegration(Base):
+    """External integration configured for a project (webhook, CRM, API)."""
+
+    __tablename__ = "project_integrations"
+    __table_args__ = (
+        Index("ix_project_integrations_type", "type"),
+        Index("ix_project_integrations_is_active", "is_active"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    type: Mapped[str] = mapped_column(String(32), nullable=False)
+    # Public config (URL, events, etc.) — no secrets.
+    config: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    # Encrypted JSON with credentials / tokens.
+    encrypted_credentials: Mapped[str] = mapped_column(Text, nullable=False)
+    # Secret random token used in webhook URLs.
+    webhook_token: Mapped[str] = mapped_column(
+        String(64), nullable=False, unique=True, index=True
+    )
+
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=_utc_now_naive, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=_utc_now_naive
+    )
+
+    project: Mapped["Project"] = relationship(back_populates="integrations")
+    external_events: Mapped[list["ProjectExternalEvent"]] = relationship(
+        back_populates="integration",
+        cascade="all, delete-orphan",
+    )
+
+
+class ProjectExternalEvent(Base):
+    """Raw event received from an external integration (webhook, CRM, etc.)."""
+
+    __tablename__ = "project_external_events"
+    __table_args__ = (
+        Index("ix_project_external_events_event_type", "event_type"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    integration_id: Mapped[int | None] = mapped_column(
+        ForeignKey("project_integrations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=_utc_now_naive
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=_utc_now_naive
+    )
+
+    project: Mapped["Project"] = relationship(back_populates="external_events")
+    integration: Mapped["ProjectIntegration | None"] = relationship(
+        back_populates="external_events"
     )
 
 

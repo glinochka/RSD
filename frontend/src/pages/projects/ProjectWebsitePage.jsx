@@ -1,14 +1,13 @@
 /**
  * Project Website Page
- * Website management dashboard for project
+ * Website management dashboard for project with card layout.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useNotification } from '../../context/useNotification';
 import { NAVIGATION_ROUTES } from '../../config/constants';
 import projectService from '../../services/projectService';
-import websiteService from '../../services/websiteService';
 import '../../styles/projectWebsitePage.css';
 
 // Icons
@@ -20,15 +19,16 @@ const GlobeIcon = () => (
   </svg>
 );
 
-const EditIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+const LayoutIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="3" y="3" width="18" height="18" rx="2" />
+    <path d="M3 9h18" />
+    <path d="M9 21V9" />
   </svg>
 );
 
 const ExternalLinkIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
     <polyline points="15 3 21 3 21 9" />
     <line x1="10" y1="14" x2="21" y2="3" />
@@ -36,7 +36,7 @@ const ExternalLinkIcon = () => (
 );
 
 const PlusIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <line x1="12" y1="5" x2="12" y2="19" />
     <line x1="5" y1="12" x2="19" y2="12" />
   </svg>
@@ -55,7 +55,6 @@ const SpinnerIcon = () => (
   </svg>
 );
 
-// Status helpers
 const getStatusLabel = (status) => {
   const labels = {
     draft: 'Черновик',
@@ -80,50 +79,61 @@ const ProjectWebsitePage = () => {
   const { projectId } = useParams();
   const { showError, showSuccess } = useNotification();
 
-  const [website, setWebsite] = useState(null);
+  const [websites, setWebsites] = useState([]);
+  const [canCreate, setCanCreate] = useState(false);
+  const [max, setMax] = useState(3);
   const [isLoading, setIsLoading] = useState(true);
   const [agents, setAgents] = useState([]);
+  const [selectedAgentId, setSelectedAgentId] = useState('');
+  const [isCreating, setIsCreating] = useState(false);
+  const [showCreateForm, setShowCreateForm] = useState(false);
 
-  useEffect(() => {
-    loadWebsite();
-    loadAgents();
-  }, [projectId]);
-
-  const loadWebsite = async () => {
+  const loadData = useCallback(async () => {
     try {
       setIsLoading(true);
-      const data = await projectService.getProjectWebsite(projectId);
-      setWebsite(data);
+      const [websitesData, agentsData] = await Promise.all([
+        projectService.getProjectWebsites(projectId).catch(() => ({ items: [], can_create: false, max: 3 })),
+        projectService.getProjectAgents(projectId).catch(() => []),
+      ]);
+      setWebsites(websitesData.items || []);
+      setCanCreate(websitesData.can_create !== false);
+      setMax(websitesData.max || 3);
+      setAgents(agentsData || []);
+      if (agentsData?.length > 0) {
+        setSelectedAgentId(agentsData[0].id);
+      }
     } catch (error) {
-      console.error('Failed to load website:', error);
-      // No website is OK - show "create" CTA
-      setWebsite(null);
+      console.error('Failed to load websites:', error);
+      showError('Не удалось загрузить сайты');
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [projectId, showError]);
 
-  const loadAgents = async () => {
-    try {
-      const data = await projectService.getProjectAgents(projectId);
-      setAgents(data || []);
-    } catch (error) {
-      console.error('Failed to load agents:', error);
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const handleCreate = async (e) => {
+    e.preventDefault();
+    if (!selectedAgentId) {
+      showError('Выберите агента для сайта');
+      return;
     }
-  };
-
-  const handleCreateWebsite = async (agentId) => {
     try {
-      const newWebsite = await websiteService.create({
-        agent_id: agentId,
-        project_id: projectId,
+      setIsCreating(true);
+      await projectService.createProjectWebsite(projectId, {
+        agent_id: Number(selectedAgentId),
         title: 'Новый сайт',
       });
       showSuccess('Сайт создан и генерируется');
-      setWebsite(newWebsite);
+      setShowCreateForm(false);
+      loadData();
     } catch (error) {
       console.error('Failed to create website:', error);
-      showError('Не удалось создать сайт');
+      showError(error.message || 'Не удалось создать сайт');
+    } finally {
+      setIsCreating(false);
     }
   };
 
@@ -138,147 +148,146 @@ const ProjectWebsitePage = () => {
     );
   }
 
-  // No website - show create CTA
-  if (!website) {
-    return (
-      <div className="project-website-page">
-        <div className="website-header">
-          <div>
-            <h2 className="website-title">Сайт проекта</h2>
-            <p className="website-subtitle">Создайте сайт для вашего бизнеса</p>
-          </div>
-        </div>
-
-        <div className="website-empty">
-          <div className="website-empty-icon">
-            <GlobeIcon />
-          </div>
-          <h3 className="website-empty-title">Сайт еще не создан</h3>
-          <p className="website-empty-description">
-            Создайте сайт и свяжите его с одним из агентов проекта
-          </p>
-
-          {agents.length > 0 ? (
-            <div className="website-agent-select">
-              <h4>Выберите агента для сайта:</h4>
-              <div className="website-agent-list">
-                {agents.map((agent) => (
-                  <button
-                    key={agent.id}
-                    type="button"
-                    className="website-agent-option"
-                    onClick={() => handleCreateWebsite(agent.id)}
-                  >
-                    <span className="website-agent-name">
-                      {agent.bot_username || `Агент #${agent.id}`}
-                    </span>
-                    <span className="website-agent-type">
-                      {agent.template_type}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="website-no-agents">
-              <p>Сначала создайте агента для проекта</p>
-              <Link to={NAVIGATION_ROUTES.PROJECT_AGENTS(projectId)} className="btn btn-black">
-                Перейти к агентам
-              </Link>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // Website exists - show status and actions
   return (
     <div className="project-website-page">
       <div className="website-header">
         <div>
-          <h2 className="website-title">{website.title || 'Сайт проекта'}</h2>
+          <h2 className="website-title">Сайты</h2>
           <p className="website-subtitle">
-            Статус: <span className={`website-status-badge website-status--${website.status}`}>
-              {getStatusLabel(website.status)}
-            </span>
-            {website.generation_status && website.generation_status !== 'idle' && (
-              <span className={`website-gen-status website-gen-status--${website.generation_status}`}>
-                {getGenerationStatusLabel(website.generation_status)}
-              </span>
-            )}
+            {websites.length} из {max} лендингов
           </p>
-        </div>
-        <div className="website-actions">
-          <Link
-            to={NAVIGATION_ROUTES.WEBSITE_EDITOR(website.id)}
-            className="btn btn-black"
-          >
-            <EditIcon />
-            Редактировать
-          </Link>
-          {website.status === 'published' && website.slug && (
-            <a
-              href={`/w/${website.slug}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn btn-outline"
-            >
-              <ExternalLinkIcon />
-              Открыть сайт
-            </a>
-          )}
         </div>
       </div>
 
-      <div className="website-info-grid">
-        <div className="website-info-card">
-          <h4>URL сайта</h4>
-          {website.slug ? (
-            <div className="website-url">
-              <code>/w/{website.slug}</code>
-              <a
-                href={`/w/${website.slug}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="website-url-link"
-              >
-                <ExternalLinkIcon />
-              </a>
+      <div className="website-cards-grid">
+        {websites.map((website) => (
+          <div key={website.id} className="website-card">
+            <div className="website-card-preview">
+              <div className="website-card-icon">
+                <GlobeIcon />
+              </div>
+              <div className="website-card-info">
+                <h3 className="website-card-title">{website.title || 'Сайт проекта'}</h3>
+                <span className={`website-card-status website-card-status--${website.status}`}>
+                  {getStatusLabel(website.status)}
+                </span>
+                {website.generation_status && website.generation_status !== 'idle' && (
+                  <span className={`website-card-gen-status website-card-gen-status--${website.generation_status}`}>
+                    {website.generation_status === 'generating' && <SpinnerIcon />}
+                    {getGenerationStatusLabel(website.generation_status)}
+                  </span>
+                )}
+              </div>
             </div>
-          ) : (
-            <p className="website-url-not-set">URL не назначен</p>
-          )}
-        </div>
 
-        <div className="website-info-card">
-          <h4>Генерация</h4>
-          <p className={`website-gen-status website-gen-status--${website.generation_status || 'idle'}`}>
-            {website.generation_status === 'generating' && <SpinnerIcon />}
-            {getGenerationStatusLabel(website.generation_status || 'idle')}
-          </p>
-        </div>
+            <div className="website-card-meta">
+              {website.url ? (
+                <code className="website-card-url">{website.url}</code>
+              ) : (
+                <span className="website-card-url-not-set">URL не назначен</span>
+              )}
+            </div>
 
-        <div className="website-info-card">
-          <h4>Связанный агент</h4>
-          <p className="website-agent-link">
-            {website.agent_id ? (
-              <Link to={NAVIGATION_ROUTES.EDIT_AGENT(website.agent_id)}>
-                Агент #{website.agent_id}
+            <div className="website-card-actions">
+              <Link
+                to={NAVIGATION_ROUTES.WEBSITE_EDITOR(website.id)}
+                className="website-card-btn website-card-btn--primary"
+                title="Конструктор"
+              >
+                <LayoutIcon />
+                <span>Конструктор</span>
               </Link>
-            ) : (
-              'Не назначен'
-            )}
-          </p>
-        </div>
+              {website.url ? (
+                <a
+                  href={website.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="website-card-btn"
+                  title="Открыть сайт"
+                >
+                  <ExternalLinkIcon />
+                  <span>Перейти</span>
+                </a>
+              ) : (
+                <button type="button" className="website-card-btn" disabled>
+                  <ExternalLinkIcon />
+                  <span>Перейти</span>
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
 
-        <div className="website-info-card">
-          <h4>Создан</h4>
-          <p className="website-date">
-            {new Date(website.created_at).toLocaleDateString('ru-RU')}
+        {/* New Site Card */}
+        {canCreate && (
+          <div className={`website-card website-card--new ${showCreateForm ? 'website-card--new-active' : ''}`}>
+            {!showCreateForm ? (
+              <button
+                type="button"
+                className="website-new-card-inner"
+                onClick={() => setShowCreateForm(true)}
+              >
+                <div className="website-new-card-icon">
+                  <PlusIcon />
+                </div>
+                <span className="website-new-card-label">Новый сайт</span>
+              </button>
+            ) : (
+              <form className="website-create-form" onSubmit={handleCreate}>
+                <h3 className="website-create-form-title">Создать новый сайт</h3>
+                {agents.length > 0 ? (
+                  <label className="website-create-field">
+                    <span>Агент для сайта</span>
+                    <select
+                      value={selectedAgentId}
+                      onChange={(e) => setSelectedAgentId(e.target.value)}
+                      required
+                    >
+                      {agents.map((agent) => (
+                        <option key={agent.id} value={agent.id}>
+                          {agent.bot_username || `Агент #${agent.id}`} ({agent.template_type})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : (
+                  <p className="website-create-hint">
+                    Сначала создайте агента в разделе «Агенты».
+                  </p>
+                )}
+                <div className="website-create-form-actions">
+                  <button
+                    type="submit"
+                    className="btn btn-black"
+                    disabled={isCreating || agents.length === 0}
+                  >
+                    {isCreating ? 'Создание...' : 'Создать сайт'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-outline"
+                    onClick={() => setShowCreateForm(false)}
+                  >
+                    Отмена
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        )}
+      </div>
+
+      {websites.length === 0 && !canCreate && (
+        <div className="website-empty">
+          <div className="website-empty-icon">
+            <GlobeIcon />
+          </div>
+          <h3 className="website-empty-title">Сайтов еще нет</h3>
+          <p className="website-empty-description">
+            Для проекта достигнут лимит сайтов. Удалите существующий, чтобы создать новый.
           </p>
         </div>
-      </div>
+      )}
     </div>
   );
 };

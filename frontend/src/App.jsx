@@ -41,9 +41,10 @@ import ProjectSettingsPage from './pages/projects/ProjectSettingsPage';
 import ProjectCreatePage from './pages/projects/ProjectCreatePage';
 import ProjectContentPage from './pages/projects/ProjectContentPage';
 import ProjectManagerPage from './pages/projects/ProjectManagerPage';
+import ProjectIntegrationsPage from './pages/projects/ProjectIntegrationsPage';
 
 // Website Builder Pages
-import { PreviewPage, WebsitePublicPage, ConstructorPage } from './website-builder/pages';
+import { PreviewPage, WebsitePublicPage, ConstructorPage, WebsiteCreatePage } from './website-builder/pages';
 const App = () => {
   return (
     <ErrorBoundary>
@@ -118,6 +119,10 @@ const App = () => {
                   path={`${NAVIGATION_ROUTES.PROJECT_MANAGER(':projectId')}`}
                   element={<ProjectLayout><ProjectManagerPage /></ProjectLayout>}
                 />
+                <Route
+                  path={`${NAVIGATION_ROUTES.PROJECT_INTEGRATIONS(':projectId')}`}
+                  element={<ProjectLayout><ProjectIntegrationsPage /></ProjectLayout>}
+                />
                 {/* Project Create - Stage 5 */}
                 <Route
                   path={`${NAVIGATION_ROUTES.PROJECT_CREATE}`}
@@ -127,6 +132,7 @@ const App = () => {
                 {/* Website Builder Routes */}
                 <Route path="/preview/:websiteId" element={<PreviewPage />} />
                 <Route path="/websites/:websiteId/edit" element={<ConstructorPage />} />
+                <Route path="/websites/create" element={<WebsiteCreatePage />} />
                 <Route path="/w/:slug" element={<WebsitePublicPage />} />
 
                 {/* Catch-all - redirect to home */}

@@ -7,6 +7,11 @@ export const websiteService = {
     return response.data;
   },
 
+  create: async (payload) => {
+    const response = await apiClient.post(API_ROUTES.WEBSITE_CREATE, payload);
+    return response.data;
+  },
+
   createAndGenerate: async (payload) => {
     const response = await apiClient.post(API_ROUTES.WEBSITE_GENERATE_CREATE, payload);
     return response.data;

@@ -206,7 +206,11 @@ async def get_context(
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
 
     vector_namespace_id = agent.bot_id if agent.bot_id is not None else agent.id
-    context = await search_knowledge_base(query, agent_id=vector_namespace_id)
+    context = await search_knowledge_base(
+        query,
+        agent_id=vector_namespace_id,
+        project_id=agent.project_id,
+    )
     return JSONResponse(content=context, status_code=status.HTTP_200_OK)
 
 
@@ -329,6 +333,7 @@ async def upload_document(
                 document_id=existing_doc.id,
                 content_hash=content_hash,
                 source_name=file.filename,
+                project_id=agent.project_id,
             )
             data = {
                 "status": "reprocessing",
@@ -417,6 +422,7 @@ async def upload_document(
             document_id=doc.id,
             content_hash=content_hash,
             source_name=file.filename,
+            project_id=agent.project_id,
         )
         data = {
             "status": "limit_ok",
@@ -562,6 +568,7 @@ async def upload_public_link(
         agent_id=vector_namespace_id,
         document_id=doc.id,
         content_hash=content_hash,
+        project_id=agent.project_id,
     )
     data = {
         "status": "limit_ok",

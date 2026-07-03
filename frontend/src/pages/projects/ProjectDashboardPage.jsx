@@ -1,6 +1,6 @@
 /**
  * Project Dashboard Page
- * Main dashboard for project overview with widgets and onboarding checklist
+ * Main dashboard for project overview with widgets, charts and onboarding checklist.
  */
 
 import React, { useEffect, useState } from 'react';
@@ -75,16 +75,82 @@ const FileIcon = () => (
   </svg>
 );
 
-const EditIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+const SparklesIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z" />
   </svg>
 );
 
+const CloseIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="18" y1="6" x2="6" y2="18" />
+    <line x1="6" y1="6" x2="18" y2="18" />
+  </svg>
+);
+
+const BarChart = ({ title, labels, datasets }) => {
+  const maxValue = Math.max(
+    1,
+    ...datasets.flatMap((ds) => ds.data),
+  );
+  const barWidth = 10;
+  const gap = 4;
+  const chartHeight = 120;
+  const chartWidth = labels.length * (barWidth + gap) * datasets.length + labels.length * gap + 20;
+
+  return (
+    <div className="dashboard-chart">
+      <h3 className="dashboard-chart-title">{title}</h3>
+      <svg viewBox={`0 0 ${chartWidth} ${chartHeight + 30}`} className="dashboard-chart-svg">
+        {labels.map((label, index) => {
+          const groupX = index * (datasets.length * (barWidth + gap) + gap) + gap;
+          return (
+            <g key={label}>
+              {datasets.map((ds, dsIndex) => {
+                const value = ds.data[index] || 0;
+                const barHeight = (value / maxValue) * chartHeight;
+                const x = groupX + dsIndex * (barWidth + gap);
+                const y = chartHeight - barHeight;
+                return (
+                  <rect
+                    key={ds.key}
+                    x={x}
+                    y={y}
+                    width={barWidth}
+                    height={barHeight}
+                    rx="2"
+                    fill={ds.color}
+                    className="dashboard-chart-bar"
+                  />
+                );
+              })}
+              <text
+                x={groupX + (datasets.length * barWidth) / 2}
+                y={chartHeight + 16}
+                textAnchor="middle"
+                className="dashboard-chart-label"
+              >
+                {label}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+      <div className="dashboard-chart-legend">
+        {datasets.map((ds) => (
+          <span key={ds.key} className="dashboard-chart-legend-item">
+            <span className="dashboard-chart-legend-dot" style={{ background: ds.color }} />
+            {ds.label}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 const ProjectDashboardPage = () => {
   const { projectId } = useParams();
-  const { showError } = useNotification();
+  const { showError, showSuccess } = useNotification();
 
   const [data, setData] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -105,6 +171,17 @@ const ProjectDashboardPage = () => {
 
     fetchDashboard();
   }, [projectId, showError]);
+
+  const hideChecklist = async () => {
+    try {
+      await projectService.updateProjectChecklistVisibility(projectId, true);
+      setData((prev) => (prev ? { ...prev, checklist_hidden: true } : prev));
+      showSuccess('Чеклист скрыт. Вы можете вернуть его в настройках.');
+    } catch (error) {
+      console.error('Failed to hide checklist:', error);
+      showError('Не удалось скрыть чеклист');
+    }
+  };
 
   if (isLoading) {
     return (
@@ -127,7 +204,15 @@ const ProjectDashboardPage = () => {
     );
   }
 
-  const { project, summary, onboarding_checklist, quick_actions } = data;
+  const {
+    project,
+    summary,
+    onboarding_checklist,
+    checklist_hidden,
+    quick_actions,
+    charts,
+    ai_manager,
+  } = data;
   const completedTasks = onboarding_checklist.filter((t) => t.completed).length;
   const totalTasks = onboarding_checklist.length;
 
@@ -194,43 +279,53 @@ const ProjectDashboardPage = () => {
 
       <div className="dashboard-grid">
         {/* Onboarding Checklist */}
-        <div className="dashboard-section dashboard-section--checklist">
-          <div className="dashboard-section-header">
-            <h2 className="dashboard-section-title">
-              Чеклист запуска
-              <span className="dashboard-section-badge">
-                {completedTasks}/{totalTasks}
-              </span>
-            </h2>
-          </div>
-
-          <div className="dashboard-checklist">
-            {onboarding_checklist.map((item) => (
-              <div
-                key={item.id}
-                className={`dashboard-checklist-item ${item.completed ? 'dashboard-checklist-item--completed' : ''}`}
+        {!checklist_hidden && (
+          <div className="dashboard-section dashboard-section--checklist">
+            <div className="dashboard-section-header">
+              <h2 className="dashboard-section-title">
+                Чеклист запуска
+                <span className="dashboard-section-badge">
+                  {completedTasks}/{totalTasks}
+                </span>
+              </h2>
+              <button
+                type="button"
+                className="dashboard-checklist-close"
+                onClick={hideChecklist}
+                title="Скрыть чеклист навсегда"
               >
-                <div className="dashboard-checklist-icon">
-                  {item.completed ? <CheckIcon /> : <CircleIcon />}
-                </div>
-                <span className="dashboard-checklist-label">{item.label}</span>
-                {!item.completed && item.action_url && (
-                  <Link to={item.action_url} className="dashboard-checklist-action">
-                    Выполнить
-                    <ArrowRightIcon />
-                  </Link>
-                )}
-              </div>
-            ))}
-          </div>
-
-          {completedTasks === totalTasks && (
-            <div className="dashboard-checklist-complete">
-              <CheckIcon />
-              <span>Все задачи выполнены! Проект готов к работе.</span>
+                <CloseIcon />
+              </button>
             </div>
-          )}
-        </div>
+
+            <div className="dashboard-checklist">
+              {onboarding_checklist.map((item) => (
+                <div
+                  key={item.id}
+                  className={`dashboard-checklist-item ${item.completed ? 'dashboard-checklist-item--completed' : ''}`}
+                >
+                  <div className="dashboard-checklist-icon">
+                    {item.completed ? <CheckIcon /> : <CircleIcon />}
+                  </div>
+                  <span className="dashboard-checklist-label">{item.label}</span>
+                  {!item.completed && item.action_url && (
+                    <Link to={item.action_url} className="dashboard-checklist-action">
+                      Выполнить
+                      <ArrowRightIcon />
+                    </Link>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {completedTasks === totalTasks && (
+              <div className="dashboard-checklist-complete">
+                <CheckIcon />
+                <span>Все задачи выполнены! Проект готов к работе.</span>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Quick Actions */}
         <div className="dashboard-section dashboard-section--actions">
@@ -254,36 +349,78 @@ const ProjectDashboardPage = () => {
                 <ArrowRightIcon />
               </Link>
             ))}
+          </div>
+        </div>
+      </div>
 
-            {/* Add Agent Action */}
-            <Link
-              to={NAVIGATION_ROUTES.PROJECT_AGENTS(projectId)}
-              className="dashboard-action-card dashboard-action-card--add"
-            >
-              <div className="dashboard-action-icon">
-                <PlusIcon />
-              </div>
-              <span className="dashboard-action-label">Добавить агента</span>
-              <ArrowRightIcon />
-            </Link>
+      {/* Charts & AI Manager */}
+      <div className="dashboard-grid dashboard-grid--wide">
+        <div className="dashboard-section dashboard-section--charts">
+          <div className="dashboard-section-header">
+            <h2 className="dashboard-section-title">Рост и эффективность</h2>
+          </div>
+          <div className="dashboard-charts-grid">
+            {charts?.growth && (
+              <BarChart
+                title="Активность за 7 дней"
+                labels={charts.growth.labels}
+                datasets={[
+                  {
+                    key: 'messages',
+                    label: 'Диалоги',
+                    color: '#3b82f6',
+                    data: charts.growth.messages,
+                  },
+                  {
+                    key: 'leads',
+                    label: 'Лиды',
+                    color: '#10b981',
+                    data: charts.growth.leads,
+                  },
+                ]}
+              />
+            )}
+            {charts?.efficiency && (
+              <BarChart
+                title="Эффективность проекта"
+                labels={charts.efficiency.labels}
+                datasets={[
+                  {
+                    key: 'values',
+                    label: 'Количество',
+                    color: '#8b5cf6',
+                    data: charts.efficiency.values,
+                  },
+                ]}
+              />
+            )}
+          </div>
+        </div>
 
-            {/* Upload Knowledge Action */}
+        <div className="dashboard-section dashboard-section--ai-manager">
+          <div className="dashboard-section-header">
+            <h2 className="dashboard-section-title">
+              <SparklesIcon />
+              ИИ-менеджер
+            </h2>
+          </div>
+          <div className="dashboard-ai-manager">
+            <p className="dashboard-ai-manager-text">
+              {ai_manager?.hint || 'Задайте вопрос ИИ-менеджеру проекта: сколько лидов сегодня, какой совет по росту, что происходит с проектом.'}
+            </p>
             <Link
-              to={NAVIGATION_ROUTES.PROJECT_KNOWLEDGE(projectId)}
-              className="dashboard-action-card dashboard-action-card--add"
+              to={NAVIGATION_ROUTES.PROJECT_MANAGER(projectId)}
+              className="btn btn-black"
             >
-              <div className="dashboard-action-icon">
-                <FileIcon />
-              </div>
-              <span className="dashboard-action-label">Загрузить документ</span>
-              <ArrowRightIcon />
+              <SparklesIcon />
+              Открыть чат
             </Link>
           </div>
         </div>
       </div>
 
       {/* Website Status Card */}
-      {summary.website_status && (
+      {summary.website_url && (
         <div className="dashboard-website-card">
           <div className="dashboard-website-info">
             <GlobeIcon />
@@ -296,16 +433,14 @@ const ProjectDashboardPage = () => {
               </p>
             </div>
           </div>
-          {summary.website_url && (
-            <a
-              href={summary.website_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn btn-outline"
-            >
-              Открыть сайт
-            </a>
-          )}
+          <a
+            href={summary.website_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn btn-outline"
+          >
+            Открыть сайт
+          </a>
         </div>
       )}
     </div>

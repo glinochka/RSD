@@ -92,7 +92,7 @@
 
 .create-choice-option {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 16px;
   padding: 20px;
   background: #fafafa;

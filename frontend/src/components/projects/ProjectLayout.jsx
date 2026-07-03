@@ -89,16 +89,26 @@ const MenuIcon = () => (
   </svg>
 );
 
+const PlugIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 22v-5" />
+    <path d="M15 8V2" />
+    <path d="M9 8V2" />
+    <path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z" />
+  </svg>
+);
+
 // Navigation items
 const getNavItems = (projectId) => [
   { id: 'dashboard', label: 'Дашборд', icon: DashboardIcon, path: NAVIGATION_ROUTES.PROJECT_DETAIL(projectId) },
   { id: 'agents', label: 'Агенты', icon: BotIcon, path: NAVIGATION_ROUTES.PROJECT_AGENTS(projectId) },
   { id: 'knowledge', label: 'База знаний', icon: BookOpenIcon, path: NAVIGATION_ROUTES.PROJECT_KNOWLEDGE(projectId) },
   { id: 'crm', label: 'CRM', icon: UsersIcon, path: NAVIGATION_ROUTES.PROJECT_CRM(projectId) },
-  { id: 'website', label: 'Сайт', icon: GlobeIcon, path: NAVIGATION_ROUTES.PROJECT_WEBSITE(projectId) },
+  { id: 'website', label: 'Сайты', icon: GlobeIcon, path: NAVIGATION_ROUTES.PROJECT_WEBSITE(projectId) },
   { id: 'content', label: 'Контент', icon: VideoIcon, path: NAVIGATION_ROUTES.PROJECT_CONTENT(projectId), hidden: true },
-  { id: 'manager', label: 'ИИ-менеджер', icon: PhoneIcon, path: NAVIGATION_ROUTES.PROJECT_MANAGER(projectId), hidden: true },
+  { id: 'manager', label: 'ИИ-менеджер', icon: PhoneIcon, path: NAVIGATION_ROUTES.PROJECT_MANAGER(projectId) },
   { id: 'settings', label: 'Настройки', icon: SettingsIcon, path: NAVIGATION_ROUTES.PROJECT_SETTINGS(projectId) },
+  { id: 'integrations', label: 'Интеграции', icon: PlugIcon, path: NAVIGATION_ROUTES.PROJECT_INTEGRATIONS(projectId) },
 ];
 
 const ProjectLayout = ({ children }) => {
@@ -115,7 +125,6 @@ const ProjectLayout = ({ children }) => {
 
   // Check which agent types are present
   const hasContentFactory = agents.some(a => a.template_type === 'content_factory');
-  const hasAiManager = agents.some(a => a.template_type === 'ai_manager');
 
   // Redirect if not authenticated
   useEffect(() => {
@@ -126,7 +135,9 @@ const ProjectLayout = ({ children }) => {
 
   // Fetch project and agents
   useEffect(() => {
-    if (!isAuthenticated || !projectId) return;
+    if (!isAuthenticated || !projectId) {
+      return;
+    }
 
     const fetchProject = async () => {
       try {
@@ -165,8 +176,9 @@ const ProjectLayout = ({ children }) => {
 
   // Dynamic nav items based on agent presence
   const navItems = getNavItems(projectId).filter(item => {
-    if (item.id === 'content' && !hasContentFactory) return false;
-    if (item.id === 'manager' && !hasAiManager) return false;
+    if (item.id === 'content' && !hasContentFactory) {
+      return false;
+    }
     return !item.hidden;
   });
 
