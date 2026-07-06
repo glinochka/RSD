@@ -83,25 +83,18 @@ const ProjectWebsitePage = () => {
   const [canCreate, setCanCreate] = useState(false);
   const [max, setMax] = useState(3);
   const [isLoading, setIsLoading] = useState(true);
-  const [agents, setAgents] = useState([]);
-  const [selectedAgentId, setSelectedAgentId] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [showCreateForm, setShowCreateForm] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
       setIsLoading(true);
-      const [websitesData, agentsData] = await Promise.all([
-        projectService.getProjectWebsites(projectId).catch(() => ({ items: [], can_create: false, max: 3 })),
-        projectService.getProjectAgents(projectId).catch(() => []),
-      ]);
+      const websitesData = await projectService
+        .getProjectWebsites(projectId)
+        .catch(() => ({ items: [], can_create: false, max: 3 }));
       setWebsites(websitesData.items || []);
       setCanCreate(websitesData.can_create !== false);
       setMax(websitesData.max || 3);
-      setAgents(agentsData || []);
-      if (agentsData?.length > 0) {
-        setSelectedAgentId(agentsData[0].id);
-      }
     } catch (error) {
       console.error('Failed to load websites:', error);
       showError('Не удалось загрузить сайты');
@@ -116,14 +109,9 @@ const ProjectWebsitePage = () => {
 
   const handleCreate = async (e) => {
     e.preventDefault();
-    if (!selectedAgentId) {
-      showError('Выберите агента для сайта');
-      return;
-    }
     try {
       setIsCreating(true);
       await projectService.createProjectWebsite(projectId, {
-        agent_id: Number(selectedAgentId),
         title: 'Новый сайт',
       });
       showSuccess('Сайт создан и генерируется');
@@ -235,31 +223,14 @@ const ProjectWebsitePage = () => {
             ) : (
               <form className="website-create-form" onSubmit={handleCreate}>
                 <h3 className="website-create-form-title">Создать новый сайт</h3>
-                {agents.length > 0 ? (
-                  <label className="website-create-field">
-                    <span>Агент для сайта</span>
-                    <select
-                      value={selectedAgentId}
-                      onChange={(e) => setSelectedAgentId(e.target.value)}
-                      required
-                    >
-                      {agents.map((agent) => (
-                        <option key={agent.id} value={agent.id}>
-                          {agent.bot_username || `Агент #${agent.id}`} ({agent.template_type})
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                ) : (
-                  <p className="website-create-hint">
-                    Сначала создайте агента в разделе «Агенты».
-                  </p>
-                )}
+                <p className="website-create-hint">
+                  Будет создан пустой лендинг, который можно настроить в конструкторе.
+                </p>
                 <div className="website-create-form-actions">
                   <button
                     type="submit"
                     className="btn btn-black"
-                    disabled={isCreating || agents.length === 0}
+                    disabled={isCreating}
                   >
                     {isCreating ? 'Создание...' : 'Создать сайт'}
                   </button>

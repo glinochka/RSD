@@ -46,7 +46,6 @@ from .schemas import (
     ProjectIntegrationUpdate,
     ProjectIntegrationResponse,
     ProjectIntegrationListResponse,
-    ProjectExternalEventResponse,
 )
 from ..dao.project_dao import ProjectDAO
 from ..dao.project_document_dao import ProjectDocumentDAO
@@ -54,7 +53,7 @@ from ..dao.project_integration_dao import ProjectIntegrationDAO
 from ..services.project_integration_service import (
     validate_integration_type,
     encrypt_credentials,
-    decrypt_credentials,
+    credentials_from_request,
     generate_webhook_token,
     serialize_integration,
 )
@@ -66,8 +65,6 @@ from ..alembic.models import (
     Website,
     ProjectDocument,
     AgentContentJob,
-    ProjectIntegration,
-    ProjectExternalEvent,
     AgentSalesContact,
     AdminAppointment,
     AgentAnalyticsMessage,

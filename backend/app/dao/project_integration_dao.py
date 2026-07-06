@@ -1,6 +1,6 @@
 """Data Access Object for Project Integration entities."""
 from typing import Optional
-from sqlalchemy import select, and_
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.alembic.models import ProjectIntegration, ProjectExternalEvent

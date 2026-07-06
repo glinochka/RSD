@@ -88,60 +88,79 @@ const CloseIcon = () => (
   </svg>
 );
 
-const BarChart = ({ title, labels, datasets }) => {
-  const maxValue = Math.max(
-    1,
-    ...datasets.flatMap((ds) => ds.data),
-  );
-  const barWidth = 10;
-  const gap = 4;
-  const chartHeight = 120;
-  const chartWidth = labels.length * (barWidth + gap) * datasets.length + labels.length * gap + 20;
+const ActivityChart = ({ title, labels, messages, leads }) => {
+  const maxValue = Math.max(1, ...messages, ...leads);
 
   return (
     <div className="dashboard-chart">
       <h3 className="dashboard-chart-title">{title}</h3>
-      <svg viewBox={`0 0 ${chartWidth} ${chartHeight + 30}`} className="dashboard-chart-svg">
-        {labels.map((label, index) => {
-          const groupX = index * (datasets.length * (barWidth + gap) + gap) + gap;
-          return (
-            <g key={label}>
-              {datasets.map((ds, dsIndex) => {
-                const value = ds.data[index] || 0;
-                const barHeight = (value / maxValue) * chartHeight;
-                const x = groupX + dsIndex * (barWidth + gap);
-                const y = chartHeight - barHeight;
-                return (
-                  <rect
-                    key={ds.key}
-                    x={x}
-                    y={y}
-                    width={barWidth}
-                    height={barHeight}
-                    rx="2"
-                    fill={ds.color}
-                    className="dashboard-chart-bar"
+      <div className="dashboard-hchart">
+        {labels.map((label, index) => (
+          <div key={label} className="dashboard-hchart-row">
+            <span className="dashboard-hchart-label">{label}</span>
+            <div className="dashboard-hchart-bars">
+              <div className="dashboard-hchart-bar-track" title={`Диалоги: ${messages[index]}`}>
+                <div className="dashboard-hchart-bar-fill">
+                  <div
+                    className="dashboard-hchart-bar dashboard-hchart-bar--messages"
+                    style={{ width: `${(messages[index] / maxValue) * 100}%` }}
                   />
-                );
-              })}
-              <text
-                x={groupX + (datasets.length * barWidth) / 2}
-                y={chartHeight + 16}
-                textAnchor="middle"
-                className="dashboard-chart-label"
-              >
-                {label}
-              </text>
-            </g>
-          );
-        })}
-      </svg>
+                </div>
+                <span className="dashboard-hchart-value">{messages[index]}</span>
+              </div>
+              <div className="dashboard-hchart-bar-track" title={`Лиды: ${leads[index]}`}>
+                <div className="dashboard-hchart-bar-fill">
+                  <div
+                    className="dashboard-hchart-bar dashboard-hchart-bar--leads"
+                    style={{ width: `${(leads[index] / maxValue) * 100}%` }}
+                  />
+                </div>
+                <span className="dashboard-hchart-value">{leads[index]}</span>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
       <div className="dashboard-chart-legend">
-        {datasets.map((ds) => (
-          <span key={ds.key} className="dashboard-chart-legend-item">
-            <span className="dashboard-chart-legend-dot" style={{ background: ds.color }} />
-            {ds.label}
-          </span>
+        <span className="dashboard-chart-legend-item">
+          <span className="dashboard-chart-legend-dot dashboard-chart-legend-dot--messages" />
+          Диалоги
+        </span>
+        <span className="dashboard-chart-legend-item">
+          <span className="dashboard-chart-legend-dot dashboard-chart-legend-dot--leads" />
+          Лиды
+        </span>
+      </div>
+    </div>
+  );
+};
+
+const MetricChart = ({ title, labels, values }) => {
+  const maxValue = Math.max(1, ...values);
+  const colors = ['#8b5cf6', '#3b82f6', '#10b981', '#f59e0b'];
+
+  return (
+    <div className="dashboard-chart">
+      <h3 className="dashboard-chart-title">{title}</h3>
+      <div className="dashboard-hchart dashboard-hchart--metrics">
+        {labels.map((label, index) => (
+          <div key={label} className="dashboard-hchart-row">
+            <span className="dashboard-hchart-label dashboard-hchart-label--wide">{label}</span>
+            <div className="dashboard-hchart-bars">
+              <div className="dashboard-hchart-bar-track dashboard-hchart-bar-track--single">
+                <div className="dashboard-hchart-bar-fill">
+                  <div
+                    className="dashboard-hchart-bar"
+                    style={{
+                      width: `${(values[index] / maxValue) * 100}%`,
+                      background: colors[index % colors.length],
+                    }}
+                  />
+                </div>
+                <span className="dashboard-hchart-value">{values[index]}</span>
+              </div>
+            </div>
+          </div>
         ))}
       </div>
     </div>
@@ -216,6 +235,54 @@ const ProjectDashboardPage = () => {
   const completedTasks = onboarding_checklist.filter((t) => t.completed).length;
   const totalTasks = onboarding_checklist.length;
 
+  const quickActionsBlock = (
+    <div className="dashboard-section dashboard-section--actions">
+      <div className="dashboard-section-header">
+        <h2 className="dashboard-section-title">Быстрые действия</h2>
+      </div>
+      <div className="dashboard-actions">
+        {quick_actions.map((action) => (
+          <Link
+            key={action.id}
+            to={action.url}
+            className="dashboard-action-card"
+          >
+            <div className="dashboard-action-icon">
+              {action.icon === 'bot' && <BotIcon />}
+              {action.icon === 'file' && <FileIcon />}
+              {action.icon === 'globe' && <GlobeIcon />}
+            </div>
+            <span className="dashboard-action-label">{action.label}</span>
+            <ArrowRightIcon />
+          </Link>
+        ))}
+      </div>
+    </div>
+  );
+
+  const aiManagerBlock = (
+    <div className="dashboard-section dashboard-section--ai-manager dashboard-section--compact">
+      <div className="dashboard-section-header">
+        <h2 className="dashboard-section-title">
+          <SparklesIcon />
+          ИИ-менеджер
+        </h2>
+      </div>
+      <div className="dashboard-ai-manager">
+        <p className="dashboard-ai-manager-text">
+          {ai_manager?.hint || 'Спросите про лиды, рост и статус проекта.'}
+        </p>
+        <Link
+          to={NAVIGATION_ROUTES.PROJECT_MANAGER(projectId)}
+          className="btn btn-black dashboard-ai-manager-btn"
+        >
+          <SparklesIcon />
+          Открыть чат
+        </Link>
+      </div>
+    </div>
+  );
+
   return (
     <div className="project-dashboard">
       {/* Header */}
@@ -277,8 +344,7 @@ const ProjectDashboardPage = () => {
         </div>
       </div>
 
-      <div className="dashboard-grid">
-        {/* Onboarding Checklist */}
+      <div className={`dashboard-grid dashboard-grid--top ${checklist_hidden ? 'dashboard-grid--top-no-checklist' : ''}`}>
         {!checklist_hidden && (
           <div className="dashboard-section dashboard-section--checklist">
             <div className="dashboard-section-header">
@@ -327,95 +393,39 @@ const ProjectDashboardPage = () => {
           </div>
         )}
 
-        {/* Quick Actions */}
-        <div className="dashboard-section dashboard-section--actions">
-          <div className="dashboard-section-header">
-            <h2 className="dashboard-section-title">Быстрые действия</h2>
+        {checklist_hidden ? (
+          <>
+            {quickActionsBlock}
+            {aiManagerBlock}
+          </>
+        ) : (
+          <div className="dashboard-top-right">
+            {quickActionsBlock}
+            {aiManagerBlock}
           </div>
-
-          <div className="dashboard-actions">
-            {quick_actions.map((action) => (
-              <Link
-                key={action.id}
-                to={action.url}
-                className="dashboard-action-card"
-              >
-                <div className="dashboard-action-icon">
-                  {action.icon === 'bot' && <BotIcon />}
-                  {action.icon === 'file' && <FileIcon />}
-                  {action.icon === 'globe' && <GlobeIcon />}
-                </div>
-                <span className="dashboard-action-label">{action.label}</span>
-                <ArrowRightIcon />
-              </Link>
-            ))}
-          </div>
-        </div>
+        )}
       </div>
 
-      {/* Charts & AI Manager */}
-      <div className="dashboard-grid dashboard-grid--wide">
-        <div className="dashboard-section dashboard-section--charts">
-          <div className="dashboard-section-header">
-            <h2 className="dashboard-section-title">Рост и эффективность</h2>
-          </div>
-          <div className="dashboard-charts-grid">
-            {charts?.growth && (
-              <BarChart
-                title="Активность за 7 дней"
-                labels={charts.growth.labels}
-                datasets={[
-                  {
-                    key: 'messages',
-                    label: 'Диалоги',
-                    color: '#3b82f6',
-                    data: charts.growth.messages,
-                  },
-                  {
-                    key: 'leads',
-                    label: 'Лиды',
-                    color: '#10b981',
-                    data: charts.growth.leads,
-                  },
-                ]}
-              />
-            )}
-            {charts?.efficiency && (
-              <BarChart
-                title="Эффективность проекта"
-                labels={charts.efficiency.labels}
-                datasets={[
-                  {
-                    key: 'values',
-                    label: 'Количество',
-                    color: '#8b5cf6',
-                    data: charts.efficiency.values,
-                  },
-                ]}
-              />
-            )}
-          </div>
+      <div className="dashboard-section dashboard-section--charts">
+        <div className="dashboard-section-header">
+          <h2 className="dashboard-section-title">Рост и эффективность</h2>
         </div>
-
-        <div className="dashboard-section dashboard-section--ai-manager">
-          <div className="dashboard-section-header">
-            <h2 className="dashboard-section-title">
-              <SparklesIcon />
-              ИИ-менеджер
-            </h2>
-          </div>
-          <div className="dashboard-ai-manager">
-            <p className="dashboard-ai-manager-text">
-              {ai_manager?.hint || 'Задайте вопрос ИИ-менеджеру проекта: сколько лидов сегодня, какой совет по росту, что происходит с проектом.'}
-            </p>
-            <Link
-              to={NAVIGATION_ROUTES.PROJECT_MANAGER(projectId)}
-              className="btn btn-black"
-            >
-              <SparklesIcon />
-              Открыть чат
-            </Link>
-          </div>
+        <div className="dashboard-charts-grid">
+          {charts?.growth && (
+            <ActivityChart
+              title="Активность за 7 дней"
+              labels={charts.growth.labels}
+              messages={charts.growth.messages}
+              leads={charts.growth.leads}
+            />
+          )}
+          {charts?.efficiency && (
+            <MetricChart
+              title="Эффективность проекта"
+              labels={charts.efficiency.labels}
+              values={charts.efficiency.values}
+            />
+          )}
         </div>
       </div>
 
