@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useCustomAuth } from '../../components/custom/useCustomAuth';
-import { NAVIGATION_ROUTES } from '../../config/constants';
-import customService from '../../services/customService';
+import { useCustomAuth } from '../../../components/custom/useCustomAuth';
+import { NAVIGATION_ROUTES } from '../../../config/constants';
+import customService from '../../../services/customService';
 import '../../../styles/projectLayout.css';
 import '../../../styles/agentsPage.css';
 import '../../../styles/projectDashboard.css';
