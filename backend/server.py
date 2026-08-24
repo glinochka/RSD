@@ -172,6 +172,13 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("AiMopWorker disabled via AI_MOP_ENABLED")
 
+    try:
+        from app.router_custom.admin_seed import seed_custom_admin
+
+        await seed_custom_admin()
+    except Exception:
+        logger.exception("Custom admin seed failed")
+
     custom_health_task = asyncio.create_task(run_health_checks_forever())
     logger.info("Custom health checker started")
     custom_scheduler = CustomAutomationScheduler()

@@ -7,11 +7,13 @@ Usage:
 
 Creates the first CustomAdmin from CUSTOM_ADMIN_LOGIN / CUSTOM_ADMIN_PASSWORD_HASH.
 If CUSTOM_ADMIN_PASSWORD_HASH is empty, uses CUSTOM_ADMIN_PASSWORD (plain) and hashes it.
+Also updates the stored hash when .env changes, so a restart applies a new password.
 """
 import asyncio
 import os
 import sys
 from datetime import datetime, timezone
+from logging import getLogger
 from pathlib import Path
 
 # Ensure project root is on sys.path when run as script
@@ -26,36 +28,61 @@ from app.alembic.models import CustomAdmin
 from app.utils.security import get_password_hash
 from app.config import settings
 
+logger = getLogger(__name__)
+
+
+def looks_like_bcrypt(value: str | None) -> bool:
+    if not value:
+        return False
+    return value.startswith(("$2a$", "$2b$", "$2y$")) and len(value) >= 59
+
 
 async def seed_custom_admin():
-    login = settings.CUSTOM_ADMIN_LOGIN
-    password_hash = settings.CUSTOM_ADMIN_PASSWORD_HASH
+    login = (settings.CUSTOM_ADMIN_LOGIN or "").strip()
+    password_hash = settings.CUSTOM_ADMIN_PASSWORD_HASH or ""
 
     if not login:
-        print("CUSTOM_ADMIN_LOGIN is not set; skipping custom admin seed.")
+        logger.warning("CUSTOM_ADMIN_LOGIN is not set; skipping custom admin seed.")
         return None
 
     if not password_hash:
         plain_password = os.environ.get("CUSTOM_ADMIN_PASSWORD")
         if not plain_password:
-            print("CUSTOM_ADMIN_PASSWORD_HASH is empty and CUSTOM_ADMIN_PASSWORD is not set; skipping seed.")
+            logger.warning(
+                "CUSTOM_ADMIN_PASSWORD_HASH is empty and CUSTOM_ADMIN_PASSWORD is not set; skipping seed."
+            )
             return None
         password_hash = get_password_hash(plain_password)
-        print("Hashed plain CUSTOM_ADMIN_PASSWORD (store hash in .env and remove plain password).")
+        logger.info("Hashed plain CUSTOM_ADMIN_PASSWORD for custom admin seed.")
+
+    if not looks_like_bcrypt(password_hash):
+        logger.error(
+            "CUSTOM_ADMIN_PASSWORD_HASH is not a bcrypt hash (prefix=%r len=%s). "
+            "Docker Compose likely ate `$...` — use `$$` for each `$` in .env.",
+            password_hash[:12],
+            len(password_hash),
+        )
+        return None
 
     async with async_session_maker() as session:
         existing = await session.scalar(
             select(CustomAdmin).where(CustomAdmin.username == login)
         )
         if existing:
+            changed = False
             if existing.password_hash != password_hash:
                 existing.password_hash = password_hash
+                changed = True
+            if not existing.is_active:
+                existing.is_active = True
+                changed = True
+            if changed:
                 existing.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 await session.commit()
                 await session.refresh(existing)
-                print(f"Updated password hash for CustomAdmin '{login}' (id={existing.id}).")
+                logger.info("Updated CustomAdmin '%s' (id=%s) from .env.", login, existing.id)
             else:
-                print(f"CustomAdmin '{login}' already exists (id={existing.id}).")
+                logger.info("CustomAdmin '%s' already in sync (id=%s).", login, existing.id)
             return existing
 
         admin = CustomAdmin(
@@ -68,7 +95,7 @@ async def seed_custom_admin():
         session.add(admin)
         await session.commit()
         await session.refresh(admin)
-        print(f"Created CustomAdmin '{login}' (id={admin.id}).")
+        logger.info("Created CustomAdmin '%s' (id=%s).", login, admin.id)
         return admin
 
 

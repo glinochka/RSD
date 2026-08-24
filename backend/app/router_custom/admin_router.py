@@ -17,7 +17,9 @@ from .schemas import (
     CustomAutomationCredentialListResponse,
     CustomAutomationCredentialResponse,
 )
+from .admin_seed import looks_like_bcrypt
 from .dependencies import get_current_custom_admin
+from ..config import settings
 from ..utils.JWT import create_access_token
 from ..utils.security import get_password_hash, verify_password
 from ..alembic.database import async_session_maker
@@ -31,29 +33,61 @@ logger = getLogger(__name__)
 router = APIRouter(prefix="/admin")
 
 
+def _password_matches(plain: str, hashed: str | None) -> bool:
+    if not hashed:
+        return False
+    try:
+        return verify_password(plain, hashed)
+    except Exception:
+        return False
+
+
 @router.post("/login", response_model=CustomLoginResponse)
 async def login_admin(payload: CustomAdminLoginRequest):
+    env_login = (settings.CUSTOM_ADMIN_LOGIN or "").strip()
+    env_hash = settings.CUSTOM_ADMIN_PASSWORD_HASH or ""
+    env_ok = (
+        bool(env_login)
+        and payload.username == env_login
+        and looks_like_bcrypt(env_hash)
+        and _password_matches(payload.password, env_hash)
+    )
+
     async with async_session_maker() as session:
         admin = await session.scalar(
-            select(CustomAdmin).where(
-                CustomAdmin.username == payload.username,
-                CustomAdmin.is_active.is_(True),
-            )
+            select(CustomAdmin).where(CustomAdmin.username == payload.username)
         )
-        if not admin:
+        db_ok = bool(admin) and admin.is_active and _password_matches(payload.password, admin.password_hash)
+
+        if not db_ok and not env_ok:
+            if admin is None:
+                logger.warning("Custom admin login failed: user %r not found", payload.username)
+            else:
+                logger.warning("Custom admin login failed: bad password for %r", payload.username)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid credentials",
             )
 
-        if not verify_password(payload.password, admin.password_hash):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid credentials",
-            )
-
-        admin.last_login_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        if env_ok:
+            if admin is None:
+                admin = CustomAdmin(
+                    username=env_login,
+                    password_hash=env_hash,
+                    is_active=True,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(admin)
+            else:
+                admin.password_hash = env_hash
+                admin.is_active = True
+                admin.updated_at = now
+        assert admin is not None
+        admin.last_login_at = now
         await session.commit()
+        await session.refresh(admin)
 
         token = create_access_token(
             data={"custom_admin_id": admin.id, "custom_admin": True},
