@@ -274,6 +274,49 @@ export const API_ROUTES = {
   PROJECT_INTEGRATION_ROTATE_TOKEN: (projectId, integrationId) =>
     `/api/projects/${projectId}/integrations/${integrationId}/rotate-token`,
   PROJECT_INTEGRATION_WEBHOOK: (projectId, token) => `/api/projects/${projectId}/integrations/webhook/${token}`,
+
+  // Custom agents subsystem
+  CUSTOM_LOGIN: '/api/custom/login',
+  CUSTOM_ADMIN_LOGIN: '/api/custom/admin/login',
+  CUSTOM_ADMIN_DASHBOARD: '/api/custom/admin/dashboard',
+  CUSTOM_ADMIN_AUTOMATIONS: '/api/custom/admin/automations',
+  CUSTOM_ADMIN_AUTOMATION: (id) => `/api/custom/admin/automations/${id}`,
+  CUSTOM_ADMIN_AUTOMATION_CREDENTIALS: (id) => `/api/custom/admin/automations/${id}/credentials`,
+  CUSTOM_AUTOMATION_DASHBOARD: (id) => `/api/custom/automations/${id}/dashboard`,
+  CUSTOM_AUTOMATION_ACCOUNTS: (id) => `/api/custom/automations/${id}/accounts`,
+  CUSTOM_AUTOMATION_ACCOUNTS_BAN_STATS: (id) => `/api/custom/automations/${id}/accounts/ban-stats`,
+  CUSTOM_AUTOMATION_ACCOUNTS_HEALTH_CHECK: (id) => `/api/custom/automations/${id}/accounts/health-check`,
+  CUSTOM_AUTOMATION_SETTINGS: (id) => `/api/custom/automations/${id}/settings`,
+  CUSTOM_AUTOMATION_CHATS: (id) => `/api/custom/automations/${id}/chats`,
+  CUSTOM_AUTOMATION_CHAT: (id, chatId) => `/api/custom/automations/${id}/chats/${chatId}`,
+  CUSTOM_AUTOMATION_CHAT_MESSAGES: (id, chatId) => `/api/custom/automations/${id}/chats/${chatId}/messages`,
+  CUSTOM_AUTOMATION_CHAT_IMPORT: (id) => `/api/custom/automations/${id}/chats/bulk-import`,
+  CUSTOM_AUTOMATION_CHAT_IMPORT_JOBS: (id) => `/api/custom/automations/${id}/chats/import-jobs`,
+  CUSTOM_AUTOMATION_CHAT_DISCOVERY: (id) => `/api/custom/automations/${id}/chats/discovery`,
+  CUSTOM_AUTOMATION_CHAT_DISCOVERY_APPROVE: (id, taskId) => `/api/custom/automations/${id}/chats/discovery/${taskId}/approve`,
+  CUSTOM_AUTOMATION_CHAT_DISCOVERY_REJECT: (id, taskId) => `/api/custom/automations/${id}/chats/discovery/${taskId}/reject`,
+  CUSTOM_AUTOMATION_CHAT_JOIN: (id) => `/api/custom/automations/${id}/chats/join`,
+  CUSTOM_AUTOMATION_CHAT_MONITOR: (id) => `/api/custom/automations/${id}/chats/monitor`,
+  CUSTOM_AUTOMATION_LEADS: (id) => `/api/custom/automations/${id}/leads`,
+  CUSTOM_AUTOMATION_LEAD: (id, leadId) => `/api/custom/automations/${id}/leads/${leadId}`,
+  CUSTOM_AUTOMATION_LEAD_MESSAGES: (id, leadId) => `/api/custom/automations/${id}/leads/${leadId}/messages`,
+  CUSTOM_AUTOMATION_LEAD_STATUS: (id, leadId) => `/api/custom/automations/${id}/leads/${leadId}/status`,
+  CUSTOM_AUTOMATION_LEAD_TRANSFER: (id, leadId) => `/api/custom/automations/${id}/leads/${leadId}/transfer`,
+  CUSTOM_AUTOMATION_DMP_IMPORTS: (id) => `/api/custom/automations/${id}/dmp/imports`,
+  CUSTOM_AUTOMATION_DMP_ORDERS: (id) => `/api/custom/automations/${id}/dmp/orders`,
+  CUSTOM_AUTOMATION_DMP_POLL: (id) => `/api/custom/automations/${id}/dmp/poll`,
+  CUSTOM_AUTOMATION_AMOCRM_CONNECTION: (id) => `/api/custom/automations/${id}/amocrm/connection`,
+  CUSTOM_AUTOMATION_AMOCRM_SYNC: (id) => `/api/custom/automations/${id}/amocrm/sync`,
+  CUSTOM_AUTOMATION_PROMPTS: (id) => `/api/custom/automations/${id}/prompts`,
+  CUSTOM_AUTOMATION_PROMPT: (id, promptId) => `/api/custom/automations/${id}/prompts/${promptId}`,
+  CUSTOM_AUTOMATION_PROMPT_TOGGLE: (id, promptId) => `/api/custom/automations/${id}/prompts/${promptId}/toggle`,
+  CUSTOM_AUTOMATION_PROMPT_TEST: (id, promptId) => `/api/custom/automations/${id}/prompts/${promptId}/test`,
+  CUSTOM_AUTOMATION_CHAT_NEUROCOMMENTING_CONFIG: (id, chatId) =>
+    `/api/custom/automations/${id}/chats/${chatId}/neurocommenting-config`,
+  CUSTOM_AUTOMATION_CHAT_NEUROCOMMENTING_RUN: (id) => `/api/custom/automations/${id}/chats/neurocommenting`,
+  CUSTOM_AUTOMATION_CHAT_DISCUSSION_CONFIG: (id, chatId) =>
+    `/api/custom/automations/${id}/chats/${chatId}/discussion-config`,
+  CUSTOM_AUTOMATION_CHAT_DISCUSSION_RUN: (id) => `/api/custom/automations/${id}/chats/discussion`,
 };
 
 export const AGENT_ROLES = {
@@ -324,6 +367,24 @@ export const NAVIGATION_ROUTES = {
   PROJECT_MANAGER: (id) => `/projects/${id}/manager`,
   PROJECT_SETTINGS: (id) => `/projects/${id}/settings`,
   PROJECT_INTEGRATIONS: (id) => `/projects/${id}/integrations`,
+
+  // Custom agents subsystem
+  CUSTOM_LOGIN: '/custom/login',
+  CUSTOM_ADMIN_DASHBOARD: '/custom/admin/dashboard',
+  CUSTOM_ADMIN_AUTOMATIONS: '/custom/admin/automations',
+  CUSTOM_ADMIN_AUTOMATION_EDIT: (id) => `/custom/admin/automations/${id}/edit`,
+  CUSTOM_ADMIN_AUTOMATION_ACCESS: (id) => `/custom/admin/automations/${id}/access`,
+  CUSTOM_AUTOMATION_DASHBOARD: (id) => `/custom/automations/${id}/dashboard`,
+  CUSTOM_AUTOMATION_ACCOUNTS: (id) => `/custom/automations/${id}/accounts`,
+  CUSTOM_AUTOMATION_SETTINGS: (id) => `/custom/automations/${id}/settings`,
+  CUSTOM_AUTOMATION_CHATS: (id) => `/custom/automations/${id}/chats`,
+  CUSTOM_AUTOMATION_CHAT_DISCOVERY: (id) => `/custom/automations/${id}/chats/discovery`,
+  CUSTOM_AUTOMATION_LEADS: (id) => `/custom/automations/${id}/leads`,
+  CUSTOM_AUTOMATION_LEAD_CHAT: (id, leadId) => `/custom/automations/${id}/leads/${leadId}/chat`,
+  CUSTOM_AUTOMATION_DMP: (id) => `/custom/automations/${id}/dmp`,
+  CUSTOM_AUTOMATION_AMOCRM: (id) => `/custom/automations/${id}/amocrm`,
+  CUSTOM_AUTOMATION_PROMPTS: (id) => `/custom/automations/${id}/prompts`,
+  CUSTOM_AUTOMATION_PROMPT_EDIT: (id, promptId) => `/custom/automations/${id}/prompts/${promptId}/edit`,
 };
 
 // User-facing messages; backend detail (FastAPI) is preferred when present (see errorUtils).

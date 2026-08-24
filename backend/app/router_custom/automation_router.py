@@ -1,0 +1,1251 @@
+"""Automation (client) routes for /custom."""
+from datetime import datetime, timezone
+from logging import getLogger
+from typing import Optional
+
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile, status
+from sqlalchemy import func, or_, select
+
+from .schemas import (
+    AccountBulkClassifyRequest,
+    AccountBulkClassifyResponse,
+    AccountBulkUpdateProfilesRequest,
+    AccountBulkUpdateProfilesResponse,
+    AccountBanStatsResponse,
+    AccountClassUpdate,
+    AccountHealthCheckResponse,
+    AccountHealthCheckResult,
+    AccountListResponse,
+    AccountResponse,
+    AccountUploadResponse,
+    ChatDiscoveryActionResponse,
+    ChatDiscoveryApproveRequest,
+    ChatDiscoveryCreate,
+    ChatDiscoveryTaskListResponse,
+    ChatDiscoveryTaskResponse,
+    ChatImportJobListResponse,
+    ChatImportJobResponse,
+    ChatMessageListResponse,
+    ChatMessageResponse,
+    ChatTargetCreate,
+    ChatTargetListResponse,
+    ChatTargetResponse,
+    ChatTargetUpdate,
+    CustomAutomationDashboardResponse,
+    CustomAutomationLoginRequest,
+    CustomAutomationSettingsResponse,
+    CustomAutomationSettingsValidationResponse,
+    AmocrmConnectionCreate,
+    AmocrmConnectionResponse,
+    AmocrmTransferResponse,
+    CustomAutomationSettingsUpdate,
+    CustomLeadListResponse,
+    CustomLeadMessageListResponse,
+    CustomLeadMessageResponse,
+    CustomLeadResponse,
+    CustomLeadStatusUpdate,
+    CustomLoginResponse,
+    CustomPromptListResponse,
+    CustomPromptResponse,
+    CustomPromptTestRequest,
+    CustomPromptTestResponse,
+    CustomPromptUpdate,
+    DmpOneImportCreate,
+    DmpOneImportListResponse,
+    DmpOneImportResponse,
+    DmpOneWebhookResponse,
+)
+from .dependencies import get_current_custom_automation
+from ..services.account_pool_service import bulk_upload_sessions
+from ..services.custom.account_health_worker import AccountHealthWorker
+from ..services.custom.bulk_profile_service import BulkProfileUpdateWorker, _save_uploaded_avatar
+from ..services.custom.chat_discovery_service import (
+    approve_discovered_chats,
+    create_discovery_task,
+    list_discovery_tasks,
+    reject_discovered_chats,
+    run_discovery_task,
+)
+from ..services.custom.chat_import_service import import_chats_from_file, retry_import_errors
+from ..services.custom.chat_join_service import join_pending_chats
+from ..services.custom.chat_monitoring_service import scan_chats_and_process
+from ..services.custom.amocrm_service import create_or_update_connection, get_connection, sync_lead_statuses, transfer_lead_to_amocrm
+from ..services.custom.lead_warmup_service import auto_transfer_lead
+from ..services.custom.analytics_service import get_automation_dashboard
+from ..services.custom.discussion_service import run_discussion_pass
+from ..services.custom.settings_service import validate_settings
+from ..services.custom.dmp_one_service import create_order, handle_webhook, poll_pending_imports
+from ..services.custom.neurocommenting_service import run_neurocommenting_pass
+from ..services.custom.prompt_service import (
+    list_prompts,
+    get_prompt,
+    test_prompt,
+    toggle_prompt,
+    update_prompt,
+)
+from ..utils.JWT import create_access_token
+from ..utils.security import verify_password
+from ..alembic.database import async_session_maker
+from ..config import settings
+from ..alembic.models import (
+    AccountClass,
+    AccountPool,
+    ChatDiscoveryTask,
+    ChatImportJob,
+    ChatMessage,
+    ChatTarget,
+    AmocrmConnection,
+    CustomAutomation,
+    CustomAutomationCredential,
+    CustomLead,
+    CustomLeadMessage,
+    DmpOneImport,
+    PoolAccount,
+    SocialAccount,
+)
+
+
+logger = getLogger(__name__)
+router = APIRouter()
+
+
+@router.post("/login", response_model=CustomLoginResponse)
+async def login_automation(payload: CustomAutomationLoginRequest):
+    async with async_session_maker() as session:
+        credential = await session.scalar(
+            select(CustomAutomationCredential).where(
+                CustomAutomationCredential.username == payload.username,
+                CustomAutomationCredential.is_active.is_(True),
+            )
+        )
+        if not credential:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid credentials",
+            )
+
+        if not verify_password(payload.password, credential.password_hash):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid credentials",
+            )
+
+        credential.last_login_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        await session.commit()
+
+        token = create_access_token(
+            data={
+                "custom_automation_id": credential.custom_automation_id,
+                "custom_credential_id": credential.id,
+            },
+            token_kind="custom_automation",
+        )
+
+        return CustomLoginResponse(
+            access_token=token,
+            custom_admin=False,
+            custom_automation_id=credential.custom_automation_id,
+        )
+
+
+@router.get("/automations/{automation_id}/dashboard", response_model=CustomAutomationDashboardResponse)
+async def automation_dashboard(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await get_automation_dashboard(session, automation_id)
+        return CustomAutomationDashboardResponse.model_validate(data)
+
+
+@router.get("/automations/{automation_id}/settings", response_model=CustomAutomationSettingsResponse)
+async def get_automation_settings(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        db_automation = await session.get(CustomAutomation, automation_id)
+        if not db_automation:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Automation not found")
+        validation = await validate_settings(session, db_automation)
+        response = CustomAutomationSettingsResponse.model_validate(db_automation).model_dump()
+        response["warnings"] = validation["warnings"]
+        return response
+
+
+@router.patch("/automations/{automation_id}/settings", response_model=CustomAutomationSettingsResponse)
+async def update_automation_settings(
+    automation_id: int,
+    payload: CustomAutomationSettingsUpdate,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        db_automation = await session.merge(automation)
+        update_data = payload.model_dump(exclude_unset=True)
+        for field, value in update_data.items():
+            setattr(db_automation, field, value)
+        modules_on = any([
+            db_automation.is_chat_monitoring_enabled,
+            db_automation.is_neurocommenting_enabled,
+            db_automation.is_digital_footprint_enabled,
+            db_automation.is_dmp_one_enabled,
+            db_automation.is_amocrm_enabled,
+        ])
+        if modules_on and db_automation.status == "draft":
+            db_automation.status = "active"
+        db_automation.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        await session.commit()
+        await session.refresh(db_automation)
+        validation = await validate_settings(session, db_automation)
+        response = CustomAutomationSettingsResponse.model_validate(db_automation).model_dump()
+        response["warnings"] = validation["warnings"]
+        return response
+
+
+@router.get(
+    "/automations/{automation_id}/settings/validation",
+    response_model=CustomAutomationSettingsValidationResponse,
+)
+async def validate_automation_settings(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        db_automation = await session.get(CustomAutomation, automation_id)
+        if not db_automation:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Automation not found")
+        validation = await validate_settings(session, db_automation)
+        return CustomAutomationSettingsValidationResponse(**validation)
+
+
+def _account_response(
+    pool_account: PoolAccount,
+    social_account: SocialAccount,
+    max_daily: int = 50,
+) -> AccountResponse:
+    return AccountResponse(
+        id=social_account.id,
+        provider=social_account.provider,
+        phone_number=social_account.phone_number,
+        username=social_account.username,
+        display_name=social_account.display_name,
+        account_class=social_account.account_class,
+        assigned_class=pool_account.assigned_class,
+        status="loaded" if social_account.session_file_path else "empty",
+        is_active=social_account.is_active,
+        is_banned=social_account.is_banned,
+        auto_classified=social_account.auto_classified,
+        risk_score=social_account.risk_score,
+        trust_score=social_account.trust_score,
+        session_file_path=social_account.session_file_path,
+        daily_messages_sent=social_account.daily_messages_sent,
+        daily_messages_reset_at=social_account.daily_messages_reset_at,
+        last_used_at=social_account.last_used_at,
+        max_daily_messages_per_account=max_daily,
+        added_at=pool_account.added_at,
+        last_health_check_at=social_account.last_health_check_at,
+    )
+
+
+@router.get("/automations/{automation_id}/accounts", response_model=AccountListResponse)
+async def list_accounts(
+    automation_id: int,
+    status: Optional[str] = None,
+    account_class: Optional[str] = None,
+    search: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        pool = await session.scalar(
+            select(AccountPool).where(
+                AccountPool.custom_automation_id == automation_id,
+                AccountPool.is_default.is_(True),
+            )
+        )
+        if not pool:
+            return AccountListResponse(items=[], total=0)
+
+        stmt = (
+            select(PoolAccount, SocialAccount)
+            .join(SocialAccount, PoolAccount.social_account_id == SocialAccount.id)
+            .where(PoolAccount.account_pool_id == pool.id)
+        )
+        if account_class:
+            stmt = stmt.where(PoolAccount.assigned_class == account_class)
+        if status == "loaded":
+            stmt = stmt.where(SocialAccount.session_file_path.isnot(None))
+        elif status == "empty":
+            stmt = stmt.where(SocialAccount.session_file_path.is_(None))
+        if search:
+            pattern = f"%{search}%"
+            stmt = stmt.where(
+                or_(
+                    SocialAccount.phone_number.ilike(pattern),
+                    SocialAccount.username.ilike(pattern),
+                    SocialAccount.display_name.ilike(pattern),
+                )
+            )
+        stmt = stmt.order_by(PoolAccount.added_at.desc()).limit(limit).offset(offset)
+
+        result = await session.execute(stmt)
+        rows = result.all()
+        total = await session.scalar(
+            select(func.count(PoolAccount.id)).where(PoolAccount.account_pool_id == pool.id)
+        )
+
+        max_daily = automation.max_daily_messages_per_account
+        items = [_account_response(pool_account, social_account, max_daily) for pool_account, social_account in rows]
+        return AccountListResponse(items=items, total=total or 0)
+
+
+@router.get("/automations/{automation_id}/accounts/ban-stats", response_model=AccountBanStatsResponse)
+async def account_ban_stats(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        pool = await session.scalar(
+            select(AccountPool).where(
+                AccountPool.custom_automation_id == automation_id,
+                AccountPool.is_default.is_(True),
+            )
+        )
+        if not pool:
+            return AccountBanStatsResponse(total=0, active=0, banned=0, banned_percent=0.0, alert=False)
+        total = await session.scalar(
+            select(func.count(PoolAccount.id)).where(PoolAccount.account_pool_id == pool.id)
+        )
+        banned = await session.scalar(
+            select(func.count(PoolAccount.id))
+            .join(SocialAccount, PoolAccount.social_account_id == SocialAccount.id)
+            .where(
+                PoolAccount.account_pool_id == pool.id,
+                SocialAccount.is_banned.is_(True),
+            )
+        )
+        active = (total or 0) - (banned or 0)
+        banned_percent = round((banned or 0) / total, 2) if total else 0.0
+        alert_threshold = float(settings.CUSTOM_BAN_ALERT_THRESHOLD or 0.3)
+        is_alert = banned_percent >= alert_threshold
+        if is_alert:
+            logger.warning(
+                "High ban rate for automation %s: %s/%s (%.0f%%)",
+                automation_id, banned, total, banned_percent * 100
+            )
+        return AccountBanStatsResponse(
+            total=total or 0,
+            active=active,
+            banned=banned or 0,
+            banned_percent=banned_percent,
+            alert_threshold=alert_threshold,
+            alert=is_alert,
+        )
+
+
+@router.post("/automations/{automation_id}/accounts/health-check", response_model=AccountHealthCheckResponse)
+async def run_account_health_check(
+    automation_id: int,
+    background_tasks: BackgroundTasks,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    worker = AccountHealthWorker()
+    results = await worker.check_all_accounts_for_automation(automation_id)
+    ok = sum(1 for r in results if r.get("status") == "ok")
+    fallback = sum(1 for r in results if r.get("status") == "fallback")
+    error = sum(1 for r in results if r.get("status") in {"error", "not_found"})
+    return AccountHealthCheckResponse(
+        results=[AccountHealthCheckResult(**r) for r in results],
+        total=len(results),
+        ok=ok,
+        fallback=fallback,
+        error=error,
+    )
+
+
+@router.get("/automations/{automation_id}/accounts/{account_id}", response_model=AccountResponse)
+async def get_account(
+    automation_id: int,
+    account_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        row = await session.execute(
+            select(PoolAccount, SocialAccount)
+            .join(SocialAccount, PoolAccount.social_account_id == SocialAccount.id)
+            .join(AccountPool, PoolAccount.account_pool_id == AccountPool.id)
+            .where(
+                AccountPool.custom_automation_id == automation_id,
+                SocialAccount.id == account_id,
+            )
+        )
+        result = row.one_or_none()
+        if not result:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+        pool_account, social_account = result
+        return _account_response(pool_account, social_account, automation.max_daily_messages_per_account)
+
+
+@router.post("/automations/{automation_id}/accounts/bulk-upload", response_model=AccountUploadResponse)
+async def bulk_upload_accounts(
+    automation_id: int,
+    background_tasks: BackgroundTasks,
+    archive: UploadFile = File(...),
+    assign_class: str = Form(AccountClass.ONE_DAY.value),
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        result = await bulk_upload_sessions(session, automation_id, archive, assign_class)
+    background_tasks.add_task(AccountHealthWorker().check_all_accounts_for_automation, automation_id)
+    return AccountUploadResponse(**result)
+
+
+@router.post("/automations/{automation_id}/accounts/bulk-classify", response_model=AccountBulkClassifyResponse)
+async def bulk_classify(
+    automation_id: int,
+    payload: AccountBulkClassifyRequest,
+    background_tasks: BackgroundTasks,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        pool = await session.scalar(
+            select(AccountPool).where(
+                AccountPool.custom_automation_id == automation_id,
+                AccountPool.is_default.is_(True),
+            )
+        )
+        if not pool:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Default pool not found",
+            )
+
+        if payload.account_ids:
+            account_ids = list(payload.account_ids)
+        else:
+            result = await session.execute(
+                select(PoolAccount.social_account_id).where(
+                    PoolAccount.account_pool_id == pool.id
+                )
+            )
+            account_ids = [row[0] for row in result.all()]
+
+        if not account_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No accounts to classify",
+            )
+
+    worker = AccountHealthWorker()
+    background_tasks.add_task(worker.process_accounts, automation_id, account_ids)
+    return AccountBulkClassifyResponse(queued=len(account_ids))
+
+
+@router.post("/automations/{automation_id}/accounts/bulk-update-profiles", response_model=AccountBulkUpdateProfilesResponse)
+async def bulk_update_profiles(
+    automation_id: int,
+    background_tasks: BackgroundTasks,
+    avatar: UploadFile | None = File(None),
+    payload: str = Form("{}"),
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    data = AccountBulkUpdateProfilesRequest.model_validate_json(payload)
+
+    avatar_relative_path = None
+    if avatar:
+        content = await avatar.read()
+        if content:
+            avatar_relative_path = await _save_uploaded_avatar(
+                automation_id, avatar.filename or "avatar.jpg", content
+            )
+
+    async with async_session_maker() as session:
+        pool = await session.scalar(
+            select(AccountPool).where(
+                AccountPool.custom_automation_id == automation_id,
+                AccountPool.is_default.is_(True),
+            )
+        )
+        if not pool:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Default pool not found",
+            )
+
+        stmt = (
+            select(PoolAccount.social_account_id)
+            .join(SocialAccount, PoolAccount.social_account_id == SocialAccount.id)
+            .where(PoolAccount.account_pool_id == pool.id)
+        )
+        if data.account_ids:
+            stmt = stmt.where(SocialAccount.id.in_(data.account_ids))
+        if data.account_class:
+            stmt = stmt.where(PoolAccount.assigned_class == data.account_class)
+        if data.status == "loaded":
+            stmt = stmt.where(SocialAccount.session_file_path.isnot(None))
+        elif data.status == "empty":
+            stmt = stmt.where(SocialAccount.session_file_path.is_(None))
+
+        result = await session.execute(stmt)
+        account_ids = [row[0] for row in result.all()]
+
+        if not account_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No accounts to update",
+            )
+
+    worker = BulkProfileUpdateWorker()
+    background_tasks.add_task(
+        worker.process_accounts,
+        automation_id,
+        account_ids,
+        avatar_relative_path=avatar_relative_path,
+        bio_template=data.bio_template,
+        generate_unique=data.generate_unique,
+    )
+    return AccountBulkUpdateProfilesResponse(queued=len(account_ids))
+
+
+@router.patch("/automations/{automation_id}/accounts/{account_id}", response_model=AccountResponse)
+async def update_account_class(
+    automation_id: int,
+    account_id: int,
+    payload: AccountClassUpdate,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        row = await session.execute(
+            select(PoolAccount, SocialAccount)
+            .join(SocialAccount, PoolAccount.social_account_id == SocialAccount.id)
+            .join(AccountPool, PoolAccount.account_pool_id == AccountPool.id)
+            .where(
+                AccountPool.custom_automation_id == automation_id,
+                SocialAccount.id == account_id,
+            )
+        )
+        result = row.one_or_none()
+        if not result:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+
+        pool_account, social_account = result
+        pool_account.assigned_class = payload.assigned_class
+        social_account.account_class = payload.assigned_class
+        social_account.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        await session.commit()
+        await session.refresh(pool_account)
+        await session.refresh(social_account)
+        return _account_response(pool_account, social_account)
+
+
+# --- Chat targets ---
+
+@router.get("/automations/{automation_id}/chats", response_model=ChatTargetListResponse)
+async def list_chats(
+    automation_id: int,
+    join_status: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        stmt = select(ChatTarget).where(ChatTarget.custom_automation_id == automation_id)
+        if join_status:
+            stmt = stmt.where(ChatTarget.join_status == join_status)
+        stmt = stmt.order_by(ChatTarget.created_at.desc()).limit(limit).offset(offset)
+        result = await session.execute(stmt)
+        items = result.scalars().all()
+        total = await session.scalar(
+            select(func.count(ChatTarget.id)).where(ChatTarget.custom_automation_id == automation_id)
+        )
+        return ChatTargetListResponse(
+            items=[ChatTargetResponse.model_validate(c) for c in items],
+            total=total or 0,
+        )
+
+
+@router.post("/automations/{automation_id}/chats", response_model=ChatTargetResponse, status_code=status.HTTP_201_CREATED)
+async def create_chat(
+    automation_id: int,
+    payload: ChatTargetCreate,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        chat = ChatTarget(
+            custom_automation_id=automation_id,
+            provider=payload.provider,
+            external_chat_id=payload.external_chat_id,
+            invite_link=payload.invite_link,
+            title=payload.title,
+            description=payload.description,
+            chat_type=payload.chat_type,
+            mode=payload.mode,
+            join_status="pending",
+            join_attempts=0,
+            is_active=True,
+            created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        )
+        session.add(chat)
+        await session.commit()
+        await session.refresh(chat)
+        return ChatTargetResponse.model_validate(chat)
+
+
+@router.patch("/automations/{automation_id}/chats/{chat_id}/neurocommenting-config", response_model=ChatTargetResponse)
+async def update_chat_neurocommenting_config(
+    automation_id: int,
+    chat_id: int,
+    payload: ChatTargetUpdate,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        chat = await session.get(ChatTarget, chat_id)
+        if not chat or chat.custom_automation_id != automation_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat not found")
+        if payload.mode is not None:
+            chat.mode = payload.mode
+        if payload.neurocommenting_config is not None:
+            chat.neurocommenting_config = payload.neurocommenting_config
+        chat.updated_at = datetime.now(timezone.utc)
+        await session.commit()
+        await session.refresh(chat)
+        return ChatTargetResponse.model_validate(chat)
+
+
+@router.post("/automations/{automation_id}/chats/neurocommenting")
+async def run_neurocommenting(
+    automation_id: int,
+    background_tasks: BackgroundTasks,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    background_tasks.add_task(run_neurocommenting_pass, automation_id)
+    return {"status": "started"}
+
+
+@router.patch("/automations/{automation_id}/chats/{chat_id}/discussion-config", response_model=ChatTargetResponse)
+async def update_chat_discussion_config(
+    automation_id: int,
+    chat_id: int,
+    payload: ChatTargetUpdate,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        chat = await session.get(ChatTarget, chat_id)
+        if not chat or chat.custom_automation_id != automation_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat not found")
+        if payload.mode is not None:
+            chat.mode = payload.mode
+        if payload.discussion_config is not None:
+            chat.discussion_config = payload.discussion_config
+        chat.updated_at = datetime.now(timezone.utc)
+        await session.commit()
+        await session.refresh(chat)
+        return ChatTargetResponse.model_validate(chat)
+
+
+@router.post("/automations/{automation_id}/chats/discussion")
+async def run_discussion(
+    automation_id: int,
+    background_tasks: BackgroundTasks,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    background_tasks.add_task(run_discussion_pass, automation_id)
+    return {"status": "started"}
+
+
+@router.delete("/automations/{automation_id}/chats/{chat_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_chat(
+    automation_id: int,
+    chat_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        chat = await session.get(ChatTarget, chat_id)
+        if not chat or chat.custom_automation_id != automation_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat not found")
+        await session.delete(chat)
+        await session.commit()
+        return None
+
+
+@router.get("/automations/{automation_id}/chats/{chat_id}/messages", response_model=ChatMessageListResponse)
+async def list_chat_messages(
+    automation_id: int,
+    chat_id: int,
+    limit: int = 50,
+    offset: int = 0,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        stmt = (
+            select(ChatMessage)
+            .where(ChatMessage.custom_automation_id == automation_id, ChatMessage.chat_target_id == chat_id)
+            .order_by(ChatMessage.sent_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        result = await session.execute(stmt)
+        items = result.scalars().all()
+        total = await session.scalar(
+            select(func.count(ChatMessage.id)).where(
+                ChatMessage.custom_automation_id == automation_id, ChatMessage.chat_target_id == chat_id
+            )
+        )
+        return ChatMessageListResponse(
+            items=[ChatMessageResponse.model_validate(m) for m in items],
+            total=total or 0,
+        )
+
+
+@router.post("/automations/{automation_id}/chats/bulk-import", response_model=ChatImportJobResponse)
+async def bulk_import_chats(
+    automation_id: int,
+    archive: UploadFile = File(...),
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    content = await archive.read()
+    async with async_session_maker() as session:
+        job = await import_chats_from_file(
+            session,
+            automation_id=automation_id,
+            filename=archive.filename or "import.csv",
+            content=content,
+        )
+        return ChatImportJobResponse.model_validate(job)
+
+
+@router.get("/automations/{automation_id}/chats/import-jobs", response_model=ChatImportJobListResponse)
+async def list_import_jobs(
+    automation_id: int,
+    limit: int = 50,
+    offset: int = 0,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        stmt = (
+            select(ChatImportJob)
+            .where(ChatImportJob.custom_automation_id == automation_id)
+            .order_by(ChatImportJob.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        result = await session.execute(stmt)
+        items = result.scalars().all()
+        total = await session.scalar(
+            select(func.count(ChatImportJob.id)).where(ChatImportJob.custom_automation_id == automation_id)
+        )
+        return ChatImportJobListResponse(
+            items=[ChatImportJobResponse.model_validate(j) for j in items],
+            total=total or 0,
+        )
+
+
+@router.post("/automations/{automation_id}/chats/import-jobs/{job_id}/retry", response_model=ChatImportJobResponse)
+async def retry_import_job(
+    automation_id: int,
+    job_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        job = await retry_import_errors(session, job_id)
+        if not job or job.custom_automation_id != automation_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Import job not found")
+        return ChatImportJobResponse.model_validate(job)
+
+
+@router.post("/automations/{automation_id}/chats/join")
+async def run_join_chats(
+    automation_id: int,
+    background_tasks: BackgroundTasks,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    background_tasks.add_task(_join_chats_background, automation_id)
+    return {"status": "started"}
+
+
+async def _join_chats_background(automation_id: int) -> None:
+    async with async_session_maker() as session:
+        await join_pending_chats(session, automation_id)
+
+
+async def _run_discovery_background(automation_id: int, task_id: int) -> None:
+    async with async_session_maker() as session:
+        try:
+            await run_discovery_task(session, task_id)
+        except Exception as exc:
+            logger.exception("Discovery task %s failed for automation %s: %s", task_id, automation_id, exc)
+
+
+@router.post("/automations/{automation_id}/chats/discovery", response_model=ChatDiscoveryTaskResponse, status_code=status.HTTP_201_CREATED)
+async def start_chat_discovery(
+    automation_id: int,
+    payload: ChatDiscoveryCreate,
+    background_tasks: BackgroundTasks,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        task = await create_discovery_task(
+            session,
+            automation_id=automation_id,
+            query=payload.query,
+            mode=payload.mode or "monitoring",
+            max_chats=payload.max_chats,
+            require_approval=payload.require_approval,
+            relevance_threshold=payload.relevance_threshold,
+        )
+        task_id = task.id
+    background_tasks.add_task(_run_discovery_background, automation_id, task_id)
+    async with async_session_maker() as session:
+        task = await session.get(ChatDiscoveryTask, task_id)
+        return ChatDiscoveryTaskResponse.model_validate(task)
+
+
+@router.get("/automations/{automation_id}/chats/discovery", response_model=ChatDiscoveryTaskListResponse)
+async def list_chat_discovery_tasks(
+    automation_id: int,
+    limit: int = 50,
+    offset: int = 0,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        items = await list_discovery_tasks(session, automation_id, limit=limit, offset=offset)
+        total = await session.scalar(
+            select(func.count(ChatDiscoveryTask.id)).where(
+                ChatDiscoveryTask.custom_automation_id == automation_id
+            )
+        )
+        return ChatDiscoveryTaskListResponse(
+            items=[ChatDiscoveryTaskResponse.model_validate(i) for i in items],
+            total=total or 0,
+        )
+
+
+@router.get("/automations/{automation_id}/chats/discovery/{task_id}", response_model=ChatDiscoveryTaskResponse)
+async def get_chat_discovery_task(
+    automation_id: int,
+    task_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        task = await session.get(ChatDiscoveryTask, task_id)
+        if not task or task.custom_automation_id != automation_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Discovery task not found")
+        return ChatDiscoveryTaskResponse.model_validate(task)
+
+
+@router.post("/automations/{automation_id}/chats/discovery/{task_id}/approve", response_model=ChatDiscoveryActionResponse)
+async def approve_discovery_task(
+    automation_id: int,
+    task_id: int,
+    payload: ChatDiscoveryApproveRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        result = await approve_discovered_chats(
+            session,
+            automation_id=automation_id,
+            task_id=task_id,
+            indices=payload.indices,
+            mode=payload.mode,
+        )
+        return ChatDiscoveryActionResponse(**result)
+
+
+@router.post("/automations/{automation_id}/chats/discovery/{task_id}/reject", response_model=ChatDiscoveryActionResponse)
+async def reject_discovery_task(
+    automation_id: int,
+    task_id: int,
+    payload: ChatDiscoveryApproveRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        result = await reject_discovered_chats(
+            session,
+            automation_id=automation_id,
+            task_id=task_id,
+            indices=payload.indices,
+        )
+        return ChatDiscoveryActionResponse(created=0, rejected=result.get("rejected", 0))
+
+
+@router.post("/automations/{automation_id}/chats/monitor")
+async def run_chat_monitoring(
+    automation_id: int,
+    background_tasks: BackgroundTasks,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    background_tasks.add_task(scan_chats_and_process, automation_id)
+    return {"status": "started"}
+
+
+@router.get("/automations/{automation_id}/leads", response_model=CustomLeadListResponse)
+async def list_leads(
+    automation_id: int,
+    status: Optional[str] = None,
+    source: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        stmt = select(CustomLead).where(CustomLead.custom_automation_id == automation_id)
+        if status:
+            stmt = stmt.where(CustomLead.status == status)
+        if source:
+            stmt = stmt.where(CustomLead.source == source)
+        stmt = stmt.order_by(CustomLead.created_at.desc()).limit(limit).offset(offset)
+        result = await session.execute(stmt)
+        items = result.scalars().all()
+        total = await session.scalar(
+            select(func.count(CustomLead.id)).where(CustomLead.custom_automation_id == automation_id)
+        )
+        return CustomLeadListResponse(
+            items=[CustomLeadResponse.model_validate(l) for l in items],
+            total=total or 0,
+        )
+
+
+@router.get("/automations/{automation_id}/leads/{lead_id}", response_model=CustomLeadResponse)
+async def get_lead(
+    automation_id: int,
+    lead_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        lead = await session.get(CustomLead, lead_id)
+        if not lead or lead.custom_automation_id != automation_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+        return CustomLeadResponse.model_validate(lead)
+
+
+@router.get("/automations/{automation_id}/leads/{lead_id}/messages", response_model=CustomLeadMessageListResponse)
+async def list_lead_messages(
+    automation_id: int,
+    lead_id: int,
+    limit: int = 100,
+    offset: int = 0,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        lead = await session.get(CustomLead, lead_id)
+        if not lead or lead.custom_automation_id != automation_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+        stmt = (
+            select(CustomLeadMessage)
+            .where(CustomLeadMessage.custom_lead_id == lead_id)
+            .order_by(CustomLeadMessage.sent_at.asc())
+            .limit(limit)
+            .offset(offset)
+        )
+        result = await session.execute(stmt)
+        items = result.scalars().all()
+        total = await session.scalar(
+            select(func.count(CustomLeadMessage.id)).where(CustomLeadMessage.custom_lead_id == lead_id)
+        )
+        return CustomLeadMessageListResponse(
+            items=[CustomLeadMessageResponse.model_validate(m) for m in items],
+            total=total or 0,
+        )
+
+
+@router.patch("/automations/{automation_id}/leads/{lead_id}/status", response_model=CustomLeadResponse)
+async def update_lead_status(
+    automation_id: int,
+    lead_id: int,
+    payload: CustomLeadStatusUpdate,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        lead = await session.get(CustomLead, lead_id)
+        if not lead or lead.custom_automation_id != automation_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+        lead.status = payload.status
+        lead.status_history = (lead.status_history or []) + [{"status": payload.status, "changed_at": datetime.now(timezone.utc).isoformat()}]
+        lead.updated_at = datetime.now(timezone.utc)
+        await session.commit()
+        await session.refresh(lead)
+        return CustomLeadResponse.model_validate(lead)
+
+
+@router.post("/automations/{automation_id}/leads/{lead_id}/transfer", response_model=AmocrmTransferResponse)
+async def transfer_lead(
+    automation_id: int,
+    lead_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        lead = await session.get(CustomLead, lead_id)
+        if not lead or lead.custom_automation_id != automation_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+
+        result = await auto_transfer_lead(session, automation_id, lead)
+        if not result.get("transferred"):
+            reason = result.get("reason") or "unknown"
+            status_code = (
+                status.HTTP_502_BAD_GATEWAY
+                if reason not in {"no_manager_contact", "invalid_contact", "unsupported_contact_type", "automation_not_found"}
+                else status.HTTP_400_BAD_REQUEST
+            )
+            raise HTTPException(status_code=status_code, detail=f"Lead transfer failed: {reason}")
+
+        await session.refresh(lead)
+        return AmocrmTransferResponse(
+            lead_id=lead.id,
+            status=lead.status,
+            transferred_at=lead.transferred_at,
+            amocrm_lead_id=lead.amocrm_lead_id,
+            amocrm_contact_id=lead.amocrm_contact_id,
+            reason=result.get("reason"),
+        )
+
+
+@router.get("/automations/{automation_id}/dmp/imports", response_model=DmpOneImportListResponse)
+async def list_dmp_imports(
+    automation_id: int,
+    limit: int = 50,
+    offset: int = 0,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        stmt = (
+            select(DmpOneImport)
+            .where(DmpOneImport.custom_automation_id == automation_id)
+            .order_by(DmpOneImport.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        result = await session.execute(stmt)
+        items = result.scalars().all()
+        total = await session.scalar(
+            select(func.count(DmpOneImport.id)).where(DmpOneImport.custom_automation_id == automation_id)
+        )
+        return DmpOneImportListResponse(
+            items=[DmpOneImportResponse.model_validate(i) for i in items],
+            total=total or 0,
+        )
+
+
+@router.post("/automations/{automation_id}/dmp/orders", response_model=DmpOneImportResponse)
+async def create_dmp_order(
+    automation_id: int,
+    payload: DmpOneImportCreate,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        try:
+            dmp_import = await create_order(
+                session,
+                automation_id,
+                import_type=payload.import_type,
+                source_url=payload.source_url,
+                requested_count=payload.requested_count,
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+        return DmpOneImportResponse.model_validate(dmp_import)
+
+
+@router.post("/automations/{automation_id}/dmp/poll")
+async def run_dmp_poll(
+    automation_id: int,
+    background_tasks: BackgroundTasks,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    background_tasks.add_task(poll_pending_imports, automation_id)
+    return {"status": "started"}
+
+
+def _dmp_webhook_secret_ok(request: Request) -> bool:
+    expected = (settings.DMP_ONE_WEBHOOK_SECRET or "").strip()
+    if not expected:
+        return False
+    incoming = (
+        request.headers.get("X-DMP-Webhook-Secret")
+        or request.headers.get("X-Webhook-Secret")
+        or ""
+    ).strip()
+    auth = request.headers.get("Authorization") or ""
+    if auth.lower().startswith("bearer "):
+        incoming = incoming or auth[7:].strip()
+    if not incoming or len(incoming) != len(expected):
+        return False
+    import hmac
+    return hmac.compare_digest(expected, incoming)
+
+
+@router.post("/webhooks/dmp/{automation_id}", response_model=DmpOneWebhookResponse)
+async def dmp_public_webhook(
+    automation_id: int,
+    payload: dict,
+    request: Request,
+):
+    if not _dmp_webhook_secret_ok(request):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid DMP webhook secret")
+    async with async_session_maker() as session:
+        automation = await session.get(CustomAutomation, automation_id)
+        if not automation:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Automation not found")
+        result = await handle_webhook(session, automation_id, payload)
+        return DmpOneWebhookResponse(
+            created_leads=result.get("created_leads") or 0,
+            received_count=result.get("received_count") or 0,
+            purchased_count=result.get("purchased_count") or 0,
+        )
+
+
+@router.post("/automations/{automation_id}/dmp/webhook", response_model=DmpOneWebhookResponse)
+async def dmp_webhook(
+    automation_id: int,
+    payload: dict,
+    request: Request,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        result = await handle_webhook(session, automation_id, payload)
+        return DmpOneWebhookResponse(
+            created_leads=result.get("created_leads") or 0,
+            received_count=result.get("received_count") or 0,
+            purchased_count=result.get("purchased_count") or 0,
+        )
+
+
+@router.get("/automations/{automation_id}/amocrm/connection", response_model=AmocrmConnectionResponse)
+async def get_amocrm_connection(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        connection = await get_connection(session, automation_id)
+        if not connection:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="AmoCRM connection not found")
+        return AmocrmConnectionResponse.model_validate(connection)
+
+
+@router.post("/automations/{automation_id}/amocrm/connection", response_model=AmocrmConnectionResponse)
+async def save_amocrm_connection(
+    automation_id: int,
+    payload: AmocrmConnectionCreate,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        connection = await create_or_update_connection(
+            session,
+            automation_id,
+            subdomain=payload.subdomain,
+            access_token=payload.access_token,
+            refresh_token=payload.refresh_token,
+            pipeline_id=payload.pipeline_id,
+            responsible_user_id=payload.responsible_user_id,
+            lead_status_id=payload.lead_status_id,
+        )
+        if not automation.is_amocrm_enabled:
+            automation.is_amocrm_enabled = True
+            automation.updated_at = datetime.now(timezone.utc)
+            await session.commit()
+        return AmocrmConnectionResponse.model_validate(connection)
+
+
+@router.delete("/automations/{automation_id}/amocrm/connection", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_amocrm_connection(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        connection = await session.scalar(
+            select(AmocrmConnection).where(AmocrmConnection.custom_automation_id == automation_id)
+        )
+        if connection:
+            connection.is_active = False
+            connection.updated_at = datetime.now(timezone.utc)
+            await session.commit()
+        return None
+
+
+@router.post("/automations/{automation_id}/amocrm/sync")
+async def run_amocrm_sync(
+    automation_id: int,
+    background_tasks: BackgroundTasks,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    background_tasks.add_task(sync_lead_statuses, automation_id)
+    return {"status": "started"}
+
+
+@router.get("/automations/{automation_id}/prompts", response_model=CustomPromptListResponse)
+async def list_automation_prompts(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        items = await list_prompts(session, automation_id)
+        return CustomPromptListResponse(
+            items=[CustomPromptResponse.model_validate(p) for p in items],
+        )
+
+
+@router.get("/automations/{automation_id}/prompts/{prompt_id}", response_model=CustomPromptResponse)
+async def get_automation_prompt(
+    automation_id: int,
+    prompt_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        prompt = await get_prompt(session, automation_id, prompt_id)
+        if not prompt:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Prompt not found")
+        return CustomPromptResponse.model_validate(prompt)
+
+
+@router.patch("/automations/{automation_id}/prompts/{prompt_id}", response_model=CustomPromptResponse)
+async def update_automation_prompt(
+    automation_id: int,
+    prompt_id: int,
+    payload: CustomPromptUpdate,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        try:
+            prompt = await update_prompt(
+                session,
+                automation_id,
+                prompt_id,
+                content=payload.content,
+                model=payload.model,
+                temperature=payload.temperature,
+                max_tokens=payload.max_tokens,
+                is_active=payload.is_active,
+            )
+            return CustomPromptResponse.model_validate(prompt)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+@router.post("/automations/{automation_id}/prompts/{prompt_id}/toggle", response_model=CustomPromptResponse)
+async def toggle_automation_prompt(
+    automation_id: int,
+    prompt_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        try:
+            prompt = await toggle_prompt(session, automation_id, prompt_id)
+            return CustomPromptResponse.model_validate(prompt)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+@router.post("/automations/{automation_id}/prompts/{prompt_id}/test", response_model=CustomPromptTestResponse)
+async def test_automation_prompt(
+    automation_id: int,
+    prompt_id: int,
+    payload: CustomPromptTestRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        try:
+            result = await test_prompt(session, automation_id, prompt_id, payload.variables)
+            return CustomPromptTestResponse(**result)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))

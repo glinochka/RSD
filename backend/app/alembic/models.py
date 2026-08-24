@@ -12,6 +12,7 @@ from sqlalchemy import (
     Text,
     DateTime,
     Date,
+    Float,
     Integer,
     UniqueConstraint,
     Index,
@@ -21,11 +22,14 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import  Mapped, mapped_column, relationship
 
-try: from .database import Base
-except ImportError: from database import Base
+try:
+    from .database import Base
+except ImportError:
+    from database import Base
     
 
 from datetime import datetime, date, timezone
+from enum import Enum
 
 from prompts.system_prompts import DEFAULT_AGENT_SYSTEM_PROMPT
 
@@ -1977,3 +1981,638 @@ class WebsiteDomain(Base):
 
     # Relationships
     website: Mapped["Website"] = relationship(back_populates="domains")
+
+
+# ============================================================
+# /custom — Custom Automation subsystem models
+# ============================================================
+
+class AccountClass(str, Enum):
+    ONE_DAY = "one_day"
+    MID = "mid"
+    TRUSTED = "trusted"
+
+
+class ChatMode(str, Enum):
+    MONITORING = "monitoring"
+    NEUROCOMMENTING = "neurocommenting"
+    DISCUSSION = "discussion"
+    INACTIVE = "inactive"
+
+
+class ChatSource(str, Enum):
+    MANUAL = "manual"
+    BULK_IMPORT = "bulk_import"
+    AI_DISCOVERY = "ai_discovery"
+
+
+class ChatJoinStatus(str, Enum):
+    PENDING = "pending"
+    JOINING = "joining"
+    JOINED = "joined"
+    RATE_LIMITED = "rate_limited"
+    ERROR = "error"
+    BANNED = "banned"
+
+
+class PromptType(str, Enum):
+    CHAT_MONITORING_TRIGGER = "chat_monitoring_trigger"
+    CHAT_MONITORING_RESPONSE = "chat_monitoring_response"
+    NEUROCOMMENTING = "neurocommenting"
+    DISCUSSION_REPLY = "discussion_reply"
+    CHAT_RELEVANCE = "chat_relevance"
+    PROFILE_BIO = "profile_bio"
+    LEAD_QUALIFICATION = "lead_qualification"
+    DMP_OUTREACH = "dmp_outreach"
+
+
+class LeadStatus(str, Enum):
+    NEW = "new"
+    WARMING = "warming"
+    QUALIFIED = "qualified"
+    TRANSFERRED = "transferred"
+    PROCESSING = "processing"
+    CONVERTED = "converted"
+    LOST = "lost"
+    SPAM = "spam"
+
+
+class CustomAdmin(Base):
+    __tablename__ = "custom_admins"
+    __table_args__ = ({"extend_existing": True},)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    password_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    created_automations: Mapped[list["CustomAutomation"]] = relationship(
+        back_populates="created_by_admin",
+        cascade="all, delete-orphan",
+    )
+
+
+class CustomAutomation(Base):
+    __tablename__ = "custom_automations"
+    __table_args__ = ({"extend_existing": True},)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    client_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    industry: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(32), default="draft", server_default="draft", nullable=False, index=True
+    )
+
+    is_chat_monitoring_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    is_neurocommenting_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    is_digital_footprint_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    is_dmp_one_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    is_amocrm_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+
+    rotation_strategy: Mapped[str] = mapped_column(
+        String(32), default="round_robin", server_default="round_robin", nullable=False
+    )
+    max_daily_messages_per_account: Mapped[int] = mapped_column(
+        Integer, default=50, server_default="50", nullable=False
+    )
+
+    lead_warmup_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
+    lead_manager_contact: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    created_by_admin_id: Mapped[int | None] = mapped_column(
+        ForeignKey("custom_admins.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    created_by_admin: Mapped["CustomAdmin | None"] = relationship(
+        back_populates="created_automations",
+        foreign_keys=[created_by_admin_id],
+    )
+    credentials: Mapped[list["CustomAutomationCredential"]] = relationship(
+        back_populates="automation",
+        cascade="all, delete-orphan",
+    )
+    account_pools: Mapped[list["AccountPool"]] = relationship(
+        back_populates="automation",
+        cascade="all, delete-orphan",
+    )
+    chat_targets: Mapped[list["ChatTarget"]] = relationship(
+        back_populates="automation",
+        cascade="all, delete-orphan",
+    )
+    chat_import_jobs: Mapped[list["ChatImportJob"]] = relationship(
+        back_populates="automation",
+        cascade="all, delete-orphan",
+    )
+    chat_discovery_tasks: Mapped[list["ChatDiscoveryTask"]] = relationship(
+        back_populates="automation",
+        cascade="all, delete-orphan",
+    )
+    chat_messages: Mapped[list["ChatMessage"]] = relationship(
+        back_populates="automation",
+        cascade="all, delete-orphan",
+    )
+    custom_leads: Mapped[list["CustomLead"]] = relationship(
+        back_populates="automation",
+        cascade="all, delete-orphan",
+    )
+    custom_prompts: Mapped[list["CustomPrompt"]] = relationship(
+        back_populates="automation",
+        cascade="all, delete-orphan",
+    )
+    action_logs: Mapped[list["AutomationActionLog"]] = relationship(
+        back_populates="automation",
+        cascade="all, delete-orphan",
+    )
+    dmp_one_imports: Mapped[list["DmpOneImport"]] = relationship(
+        back_populates="automation",
+        cascade="all, delete-orphan",
+    )
+    amocrm_connection: Mapped["AmocrmConnection | None"] = relationship(
+        back_populates="automation",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+
+
+class CustomAutomationCredential(Base):
+    __tablename__ = "custom_automation_credentials"
+    __table_args__ = (
+        UniqueConstraint("custom_automation_id", "username", name="uq_custom_automation_credential"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    custom_automation_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_automations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    username: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False, index=True)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    automation: Mapped["CustomAutomation"] = relationship(back_populates="credentials")
+
+
+class SocialAccount(Base):
+    __tablename__ = "social_accounts"
+    __table_args__ = ({"extend_existing": True},)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider: Mapped[str] = mapped_column(
+        String(32), default="telegram", server_default="telegram", nullable=False, index=True
+    )
+    phone_number: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    username: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    display_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+    encrypted_session: Mapped[str] = mapped_column(Text, nullable=False)
+    session_file_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+    avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    avatar_file_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    bio: Mapped[str | None] = mapped_column(Text, nullable=True)
+    current_bio: Mapped[str | None] = mapped_column(Text, nullable=True)
+    current_avatar_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    account_class: Mapped[str] = mapped_column(
+        String(32), default=AccountClass.ONE_DAY.value, server_default="one_day", nullable=False, index=True
+    )
+    auto_classified: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    risk_score: Mapped[float | None] = mapped_column(nullable=True)
+    trust_score: Mapped[float | None] = mapped_column(nullable=True)
+
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False, index=True)
+    is_banned: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False, index=True)
+    banned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    ban_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_health_check_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    daily_messages_sent: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    daily_messages_reset_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    purchase_cost_rub: Mapped[float | None] = mapped_column(nullable=True)
+    purchase_source: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    account_age_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    friends_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    activity_score: Mapped[float | None] = mapped_column(nullable=True)
+    spam_complaints_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    pool_links: Mapped[list["PoolAccount"]] = relationship(
+        back_populates="social_account",
+        cascade="all, delete-orphan",
+    )
+    assigned_leads: Mapped[list["CustomLead"]] = relationship(
+        back_populates="assigned_account",
+        foreign_keys="CustomLead.assigned_account_id",
+        cascade="all, delete-orphan",
+    )
+    lead_messages: Mapped[list["CustomLeadMessage"]] = relationship(
+        back_populates="social_account",
+        cascade="all, delete-orphan",
+    )
+    action_logs: Mapped[list["AutomationActionLog"]] = relationship(
+        back_populates="social_account",
+        cascade="all, delete-orphan",
+    )
+
+
+class AccountPool(Base):
+    __tablename__ = "account_pools"
+    __table_args__ = ({"extend_existing": True},)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    custom_automation_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_automations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    automation: Mapped["CustomAutomation"] = relationship(back_populates="account_pools")
+    pool_accounts: Mapped[list["PoolAccount"]] = relationship(
+        back_populates="account_pool",
+        cascade="all, delete-orphan",
+    )
+
+
+class PoolAccount(Base):
+    __tablename__ = "pool_accounts"
+    __table_args__ = (
+        UniqueConstraint("account_pool_id", "social_account_id", name="uq_pool_account"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    custom_automation_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_automations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    account_pool_id: Mapped[int] = mapped_column(
+        ForeignKey("account_pools.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    social_account_id: Mapped[int] = mapped_column(
+        ForeignKey("social_accounts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    assigned_class: Mapped[str] = mapped_column(
+        String(32), default=AccountClass.ONE_DAY.value, server_default="one_day", nullable=False, index=True
+    )
+    added_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    account_pool: Mapped["AccountPool"] = relationship(back_populates="pool_accounts")
+    social_account: Mapped["SocialAccount"] = relationship(back_populates="pool_links")
+
+
+class ChatImportJob(Base):
+    __tablename__ = "chat_import_jobs"
+    __table_args__ = ({"extend_existing": True},)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    custom_automation_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_automations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    file_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(32), default="pending", server_default="pending", nullable=False, index=True
+    )
+    total_rows: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    processed_rows: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    error_rows: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    error_log: Mapped[dict] = mapped_column(
+        JSONB, default=list, nullable=False
+    )
+    created_by_admin_id: Mapped[int | None] = mapped_column(
+        ForeignKey("custom_admins.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    automation: Mapped["CustomAutomation"] = relationship(back_populates="chat_import_jobs")
+
+
+class CustomPrompt(Base):
+    __tablename__ = "custom_prompts"
+    __table_args__ = ({"extend_existing": True},)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    custom_automation_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_automations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    prompt_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    model: Mapped[str] = mapped_column(
+        String(64), default="deepseek-chat", server_default="deepseek-chat", nullable=False
+    )
+    temperature: Mapped[float] = mapped_column(nullable=False, default=0.7, server_default="0.7")
+    max_tokens: Mapped[int] = mapped_column(Integer, default=1000, server_default="1000", nullable=False)
+    response_format: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False, index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    automation: Mapped["CustomAutomation"] = relationship(back_populates="custom_prompts")
+
+
+class ChatDiscoveryTask(Base):
+    __tablename__ = "chat_discovery_tasks"
+    __table_args__ = ({"extend_existing": True},)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    custom_automation_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_automations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(
+        String(32), default="pending", server_default="pending", nullable=False, index=True
+    )
+    query: Mapped[str] = mapped_column(Text, nullable=False)
+    prompt_id: Mapped[int | None] = mapped_column(
+        ForeignKey("custom_prompts.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    mode: Mapped[str] = mapped_column(String(32), default="monitoring", server_default="monitoring", nullable=False)
+    max_chats: Mapped[int] = mapped_column(Integer, default=50, server_default="50", nullable=False)
+    require_approval: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
+    relevance_threshold: Mapped[float] = mapped_column(Float, default=0.6, server_default=text("0.6"), nullable=False)
+    found_chats: Mapped[dict] = mapped_column(
+        JSONB, default=list, nullable=False
+    )
+    joined_chats: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    rejected_chats: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    automation: Mapped["CustomAutomation"] = relationship(back_populates="chat_discovery_tasks")
+
+
+class ChatTarget(Base):
+    __tablename__ = "chat_targets"
+    __table_args__ = ({"extend_existing": True},)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    custom_automation_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_automations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    provider: Mapped[str] = mapped_column(
+        String(32), default="telegram", server_default="telegram", nullable=False
+    )
+    external_chat_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    invite_link: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    chat_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    mode: Mapped[str] = mapped_column(
+        String(32), default=ChatMode.INACTIVE.value, server_default="inactive", nullable=False, index=True
+    )
+    source: Mapped[str] = mapped_column(
+        String(32), default=ChatSource.MANUAL.value, server_default="manual", nullable=False, index=True
+    )
+    import_job_id: Mapped[int | None] = mapped_column(
+        ForeignKey("chat_import_jobs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    discovery_task_id: Mapped[int | None] = mapped_column(
+        ForeignKey("chat_discovery_tasks.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    monitoring_config: Mapped[dict] = mapped_column(
+        JSONB, default=dict, nullable=False
+    )
+    neurocommenting_config: Mapped[dict] = mapped_column(
+        JSONB, default=dict, nullable=False
+    )
+    discussion_config: Mapped[dict] = mapped_column(
+        JSONB, default=dict, nullable=False
+    )
+    join_status: Mapped[str] = mapped_column(
+        String(32), default=ChatJoinStatus.PENDING.value, server_default="pending", nullable=False, index=True
+    )
+    join_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    last_join_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_join_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    next_join_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    joined_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    joined_by_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("social_accounts.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False, index=True)
+    last_scanned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_message_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    automation: Mapped["CustomAutomation"] = relationship(back_populates="chat_targets")
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+    __table_args__ = (
+        UniqueConstraint("custom_automation_id", "dedup_key", name="uq_chat_message_dedup"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    custom_automation_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_automations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    chat_target_id: Mapped[int] = mapped_column(
+        ForeignKey("chat_targets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    external_message_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    external_chat_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    sender_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    sender_username: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    sender_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    sent_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    dedup_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    processed_by_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("social_accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    is_processed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False, index=True)
+    is_duplicate: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False, index=True)
+    matched_intent: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    trigger_confidence: Mapped[float | None] = mapped_column(nullable=True)
+    matched_prompt_id: Mapped[int | None] = mapped_column(
+        ForeignKey("custom_prompts.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+
+    automation: Mapped["CustomAutomation"] = relationship(back_populates="chat_messages")
+
+
+class DmpOneImport(Base):
+    __tablename__ = "dmp_one_imports"
+    __table_args__ = ({"extend_existing": True},)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    custom_automation_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_automations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    import_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    requested_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    received_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    purchased_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cost_rub: Mapped[float | None] = mapped_column(nullable=True)
+    cpl_rub: Mapped[float | None] = mapped_column(nullable=True)
+    raw_payload: Mapped[dict | None] = mapped_column(
+        JSONB, default=dict, nullable=True
+    )
+    status: Mapped[str] = mapped_column(
+        String(32), default="pending", server_default="pending", nullable=False, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    automation: Mapped["CustomAutomation"] = relationship(back_populates="dmp_one_imports")
+
+
+class CustomLead(Base):
+    __tablename__ = "custom_leads"
+    __table_args__ = ({"extend_existing": True},)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    custom_automation_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_automations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    source: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    chat_message_id: Mapped[int | None] = mapped_column(
+        ForeignKey("chat_messages.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    dmp_one_import_id: Mapped[int | None] = mapped_column(
+        ForeignKey("dmp_one_imports.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    contact_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    contact_value: Mapped[str] = mapped_column(String(255), nullable=False)
+    full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    company: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    position: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    dmp_raw_data: Mapped[dict | None] = mapped_column(
+        JSONB, default=dict, nullable=True
+    )
+    assigned_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("social_accounts.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    status: Mapped[str] = mapped_column(
+        String(32), default=LeadStatus.NEW.value, server_default="new", nullable=False, index=True
+    )
+    status_history: Mapped[dict] = mapped_column(
+        JSONB, default=list, nullable=False
+    )
+    amocrm_lead_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    amocrm_contact_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    amocrm_pipeline_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    amocrm_status_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    transferred_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_message_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    automation: Mapped["CustomAutomation"] = relationship(back_populates="custom_leads")
+    assigned_account: Mapped["SocialAccount | None"] = relationship(
+        back_populates="assigned_leads",
+        foreign_keys=[assigned_account_id],
+    )
+    messages: Mapped[list["CustomLeadMessage"]] = relationship(
+        back_populates="lead",
+        cascade="all, delete-orphan",
+    )
+
+
+class CustomLeadMessage(Base):
+    __tablename__ = "custom_lead_messages"
+    __table_args__ = ({"extend_existing": True},)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    custom_lead_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_leads.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    social_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("social_accounts.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    direction: Mapped[str] = mapped_column(String(16), nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    external_message_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    sent_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+
+    lead: Mapped["CustomLead"] = relationship(back_populates="messages")
+    social_account: Mapped["SocialAccount | None"] = relationship(back_populates="lead_messages")
+
+
+class AutomationActionLog(Base):
+    __tablename__ = "automation_action_logs"
+    __table_args__ = ({"extend_existing": True},)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    custom_automation_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_automations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    social_account_id: Mapped[int] = mapped_column(
+        ForeignKey("social_accounts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    action_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    target_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    target_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    result: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payload: Mapped[dict] = mapped_column(
+        JSONB, default=dict, nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+
+    automation: Mapped["CustomAutomation"] = relationship(back_populates="action_logs")
+    social_account: Mapped["SocialAccount"] = relationship(back_populates="action_logs")
+
+
+class AmocrmConnection(Base):
+    __tablename__ = "amocrm_connections"
+    __table_args__ = (
+        UniqueConstraint("custom_automation_id", name="uq_amocrm_connection_automation"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    custom_automation_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_automations.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
+    )
+    subdomain: Mapped[str] = mapped_column(String(128), nullable=False)
+    access_token_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    refresh_token_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    pipeline_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    responsible_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    lead_status_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False, index=True)
+    last_sync_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    automation: Mapped["CustomAutomation"] = relationship(back_populates="amocrm_connection")

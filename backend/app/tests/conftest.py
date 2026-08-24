@@ -43,6 +43,8 @@ _TEST_ENV_DEFAULTS = {
     "INTERNAL_API_KEY": "test-internal-api-key",
     "ENCRYPTION_KEY": _TEST_FERNET_KEY,
     "USER_JWT_SECRET_KEY": "798cd1b6cb25d52ce4e49824b01b5b22a117325ad327161c50ad5a8c2898fc89",
+    "CUSTOM_ADMIN_JWT_SECRET_KEY": "test-custom-admin-jwt-secret-key-min-32",
+    "CUSTOM_AUTOMATION_JWT_SECRET_KEY": "test-custom-automation-jwt-secret-min-32",
 }
 for _key, _value in _TEST_ENV_DEFAULTS.items():
     os.environ[_key] = _value
@@ -98,10 +100,6 @@ _ASYNC_SESSION_MAKER_PATCH_TARGETS = (
     "app.services.template_runtime.async_session_maker",
     "app.telephony.routing.async_session_maker",
     "app.services.error_log_service.async_session_maker",
-    "app.services.sales.contact_pool.async_session_maker",
-    "app.services.sales.dm_queue_service.async_session_maker",
-    "app.services.sales.fsm.async_session_maker",
-    "app.services.sales.sales_followup_service.async_session_maker",
     "app.services.admin_booking.service.async_session_maker",
     "app.services.admin_booking.payment_service.async_session_maker",
     "app.services.admin_booking.client_notify.async_session_maker",
@@ -110,6 +108,14 @@ _ASYNC_SESSION_MAKER_PATCH_TARGETS = (
     "app.telephony.orchestrator_worker.async_session_maker",
     "app.services.website_public_forms.async_session_maker",
     "app.services.agent_public_data.async_session_maker",
+    "app.router_custom.automation_router.async_session_maker",
+    "app.router_custom.admin_router.async_session_maker",
+    "app.services.custom.account_health_worker.async_session_maker",
+    "app.services.custom.chat_join_service.async_session_maker",
+    "app.services.custom.chat_discovery_service.async_session_maker",
+    "app.services.custom.chat_monitoring_service.async_session_maker",
+    "app.services.custom.dmp_one_service.async_session_maker",
+    "app.services.custom.amocrm_service.async_session_maker",
 )
 
 
@@ -121,7 +127,11 @@ def _patch_async_session_makers(stack: ExitStack, test_engine):
     factory = _make_sqlite_async_session_maker(test_engine)
 
     for target in _ASYNC_SESSION_MAKER_PATCH_TARGETS:
-        stack.enter_context(patch(target, factory))
+        try:
+            stack.enter_context(patch(target, factory))
+        except (AttributeError, ModuleNotFoundError):
+            # Module may be missing or not import a session maker; skip.
+            pass
     _wire_test_booking_service(factory)
     return factory
 
@@ -212,6 +222,9 @@ async def client(test_engine, test_session) -> AsyncGenerator[AsyncClient, None]
     mock_search_service = MagicMock()
     mock_ai_authoring = MagicMock()
     mock_sentence_transformers = MagicMock()
+    # Heavy PDF/image dependencies that can abort on some environments.
+    mock_pikepdf = MagicMock()
+    mock_img2pdf = MagicMock()
 
     # --- 2. ПАТЧИНГ СИСТЕМНЫХ МОДУЛЕЙ ПЕРЕД ИМПОРТОМ РОУТЕРОВ ---
     # Это критически важно: мы подменяем модуль в sys.modules ДО того, как кто-то сделает 'import app.qdrant.indexer'
@@ -221,6 +234,8 @@ async def client(test_engine, test_session) -> AsyncGenerator[AsyncClient, None]
         'app.qdrant.search_service': mock_search_service,
         'app.services.ai_authoring': mock_ai_authoring,
         'sentence_transformers': mock_sentence_transformers,
+        'pikepdf': mock_pikepdf,
+        'img2pdf': mock_img2pdf,
     }):
         
         # --- 3. ПАТЧИНГ ФУНКЦИЙ КРИПТОГРАФИИ ---
@@ -257,6 +272,7 @@ async def client(test_engine, test_session) -> AsyncGenerator[AsyncClient, None]
                         from app.router_documents.router import router as documents_router
                         from app.router_payments.router import router as payments_router
                         from app.router_admin.router import router as admin_router
+                        from app.router_custom import router as custom_router
 
                         test_app = FastAPI()
                         test_app.add_middleware(
@@ -272,6 +288,7 @@ async def client(test_engine, test_session) -> AsyncGenerator[AsyncClient, None]
                         test_app.include_router(documents_router)
                         test_app.include_router(payments_router)
                         test_app.include_router(admin_router)
+                        test_app.include_router(custom_router)
 
                         async with AsyncClient(
                             transport=ASGITransport(app=test_app),

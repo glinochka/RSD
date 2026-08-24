@@ -31,6 +31,7 @@ from app.router_telephony import router as telephony_router
 from app.router_websites.router import router as websites_router
 from app.router_websites.public_router import router as websites_public_router
 from app.router_projects import router as projects_router
+from app.router_custom import router as custom_router
 from app.config import settings
 from app.services.subscription_maintenance import downgrade_expired_subscriptions_once
 from app.services.agent_autopay import process_agent_autopay_renewals_once
@@ -41,6 +42,8 @@ from app.services.content_factory_worker import get_content_factory_worker
 from app.services.sales.dm_outreach_worker import get_dm_outreach_worker
 from app.services.article_publisher.worker import get_article_publisher_worker
 from app.services.ai_mop import get_ai_mop_worker
+from app.services.custom.account_health_worker import run_health_checks_forever
+from app.services.custom.scheduler_manager import CustomAutomationScheduler
 from app.channels import UserbotManager, MaxBotManager, MaxUserbotManager, WhatsAppUserbotManager
 from app.qdrant.embeddings import get_active_dense_model_name, get_dense_vector_size
 from app.utils.internal_auth import is_request_secure
@@ -67,10 +70,12 @@ async def lifespan(app: FastAPI):
     content_factory_task: asyncio.Task | None = None
     dm_outreach_worker = None
     dm_outreach_task: asyncio.Task | None = None
+    custom_health_task: asyncio.Task | None = None
     article_publisher_worker = None
     article_publisher_task: asyncio.Task | None = None
     ai_mop_worker = None
     ai_mop_task: asyncio.Task | None = None
+    custom_scheduler: CustomAutomationScheduler | None = None
 
     async def run_subscription_cron():
         while True:
@@ -167,6 +172,12 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("AiMopWorker disabled via AI_MOP_ENABLED")
 
+    custom_health_task = asyncio.create_task(run_health_checks_forever())
+    logger.info("Custom health checker started")
+    custom_scheduler = CustomAutomationScheduler()
+    custom_scheduler.start()
+    logger.info("Custom automation scheduler started")
+
     yield 
 
     if cron_task:
@@ -245,7 +256,14 @@ async def lifespan(app: FastAPI):
             await ai_mop_task
         except asyncio.CancelledError:
             pass
-
+    if custom_health_task:
+        custom_health_task.cancel()
+        try:
+            await custom_health_task
+        except asyncio.CancelledError:
+            pass
+    if custom_scheduler:
+        await custom_scheduler.stop()
 
 
 
@@ -318,6 +336,7 @@ app.include_router(telephony_router)
 app.include_router(websites_router)
 app.include_router(websites_public_router, prefix="/public-website")
 app.include_router(projects_router)
+app.include_router(custom_router)
 
 website_assets_path = os.getenv("WEBSITE_ASSETS_PATH", "/tmp/website_assets")
 Path(website_assets_path).mkdir(parents=True, exist_ok=True)

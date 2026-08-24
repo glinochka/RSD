@@ -17,7 +17,7 @@
 | **CRM** | AmoCRM, Bitrix24; запись на приём, заявки, внутренний Sales CRM |
 | **Платежи** | Подписки и биллинг агентов через YooKassa |
 | **Партнёрка** | Промокоды, выплаты |
-| **Автоматизация** | Content Factory, Article Publisher, AI MOP (лидогенерация) |
+| **Автоматизация** | Content Factory, Article Publisher, AI MOP (лидогенерация), `/custom` mass social automation |
 
 ---
 
@@ -75,6 +75,8 @@ flowchart TB
 ```
 
 **Поток сообщений:** каналы (userbot-менеджеры, Telegram-бот) → `MessageProcessor` → `TemplateRuntimeService` → LLM + tools (CRM, booking, HTTP).
+
+Массовые автоматизации `/custom` (пул Telegram-аккаунтов, нейрокомментинг, перехват заявок, DMP.one, AmoCRM): план [backlogs/CUSTOM_AGENTS_PLAN.md](backlogs/CUSTOM_AGENTS_PLAN.md), runbook [docs/custom/RUNBOOK.md](docs/custom/RUNBOOK.md).
 
 ---
 

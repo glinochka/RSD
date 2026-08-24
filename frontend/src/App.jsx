@@ -43,6 +43,27 @@ import ProjectContentPage from './pages/projects/ProjectContentPage';
 import ProjectManagerPage from './pages/projects/ProjectManagerPage';
 import ProjectIntegrationsPage from './pages/projects/ProjectIntegrationsPage';
 
+// Custom Agents Pages
+import { CustomAuthProvider } from './components/custom/CustomAuthProvider';
+import CustomAdminLayout from './components/custom/CustomAdminLayout';
+import CustomClientLayout from './components/custom/CustomClientLayout';
+import CustomLoginPage from './pages/custom/CustomLoginPage';
+import CustomAdminDashboardPage from './pages/custom/admin/CustomAdminDashboardPage';
+import CustomAdminAutomationsPage from './pages/custom/admin/CustomAdminAutomationsPage';
+import CustomAdminAutomationEditPage from './pages/custom/admin/CustomAdminAutomationEditPage';
+import CustomAdminAutomationAccessPage from './pages/custom/admin/CustomAdminAutomationAccessPage';
+import CustomAutomationDashboardPage from './pages/custom/automation/CustomAutomationDashboardPage';
+import CustomAutomationAccountsPage from './pages/custom/automation/CustomAutomationAccountsPage';
+import CustomAutomationSettingsPage from './pages/custom/automation/CustomAutomationSettingsPage';
+import CustomAutomationChatsPage from './pages/custom/automation/CustomAutomationChatsPage';
+import CustomAutomationChatDiscoveryPage from './pages/custom/automation/CustomAutomationChatDiscoveryPage';
+import CustomAutomationLeadsPage from './pages/custom/automation/CustomAutomationLeadsPage';
+import CustomAutomationLeadChatPage from './pages/custom/automation/CustomAutomationLeadChatPage';
+import CustomAutomationDmpPage from './pages/custom/automation/CustomAutomationDmpPage';
+import CustomAutomationAmocrmPage from './pages/custom/automation/CustomAutomationAmocrmPage';
+import CustomAutomationPromptsPage from './pages/custom/automation/CustomAutomationPromptsPage';
+import CustomAutomationPromptEditPage from './pages/custom/automation/CustomAutomationPromptEditPage';
+
 // Website Builder Pages
 import { PreviewPage, WebsitePublicPage, ConstructorPage, WebsiteCreatePage } from './website-builder/pages';
 const App = () => {
@@ -128,6 +149,50 @@ const App = () => {
                   path={`${NAVIGATION_ROUTES.PROJECT_CREATE}`}
                   element={<ProjectCreatePage />}
                 />
+
+                {/* Custom Agents Routes */}
+                <Route
+                  path={NAVIGATION_ROUTES.CUSTOM_LOGIN}
+                  element={
+                    <CustomAuthProvider>
+                      <CustomLoginPage />
+                    </CustomAuthProvider>
+                  }
+                />
+                <Route
+                  path="/custom/admin/*"
+                  element={
+                    <CustomAuthProvider>
+                      <CustomAdminLayout />
+                    </CustomAuthProvider>
+                  }
+                >
+                  <Route path="dashboard" element={<CustomAdminDashboardPage />} />
+                  <Route path="automations" element={<CustomAdminAutomationsPage />} />
+                  <Route path="automations/new" element={<CustomAdminAutomationEditPage />} />
+                  <Route path="automations/:id/edit" element={<CustomAdminAutomationEditPage />} />
+                  <Route path="automations/:id/access" element={<CustomAdminAutomationAccessPage />} />
+                </Route>
+                <Route
+                  path="/custom/automations/:id/*"
+                  element={
+                    <CustomAuthProvider>
+                      <CustomClientLayout />
+                    </CustomAuthProvider>
+                  }
+                >
+                  <Route path="dashboard" element={<CustomAutomationDashboardPage />} />
+                  <Route path="accounts" element={<CustomAutomationAccountsPage />} />
+                  <Route path="settings" element={<CustomAutomationSettingsPage />} />
+                  <Route path="chats" element={<CustomAutomationChatsPage />} />
+                  <Route path="chats/discovery" element={<CustomAutomationChatDiscoveryPage />} />
+                  <Route path="leads" element={<CustomAutomationLeadsPage />} />
+                  <Route path="leads/:leadId/chat" element={<CustomAutomationLeadChatPage />} />
+                  <Route path="dmp" element={<CustomAutomationDmpPage />} />
+                  <Route path="amocrm" element={<CustomAutomationAmocrmPage />} />
+                  <Route path="prompts" element={<CustomAutomationPromptsPage />} />
+                  <Route path="prompts/:promptId/edit" element={<CustomAutomationPromptEditPage />} />
+                </Route>
 
                 {/* Website Builder Routes */}
                 <Route path="/preview/:websiteId" element={<PreviewPage />} />

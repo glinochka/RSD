@@ -1,0 +1,103 @@
+"""Settings validation and feature-flag helpers for /custom automations."""
+from typing import Any
+
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ...alembic.models import AccountClass, CustomAutomation, PoolAccount, SocialAccount
+
+
+async def count_accounts_by_class(session: AsyncSession, automation_id: int) -> dict[str, int]:
+    result = await session.execute(
+        select(SocialAccount.account_class, func.count(SocialAccount.id))
+        .join(PoolAccount, PoolAccount.social_account_id == SocialAccount.id)
+        .where(
+            PoolAccount.custom_automation_id == automation_id,
+            SocialAccount.is_active.is_(True),
+            SocialAccount.is_banned.is_(False),
+        )
+        .group_by(SocialAccount.account_class)
+    )
+    counts = {cls.value: 0 for cls in AccountClass}
+    for account_class, count in result.all():
+        counts[account_class] = count
+    return counts
+
+
+async def count_active_accounts(session: AsyncSession, automation_id: int) -> int:
+    return await session.scalar(
+        select(func.count(SocialAccount.id))
+        .join(PoolAccount, PoolAccount.social_account_id == SocialAccount.id)
+        .where(
+            PoolAccount.custom_automation_id == automation_id,
+            SocialAccount.is_active.is_(True),
+            SocialAccount.is_banned.is_(False),
+        )
+    ) or 0
+
+
+async def validate_settings(
+    session: AsyncSession,
+    automation: CustomAutomation,
+) -> dict[str, Any]:
+    warnings: list[str] = []
+    can_enable: dict[str, bool] = {}
+
+    counts = await count_accounts_by_class(session, automation.id)
+    total_active = sum(counts.values())
+    trusted = counts.get(AccountClass.TRUSTED.value, 0)
+    mid = counts.get(AccountClass.MID.value, 0)
+    one_day = counts.get(AccountClass.ONE_DAY.value, 0)
+
+    can_enable["chat_monitoring"] = trusted >= 1
+    can_enable["neurocommenting"] = (one_day + mid) >= 1
+    can_enable["discussion"] = (one_day + mid + trusted) >= 1
+    can_enable["dmp_one"] = (one_day + mid + trusted) >= 1
+    can_enable["amocrm"] = True
+
+    if automation.is_chat_monitoring_enabled and not can_enable["chat_monitoring"]:
+        warnings.append(
+            "Мониторинг чатов включён, но нет активных trusted-аккаунтов для отправки ЛС. "
+            "Добавьте/классифицируйте аккаунты trusted или отключите модуль."
+        )
+    if automation.is_neurocommenting_enabled and not can_enable["neurocommenting"]:
+        warnings.append(
+            "Нейрокомментинг включён, но нет активных one_day/mid-аккаунтов. "
+            "Добавьте и классифицируйте аккаунты или отключите модуль."
+        )
+    if automation.is_digital_footprint_enabled and not can_enable["discussion"]:
+        warnings.append(
+            "Обсуждения включены, но нет активных аккаунтов пула. "
+            "Добавьте аккаунты или отключите модуль."
+        )
+    if automation.is_dmp_one_enabled and not can_enable["dmp_one"]:
+        warnings.append(
+            "DMP.one включён, но нет активных аккаунтов пула для прогрева. "
+            "Добавьте аккаунты или отключите модуль."
+        )
+    if automation.max_daily_messages_per_account <= 0:
+        warnings.append("Дневной лимит сообщений на аккаунт равен 0 — сообщения не будут отправляться.")
+    if total_active == 0:
+        warnings.append("В автоматизации нет активных аккаунтов пула — все действия будут пропущены.")
+    if not automation.is_amocrm_enabled and not (automation.lead_manager_contact or "").strip():
+        warnings.append(
+            "Не указан контакт менеджера (lead_manager_contact). "
+            "Без AmoCRM передать лид заказчику будет нельзя."
+        )
+
+    return {
+        "warnings": warnings,
+        "can_enable": can_enable,
+        "counts": counts,
+    }
+
+
+async def is_feature_enabled(
+    session: AsyncSession,
+    automation_id: int,
+    flag_name: str,
+) -> bool:
+    automation = await session.get(CustomAutomation, automation_id)
+    if not automation:
+        return False
+    return bool(getattr(automation, flag_name, False))

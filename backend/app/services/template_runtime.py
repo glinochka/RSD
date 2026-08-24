@@ -2441,13 +2441,14 @@ class TemplateRuntimeService:
             stage_hint=stage_hint,
         )
 
-        instruction = f"{prompt}\n\n{SALES_UNIFIED_QUALIFY_INSTRUCTION.format(
+        formatted_qualify_instruction = SALES_UNIFIED_QUALIFY_INSTRUCTION.format(
             product_name=product_name,
             offer_type=offer_type,
             current_sales_state=state_upper,
             stage_instruction=stage_instruction,
             lead_score_scale=lead_score_scale,
-        )}\n\n{CHAT_OPERATOR_PERSONA}\n\n{SALES_HUMAN_FLEXIBILITY_BLOCK}"
+        )
+        instruction = f"{prompt}\n\n{formatted_qualify_instruction}\n\n{CHAT_OPERATOR_PERSONA}\n\n{SALES_HUMAN_FLEXIBILITY_BLOCK}"
         if scenario_addon:
             instruction = f"{instruction}\n\n{scenario_addon}"
         if workflow_completion_mode == "auto_finish_on_signal":
@@ -2577,11 +2578,12 @@ class TemplateRuntimeService:
             current_sales_state=current_sales_state,
         )
         scenario_addon = build_sales_scenario_system_addon(scenario=scenario)
-        instruction = f"{prompt}\n\n{SALES_PRE_SALES_SCREENING_INSTRUCTION.format(
+        formatted_screening_instruction = SALES_PRE_SALES_SCREENING_INSTRUCTION.format(
             product_name=product_name,
             offer_type=offer_type,
             current_sales_state=(current_sales_state or 'DISCOVERED').strip().upper(),
-        )}"
+        )
+        instruction = f"{prompt}\n\n{formatted_screening_instruction}"
         if scenario_addon:
             instruction = f"{instruction}\n\n{scenario_addon}"
         if workflow_completion_mode == "auto_finish_on_signal":
@@ -2853,12 +2855,13 @@ class TemplateRuntimeService:
         )
         scenario_addon = build_sales_scenario_system_addon(scenario=scenario)
 
-        system_prompt = f"{prompt}\n\n{SALES_DM_COMPOSE_INSTRUCTION.format(
+        formatted_dm_instruction = SALES_DM_COMPOSE_INSTRUCTION.format(
             product_name=product_name,
             offer_type=offer_type,
             current_sales_state=(current_sales_state or 'DISCOVERED').strip().upper(),
             stage_instruction=stage_instruction,
-        )}"
+        )
+        system_prompt = f"{prompt}\n\n{formatted_dm_instruction}"
         if scenario_addon:
             system_prompt = f"{system_prompt}\n\n{scenario_addon}"
         if client_memory_section:

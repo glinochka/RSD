@@ -4,6 +4,7 @@
 
 | Документ | Содержание | Статус |
 |----------|------------|--------|
+| [CUSTOM_AGENTS_PLAN.md](./CUSTOM_AGENTS_PLAN.md) | Пространство кастомных агентов (`/custom`): пулы аккаунтов, ротация, классификация, массовый импорт чатов, авто-поиск, дедупликация, DMP.one, AmoCRM, масштабирование | реализовано, runbook: [docs/custom/RUNBOOK.md](../docs/custom/RUNBOOK.md) |
 | [TECH_STACK_EVALUATION.md](./TECH_STACK_EVALUATION.md) | LangChain/LangGraph, Kafka, альтернативный стек | оценка |
 | [PROJECT_PORTAL_PLAN.md](./PROJECT_PORTAL_PLAN.md) | Эволюция в портал «Проект» | план |
 | [BACKEND_REFACTOR_PLAN.md](./BACKEND_REFACTOR_PLAN.md) | Дедупликация и ООП в backend | фазы 1–4 ✅, фаза 5 — backlog |

@@ -96,7 +96,40 @@ class Settings(BaseSettings):
     ADMIN_WEB_LOGIN: str = ""
     ADMIN_WEB_PASSWORD_HASH: str = ""
 
-    @field_validator("ADMIN_WEB_PASSWORD_HASH", mode="before")
+    # /custom subsystem credentials and JWT secrets
+    CUSTOM_ADMIN_LOGIN: str = ""
+    CUSTOM_ADMIN_PASSWORD_HASH: str = ""
+    CUSTOM_ADMIN_JWT_SECRET_KEY: str = ""
+    CUSTOM_AUTOMATION_JWT_SECRET_KEY: str = ""
+
+    # Local media storage (uploaded sessions, avatars, etc.).
+    MEDIA_ROOT: str = "media"
+
+    # DMP.one integration (optional).
+    DMP_ONE_API_BASE_URL: str = ""
+    DMP_ONE_API_KEY: str = ""
+    DMP_ONE_WEBHOOK_SECRET: str = ""
+    DMP_ONE_TIMEOUT_SECONDS: float = 30.0
+    DMP_ONE_POLL_INTERVAL_SECONDS: int = 300
+    DMP_ONE_OUTREACH_ENABLED: bool = True
+
+    # AmoCRM integration (optional).
+    AMOCRM_CLIENT_ID: str = ""
+    AMOCRM_CLIENT_SECRET: str = ""
+    AMOCRM_REDIRECT_URI: str = ""
+
+    # /custom automation scheduler intervals (seconds).
+    CUSTOM_SCHEDULER_REFRESH_INTERVAL_SECONDS: int = 60
+    CUSTOM_MONITOR_INTERVAL_SECONDS: int = 60
+    CUSTOM_JOIN_INTERVAL_SECONDS: int = 120
+    CUSTOM_DISCOVERY_INTERVAL_SECONDS: int = 30
+    CUSTOM_NEUROCOMMENTING_INTERVAL_SECONDS: int = 300
+    CUSTOM_DISCUSSION_INTERVAL_SECONDS: int = 240
+    CUSTOM_LEAD_WARMUP_INTERVAL_SECONDS: int = 90
+    CUSTOM_AMOCRM_SYNC_INTERVAL_SECONDS: int = 600
+    CUSTOM_BAN_ALERT_THRESHOLD: float = 0.3
+
+    @field_validator("ADMIN_WEB_PASSWORD_HASH", "CUSTOM_ADMIN_PASSWORD_HASH", mode="before")
     @classmethod
     def unescape_compose_dollars_in_admin_hash(cls, v: object) -> object:
         # Docker Compose interpolates `$name` in env values; bcrypt hashes look like `$2b$12$...`.
@@ -247,11 +280,19 @@ def get_db_url():
     )
 
 
-def get_auth_data(token_kind: Literal["user", "admin", "sales_staff"] = "user"):
+def get_auth_data(token_kind: Literal["user", "admin", "sales_staff", "custom_admin", "custom_automation"] = "user"):
     if token_kind == "admin":
         secret_key = settings.ADMIN_JWT_SECRET_KEY.strip()
         if not secret_key:
             raise RuntimeError("ADMIN_JWT_SECRET_KEY is not configured")
+    elif token_kind == "custom_admin":
+        secret_key = settings.CUSTOM_ADMIN_JWT_SECRET_KEY.strip() or settings.ADMIN_JWT_SECRET_KEY.strip()
+        if not secret_key:
+            raise RuntimeError("CUSTOM_ADMIN_JWT_SECRET_KEY or ADMIN_JWT_SECRET_KEY is not configured")
+    elif token_kind == "custom_automation":
+        secret_key = settings.CUSTOM_AUTOMATION_JWT_SECRET_KEY.strip() or settings.USER_JWT_SECRET_KEY.strip()
+        if not secret_key:
+            raise RuntimeError("CUSTOM_AUTOMATION_JWT_SECRET_KEY or USER_JWT_SECRET_KEY is not configured")
     else:
         secret_key = settings.USER_JWT_SECRET_KEY.strip()
         if not secret_key:
