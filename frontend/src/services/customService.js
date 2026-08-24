@@ -60,6 +60,32 @@ const customService = {
     return getStorageItem(CUSTOM_AUTOMATION_ID_KEY);
   },
 
+  async login(username, password) {
+    const body = JSON.stringify({ username, password });
+    const headers = { 'Content-Type': 'application/json' };
+    const adminResponse = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_ADMIN_LOGIN}`, {
+      method: 'POST',
+      headers,
+      body,
+    });
+    if (adminResponse.ok) {
+      const data = await adminResponse.json();
+      this.setCustomSession(data);
+      return data;
+    }
+    const automationResponse = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_LOGIN}`, {
+      method: 'POST',
+      headers,
+      body,
+    });
+    if (automationResponse.ok) {
+      const data = await automationResponse.json();
+      this.setCustomSession(data);
+      return data;
+    }
+    throw new Error('Неверный логин или пароль');
+  },
+
   async loginAdmin(username, password) {
     const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_ADMIN_LOGIN}`, {
       method: 'POST',

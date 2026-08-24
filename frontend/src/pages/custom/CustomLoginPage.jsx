@@ -1,35 +1,40 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useCustomAuth } from '../../components/custom/useCustomAuth';
 import { NAVIGATION_ROUTES } from '../../config/constants';
+import '../../styles/managementPortal.css';
 
 const CustomLoginPage = () => {
   const navigate = useNavigate();
   const { login, isAuthenticated, isAdmin, automationId } = useCustomAuth();
-  const [mode, setMode] = useState('admin'); // 'admin' | 'automation'
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Redirect if already logged in
-  if (isAuthenticated) {
+  useEffect(() => {
+    if (!isAuthenticated) {
+      return;
+    }
     if (isAdmin) {
       navigate(NAVIGATION_ROUTES.CUSTOM_ADMIN_DASHBOARD, { replace: true });
-      return null;
+      return;
     }
     if (automationId) {
       navigate(NAVIGATION_ROUTES.CUSTOM_AUTOMATION_DASHBOARD(automationId), { replace: true });
-      return null;
     }
-  }
+  }, [automationId, isAdmin, isAuthenticated, navigate]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError(null);
-    setIsLoading(true);
+    setError('');
+    if (!username.trim() || !password) {
+      setError('Введите логин и пароль');
+      return;
+    }
+    setIsSubmitting(true);
     try {
-      const response = await login(username, password, mode);
+      const response = await login(username.trim(), password);
       if (response.custom_admin) {
         navigate(NAVIGATION_ROUTES.CUSTOM_ADMIN_DASHBOARD, { replace: true });
       } else if (response.custom_automation_id) {
@@ -39,71 +44,61 @@ const CustomLoginPage = () => {
         );
       }
     } catch (err) {
-      setError(err.message || 'Login failed');
+      setError(err.message || 'Неверный логин или пароль');
     } finally {
-      setIsLoading(false);
+      setIsSubmitting(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
-      <div className="w-full max-w-md bg-white rounded-lg shadow p-8">
-        <h1 className="text-xl font-semibold mb-6 text-center">Вход в кастомные агенты</h1>
+    <div className="management-page">
+      <header className="management-header">
+        <h1>Кастомные агенты</h1>
+      </header>
 
-        <div className="flex gap-2 mb-6">
-          <button
-            type="button"
-            onClick={() => setMode('admin')}
-            className={`flex-1 py-2 rounded text-sm font-medium ${
-              mode === 'admin' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'
-            }`}
-          >
-            Админ
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode('automation')}
-            className={`flex-1 py-2 rounded text-sm font-medium ${
-              mode === 'automation' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'
-            }`}
-          >
-            Клиент
-          </button>
-        </div>
+      <main className="management-login-wrap">
+        <div className="management-login-portal-shell">
+          <div className="management-login-portal-header">
+            <p className="management-login-portal-eyebrow">RSD Custom</p>
+            <h2 className="management-login-portal-title">Вход в панель</h2>
+            <p className="management-login-portal-subtitle">
+              Один вход для администратора и клиента автоматизации
+            </p>
+          </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium mb-1">Логин</label>
+          <form className="management-login-card" onSubmit={handleSubmit}>
+            <h2>Вход</h2>
+
+            <label htmlFor="custom-login">Логин</label>
             <input
+              id="custom-login"
               type="text"
+              className="management-field"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className="w-full border rounded px-3 py-2"
-              required
+              autoComplete="username"
+              disabled={isSubmitting}
             />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">Пароль</label>
+
+            <label htmlFor="custom-password">Пароль</label>
             <input
+              id="custom-password"
               type="password"
+              className="management-field"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full border rounded px-3 py-2"
-              required
+              autoComplete="current-password"
+              disabled={isSubmitting}
             />
-          </div>
 
-          {error && <div className="text-red-600 text-sm">{error}</div>}
+            {error && <div className="management-error">{error}</div>}
 
-          <button
-            type="submit"
-            disabled={isLoading}
-            className="w-full bg-blue-600 text-white rounded py-2 font-medium hover:bg-blue-700 disabled:opacity-50"
-          >
-            {isLoading ? 'Вход...' : 'Войти'}
-          </button>
-        </form>
-      </div>
+            <button type="submit" className="btn btn-black management-login-btn" disabled={isSubmitting}>
+              {isSubmitting ? 'Проверка...' : 'Войти'}
+            </button>
+          </form>
+        </div>
+      </main>
     </div>
   );
 };

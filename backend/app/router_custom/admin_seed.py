@@ -48,7 +48,14 @@ async def seed_custom_admin():
             select(CustomAdmin).where(CustomAdmin.username == login)
         )
         if existing:
-            print(f"CustomAdmin '{login}' already exists (id={existing.id}).")
+            if existing.password_hash != password_hash:
+                existing.password_hash = password_hash
+                existing.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                await session.commit()
+                await session.refresh(existing)
+                print(f"Updated password hash for CustomAdmin '{login}' (id={existing.id}).")
+            else:
+                print(f"CustomAdmin '{login}' already exists (id={existing.id}).")
             return existing
 
         admin = CustomAdmin(

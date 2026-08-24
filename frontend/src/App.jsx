@@ -152,6 +152,10 @@ const App = () => {
 
                 {/* Custom Agents Routes */}
                 <Route
+                  path="/custom"
+                  element={<Navigate to={NAVIGATION_ROUTES.CUSTOM_LOGIN} replace />}
+                />
+                <Route
                   path={NAVIGATION_ROUTES.CUSTOM_LOGIN}
                   element={
                     <CustomAuthProvider>

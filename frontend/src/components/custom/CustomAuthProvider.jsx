@@ -15,11 +15,8 @@ export const CustomAuthProvider = ({ children }) => {
   const [isLoading, setIsLoading] = useState(false);
 
   const login = useCallback(
-    async (username, password, mode = 'automation') => {
-      const response =
-        mode === 'admin'
-          ? await customService.loginAdmin(username, password)
-          : await customService.loginAutomation(username, password);
+    async (username, password) => {
+      const response = await customService.login(username, password);
 
       setToken(response.access_token);
       setIsAdmin(Boolean(response.custom_admin));
