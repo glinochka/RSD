@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import customService from '../../../services/customService';
 import CustomBulkProfileForm from './CustomBulkProfileForm';
+import '../../../styles/projectCRMPage.css';
+import '../../../styles/projectSettingsPage.css';
 
 const ACCOUNT_CLASSES = [
   { value: '', label: 'Все классы' },
@@ -10,10 +12,10 @@ const ACCOUNT_CLASSES = [
   { value: 'trusted', label: 'Доверенный' },
 ];
 
-const CLASS_COLORS = {
-  one_day: 'bg-yellow-100 text-yellow-700',
-  mid: 'bg-blue-100 text-blue-700',
-  trusted: 'bg-green-100 text-green-700',
+const CLASS_STATUS = {
+  one_day: 'crm-status--pending',
+  mid: 'crm-status--completed',
+  trusted: 'crm-status--confirmed',
 };
 
 const STATUSES = [
@@ -70,7 +72,7 @@ const CustomAutomationAccountsPage = () => {
     try {
       const data = await customService.getAutomationAccountBanStats(id);
       setBanStats(data);
-    } catch (err) {
+    } catch {
       setBanStats(null);
     }
   }, [id]);
@@ -151,236 +153,154 @@ const CustomAutomationAccountsPage = () => {
   }, {});
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        <h1 className="text-2xl font-semibold">Аккаунты автоматизации</h1>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={handleHealthCheck}
-            disabled={isHealthChecking}
-            className="bg-emerald-600 text-white px-4 py-2 rounded hover:bg-emerald-700 disabled:opacity-50"
-          >
-            {isHealthChecking ? 'Проверка...' : 'Проверить аккаунты'}
+    <div className="project-crm-page">
+      <div className="crm-header">
+        <div>
+          <h1 className="crm-title">Аккаунты</h1>
+          <p className="crm-subtitle">Массовый залив сессий. Классификация пройдёт сама.</p>
+        </div>
+        <div className="settings-actions">
+          <button type="button" onClick={handleHealthCheck} disabled={isHealthChecking} className="btn btn-outline">
+            {isHealthChecking ? 'Проверка...' : 'Проверить'}
           </button>
-          <button
-            onClick={handleBulkClassify}
-            disabled={isClassifying}
-            className="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 disabled:opacity-50"
-          >
-            {isClassifying ? 'Проверка...' : 'Переклассифировать все'}
+          <button type="button" onClick={handleBulkClassify} disabled={isClassifying} className="btn btn-outline">
+            {isClassifying ? 'Проверка...' : 'Переклассифировать'}
           </button>
-          <label className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 cursor-pointer disabled:opacity-50">
+          <label className="btn btn-black">
             <input
               type="file"
               accept=".zip,.csv,.session"
               onChange={handleFileChange}
               disabled={isUploading}
-              className="hidden"
+              style={{ display: 'none' }}
             />
             {isUploading ? 'Загрузка...' : 'Загрузить ZIP / CSV / .session'}
           </label>
         </div>
       </div>
 
-      {classifyMessage && (
-        <div className={classifyMessage.startsWith('В очереди') ? 'text-purple-600' : 'text-red-600'}>
-          {classifyMessage}
-        </div>
-      )}
+      {classifyMessage ? <p className="crm-flash">{classifyMessage}</p> : null}
+      {healthCheckMessage ? <p className="crm-flash">{healthCheckMessage}</p> : null}
+      {uploadSuccess ? <p className="crm-flash">{uploadSuccess}</p> : null}
+      {uploadError ? <p className="crm-flash crm-flash--error">{uploadError}</p> : null}
+      {error ? <p className="crm-flash crm-flash--error">{error}</p> : null}
 
-      {healthCheckMessage && (
-        <div className="text-emerald-600">{healthCheckMessage}</div>
-      )}
-
-      {banStats && banStats.alert && (
-        <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-4">
-          <div className="font-semibold">Внимание: высокий процент забаненных аккаунтов</div>
-          <div className="text-sm">
+      {banStats && banStats.alert ? (
+        <div className="settings-section settings-section--danger">
+          <h3 className="settings-section-title settings-section-title--danger">Высокий процент банов</h3>
+          <p className="form-hint">
             Забанено {banStats.banned} из {banStats.total} ({(banStats.banned_percent * 100).toFixed(0)}%).
-            {' '}
-            Рекомендуется пополнить пул или снизить активность.
-          </div>
+            Пополните пул или снизьте активность.
+          </p>
         </div>
-      )}
+      ) : null}
 
-      {(uploadSuccess || uploadError) && (
-        <div className="space-y-2">
-          {uploadSuccess && <div className="text-green-600">{uploadSuccess}</div>}
-          {uploadError && <div className="text-red-600">{uploadError}</div>}
-        </div>
-      )}
-
-      {accounts.length > 0 && (
-        <div className="bg-white rounded-lg shadow p-4 flex flex-wrap gap-3">
+      {accounts.length > 0 ? (
+        <div className="crm-stats" style={{ marginBottom: 16 }}>
           {ACCOUNT_CLASSES.filter((c) => c.value).map((c) => (
-            <div key={c.value} className="flex items-center gap-2 text-sm">
-              <span className={`inline-flex px-2 py-1 rounded text-xs ${CLASS_COLORS[c.value]}`}>
-                {c.label}
-              </span>
-              <span className="font-medium">{distribution[c.value] || 0}</span>
+            <div key={c.value} className="crm-stat">
+              <span className="crm-stat-value">{distribution[c.value] || 0}</span>
+              <span className="crm-stat-label">{c.label}</span>
             </div>
           ))}
+          <div className="crm-stat">
+            <span className="crm-stat-value">{total}</span>
+            <span className="crm-stat-label">Всего</span>
+          </div>
         </div>
-      )}
+      ) : null}
 
       <CustomBulkProfileForm automationId={id} onSuccess={loadAccounts} />
 
-      <div className="bg-white rounded-lg shadow p-4">
-        <form onSubmit={handleSearchSubmit} className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Статус</label>
-            <select
-              value={filters.status}
-              onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}
-              className="w-full border border-gray-300 rounded px-3 py-2"
-            >
-              {STATUSES.map((s) => (
-                <option key={s.value} value={s.value}>{s.label}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Класс</label>
-            <select
-              value={filters.accountClass}
-              onChange={(e) => setFilters((f) => ({ ...f, accountClass: e.target.value }))}
-              className="w-full border border-gray-300 rounded px-3 py-2"
-            >
-              {ACCOUNT_CLASSES.map((c) => (
-                <option key={c.value} value={c.value}>{c.label}</option>
-              ))}
-            </select>
-          </div>
-          <div className="md:col-span-2">
-            <label className="block text-sm font-medium text-gray-700 mb-1">Поиск</label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={filters.search}
-                onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))}
-                placeholder="Телефон, username, имя"
-                className="flex-1 border border-gray-300 rounded px-3 py-2"
-              />
-              <button
-                type="submit"
-                className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50"
-              >
-                Найти
-              </button>
-            </div>
-          </div>
-        </form>
-      </div>
-
-      {error && <div className="text-red-600">{error}</div>}
-
-      <div className="text-sm text-gray-500">Всего: {total}</div>
+      <form onSubmit={handleSearchSubmit} className="settings-section">
+        <h3 className="settings-section-title">Фильтр</h3>
+        <div className="form-group">
+          <label htmlFor="acc-status">Статус</label>
+          <select
+            id="acc-status"
+            value={filters.status}
+            onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}
+          >
+            {STATUSES.map((s) => (
+              <option key={s.value} value={s.value}>{s.label}</option>
+            ))}
+          </select>
+        </div>
+        <div className="form-group">
+          <label htmlFor="acc-class">Класс</label>
+          <select
+            id="acc-class"
+            value={filters.accountClass}
+            onChange={(e) => setFilters((f) => ({ ...f, accountClass: e.target.value }))}
+          >
+            {ACCOUNT_CLASSES.map((c) => (
+              <option key={c.value} value={c.value}>{c.label}</option>
+            ))}
+          </select>
+        </div>
+        <div className="form-group">
+          <label htmlFor="acc-search">Поиск</label>
+          <input
+            id="acc-search"
+            type="text"
+            value={filters.search}
+            onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))}
+            placeholder="Телефон, username, имя"
+          />
+        </div>
+        <div className="settings-actions">
+          <button type="submit" className="btn btn-outline">Найти</button>
+        </div>
+      </form>
 
       {isLoading ? (
-        <div className="text-gray-500">Загрузка...</div>
+        <div className="crm-empty-list"><p>Загрузка...</p></div>
       ) : accounts.length === 0 ? (
-        <div className="bg-white rounded-lg shadow p-6 text-center text-gray-500">
-          Нет аккаунтов. Загрузите ZIP с .session файлами или CSV с метаданными.
+        <div className="crm-empty-list">
+          <p>Нет аккаунтов</p>
+          <span>Загрузите ZIP с .session файлами или CSV с метаданными.</span>
         </div>
       ) : (
-        <div className="bg-white rounded-lg shadow overflow-hidden">
-          <table className="w-full text-left">
-            <thead className="bg-gray-50 border-b">
-              <tr>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">ID</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Телефон / Username</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Класс</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Статус</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Risk / Trust</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Суточный лимит</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Последнее использование</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Добавлен</th>
-              </tr>
-            </thead>
-            <tbody>
-              {accounts.map((account) => (
-                <tr key={account.id} className="border-b last:border-b-0 hover:bg-gray-50">
-                  <td className="px-4 py-3 text-sm font-mono">{account.id}</td>
-                  <td className="px-4 py-3 text-sm">
-                    <div>{account.phone_number || account.username || '-'}</div>
-                    {account.display_name && (
-                      <div className="text-xs text-gray-500">{account.display_name}</div>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-sm">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`inline-flex px-2 py-1 rounded text-xs ${
-                          CLASS_COLORS[account.assigned_class] || 'bg-gray-100 text-gray-700'
-                        }`}
-                      >
-                        {account.assigned_class}
-                      </span>
-                      <select
-                        value={account.assigned_class}
-                        onChange={(e) => handleClassChange(account.id, e.target.value)}
-                        className="text-xs border border-gray-300 rounded px-1 py-1"
-                      >
-                        {ACCOUNT_CLASSES.filter((c) => c.value).map((c) => (
-                          <option key={c.value} value={c.value}>{c.label}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-sm">
-                    <div className="flex flex-col gap-1">
-                      <span
-                        className={`inline-flex px-2 py-1 rounded text-xs ${
-                          account.status === 'loaded'
-                            ? 'bg-green-100 text-green-700'
-                            : 'bg-yellow-100 text-yellow-700'
-                        }`}
-                      >
-                        {account.status === 'loaded' ? 'Загружено' : 'Пусто'}
-                      </span>
-                      {account.is_banned && (
-                        <span className="inline-flex px-2 py-1 rounded text-xs bg-red-100 text-red-700">
-                          Забанен
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-sm text-gray-600">
-                    {account.risk_score !== null && account.trust_score !== null ? (
-                      <div className="text-xs">
-                        <div>Risk: {account.risk_score}</div>
-                        <div>Trust: {account.trust_score}</div>
-                      </div>
-                    ) : (
-                      '-'
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-sm">
-                    <div className="text-xs mb-1">
-                      {account.daily_messages_sent} / {account.max_daily_messages_per_account ?? '—'}
-                    </div>
-                    <div className="w-24 h-2 bg-gray-200 rounded overflow-hidden">
-                      <div
-                        className="h-full bg-blue-500"
-                        style={{
-                          width: `${Math.min(
-                            100,
-                            ((account.daily_messages_sent || 0) / (account.max_daily_messages_per_account || 1)) * 100,
-                          )}%`,
-                        }}
-                      />
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-sm text-gray-500">
-                    {account.last_used_at ? new Date(account.last_used_at).toLocaleString() : '-'}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-gray-500">
-                    {new Date(account.added_at).toLocaleString()}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="crm-list">
+          {accounts.map((account) => (
+            <div key={account.id} className="crm-item">
+              <div className="crm-item-header">
+                <h5 className="crm-item-title">{account.phone_number || account.username || `Аккаунт #${account.id}`}</h5>
+                <span className={`crm-status ${account.status === 'loaded' ? 'crm-status--confirmed' : 'crm-status--pending'}`}>
+                  {account.status === 'loaded' ? 'Загружено' : 'Пусто'}
+                </span>
+              </div>
+              {account.display_name ? <p className="crm-item-subtitle">{account.display_name}</p> : null}
+              <p className="crm-item-subtitle">
+                {account.is_banned ? 'Забанен · ' : ''}
+                {account.risk_score !== null && account.trust_score !== null
+                  ? `Risk ${account.risk_score} · Trust ${account.trust_score} · `
+                  : ''}
+                {account.daily_messages_sent} / {account.max_daily_messages_per_account ?? '—'} сообщений сегодня
+              </p>
+              <span className="crm-date">
+                {account.last_used_at
+                  ? `Последнее использование ${new Date(account.last_used_at).toLocaleString()}`
+                  : 'Ещё не использовался'}
+                {account.added_at ? ` · добавлен ${new Date(account.added_at).toLocaleString()}` : ''}
+              </span>
+              <div className="form-group">
+                <label htmlFor={`class-${account.id}`}>Класс</label>
+                <select
+                  id={`class-${account.id}`}
+                  value={account.assigned_class}
+                  onChange={(e) => handleClassChange(account.id, e.target.value)}
+                >
+                  {ACCOUNT_CLASSES.filter((c) => c.value).map((c) => (
+                    <option key={c.value} value={c.value}>{c.label}</option>
+                  ))}
+                </select>
+              </div>
+              <span className={`crm-status ${CLASS_STATUS[account.assigned_class] || ''}`}>
+                {ACCOUNT_CLASSES.find((c) => c.value === account.assigned_class)?.label || account.assigned_class}
+              </span>
+            </div>
+          ))}
         </div>
       )}
     </div>

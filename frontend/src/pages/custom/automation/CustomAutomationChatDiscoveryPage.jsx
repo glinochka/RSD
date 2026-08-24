@@ -19,7 +19,7 @@ const CustomAutomationChatDiscoveryPage = () => {
     query: '',
     mode: 'monitoring',
     max_chats: 30,
-    require_approval: true,
+    require_approval: false,
     relevance_threshold: 0.6,
   });
   const [selected, setSelected] = useState({});
@@ -115,141 +115,128 @@ const CustomAutomationChatDiscoveryPage = () => {
   };
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
-      <h1 className="text-2xl font-semibold">Автопоиск чатов и каналов</h1>
-      {error && <div className="text-red-600">{error}</div>}
-      {message && <div className="text-green-600">{message}</div>}
+    <>
+      {error ? <p className="crm-flash crm-flash--error">{error}</p> : null}
+      {message ? <p className="crm-flash">{message}</p> : null}
 
-      <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow p-6 space-y-4">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Тема / запрос</label>
+      <form onSubmit={handleSubmit} className="settings-section">
+        <h3 className="settings-section-title">Автопоиск</h3>
+        <div className="form-group">
+          <label htmlFor="discovery-query">Тема / запрос</label>
           <input
+            id="discovery-query"
             type="text"
             value={form.query}
             onChange={(e) => setForm((prev) => ({ ...prev, query: e.target.value }))}
             placeholder="SEO оптимизация"
-            className="w-full border border-gray-300 rounded px-3 py-2"
             required
           />
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Режим чатов</label>
-            <select
-              value={form.mode}
-              onChange={(e) => setForm((prev) => ({ ...prev, mode: e.target.value }))}
-              className="w-full border border-gray-300 rounded px-3 py-2"
-            >
-              {MODES.map((m) => (
-                <option key={m.value} value={m.value}>{m.label}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Макс. чатов</label>
-            <input
-              type="number"
-              value={form.max_chats}
-              min={1}
-              max={200}
-              onChange={(e) => setForm((prev) => ({ ...prev, max_chats: e.target.value }))}
-              className="w-full border border-gray-300 rounded px-3 py-2"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Порог релевантности</label>
-            <input
-              type="number"
-              step={0.05}
-              min={0}
-              max={1}
-              value={form.relevance_threshold}
-              onChange={(e) => setForm((prev) => ({ ...prev, relevance_threshold: e.target.value }))}
-              className="w-full border border-gray-300 rounded px-3 py-2"
-            />
-          </div>
+        <div className="form-group">
+          <label htmlFor="discovery-mode">Режим чатов</label>
+          <select
+            id="discovery-mode"
+            value={form.mode}
+            onChange={(e) => setForm((prev) => ({ ...prev, mode: e.target.value }))}
+          >
+            {MODES.map((m) => (
+              <option key={m.value} value={m.value}>{m.label}</option>
+            ))}
+          </select>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="form-group">
+          <label htmlFor="discovery-max">Макс. чатов</label>
           <input
-            id="require_approval"
-            type="checkbox"
-            checked={form.require_approval}
-            onChange={(e) => setForm((prev) => ({ ...prev, require_approval: e.target.checked }))}
+            id="discovery-max"
+            type="number"
+            value={form.max_chats}
+            min={1}
+            max={200}
+            onChange={(e) => setForm((prev) => ({ ...prev, max_chats: e.target.value }))}
           />
-          <label htmlFor="require_approval" className="text-sm text-gray-700">
+        </div>
+        <div className="form-group">
+          <label htmlFor="discovery-threshold">Порог релевантности</label>
+          <input
+            id="discovery-threshold"
+            type="number"
+            step={0.05}
+            min={0}
+            max={1}
+            value={form.relevance_threshold}
+            onChange={(e) => setForm((prev) => ({ ...prev, relevance_threshold: e.target.value }))}
+          />
+        </div>
+        <div className="form-group">
+          <label htmlFor="require_approval">
+            <input
+              id="require_approval"
+              type="checkbox"
+              checked={form.require_approval}
+              onChange={(e) => setForm((prev) => ({ ...prev, require_approval: e.target.checked }))}
+            />{' '}
             Требовать ручного одобрения перед вступлением
           </label>
         </div>
-        <button
-          type="submit"
-          disabled={isStarting}
-          className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50"
-        >
-          {isStarting ? 'Запуск...' : 'Найти чаты'}
-        </button>
+        <div className="settings-actions">
+          <button type="submit" disabled={isStarting} className="btn btn-black">
+            {isStarting ? 'Запуск...' : 'Найти чаты'}
+          </button>
+        </div>
       </form>
 
       {isLoading ? (
-        <div className="text-gray-500">Загрузка...</div>
+        <div className="crm-empty-list"><p>Загрузка...</p></div>
       ) : tasks.length === 0 ? (
-        <div className="text-gray-500 text-center py-6">Задач поиска пока нет.</div>
+        <div className="crm-empty-list">
+          <p>Задач поиска пока нет</p>
+          <span>Укажите тему — система найдёт чаты сама.</span>
+        </div>
       ) : (
-        <div className="space-y-4">
+        <div className="crm-list">
           {tasks.map((task) => (
-            <div key={task.id} className="bg-white rounded-lg shadow p-4">
-              <div className="flex items-center justify-between mb-2">
-                <div className="font-medium">Задача #{task.id}</div>
-                <div className="text-sm text-gray-500">{task.status}</div>
+            <div key={task.id} className="crm-item">
+              <div className="crm-item-header">
+                <h5 className="crm-item-title">Задача #{task.id}</h5>
+                <span className="crm-status">{task.status}</span>
               </div>
-              <div className="text-sm text-gray-700 mb-2">Запрос: {task.query}</div>
-              <div className="text-sm text-gray-500 mb-2">
-                Найдено: {task.found_chats.length} / Одобрено: {task.joined_chats} / Отклонено: {task.rejected_chats}
-              </div>
-              {task.status === 'awaiting_approval' && (
-                <div className="mt-3 space-y-2">
-                  {task.found_chats.map((chat, idx) => (
-                    <div
-                      key={chat.id || idx}
-                      className="flex items-start gap-3 p-2 border rounded hover:bg-gray-50"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selected[task.id]?.includes(idx) || false}
-                        onChange={() => toggleSelected(task.id, idx)}
-                      />
-                      <div className="flex-1">
-                        <div className="font-medium">{chat.title || chat.username || 'Без названия'}</div>
-                        <div className="text-sm text-gray-600">{chat.description}</div>
-                        <div className="text-xs text-gray-500 mt-1">
-                          {chat.chat_type} · {chat.participants_count || 0} участников · релевантность {Math.round((chat.score || 0) * 100)}%
-                        </div>
-                        {chat.reason && (
-                          <div className="text-xs text-gray-500 mt-1">{chat.reason}</div>
-                        )}
-                      </div>
+              <p className="crm-item-subtitle">Запрос: {task.query}</p>
+              <p className="crm-item-subtitle">
+                Найдено: {(task.found_chats || []).length} / Одобрено: {task.joined_chats} / Отклонено: {task.rejected_chats}
+              </p>
+              {task.status === 'awaiting_approval' ? (
+                <>
+                  {(task.found_chats || []).map((chat, idx) => (
+                    <div key={chat.id || idx} className="form-group">
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={selected[task.id]?.includes(idx) || false}
+                          onChange={() => toggleSelected(task.id, idx)}
+                        />{' '}
+                        {chat.title || chat.username || 'Без названия'}
+                      </label>
+                      <span className="form-hint">
+                        {chat.chat_type} · {chat.participants_count || 0} участников · релевантность {Math.round((chat.score || 0) * 100)}%
+                        {chat.reason ? ` · ${chat.reason}` : ''}
+                      </span>
                     </div>
                   ))}
-                  <div className="flex gap-2 pt-2">
-                    <button
-                      onClick={() => handleApprove(task.id)}
-                      className="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700"
-                    >
+                  <div className="crm-item-actions">
+                    <button type="button" onClick={() => handleApprove(task.id)} className="btn btn-black">
                       Одобрить выбранные
                     </button>
-                    <button
-                      onClick={() => handleReject(task.id)}
-                      className="bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-700"
-                    >
+                    <button type="button" onClick={() => handleReject(task.id)} className="btn btn-outline">
                       Отклонить выбранные
                     </button>
                   </div>
-                </div>
-              )}
+                </>
+              ) : null}
             </div>
           ))}
         </div>
       )}
-    </div>
+    </>
   );
 };
 

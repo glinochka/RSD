@@ -45,18 +45,15 @@ import ProjectIntegrationsPage from './pages/projects/ProjectIntegrationsPage';
 
 // Custom Agents Pages
 import { CustomAuthProvider } from './components/custom/CustomAuthProvider';
-import CustomAdminLayout from './components/custom/CustomAdminLayout';
-import CustomClientLayout from './components/custom/CustomClientLayout';
+import CustomAdminGuard from './components/custom/CustomAdminGuard';
+import CustomSolutionLayout from './components/custom/CustomSolutionLayout';
 import CustomLoginPage from './pages/custom/CustomLoginPage';
-import CustomAdminDashboardPage from './pages/custom/admin/CustomAdminDashboardPage';
-import CustomAdminAutomationsPage from './pages/custom/admin/CustomAdminAutomationsPage';
-import CustomAdminAutomationEditPage from './pages/custom/admin/CustomAdminAutomationEditPage';
-import CustomAdminAutomationAccessPage from './pages/custom/admin/CustomAdminAutomationAccessPage';
+import CustomSolutionsListPage from './pages/custom/admin/CustomSolutionsListPage';
+import CustomNewSolutionPage from './pages/custom/admin/CustomNewSolutionPage';
 import CustomAutomationDashboardPage from './pages/custom/automation/CustomAutomationDashboardPage';
 import CustomAutomationAccountsPage from './pages/custom/automation/CustomAutomationAccountsPage';
 import CustomAutomationSettingsPage from './pages/custom/automation/CustomAutomationSettingsPage';
 import CustomAutomationChatsPage from './pages/custom/automation/CustomAutomationChatsPage';
-import CustomAutomationChatDiscoveryPage from './pages/custom/automation/CustomAutomationChatDiscoveryPage';
 import CustomAutomationLeadsPage from './pages/custom/automation/CustomAutomationLeadsPage';
 import CustomAutomationLeadChatPage from './pages/custom/automation/CustomAutomationLeadChatPage';
 import CustomAutomationDmpPage from './pages/custom/automation/CustomAutomationDmpPage';
@@ -164,32 +161,43 @@ const App = () => {
                   }
                 />
                 <Route
-                  path="/custom/admin/*"
+                  path="/custom/admin"
                   element={
                     <CustomAuthProvider>
-                      <CustomAdminLayout />
+                      <CustomAdminGuard>
+                        <CustomSolutionsListPage />
+                      </CustomAdminGuard>
                     </CustomAuthProvider>
                   }
-                >
-                  <Route path="dashboard" element={<CustomAdminDashboardPage />} />
-                  <Route path="automations" element={<CustomAdminAutomationsPage />} />
-                  <Route path="automations/new" element={<CustomAdminAutomationEditPage />} />
-                  <Route path="automations/:id/edit" element={<CustomAdminAutomationEditPage />} />
-                  <Route path="automations/:id/access" element={<CustomAdminAutomationAccessPage />} />
-                </Route>
+                />
+                <Route
+                  path="/custom/admin/new"
+                  element={
+                    <CustomAuthProvider>
+                      <CustomAdminGuard>
+                        <CustomNewSolutionPage />
+                      </CustomAdminGuard>
+                    </CustomAuthProvider>
+                  }
+                />
+                <Route
+                  path="/custom/admin/*"
+                  element={<Navigate to={NAVIGATION_ROUTES.CUSTOM_ADMIN} replace />}
+                />
                 <Route
                   path="/custom/automations/:id/*"
                   element={
                     <CustomAuthProvider>
-                      <CustomClientLayout />
+                      <CustomSolutionLayout />
                     </CustomAuthProvider>
                   }
                 >
+                  <Route index element={<Navigate to="dashboard" replace />} />
                   <Route path="dashboard" element={<CustomAutomationDashboardPage />} />
                   <Route path="accounts" element={<CustomAutomationAccountsPage />} />
                   <Route path="settings" element={<CustomAutomationSettingsPage />} />
                   <Route path="chats" element={<CustomAutomationChatsPage />} />
-                  <Route path="chats/discovery" element={<CustomAutomationChatDiscoveryPage />} />
+                  <Route path="chats/discovery" element={<CustomAutomationChatsPage defaultTab="discovery" />} />
                   <Route path="leads" element={<CustomAutomationLeadsPage />} />
                   <Route path="leads/:leadId/chat" element={<CustomAutomationLeadChatPage />} />
                   <Route path="dmp" element={<CustomAutomationDmpPage />} />

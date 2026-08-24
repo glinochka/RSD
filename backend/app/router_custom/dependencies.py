@@ -57,6 +57,41 @@ async def get_current_custom_automation(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(http_bearer),
 ) -> CustomAutomation:
     token = await _get_token_or_raise(credentials)
+    path_automation_id = request.path_params.get("automation_id")
+
+    admin_payload = None
+    try:
+        admin_payload = decode_access_token_payload(token, "custom_admin")
+    except HTTPException:
+        admin_payload = None
+
+    if admin_payload:
+        admin_id = admin_payload.get("custom_admin_id")
+        if not admin_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token claims",
+            )
+        if path_automation_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="automation_id required",
+            )
+        async with async_session_maker() as session:
+            admin = await session.get(CustomAdmin, int(admin_id))
+            if not admin or not admin.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Custom admin access denied",
+                )
+            automation = await session.get(CustomAutomation, int(path_automation_id))
+            if not automation:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Automation not found",
+                )
+            return automation
+
     try:
         payload = decode_access_token_payload(token, "custom_automation")
     except HTTPException:
@@ -72,7 +107,6 @@ async def get_current_custom_automation(
             detail="Invalid token claims",
         )
 
-    path_automation_id = request.path_params.get("automation_id")
     if path_automation_id is not None and int(path_automation_id) != int(automation_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

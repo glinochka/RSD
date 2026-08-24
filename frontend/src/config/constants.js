@@ -370,10 +370,12 @@ export const NAVIGATION_ROUTES = {
 
   // Custom agents subsystem
   CUSTOM_LOGIN: '/custom/login',
-  CUSTOM_ADMIN_DASHBOARD: '/custom/admin/dashboard',
-  CUSTOM_ADMIN_AUTOMATIONS: '/custom/admin/automations',
-  CUSTOM_ADMIN_AUTOMATION_EDIT: (id) => `/custom/admin/automations/${id}/edit`,
-  CUSTOM_ADMIN_AUTOMATION_ACCESS: (id) => `/custom/admin/automations/${id}/access`,
+  CUSTOM_ADMIN: '/custom/admin',
+  CUSTOM_ADMIN_DASHBOARD: '/custom/admin',
+  CUSTOM_ADMIN_NEW: '/custom/admin/new',
+  CUSTOM_ADMIN_AUTOMATIONS: '/custom/admin',
+  CUSTOM_ADMIN_AUTOMATION_EDIT: (id) => `/custom/automations/${id}/settings`,
+  CUSTOM_ADMIN_AUTOMATION_ACCESS: (id) => `/custom/automations/${id}/settings`,
   CUSTOM_AUTOMATION_DASHBOARD: (id) => `/custom/automations/${id}/dashboard`,
   CUSTOM_AUTOMATION_ACCOUNTS: (id) => `/custom/automations/${id}/accounts`,
   CUSTOM_AUTOMATION_SETTINGS: (id) => `/custom/automations/${id}/settings`,

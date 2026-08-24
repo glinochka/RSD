@@ -76,7 +76,7 @@ flowchart TB
 
 **Поток сообщений:** каналы (userbot-менеджеры, Telegram-бот) → `MessageProcessor` → `TemplateRuntimeService` → LLM + tools (CRM, booking, HTTP).
 
-Массовые автоматизации `/custom` (пул Telegram-аккаунтов, нейрокомментинг, перехват заявок, DMP.one, AmoCRM): план [backlogs/CUSTOM_AGENTS_PLAN.md](backlogs/CUSTOM_AGENTS_PLAN.md), runbook [docs/custom/RUNBOOK.md](docs/custom/RUNBOOK.md).
+Массовые автоматизации `/custom` (пул Telegram-аккаунтов, нейрокомментинг, перехват заявок, DMP.one, AmoCRM): актуальный план [backlogs/CUSTOM_AGENTS_V2_PLAN.md](backlogs/CUSTOM_AGENTS_V2_PLAN.md), runbook [docs/custom/RUNBOOK.md](docs/custom/RUNBOOK.md).
 
 ---
 

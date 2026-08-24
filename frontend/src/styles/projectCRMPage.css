@@ -275,6 +275,68 @@
   margin: 0;
 }
 
+.crm-flash {
+  margin: 0 0 var(--spacing-md) 0;
+  font-size: 0.9375rem;
+  color: var(--color-text-secondary);
+}
+
+.crm-flash--error {
+  color: #991b1b;
+}
+
+.crm-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-sm);
+}
+
+.crm-chat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.crm-chat-row {
+  display: flex;
+}
+
+.crm-chat-row--out {
+  justify-content: flex-end;
+}
+
+.crm-chat-bubble {
+  max-width: 80%;
+  padding: var(--spacing-md);
+  border-radius: 12px;
+  border: 1px solid var(--color-border);
+  background: #fff;
+}
+
+.crm-chat-row--out .crm-chat-bubble {
+  background: #2f2f2f;
+  color: #fff;
+  border-color: #2f2f2f;
+}
+
+.crm-chat-meta {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  margin-bottom: var(--spacing-xs);
+}
+
+.crm-chat-row--out .crm-chat-meta {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.crm-prompt-preview {
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+  white-space: pre-wrap;
+  margin: var(--spacing-xs) 0 0;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .project-crm-page {

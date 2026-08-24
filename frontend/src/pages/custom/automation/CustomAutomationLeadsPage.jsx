@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
 import customService from '../../../services/customService';
+import '../../../styles/projectCRMPage.css';
+import '../../../styles/projectSettingsPage.css';
 
 const LEAD_STATUSES = [
   { value: 'new', label: 'Новый' },
@@ -19,15 +21,15 @@ const STATUS_FILTERS = [
   ...LEAD_STATUSES,
 ];
 
-const STATUS_COLORS = {
-  new: 'bg-blue-50 text-blue-700',
-  warming: 'bg-yellow-50 text-yellow-700',
-  qualified: 'bg-green-50 text-green-700',
-  transferred: 'bg-purple-50 text-purple-700',
-  processing: 'bg-orange-50 text-orange-700',
-  converted: 'bg-emerald-50 text-emerald-700',
-  lost: 'bg-gray-100 text-gray-600',
-  spam: 'bg-red-50 text-red-700',
+const STATUS_CLASS = {
+  new: '',
+  warming: 'crm-status--pending',
+  qualified: 'crm-status--confirmed',
+  transferred: 'crm-status--completed',
+  processing: 'crm-status--pending',
+  converted: 'crm-status--confirmed',
+  lost: 'crm-status--completed',
+  spam: 'crm-status--cancelled',
 };
 
 const CustomAutomationLeadsPage = () => {
@@ -92,97 +94,84 @@ const CustomAutomationLeadsPage = () => {
   };
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
-      <h1 className="text-2xl font-semibold">Лиды</h1>
+    <div className="project-crm-page">
+      <div className="crm-header">
+        <div>
+          <h1 className="crm-title">Лиды</h1>
+          <p className="crm-subtitle">Перехват, согрев и передача менеджеру.</p>
+        </div>
+        <div className="crm-stats">
+          <div className="crm-stat">
+            <span className="crm-stat-value">{total}</span>
+            <span className="crm-stat-label">Всего</span>
+          </div>
+        </div>
+      </div>
 
-      {message && <div className="text-green-600">{message}</div>}
-      {error && <div className="text-red-600">{error}</div>}
+      {message ? <p className="crm-flash">{message}</p> : null}
+      {error ? <p className="crm-flash crm-flash--error">{error}</p> : null}
 
-      <div className="bg-white rounded-lg shadow p-4">
-        <div className="flex items-center gap-3 mb-4">
-          <label className="text-sm font-medium text-gray-700">Статус:</label>
-          <select
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            className="border border-gray-300 rounded px-3 py-2 text-sm"
-          >
+      <div className="settings-section">
+        <div className="form-group">
+          <label htmlFor="lead-filter">Статус</label>
+          <select id="lead-filter" value={filter} onChange={(e) => setFilter(e.target.value)}>
             {STATUS_FILTERS.map((s) => (
               <option key={s.value} value={s.value}>{s.label}</option>
             ))}
           </select>
         </div>
-        <div className="text-sm text-gray-500 mb-2">Всего: {total}</div>
-
-        {isLoading ? (
-          <div className="text-gray-500">Загрузка...</div>
-        ) : leads.length === 0 ? (
-          <div className="text-gray-500 text-center py-6">Лиды пока не появились.</div>
-        ) : (
-          <table className="w-full text-left">
-            <thead className="bg-gray-50 border-b">
-              <tr>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">ID</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Контакт</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Имя</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Компания</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Статус</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Аккаунт</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Создан</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Действия</th>
-              </tr>
-            </thead>
-            <tbody>
-              {leads.map((lead) => (
-                <tr key={lead.id} className="border-b last:border-b-0 hover:bg-gray-50">
-                  <td className="px-4 py-3 text-sm font-mono">{lead.id}</td>
-                  <td className="px-4 py-3 text-sm">{lead.contact_value}</td>
-                  <td className="px-4 py-3 text-sm">{lead.full_name || '-'}</td>
-                  <td className="px-4 py-3 text-sm">{lead.company || '-'}</td>
-                  <td className="px-4 py-3 text-sm">
-                    <div className="flex items-center gap-2">
-                      <span className={`inline-flex px-2 py-1 rounded text-xs ${STATUS_COLORS[lead.status] || 'bg-gray-100 text-gray-700'}`}>
-                        {LEAD_STATUSES.find((s) => s.value === lead.status)?.label || lead.status}
-                      </span>
-                      <select
-                        value={lead.status}
-                        onChange={(e) => handleStatusChange(lead.id, e.target.value)}
-                        disabled={updating[lead.id]}
-                        className="border border-gray-300 rounded px-2 py-1 text-xs"
-                      >
-                        {LEAD_STATUSES.map((s) => (
-                          <option key={s.value} value={s.value}>{s.label}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-sm font-mono">{lead.assigned_account_id || '-'}</td>
-                  <td className="px-4 py-3 text-sm text-gray-500">
-                    {new Date(lead.created_at).toLocaleString()}
-                  </td>
-                  <td className="px-4 py-3 text-sm">
-                    <div className="flex items-center gap-3">
-                      <button
-                        onClick={() => openChat(lead.id)}
-                        className="text-blue-600 hover:underline"
-                      >
-                        Переписка
-                      </button>
-                      {lead.status !== 'transferred' && (
-                        <button
-                          onClick={() => handleTransfer(lead.id)}
-                          className="text-purple-600 hover:underline"
-                        >
-                          Передать
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
       </div>
+
+      {isLoading ? (
+        <div className="crm-empty-list"><p>Загрузка...</p></div>
+      ) : leads.length === 0 ? (
+        <div className="crm-empty-list">
+          <p>Лиды пока не появились</p>
+          <span>Они появятся после перехвата в чатах или импорта DMP.</span>
+        </div>
+      ) : (
+        <div className="crm-list">
+          {leads.map((lead) => (
+            <div key={lead.id} className="crm-item">
+              <div className="crm-item-header">
+                <h5 className="crm-item-title">{lead.full_name || lead.contact_value || `Лид #${lead.id}`}</h5>
+                <span className={`crm-status ${STATUS_CLASS[lead.status] || ''}`}>
+                  {LEAD_STATUSES.find((s) => s.value === lead.status)?.label || lead.status}
+                </span>
+              </div>
+              <p className="crm-item-subtitle">
+                {lead.contact_value}
+                {lead.company ? ` · ${lead.company}` : ''}
+                {lead.assigned_account_id ? ` · аккаунт #${lead.assigned_account_id}` : ''}
+              </p>
+              <span className="crm-date">{lead.created_at ? new Date(lead.created_at).toLocaleString() : ''}</span>
+              <div className="form-group">
+                <label htmlFor={`lead-status-${lead.id}`}>Статус</label>
+                <select
+                  id={`lead-status-${lead.id}`}
+                  value={lead.status}
+                  onChange={(e) => handleStatusChange(lead.id, e.target.value)}
+                  disabled={updating[lead.id]}
+                >
+                  {LEAD_STATUSES.map((s) => (
+                    <option key={s.value} value={s.value}>{s.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="crm-item-actions">
+                <button type="button" onClick={() => openChat(lead.id)} className="btn btn-black">
+                  Переписка
+                </button>
+                {lead.status !== 'transferred' ? (
+                  <button type="button" onClick={() => handleTransfer(lead.id)} className="btn btn-outline">
+                    Передать
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 };

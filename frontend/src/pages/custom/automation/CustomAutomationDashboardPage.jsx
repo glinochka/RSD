@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
+import '../../../styles/projectDashboard.css';
+import '../../../styles/projectCRMPage.css';
 
 const STATUS_ORDER = ['new', 'warming', 'qualified', 'transferred', 'processing', 'converted', 'lost', 'spam'];
 const STATUS_LABELS = {
@@ -37,176 +39,157 @@ const CustomAutomationDashboardPage = () => {
       .catch((err) => setError(err.message));
   }, [id]);
 
-  const statCard = (label, value, color = 'bg-white') => (
-    <div className={`${color} rounded-lg shadow p-4 text-center`}>
-      <div className="text-2xl font-semibold">{value}</div>
-      <div className="text-xs text-gray-500">{label}</div>
-    </div>
-  );
-
-  const barChart = (items, total, color = 'bg-blue-500') => {
-    if (!total) {
-      return null;
-    }
+  if (!data && !error) {
     return (
-      <div className="space-y-2">
-        {items.map(([key, count]) => (
-          <div key={key} className="flex items-center gap-3">
-            <div className="w-24 text-xs text-gray-600 truncate">{key}</div>
-            <div className="flex-1 h-2 bg-gray-100 rounded overflow-hidden">
-              <div
-                className={`h-full ${color} rounded`}
-                style={{ width: `${Math.round((count / total) * 100)}%` }}
-              />
-            </div>
-            <div className="w-8 text-xs text-right">{count}</div>
-          </div>
-        ))}
+      <div className="project-dashboard project-dashboard--loading">
+        <div className="dashboard-loading">
+          <div className="dashboard-spinner" />
+          <p>Загрузка дашборда...</p>
+        </div>
       </div>
     );
-  };
+  }
+
+  if (error || !data) {
+    return (
+      <div className="project-dashboard">
+        <div className="dashboard-error">
+          <p>{error || 'Не удалось загрузить данные'}</p>
+        </div>
+      </div>
+    );
+  }
+
+  const funnel = STATUS_ORDER
+    .map((status) => [STATUS_LABELS[status], data.leads?.by_status?.[status] || 0])
+    .filter(([, count]) => count > 0);
+  const actions24h = Object.entries(data.actions?.last_24h || {}).map(([key, count]) => [
+    ACTION_LABELS[key] || key,
+    count,
+  ]);
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">Dashboard</h1>
-          {data && (
-            <div className="text-sm text-gray-500">
-              {data.client_name || data.name || `Automation #${data.automation_id}`}
-            </div>
-          )}
+    <div className="project-dashboard">
+      <div className="dashboard-header">
+        <h1 className="dashboard-title">Дашборд</h1>
+        <p className="dashboard-subtitle">
+          {data.client_name || data.name || `Решение #${data.automation_id}`}
+        </p>
+      </div>
+
+      <div className="dashboard-stats-grid">
+        <div className="dashboard-stat-card">
+          <div className="dashboard-stat-content">
+            <span className="dashboard-stat-value">{data.actions?.total ?? 0}</span>
+            <span className="dashboard-stat-label">Сообщений</span>
+          </div>
         </div>
-        <div className="flex gap-3 text-sm">
-          <Link to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_ACCOUNTS(id)} className="text-blue-600 hover:underline">
-            Аккаунты
-          </Link>
-          <Link to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id)} className="text-blue-600 hover:underline">
-            Чаты
-          </Link>
-          <Link to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_LEADS(id)} className="text-blue-600 hover:underline">
-            Лиды
-          </Link>
-          <Link to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_SETTINGS(id)} className="text-blue-600 hover:underline">
-            Настройки
-          </Link>
+        <div className="dashboard-stat-card">
+          <div className="dashboard-stat-content">
+            <span className="dashboard-stat-value">{data.leads?.total ?? 0}</span>
+            <span className="dashboard-stat-label">Лидов</span>
+          </div>
+        </div>
+        <div className="dashboard-stat-card">
+          <div className="dashboard-stat-content">
+            <span className="dashboard-stat-value">{data.leads?.by_status?.transferred ?? 0}</span>
+            <span className="dashboard-stat-label">Передано</span>
+          </div>
+        </div>
+        <div className="dashboard-stat-card">
+          <div className="dashboard-stat-content">
+            <span className="dashboard-stat-value">{data.accounts?.banned ?? 0}</span>
+            <span className="dashboard-stat-label">Баны аккаунтов</span>
+          </div>
+        </div>
+        <div className="dashboard-stat-card">
+          <div className="dashboard-stat-content">
+            <span className="dashboard-stat-value">{data.dmp?.purchased ?? 0}</span>
+            <span className="dashboard-stat-label">DMP куплено</span>
+          </div>
+        </div>
+        <div className="dashboard-stat-card">
+          <div className="dashboard-stat-content">
+            <span className="dashboard-stat-value">
+              {data.dmp?.cost_rub === undefined || data.dmp?.cost_rub === null ? '—' : `${data.dmp.cost_rub} ₽`}
+            </span>
+            <span className="dashboard-stat-label">Расход DMP</span>
+          </div>
         </div>
       </div>
 
-      {error && <div className="text-red-600">{error}</div>}
-
-      {!data ? (
-        <div className="text-gray-500">Загрузка...</div>
-      ) : (
-        <>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {statCard('Аккаунты', data.accounts?.total)}
-            {statCard('Активные', data.accounts?.active, 'bg-green-50')}
-            {statCard('Забанены', data.accounts?.banned, 'bg-red-50')}
-            {statCard('Лиды', data.leads?.total, 'bg-blue-50')}
-            {statCard('Чатов', data.chats?.total)}
-            {statCard('Вступили', data.chats?.joined, 'bg-green-50')}
-            {statCard('DMP куплено', data.dmp?.purchased)}
-            {statCard('Сообщений', data.actions?.total)}
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="bg-white rounded-lg shadow p-4">
-              <h2 className="font-medium mb-4">Воронка лидов</h2>
-              {barChart(
-                STATUS_ORDER.filter((s) => (data.leads?.by_status?.[s] || 0) > 0).map((s) => [STATUS_LABELS[s] || s, data.leads.by_status[s]]),
-                data.leads?.total,
-                'bg-blue-500',
-              )}
-            </div>
-
-            <div className="bg-white rounded-lg shadow p-4">
-              <h2 className="font-medium mb-4">Источники лидов</h2>
-              {barChart(
-                Object.entries(data.leads?.by_source || {}),
-                data.leads?.total,
-                'bg-purple-500',
-              )}
-            </div>
-
-            <div className="bg-white rounded-lg shadow p-4">
-              <h2 className="font-medium mb-4">Активность за 24ч</h2>
-              {barChart(
-                Object.entries(data.actions?.last_24h || {}).map(([k, v]) => [ACTION_LABELS[k] || k, v]),
-                Object.values(data.actions?.last_24h || {}).reduce((a, b) => a + b, 0),
-                'bg-orange-500',
-              )}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="bg-white rounded-lg shadow p-4">
-              <h2 className="font-medium mb-4">Последние лиды</h2>
-              {data.leads?.recent?.length === 0 ? (
-                <div className="text-gray-500 text-sm">Лиды пока не появились.</div>
-              ) : (
-                <div className="space-y-3">
-                  {data.leads.recent.map((lead) => (
-                    <div key={lead.id} className="flex items-center justify-between border-b last:border-b-0 pb-2">
-                      <div>
-                        <div className="text-sm font-medium">{lead.contact_value}</div>
-                        <div className="text-xs text-gray-500">
-                          {lead.full_name || '-'} • {lead.source} • {STATUS_LABELS[lead.status] || lead.status}
-                        </div>
-                      </div>
-                      <Link
-                        to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_LEAD_CHAT(id, lead.id)}
-                        className="text-xs text-blue-600 hover:underline"
-                      >
-                        Чат
-                      </Link>
+      <div className="dashboard-section">
+        <div className="dashboard-section-header">
+          <h2 className="dashboard-section-title">Воронка лидов</h2>
+        </div>
+        {funnel.length === 0 ? (
+          <p className="dashboard-subtitle">Пока нет лидов.</p>
+        ) : (
+          <div className="dashboard-hchart dashboard-hchart--metrics">
+            {funnel.map(([label, count]) => (
+              <div key={label} className="dashboard-hchart-row">
+                <span className="dashboard-hchart-label">{label}</span>
+                <div className="dashboard-hchart-bars">
+                  <div className="dashboard-hchart-bar-track dashboard-hchart-bar-track--single">
+                    <div className="dashboard-hchart-bar-fill">
+                      <div
+                        className="dashboard-hchart-bar dashboard-hchart-bar--leads"
+                        style={{ width: `${Math.round((count / (data.leads.total || 1)) * 100)}%` }}
+                      />
                     </div>
-                  ))}
+                  </div>
+                  <span className="dashboard-hchart-value">{count}</span>
                 </div>
-              )}
-            </div>
-
-            <div className="bg-white rounded-lg shadow p-4">
-              <h2 className="font-medium mb-4">Распределение аккаунтов</h2>
-              {barChart(
-                Object.entries(data.accounts?.by_class || {}).map(([k, v]) => [k, v]),
-                data.accounts?.total,
-                'bg-teal-500',
-              )}
-            </div>
+              </div>
+            ))}
           </div>
+        )}
+      </div>
 
-          <div className="bg-white rounded-lg shadow p-4">
-            <h2 className="font-medium mb-4">Быстрые действия</h2>
-            <div className="flex flex-wrap gap-3">
-              <Link
-                to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id)}
-                className="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 text-sm"
-              >
-                Вступить в чаты
-              </Link>
-              <Link
-                to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id)}
-                className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 text-sm"
-              >
-                Запустить мониторинг
-              </Link>
-              <Link
-                to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id)}
-                className="bg-orange-600 text-white px-4 py-2 rounded hover:bg-orange-700 text-sm"
-              >
-                Нейрокомментинг
-              </Link>
-              <Link
-                to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_LEADS(id)}
-                className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 text-sm"
-              >
-                Перейти к лидам
-              </Link>
-            </div>
+      <div className="dashboard-section">
+        <div className="dashboard-section-header">
+          <h2 className="dashboard-section-title">Активность за 24 часа</h2>
+        </div>
+        {actions24h.length === 0 ? (
+          <p className="dashboard-subtitle">Нет действий за сутки.</p>
+        ) : (
+          <div className="crm-list">
+            {actions24h.map(([label, count]) => (
+              <div key={label} className="crm-item">
+                <div className="crm-item-header">
+                  <strong>{label}</strong>
+                  <span>{count}</span>
+                </div>
+              </div>
+            ))}
           </div>
-        </>
-      )}
+        )}
+      </div>
+
+      <div className="dashboard-section">
+        <div className="dashboard-section-header">
+          <h2 className="dashboard-section-title">Последние диалоги</h2>
+        </div>
+        {!data.leads?.recent?.length ? (
+          <p className="dashboard-subtitle">Диалогов пока нет.</p>
+        ) : (
+          <div className="crm-list">
+            {data.leads.recent.map((lead) => (
+              <Link
+                key={lead.id}
+                to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_LEAD_CHAT(id, lead.id)}
+                className="crm-item"
+              >
+                <div className="crm-item-header">
+                  <strong>{lead.contact_value || lead.full_name || `Лид #${lead.id}`}</strong>
+                  <span className="crm-status">{STATUS_LABELS[lead.status] || lead.status}</span>
+                </div>
+                <span>{lead.source}</span>
+              </Link>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 };

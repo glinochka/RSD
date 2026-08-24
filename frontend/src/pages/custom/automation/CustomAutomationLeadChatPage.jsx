@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
 import customService from '../../../services/customService';
+import '../../../styles/projectCRMPage.css';
+import '../../../styles/projectSettingsPage.css';
 
 const LEAD_STATUSES = [
   { value: 'new', label: 'Новый' },
@@ -82,83 +84,67 @@ const CustomAutomationLeadChatPage = () => {
     }
   };
 
-  const goBack = () => {
-    navigate(NAVIGATION_ROUTES.CUSTOM_AUTOMATION_LEADS(id));
-  };
-
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <button onClick={goBack} className="text-sm text-gray-600 hover:text-gray-900">
-            ← Назад к лидам
-          </button>
-          <h1 className="text-2xl font-semibold">Переписка с лидом #{leadId}</h1>
+    <div className="project-crm-page">
+      <div className="crm-header">
+        <div>
+          <h1 className="crm-title">Переписка с лидом #{leadId}</h1>
+          <p className="crm-subtitle">{lead?.contact_value || lead?.full_name || ''}</p>
         </div>
-        {lead && (
-          <div className="flex items-center gap-3">
-            <select
-              value={lead.status}
-              onChange={handleStatusChange}
-              disabled={updatingStatus}
-              className="border border-gray-300 rounded px-3 py-2 text-sm"
-            >
+        <div className="settings-actions">
+          <button type="button" className="btn btn-outline" onClick={() => navigate(NAVIGATION_ROUTES.CUSTOM_AUTOMATION_LEADS(id))}>
+            К лидам
+          </button>
+          {lead && lead.status !== 'transferred' ? (
+            <button type="button" onClick={handleTransfer} className="btn btn-black">
+              Передать
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      {message ? <p className="crm-flash">{message}</p> : null}
+      {error ? <p className="crm-flash crm-flash--error">{error}</p> : null}
+
+      {lead ? (
+        <div className="settings-section">
+          <p className="form-hint">Контакт: {lead.contact_value}</p>
+          <p className="form-hint">Имя: {lead.full_name || '-'}</p>
+          <p className="form-hint">Компания: {lead.company || '-'}</p>
+          <p className="form-hint">Аккаунт пула: {lead.assigned_account_id || '-'}</p>
+          <p className="form-hint">Источник: {lead.source}</p>
+          <div className="form-group">
+            <label htmlFor="lead-chat-status">Статус</label>
+            <select id="lead-chat-status" value={lead.status} onChange={handleStatusChange} disabled={updatingStatus}>
               {LEAD_STATUSES.map((s) => (
                 <option key={s.value} value={s.value}>{s.label}</option>
               ))}
             </select>
-            {lead.status !== 'transferred' && (
-              <button
-                onClick={handleTransfer}
-                className="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 text-sm"
-              >
-                Передать
-              </button>
-            )}
           </div>
-        )}
-      </div>
-
-      {message && <div className="text-green-600">{message}</div>}
-      {error && <div className="text-red-600">{error}</div>}
-
-      {lead && (
-        <div className="bg-white rounded-lg shadow p-4 text-sm space-y-1">
-          <div><strong>Контакт:</strong> {lead.contact_value}</div>
-          <div><strong>Имя:</strong> {lead.full_name || '-'}</div>
-          <div><strong>Компания:</strong> {lead.company || '-'}</div>
-          <div><strong>Аккаунт пула:</strong> {lead.assigned_account_id || '-'}</div>
-          <div><strong>Источник:</strong> {lead.source}</div>
         </div>
-      )}
+      ) : null}
 
-      <div className="bg-white rounded-lg shadow p-4">
+      <div className="settings-section">
         {isLoading ? (
-          <div className="text-gray-500">Загрузка...</div>
+          <p className="form-hint">Загрузка...</p>
         ) : messages.length === 0 ? (
-          <div className="text-gray-500 text-center py-6">Сообщений пока нет.</div>
+          <div className="crm-empty-list">
+            <p>Сообщений пока нет</p>
+          </div>
         ) : (
-          <div className="space-y-4">
+          <div className="crm-chat">
             {messages.map((msg) => (
               <div
                 key={msg.id}
-                className={`flex ${msg.direction === 'outgoing' ? 'justify-end' : 'justify-start'}`}
+                className={`crm-chat-row ${msg.direction === 'outgoing' ? 'crm-chat-row--out' : ''}`}
               >
-                <div
-                  className={`max-w-[80%] rounded-lg px-4 py-3 ${
-                    msg.direction === 'outgoing'
-                      ? 'bg-blue-600 text-white rounded-br-none'
-                      : 'bg-gray-100 text-gray-800 rounded-bl-none'
-                  }`}
-                >
-                  <div className="text-xs opacity-75 mb-1">
+                <div className="crm-chat-bubble">
+                  <div className="crm-chat-meta">
                     {msg.direction === 'outgoing' ? 'От аккаунта пула' : 'Входящее'}
                     {msg.social_account_id ? ` #${msg.social_account_id}` : ''}
+                    {msg.sent_at ? ` · ${new Date(msg.sent_at).toLocaleString()}` : ''}
                   </div>
-                  <div className="text-sm whitespace-pre-wrap">{msg.text}</div>
-                  <div className={`text-xs mt-2 ${msg.direction === 'outgoing' ? 'text-blue-100' : 'text-gray-500'}`}>
-                    {new Date(msg.sent_at).toLocaleString()}
-                  </div>
+                  <div>{msg.text}</div>
                 </div>
               </div>
             ))}

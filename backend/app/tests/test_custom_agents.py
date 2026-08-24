@@ -103,6 +103,14 @@ class TestCustomAdmin:
         assert data["total"] >= 1
         assert any(item["id"] == custom_automation.id for item in data["items"])
 
+    async def test_admin_can_open_automation_dashboard(self, client: AsyncClient, admin_token: str, custom_automation: CustomAutomation):
+        response = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/dashboard",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        assert response.status_code == 200
+        assert response.json()["automation_id"] == custom_automation.id
+
 
 class TestCustomClient:
     async def test_client_login(self, client: AsyncClient, client_token: str, custom_automation: CustomAutomation):

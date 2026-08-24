@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
+import '../../../styles/projectCRMPage.css';
+import '../../../styles/projectSettingsPage.css';
 
 const PROMPT_TYPE_LABELS = {
   chat_monitoring_trigger: 'Мониторинг: триггер',
@@ -69,65 +71,55 @@ const CustomAutomationPromptsPage = () => {
   }, {});
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Промпты</h1>
-        <Link
-          to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_SETTINGS(id)}
-          className="text-sm text-blue-600 hover:underline"
-        >
+    <div className="project-crm-page">
+      <div className="crm-header">
+        <div>
+          <h1 className="crm-title">Промпты</h1>
+          <p className="crm-subtitle">Шаблоны ответов по модулям автоматизации.</p>
+        </div>
+        <Link to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_SETTINGS(id)} className="btn btn-outline">
           Настройки модулей
         </Link>
       </div>
 
-      {message && <div className="text-green-600">{message}</div>}
-      {error && <div className="text-red-600">{error}</div>}
+      {message ? <p className="crm-flash">{message}</p> : null}
+      {error ? <p className="crm-flash crm-flash--error">{error}</p> : null}
 
       {isLoading ? (
-        <div className="text-gray-500">Загрузка...</div>
+        <div className="crm-empty-list"><p>Загрузка...</p></div>
       ) : Object.keys(grouped).length === 0 ? (
-        <div className="text-gray-500 text-center py-6">Промптов пока нет. Создайте автоматизацию заново — шаблоны появятся автоматически.</div>
+        <div className="crm-empty-list">
+          <p>Промптов пока нет</p>
+          <span>Создайте автоматизацию заново — шаблоны появятся автоматически.</span>
+        </div>
       ) : (
         Object.entries(grouped).map(([type, items]) => (
-          <div key={type} className="bg-white rounded-lg shadow p-4">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="font-medium">{PROMPT_TYPE_LABELS[type] || type}</h2>
-              <div className="text-xs text-gray-500">
-                Переменные: {VARIABLE_HINTS[type]?.map((v) => `{${v}}`).join(', ') || '-'}
-              </div>
-            </div>
-            <div className="space-y-3">
+          <div key={type} className="settings-section">
+            <h3 className="settings-section-title">{PROMPT_TYPE_LABELS[type] || type}</h3>
+            <p className="form-hint">
+              Переменные: {VARIABLE_HINTS[type]?.map((v) => `{${v}}`).join(', ') || '-'}
+            </p>
+            <div className="crm-list">
               {items.map((prompt) => (
-                <div
-                  key={prompt.id}
-                  className={`border rounded p-3 flex items-start justify-between ${prompt.is_active ? 'border-blue-200 bg-blue-50' : 'border-gray-200 bg-gray-50'}`}
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-sm font-medium">{prompt.name}</span>
-                      <span className="text-xs text-gray-500">v{prompt.version}</span>
-                      {prompt.is_active ? (
-                        <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">Активен</span>
-                      ) : (
-                        <span className="text-xs bg-gray-200 text-gray-600 px-2 py-0.5 rounded">Архив</span>
-                      )}
-                    </div>
-                    <div className="text-xs text-gray-500 mb-1">
-                      {prompt.model} • temp {prompt.temperature} • max_tokens {prompt.max_tokens}
-                    </div>
-                    <div className="text-sm text-gray-700 line-clamp-3 whitespace-pre-wrap">{prompt.content}</div>
+                <div key={prompt.id} className="crm-item">
+                  <div className="crm-item-header">
+                    <h5 className="crm-item-title">{prompt.name}</h5>
+                    <span className={`crm-status ${prompt.is_active ? 'crm-status--confirmed' : 'crm-status--completed'}`}>
+                      {prompt.is_active ? 'Активен' : 'Архив'}
+                    </span>
                   </div>
-                  <div className="flex flex-col gap-2 ml-4">
+                  <p className="crm-item-subtitle">
+                    v{prompt.version} · {prompt.model} · temp {prompt.temperature} · max_tokens {prompt.max_tokens}
+                  </p>
+                  <p className="crm-prompt-preview">{prompt.content}</p>
+                  <div className="crm-item-actions">
                     <Link
                       to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_PROMPT_EDIT(id, prompt.id)}
-                      className="text-sm text-blue-600 hover:underline"
+                      className="btn btn-black"
                     >
                       Редактировать
                     </Link>
-                    <button
-                      onClick={() => handleToggle(prompt.id)}
-                      className="text-sm text-gray-600 hover:underline text-left"
-                    >
+                    <button type="button" onClick={() => handleToggle(prompt.id)} className="btn btn-outline">
                       {prompt.is_active ? 'Отключить' : 'Включить'}
                     </button>
                   </div>

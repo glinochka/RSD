@@ -1,6 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import customService from '../../../services/customService';
+import '../../../styles/projectCRMPage.css';
+import '../../../styles/projectDashboard.css';
+import '../../../styles/projectSettingsPage.css';
 
 const DMP_IMPORT_TYPES = [
   { value: 'website', label: 'Посетители сайта' },
@@ -9,11 +12,11 @@ const DMP_IMPORT_TYPES = [
   { value: 'other', label: 'Другое' },
 ];
 
-const STATUS_COLORS = {
-  pending: 'bg-yellow-50 text-yellow-700',
-  processing: 'bg-blue-50 text-blue-700',
-  completed: 'bg-green-50 text-green-700',
-  failed: 'bg-red-50 text-red-700',
+const IMPORT_STATUS_CLASS = {
+  pending: 'crm-status--pending',
+  processing: 'crm-status--pending',
+  completed: 'crm-status--confirmed',
+  failed: 'crm-status--cancelled',
 };
 
 const CustomAutomationDmpPage = () => {
@@ -104,175 +107,149 @@ const CustomAutomationDmpPage = () => {
     },
     { requested: 0, received: 0, purchased: 0, cost: 0 },
   );
-  const cpl = totals.purchased ? (totals.cost / totals.purchased).toFixed(2) : '-';
+  const cpl = totals.purchased ? (totals.cost / totals.purchased).toFixed(2) : '—';
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
-      <h1 className="text-2xl font-semibold">DMP.one</h1>
-
-      {message && <div className="text-green-600">{message}</div>}
-      {error && <div className="text-red-600">{error}</div>}
-
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-        <div className="bg-white rounded-lg shadow p-4 text-center">
-          <div className="text-2xl font-semibold">{totals.requested}</div>
-          <div className="text-xs text-gray-500">Заказано</div>
-        </div>
-        <div className="bg-white rounded-lg shadow p-4 text-center">
-          <div className="text-2xl font-semibold">{totals.received}</div>
-          <div className="text-xs text-gray-500">Получено</div>
-        </div>
-        <div className="bg-white rounded-lg shadow p-4 text-center">
-          <div className="text-2xl font-semibold">{totals.purchased}</div>
-          <div className="text-xs text-gray-500">Куплено</div>
-        </div>
-        <div className="bg-white rounded-lg shadow p-4 text-center">
-          <div className="text-2xl font-semibold">{totals.cost.toFixed(2)} ₽</div>
-          <div className="text-xs text-gray-500">Стоимость</div>
-        </div>
-        <div className="bg-white rounded-lg shadow p-4 text-center">
-          <div className="text-2xl font-semibold">{cpl} ₽</div>
-          <div className="text-xs text-gray-500">CPL</div>
+    <div className="project-crm-page">
+      <div className="crm-header">
+        <div>
+          <h1 className="crm-title">DMP.one</h1>
+          <p className="crm-subtitle">Заказ контактов. Создание заказа — единственное ручное действие с деньгами.</p>
         </div>
       </div>
 
-      <form onSubmit={handleCreate} className="bg-white rounded-lg shadow p-4 grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Тип импорта</label>
+      {message ? <p className="crm-flash">{message}</p> : null}
+      {error ? <p className="crm-flash crm-flash--error">{error}</p> : null}
+
+      <div className="dashboard-stats-grid">
+        <div className="dashboard-stat-card">
+          <div className="dashboard-stat-content">
+            <span className="dashboard-stat-value">{totals.requested}</span>
+            <span className="dashboard-stat-label">Заказано</span>
+          </div>
+        </div>
+        <div className="dashboard-stat-card">
+          <div className="dashboard-stat-content">
+            <span className="dashboard-stat-value">{totals.received}</span>
+            <span className="dashboard-stat-label">Получено</span>
+          </div>
+        </div>
+        <div className="dashboard-stat-card">
+          <div className="dashboard-stat-content">
+            <span className="dashboard-stat-value">{totals.purchased}</span>
+            <span className="dashboard-stat-label">Куплено</span>
+          </div>
+        </div>
+        <div className="dashboard-stat-card">
+          <div className="dashboard-stat-content">
+            <span className="dashboard-stat-value">{totals.cost.toFixed(2)} ₽</span>
+            <span className="dashboard-stat-label">Стоимость</span>
+          </div>
+        </div>
+        <div className="dashboard-stat-card">
+          <div className="dashboard-stat-content">
+            <span className="dashboard-stat-value">{cpl} ₽</span>
+            <span className="dashboard-stat-label">CPL</span>
+          </div>
+        </div>
+      </div>
+
+      <form onSubmit={handleCreate} className="settings-section">
+        <h3 className="settings-section-title">Новый заказ</h3>
+        <div className="form-group">
+          <label htmlFor="dmp-type">Тип импорта</label>
           <select
+            id="dmp-type"
             value={form.importType}
             onChange={(e) => setForm((f) => ({ ...f, importType: e.target.value }))}
-            className="border border-gray-300 rounded px-3 py-2 w-full text-sm"
           >
             {DMP_IMPORT_TYPES.map((t) => (
               <option key={t.value} value={t.value}>{t.label}</option>
             ))}
           </select>
         </div>
-        <div className="md:col-span-2">
-          <label className="block text-sm font-medium text-gray-700 mb-1">Источник (URL, сайт, номера)</label>
+        <div className="form-group">
+          <label htmlFor="dmp-source">Источник (URL, сайт, номера)</label>
           <input
+            id="dmp-source"
             type="text"
             placeholder="https://example.com"
             value={form.sourceUrl}
             onChange={(e) => setForm((f) => ({ ...f, sourceUrl: e.target.value }))}
-            className="border border-gray-300 rounded px-3 py-2 w-full text-sm"
           />
         </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Количество</label>
+        <div className="form-group">
+          <label htmlFor="dmp-count">Количество</label>
           <input
+            id="dmp-count"
             type="number"
             min={1}
             value={form.requestedCount}
             onChange={(e) => setForm((f) => ({ ...f, requestedCount: e.target.value }))}
-            className="border border-gray-300 rounded px-3 py-2 w-full text-sm"
           />
         </div>
-        <div className="md:col-span-4 flex gap-3">
-          <button
-            type="submit"
-            disabled={isCreating}
-            className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50 text-sm"
-          >
+        <div className="settings-actions">
+          <button type="submit" disabled={isCreating} className="btn btn-black">
             {isCreating ? 'Создание...' : 'Создать заказ'}
           </button>
-          <button
-            type="button"
-            onClick={handlePoll}
-            disabled={isPolling}
-            className="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 disabled:opacity-50 text-sm"
-          >
+          <button type="button" onClick={handlePoll} disabled={isPolling} className="btn btn-outline">
             {isPolling ? '...' : 'Опросить результаты'}
           </button>
         </div>
       </form>
 
-      <div className="bg-white rounded-lg shadow p-4">
-        <h2 className="font-medium mb-4">История импортов</h2>
+      <div className="settings-section">
+        <h3 className="settings-section-title">История импортов</h3>
         {isLoading ? (
-          <div className="text-gray-500">Загрузка...</div>
+          <p className="form-hint">Загрузка...</p>
         ) : imports.length === 0 ? (
-          <div className="text-gray-500 text-center py-6">Импортов пока нет.</div>
+          <div className="crm-empty-list">
+            <p>Импортов пока нет</p>
+          </div>
         ) : (
-          <table className="w-full text-left">
-            <thead className="bg-gray-50 border-b">
-              <tr>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">ID</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Тип</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Источник</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Статус</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Заказано</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Получено</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Куплено</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Стоимость</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">CPL</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Создан</th>
-              </tr>
-            </thead>
-            <tbody>
-              {imports.map((item) => (
-                <tr key={item.id} className="border-b last:border-b-0 hover:bg-gray-50">
-                  <td className="px-4 py-3 text-sm font-mono">{item.id}</td>
-                  <td className="px-4 py-3 text-sm">{item.import_type}</td>
-                  <td className="px-4 py-3 text-sm truncate max-w-xs">{item.source_url || '-'}</td>
-                  <td className="px-4 py-3 text-sm">
-                    <span className={`inline-flex px-2 py-1 rounded text-xs ${STATUS_COLORS[item.status] || 'bg-gray-100 text-gray-700'}`}>
-                      {item.status}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-sm">{item.requested_count || 0}</td>
-                  <td className="px-4 py-3 text-sm">{item.received_count || 0}</td>
-                  <td className="px-4 py-3 text-sm">{item.purchased_count || 0}</td>
-                  <td className="px-4 py-3 text-sm">{item.cost_rub ? `${item.cost_rub.toFixed(2)} ₽` : '-'}</td>
-                  <td className="px-4 py-3 text-sm">{item.cpl_rub ? `${item.cpl_rub.toFixed(2)} ₽` : '-'}</td>
-                  <td className="px-4 py-3 text-sm text-gray-500">
-                    {new Date(item.created_at).toLocaleString()}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="crm-list">
+            {imports.map((item) => (
+              <div key={item.id} className="crm-item">
+                <div className="crm-item-header">
+                  <h5 className="crm-item-title">#{item.id} · {item.import_type}</h5>
+                  <span className={`crm-status ${IMPORT_STATUS_CLASS[item.status] || ''}`}>{item.status}</span>
+                </div>
+                <p className="crm-item-subtitle">{item.source_url || '-'}</p>
+                <p className="crm-item-subtitle">
+                  заказано {item.requested_count || 0} · получено {item.received_count || 0} · куплено {item.purchased_count || 0}
+                  {item.cost_rub ? ` · ${item.cost_rub.toFixed(2)} ₽` : ''}
+                  {item.cpl_rub ? ` · CPL ${item.cpl_rub.toFixed(2)} ₽` : ''}
+                </p>
+                <span className="crm-date">{item.created_at ? new Date(item.created_at).toLocaleString() : ''}</span>
+              </div>
+            ))}
+          </div>
         )}
       </div>
 
-      <div className="bg-white rounded-lg shadow p-4">
-        <h2 className="font-medium mb-4">Лиды из DMP.one ({leads.length})</h2>
+      <div className="settings-section">
+        <h3 className="settings-section-title">Лиды из DMP.one ({leads.length})</h3>
         {leads.length === 0 ? (
-          <div className="text-gray-500 text-center py-6">Лиды пока не получены.</div>
+          <div className="crm-empty-list">
+            <p>Лиды пока не получены</p>
+          </div>
         ) : (
-          <table className="w-full text-left">
-            <thead className="bg-gray-50 border-b">
-              <tr>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">ID</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Контакт</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Имя</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Компания</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Статус</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Аккаунт</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Создан</th>
-              </tr>
-            </thead>
-            <tbody>
-              {leads.map((lead) => (
-                <tr key={lead.id} className="border-b last:border-b-0 hover:bg-gray-50">
-                  <td className="px-4 py-3 text-sm font-mono">{lead.id}</td>
-                  <td className="px-4 py-3 text-sm">{lead.contact_value}</td>
-                  <td className="px-4 py-3 text-sm">{lead.full_name || '-'}</td>
-                  <td className="px-4 py-3 text-sm">{lead.company || '-'}</td>
-                  <td className="px-4 py-3 text-sm">
-                    <span className="inline-flex px-2 py-1 rounded text-xs bg-gray-100 text-gray-700">
-                      {lead.status}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-sm font-mono">{lead.assigned_account_id || '-'}</td>
-                  <td className="px-4 py-3 text-sm text-gray-500">
-                    {new Date(lead.created_at).toLocaleString()}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="crm-list">
+            {leads.map((lead) => (
+              <div key={lead.id} className="crm-item">
+                <div className="crm-item-header">
+                  <h5 className="crm-item-title">{lead.full_name || lead.contact_value}</h5>
+                  <span className="crm-status">{lead.status}</span>
+                </div>
+                <p className="crm-item-subtitle">
+                  {lead.contact_value}
+                  {lead.company ? ` · ${lead.company}` : ''}
+                  {lead.assigned_account_id ? ` · аккаунт #${lead.assigned_account_id}` : ''}
+                </p>
+                <span className="crm-date">{lead.created_at ? new Date(lead.created_at).toLocaleString() : ''}</span>
+              </div>
+            ))}
+          </div>
         )}
       </div>
     </div>

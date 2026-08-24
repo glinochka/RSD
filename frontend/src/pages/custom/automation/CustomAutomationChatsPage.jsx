@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import customService from '../../../services/customService';
-import { NAVIGATION_ROUTES } from '../../../config/constants';
+import CustomAutomationChatDiscoveryPage from './CustomAutomationChatDiscoveryPage';
+import '../../../styles/projectCRMPage.css';
+import '../../../styles/projectSettingsPage.css';
 
 const JOIN_STATUSES = [
   { value: '', label: 'Все статусы' },
@@ -43,7 +45,7 @@ function formatActivityHours(config) {
   return hours.map(([start, end]) => `${start}-${end}`).join(', ');
 }
 
-const CustomAutomationChatsPage = () => {
+const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
   const { id } = useParams();
   const [chats, setChats] = useState([]);
   const [total, setTotal] = useState(0);
@@ -53,9 +55,7 @@ const CustomAutomationChatsPage = () => {
   const [message, setMessage] = useState(null);
   const [isImporting, setIsImporting] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
-  const [isMonitoring, setIsMonitoring] = useState(false);
-  const [isNeurocommenting, setIsNeurocommenting] = useState(false);
-  const [isDiscussing, setIsDiscussing] = useState(false);
+  const [tab, setTab] = useState(defaultTab);
   const [filter, setFilter] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({
@@ -152,45 +152,6 @@ const CustomAutomationChatsPage = () => {
     }
   };
 
-  const handleMonitor = async () => {
-    setIsMonitoring(true);
-    setMessage(null);
-    try {
-      await customService.runChatMonitor(id);
-      setMessage('Мониторинг чатов запущен в фоне');
-    } catch (err) {
-      setError(err.message || 'Monitor failed');
-    } finally {
-      setIsMonitoring(false);
-    }
-  };
-
-  const handleRunNeurocommenting = async () => {
-    setIsNeurocommenting(true);
-    setMessage(null);
-    try {
-      await customService.runNeurocommenting(id);
-      setMessage('Нейрокомментинг запущен в фоне');
-    } catch (err) {
-      setError(err.message || 'Neurocommenting failed');
-    } finally {
-      setIsNeurocommenting(false);
-    }
-  };
-
-  const handleRunDiscussion = async () => {
-    setIsDiscussing(true);
-    setMessage(null);
-    try {
-      await customService.runDiscussion(id);
-      setMessage('Обсуждения запущены в фоне');
-    } catch (err) {
-      setError(err.message || 'Discussion failed');
-    } finally {
-      setIsDiscussing(false);
-    }
-  };
-
   const startEdit = (chat) => {
     const neuro = chat.neurocommenting_config || {};
     const disc = chat.discussion_config || {};
@@ -241,272 +202,228 @@ const CustomAutomationChatsPage = () => {
   };
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        <h1 className="text-2xl font-semibold">Чаты и мониторинг</h1>
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            onClick={() => setShowForm((s) => !s)}
-            className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm"
-          >
-            {showForm ? 'Скрыть форму' : '+ Добавить чат'}
-          </button>
-          <Link
-            to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHAT_DISCOVERY(id)}
-            className="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm"
-          >
-            Автопоиск
-          </Link>
-          <label className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 cursor-pointer text-sm">
-            <input type="file" accept=".csv,.xlsx,.xls" onChange={handleImport} disabled={isImporting} className="hidden" />
-            {isImporting ? 'Импорт...' : 'Импорт CSV / Excel'}
-          </label>
-          <button
-            onClick={handleJoin}
-            disabled={isJoining}
-            className="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 disabled:opacity-50 text-sm"
-          >
-            {isJoining ? '...' : 'Вступить в чаты'}
-          </button>
-          <button
-            onClick={handleMonitor}
-            disabled={isMonitoring}
-            className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 disabled:opacity-50 text-sm"
-          >
-            {isMonitoring ? '...' : 'Запустить мониторинг'}
-          </button>
-          <button
-            onClick={handleRunNeurocommenting}
-            disabled={isNeurocommenting}
-            className="bg-orange-600 text-white px-4 py-2 rounded hover:bg-orange-700 disabled:opacity-50 text-sm"
-          >
-            {isNeurocommenting ? '...' : 'Нейрокомментинг'}
-          </button>
-          <button
-            onClick={handleRunDiscussion}
-            disabled={isDiscussing}
-            className="bg-teal-600 text-white px-4 py-2 rounded hover:bg-teal-700 disabled:opacity-50 text-sm"
-          >
-            {isDiscussing ? '...' : 'Обсуждения'}
-          </button>
+    <div className="project-crm-page">
+      <div className="crm-header">
+        <div>
+          <h1 className="crm-title">Чаты</h1>
+          <p className="crm-subtitle">Залейте Excel со ссылками — система сама вступает. Автопоиск, если списка нет.</p>
+        </div>
+        <div className="crm-stats">
+          <div className="crm-stat">
+            <span className="crm-stat-value">{total}</span>
+            <span className="crm-stat-label">Всего</span>
+          </div>
         </div>
       </div>
+      <div className="crm-tabs">
+        <button type="button" className={`crm-tab ${tab === 'list' ? 'crm-tab--active' : ''}`} onClick={() => setTab('list')}>
+          Список
+        </button>
+        <button type="button" className={`crm-tab ${tab === 'discovery' ? 'crm-tab--active' : ''}`} onClick={() => setTab('discovery')}>
+          Автопоиск
+        </button>
+      </div>
+      {tab === 'discovery' ? <CustomAutomationChatDiscoveryPage /> : null}
+      {tab !== 'list' ? null : (
+        <>
+          <div className="settings-actions" style={{ marginBottom: 16, flexWrap: 'wrap' }}>
+            <button type="button" onClick={() => setShowForm((s) => !s)} className="btn btn-outline">
+              {showForm ? 'Скрыть форму' : 'Добавить чат'}
+            </button>
+            <label className="btn btn-black">
+              <input type="file" accept=".csv,.xlsx,.xls" onChange={handleImport} disabled={isImporting} style={{ display: 'none' }} />
+              {isImporting ? 'Импорт...' : 'Импорт Excel'}
+            </label>
+            <button type="button" onClick={handleJoin} disabled={isJoining} className="btn btn-outline">
+              {isJoining ? '...' : 'Вступить сейчас'}
+            </button>
+          </div>
 
-      {message && <div className="text-green-600">{message}</div>}
-      {error && <div className="text-red-600">{error}</div>}
+          {message ? <p className="crm-flash">{message}</p> : null}
+          {error ? <p className="crm-flash crm-flash--error">{error}</p> : null}
 
-      {showForm && (
-        <form onSubmit={handleCreate} className="bg-white rounded-lg shadow p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-          <input
-            placeholder="Ссылка или invite"
-            value={form.invite_link}
-            onChange={(e) => setForm((f) => ({ ...f, invite_link: e.target.value }))}
-            className="border border-gray-300 rounded px-3 py-2"
-          />
-          <input
-            placeholder="Название чата"
-            value={form.title}
-            onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
-            className="border border-gray-300 rounded px-3 py-2"
-          />
-          <input
-            placeholder="Описание"
-            value={form.description}
-            onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-            className="border border-gray-300 rounded px-3 py-2"
-          />
-          <input
-            placeholder="Тип (channel/chat)"
-            value={form.chat_type}
-            onChange={(e) => setForm((f) => ({ ...f, chat_type: e.target.value }))}
-            className="border border-gray-300 rounded px-3 py-2"
-          />
-          <button type="submit" className="md:col-span-2 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
-            Сохранить
-          </button>
-        </form>
-      )}
+          {showForm ? (
+            <form onSubmit={handleCreate} className="settings-section">
+              <h3 className="settings-section-title">Новый чат</h3>
+              <div className="form-group">
+                <label htmlFor="chat-invite">Ссылка или invite</label>
+                <input
+                  id="chat-invite"
+                  type="text"
+                  value={form.invite_link}
+                  onChange={(e) => setForm((f) => ({ ...f, invite_link: e.target.value }))}
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="chat-title">Название</label>
+                <input
+                  id="chat-title"
+                  type="text"
+                  value={form.title}
+                  onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="chat-description">Описание</label>
+                <input
+                  id="chat-description"
+                  type="text"
+                  value={form.description}
+                  onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="chat-type">Тип (channel/chat)</label>
+                <input
+                  id="chat-type"
+                  type="text"
+                  value={form.chat_type}
+                  onChange={(e) => setForm((f) => ({ ...f, chat_type: e.target.value }))}
+                />
+              </div>
+              <div className="settings-actions">
+                <button type="submit" className="btn btn-black">Сохранить</button>
+              </div>
+            </form>
+          ) : null}
 
-      <div className="bg-white rounded-lg shadow p-4">
-        <div className="flex items-center gap-3 mb-4">
-          <label className="text-sm font-medium text-gray-700">Статус:</label>
-          <select
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            className="border border-gray-300 rounded px-3 py-2 text-sm"
-          >
-            {JOIN_STATUSES.map((s) => (
-              <option key={s.value} value={s.value}>{s.label}</option>
-            ))}
-          </select>
-        </div>
-        <div className="text-sm text-gray-500 mb-2">Всего: {total}</div>
-        {isLoading ? (
-          <div className="text-gray-500">Загрузка...</div>
-        ) : chats.length === 0 ? (
-          <div className="text-gray-500 text-center py-6">Нет чатов. Добавьте вручную или импортируйте.</div>
-        ) : (
-          <table className="w-full text-left">
-            <thead className="bg-gray-50 border-b">
-              <tr>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Название</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Ссылка / ID</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Статус</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Режим</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Настройки</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Попытки</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Действия</th>
-              </tr>
-            </thead>
-            <tbody>
+          <div className="settings-section">
+            <div className="form-group">
+              <label htmlFor="chat-filter">Статус вступления</label>
+              <select id="chat-filter" value={filter} onChange={(e) => setFilter(e.target.value)}>
+                {JOIN_STATUSES.map((s) => (
+                  <option key={s.value} value={s.value}>{s.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {isLoading ? (
+            <div className="crm-empty-list"><p>Загрузка...</p></div>
+          ) : chats.length === 0 ? (
+            <div className="crm-empty-list">
+              <p>Нет чатов</p>
+              <span>Добавьте вручную или импортируйте Excel.</span>
+            </div>
+          ) : (
+            <div className="crm-list">
               {chats.map((chat) => (
-                <tr key={chat.id} className="border-b last:border-b-0 hover:bg-gray-50">
-                  <td className="px-4 py-3 text-sm">{chat.title || `Chat #${chat.id}`}</td>
-                  <td className="px-4 py-3 text-sm font-mono truncate max-w-xs">
-                    {chat.invite_link || chat.external_chat_id || '-'}
-                  </td>
-                  <td className="px-4 py-3 text-sm">
-                    <span className="inline-flex px-2 py-1 rounded text-xs bg-gray-100 text-gray-700">
-                      {chat.join_status}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-sm">
-                    {editing.chatId === chat.id ? (
-                      <select
-                        value={editing.mode}
-                        onChange={(e) => setEditing((ed) => ({ ...ed, mode: e.target.value }))}
-                        className="border border-gray-300 rounded px-2 py-1 text-sm"
-                      >
-                        {MODES.map((m) => (
-                          <option key={m.value} value={m.value}>{m.label}</option>
-                        ))}
-                      </select>
-                    ) : (
-                      <span className="inline-flex px-2 py-1 rounded text-xs bg-blue-50 text-blue-700">
-                        {MODES.find((m) => m.value === chat.mode)?.label || chat.mode}
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-sm">
-                    {editing.chatId === chat.id ? (
-                      <div className="flex flex-col gap-2">
-                        {editing.mode === 'neurocommenting' ? (
-                          <>
-                            <label className="text-xs text-gray-500">max/день</label>
+                <div key={chat.id} className="crm-item">
+                  <div className="crm-item-header">
+                    <h5 className="crm-item-title">{chat.title || `Chat #${chat.id}`}</h5>
+                    <span className="crm-status">{chat.join_status}</span>
+                  </div>
+                  <p className="crm-item-subtitle">{chat.invite_link || chat.external_chat_id || '-'}</p>
+                  {editing.chatId === chat.id ? (
+                    <>
+                      <div className="form-group">
+                        <label htmlFor={`mode-${chat.id}`}>Режим</label>
+                        <select
+                          id={`mode-${chat.id}`}
+                          value={editing.mode}
+                          onChange={(e) => setEditing((ed) => ({ ...ed, mode: e.target.value }))}
+                        >
+                          {MODES.map((m) => (
+                            <option key={m.value} value={m.value}>{m.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                      {editing.mode === 'neurocommenting' ? (
+                        <>
+                          <div className="form-group">
+                            <label htmlFor={`max-${chat.id}`}>max/день</label>
                             <input
+                              id={`max-${chat.id}`}
                               type="number"
                               min={1}
                               value={editing.max_per_day}
                               onChange={(e) => setEditing((ed) => ({ ...ed, max_per_day: e.target.value }))}
-                              className="border border-gray-300 rounded px-2 py-1 text-sm w-24"
                             />
-                            <label className="text-xs text-gray-500">частота (мин)</label>
+                          </div>
+                          <div className="form-group">
+                            <label htmlFor={`freq-${chat.id}`}>частота (мин)</label>
                             <input
+                              id={`freq-${chat.id}`}
                               type="number"
                               min={1}
                               value={editing.frequency_minutes}
                               onChange={(e) => setEditing((ed) => ({ ...ed, frequency_minutes: e.target.value }))}
-                              className="border border-gray-300 rounded px-2 py-1 text-sm w-24"
                             />
-                          </>
-                        ) : editing.mode === 'discussion' ? (
-                          <>
-                            <label className="text-xs text-gray-500">часы активности (9-18, 20-23)</label>
+                          </div>
+                        </>
+                      ) : null}
+                      {editing.mode === 'discussion' ? (
+                        <>
+                          <div className="form-group">
+                            <label htmlFor={`hours-${chat.id}`}>часы активности (9-18, 20-23)</label>
                             <input
+                              id={`hours-${chat.id}`}
                               type="text"
                               placeholder="9-18, 20-23"
                               value={editing.activity_hours}
                               onChange={(e) => setEditing((ed) => ({ ...ed, activity_hours: e.target.value }))}
-                              className="border border-gray-300 rounded px-2 py-1 text-sm w-40"
                             />
-                            <label className="text-xs text-gray-500">вероятность ответа (%)</label>
+                          </div>
+                          <div className="form-group">
+                            <label htmlFor={`prob-${chat.id}`}>вероятность ответа (%)</label>
                             <input
+                              id={`prob-${chat.id}`}
                               type="number"
                               min={0}
                               max={100}
                               value={editing.reply_probability}
                               onChange={(e) => setEditing((ed) => ({ ...ed, reply_probability: e.target.value }))}
-                              className="border border-gray-300 rounded px-2 py-1 text-sm w-24"
                             />
-                          </>
-                        ) : (
-                          <span className="text-xs text-gray-500">Нет настроек</span>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="text-xs text-gray-600">
-                        {chat.mode === 'neurocommenting' ? (
-                          <>
-                            <div>max/день: {chat.neurocommenting_config?.max_per_day || 10}</div>
-                            <div>частота: {chat.neurocommenting_config?.frequency_minutes || 60} мин</div>
-                          </>
-                        ) : chat.mode === 'discussion' ? (
-                          <>
-                            <div>часы: {formatActivityHours(chat.discussion_config) || 'все'}</div>
-                            <div>вероятность: {Math.round((chat.discussion_config?.reply_probability || 0) * 100)}%</div>
-                          </>
-                        ) : (
-                          '-'
-                        )}
-                      </div>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-sm">{chat.join_attempts}</td>
-                  <td className="px-4 py-3 text-sm">
-                    <div className="flex items-center gap-3">
-                      {editing.chatId === chat.id ? (
-                        <>
-                          <button onClick={() => saveEdit(chat.id)} className="text-green-600 hover:underline">
-                            Сохранить
-                          </button>
-                          <button onClick={cancelEdit} className="text-gray-600 hover:underline">
-                            Отмена
-                          </button>
+                          </div>
                         </>
-                      ) : (
-                        <button onClick={() => startEdit(chat)} className="text-blue-600 hover:underline">
-                          Настроить
-                        </button>
-                      )}
-                      <button
-                        onClick={() => handleDelete(chat.id)}
-                        className="text-red-600 hover:underline"
-                      >
-                        Удалить
-                      </button>
-                    </div>
-                  </td>
-                </tr>
+                      ) : null}
+                      <div className="crm-item-actions">
+                        <button type="button" onClick={() => saveEdit(chat.id)} className="btn btn-black">Сохранить</button>
+                        <button type="button" onClick={cancelEdit} className="btn btn-outline">Отмена</button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <p className="crm-item-subtitle">
+                        {MODES.find((m) => m.value === chat.mode)?.label || chat.mode}
+                        {chat.mode === 'neurocommenting'
+                          ? ` · max/день ${chat.neurocommenting_config?.max_per_day || 10} · ${chat.neurocommenting_config?.frequency_minutes || 60} мин`
+                          : ''}
+                        {chat.mode === 'discussion'
+                          ? ` · часы ${formatActivityHours(chat.discussion_config) || 'все'} · ${Math.round((chat.discussion_config?.reply_probability || 0) * 100)}%`
+                          : ''}
+                        {` · попыток ${chat.join_attempts}`}
+                      </p>
+                      <div className="crm-item-actions">
+                        <button type="button" onClick={() => startEdit(chat)} className="btn btn-outline">Настроить</button>
+                        <button type="button" onClick={() => handleDelete(chat.id)} className="btn btn-outline">Удалить</button>
+                      </div>
+                    </>
+                  )}
+                </div>
               ))}
-            </tbody>
-          </table>
-        )}
-      </div>
+            </div>
+          )}
 
-      {jobs.length > 0 && (
-        <div className="bg-white rounded-lg shadow p-4">
-          <h2 className="font-medium mb-4">Импорты</h2>
-          <table className="w-full text-left">
-            <thead className="bg-gray-50 border-b">
-              <tr>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Файл</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Статус</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Обработано</th>
-                <th className="px-4 py-3 text-sm font-medium text-gray-700">Ошибок</th>
-              </tr>
-            </thead>
-            <tbody>
-              {jobs.map((job) => (
-                <tr key={job.id} className="border-b last:border-b-0 hover:bg-gray-50">
-                  <td className="px-4 py-3 text-sm">{job.file_name}</td>
-                  <td className="px-4 py-3 text-sm">{job.status}</td>
-                  <td className="px-4 py-3 text-sm">{job.processed_rows} / {job.total_rows}</td>
-                  <td className="px-4 py-3 text-sm">{job.error_rows}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+          {jobs.length > 0 ? (
+            <div className="settings-section">
+              <h3 className="settings-section-title">Импорты</h3>
+              <div className="crm-list">
+                {jobs.map((job) => (
+                  <div key={job.id} className="crm-item">
+                    <div className="crm-item-header">
+                      <h5 className="crm-item-title">{job.file_name}</h5>
+                      <span className="crm-status">{job.status}</span>
+                    </div>
+                    <p className="crm-item-subtitle">
+                      {job.processed_rows} / {job.total_rows} · ошибок {job.error_rows}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </>
       )}
     </div>
   );

@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
+import '../../../styles/projectSettingsPage.css';
+import '../../../styles/projectCRMPage.css';
 
 const VARIABLE_HINTS = {
   chat_monitoring_trigger: ['text'],
@@ -115,50 +117,54 @@ const CustomAutomationPromptEditPage = () => {
   };
 
   if (isLoading) {
-    return <div className="text-gray-500">Загрузка...</div>;
+    return (
+      <div className="project-settings-page project-settings-page--loading">
+        <div className="settings-loading">
+          <div className="spinner" />
+          <p>Загрузка...</p>
+        </div>
+      </div>
+    );
   }
 
   if (!prompt) {
-    return <div className="text-red-600">{error || 'Промпт не найден'}</div>;
+    return (
+      <div className="project-settings-page">
+        <p className="form-hint">{error || 'Промпт не найден'}</p>
+      </div>
+    );
   }
 
   const variables = VARIABLE_HINTS[prompt.prompt_type] || [];
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="project-settings-page">
+      <div className="settings-header">
         <div>
-          <h1 className="text-2xl font-semibold">Редактирование промпта</h1>
-          <div className="text-sm text-gray-500">
-            {PROMPT_TYPE_LABELS[prompt.prompt_type] || prompt.prompt_type} • v{prompt.version}
-          </div>
+          <h1 className="settings-title">Редактирование промпта</h1>
+          <p className="settings-subtitle">
+            {PROMPT_TYPE_LABELS[prompt.prompt_type] || prompt.prompt_type} · v{prompt.version}
+          </p>
         </div>
-        <Link
-          to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_PROMPTS(id)}
-          className="text-sm text-blue-600 hover:underline"
-        >
-          ← К списку промптов
+        <Link to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_PROMPTS(id)} className="btn btn-outline">
+          К списку
         </Link>
       </div>
 
-      {message && <div className="text-green-600">{message}</div>}
-      {error && <div className="text-red-600">{error}</div>}
+      {message ? <p className="form-hint">{message}</p> : null}
+      {error ? <p className="form-hint">{error}</p> : null}
 
-      <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow p-6 space-y-6">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Модель</label>
-            <input
-              type="text"
-              name="model"
-              value={form.model}
-              onChange={handleChange}
-              className="w-full border border-gray-300 rounded px-3 py-2"
-            />
+      <form onSubmit={handleSubmit} className="settings-form">
+        <div className="settings-section">
+          <h3 className="settings-section-title">Параметры</h3>
+          <div className="form-group">
+            <label htmlFor="model">Модель</label>
+            <input id="model" type="text" name="model" value={form.model} onChange={handleChange} />
           </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Temperature</label>
+          <div className="form-group">
+            <label htmlFor="temperature">Temperature</label>
             <input
+              id="temperature"
               type="number"
               step="0.1"
               min="0"
@@ -166,94 +172,60 @@ const CustomAutomationPromptEditPage = () => {
               name="temperature"
               value={form.temperature}
               onChange={handleChange}
-              className="w-full border border-gray-300 rounded px-3 py-2"
             />
           </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Max tokens</label>
-            <input
-              type="number"
-              name="max_tokens"
-              value={form.max_tokens}
-              onChange={handleChange}
-              className="w-full border border-gray-300 rounded px-3 py-2"
-            />
+          <div className="form-group">
+            <label htmlFor="max_tokens">Max tokens</label>
+            <input id="max_tokens" type="number" name="max_tokens" value={form.max_tokens} onChange={handleChange} />
           </div>
-        </div>
-
-        <div>
-          <div className="flex items-center justify-between mb-1">
-            <label className="block text-sm font-medium text-gray-700">Содержимое промпта</label>
-            <div className="text-xs text-gray-500">
-              Переменные: {variables.map((v) => `{${v}}`).join(', ')}
-            </div>
+          <div className="form-group">
+            <label htmlFor="content">Содержимое промпта</label>
+            <span className="form-hint">Переменные: {variables.map((v) => `{${v}}`).join(', ')}</span>
+            <textarea id="content" name="content" value={form.content} onChange={handleChange} rows={12} />
           </div>
-          <textarea
-            name="content"
-            value={form.content}
-            onChange={handleChange}
-            rows={12}
-            className="w-full border border-gray-300 rounded px-3 py-2 font-mono text-sm"
-          />
-        </div>
-
-        <div className="flex gap-3">
-          <button
-            type="submit"
-            disabled={isSaving}
-            className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50"
-          >
-            {isSaving ? 'Сохранение...' : 'Сохранить новую версию'}
-          </button>
+          <div className="settings-actions">
+            <button type="submit" disabled={isSaving} className="btn btn-black">
+              {isSaving ? 'Сохранение...' : 'Сохранить новую версию'}
+            </button>
+          </div>
         </div>
       </form>
 
-      <div className="bg-white rounded-lg shadow p-6 space-y-4">
-        <h2 className="font-medium">Тестирование</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {variables.map((v) => (
-            <div key={v}>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{`{${v}}`}</label>
-              <input
-                type="text"
-                value={testVariables[v] || ''}
-                onChange={(e) => handleVariableChange(v, e.target.value)}
-                className="w-full border border-gray-300 rounded px-3 py-2"
-              />
-            </div>
-          ))}
-        </div>
-        <button
-          onClick={handleTest}
-          disabled={isTesting}
-          className="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 disabled:opacity-50"
-        >
-          {isTesting ? 'Тестирование...' : 'Тестировать'}
-        </button>
-
-        {testResult && (
-          <div className="space-y-4">
-            {testResult.missing_variables?.length > 0 && (
-              <div className="text-orange-600 text-sm">
-                Не заполнены переменные: {testResult.missing_variables.map((v) => `{${v}}`).join(', ')}
-              </div>
-            )}
-            <div>
-              <div className="text-sm font-medium text-gray-700 mb-1">Сrendered:</div>
-              <div className="bg-gray-50 rounded p-3 text-sm whitespace-pre-wrap font-mono">{testResult.rendered}</div>
-            </div>
-            <div>
-              <div className="text-sm font-medium text-gray-700 mb-1">Результат LLM:</div>
-              <div className="bg-gray-50 rounded p-3 text-sm whitespace-pre-wrap font-mono">
-                {testResult.error ? (
-                  <span className="text-red-600">{testResult.error}</span>
-                ) : (
-                  testResult.output
-                )}
-              </div>
-            </div>
+      <div className="settings-section">
+        <h3 className="settings-section-title">Тестирование</h3>
+        {variables.map((v) => (
+          <div key={v} className="form-group">
+            <label htmlFor={`var-${v}`}>{`{${v}}`}</label>
+            <input
+              id={`var-${v}`}
+              type="text"
+              value={testVariables[v] || ''}
+              onChange={(e) => handleVariableChange(v, e.target.value)}
+            />
           </div>
-        )}
+        ))}
+        <div className="settings-actions">
+          <button type="button" onClick={handleTest} disabled={isTesting} className="btn btn-outline">
+            {isTesting ? 'Тестирование...' : 'Тестировать'}
+          </button>
+        </div>
+        {testResult ? (
+          <>
+            {testResult.missing_variables?.length > 0 ? (
+              <p className="form-hint">
+                Не заполнены переменные: {testResult.missing_variables.map((v) => `{${v}}`).join(', ')}
+              </p>
+            ) : null}
+            <div className="form-group">
+              <label>Собранный промпт</label>
+              <p className="crm-prompt-preview">{testResult.rendered}</p>
+            </div>
+            <div className="form-group">
+              <label>Результат LLM</label>
+              <p className="crm-prompt-preview">{testResult.error || testResult.output}</p>
+            </div>
+          </>
+        ) : null}
       </div>
     </div>
   );
