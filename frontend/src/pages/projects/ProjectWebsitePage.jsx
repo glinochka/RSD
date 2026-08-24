@@ -77,14 +77,14 @@ const getGenerationStatusLabel = (status) => {
 
 const ProjectWebsitePage = () => {
   const { projectId } = useParams();
-  const { showError, showSuccess } = useNotification();
+  const { showError } = useNotification();
 
   const [websites, setWebsites] = useState([]);
   const [canCreate, setCanCreate] = useState(false);
   const [max, setMax] = useState(3);
   const [isLoading, setIsLoading] = useState(true);
-  const [isCreating, setIsCreating] = useState(false);
-  const [showCreateForm, setShowCreateForm] = useState(false);
+
+  const createWebsiteUrl = `${NAVIGATION_ROUTES.WEBSITE_CREATE}?mode=ai&project_id=${projectId}`;
 
   const loadData = useCallback(async () => {
     try {
@@ -106,24 +106,6 @@ const ProjectWebsitePage = () => {
   useEffect(() => {
     loadData();
   }, [loadData]);
-
-  const handleCreate = async (e) => {
-    e.preventDefault();
-    try {
-      setIsCreating(true);
-      await projectService.createProjectWebsite(projectId, {
-        title: 'Новый сайт',
-      });
-      showSuccess('Сайт создан и генерируется');
-      setShowCreateForm(false);
-      loadData();
-    } catch (error) {
-      console.error('Failed to create website:', error);
-      showError(error.message || 'Не удалось создать сайт');
-    } finally {
-      setIsCreating(false);
-    }
-  };
 
   if (isLoading) {
     return (
@@ -206,45 +188,15 @@ const ProjectWebsitePage = () => {
           </div>
         ))}
 
-        {/* New Site Card */}
         {canCreate && (
-          <div className={`website-card website-card--new ${showCreateForm ? 'website-card--new-active' : ''}`}>
-            {!showCreateForm ? (
-              <button
-                type="button"
-                className="website-new-card-inner"
-                onClick={() => setShowCreateForm(true)}
-              >
-                <div className="website-new-card-icon">
-                  <PlusIcon />
-                </div>
-                <span className="website-new-card-label">Новый сайт</span>
-              </button>
-            ) : (
-              <form className="website-create-form" onSubmit={handleCreate}>
-                <h3 className="website-create-form-title">Создать новый сайт</h3>
-                <p className="website-create-hint">
-                  Будет создан пустой лендинг, который можно настроить в конструкторе.
-                </p>
-                <div className="website-create-form-actions">
-                  <button
-                    type="submit"
-                    className="btn btn-black"
-                    disabled={isCreating}
-                  >
-                    {isCreating ? 'Создание...' : 'Создать сайт'}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-outline"
-                    onClick={() => setShowCreateForm(false)}
-                  >
-                    Отмена
-                  </button>
-                </div>
-              </form>
-            )}
-          </div>
+          <Link to={createWebsiteUrl} className="website-card website-card--new">
+            <div className="website-new-card-inner">
+              <div className="website-new-card-icon">
+                <PlusIcon />
+              </div>
+              <span className="website-new-card-label">Новый сайт</span>
+            </div>
+          </Link>
         )}
       </div>
 

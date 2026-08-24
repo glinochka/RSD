@@ -9,11 +9,11 @@ from typing import Annotated
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Request, status, Response, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
 
 from ..alembic.database import async_session_maker
-from ..alembic.models import AdminService, Agent, AgentChannelConnection, User, Website, WebsiteBlock, WebsiteDomain, WebsiteTemplate
+from ..alembic.models import AdminService, Agent, AgentChannelConnection, Project, User, Website, WebsiteBlock, WebsiteDomain, WebsiteTemplate
 from ..utils.JWT import get_user_from_access_token
 from ..config import settings
 from ..router_users.dao import UserDAO
@@ -1573,6 +1573,9 @@ async def generate_website(
     )
 
 
+MAX_WEBSITES_PER_PROJECT = 3
+
+
 @router.post("/generate/create-and-generate", response_model=WebsiteGenerationStartResponse, status_code=status.HTTP_201_CREATED)
 async def create_and_generate_website(
     request: WebsiteGenerateRequest,
@@ -1586,6 +1589,23 @@ async def create_and_generate_website(
     1. Creates a new website with auto-generated slug
     2. Queues it for AI generation
     """
+    if request.project_id:
+        project = await website_dao._session.get(Project, request.project_id)
+        if not project or project.user_id != user.id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Project not found",
+            )
+        count_result = await website_dao._session.execute(
+            select(func.count(Website.id)).where(Website.project_id == request.project_id)
+        )
+        existing_count = count_result.scalar() or 0
+        if existing_count >= MAX_WEBSITES_PER_PROJECT:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Maximum {MAX_WEBSITES_PER_PROJECT} websites per project",
+            )
+
     # Auto-generate slug from business name
     slug = generate_slug_from_name(request.business_name)
 
@@ -1613,6 +1633,7 @@ async def create_and_generate_website(
     website_data = {
         "owner_id": user.id,
         "agent_id": request.agent_id,
+        "project_id": request.project_id,
         "template_id": None,
         "slug": slug,
         "title": request.business_name,

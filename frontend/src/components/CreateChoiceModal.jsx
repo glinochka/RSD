@@ -105,11 +105,6 @@ const CreateChoiceModal = ({ isOpen, onClose }) => {
     navigate(`${NAVIGATION_ROUTES.WEBSITE_CREATE}?mode=ai`);
   };
 
-  const handleCreateWebsiteManual = () => {
-    onClose();
-    navigate(`${NAVIGATION_ROUTES.WEBSITE_CREATE}?mode=manual`);
-  };
-
   if (!isOpen) return null;
 
   return (
@@ -146,8 +141,6 @@ const CreateChoiceModal = ({ isOpen, onClose }) => {
                 onClick={
                   createTarget === 'agent'
                     ? handleCreateAgentAI
-                    : createTarget === 'website'
-                    ? handleCreateWebsiteAI
                     : handleCreateProjectAI
                 }
               >
@@ -156,8 +149,6 @@ const CreateChoiceModal = ({ isOpen, onClose }) => {
                   <p className="create-choice-option-description">
                     {createTarget === 'agent'
                       ? 'Коротко описываете задачу, получаете готовый шаблон и промпт.'
-                      : createTarget === 'website'
-                      ? 'ИИ сгенерирует готовый сайт: дизайн, тексты и блоки на основе брифа.'
                       : 'ИИ соберет проектный план: агенты, сайт и рекомендации по запуску.'}
                   </p>
                 </div>
@@ -168,8 +159,6 @@ const CreateChoiceModal = ({ isOpen, onClose }) => {
                 onClick={
                   createTarget === 'agent'
                     ? handleCreateAgentManual
-                    : createTarget === 'website'
-                    ? handleCreateWebsiteManual
                     : handleCreateProjectManual
                 }
               >
@@ -178,8 +167,6 @@ const CreateChoiceModal = ({ isOpen, onClose }) => {
                   <p className="create-choice-option-description">
                     {createTarget === 'agent'
                       ? 'Пустой агент: полностью ручная настройка каналов, промпта и логики.'
-                      : createTarget === 'website'
-                      ? 'Пустой сайт: настроите блоки, стили и контент самостоятельно.'
                       : 'Пустой проект: добавляете сайт, агентов и базу знаний самостоятельно.'}
                   </p>
                 </div>
@@ -206,7 +193,7 @@ const CreateChoiceModal = ({ isOpen, onClose }) => {
               <button
                 type="button"
                 className="create-choice-option create-choice-option--website"
-                onClick={() => setCreateTarget('website')}
+                onClick={handleCreateWebsiteAI}
               >
                 <div className="create-choice-option-icon">
                   <GlobeIcon />

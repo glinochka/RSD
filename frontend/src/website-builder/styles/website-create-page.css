@@ -264,6 +264,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-wrap: wrap;
   gap: var(--spacing-md);
   margin-top: var(--spacing-xl);
   padding-top: var(--spacing-xl);
@@ -271,9 +272,11 @@
 }
 
 .website-create-actions .btn {
-  display: flex;
+  display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: var(--spacing-sm);
+  min-width: 0;
 }
 
 /* Loading State */
@@ -423,6 +426,10 @@
 
   .website-create-actions {
     flex-direction: column;
+  }
+
+  .website-create-actions .btn {
+    width: 100%;
   }
 }
 

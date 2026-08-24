@@ -11,6 +11,7 @@ import { useNotification } from '../../context/useNotification';
 import { NAVIGATION_ROUTES } from '../../config/constants';
 import websiteService from '../../services/websiteService';
 import agentService from '../../services/agentService';
+import projectService from '../../services/projectService';
 import '../styles/website-create-page.css';
 
 const STEPS = {
@@ -36,24 +37,16 @@ const ChevronRightIcon = () => (
   </svg>
 );
 
-const GlobeIcon = () => (
-  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <circle cx="12" cy="12" r="10" />
-    <line x1="2" y1="12" x2="22" y2="12" />
-    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-  </svg>
-);
-
 const WebsiteCreatePageContent = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { showError, showInfo } = useNotification();
-  const createMode = searchParams.get('mode') === 'manual' ? 'manual' : 'ai';
   const agentIdParam = searchParams.get('agent_id');
   const agentId = agentIdParam ? Number(agentIdParam) : null;
+  const projectIdParam = searchParams.get('project_id');
+  const projectId = projectIdParam ? Number(projectIdParam) : null;
 
   const [currentStep, setCurrentStep] = useState(STEPS.BRIEF);
-  const [isCreatingManual, setIsCreatingManual] = useState(false);
   const [generationError, setGenerationError] = useState(null);
   const [generationLogs, setGenerationLogs] = useState([]);
   const [websiteId, setWebsiteId] = useState(null);
@@ -65,7 +58,6 @@ const WebsiteCreatePageContent = () => {
     generationBrief: '',
     primaryColor: '#3B82F6',
     darkMode: false,
-    manualTitle: '',
   });
 
   useEffect(() => {
@@ -100,6 +92,37 @@ const WebsiteCreatePageContent = () => {
     };
   }, [agentId]);
 
+  useEffect(() => {
+    if (!projectId) {
+      return;
+    }
+
+    let cancelled = false;
+    const loadProject = async () => {
+      try {
+        const project = await projectService.getProject(projectId);
+        if (cancelled) {
+          return;
+        }
+        const description = String(project?.description || '').trim();
+        setFormData((prev) => ({
+          ...prev,
+          businessName: project?.name || prev.businessName,
+          businessDescription: description.length >= 10 ? description : prev.businessDescription,
+        }));
+      } catch (error) {
+        if (!cancelled) {
+          console.error('Failed to load project for website creation:', error);
+        }
+      }
+    };
+
+    loadProject();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
   const handleInputChange = (field, value) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
@@ -108,8 +131,6 @@ const WebsiteCreatePageContent = () => {
     formData.businessName.trim().length >= 2 &&
     formData.businessDescription.trim().length >= 10
   );
-
-  const isManualValid = () => formData.manualTitle.trim().length >= 2;
 
   const handleSubmitBrief = async () => {
     if (!isBriefValid()) {
@@ -127,6 +148,7 @@ const WebsiteCreatePageContent = () => {
         business_name: formData.businessName.trim(),
         business_description: formData.businessDescription.trim(),
         agent_id: agentId || undefined,
+        project_id: projectId || undefined,
         generation_brief: formData.generationBrief.trim() || undefined,
         primary_color: formData.primaryColor,
         dark_mode: formData.darkMode,
@@ -191,32 +213,7 @@ const WebsiteCreatePageContent = () => {
     setCurrentStep(STEPS.BRIEF);
   };
 
-  const handleCreateManual = async () => {
-    if (!isManualValid()) {
-      showError('Укажите название сайта');
-      return;
-    }
-
-    setIsCreatingManual(true);
-    try {
-      const result = await websiteService.create({
-        title: formData.manualTitle.trim(),
-        agent_id: agentId || undefined,
-      });
-      showInfo('Пустой сайт создан. Настройте блоки в конструкторе.');
-      navigate(NAVIGATION_ROUTES.WEBSITE_EDITOR(result.id));
-    } catch (error) {
-      showError(error?.message || 'Не удалось создать сайт');
-    } finally {
-      setIsCreatingManual(false);
-    }
-  };
-
   const renderProgressSteps = () => {
-    if (createMode === 'manual') {
-      return null;
-    }
-
     const steps = [
       { key: STEPS.BRIEF, label: 'Бриф', number: 1 },
       { key: STEPS.GENERATING, label: 'Генерация', number: 2 },
@@ -348,6 +345,15 @@ const WebsiteCreatePageContent = () => {
       </div>
 
       <div className="website-create-actions">
+        {projectId && (
+          <button
+            type="button"
+            className="btn btn-outline"
+            onClick={() => navigate(NAVIGATION_ROUTES.PROJECT_WEBSITE(projectId))}
+          >
+            Отмена
+          </button>
+        )}
         <button
           type="button"
           className="btn btn-black"
@@ -409,58 +415,15 @@ const WebsiteCreatePageContent = () => {
     </div>
   );
 
-  const renderManualStep = () => (
-    <div className="website-create-step">
-      <div className="website-create-step-header">
-        <h2>Создание сайта вручную</h2>
-        <p>Создаётся пустой сайт. Блоки и дизайн вы настроите в конструкторе.</p>
-      </div>
-
-      <div className="website-create-form">
-        <div className="form-group">
-          <label htmlFor="manual-title">
-            Название сайта <span className="required">*</span>
-          </label>
-          <input
-            type="text"
-            id="manual-title"
-            value={formData.manualTitle}
-            onChange={(e) => handleInputChange('manualTitle', e.target.value)}
-            placeholder="Например: Лендинг салона красоты"
-            maxLength={100}
-          />
-        </div>
-      </div>
-
-      <div className="website-create-actions">
-        <button
-          type="button"
-          className="btn btn-black"
-          onClick={handleCreateManual}
-          disabled={isCreatingManual || !isManualValid()}
-        >
-          <GlobeIcon />
-          {isCreatingManual ? 'Создаём...' : 'Создать пустой сайт'}
-        </button>
-      </div>
-    </div>
-  );
-
   return (
     <MainLayout>
       <div className="website-create-page">
         {renderProgressSteps()}
 
         <div className="website-create-container">
-          {createMode === 'manual' ? (
-            renderManualStep()
-          ) : (
-            <>
-              {currentStep === STEPS.BRIEF && renderBriefStep()}
-              {currentStep === STEPS.GENERATING && renderGeneratingStep()}
-              {currentStep === STEPS.ERROR && renderErrorStep()}
-            </>
-          )}
+          {currentStep === STEPS.BRIEF && renderBriefStep()}
+          {currentStep === STEPS.GENERATING && renderGeneratingStep()}
+          {currentStep === STEPS.ERROR && renderErrorStep()}
         </div>
       </div>
     </MainLayout>

@@ -167,6 +167,7 @@ class WebsiteGenerateRequest(BaseModel):
     business_name: str = Field(..., min_length=1, max_length=200)
     business_description: str = Field(..., min_length=10, max_length=5000)
     agent_id: int | None = Field(default=None, gt=0, description="Optional agent ID to pull services and contacts")
+    project_id: int | None = Field(default=None, gt=0, description="Optional project ID to attach the website to")
     primary_color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
     dark_mode: bool = Field(default=False, description="Whether to use dark mode theme")
     generation_brief: str | None = Field(
