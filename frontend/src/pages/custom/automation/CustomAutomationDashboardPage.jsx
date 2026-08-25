@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
+import { ACTION_LABELS } from './activityLabels';
 import '../../../styles/projectDashboard.css';
 import '../../../styles/projectCRMPage.css';
 
@@ -15,15 +16,6 @@ const STATUS_LABELS = {
   converted: 'Конвертирован',
   lost: 'Потерян',
   spam: 'Спам',
-};
-
-const ACTION_LABELS = {
-  neurocommenting: 'Нейрокомментинг',
-  discussion: 'Обсуждения',
-  dm: 'ЛС',
-  chat_monitoring: 'Мониторинг',
-  shilling_chat: 'Шиллинг в чате',
-  shilling_post: 'Шиллинг под постом',
 };
 
 const CustomAutomationDashboardPage = () => {

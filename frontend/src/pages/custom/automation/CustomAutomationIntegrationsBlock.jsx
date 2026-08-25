@@ -45,6 +45,7 @@ const CustomAutomationIntegrationsBlock = ({
   onError,
   onMessage,
 }) => {
+  const isDmpBot = settings?.solution_kind === 'dmp_bot';
   const [connection, setConnection] = useState(null);
   const [amoForm, setAmoForm] = useState({
     subdomain: '',
@@ -54,11 +55,27 @@ const CustomAutomationIntegrationsBlock = ({
     responsible_user_id: '',
     lead_status_id: '',
   });
+  const [botToken, setBotToken] = useState('');
+  const [sheetsForm, setSheetsForm] = useState({
+    spreadsheet: '',
+    worksheet: '',
+    service_account_json: '',
+  });
   const [isSavingCreds, setIsSavingCreds] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isSavingPipeline, setIsSavingPipeline] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isRotating, setIsRotating] = useState(false);
+  const [isSavingBot, setIsSavingBot] = useState(false);
+  const [isSavingSheets, setIsSavingSheets] = useState(false);
+
+  useEffect(() => {
+    setSheetsForm((prev) => ({
+      ...prev,
+      spreadsheet: settings?.google_sheets_spreadsheet_id || prev.spreadsheet || '',
+      worksheet: settings?.google_sheets_worksheet || prev.worksheet || 'Лиды',
+    }));
+  }, [settings?.google_sheets_spreadsheet_id, settings?.google_sheets_worksheet]);
 
   const loadConnection = useCallback(async () => {
     try {
@@ -79,10 +96,10 @@ const CustomAutomationIntegrationsBlock = ({
   }, [automationId, onError]);
 
   useEffect(() => {
-    if (settings?.is_amocrm_enabled) {
+    if (settings?.is_amocrm_enabled && !isDmpBot) {
       loadConnection();
     }
-  }, [settings?.is_amocrm_enabled, loadConnection]);
+  }, [settings?.is_amocrm_enabled, isDmpBot, loadConnection]);
 
   const handleAmoChange = (e) => {
     const { name, value } = e.target;
@@ -185,14 +202,107 @@ const CustomAutomationIntegrationsBlock = ({
     }
   };
 
-  const showAmocrm = Boolean(settings?.is_amocrm_enabled);
-  const showDmp = Boolean(settings?.is_dmp_one_enabled);
-  if (!showAmocrm && !showDmp) {
+  const handleSaveBot = async (e) => {
+    e.preventDefault();
+    setIsSavingBot(true);
+    try {
+      await customService.saveTelegramBot(automationId, { bot_token: botToken || undefined });
+      setBotToken('');
+      onMessage('Бот подключён, webhook установлен');
+      await onReloadSettings();
+    } catch (err) {
+      onError(err.message || 'Не удалось подключить бота');
+    } finally {
+      setIsSavingBot(false);
+    }
+  };
+
+  const handleDisconnectBot = async () => {
+    if (!window.confirm('Отключить бота?')) {
+      return;
+    }
+    setIsSavingBot(true);
+    try {
+      await customService.saveTelegramBot(automationId, { disconnect: true });
+      setBotToken('');
+      onMessage('Бот отключён');
+      await onReloadSettings();
+    } catch (err) {
+      onError(err.message || 'Не удалось отключить бота');
+    } finally {
+      setIsSavingBot(false);
+    }
+  };
+
+  const handleSaveSheets = async (e) => {
+    e.preventDefault();
+    setIsSavingSheets(true);
+    try {
+      await customService.saveGoogleSheets(automationId, {
+        spreadsheet: sheetsForm.spreadsheet,
+        worksheet: sheetsForm.worksheet,
+        service_account_json: sheetsForm.service_account_json || undefined,
+      });
+      setSheetsForm((prev) => ({ ...prev, service_account_json: '' }));
+      onMessage('Google Таблица сохранена');
+      await onReloadSettings();
+    } catch (err) {
+      onError(err.message || 'Не удалось сохранить таблицу');
+    } finally {
+      setIsSavingSheets(false);
+    }
+  };
+
+  const showAmocrm = Boolean(settings?.is_amocrm_enabled) && !isDmpBot;
+  const showDmp = Boolean(settings?.is_dmp_one_enabled) || isDmpBot;
+  const showBot = isDmpBot;
+  const showSheets = isDmpBot;
+  if (!showAmocrm && !showDmp && !showBot && !showSheets) {
     return null;
   }
 
   return (
     <>
+      {showBot ? (
+        <div className="settings-section">
+          <h3 className="settings-section-title">Telegram-бот</h3>
+          <p className="form-hint">
+            {settings?.telegram_bot_token_set
+              ? `@${settings.telegram_bot_username || 'бот'} · подписано: ${settings.telegram_bot_subscribers || 0}`
+              : 'Вставьте API-ключ бота — webhook поставится сам.'}
+          </p>
+          <form onSubmit={handleSaveBot}>
+            <div className="form-group">
+              <label htmlFor="telegram-bot-token">API-ключ</label>
+              <input
+                id="telegram-bot-token"
+                type="password"
+                value={botToken}
+                onChange={(e) => setBotToken(e.target.value)}
+                placeholder={settings?.telegram_bot_token_set ? 'Оставьте пустым, чтобы не менять' : '123456:AA...'}
+              />
+            </div>
+            {settings?.telegram_bot_webhook_url ? (
+              <CopyField
+                id="telegram-bot-webhook"
+                label="Webhook"
+                value={settings.telegram_bot_webhook_url}
+              />
+            ) : null}
+            <div className="settings-actions">
+              <button type="submit" className="btn btn-black" disabled={isSavingBot || (!botToken && !settings?.telegram_bot_token_set)}>
+                {isSavingBot ? 'Сохранение...' : 'Сохранить'}
+              </button>
+              {settings?.telegram_bot_token_set ? (
+                <button type="button" className="btn-danger" onClick={handleDisconnectBot} disabled={isSavingBot}>
+                  Отключить
+                </button>
+              ) : null}
+            </div>
+          </form>
+        </div>
+      ) : null}
+
       {showAmocrm ? (
         <div className="settings-section">
           <h3 className="settings-section-title">AmoCRM</h3>
@@ -313,6 +423,55 @@ const CustomAutomationIntegrationsBlock = ({
               {isRotating ? '...' : 'Новый секрет'}
             </button>
           </div>
+        </div>
+      ) : null}
+
+      {showSheets ? (
+        <div className="settings-section">
+          <h3 className="settings-section-title">Google Таблица</h3>
+          <p className="form-hint">
+            Один лид — одна строка. Лист по умолчанию «Лиды».
+            {settings?.google_sheets_service_account_email
+              ? ` Выдайте доступ редактора: ${settings.google_sheets_service_account_email}`
+              : ''}
+          </p>
+          <form onSubmit={handleSaveSheets}>
+            <div className="form-group">
+              <label htmlFor="sheets-spreadsheet">Таблица (ссылка или ID)</label>
+              <input
+                id="sheets-spreadsheet"
+                type="text"
+                value={sheetsForm.spreadsheet}
+                onChange={(e) => setSheetsForm((prev) => ({ ...prev, spreadsheet: e.target.value }))}
+                placeholder="https://docs.google.com/spreadsheets/d/..."
+              />
+            </div>
+            <div className="form-group">
+              <label htmlFor="sheets-worksheet">Лист</label>
+              <input
+                id="sheets-worksheet"
+                type="text"
+                value={sheetsForm.worksheet}
+                onChange={(e) => setSheetsForm((prev) => ({ ...prev, worksheet: e.target.value }))}
+                placeholder="Лиды"
+              />
+            </div>
+            <div className="form-group">
+              <label htmlFor="sheets-json">JSON сервисного аккаунта</label>
+              <textarea
+                id="sheets-json"
+                rows={6}
+                value={sheetsForm.service_account_json}
+                onChange={(e) => setSheetsForm((prev) => ({ ...prev, service_account_json: e.target.value }))}
+                placeholder={settings?.google_sheets_credentials_set ? 'Оставьте пустым, чтобы не менять' : '{ "client_email": "...", "private_key": "..." }'}
+              />
+            </div>
+            <div className="settings-actions">
+              <button type="submit" className="btn btn-black" disabled={isSavingSheets}>
+                {isSavingSheets ? 'Сохранение...' : 'Сохранить'}
+              </button>
+            </div>
+          </form>
         </div>
       ) : null}
     </>

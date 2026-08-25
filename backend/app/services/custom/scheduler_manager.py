@@ -99,6 +99,16 @@ class CustomAutomationScheduler:
 
     @staticmethod
     def _enabled_jobs(automation: CustomAutomation) -> set[str]:
+        from .solution_templates import is_dmp_notify_pipeline, qualification_enabled
+
+        if is_dmp_notify_pipeline(automation):
+            jobs: set[str] = set()
+            if automation.is_dmp_one_enabled:
+                jobs.add("dmp_poll")
+            if qualification_enabled(automation):
+                jobs.add("lead_warmup")
+            return jobs
+
         jobs = {"join", "discovery"}
         if automation.is_chat_monitoring_enabled:
             jobs.add("monitor")
@@ -189,6 +199,13 @@ class CustomAutomationScheduler:
             logger.info("Stopped %s job for automation %s", job_name, automation_id)
 
     async def _run_scheduler(self) -> None:
+        from .solution_templates import ensure_builtin_solutions
+
+        try:
+            async with async_session_maker() as session:
+                await ensure_builtin_solutions(session)
+        except Exception as exc:
+            logger.exception("Failed to seed built-in custom solutions: %s", exc)
         refresh_interval = settings.CUSTOM_SCHEDULER_REFRESH_INTERVAL_SECONDS
         while not self._stop_event.is_set():
             try:

@@ -76,28 +76,49 @@ const MenuIcon = () => (
   </svg>
 );
 
-const getNavItems = (automationId, features) => [
-  { id: 'dashboard', label: 'Дашборд', icon: DashboardIcon, path: NAVIGATION_ROUTES.CUSTOM_AUTOMATION_DASHBOARD(automationId) },
-  { id: 'accounts', label: 'Аккаунты', icon: UsersIcon, path: NAVIGATION_ROUTES.CUSTOM_AUTOMATION_ACCOUNTS(automationId) },
-  { id: 'chats', label: 'Чаты', icon: ChatIcon, path: NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(automationId) },
-  { id: 'leads', label: 'Лиды', icon: LeadsIcon, path: NAVIGATION_ROUTES.CUSTOM_AUTOMATION_LEADS(automationId) },
-  { id: 'prompts', label: 'Промпты', icon: PromptIcon, path: NAVIGATION_ROUTES.CUSTOM_AUTOMATION_PROMPTS(automationId) },
-  {
-    id: 'dmp',
-    label: 'DMP.one',
-    icon: PlugIcon,
-    path: NAVIGATION_ROUTES.CUSTOM_AUTOMATION_DMP(automationId),
-    hidden: !features?.is_dmp_one_enabled,
-  },
-  {
-    id: 'amocrm',
-    label: 'AmoCRM',
-    icon: PlugIcon,
-    path: NAVIGATION_ROUTES.CUSTOM_AUTOMATION_AMOCRM(automationId),
-    hidden: !features?.is_amocrm_enabled,
-  },
-  { id: 'settings', label: 'Настройки', icon: SettingsIcon, path: NAVIGATION_ROUTES.CUSTOM_AUTOMATION_SETTINGS(automationId) },
-];
+const getNavItems = (automationId, features) => {
+  const isDmpBot = features?.solution_kind === 'dmp_bot';
+  return [
+    { id: 'dashboard', label: 'Дашборд', icon: DashboardIcon, path: NAVIGATION_ROUTES.CUSTOM_AUTOMATION_DASHBOARD(automationId) },
+    {
+      id: 'accounts',
+      label: 'Аккаунты',
+      icon: UsersIcon,
+      path: NAVIGATION_ROUTES.CUSTOM_AUTOMATION_ACCOUNTS(automationId),
+      hidden: isDmpBot,
+    },
+    {
+      id: 'chats',
+      label: 'Чаты',
+      icon: ChatIcon,
+      path: NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(automationId),
+      hidden: isDmpBot,
+    },
+    { id: 'leads', label: 'Лиды', icon: LeadsIcon, path: NAVIGATION_ROUTES.CUSTOM_AUTOMATION_LEADS(automationId) },
+    {
+      id: 'prompts',
+      label: 'Промпты',
+      icon: PromptIcon,
+      path: NAVIGATION_ROUTES.CUSTOM_AUTOMATION_PROMPTS(automationId),
+      hidden: isDmpBot,
+    },
+    {
+      id: 'dmp',
+      label: 'DMP.one',
+      icon: PlugIcon,
+      path: NAVIGATION_ROUTES.CUSTOM_AUTOMATION_DMP(automationId),
+      hidden: !features?.is_dmp_one_enabled,
+    },
+    {
+      id: 'amocrm',
+      label: 'AmoCRM',
+      icon: PlugIcon,
+      path: NAVIGATION_ROUTES.CUSTOM_AUTOMATION_AMOCRM(automationId),
+      hidden: isDmpBot || !features?.is_amocrm_enabled,
+    },
+    { id: 'settings', label: 'Настройки', icon: SettingsIcon, path: NAVIGATION_ROUTES.CUSTOM_AUTOMATION_SETTINGS(automationId) },
+  ];
+};
 
 const CustomSolutionLayout = () => {
   const { id } = useParams();

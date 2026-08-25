@@ -3,13 +3,9 @@ import { useParams } from 'react-router-dom';
 import CustomSelect from '../../../components/CustomSelect';
 import FeatureToggle from '../../../components/FeatureToggle';
 import customService from '../../../services/customService';
+import { CHAT_MODE_OPTIONS_WITHOUT_INACTIVE } from './activityLabels';
 
-const MODES = [
-  { value: 'monitoring', label: 'Мониторинг' },
-  { value: 'neurocommenting', label: 'Нейрокомментинг' },
-  { value: 'discussion', label: 'Обсуждения' },
-  { value: 'shilling', label: 'Шиллинг' },
-];
+const MODES = CHAT_MODE_OPTIONS_WITHOUT_INACTIVE;
 
 const CustomAutomationChatDiscoveryPage = () => {
   const { id } = useParams();

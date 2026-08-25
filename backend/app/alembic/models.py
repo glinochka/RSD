@@ -2090,6 +2090,11 @@ class CustomAutomation(Base):
         Boolean, default=False, server_default="false", nullable=False
     )
 
+    solution_kind: Mapped[str] = mapped_column(
+        String(32), default="generic", server_default="generic", nullable=False, index=True
+    )
+    solution_slug: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
+
     rotation_strategy: Mapped[str] = mapped_column(
         String(32), default="round_robin", server_default="round_robin", nullable=False
     )
@@ -2101,7 +2106,19 @@ class CustomAutomation(Base):
         Boolean, default=True, server_default="true", nullable=False
     )
     lead_manager_contact: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    partner_utm_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    partner_promo_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    conversion_check_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     dmp_webhook_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    is_lead_qualification_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    telegram_bot_token_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    telegram_bot_username: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    telegram_bot_webhook_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    google_sheets_spreadsheet_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    google_sheets_worksheet: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    google_sheets_credentials_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_by_admin_id: Mapped[int | None] = mapped_column(
         ForeignKey("custom_admins.id", ondelete="SET NULL"), nullable=True, index=True
@@ -2158,6 +2175,10 @@ class CustomAutomation(Base):
         cascade="all, delete-orphan",
         uselist=False,
     )
+    bot_subscribers: Mapped[list["CustomBotSubscriber"]] = relationship(
+        back_populates="automation",
+        cascade="all, delete-orphan",
+    )
 
 
 class CustomAutomationCredential(Base):
@@ -2179,6 +2200,34 @@ class CustomAutomationCredential(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
 
     automation: Mapped["CustomAutomation"] = relationship(back_populates="credentials")
+
+
+class CustomBotSubscriber(Base):
+    __tablename__ = "custom_bot_subscribers"
+    __table_args__ = (
+        UniqueConstraint("custom_automation_id", "telegram_chat_id", name="uq_custom_bot_subscriber_chat"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    custom_automation_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_automations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    telegram_chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    telegram_username: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(32), default="idle", server_default="idle", nullable=False, index=True
+    )
+    pending_username: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    pending_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    failed_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    authenticated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_message_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    automation: Mapped["CustomAutomation"] = relationship(back_populates="bot_subscribers")
 
 
 class SocialAccount(Base):

@@ -725,6 +725,30 @@ const customService = {
     return handleResponse(response);
   },
 
+  async saveTelegramBot(automationId, data) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_TELEGRAM_BOT(automationId)}`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(data),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async saveGoogleSheets(automationId, data) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_GOOGLE_SHEETS(automationId)}`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(data),
+      },
+    );
+    return handleResponse(response);
+  },
+
   async getPrompts(automationId) {
     const response = await fetch(
       `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_PROMPTS(automationId)}`,

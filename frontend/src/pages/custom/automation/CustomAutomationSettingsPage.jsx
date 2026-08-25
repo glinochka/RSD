@@ -5,6 +5,7 @@ import FeatureToggle from '../../../components/FeatureToggle';
 import customService from '../../../services/customService';
 import { useCustomAuth } from '../../../components/custom/useCustomAuth';
 import CustomAutomationIntegrationsBlock from './CustomAutomationIntegrationsBlock';
+import { ACTIVITY_MODULE_TOGGLES } from './activityLabels';
 import '../../../styles/projectSettingsPage.css';
 import '../../../styles/projectCRMPage.css';
 
@@ -97,17 +98,25 @@ const CustomAutomationSettingsPage = () => {
     setError(null);
     setIsSaving(true);
     try {
-      const payload = {
-        rotation_strategy: form.rotation_strategy,
-        max_daily_messages_per_account: form.max_daily_messages_per_account,
-        is_chat_monitoring_enabled: form.is_chat_monitoring_enabled,
-        is_neurocommenting_enabled: form.is_neurocommenting_enabled,
-        is_shilling_enabled: form.is_shilling_enabled,
-        is_digital_footprint_enabled: form.is_digital_footprint_enabled,
-        is_dmp_one_enabled: form.is_dmp_one_enabled,
-        is_amocrm_enabled: form.is_amocrm_enabled,
-        lead_manager_contact: form.lead_manager_contact,
-      };
+      const payload = settings.solution_kind === 'dmp_bot'
+        ? {
+            is_dmp_one_enabled: true,
+            is_lead_qualification_enabled: Boolean(form.is_lead_qualification_enabled),
+          }
+        : {
+            rotation_strategy: form.rotation_strategy,
+            max_daily_messages_per_account: form.max_daily_messages_per_account,
+            is_chat_monitoring_enabled: form.is_chat_monitoring_enabled,
+            is_neurocommenting_enabled: form.is_neurocommenting_enabled,
+            is_shilling_enabled: form.is_shilling_enabled,
+            is_digital_footprint_enabled: form.is_digital_footprint_enabled,
+            is_dmp_one_enabled: form.is_dmp_one_enabled,
+            is_amocrm_enabled: form.is_amocrm_enabled,
+            lead_manager_contact: form.lead_manager_contact,
+            partner_utm_url: form.partner_utm_url,
+            partner_promo_code: form.partner_promo_code,
+            conversion_check_url: form.conversion_check_url,
+          };
       const data = await customService.updateAutomationSettings(id, payload);
       setSettings(data);
       setForm(data);
@@ -158,7 +167,11 @@ const CustomAutomationSettingsPage = () => {
       <div className="settings-header">
         <div>
           <h1 className="settings-title">Настройки</h1>
-          <p className="settings-subtitle">Модули, ротация и доступ клиента.</p>
+          <p className="settings-subtitle">
+            {settings?.solution_kind === 'dmp_bot'
+              ? 'Бот, DMP, таблица и доступ клиента.'
+              : 'Модули, ротация и доступ клиента.'}
+          </p>
         </div>
       </div>
 
@@ -177,24 +190,32 @@ const CustomAutomationSettingsPage = () => {
         <div className="settings-section">
           <h3 className="settings-section-title">Модули</h3>
           <div className="settings-toggles">
-            {[
-              { name: 'is_chat_monitoring_enabled', label: 'Мониторинг чатов' },
-              { name: 'is_neurocommenting_enabled', label: 'Нейрокомментинг' },
-              { name: 'is_shilling_enabled', label: 'Шиллинг' },
-              { name: 'is_digital_footprint_enabled', label: 'Цифровой след' },
-              { name: 'is_dmp_one_enabled', label: 'DMP.one' },
-              { name: 'is_amocrm_enabled', label: 'AmoCRM' },
-            ].map((field) => (
+            {settings.solution_kind === 'dmp_bot' ? (
               <FeatureToggle
-                key={field.name}
-                title={field.label}
-                checked={Boolean(form[field.name])}
-                onChange={(checked) => setForm((prev) => ({ ...prev, [field.name]: checked }))}
+                title="Квалификация"
+                description="ИИ найдёт чат по номеру и квалифицирует лид. В бот и таблицу уйдёт только квалифицированный."
+                checked={Boolean(form.is_lead_qualification_enabled)}
+                onChange={(checked) => setForm((prev) => ({ ...prev, is_lead_qualification_enabled: checked }))}
               />
-            ))}
+            ) : (
+              ACTIVITY_MODULE_TOGGLES.filter((field) => {
+                if (field.name === 'is_amocrm_enabled' && settings.solution_kind === 'seo_saas') {
+                  return false;
+                }
+                return true;
+              }).map((field) => (
+                <FeatureToggle
+                  key={field.name}
+                  title={field.label}
+                  checked={Boolean(form[field.name])}
+                  onChange={(checked) => setForm((prev) => ({ ...prev, [field.name]: checked }))}
+                />
+              ))
+            )}
           </div>
         </div>
 
+        {settings.solution_kind === 'dmp_bot' ? null : (
         <div className="settings-section">
           <h3 className="settings-section-title">Ротация</h3>
           <div className="form-group">
@@ -219,21 +240,64 @@ const CustomAutomationSettingsPage = () => {
             />
           </div>
         </div>
+        )}
 
+        {settings.solution_kind === 'dmp_bot' ? null : (settings.solution_kind === 'seo_saas' || settings.is_dmp_one_enabled || settings.solution_kind === 'fulfillment') ? (
+          <div className="settings-section">
+            <h3 className="settings-section-title">Партнёрка</h3>
+            <div className="form-group">
+              <label htmlFor="partner_utm_url">Ссылка с UTM</label>
+              <input
+                id="partner_utm_url"
+                type="text"
+                name="partner_utm_url"
+                value={form.partner_utm_url || ''}
+                onChange={handleChange}
+                placeholder="https://example.com/?utm_source=telegram"
+              />
+            </div>
+            <div className="form-group">
+              <label htmlFor="partner_promo_code">Промокод</label>
+              <input
+                id="partner_promo_code"
+                type="text"
+                name="partner_promo_code"
+                value={form.partner_promo_code || ''}
+                onChange={handleChange}
+              />
+            </div>
+            <div className="form-group">
+              <label htmlFor="conversion_check_url">Проверка регистрации</label>
+              <input
+                id="conversion_check_url"
+                type="text"
+                name="conversion_check_url"
+                value={form.conversion_check_url || ''}
+                onChange={handleChange}
+                placeholder="https://saas.example.com/api/lead-status"
+              />
+            </div>
+          </div>
+        ) : null}
+
+        {settings.solution_kind === 'seo_saas' || settings.solution_kind === 'dmp_bot' ? null : (
         <div className="settings-section">
           <h3 className="settings-section-title">Передача лидов</h3>
           <div className="form-group">
-            <label htmlFor="lead_manager_contact">Контакт менеджера</label>
+            <label htmlFor="lead_manager_contact">
+              {settings.solution_kind === 'fulfillment' ? 'Telegram МОПа' : 'Контакт менеджера'}
+            </label>
             <input
               id="lead_manager_contact"
               type="text"
               name="lead_manager_contact"
               value={form.lead_manager_contact || ''}
               onChange={handleChange}
-              placeholder="Telegram / email / webhook"
+              placeholder={settings.solution_kind === 'fulfillment' ? '@mop_account' : 'Telegram / email / webhook'}
             />
           </div>
         </div>
+        )}
 
         <div className="settings-actions">
           <button type="submit" className="btn btn-black" disabled={isSaving}>
@@ -253,6 +317,9 @@ const CustomAutomationSettingsPage = () => {
       {isAdmin ? (
         <div className="settings-section">
           <h3 className="settings-section-title">Доступ клиента</h3>
+          {settings.solution_kind === 'dmp_bot' ? (
+            <p className="form-hint">Эти логин и пароль бот спрашивает в Telegram, прежде чем слать лидов.</p>
+          ) : null}
           <form onSubmit={handleCreateAccess}>
             <div className="form-group">
               <label htmlFor="access-login">Логин</label>

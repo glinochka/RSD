@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...alembic.models import CustomPrompt, PromptType
+from ...alembic.models import CustomAutomation, CustomPrompt, PromptType
 from ...services.ai_authoring import ai_client
 
 
@@ -96,11 +96,17 @@ DEFAULT_PROMPTS: dict[str, dict[str, Any]] = {
     },
     PromptType.DMP_OUTREACH.value: {
         "name": "DMP Outreach",
-        "content": """Ты — менеджер компании. Ты пишешь первое сообщение в Telegram человеку, который посетил сайт или проявил интерес к услугам (SEO, маркетинг, сайт, автоматизация, CRM).
-Сообщение должно быть коротким, дружелюбным, без навязчивых продаж и без ссылок.
+        "content": """Ты — живой человек в Telegram, пишешь первое сообщение посетителю сайта.
+Коротко, по-человечески, без рекламного тона и без признания, что человека «вычислили».
+Если есть промокод или ссылка — мягко предложи ими воспользоваться. Не вставляй ссылку, если поле пустое.
 
 Имя: {name}
 Компания: {company}
+Сайт: {website}
+Страница: {page}
+Ссылка с UTM: {partner_utm_url}
+Промокод: {partner_promo_code}
+Уже регистрировался: {registered}
 
 Верни ТОЛЬКО JSON:
 {
@@ -143,6 +149,9 @@ DEFAULT_PROMPTS: dict[str, dict[str, Any]] = {
 
 Последнее сообщение лида:
 {last_incoming}
+
+Ссылка с UTM: {partner_utm_url}
+Промокод: {partner_promo_code}
 
 Верни ТОЛЬКО JSON:
 {
@@ -202,16 +211,200 @@ PROMPT_VARIABLES: dict[str, list[str]] = {
     PromptType.CHAT_MONITORING_RESPONSE.value: ["text"],
     PromptType.NEUROCOMMENTING.value: ["post_text", "chat_title"],
     PromptType.DISCUSSION_REPLY.value: ["message_text", "chat_title"],
-    PromptType.DMP_OUTREACH.value: ["name", "company"],
+    PromptType.DMP_OUTREACH.value: [
+        "name",
+        "company",
+        "website",
+        "page",
+        "partner_utm_url",
+        "partner_promo_code",
+        "registered",
+    ],
     PromptType.CHAT_RELEVANCE.value: ["query", "title", "description", "chat_type", "participants_count"],
-    PromptType.LEAD_QUALIFICATION.value: ["history", "last_incoming"],
+    PromptType.LEAD_QUALIFICATION.value: ["history", "last_incoming", "partner_utm_url", "partner_promo_code"],
     PromptType.PROFILE_BIO.value: ["industry", "name"],
     PromptType.SHILLING.value: ["industry", "client_name", "chat_title", "post_text"],
 }
 
+SOLUTION_PROMPT_OVERRIDES: dict[str, dict[str, dict[str, Any]]] = {
+    "seo_saas": {
+        PromptType.CHAT_MONITORING_TRIGGER.value: {
+            "name": "Перехват заявок: триггер",
+            "content": """Ты анализируешь сообщение в Telegram-чате.
+Это заявка, если человек ищет SEO, продвижение сайта, рост органики, аудит, ссылки, контент или SaaS для SEO.
+
+Верни ТОЛЬКО валидный JSON без markdown:
+{
+  "is_lead": true/false,
+  "confidence": 0.0-1.0,
+  "reason": "краткое объяснение",
+  "contact_type": "telegram",
+  "contact_value": "username или id отправителя, если видно"
+}
+
+Сообщение:
+{text}""",
+        },
+        PromptType.CHAT_MONITORING_RESPONSE.value: {
+            "name": "Перехват заявок: ответ",
+            "content": """Напиши короткое ЛС от живого человека, который сам пользуется SEO-сервисом.
+Помоги с вопросом. Если уместно, мягко намекни на инструмент. Без рекламного тона.
+
+Сообщение из чата:
+{text}
+
+Верни ТОЛЬКО JSON:
+{
+  "message": "текст ответа"
+}""",
+        },
+        PromptType.DMP_OUTREACH.value: {
+            "name": "DMP: первое сообщение",
+            "content": """Ты — доверенный аккаунт. Пишешь человеку, который смотрел SEO SaaS.
+Цель: чтобы он зарегистрировался по партнёрской ссылке или ввёл промокод. Не продавай услугу менеджером.
+Не признавайся в пикселе и слежке. 2-4 коротких предложения.
+
+Имя: {name}
+Компания: {company}
+Сайт: {website}
+Ссылка с UTM: {partner_utm_url}
+Промокод: {partner_promo_code}
+Уже регистрировался: {registered}
+
+Если registered=yes — мягко напомни завершить регистрацию или оформить подписку.
+Если ссылка или промокод пустые — не выдумывай их.
+
+Верни ТОЛЬКО JSON:
+{
+  "message": "текст первого сообщения"
+}""",
+        },
+        PromptType.LEAD_QUALIFICATION.value: {
+            "name": "Квалификация лида",
+            "content": """Ты прогреваешь лида SEO SaaS в Telegram.
+Цель — регистрация по ссылке/промокоду, не передача менеджеру.
+
+История переписки:
+{history}
+
+Последнее сообщение лида:
+{last_incoming}
+
+Ссылка с UTM: {partner_utm_url}
+Промокод: {partner_promo_code}
+
+qualified=true, если человек перешёл, зарегистрировался, попросил ссылку/промокод и готов ими воспользоваться.
+lost=true при отказе или спаме.
+continue=true, если нужно ещё одно короткое сообщение.
+
+Верни ТОЛЬКО JSON:
+{
+  "qualified": true/false,
+  "lost": true/false,
+  "continue": true/false,
+  "reply": "следующее короткое сообщение, если continue=true"
+}""",
+        },
+    },
+    "fulfillment": {
+        PromptType.CHAT_MONITORING_TRIGGER.value: {
+            "name": "Перехват заявок: триггер",
+            "content": """Ты анализируешь сообщение в Telegram-чате.
+Это заявка, если человек ищет фулфилмент, склад, упаковку, отгрузки, логистику для ecom, хранение товара.
+
+Верни ТОЛЬКО валидный JSON без markdown:
+{
+  "is_lead": true/false,
+  "confidence": 0.0-1.0,
+  "reason": "краткое объяснение",
+  "contact_type": "telegram",
+  "contact_value": "username или id отправителя, если видно"
+}
+
+Сообщение:
+{text}""",
+        },
+        PromptType.CHAT_MONITORING_RESPONSE.value: {
+            "name": "Перехват заявок: ответ",
+            "content": """Напиши короткое ЛС от живого человека с опытом отгрузок/склада.
+Ответь по делу. Не закрывай сделку сам — цель позже передать менеджеру.
+
+Сообщение из чата:
+{text}
+
+Верни ТОЛЬКО JSON:
+{
+  "message": "текст ответа"
+}""",
+        },
+        PromptType.DMP_OUTREACH.value: {
+            "name": "DMP: первое сообщение",
+            "content": """Ты — доверенный аккаунт. Пишешь человеку, который смотрел сайт фулфилмента.
+Прогрей интерес к складу/отгрузкам. Не закрывай сделку и не зови сразу «оставить заявку менеджеру».
+Если есть промокод или ссылка — можно мягко упомянуть. Не признавайся в пикселе.
+
+Имя: {name}
+Компания: {company}
+Сайт: {website}
+Ссылка с UTM: {partner_utm_url}
+Промокод: {partner_promo_code}
+Уже регистрировался: {registered}
+
+Верни ТОЛЬКО JSON:
+{
+  "message": "текст первого сообщения"
+}""",
+        },
+        PromptType.LEAD_QUALIFICATION.value: {
+            "name": "Квалификация лида",
+            "content": """Ты прогреваешь лида фулфилмента в Telegram.
+Когда человек проявил интерес и готов обсуждать объёмы/условия — qualified=true, его передадут МОПу.
+Не обещай цены сам.
+
+История переписки:
+{history}
+
+Последнее сообщение лида:
+{last_incoming}
+
+Ссылка с UTM: {partner_utm_url}
+Промокод: {partner_promo_code}
+
+lost=true при отказе или спаме.
+continue=true, если нужно ещё одно короткое сообщение.
+
+Верни ТОЛЬКО JSON:
+{
+  "qualified": true/false,
+  "lost": true/false,
+  "continue": true/false,
+  "reply": "следующее короткое сообщение, если continue=true"
+}""",
+        },
+    },
+}
+
+
+def render_prompt(template: str, variables: dict[str, Any] | None = None) -> str:
+    rendered = template or ""
+    for key, value in (variables or {}).items():
+        rendered = rendered.replace("{" + str(key) + "}", "" if value is None else str(value))
+    return rendered
+
+
+def prompts_for_kind(kind: str | None) -> dict[str, dict[str, Any]]:
+    catalog = {key: dict(value) for key, value in DEFAULT_PROMPTS.items()}
+    overrides = SOLUTION_PROMPT_OVERRIDES.get((kind or "generic").strip().lower(), {})
+    for prompt_type, override in overrides.items():
+        catalog[prompt_type] = {**catalog.get(prompt_type, {}), **override}
+    return catalog
+
 
 async def create_default_prompts(session: AsyncSession, automation_id: int) -> None:
-    for prompt_type, defaults in DEFAULT_PROMPTS.items():
+    automation = await session.get(CustomAutomation, automation_id)
+    kind = (automation.solution_kind if automation else None) or "generic"
+    catalog = prompts_for_kind(kind)
+    for prompt_type, defaults in catalog.items():
         existing = await session.scalar(
             select(CustomPrompt).where(
                 CustomPrompt.custom_automation_id == automation_id,

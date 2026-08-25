@@ -938,3 +938,438 @@ class TestAmocrmOAuthAndDmpWebhook:
         )
         assert lead.company == "example.com"
         assert (lead.dmp_raw_data or {}).get("website") == "example.com"
+
+
+class TestBuiltinSolutions:
+    async def test_ensure_builtin_solutions_seeds_two_pipelines(self, test_session: AsyncSession):
+        from app.services.custom.solution_templates import (
+            KIND_DMP_BOT,
+            KIND_FULFILLMENT,
+            KIND_SEO_SAAS,
+            SLUG_DMP_BOT,
+            SLUG_FULFILLMENT,
+            SLUG_SEO_SAAS,
+            ensure_builtin_solutions,
+        )
+
+        ids = await ensure_builtin_solutions(test_session)
+        assert len(ids) == 3
+        again = await ensure_builtin_solutions(test_session)
+        assert set(again) == set(ids)
+
+        seo = await test_session.scalar(
+            select(CustomAutomation).where(CustomAutomation.solution_slug == SLUG_SEO_SAAS)
+        )
+        fulfillment = await test_session.scalar(
+            select(CustomAutomation).where(CustomAutomation.solution_slug == SLUG_FULFILLMENT)
+        )
+        dmp_bot = await test_session.scalar(
+            select(CustomAutomation).where(CustomAutomation.solution_slug == SLUG_DMP_BOT)
+        )
+        assert seo is not None
+        assert fulfillment is not None
+        assert dmp_bot is not None
+        assert seo.solution_kind == KIND_SEO_SAAS
+        assert seo.is_dmp_one_enabled is True
+        assert seo.is_amocrm_enabled is False
+        assert seo.is_chat_monitoring_enabled is True
+        assert seo.is_shilling_enabled is True
+        assert seo.is_digital_footprint_enabled is True
+        assert fulfillment.solution_kind == KIND_FULFILLMENT
+        assert fulfillment.is_amocrm_enabled is True
+        assert fulfillment.is_dmp_one_enabled is True
+        assert dmp_bot.solution_kind == KIND_DMP_BOT
+        assert dmp_bot.is_dmp_one_enabled is True
+        assert dmp_bot.is_amocrm_enabled is False
+        assert dmp_bot.is_chat_monitoring_enabled is False
+        assert dmp_bot.is_shilling_enabled is False
+        assert dmp_bot.is_lead_qualification_enabled is False
+        assert dmp_bot.lead_warmup_enabled is False
+
+    async def test_seo_saas_does_not_hand_off_to_sales(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from app.services.custom.lead_warmup_service import auto_transfer_lead
+
+        custom_automation.solution_kind = "seo_saas"
+        custom_automation.lead_manager_contact = "@mop"
+        custom_automation.is_amocrm_enabled = False
+        await test_session.commit()
+
+        lead = CustomLead(
+            custom_automation_id=custom_automation.id,
+            source="dmp_one",
+            contact_type="telegram",
+            contact_value="leaduser",
+            status="qualified",
+        )
+        test_session.add(lead)
+        await test_session.commit()
+        await test_session.refresh(lead)
+
+        result = await auto_transfer_lead(test_session, custom_automation.id, lead)
+        assert result.get("converted") is True
+        assert result.get("transferred") is False
+        await test_session.refresh(lead)
+        assert lead.status == "converted"
+
+    async def test_partner_settings_roundtrip(
+        self,
+        client: AsyncClient,
+        custom_automation: CustomAutomation,
+        client_token: str,
+    ):
+        response = await client.patch(
+            f"/api/custom/automations/{custom_automation.id}/settings",
+            json={
+                "is_dmp_one_enabled": True,
+                "partner_utm_url": "https://saas.example.com/?utm_source=tg",
+                "partner_promo_code": "SEO20",
+                "conversion_check_url": "https://saas.example.com/api/lead-status",
+            },
+            headers={"Authorization": f"Bearer {client_token}"},
+        )
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["partner_utm_url"] == "https://saas.example.com/?utm_source=tg"
+        assert data["partner_promo_code"] == "SEO20"
+        assert data["conversion_check_url"] == "https://saas.example.com/api/lead-status"
+
+    async def test_conversion_check_skips_subscribed_dmp_lead(
+        self,
+        client: AsyncClient,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+        client_token: str,
+    ):
+        from app.config import settings
+
+        custom_automation.conversion_check_url = "https://saas.example.com/api/lead-status"
+        custom_automation.solution_kind = "seo_saas"
+        await test_session.commit()
+
+        class FakeResponse:
+            content = b'{"subscribed": true, "registered": true}'
+            def raise_for_status(self):
+                return None
+            def json(self):
+                return {"subscribed": True, "registered": True}
+
+        class FakeHttpClient:
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *args):
+                return False
+            async def post(self, url, json=None):
+                assert url == "https://saas.example.com/api/lead-status"
+                return FakeResponse()
+
+        headers = {"Authorization": f"Bearer {client_token}"}
+        automation_id = custom_automation.id
+        with patch.object(settings, "BASE_URL", "https://app.example.com"), patch(
+            "app.services.custom.dmp_one_service.httpx.AsyncClient",
+            return_value=FakeHttpClient(),
+        ):
+            updated = await client.patch(
+                f"/api/custom/automations/{automation_id}/settings",
+                headers=headers,
+                json={"is_dmp_one_enabled": True},
+            )
+            assert updated.status_code == 200, updated.text
+            secret = updated.json()["dmp_webhook_secret"]
+            first = await client.post(
+                f"/api/custom/webhooks/dmp/{automation_id}/{secret}",
+                json=[{"phone": "79007654321", "website": "saas.example.com"}],
+            )
+            assert first.status_code == 200, first.text
+            assert first.json()["created_leads"] == 1
+
+        test_session.expire_all()
+        lead = await test_session.scalar(
+            select(CustomLead).where(
+                CustomLead.custom_automation_id == automation_id,
+                CustomLead.contact_value == "79007654321",
+            )
+        )
+        assert lead is not None
+        assert lead.status == "converted"
+
+
+class FakeTelegramClient:
+    sent: list[dict] = []
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    async def post(self, url, json=None):
+        payload = dict(json or {})
+        if "sendMessage" in url:
+            FakeTelegramClient.sent.append(payload)
+
+        class Resp:
+            content = b"{}"
+
+            def json(self):
+                if "getMe" in url:
+                    return {"ok": True, "result": {"username": "notify_bot"}}
+                return {"ok": True}
+
+        return Resp()
+
+
+def _bot_message(chat_id: int, text: str) -> dict:
+    return {"message": {"chat": {"id": chat_id}, "from": {"username": "ops"}, "text": text}}
+
+
+class TestDmpBotPipeline:
+    async def test_qualification_defaults_off_and_roundtrips(
+        self,
+        client: AsyncClient,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+        client_token: str,
+    ):
+        custom_automation.solution_kind = "dmp_bot"
+        custom_automation.is_dmp_one_enabled = True
+        await test_session.commit()
+        automation_id = custom_automation.id
+        headers = {"Authorization": f"Bearer {client_token}"}
+
+        settings = await client.get(f"/api/custom/automations/{automation_id}/settings", headers=headers)
+        assert settings.status_code == 200, settings.text
+        data = settings.json()
+        assert data["is_lead_qualification_enabled"] is False
+        assert "telegram_bot_token_enc" not in data
+        assert data["telegram_bot_token_set"] is False
+
+        updated = await client.patch(
+            f"/api/custom/automations/{automation_id}/settings",
+            headers=headers,
+            json={"is_lead_qualification_enabled": True},
+        )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["is_lead_qualification_enabled"] is True
+        test_session.expire_all()
+        row = await test_session.get(CustomAutomation, automation_id)
+        assert row.is_lead_qualification_enabled is True
+        assert row.lead_warmup_enabled is True
+        assert row.is_chat_monitoring_enabled is False
+        assert row.is_amocrm_enabled is False
+
+    async def test_dmp_webhook_creates_lead_without_telegram_resolve(
+        self,
+        client: AsyncClient,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+        client_token: str,
+    ):
+        from app.config import settings
+        from app.services.custom.scheduler_manager import CustomAutomationScheduler
+
+        custom_automation.solution_kind = "dmp_bot"
+        custom_automation.is_dmp_one_enabled = True
+        custom_automation.is_lead_qualification_enabled = False
+        await test_session.commit()
+        automation_id = custom_automation.id
+        jobs = CustomAutomationScheduler._enabled_jobs(custom_automation)
+        assert jobs == {"dmp_poll"}
+        assert "join" not in jobs
+        assert "lead_warmup" not in jobs
+
+        headers = {"Authorization": f"Bearer {client_token}"}
+        with patch.object(settings, "BASE_URL", "https://app.example.com"):
+            updated = await client.patch(
+                f"/api/custom/automations/{automation_id}/settings",
+                headers=headers,
+                json={"is_dmp_one_enabled": True},
+            )
+            assert updated.status_code == 200, updated.text
+            secret = updated.json()["dmp_webhook_secret"]
+            first = await client.post(
+                f"/api/custom/webhooks/dmp/{automation_id}/{secret}",
+                json=[{"phone": "79001112233", "website": "dmp.example.com", "ip": "10.0.0.1", "page": "/x"}],
+            )
+        assert first.status_code == 200, first.text
+        assert first.json()["created_leads"] == 1
+
+        test_session.expire_all()
+        lead = await test_session.scalar(
+            select(CustomLead).where(
+                CustomLead.custom_automation_id == automation_id,
+                CustomLead.contact_value == "79001112233",
+            )
+        )
+        assert lead is not None
+        assert lead.status == "transferred"
+
+    async def test_bot_login_password_then_notifies_on_dmp_lead(
+        self,
+        client: AsyncClient,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+        custom_credential: CustomAutomationCredential,
+        client_token: str,
+    ):
+        from app.config import settings
+        from app.utils.crypto import encrypt_token
+
+        custom_automation.solution_kind = "dmp_bot"
+        custom_automation.is_dmp_one_enabled = True
+        custom_automation.telegram_bot_token_enc = encrypt_token("123456:test-token")
+        custom_automation.telegram_bot_webhook_secret = "botsecret"
+        custom_automation.telegram_bot_username = "notify_bot"
+        await test_session.commit()
+        automation_id = custom_automation.id
+        FakeTelegramClient.sent = []
+
+        with patch("app.services.custom.telegram_notify_bot_service.httpx.AsyncClient", FakeTelegramClient), patch.object(
+            settings, "BASE_URL", "https://app.example.com"
+        ):
+            start = await client.post(
+                f"/api/custom/webhooks/telegram/{automation_id}/botsecret",
+                json=_bot_message(777, "/start"),
+            )
+            assert start.status_code == 200
+            login = await client.post(
+                f"/api/custom/webhooks/telegram/{automation_id}/botsecret",
+                json=_bot_message(777, custom_credential.username),
+            )
+            assert login.status_code == 200
+            password = await client.post(
+                f"/api/custom/webhooks/telegram/{automation_id}/botsecret",
+                json=_bot_message(777, "password"),
+            )
+            assert password.status_code == 200
+
+            test_session.expire_all()
+            from app.alembic.models import CustomBotSubscriber
+
+            subscriber = await test_session.scalar(
+                select(CustomBotSubscriber).where(
+                    CustomBotSubscriber.custom_automation_id == automation_id,
+                    CustomBotSubscriber.telegram_chat_id == 777,
+                )
+            )
+            assert subscriber is not None
+            assert subscriber.status == "subscribed"
+
+            headers = {"Authorization": f"Bearer {client_token}"}
+            updated = await client.patch(
+                f"/api/custom/automations/{automation_id}/settings",
+                headers=headers,
+                json={"is_dmp_one_enabled": True},
+            )
+            secret = updated.json()["dmp_webhook_secret"]
+            FakeTelegramClient.sent = []
+            dmp = await client.post(
+                f"/api/custom/webhooks/dmp/{automation_id}/{secret}",
+                json=[{"phone": "79009998877", "website": "lead.example.com", "name": "Иван"}],
+            )
+            assert dmp.status_code == 200, dmp.text
+            assert dmp.json()["created_leads"] == 1
+
+        texts = [item.get("text") or "" for item in FakeTelegramClient.sent]
+        assert any(text.startswith("Новый лид:") for text in texts)
+        assert any("79009998877" in text for text in texts)
+
+    async def test_bot_rate_limit_locks_after_failed_passwords(
+        self,
+        client: AsyncClient,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+        custom_credential: CustomAutomationCredential,
+    ):
+        from app.alembic.models import CustomBotSubscriber
+        from app.utils.crypto import encrypt_token
+
+        custom_automation.solution_kind = "dmp_bot"
+        custom_automation.telegram_bot_token_enc = encrypt_token("123456:test-token")
+        custom_automation.telegram_bot_webhook_secret = "botsecret"
+        await test_session.commit()
+        automation_id = custom_automation.id
+        FakeTelegramClient.sent = []
+
+        with patch("app.services.custom.telegram_notify_bot_service.httpx.AsyncClient", FakeTelegramClient):
+            for _ in range(5):
+                await client.post(
+                    f"/api/custom/webhooks/telegram/{automation_id}/botsecret",
+                    json=_bot_message(888, custom_credential.username),
+                )
+                await client.post(
+                    f"/api/custom/webhooks/telegram/{automation_id}/botsecret",
+                    json=_bot_message(888, "wrong-password"),
+                )
+
+        test_session.expire_all()
+        subscriber = await test_session.scalar(
+            select(CustomBotSubscriber).where(
+                CustomBotSubscriber.custom_automation_id == automation_id,
+                CustomBotSubscriber.telegram_chat_id == 888,
+            )
+        )
+        assert subscriber is not None
+        assert subscriber.failed_attempts >= 5
+        assert subscriber.locked_until is not None
+        assert any("Слишком много попыток" in (item.get("text") or "") for item in FakeTelegramClient.sent)
+
+    async def test_google_sheets_save_and_mocked_append(
+        self,
+        client: AsyncClient,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+        client_token: str,
+    ):
+        from app.config import settings
+
+        custom_automation.solution_kind = "dmp_bot"
+        custom_automation.is_dmp_one_enabled = True
+        await test_session.commit()
+        automation_id = custom_automation.id
+        headers = {"Authorization": f"Bearer {client_token}"}
+
+        saved = await client.post(
+            f"/api/custom/automations/{automation_id}/google-sheets",
+            headers=headers,
+            json={
+                "spreadsheet": "https://docs.google.com/spreadsheets/d/abc123def456ghi789jk/edit",
+                "worksheet": "Лиды",
+                "service_account_json": (
+                    '{"client_email":"sheets@proj.iam.gserviceaccount.com",'
+                    '"private_key":"-----BEGIN RSA PRIVATE KEY-----\\nABC\\n-----END RSA PRIVATE KEY-----\\n"}'
+                ),
+            },
+        )
+        assert saved.status_code == 200, saved.text
+        body = saved.json()
+        assert body["google_sheets_spreadsheet_id"] == "abc123def456ghi789jk"
+        assert body["google_sheets_worksheet"] == "Лиды"
+        assert body["google_sheets_credentials_set"] is True
+        assert body["google_sheets_service_account_email"] == "sheets@proj.iam.gserviceaccount.com"
+        assert "google_sheets_credentials_enc" not in body
+
+        with patch.object(settings, "BASE_URL", "https://app.example.com"), patch(
+            "app.services.custom.telegram_notify_bot_service.ensure_header_and_append",
+            new=AsyncMock(return_value={"ok": True}),
+        ) as append:
+            updated = await client.patch(
+                f"/api/custom/automations/{automation_id}/settings",
+                headers=headers,
+                json={"is_dmp_one_enabled": True},
+            )
+            secret = updated.json()["dmp_webhook_secret"]
+            dmp = await client.post(
+                f"/api/custom/webhooks/dmp/{automation_id}/{secret}",
+                json=[{"phone": "79005554433", "website": "sheet.example.com"}],
+            )
+            assert dmp.status_code == 200, dmp.text
+            assert append.await_count == 1
+
+

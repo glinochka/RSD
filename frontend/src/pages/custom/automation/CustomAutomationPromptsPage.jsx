@@ -1,33 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import customService from '../../../services/customService';
-import { NAVIGATION_ROUTES } from '../../../config/constants';
+import { PROMPT_TYPE_LABELS, VARIABLE_HINTS } from './activityLabels';
 import '../../../styles/projectCRMPage.css';
 import '../../../styles/projectSettingsPage.css';
-
-const PROMPT_TYPE_LABELS = {
-  chat_monitoring_trigger: 'Мониторинг: триггер',
-  chat_monitoring_response: 'Мониторинг: ответ',
-  neurocommenting: 'Нейрокомментинг',
-  discussion_reply: 'Обсуждения',
-  dmp_outreach: 'DMP прогрев',
-  lead_qualification: 'Квалификация лида',
-  chat_relevance: 'Релевантность чата',
-  profile_bio: 'Профиль bio',
-  shilling: 'Шиллинг',
-};
-
-const VARIABLE_HINTS = {
-  chat_monitoring_trigger: ['text'],
-  chat_monitoring_response: ['text'],
-  neurocommenting: ['post_text', 'chat_title'],
-  discussion_reply: ['message_text', 'chat_title'],
-  dmp_outreach: ['name', 'company'],
-  lead_qualification: ['history', 'last_incoming'],
-  chat_relevance: ['query', 'title', 'description', 'chat_type', 'participants_count'],
-  profile_bio: ['industry', 'name'],
-  shilling: ['industry', 'client_name', 'chat_title', 'post_text'],
-};
 
 const CustomAutomationPromptsPage = () => {
   const { id } = useParams();

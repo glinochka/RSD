@@ -58,6 +58,8 @@ from .schemas import (
     DmpOneImportListResponse,
     DmpOneImportResponse,
     DmpOneWebhookResponse,
+    GoogleSheetsSettingsUpdate,
+    TelegramBotSettingsUpdate,
 )
 from .dependencies import get_current_custom_automation
 from ..services.account_pool_service import bulk_upload_sessions
@@ -101,6 +103,21 @@ from ..services.custom.dmp_one_service import (
     public_webhook_url,
     rotate_dmp_webhook_secret,
 )
+from ..services.custom.google_sheets_service import (
+    encrypt_service_account_json,
+    parse_spreadsheet_id,
+    service_account_email,
+    worksheet_name,
+)
+from ..services.custom.solution_templates import is_dmp_notify_pipeline, lock_dmp_bot_modules
+from ..services.custom.telegram_notify_bot_service import (
+    bot_webhook_secret_ok,
+    connect_telegram_bot,
+    count_subscribers,
+    disconnect_telegram_bot,
+    handle_bot_update,
+    public_bot_webhook_url,
+)
 from ..services.custom.neurocommenting_service import run_neurocommenting_pass
 from ..services.custom.prompt_service import (
     list_prompts,
@@ -136,7 +153,7 @@ router = APIRouter()
 
 
 async def _settings_payload(session, db_automation) -> dict:
-    if db_automation.is_dmp_one_enabled and not db_automation.dmp_webhook_secret:
+    if (db_automation.is_dmp_one_enabled or is_dmp_notify_pipeline(db_automation)) and not db_automation.dmp_webhook_secret:
         ensure_dmp_webhook_secret(db_automation)
         await session.commit()
         await session.refresh(db_automation)
@@ -144,12 +161,26 @@ async def _settings_payload(session, db_automation) -> dict:
     response = CustomAutomationSettingsResponse.model_validate(db_automation).model_dump()
     response["warnings"] = validation["warnings"]
     response["amocrm_redirect_uri"] = get_redirect_uri()
-    if db_automation.is_dmp_one_enabled and db_automation.dmp_webhook_secret:
+    if (db_automation.is_dmp_one_enabled or is_dmp_notify_pipeline(db_automation)) and db_automation.dmp_webhook_secret:
         response["dmp_webhook_secret"] = db_automation.dmp_webhook_secret
         response["dmp_webhook_url"] = public_webhook_url(db_automation.id, db_automation.dmp_webhook_secret)
     else:
         response["dmp_webhook_secret"] = None
         response["dmp_webhook_url"] = None
+    response["telegram_bot_token_set"] = bool((db_automation.telegram_bot_token_enc or "").strip())
+    response["telegram_bot_username"] = db_automation.telegram_bot_username
+    response["telegram_bot_webhook_url"] = public_bot_webhook_url(
+        db_automation.id, db_automation.telegram_bot_webhook_secret
+    ) if response["telegram_bot_token_set"] else None
+    response["telegram_bot_subscribers"] = await count_subscribers(session, db_automation.id)
+    response["google_sheets_spreadsheet_id"] = db_automation.google_sheets_spreadsheet_id
+    response["google_sheets_worksheet"] = worksheet_name(db_automation)
+    response["google_sheets_credentials_set"] = bool((db_automation.google_sheets_credentials_enc or "").strip())
+    response["google_sheets_service_account_email"] = (
+        service_account_email(db_automation) if response["google_sheets_credentials_set"] else None
+    )
+    response.pop("telegram_bot_token_enc", None)
+    response.pop("google_sheets_credentials_enc", None)
     return response
 
 
@@ -238,6 +269,8 @@ async def update_automation_settings(
         update_data = payload.model_dump(exclude_unset=True)
         for field, value in update_data.items():
             setattr(db_automation, field, value)
+        if is_dmp_notify_pipeline(db_automation):
+            lock_dmp_bot_modules(db_automation)
         modules_on = any([
             db_automation.is_chat_monitoring_enabled,
             db_automation.is_neurocommenting_enabled,
@@ -1207,6 +1240,74 @@ async def rotate_automation_dmp_webhook_secret(
             "dmp_webhook_secret": secret,
             "dmp_webhook_url": public_webhook_url(automation_id, secret),
         }
+
+
+@router.post("/automations/{automation_id}/telegram-bot", response_model=CustomAutomationSettingsResponse)
+async def save_telegram_bot(
+    automation_id: int,
+    payload: TelegramBotSettingsUpdate,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        db_automation = await session.get(CustomAutomation, automation_id)
+        if not db_automation:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Automation not found")
+        try:
+            if payload.disconnect:
+                await disconnect_telegram_bot(db_automation)
+            elif (payload.bot_token or "").strip():
+                await connect_telegram_bot(db_automation, payload.bot_token or "")
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        await session.commit()
+        await session.refresh(db_automation)
+        return await _settings_payload(session, db_automation)
+
+
+@router.post("/automations/{automation_id}/google-sheets", response_model=CustomAutomationSettingsResponse)
+async def save_google_sheets(
+    automation_id: int,
+    payload: GoogleSheetsSettingsUpdate,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        db_automation = await session.get(CustomAutomation, automation_id)
+        if not db_automation:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Automation not found")
+        if payload.spreadsheet is not None:
+            db_automation.google_sheets_spreadsheet_id = parse_spreadsheet_id(payload.spreadsheet) or None
+        if payload.worksheet is not None:
+            name = (payload.worksheet or "").strip()
+            db_automation.google_sheets_worksheet = name or None
+        raw_json = (payload.service_account_json or "").strip()
+        if raw_json:
+            try:
+                db_automation.google_sheets_credentials_enc = encrypt_service_account_json(raw_json)
+            except (ValueError, TypeError) as exc:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        db_automation.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        await session.commit()
+        await session.refresh(db_automation)
+        return await _settings_payload(session, db_automation)
+
+
+@router.post("/webhooks/telegram/{automation_id}/{secret}")
+async def telegram_bot_public_webhook(
+    automation_id: int,
+    secret: str,
+    request: Request,
+    payload: Any = Body(default=None),
+):
+    header_token = (request.headers.get("X-Telegram-Bot-Api-Secret-Token") or "").strip()
+    try:
+        async with async_session_maker() as session:
+            automation = await session.get(CustomAutomation, automation_id)
+            if not automation or not bot_webhook_secret_ok(automation, secret, header_token):
+                return {"ok": True}
+            await handle_bot_update(session, automation, payload if isinstance(payload, dict) else {})
+    except Exception:
+        logger.exception("Telegram bot webhook failed for automation %s", automation_id)
+    return {"ok": True}
 
 
 @router.get("/automations/{automation_id}/amocrm/connection", response_model=AmocrmConnectionResponse)

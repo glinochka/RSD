@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .rotation_service import select_account_for_action
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import execute_with_telegram_retry
-from ...alembic.models import AutomationActionLog, CustomAutomation, CustomLead, LeadStatus
+from ...alembic.models import CustomAutomation, CustomLead, CustomLeadMessage, LeadStatus
 from ...config import settings
 
 logger = logging.getLogger(__name__)
@@ -47,11 +47,11 @@ def _parse_contact(contact: str) -> tuple[str, str]:
     return ("unknown", contact)
 
 
-def _render_lead_message(lead: CustomLead, automation: CustomAutomation) -> str:
+def _render_lead_message(lead: CustomLead, automation: CustomAutomation, conversation: str = "") -> str:
     parts = [
         f"Новый лид из автоматизации «{automation.name}»",
         f"Источник: {lead.source}",
-        f"Контакт: {lead.contact_value}",
+        f"Контакт: {lead.contact_value} ({lead.contact_type})",
     ]
     if lead.full_name:
         parts.append(f"Имя: {lead.full_name}")
@@ -59,8 +59,44 @@ def _render_lead_message(lead: CustomLead, automation: CustomAutomation) -> str:
         parts.append(f"Компания: {lead.company}")
     if lead.position:
         parts.append(f"Должность: {lead.position}")
+    raw = lead.dmp_raw_data if isinstance(lead.dmp_raw_data, dict) else {}
+    if raw.get("phone"):
+        parts.append(f"Телефон: {raw.get('phone')}")
+    if raw.get("website"):
+        parts.append(f"Сайт: {raw.get('website')}")
+    if raw.get("page"):
+        parts.append(f"Страница: {raw.get('page')}")
+    if automation.partner_promo_code:
+        parts.append(f"Промокод: {automation.partner_promo_code}")
+    if automation.partner_utm_url:
+        parts.append(f"UTM: {automation.partner_utm_url}")
     parts.append(f"Статус: {lead.status}")
+    if conversation:
+        parts.append("Переписка:")
+        parts.append(conversation)
     return "\n".join(parts)
+
+
+async def lead_conversation_text(session: AsyncSession, lead_id: int, limit: int = 20) -> str:
+    result = await session.execute(
+        select(CustomLeadMessage)
+        .where(CustomLeadMessage.custom_lead_id == lead_id)
+        .order_by(CustomLeadMessage.sent_at.asc())
+        .limit(limit)
+    )
+    lines = []
+    for message in result.scalars().all():
+        prefix = "Лид" if message.direction == "incoming" else "Мы"
+        lines.append(f"{prefix}: {message.text}")
+    return "\n".join(lines)
+
+
+async def build_lead_handoff_text(
+    session: AsyncSession,
+    lead: CustomLead,
+    automation: CustomAutomation,
+) -> str:
+    return _render_lead_message(lead, automation, await lead_conversation_text(session, lead.id))
 
 
 async def _send_telegram(
@@ -78,7 +114,7 @@ async def _send_telegram(
         logger.warning("Session file missing for delivery account %s", account.id)
         return False
 
-    text = _render_lead_message(lead, await session.get(CustomAutomation, automation_id))
+    text = await build_lead_handoff_text(session, lead, await session.get(CustomAutomation, automation_id))
     try:
         async with TelegramAccountClient(str(session_path)) as client:
             await execute_with_telegram_retry(
@@ -97,7 +133,7 @@ async def _send_telegram(
         return False
 
 
-async def _send_email(lead: CustomLead, automation: CustomAutomation, email: str) -> bool:
+async def _send_email(lead: CustomLead, automation: CustomAutomation, email: str, extra_body: str | None = None) -> bool:
     token = settings.MAILOPOST_API_TOKEN.strip()
     from_email = settings.MAILOPOST_FROM_EMAIL.strip()
     base_url = settings.MAILOPOST_API_URL.strip().rstrip("/")
@@ -106,7 +142,7 @@ async def _send_email(lead: CustomLead, automation: CustomAutomation, email: str
         return False
 
     subject = f"Новый лид из автоматизации «{automation.name}»"
-    body = _render_lead_message(lead, automation)
+    body = extra_body or _render_lead_message(lead, automation)
     payload = {
         "from_email": from_email,
         "to": email,
@@ -173,23 +209,25 @@ async def deliver_lead_to_manager(
     if not contact_type or not value:
         return {"delivered": False, "reason": "invalid_contact", "contact": contact}
 
+    handoff = await build_lead_handoff_text(session, lead, automation)
     delivered = False
     if contact_type == "telegram":
         delivered = await _send_telegram(session, automation_id, lead, value)
     elif contact_type == "email":
-        delivered = await _send_email(lead, automation, value)
+        delivered = await _send_email(lead, automation, value, extra_body=handoff)
     elif contact_type == "url":
         delivered = await _send_webhook(lead, automation, value)
     else:
         return {"delivered": False, "reason": "unsupported_contact_type", "contact": contact}
 
     if delivered:
+        now = _utc_now()
         lead.status = LeadStatus.TRANSFERRED.value
-        lead.transferred_at = _utc_now()
+        lead.transferred_at = lead.transferred_at or now
         lead.status_history = (lead.status_history or []) + [
-            {"status": LeadStatus.TRANSFERRED.value, "changed_at": lead.transferred_at.isoformat(), "channel": contact_type}
+            {"status": LeadStatus.TRANSFERRED.value, "changed_at": now.isoformat(), "channel": contact_type}
         ]
-        lead.updated_at = _utc_now()
+        lead.updated_at = now
         await session.commit()
 
     return {"delivered": delivered, "channel": contact_type, "contact": value}

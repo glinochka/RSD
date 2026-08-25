@@ -138,6 +138,12 @@ async def create_automation(
             created_at=datetime.now(timezone.utc).replace(tzinfo=None),
             updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
         )
+        from ..services.custom.dmp_one_service import ensure_dmp_webhook_secret
+        from ..services.custom.solution_templates import apply_solution_kind, normalize_solution_kind
+
+        apply_solution_kind(automation, normalize_solution_kind(payload.solution_kind or payload.industry))
+        if automation.is_dmp_one_enabled:
+            ensure_dmp_webhook_secret(automation)
         session.add(automation)
         await session.flush()
         await get_or_create_default_pool(session, automation.id)

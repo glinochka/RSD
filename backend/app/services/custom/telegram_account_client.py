@@ -1,19 +1,37 @@
 """Telegram client wrapper for checking a single .session account."""
 import io
+import random
+import re
 from logging import getLogger
 from typing import Any
 
 from telethon import TelegramClient
 from telethon.errors import AuthKeyError, RPCError
 from telethon.tl.functions.account import UpdateProfileRequest
+from telethon.tl.functions.contacts import ImportContactsRequest
 from telethon.tl.functions.photos import UploadProfilePhotoRequest
 from telethon.tl.functions.users import GetFullUserRequest
+from telethon.tl.types import InputPhoneContact
 
 from ..telegram_userbot_auth import resolve_api_credentials
 
 logger = getLogger(__name__)
 
 _MAX_BIO_LENGTH = 160
+_PHONE_DIGITS_RE = re.compile(r"\D+")
+
+
+def normalize_telegram_phone(value: str | None) -> str | None:
+    digits = _PHONE_DIGITS_RE.sub("", value or "")
+    if len(digits) < 10:
+        return None
+    if len(digits) == 11 and digits.startswith("8"):
+        digits = "7" + digits[1:]
+    elif len(digits) == 10 and digits.startswith("9"):
+        digits = "7" + digits
+    if len(digits) < 11:
+        return None
+    return f"+{digits}"
 
 
 class TelegramAccountClient:
@@ -92,8 +110,9 @@ class TelegramAccountClient:
         await self.client(UploadProfilePhotoRequest(file=uploaded))
 
     async def send_message(self, recipient: str | int, text: str) -> None:
-        """Send a private message to a user by username, id or peer."""
-        await self.client.send_message(recipient, text)
+        """Send a private message to a user by username, id or phone."""
+        entity = await self.resolve_peer(recipient)
+        await self.client.send_message(entity, text)
 
     async def __call__(self, request: Any) -> Any:
         return await self.client(request)
@@ -105,7 +124,7 @@ class TelegramAccountClient:
         return await self.resolve_peer(identifier)
 
     async def resolve_peer(self, identifier: Any) -> Any:
-        """Resolve a Telegram entity from username, t.me link, numeric id or peer."""
+        """Resolve a Telegram entity from username, t.me link, phone, numeric id or peer."""
         if identifier is None:
             raise ValueError("empty peer identifier")
         if not isinstance(identifier, str):
@@ -113,15 +132,45 @@ class TelegramAccountClient:
         text = identifier.strip()
         if not text:
             raise ValueError("empty peer identifier")
+        phone = normalize_telegram_phone(text)
+        if phone and (text.startswith("+") or text.replace(" ", "").replace("-", "").isdigit()):
+            return await self.resolve_phone(phone)
         if "t.me/" in text.lower():
             path = text.split("t.me/", 1)[-1].strip("/")
             if path.startswith("+") or path.lower().startswith("joinchat/"):
+                phone_from_link = normalize_telegram_phone(path)
+                if phone_from_link:
+                    return await self.resolve_phone(phone_from_link)
                 return await self.client.get_entity(text)
             username = path.split("/")[0].split("?")[0]
             return await self.client.get_entity(username)
         if text.lstrip("-").isdigit():
             return await self.client.get_entity(int(text))
         return await self.client.get_entity(text)
+
+    async def resolve_phone(self, phone: str) -> Any:
+        """Find a Telegram user by phone, same approach as ИИ МОП outreach (entity + ImportContacts)."""
+        formatted = normalize_telegram_phone(phone) or phone
+        try:
+            return await self.client.get_entity(formatted)
+        except Exception:
+            logger.debug("Direct phone resolve failed for %s, trying ImportContacts", formatted)
+        result = await self.client(
+            ImportContactsRequest(
+                [
+                    InputPhoneContact(
+                        client_id=random.randrange(10**6, 10**9),
+                        phone=formatted,
+                        first_name="Contact",
+                        last_name="",
+                    )
+                ]
+            )
+        )
+        users = list(getattr(result, "users", None) or [])
+        if not users:
+            raise ValueError(f"Telegram user not found for {formatted}")
+        return users[0]
 
     @staticmethod
     def _display_name(me: Any) -> str:

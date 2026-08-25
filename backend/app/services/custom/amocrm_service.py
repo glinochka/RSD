@@ -380,10 +380,16 @@ async def _create_amocrm_contact(
     lead: CustomLead,
 ) -> str | None:
     custom_fields = []
+    raw = lead.dmp_raw_data if isinstance(lead.dmp_raw_data, dict) else {}
+    phone = None
     if lead.contact_type == "phone" and lead.contact_value:
+        phone = lead.contact_value
+    else:
+        phone = raw.get("phone") or raw.get("phone_number") or raw.get("tel")
+    if phone:
         custom_fields.append({
             "field_code": "PHONE",
-            "values": [{"value": lead.contact_value}],
+            "values": [{"value": str(phone)}],
         })
     if lead.contact_type == "email" and lead.contact_value:
         custom_fields.append({
@@ -457,6 +463,31 @@ async def _create_amocrm_lead(
     return None
 
 
+async def _add_amocrm_note(
+    session: AsyncSession,
+    connection: AmocrmConnection,
+    amocrm_lead_id: str,
+    text: str,
+) -> None:
+    payload = [
+        {
+            "note_type": "common",
+            "params": {"text": (text or "")[:10000]},
+        }
+    ]
+    try:
+        response = await _amocrm_request(
+            session,
+            connection,
+            "POST",
+            f"{_base_url(connection.subdomain)}/leads/{amocrm_lead_id}/notes",
+            json_body=payload,
+        )
+        response.raise_for_status()
+    except Exception as exc:
+        logger.warning("AmoCRM note failed for amo lead %s: %s", amocrm_lead_id, exc)
+
+
 async def transfer_lead_to_amocrm(
     session: AsyncSession,
     automation_id: int,
@@ -477,6 +508,15 @@ async def transfer_lead_to_amocrm(
     lead_id = await _create_amocrm_lead(session, connection, lead, contact_id)
     if not lead_id:
         return {"transferred": False, "reason": "lead_failed"}
+
+    try:
+        from .lead_delivery_service import build_lead_handoff_text
+
+        note = await build_lead_handoff_text(session, lead, automation)
+        if note:
+            await _add_amocrm_note(session, connection, lead_id, note)
+    except Exception as exc:
+        logger.warning("AmoCRM comment skipped for lead %s: %s", lead.id, exc)
 
     lead.amocrm_contact_id = contact_id
     lead.amocrm_lead_id = lead_id

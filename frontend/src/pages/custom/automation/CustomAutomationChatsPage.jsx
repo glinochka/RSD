@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import CustomSelect from '../../../components/CustomSelect';
 import customService from '../../../services/customService';
 import CustomAutomationChatDiscoveryPage from './CustomAutomationChatDiscoveryPage';
+import { CHAT_MODE_OPTIONS } from './activityLabels';
 import '../../../styles/projectCRMPage.css';
 import '../../../styles/projectSettingsPage.css';
 
@@ -16,13 +17,7 @@ const JOIN_STATUSES = [
   { value: 'banned', label: 'Бан' },
 ];
 
-const MODES = [
-  { value: 'monitoring', label: 'Мониторинг' },
-  { value: 'neurocommenting', label: 'Нейрокомментинг' },
-  { value: 'discussion', label: 'Обсуждения' },
-  { value: 'shilling', label: 'Шиллинг' },
-  { value: 'inactive', label: 'Неактивен' },
-];
+const MODES = CHAT_MODE_OPTIONS;
 
 function parseActivityHours(value) {
   if (!value || value.trim() === '') {

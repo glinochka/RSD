@@ -97,6 +97,7 @@ class CustomAutomationCreate(BaseModel):
     client_name: Optional[str] = Field(None, max_length=200)
     industry: Optional[str] = Field(None, max_length=64)
     description: Optional[str] = None
+    solution_kind: Optional[str] = Field(None, max_length=32)
 
 
 class CustomAutomationUpdate(BaseModel):
@@ -105,6 +106,7 @@ class CustomAutomationUpdate(BaseModel):
     industry: Optional[str] = Field(None, max_length=64)
     description: Optional[str] = None
     status: Optional[str] = Field(None, max_length=32)
+    solution_kind: Optional[str] = Field(None, max_length=32)
 
 
 class CustomAutomationResponse(BaseModel):
@@ -116,6 +118,8 @@ class CustomAutomationResponse(BaseModel):
     industry: Optional[str] = None
     description: Optional[str] = None
     status: str
+    solution_kind: str = "generic"
+    solution_slug: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -138,12 +142,26 @@ class CustomAutomationSettingsResponse(BaseModel):
     is_dmp_one_enabled: bool
     is_amocrm_enabled: bool
     is_shilling_enabled: bool
+    is_lead_qualification_enabled: bool = False
+    solution_kind: str = "generic"
+    solution_slug: str | None = None
     lead_manager_contact: str | None = None
+    partner_utm_url: str | None = None
+    partner_promo_code: str | None = None
+    conversion_check_url: str | None = None
     status: str = "draft"
     warnings: list[str] = []
     dmp_webhook_url: str | None = None
     dmp_webhook_secret: str | None = None
     amocrm_redirect_uri: str | None = None
+    telegram_bot_token_set: bool = False
+    telegram_bot_username: str | None = None
+    telegram_bot_webhook_url: str | None = None
+    telegram_bot_subscribers: int = 0
+    google_sheets_spreadsheet_id: str | None = None
+    google_sheets_worksheet: str | None = None
+    google_sheets_credentials_set: bool = False
+    google_sheets_service_account_email: str | None = None
 
 
 class CustomAutomationSettingsValidationResponse(BaseModel):
@@ -161,7 +179,11 @@ class CustomAutomationSettingsUpdate(BaseModel):
     is_dmp_one_enabled: bool | None = None
     is_amocrm_enabled: bool | None = None
     is_shilling_enabled: bool | None = None
+    is_lead_qualification_enabled: bool | None = None
     lead_manager_contact: str | None = None
+    partner_utm_url: str | None = None
+    partner_promo_code: str | None = None
+    conversion_check_url: str | None = None
     status: str | None = None
 
 
@@ -337,6 +359,17 @@ class DmpOneWebhookResponse(BaseModel):
     created_leads: int
     received_count: int
     purchased_count: int
+
+
+class TelegramBotSettingsUpdate(BaseModel):
+    bot_token: Optional[str] = None
+    disconnect: bool = False
+
+
+class GoogleSheetsSettingsUpdate(BaseModel):
+    spreadsheet: Optional[str] = None
+    worksheet: Optional[str] = None
+    service_account_json: Optional[str] = None
 
 
 class AmocrmCredentialsUpdate(BaseModel):

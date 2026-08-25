@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import CustomSelect from '../../../components/CustomSelect';
 import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
+import { SOLUTION_KIND_OPTIONS } from '../automation/activityLabels';
 import '../../../styles/projectLayout.css';
 import '../../../styles/projectSettingsPage.css';
 
@@ -10,7 +12,7 @@ const CustomNewSolutionPage = () => {
   const [form, setForm] = useState({
     name: '',
     client_name: '',
-    industry: '',
+    solution_kind: 'generic',
     description: '',
   });
   const [isSaving, setIsSaving] = useState(false);
@@ -69,14 +71,13 @@ const CustomNewSolutionPage = () => {
                 <input id="client_name" name="client_name" type="text" value={form.client_name} onChange={handleChange} />
               </div>
               <div className="form-group">
-                <label htmlFor="industry">Индустрия</label>
-                <input
-                  id="industry"
-                  name="industry"
-                  type="text"
-                  value={form.industry}
+                <label htmlFor="solution_kind">Пайплайн</label>
+                <CustomSelect
+                  id="solution_kind"
+                  name="solution_kind"
+                  value={form.solution_kind}
+                  options={SOLUTION_KIND_OPTIONS}
                   onChange={handleChange}
-                  placeholder="seo_saas / fulfillment"
                 />
               </div>
               <div className="form-group">

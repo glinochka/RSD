@@ -10,7 +10,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .amocrm_service import transfer_lead_to_amocrm
+from .dmp_one_service import check_lead_conversion, resolve_telegram_for_lead
 from .lead_delivery_service import deliver_lead_to_manager
+from .prompt_service import render_prompt
+from .solution_templates import uses_sales_handoff
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import execute_with_telegram_retry
 from ...alembic.models import CustomAutomation, CustomLead, CustomLeadMessage, CustomPrompt, LeadStatus, PromptType, SocialAccount
@@ -27,15 +30,18 @@ DEFAULT_QUALIFICATION_PROMPT = """Ты квалифицируешь лид в Te
 Последнее сообщение лида:
 {last_incoming}
 
+Ссылка с UTM: {partner_utm_url}
+Промокод: {partner_promo_code}
+
 Верни ТОЛЬКО JSON:
-{{
+{
   "qualified": true/false,
   "lost": true/false,
   "continue": true/false,
   "reply": "следующее короткое сообщение, если continue=true"
-}}
+}
 
-qualified=true, если человек проявил интерес и готов к передаче менеджеру.
+qualified=true, если человек проявил интерес и готов к следующему шагу.
 lost=true, если отказ, спам или нет смысла продолжать.
 continue=true, если нужно ещё одно короткое сообщение для прогрева.
 """
@@ -75,31 +81,55 @@ async def auto_transfer_lead(
     automation_id: int,
     lead: CustomLead,
 ) -> dict[str, Any]:
+    from .solution_templates import is_dmp_notify_pipeline
+
     automation = await session.get(CustomAutomation, automation_id)
     if not automation:
         return {"transferred": False, "reason": "automation_not_found"}
+    if is_dmp_notify_pipeline(automation):
+        from .telegram_notify_bot_service import dispatch_dmp_notifications
 
+        return await dispatch_dmp_notifications(session, automation, lead)
+    if not uses_sales_handoff(automation):
+        lead.status = LeadStatus.CONVERTED.value
+        lead.updated_at = _utc_now()
+        lead.status_history = (lead.status_history or []) + [
+            {"status": LeadStatus.CONVERTED.value, "changed_at": _utc_now().isoformat(), "reason": "seo_closed"}
+        ]
+        await session.commit()
+        return {"transferred": False, "converted": True, "reason": "seo_saas"}
+
+    result: dict[str, Any] = {"transferred": False}
     if automation.is_amocrm_enabled:
-        result = await transfer_lead_to_amocrm(session, automation_id, lead)
-        if result.get("transferred"):
-            return result
-
-    delivery = await deliver_lead_to_manager(session, automation_id, lead)
-    return {
-        "transferred": bool(delivery.get("delivered")),
-        "reason": delivery.get("reason") or delivery.get("channel"),
-    }
+        amo = await transfer_lead_to_amocrm(session, automation_id, lead)
+        result.update(amo)
+        result["amocrm"] = amo
+    if (automation.lead_manager_contact or "").strip():
+        delivery = await deliver_lead_to_manager(session, automation_id, lead)
+        result["notified"] = bool(delivery.get("delivered"))
+        result["notify"] = delivery
+        if delivery.get("delivered"):
+            result["transferred"] = True
+            result["reason"] = delivery.get("reason") or delivery.get("channel")
+    elif result.get("transferred"):
+        result["reason"] = result.get("reason") or "amocrm"
+    return result
 
 
 async def _classify_dialogue(
     session: AsyncSession,
-    automation_id: int,
+    automation: CustomAutomation,
     history: str,
     last_incoming: str,
 ) -> dict[str, Any]:
-    prompt = (await _load_prompt(session, automation_id)).format(
-        history=history or "",
-        last_incoming=last_incoming or "",
+    prompt = render_prompt(
+        await _load_prompt(session, automation.id),
+        {
+            "history": history or "",
+            "last_incoming": last_incoming or "",
+            "partner_utm_url": automation.partner_utm_url or "",
+            "partner_promo_code": automation.partner_promo_code or "",
+        },
     )
     try:
         response = await ai_client.chat.completions.create(
@@ -148,9 +178,21 @@ async def _process_lead(
     automation: CustomAutomation,
     lead: CustomLead,
 ) -> dict[str, Any]:
+    conversion = await check_lead_conversion(automation, lead)
+    if conversion.get("subscribed"):
+        lead.status = LeadStatus.CONVERTED.value
+        lead.updated_at = _utc_now()
+        lead.status_history = (lead.status_history or []) + [
+            {"status": LeadStatus.CONVERTED.value, "changed_at": _utc_now().isoformat(), "reason": "conversion_check"}
+        ]
+        await session.commit()
+        return {"lead_id": lead.id, "status": "converted", "reason": "already_subscribed"}
+
     if lead.contact_type != "telegram":
-        transferred = await auto_transfer_lead(session, automation.id, lead)
-        return {"lead_id": lead.id, **transferred}
+        resolved = await resolve_telegram_for_lead(session, automation, lead)
+        if not resolved:
+            return {"lead_id": lead.id, "status": "waiting_telegram"}
+        await session.commit()
 
     if lead.status == LeadStatus.QUALIFIED.value:
         transferred = await auto_transfer_lead(session, automation.id, lead)
@@ -212,7 +254,7 @@ async def _process_lead(
 
     decision = await _classify_dialogue(
         session,
-        automation.id,
+        automation,
         await _history_text(session, lead.id),
         last_text,
     )
@@ -227,7 +269,8 @@ async def _process_lead(
         lead.updated_at = _utc_now()
         await session.commit()
         transferred = await auto_transfer_lead(session, automation.id, lead)
-        return {"lead_id": lead.id, "status": "transferred" if transferred.get("transferred") else "qualified", **transferred}
+        status = "converted" if transferred.get("converted") else ("transferred" if transferred.get("transferred") else "qualified")
+        return {"lead_id": lead.id, "status": status, **transferred}
 
     reply = decision.get("reply") or ""
     if not reply or not decision["continue"]:

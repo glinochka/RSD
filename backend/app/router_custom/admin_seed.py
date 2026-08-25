@@ -83,20 +83,30 @@ async def seed_custom_admin():
                 logger.info("Updated CustomAdmin '%s' (id=%s) from .env.", login, existing.id)
             else:
                 logger.info("CustomAdmin '%s' already in sync (id=%s).", login, existing.id)
-            return existing
+            admin = existing
+        else:
+            admin = CustomAdmin(
+                username=login,
+                password_hash=password_hash,
+                is_active=True,
+                created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            )
+            session.add(admin)
+            await session.commit()
+            await session.refresh(admin)
+            logger.info("Created CustomAdmin '%s' (id=%s).", login, admin.id)
 
-        admin = CustomAdmin(
-            username=login,
-            password_hash=password_hash,
-            is_active=True,
-            created_at=datetime.now(timezone.utc).replace(tzinfo=None),
-            updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
-        )
-        session.add(admin)
-        await session.commit()
-        await session.refresh(admin)
-        logger.info("Created CustomAdmin '%s' (id=%s).", login, admin.id)
-        return admin
+    try:
+        from app.services.custom.solution_templates import ensure_builtin_solutions
+
+        async with async_session_maker() as session:
+            ids = await ensure_builtin_solutions(session)
+            logger.info("Built-in custom solutions ready: %s", ids)
+    except Exception as exc:
+        logger.exception("Failed to seed built-in custom solutions: %s", exc)
+
+    return admin
 
 
 async def main():

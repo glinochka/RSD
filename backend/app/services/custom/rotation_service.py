@@ -15,6 +15,7 @@ logger = getLogger(__name__)
 ACTION_ALLOWED_CLASSES = {
     "commenting": {AccountClass.ONE_DAY.value, AccountClass.MID.value, AccountClass.TRUSTED.value},
     "dm": {AccountClass.TRUSTED.value, AccountClass.MID.value},
+    "dmp_outreach": {AccountClass.TRUSTED.value},
     "discussion": {AccountClass.ONE_DAY.value, AccountClass.MID.value, AccountClass.TRUSTED.value},
     "shilling": {AccountClass.SHILLING.value},
 }

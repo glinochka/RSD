@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useCustomAuth } from '../../../components/custom/useCustomAuth';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
 import customService from '../../../services/customService';
+import { SOLUTION_KIND_LABELS } from '../automation/activityLabels';
 import '../../../styles/projectLayout.css';
 import '../../../styles/agentsPage.css';
 import '../../../styles/projectDashboard.css';
@@ -127,7 +128,9 @@ const CustomSolutionsListPage = () => {
                       <div className="agent-details">
                         <h3 className="agent-name">{automation.name}</h3>
                         <p className="agent-role">
-                          {automation.client_name || 'Без клиента'} · {STATUS_LABELS[automation.status] || automation.status}
+                          {SOLUTION_KIND_LABELS[automation.solution_kind] || automation.client_name || 'Без клиента'}
+                          {' · '}
+                          {STATUS_LABELS[automation.status] || automation.status}
                         </p>
                       </div>
                     </div>
@@ -142,6 +145,7 @@ const CustomSolutionsListPage = () => {
                       <h3>{selected.name}</h3>
                       <p>ID: {selected.id}</p>
                       <p>{selected.client_name || 'Клиент не указан'}</p>
+                    <p className="agent-role">{SOLUTION_KIND_LABELS[selected.solution_kind] || selected.solution_kind || ''}</p>
                     </div>
                     <div className="dashboard-stats-grid">
                       <div className="dashboard-stat-card">
