@@ -228,6 +228,34 @@ class AccountClassUpdate(BaseModel):
     assigned_class: str = Field(..., min_length=1, max_length=32)
 
 
+class AccountQrStartRequest(BaseModel):
+    assign_class: str = Field(default="one_day", min_length=1, max_length=32)
+
+
+class AccountQrStatusRequest(BaseModel):
+    auth_token: str = Field(..., min_length=20, max_length=16384)
+
+
+class AccountQrVerify2faRequest(BaseModel):
+    auth_token: str = Field(..., min_length=20, max_length=16384)
+    password: str = Field(..., min_length=1, max_length=128)
+
+
+class AccountSmsRequest(BaseModel):
+    phone_number: str = Field(..., min_length=5, max_length=32)
+    assign_class: str = Field(default="one_day", min_length=1, max_length=32)
+
+
+class AccountSmsVerifyRequest(BaseModel):
+    auth_token: str = Field(..., min_length=20, max_length=16384)
+    code: str = Field(..., min_length=3, max_length=12)
+    password: str | None = Field(default=None, max_length=128)
+
+
+class AccountSmsStartResponse(BaseModel):
+    auth_token: str
+
+
 class AccountBulkUpdateProfilesRequest(BaseModel):
     account_ids: list[int] = []
     account_class: str | None = None
@@ -263,6 +291,24 @@ class AccountResponse(BaseModel):
     max_daily_messages_per_account: int = 50
     added_at: datetime
     last_health_check_at: Optional[datetime] = None
+
+
+class AccountQrStartResponse(BaseModel):
+    auth_token: str
+    qr_url: str = ""
+    qr_data_url: str = ""
+    already_authorized: bool = False
+    account: Optional[AccountResponse] = None
+
+
+class AccountQrStatusResponse(BaseModel):
+    status: str
+    error: Optional[str] = None
+    account: Optional[AccountResponse] = None
+
+
+class AccountConnectResponse(BaseModel):
+    account: AccountResponse
 
 
 class AccountListResponse(BaseModel):

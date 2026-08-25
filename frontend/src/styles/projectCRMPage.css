@@ -354,6 +354,41 @@
   margin: var(--spacing-xs) 0 0;
 }
 
+.account-connect-modes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--spacing-sm);
+  margin: var(--spacing-base) 0;
+}
+
+.account-connect-mode {
+  border: 1px solid var(--color-border);
+  background-color: #ffffff;
+  border-radius: var(--radius-base);
+  padding: var(--spacing-base);
+  cursor: pointer;
+  font-size: var(--font-size-base);
+}
+
+.account-connect-mode.active {
+  border-color: var(--color-primary);
+  background-color: #eef2ff;
+}
+
+.project-crm-page .userbot-qr-wrap {
+  margin: 12px 0;
+  display: flex;
+  justify-content: center;
+}
+
+.project-crm-page .userbot-qr-image {
+  max-width: 220px;
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
+  border: 1px solid var(--color-border, #e0e0e0);
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .project-crm-page {

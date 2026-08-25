@@ -159,6 +159,10 @@ async def _save_session_file(
     archive_name: str,
     data: bytes,
     assign_class: str,
+    *,
+    phone_number: str | None = None,
+    username: str | None = None,
+    display_name: str | None = None,
 ) -> SocialAccount:
     sessions_dir = _automation_sessions_dir(automation_id)
     safe_name = _safe_filename(archive_name)
@@ -172,13 +176,150 @@ async def _save_session_file(
         automation_id,
         pool_id,
         provider="telegram",
-        phone_number=None,
-        username=None,
-        display_name=None,
+        phone_number=phone_number,
+        username=username,
+        display_name=display_name,
         account_class=assign_class,
         encrypted_session=encrypted,
         session_file_path=relative_path,
     )
+
+
+def string_session_to_sqlite_bytes(session_string: str) -> bytes:
+    """Convert a Telethon StringSession into SQLite .session file bytes."""
+    import tempfile
+
+    from telethon.sessions import SQLiteSession, StringSession
+
+    raw = (session_string or "").strip()
+    if not raw:
+        raise ValueError("Пустая строка сессии")
+    src = StringSession(raw)
+    if not getattr(src, "auth_key", None):
+        raise ValueError("В сессии нет ключа авторизации")
+    with tempfile.TemporaryDirectory() as tmp:
+        stem = str(Path(tmp) / "account")
+        dest = SQLiteSession(stem)
+        dest.set_dc(src.dc_id, src.server_address, src.port)
+        dest.auth_key = src.auth_key
+        dest.save()
+        dest.close()
+        path = Path(f"{stem}.session")
+        if not path.is_file():
+            raise ValueError("Не удалось записать файл сессии")
+        data = path.read_bytes()
+    if not _is_valid_telegram_session(data):
+        raise ValueError("Полученный файл сессии повреждён")
+    return data
+
+
+async def _find_existing_pool_account(
+    session: AsyncSession,
+    automation_id: int,
+    pool_id: int,
+    *,
+    phone_number: str | None,
+    username: str | None,
+) -> tuple[PoolAccount, SocialAccount] | None:
+    from .custom.telegram_account_client import normalize_telegram_phone
+
+    phone = normalize_telegram_phone(phone_number) or (phone_number or "").strip() or None
+    uname = (username or "").strip().lstrip("@") or None
+    if not phone and not uname:
+        return None
+
+    stmt = (
+        select(PoolAccount, SocialAccount)
+        .join(SocialAccount, PoolAccount.social_account_id == SocialAccount.id)
+        .where(
+            PoolAccount.custom_automation_id == automation_id,
+            PoolAccount.account_pool_id == pool_id,
+        )
+    )
+    rows = (await session.execute(stmt)).all()
+    for pool_account, social in rows:
+        existing_phone = normalize_telegram_phone(social.phone_number) or (social.phone_number or "").strip() or None
+        existing_user = (social.username or "").strip().lstrip("@") or None
+        if phone and existing_phone and phone == existing_phone:
+            return pool_account, social
+        if uname and existing_user and uname.lower() == existing_user.lower():
+            return pool_account, social
+    return None
+
+
+async def add_account_from_session_string(
+    session: AsyncSession,
+    automation_id: int,
+    *,
+    session_string: str,
+    assign_class: str,
+    phone_number: str | None = None,
+    username: str | None = None,
+    display_name: str | None = None,
+    telegram_id: int | None = None,
+) -> tuple[PoolAccount, SocialAccount]:
+    """Persist an authorized StringSession as a pool .session account."""
+    data = await asyncio.to_thread(string_session_to_sqlite_bytes, session_string)
+    pool = await get_or_create_default_pool(session, automation_id)
+    existing = await _find_existing_pool_account(
+        session,
+        automation_id,
+        pool.id,
+        phone_number=phone_number,
+        username=username,
+    )
+    if existing:
+        pool_account, social = existing
+        if social.session_file_path:
+            target_path = _media_root() / social.session_file_path
+        else:
+            filename = _safe_filename(f"tg_{telegram_id or social.id}.session")
+            target_path = _automation_sessions_dir(automation_id) / filename
+            social.session_file_path = str(target_path.relative_to(_media_root()))
+        await asyncio.to_thread(_write_file, target_path, data)
+        social.encrypted_session = encrypt_session_bytes(data)
+        social.phone_number = phone_number or social.phone_number
+        social.username = username or social.username
+        social.display_name = display_name or social.display_name
+        social.is_active = True
+        social.updated_at = _utc_now()
+        await session.flush()
+        await session.commit()
+        await session.refresh(social)
+        await session.refresh(pool_account)
+        return pool_account, social
+
+    filename = _safe_filename(f"tg_{telegram_id or uuid_like_name()}.session")
+    social = await _save_session_file(
+        session,
+        automation_id,
+        pool.id,
+        filename,
+        data,
+        assign_class,
+        phone_number=phone_number,
+        username=username,
+        display_name=display_name,
+    )
+    pool_account = await session.scalar(
+        select(PoolAccount).where(
+            PoolAccount.custom_automation_id == automation_id,
+            PoolAccount.social_account_id == social.id,
+        )
+    )
+    await session.commit()
+    await session.refresh(social)
+    if pool_account:
+        await session.refresh(pool_account)
+    if pool_account is None:
+        raise RuntimeError("Pool account was not created")
+    return pool_account, social
+
+
+def uuid_like_name() -> str:
+    import uuid
+
+    return uuid.uuid4().hex[:12]
 
 
 async def bulk_upload_sessions(

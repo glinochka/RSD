@@ -89,3 +89,17 @@ whatsapp_userbot_auth_token = ScopedAuthToken(
     scope_mismatch_detail="Некорректный scope токена подтверждения WhatsApp userbot",
     missing_key_detail="Токен подтверждения WhatsApp userbot не привязан к пользователю",
 )
+
+custom_account_qr_auth_token = ScopedAuthToken(
+    "custom_account_qr_auth",
+    invalid_detail="Невалидный или просроченный токен QR-входа",
+    scope_mismatch_detail="Некорректный токен QR-входа",
+    missing_key_detail="Токен QR-входа не содержит auth_id",
+)
+
+custom_account_sms_auth_token = ScopedAuthToken(
+    "custom_account_sms_auth",
+    invalid_detail="Невалидный или просроченный токен входа по SMS",
+    scope_mismatch_detail="Некорректный токен входа по SMS",
+    missing_key_detail="Токен входа по SMS не содержит номер телефона",
+)

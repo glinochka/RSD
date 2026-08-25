@@ -29,7 +29,10 @@ const getAuthHeaders = () => {
 const handleResponse = async (response) => {
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(error.detail || `HTTP ${response.status}`);
+    const message = typeof error.detail === 'string' ? error.detail : `HTTP ${response.status}`;
+    const err = new Error(message);
+    err.status = response.status;
+    throw err;
   }
   if (response.status === 204) {
     return null;
@@ -257,6 +260,70 @@ const customService = {
         method: 'POST',
         headers,
         body: formData,
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async startAccountQr(automationId, assignClass = 'one_day') {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ACCOUNTS_QR_START(automationId)}`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ assign_class: assignClass }),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async accountQrStatus(automationId, authToken) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ACCOUNTS_QR_STATUS(automationId)}`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ auth_token: authToken }),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async verifyAccountQr2fa(automationId, authToken, password) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ACCOUNTS_QR_2FA(automationId)}`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ auth_token: authToken, password }),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async requestAccountSms(automationId, phoneNumber, assignClass = 'one_day') {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ACCOUNTS_SMS_REQUEST(automationId)}`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ phone_number: phoneNumber, assign_class: assignClass }),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async verifyAccountSms(automationId, { authToken, code, password }) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ACCOUNTS_SMS_VERIFY(automationId)}`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          auth_token: authToken,
+          code,
+          password: password || undefined,
+        }),
       },
     );
     return handleResponse(response);

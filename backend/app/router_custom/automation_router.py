@@ -14,10 +14,19 @@ from .schemas import (
     AccountBulkUpdateProfilesResponse,
     AccountBanStatsResponse,
     AccountClassUpdate,
+    AccountConnectResponse,
     AccountHealthCheckResponse,
     AccountHealthCheckResult,
     AccountListResponse,
+    AccountQrStartRequest,
+    AccountQrStartResponse,
+    AccountQrStatusRequest,
+    AccountQrStatusResponse,
+    AccountQrVerify2faRequest,
     AccountResponse,
+    AccountSmsRequest,
+    AccountSmsStartResponse,
+    AccountSmsVerifyRequest,
     AccountUploadResponse,
     ChatDiscoveryActionResponse,
     ChatDiscoveryApproveRequest,
@@ -63,7 +72,15 @@ from .schemas import (
 )
 from .dependencies import get_current_custom_automation
 from ..services.account_pool_service import bulk_upload_sessions
+from ..services.custom.account_connect_service import (
+    poll_account_qr,
+    request_account_sms,
+    start_account_qr,
+    verify_account_qr_2fa,
+    verify_account_sms,
+)
 from ..services.custom.account_health_worker import AccountHealthWorker
+from ..services.telegram_userbot_auth import TelegramUserbotAuthError
 from ..services.custom.bulk_profile_service import BulkProfileUpdateWorker, _save_uploaded_avatar
 from ..services.custom.chat_discovery_service import (
     approve_discovered_chats,
@@ -334,6 +351,14 @@ def _account_response(
     )
 
 
+def _userbot_auth_http_error(exc: TelegramUserbotAuthError) -> HTTPException:
+    return HTTPException(status_code=exc.status_code, detail=str(exc))
+
+
+def _queue_account_health_check(background_tasks: BackgroundTasks, automation_id: int) -> None:
+    background_tasks.add_task(AccountHealthWorker().check_all_accounts_for_automation, automation_id)
+
+
 @router.get("/automations/{automation_id}/accounts", response_model=AccountListResponse)
 async def list_accounts(
     automation_id: int,
@@ -448,6 +473,123 @@ async def run_account_health_check(
         ok=ok,
         fallback=fallback,
         error=error,
+    )
+
+
+@router.post("/automations/{automation_id}/accounts/qr/start", response_model=AccountQrStartResponse)
+async def start_qr_account(
+    automation_id: int,
+    background_tasks: BackgroundTasks,
+    payload: AccountQrStartRequest | None = None,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    body = payload or AccountQrStartRequest()
+    async with async_session_maker() as session:
+        try:
+            result = await start_account_qr(session, automation_id, assign_class=body.assign_class)
+        except TelegramUserbotAuthError as exc:
+            raise _userbot_auth_http_error(exc) from exc
+    account = None
+    if result.get("pool_account") is not None and result.get("social_account") is not None:
+        account = _account_response(
+            result["pool_account"],
+            result["social_account"],
+            automation.max_daily_messages_per_account,
+        )
+        if result.get("created"):
+            _queue_account_health_check(background_tasks, automation_id)
+    return AccountQrStartResponse(
+        auth_token=result["auth_token"],
+        qr_url=result.get("qr_url") or "",
+        qr_data_url=result.get("qr_data_url") or "",
+        already_authorized=bool(result.get("already_authorized")),
+        account=account,
+    )
+
+
+@router.post("/automations/{automation_id}/accounts/qr/status", response_model=AccountQrStatusResponse)
+async def qr_account_status(
+    automation_id: int,
+    payload: AccountQrStatusRequest,
+    background_tasks: BackgroundTasks,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        try:
+            result = await poll_account_qr(session, automation_id, auth_token=payload.auth_token)
+        except TelegramUserbotAuthError as exc:
+            raise _userbot_auth_http_error(exc) from exc
+    account = None
+    if result.get("pool_account") is not None and result.get("social_account") is not None:
+        account = _account_response(
+            result["pool_account"],
+            result["social_account"],
+            automation.max_daily_messages_per_account,
+        )
+        if result.get("created"):
+            _queue_account_health_check(background_tasks, automation_id)
+    return AccountQrStatusResponse(
+        status=result.get("status") or "pending",
+        error=result.get("error"),
+        account=account,
+    )
+
+
+@router.post("/automations/{automation_id}/accounts/qr/verify_2fa", response_model=AccountConnectResponse)
+async def qr_account_verify_2fa(
+    automation_id: int,
+    payload: AccountQrVerify2faRequest,
+    background_tasks: BackgroundTasks,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        try:
+            pool_account, social_account = await verify_account_qr_2fa(
+                session,
+                automation_id,
+                auth_token=payload.auth_token,
+                password=payload.password,
+            )
+        except TelegramUserbotAuthError as exc:
+            raise _userbot_auth_http_error(exc) from exc
+    _queue_account_health_check(background_tasks, automation_id)
+    return AccountConnectResponse(
+        account=_account_response(pool_account, social_account, automation.max_daily_messages_per_account)
+    )
+
+
+@router.post("/automations/{automation_id}/accounts/sms/request", response_model=AccountSmsStartResponse)
+async def sms_account_request(
+    automation_id: int,
+    payload: AccountSmsRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    result = await request_account_sms(
+        automation_id,
+        phone_number=payload.phone_number,
+        assign_class=payload.assign_class,
+    )
+    return AccountSmsStartResponse(auth_token=result["auth_token"])
+
+
+@router.post("/automations/{automation_id}/accounts/sms/verify", response_model=AccountConnectResponse)
+async def sms_account_verify(
+    automation_id: int,
+    payload: AccountSmsVerifyRequest,
+    background_tasks: BackgroundTasks,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        pool_account, social_account = await verify_account_sms(
+            session,
+            automation_id,
+            auth_token=payload.auth_token,
+            code=payload.code,
+            password=payload.password,
+        )
+    _queue_account_health_check(background_tasks, automation_id)
+    return AccountConnectResponse(
+        account=_account_response(pool_account, social_account, automation.max_daily_messages_per_account)
     )
 
 

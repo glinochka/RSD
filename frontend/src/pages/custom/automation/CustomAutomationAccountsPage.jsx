@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import CustomSelect from '../../../components/CustomSelect';
 import customService from '../../../services/customService';
 import CustomBulkProfileForm from './CustomBulkProfileForm';
+import CustomAccountConnectForm from './CustomAccountConnectForm';
 import '../../../styles/projectCRMPage.css';
 import '../../../styles/projectSettingsPage.css';
 
@@ -160,7 +161,7 @@ const CustomAutomationAccountsPage = () => {
       <div className="crm-header">
         <div>
           <h1 className="crm-title">Аккаунты</h1>
-          <p className="crm-subtitle">Массовый залив сессий. Классификация пройдёт сама.</p>
+          <p className="crm-subtitle">Один аккаунт по QR или SMS, либо массовый залив сессий.</p>
         </div>
         <div className="settings-actions">
           <button type="button" onClick={handleHealthCheck} disabled={isHealthChecking} className="btn btn-outline">
@@ -213,6 +214,8 @@ const CustomAutomationAccountsPage = () => {
         </div>
       ) : null}
 
+      <CustomAccountConnectForm automationId={id} onConnected={loadAccounts} />
+
       <CustomBulkProfileForm automationId={id} onSuccess={loadAccounts} />
 
       <form onSubmit={handleSearchSubmit} className="settings-section">
@@ -255,7 +258,7 @@ const CustomAutomationAccountsPage = () => {
       ) : accounts.length === 0 ? (
         <div className="crm-empty-list">
           <p>Нет аккаунтов</p>
-          <span>Загрузите ZIP с .session файлами или CSV с метаданными.</span>
+          <span>Добавьте по QR / SMS или загрузите ZIP с .session.</span>
         </div>
       ) : (
         <div className="crm-list">

@@ -1,5 +1,5 @@
 """Backend tests for /custom mass-automation subsystem."""
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
@@ -1522,5 +1522,218 @@ class TestDmpBotPipeline:
             select(CustomBotSubscriber).where(CustomBotSubscriber.telegram_chat_id == 999003)
         )
         assert subscriber.status == "subscribed"
+
+
+_FAKE_SESSION_BYTES = b"SQLite format 3\x00" + b"\x00" * 48
+
+
+def _qr_login_payload(*, auth_id: str, already_authorized: bool = False, session_string: str = "1Asession"):
+    return {
+        "auth_id": auth_id,
+        "qr_url": "" if already_authorized else "tg://login?token=abc",
+        "qr_data_url": "" if already_authorized else "data:image/png;base64,aaa",
+        "pending_session_string": session_string,
+        "already_authorized": already_authorized,
+        "api_id": 2040,
+        "api_hash": "testhash",
+    }
+
+
+class TestAccountQrConnect:
+    async def test_qr_start_requires_auth(self, client: AsyncClient, custom_automation: CustomAutomation):
+        response = await client.post(f"/api/custom/automations/{custom_automation.id}/accounts/qr/start")
+        assert response.status_code in (401, 403)
+
+    async def test_qr_already_authorized_creates_account(
+        self,
+        client: AsyncClient,
+        client_token: str,
+        custom_automation: CustomAutomation,
+        test_session: AsyncSession,
+        tmp_path,
+        monkeypatch,
+    ):
+        from app.config import settings
+        from app.services.custom import account_connect_service
+
+        account_connect_service._persisted_by_auth_id.clear()
+        monkeypatch.setattr(settings, "MEDIA_ROOT", str(tmp_path))
+        mock_worker = MagicMock()
+        mock_worker.check_all_accounts_for_automation = AsyncMock(return_value=[])
+        with (
+            patch(
+                "app.services.custom.account_connect_service.start_qr_login",
+                AsyncMock(return_value=_qr_login_payload(auth_id="auth-already", already_authorized=True)),
+            ),
+            patch(
+                "app.services.custom.account_connect_service.get_qr_status",
+                AsyncMock(
+                    return_value={
+                        "status": "success",
+                        "session_string": "1Asession",
+                        "me": {
+                            "telegram_id": 555001,
+                            "username": "qruser",
+                            "first_name": "Qr",
+                            "last_name": "User",
+                            "phone_number": "+79991112233",
+                        },
+                    }
+                ),
+            ),
+            patch(
+                "app.services.account_pool_service.string_session_to_sqlite_bytes",
+                return_value=_FAKE_SESSION_BYTES,
+            ),
+            patch("app.router_custom.automation_router.AccountHealthWorker", return_value=mock_worker),
+        ):
+            response = await client.post(
+                f"/api/custom/automations/{custom_automation.id}/accounts/qr/start",
+                headers={"Authorization": f"Bearer {client_token}"},
+                json={"assign_class": "one_day"},
+            )
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["already_authorized"] is True
+        assert data["account"]["username"] == "qruser"
+        assert data["account"]["phone_number"] == "+79991112233"
+        assert data["account"]["status"] == "loaded"
+        test_session.expire_all()
+        saved = await test_session.scalar(select(SocialAccount).where(SocialAccount.username == "qruser"))
+        assert saved is not None
+        assert saved.session_file_path
+
+    async def test_qr_status_success_persists_once(
+        self,
+        client: AsyncClient,
+        client_token: str,
+        custom_automation: CustomAutomation,
+        test_session: AsyncSession,
+        tmp_path,
+        monkeypatch,
+    ):
+        from app.config import settings
+        from app.services.custom import account_connect_service
+
+        account_connect_service._persisted_by_auth_id.clear()
+        monkeypatch.setattr(settings, "MEDIA_ROOT", str(tmp_path))
+        mock_worker = MagicMock()
+        mock_worker.check_all_accounts_for_automation = AsyncMock(return_value=[])
+        with (
+            patch(
+                "app.services.custom.account_connect_service.start_qr_login",
+                AsyncMock(return_value=_qr_login_payload(auth_id="auth-poll")),
+            ),
+            patch(
+                "app.services.account_pool_service.string_session_to_sqlite_bytes",
+                return_value=_FAKE_SESSION_BYTES,
+            ),
+            patch("app.router_custom.automation_router.AccountHealthWorker", return_value=mock_worker),
+        ):
+            start = await client.post(
+                f"/api/custom/automations/{custom_automation.id}/accounts/qr/start",
+                headers={"Authorization": f"Bearer {client_token}"},
+                json={"assign_class": "mid"},
+            )
+            assert start.status_code == 200, start.text
+            auth_token = start.json()["auth_token"]
+            assert start.json()["account"] is None
+            with patch(
+                "app.services.custom.account_connect_service.get_qr_status",
+                AsyncMock(
+                    return_value={
+                        "status": "success",
+                        "session_string": "1Asession",
+                        "me": {
+                            "telegram_id": 555002,
+                            "username": "polluser",
+                            "phone_number": "+79990001122",
+                        },
+                    }
+                ),
+            ):
+                first = await client.post(
+                    f"/api/custom/automations/{custom_automation.id}/accounts/qr/status",
+                    headers={"Authorization": f"Bearer {client_token}"},
+                    json={"auth_token": auth_token},
+                )
+                second = await client.post(
+                    f"/api/custom/automations/{custom_automation.id}/accounts/qr/status",
+                    headers={"Authorization": f"Bearer {client_token}"},
+                    json={"auth_token": auth_token},
+                )
+        assert first.status_code == 200, first.text
+        assert second.status_code == 200, second.text
+        assert first.json()["status"] == "success"
+        assert first.json()["account"]["username"] == "polluser"
+        assert second.json()["account"]["id"] == first.json()["account"]["id"]
+        test_session.expire_all()
+        count = await test_session.scalar(
+            select(func.count(SocialAccount.id)).where(SocialAccount.username == "polluser")
+        )
+        assert count == 1
+
+    async def test_qr_verify_2fa_creates_account(
+        self,
+        client: AsyncClient,
+        client_token: str,
+        custom_automation: CustomAutomation,
+        test_session: AsyncSession,
+        tmp_path,
+        monkeypatch,
+    ):
+        from app.config import settings
+        from app.services.custom import account_connect_service
+
+        account_connect_service._persisted_by_auth_id.clear()
+        monkeypatch.setattr(settings, "MEDIA_ROOT", str(tmp_path))
+        mock_worker = MagicMock()
+        mock_worker.check_all_accounts_for_automation = AsyncMock(return_value=[])
+        with (
+            patch(
+                "app.services.custom.account_connect_service.start_qr_login",
+                AsyncMock(return_value=_qr_login_payload(auth_id="auth-2fa")),
+            ),
+            patch(
+                "app.services.custom.account_connect_service.get_qr_status",
+                AsyncMock(return_value={"status": "need_2fa", "session_string": "1Apending"}),
+            ),
+            patch(
+                "app.services.custom.account_connect_service.complete_qr_2fa",
+                AsyncMock(
+                    return_value={
+                        "session_string": "1Adone",
+                        "telegram_id": 555003,
+                        "username": "twofauser",
+                        "first_name": "Two",
+                        "last_name": "Fa",
+                        "phone_number": "+79993334455",
+                    }
+                ),
+            ),
+            patch(
+                "app.services.account_pool_service.string_session_to_sqlite_bytes",
+                return_value=_FAKE_SESSION_BYTES,
+            ),
+            patch("app.router_custom.automation_router.AccountHealthWorker", return_value=mock_worker),
+        ):
+            start = await client.post(
+                f"/api/custom/automations/{custom_automation.id}/accounts/qr/start",
+                headers={"Authorization": f"Bearer {client_token}"},
+                json={"assign_class": "one_day"},
+            )
+            assert start.status_code == 200, start.text
+            response = await client.post(
+                f"/api/custom/automations/{custom_automation.id}/accounts/qr/verify_2fa",
+                headers={"Authorization": f"Bearer {client_token}"},
+                json={"auth_token": start.json()["auth_token"], "password": "secret-2fa"},
+            )
+        assert response.status_code == 200, response.text
+        assert response.json()["account"]["username"] == "twofauser"
+        test_session.expire_all()
+        saved = await test_session.scalar(select(SocialAccount).where(SocialAccount.username == "twofauser"))
+        assert saved is not None
+        assert saved.session_file_path
+
 
 
