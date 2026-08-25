@@ -141,6 +141,9 @@ class CustomAutomationSettingsResponse(BaseModel):
     lead_manager_contact: str | None = None
     status: str = "draft"
     warnings: list[str] = []
+    dmp_webhook_url: str | None = None
+    dmp_webhook_secret: str | None = None
+    amocrm_redirect_uri: str | None = None
 
 
 class CustomAutomationSettingsValidationResponse(BaseModel):
@@ -336,28 +339,43 @@ class DmpOneWebhookResponse(BaseModel):
     purchased_count: int
 
 
-class AmocrmConnectionCreate(BaseModel):
+class AmocrmCredentialsUpdate(BaseModel):
     subdomain: str
-    access_token: str
-    refresh_token: Optional[str] = None
+    client_id: str
+    client_secret: Optional[str] = None
+
+
+class AmocrmOAuthStartRequest(BaseModel):
+    return_url: Optional[str] = None
+
+
+class AmocrmOAuthStartResponse(BaseModel):
+    auth_url: str
+    redirect_uri: str
+
+
+class AmocrmPipelineUpdate(BaseModel):
     pipeline_id: Optional[str] = None
     responsible_user_id: Optional[str] = None
     lead_status_id: Optional[str] = None
 
 
 class AmocrmConnectionResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    custom_automation_id: int
-    subdomain: str
+    id: Optional[int] = None
+    custom_automation_id: Optional[int] = None
+    subdomain: Optional[str] = None
+    client_id: Optional[str] = None
+    has_credentials: bool = False
+    client_secret_set: bool = False
+    connected: bool = False
     pipeline_id: Optional[str] = None
     responsible_user_id: Optional[str] = None
     lead_status_id: Optional[str] = None
-    is_active: bool
+    is_active: bool = False
     last_sync_at: Optional[datetime] = None
-    created_at: datetime
-    updated_at: datetime
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    redirect_uri: str = ""
 
 
 class AmocrmTransferResponse(BaseModel):

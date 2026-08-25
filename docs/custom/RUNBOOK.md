@@ -56,7 +56,7 @@
 - **Передача лида**:
   - Если `is_amocrm_enabled` и подключена интеграция — лид уходит в AmoCRM.
   - Иначе лид передаётся на `lead_manager_contact` (Telegram, email или webhook).
-- **DMP webhook:** `POST /api/custom/webhooks/dmp/{automation_id}` с заголовком `X-DMP-Webhook-Secret` (значение `DMP_ONE_WEBHOOK_SECRET`). Без секрета webhook отклоняется. Параллельно работает polling.
+- **DMP webhook:** URL из настроек решения: `POST /api/custom/webhooks/dmp/{automation_id}/{secret}`. В DMP One вставьте этот URL и включите JSON. Старый вариант с заголовком `X-DMP-Webhook-Secret` тоже работает. Параллельно работает polling заказов.
 
 
 ### 5. Промпты
@@ -114,7 +114,7 @@ Scheduler каждую минуту сверяет список активных
 
 ### Фулфилмент (с AmoCRM)
 
-1. Включить `is_amocrm_enabled`, подключить воронку и токен.
+1. Включить AmoCRM в настройках, сохранить `client_id` / `client_secret` / поддомен, указать Redirect URI в карточке интеграции AmoCRM и нажать «Подключить».
 2. Повторить шаги SEO SaaS.
 3. При передаче лида он должен появиться в AmoCRM с `amocrm_lead_id`.
 

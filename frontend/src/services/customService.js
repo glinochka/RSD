@@ -656,7 +656,31 @@ const customService = {
     return handleResponse(response);
   },
 
-  async saveAmocrmConnection(automationId, data) {
+  async saveAmocrmCredentials(automationId, data) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_AMOCRM_CREDENTIALS(automationId)}`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(data),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async startAmocrmOAuth(automationId, returnUrl) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_AMOCRM_OAUTH_START(automationId)}`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ return_url: returnUrl }),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async saveAmocrmPipeline(automationId, data) {
     const response = await fetch(
       `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_AMOCRM_CONNECTION(automationId)}`,
       {
@@ -682,6 +706,17 @@ const customService = {
   async runAmocrmSync(automationId) {
     const response = await fetch(
       `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_AMOCRM_SYNC(automationId)}`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async rotateDmpWebhookSecret(automationId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_DMP_WEBHOOK_ROTATE(automationId)}`,
       {
         method: 'POST',
         headers: getAuthHeaders(),

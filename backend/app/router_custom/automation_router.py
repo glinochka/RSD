@@ -1,9 +1,10 @@
 """Automation (client) routes for /custom."""
 from datetime import datetime, timezone
 from logging import getLogger
-from typing import Optional
+from typing import Any, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Form, HTTPException, Request, UploadFile, status
+from fastapi.responses import RedirectResponse
 from sqlalchemy import func, or_, select
 
 from .schemas import (
@@ -35,7 +36,10 @@ from .schemas import (
     CustomAutomationLoginRequest,
     CustomAutomationSettingsResponse,
     CustomAutomationSettingsValidationResponse,
-    AmocrmConnectionCreate,
+    AmocrmCredentialsUpdate,
+    AmocrmOAuthStartRequest,
+    AmocrmOAuthStartResponse,
+    AmocrmPipelineUpdate,
     AmocrmConnectionResponse,
     AmocrmTransferResponse,
     CustomAutomationSettingsUpdate,
@@ -69,12 +73,34 @@ from ..services.custom.chat_discovery_service import (
 from ..services.custom.chat_import_service import import_chats_from_file, retry_import_errors
 from ..services.custom.chat_join_service import join_pending_chats
 from ..services.custom.chat_monitoring_service import scan_chats_and_process
-from ..services.custom.amocrm_service import create_or_update_connection, get_connection, sync_lead_statuses, transfer_lead_to_amocrm
+from ..services.custom.amocrm_service import (
+    build_oauth_authorization_url,
+    create_oauth_state,
+    deactivate_connection,
+    decode_oauth_state,
+    exchange_authorization_code,
+    get_connection,
+    get_redirect_uri,
+    run_amocrm_sync_for_automation,
+    safe_return_url,
+    save_credentials,
+    serialize_connection,
+    transfer_lead_to_amocrm,
+    update_pipeline_config,
+)
 from ..services.custom.lead_warmup_service import auto_transfer_lead
 from ..services.custom.analytics_service import get_automation_dashboard
 from ..services.custom.discussion_service import run_discussion_pass
 from ..services.custom.settings_service import validate_settings
-from ..services.custom.dmp_one_service import create_order, handle_webhook, poll_pending_imports
+from ..services.custom.dmp_one_service import (
+    create_order,
+    dmp_webhook_secret_ok,
+    ensure_dmp_webhook_secret,
+    handle_webhook,
+    poll_pending_imports,
+    public_webhook_url,
+    rotate_dmp_webhook_secret,
+)
 from ..services.custom.neurocommenting_service import run_neurocommenting_pass
 from ..services.custom.prompt_service import (
     list_prompts,
@@ -95,7 +121,6 @@ from ..alembic.models import (
     ChatImportJob,
     ChatMessage,
     ChatTarget,
-    AmocrmConnection,
     CustomAutomation,
     CustomAutomationCredential,
     CustomLead,
@@ -108,6 +133,37 @@ from ..alembic.models import (
 
 logger = getLogger(__name__)
 router = APIRouter()
+
+
+async def _settings_payload(session, db_automation) -> dict:
+    if db_automation.is_dmp_one_enabled and not db_automation.dmp_webhook_secret:
+        ensure_dmp_webhook_secret(db_automation)
+        await session.commit()
+        await session.refresh(db_automation)
+    validation = await validate_settings(session, db_automation)
+    response = CustomAutomationSettingsResponse.model_validate(db_automation).model_dump()
+    response["warnings"] = validation["warnings"]
+    response["amocrm_redirect_uri"] = get_redirect_uri()
+    if db_automation.is_dmp_one_enabled and db_automation.dmp_webhook_secret:
+        response["dmp_webhook_secret"] = db_automation.dmp_webhook_secret
+        response["dmp_webhook_url"] = public_webhook_url(db_automation.id, db_automation.dmp_webhook_secret)
+    else:
+        response["dmp_webhook_secret"] = None
+        response["dmp_webhook_url"] = None
+    return response
+
+
+def _dmp_incoming_secret(request: Request, path_secret: str | None = None) -> str:
+    incoming = (path_secret or "").strip()
+    incoming = incoming or (
+        request.headers.get("X-DMP-Webhook-Secret")
+        or request.headers.get("X-Webhook-Secret")
+        or ""
+    ).strip()
+    auth = request.headers.get("Authorization") or ""
+    if auth.lower().startswith("bearer "):
+        incoming = incoming or auth[7:].strip()
+    return incoming
 
 
 @router.post("/login", response_model=CustomLoginResponse)
@@ -168,10 +224,7 @@ async def get_automation_settings(
         db_automation = await session.get(CustomAutomation, automation_id)
         if not db_automation:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Automation not found")
-        validation = await validate_settings(session, db_automation)
-        response = CustomAutomationSettingsResponse.model_validate(db_automation).model_dump()
-        response["warnings"] = validation["warnings"]
-        return response
+        return await _settings_payload(session, db_automation)
 
 
 @router.patch("/automations/{automation_id}/settings", response_model=CustomAutomationSettingsResponse)
@@ -195,13 +248,12 @@ async def update_automation_settings(
         ])
         if modules_on and db_automation.status == "draft":
             db_automation.status = "active"
+        if db_automation.is_dmp_one_enabled:
+            ensure_dmp_webhook_secret(db_automation)
         db_automation.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         await session.commit()
         await session.refresh(db_automation)
-        validation = await validate_settings(session, db_automation)
-        response = CustomAutomationSettingsResponse.model_validate(db_automation).model_dump()
-        response["warnings"] = validation["warnings"]
-        return response
+        return await _settings_payload(session, db_automation)
 
 
 @router.get(
@@ -1090,36 +1142,13 @@ async def run_dmp_poll(
     return {"status": "started"}
 
 
-def _dmp_webhook_secret_ok(request: Request) -> bool:
-    expected = (settings.DMP_ONE_WEBHOOK_SECRET or "").strip()
-    if not expected:
-        return False
-    incoming = (
-        request.headers.get("X-DMP-Webhook-Secret")
-        or request.headers.get("X-Webhook-Secret")
-        or ""
-    ).strip()
-    auth = request.headers.get("Authorization") or ""
-    if auth.lower().startswith("bearer "):
-        incoming = incoming or auth[7:].strip()
-    if not incoming or len(incoming) != len(expected):
-        return False
-    import hmac
-    return hmac.compare_digest(expected, incoming)
-
-
-@router.post("/webhooks/dmp/{automation_id}", response_model=DmpOneWebhookResponse)
-async def dmp_public_webhook(
-    automation_id: int,
-    payload: dict,
-    request: Request,
-):
-    if not _dmp_webhook_secret_ok(request):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid DMP webhook secret")
+async def _accept_dmp_webhook(automation_id: int, payload: Any, incoming_secret: str) -> DmpOneWebhookResponse:
     async with async_session_maker() as session:
         automation = await session.get(CustomAutomation, automation_id)
         if not automation:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Automation not found")
+        if not dmp_webhook_secret_ok(automation, incoming_secret):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid DMP webhook secret")
         result = await handle_webhook(session, automation_id, payload)
         return DmpOneWebhookResponse(
             created_leads=result.get("created_leads") or 0,
@@ -1128,11 +1157,30 @@ async def dmp_public_webhook(
         )
 
 
+@router.post("/webhooks/dmp/{automation_id}/{secret}", response_model=DmpOneWebhookResponse)
+async def dmp_public_webhook_with_secret(
+    automation_id: int,
+    secret: str,
+    request: Request,
+    payload: Any = Body(default=None),
+):
+    return await _accept_dmp_webhook(automation_id, payload, secret or _dmp_incoming_secret(request))
+
+
+@router.post("/webhooks/dmp/{automation_id}", response_model=DmpOneWebhookResponse)
+async def dmp_public_webhook(
+    automation_id: int,
+    request: Request,
+    payload: Any = Body(default=None),
+):
+    return await _accept_dmp_webhook(automation_id, payload, _dmp_incoming_secret(request))
+
+
 @router.post("/automations/{automation_id}/dmp/webhook", response_model=DmpOneWebhookResponse)
 async def dmp_webhook(
     automation_id: int,
-    payload: dict,
     request: Request,
+    payload: Any = Body(default=None),
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
     async with async_session_maker() as session:
@@ -1142,6 +1190,23 @@ async def dmp_webhook(
             received_count=result.get("received_count") or 0,
             purchased_count=result.get("purchased_count") or 0,
         )
+
+
+@router.post("/automations/{automation_id}/dmp/webhook-secret/rotate")
+async def rotate_automation_dmp_webhook_secret(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        db_automation = await session.get(CustomAutomation, automation_id)
+        if not db_automation:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Automation not found")
+        secret = rotate_dmp_webhook_secret(db_automation)
+        await session.commit()
+        return {
+            "dmp_webhook_secret": secret,
+            "dmp_webhook_url": public_webhook_url(automation_id, secret),
+        }
 
 
 @router.get("/automations/{automation_id}/amocrm/connection", response_model=AmocrmConnectionResponse)
@@ -1151,33 +1216,102 @@ async def get_amocrm_connection(
 ):
     async with async_session_maker() as session:
         connection = await get_connection(session, automation_id)
-        if not connection:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="AmoCRM connection not found")
-        return AmocrmConnectionResponse.model_validate(connection)
+        return AmocrmConnectionResponse.model_validate(serialize_connection(connection))
 
 
-@router.post("/automations/{automation_id}/amocrm/connection", response_model=AmocrmConnectionResponse)
-async def save_amocrm_connection(
+@router.post("/automations/{automation_id}/amocrm/credentials", response_model=AmocrmConnectionResponse)
+async def save_amocrm_credentials(
     automation_id: int,
-    payload: AmocrmConnectionCreate,
+    payload: AmocrmCredentialsUpdate,
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
     async with async_session_maker() as session:
-        connection = await create_or_update_connection(
-            session,
-            automation_id,
-            subdomain=payload.subdomain,
-            access_token=payload.access_token,
-            refresh_token=payload.refresh_token,
-            pipeline_id=payload.pipeline_id,
-            responsible_user_id=payload.responsible_user_id,
-            lead_status_id=payload.lead_status_id,
+        try:
+            connection = await save_credentials(
+                session,
+                automation_id,
+                subdomain=payload.subdomain,
+                client_id=payload.client_id,
+                client_secret=payload.client_secret,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        return AmocrmConnectionResponse.model_validate(serialize_connection(connection))
+
+
+@router.post("/automations/{automation_id}/amocrm/oauth/start", response_model=AmocrmOAuthStartResponse)
+async def start_amocrm_oauth(
+    automation_id: int,
+    payload: AmocrmOAuthStartRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        connection = await get_connection(session, automation_id)
+        if not connection or not connection.client_id or not connection.client_secret_enc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Сначала сохраните client_id и client_secret",
+            )
+        redirect_uri = get_redirect_uri()
+        if not redirect_uri:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="AMOCRM_REDIRECT_URI не задан",
+            )
+        return_url = safe_return_url(payload.return_url, automation_id)
+        state = create_oauth_state(automation_id=automation_id, return_url=return_url)
+        return AmocrmOAuthStartResponse(
+            auth_url=build_oauth_authorization_url(connection.client_id, state),
+            redirect_uri=redirect_uri,
         )
-        if not automation.is_amocrm_enabled:
-            automation.is_amocrm_enabled = True
-            automation.updated_at = datetime.now(timezone.utc)
-            await session.commit()
-        return AmocrmConnectionResponse.model_validate(connection)
+
+
+@router.get("/amocrm/oauth/callback")
+async def amocrm_oauth_callback(
+    code: str | None = None,
+    state: str | None = None,
+    referer: str | None = None,
+    error: str | None = None,
+):
+    fallback = f"{(settings.BASE_URL or '').rstrip('/')}/custom"
+    if error or not code or not state:
+        return RedirectResponse(url=f"{fallback}?amocrm=error", status_code=302)
+    try:
+        data = decode_oauth_state(state)
+        automation_id = int(data["automation_id"])
+        return_url = safe_return_url(data.get("return_url"), automation_id)
+        async with async_session_maker() as session:
+            await exchange_authorization_code(
+                session,
+                automation_id,
+                code=code,
+                referer=referer,
+            )
+        separator = "&" if "?" in return_url else "?"
+        return RedirectResponse(url=f"{return_url}{separator}amocrm=connected", status_code=302)
+    except Exception:
+        logger.exception("AmoCRM OAuth callback failed")
+        return RedirectResponse(url=f"{fallback}?amocrm=error", status_code=302)
+
+
+@router.post("/automations/{automation_id}/amocrm/connection", response_model=AmocrmConnectionResponse)
+async def save_amocrm_pipeline(
+    automation_id: int,
+    payload: AmocrmPipelineUpdate,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        try:
+            connection = await update_pipeline_config(
+                session,
+                automation_id,
+                pipeline_id=payload.pipeline_id,
+                responsible_user_id=payload.responsible_user_id,
+                lead_status_id=payload.lead_status_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        return AmocrmConnectionResponse.model_validate(serialize_connection(connection))
 
 
 @router.delete("/automations/{automation_id}/amocrm/connection", status_code=status.HTTP_204_NO_CONTENT)
@@ -1186,13 +1320,7 @@ async def delete_amocrm_connection(
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
     async with async_session_maker() as session:
-        connection = await session.scalar(
-            select(AmocrmConnection).where(AmocrmConnection.custom_automation_id == automation_id)
-        )
-        if connection:
-            connection.is_active = False
-            connection.updated_at = datetime.now(timezone.utc)
-            await session.commit()
+        await deactivate_connection(session, automation_id)
         return None
 
 
@@ -1202,7 +1330,7 @@ async def run_amocrm_sync(
     background_tasks: BackgroundTasks,
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
-    background_tasks.add_task(sync_lead_statuses, automation_id)
+    background_tasks.add_task(run_amocrm_sync_for_automation, automation_id)
     return {"status": "started"}
 
 

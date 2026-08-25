@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import CustomSelect from '../../../components/CustomSelect';
 import FeatureToggle from '../../../components/FeatureToggle';
 import customService from '../../../services/customService';
 import { useCustomAuth } from '../../../components/custom/useCustomAuth';
+import CustomAutomationIntegrationsBlock from './CustomAutomationIntegrationsBlock';
 import '../../../styles/projectSettingsPage.css';
 import '../../../styles/projectCRMPage.css';
 
@@ -15,6 +16,7 @@ const ROTATION_STRATEGIES = [
 
 const CustomAutomationSettingsPage = () => {
   const { id } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { isAdmin } = useCustomAuth();
   const [settings, setSettings] = useState(null);
   const [form, setForm] = useState({});
@@ -59,6 +61,21 @@ const CustomAutomationSettingsPage = () => {
   useEffect(() => {
     loadCredentials();
   }, [loadCredentials]);
+
+  useEffect(() => {
+    const amocrm = searchParams.get('amocrm');
+    if (!amocrm) {
+      return;
+    }
+    if (amocrm === 'connected') {
+      setSuccess('AmoCRM подключено');
+    } else if (amocrm === 'error') {
+      setError('Не удалось подключить AmoCRM');
+    }
+    const next = new URLSearchParams(searchParams);
+    next.delete('amocrm');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
@@ -224,6 +241,14 @@ const CustomAutomationSettingsPage = () => {
           </button>
         </div>
       </form>
+
+      <CustomAutomationIntegrationsBlock
+        automationId={id}
+        settings={settings}
+        onReloadSettings={loadSettings}
+        onError={setError}
+        onMessage={setSuccess}
+      />
 
       {isAdmin ? (
         <div className="settings-section">

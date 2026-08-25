@@ -2101,6 +2101,7 @@ class CustomAutomation(Base):
         Boolean, default=True, server_default="true", nullable=False
     )
     lead_manager_contact: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    dmp_webhook_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     created_by_admin_id: Mapped[int | None] = mapped_column(
         ForeignKey("custom_admins.id", ondelete="SET NULL"), nullable=True, index=True
@@ -2614,8 +2615,11 @@ class AmocrmConnection(Base):
         ForeignKey("custom_automations.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
     )
     subdomain: Mapped[str] = mapped_column(String(128), nullable=False)
-    access_token_hash: Mapped[str] = mapped_column(String(255), nullable=False)
-    refresh_token_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    client_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    client_secret_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    access_token_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    refresh_token_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     pipeline_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     responsible_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     lead_status_id: Mapped[str | None] = mapped_column(String(128), nullable=True)

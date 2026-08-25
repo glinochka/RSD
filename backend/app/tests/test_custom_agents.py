@@ -721,3 +721,220 @@ class TestShilling:
             )
         )
         assert row is not None
+
+
+class TestAmocrmOAuthAndDmpWebhook:
+    async def test_oauth_start_callback_stores_tokens(
+        self,
+        client: AsyncClient,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+        client_token: str,
+    ):
+        from urllib.parse import parse_qs, urlparse
+
+        from app.alembic.models import AmocrmConnection
+        from app.config import settings
+
+        automation_id = custom_automation.id
+        headers = {"Authorization": f"Bearer {client_token}"}
+        custom_automation.is_amocrm_enabled = True
+        await test_session.commit()
+
+        class FakeResponse:
+            status_code = 200
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "access_token": "access-from-code",
+                    "refresh_token": "refresh-from-code",
+                    "expires_in": 86400,
+                }
+
+        class FakeHttpClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def post(self, url, json=None):
+                assert "oauth2/access_token" in url
+                assert json["grant_type"] == "authorization_code"
+                assert json["code"] == "auth-code"
+                return FakeResponse()
+
+        with patch.object(
+            settings,
+            "AMOCRM_REDIRECT_URI",
+            "https://app.example.com/api/custom/amocrm/oauth/callback",
+        ), patch(
+            "app.services.custom.amocrm_service.httpx.AsyncClient",
+            return_value=FakeHttpClient(),
+        ):
+            creds = await client.post(
+                f"/api/custom/automations/{automation_id}/amocrm/credentials",
+                headers=headers,
+                json={
+                    "subdomain": "company",
+                    "client_id": "cid-1",
+                    "client_secret": "csecret-1",
+                },
+            )
+            assert creds.status_code == 200, creds.text
+            started = await client.post(
+                f"/api/custom/automations/{automation_id}/amocrm/oauth/start",
+                headers=headers,
+                json={
+                    "return_url": f"https://app.example.com/custom/automations/{automation_id}/settings",
+                },
+            )
+            assert started.status_code == 200, started.text
+            auth_url = started.json()["auth_url"]
+            state = parse_qs(urlparse(auth_url).query)["state"][0]
+            callback = await client.get(
+                "/api/custom/amocrm/oauth/callback",
+                params={
+                    "code": "auth-code",
+                    "state": state,
+                    "referer": "https://company.amocrm.ru",
+                },
+                follow_redirects=False,
+            )
+            assert callback.status_code == 302
+            assert "amocrm=connected" in (callback.headers.get("location") or "")
+
+        test_session.expire_all()
+        connection = await test_session.scalar(
+            select(AmocrmConnection).where(AmocrmConnection.custom_automation_id == automation_id)
+        )
+        assert connection is not None
+        assert connection.is_active is True
+        assert "access-from-code" in (connection.access_token_hash or "")
+        assert "refresh-from-code" in (connection.refresh_token_hash or "")
+
+    async def test_refresh_persists_new_token_pair(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from datetime import datetime
+
+        from app.alembic.models import AmocrmConnection
+        from app.services.custom.amocrm_service import _refresh_and_persist
+
+        connection = AmocrmConnection(
+            custom_automation_id=custom_automation.id,
+            subdomain="company",
+            client_id="cid-1",
+            client_secret_enc="csecret",
+            access_token_hash="old-access",
+            refresh_token_hash="old-refresh",
+            expires_at=datetime(2020, 1, 1),
+            is_active=True,
+        )
+        test_session.add(connection)
+        await test_session.commit()
+        await test_session.refresh(connection)
+
+        class FakeResponse:
+            status_code = 200
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "access_token": "rotated-access",
+                    "refresh_token": "rotated-refresh",
+                    "expires_in": 3600,
+                }
+
+        class FakeHttpClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def post(self, url, json=None):
+                assert json["grant_type"] == "refresh_token"
+                assert json["refresh_token"] == "old-refresh"
+                return FakeResponse()
+
+        with patch(
+            "app.services.custom.amocrm_service.httpx.AsyncClient",
+            return_value=FakeHttpClient(),
+        ):
+            ok = await _refresh_and_persist(test_session, connection)
+        assert ok is True
+        await test_session.refresh(connection)
+        from app.utils.crypto import decrypt_token
+        assert decrypt_token(connection.access_token_hash) == "rotated-access"
+        assert decrypt_token(connection.refresh_token_hash) == "rotated-refresh"
+
+    async def test_dmp_webhook_array_creates_lead_and_dedups(
+        self,
+        client: AsyncClient,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+        client_token: str,
+    ):
+        from app.config import settings
+
+        automation_id = custom_automation.id
+        headers = {"Authorization": f"Bearer {client_token}"}
+        with patch.object(settings, "BASE_URL", "https://app.example.com"):
+            updated = await client.patch(
+                f"/api/custom/automations/{automation_id}/settings",
+                headers=headers,
+                json={"is_dmp_one_enabled": True},
+            )
+            assert updated.status_code == 200, updated.text
+            data = updated.json()
+            secret = data["dmp_webhook_secret"]
+            assert secret
+            assert secret in (data["dmp_webhook_url"] or "")
+
+            payload = [
+                {
+                    "phone": "79001234567",
+                    "website": "example.com",
+                    "ip": "192.168.1.1",
+                    "page": "https://example.com/landing",
+                }
+            ]
+            first = await client.post(
+                f"/api/custom/webhooks/dmp/{automation_id}/{secret}",
+                json=payload,
+            )
+            assert first.status_code == 200, first.text
+            assert first.json()["created_leads"] == 1
+
+            second = await client.post(
+                f"/api/custom/webhooks/dmp/{automation_id}/{secret}",
+                json=payload,
+            )
+            assert second.status_code == 200, second.text
+            assert second.json()["created_leads"] == 0
+
+        test_session.expire_all()
+        total = await test_session.scalar(
+            select(func.count(CustomLead.id)).where(
+                CustomLead.custom_automation_id == automation_id,
+                CustomLead.source == "dmp_one",
+                CustomLead.contact_value == "79001234567",
+            )
+        )
+        assert total == 1
+        lead = await test_session.scalar(
+            select(CustomLead).where(
+                CustomLead.custom_automation_id == automation_id,
+                CustomLead.contact_value == "79001234567",
+            )
+        )
+        assert lead.company == "example.com"
+        assert (lead.dmp_raw_data or {}).get("website") == "example.com"

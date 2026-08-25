@@ -1,7 +1,9 @@
 """DMP.one integration: create orders, receive webhooks/poll results, warm leads."""
+import hmac
 import json
 import logging
 import re
+import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -13,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .rotation_service import select_account_for_action
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import execute_with_telegram_retry
-from ...alembic.models import CustomLead, CustomLeadMessage, CustomPrompt, DmpOneImport, PromptType, SocialAccount
+from ...alembic.models import CustomAutomation, CustomLead, CustomLeadMessage, CustomPrompt, DmpOneImport, PromptType, SocialAccount
 from ...config import settings
 from ...services.ai_authoring import ai_client
 
@@ -94,11 +96,43 @@ async def _generate_outreach_message(
         return ""
 
 
-def _callback_url(automation_id: int) -> str:
-    base = settings.BASE_URL or ""
-    if not base:
+def public_webhook_url(automation_id: int, secret: str | None) -> str:
+    base = (settings.BASE_URL or "").rstrip("/")
+    if not base or not secret:
         return ""
-    return f"{base.rstrip('/')}/api/custom/automations/{automation_id}/dmp/webhook"
+    return f"{base}/api/custom/webhooks/dmp/{automation_id}/{secret}"
+
+
+def ensure_dmp_webhook_secret(automation: CustomAutomation) -> str:
+    if automation.dmp_webhook_secret:
+        return automation.dmp_webhook_secret
+    automation.dmp_webhook_secret = secrets.token_urlsafe(24)
+    return automation.dmp_webhook_secret
+
+
+def rotate_dmp_webhook_secret(automation: CustomAutomation) -> str:
+    automation.dmp_webhook_secret = secrets.token_urlsafe(24)
+    return automation.dmp_webhook_secret
+
+
+def _secrets_match(left: str, right: str) -> bool:
+    if not left or not right or len(left) != len(right):
+        return False
+    return hmac.compare_digest(left, right)
+
+
+def dmp_webhook_secret_ok(automation: CustomAutomation | None, incoming: str) -> bool:
+    incoming = (incoming or "").strip()
+    if not incoming:
+        return False
+    if automation and _secrets_match(incoming, (automation.dmp_webhook_secret or "").strip()):
+        return True
+    return _secrets_match(incoming, (settings.DMP_ONE_WEBHOOK_SECRET or "").strip())
+
+
+def _callback_url(automation: CustomAutomation) -> str:
+    secret = ensure_dmp_webhook_secret(automation)
+    return public_webhook_url(automation.id, secret)
 
 
 async def create_order(
@@ -112,11 +146,15 @@ async def create_order(
     if not settings.DMP_ONE_API_BASE_URL or not settings.DMP_ONE_API_KEY:
         raise RuntimeError("DMP.one is not configured (DMP_ONE_API_BASE_URL / DMP_ONE_API_KEY)")
 
+    automation = await session.get(CustomAutomation, automation_id)
+    if not automation:
+        raise RuntimeError("Automation not found")
+
     payload = {
         "type": import_type,
         "source_url": source_url,
         "count": requested_count,
-        "callback_url": _callback_url(automation_id),
+        "callback_url": _callback_url(automation),
     }
     try:
         async with _client() as client:
@@ -179,6 +217,25 @@ def _lead_contact(data: dict) -> tuple[str, str]:
     if phone:
         return "phone", str(phone)
     return "unknown", "unknown"
+
+
+def _normalize_webhook_payload(payload: Any) -> dict[str, Any]:
+    if isinstance(payload, list):
+        return {"contacts": [item for item in payload if isinstance(item, dict)], "type": "webhook"}
+    if isinstance(payload, dict):
+        return payload
+    return {"contacts": []}
+
+
+def _extract_leads_data(results: dict[str, Any]) -> list[dict[str, Any]]:
+    leads_data = results.get("leads") or results.get("data") or results.get("contacts") or results.get("items") or []
+    if isinstance(leads_data, dict):
+        leads_data = [leads_data]
+    if not isinstance(leads_data, list):
+        leads_data = []
+    if not leads_data and (results.get("phone") or results.get("phone_number") or results.get("telegram")):
+        leads_data = [results]
+    return [item for item in leads_data if isinstance(item, dict)]
 
 
 async def _send_outreach(
@@ -251,6 +308,17 @@ async def _create_leads_from_data(
     created = 0
     for data in leads_data:
         contact_type, contact_value = _lead_contact(data)
+        if contact_type == "unknown" or not contact_value or contact_value == "unknown":
+            continue
+        exists = await session.scalar(
+            select(CustomLead.id).where(
+                CustomLead.custom_automation_id == automation_id,
+                CustomLead.contact_type == contact_type,
+                CustomLead.contact_value == contact_value,
+            )
+        )
+        if exists:
+            continue
         lead = CustomLead(
             custom_automation_id=automation_id,
             source="dmp_one",
@@ -258,8 +326,8 @@ async def _create_leads_from_data(
             contact_type=contact_type,
             contact_value=contact_value,
             full_name=data.get("name") or data.get("full_name") or data.get("fio"),
-            company=data.get("company") or data.get("organization") or data.get("org"),
-            position=data.get("position") or data.get("job"),
+            company=data.get("company") or data.get("organization") or data.get("org") or data.get("website"),
+            position=data.get("position") or data.get("job") or data.get("page"),
             dmp_raw_data=data,
             status="new",
             created_at=_utc_now(),
@@ -281,10 +349,7 @@ async def process_order_results(
     dmp_import: DmpOneImport,
     results: dict[str, Any],
 ) -> dict[str, Any]:
-    leads_data = results.get("leads") or results.get("data") or results.get("contacts") or []
-    if not isinstance(leads_data, list):
-        leads_data = []
-
+    leads_data = _extract_leads_data(results)
     received = int(results.get("received_count") or results.get("count") or len(leads_data))
     purchased = int(results.get("purchased_count") or results.get("bought_count") or len(leads_data))
     cost = results.get("cost") or results.get("cost_rub") or results.get("price")
@@ -304,6 +369,7 @@ async def process_order_results(
     await session.commit()
 
     created = await _create_leads_from_data(session, automation_id, dmp_import, leads_data)
+    await session.commit()
 
     return {"created_leads": created, "received_count": received, "purchased_count": purchased}
 
@@ -311,8 +377,9 @@ async def process_order_results(
 async def handle_webhook(
     session: AsyncSession,
     automation_id: int,
-    payload: dict[str, Any],
+    payload: Any,
 ) -> dict[str, Any]:
+    payload = _normalize_webhook_payload(payload)
     external_order_id = str(
         payload.get("order_id")
         or payload.get("id")
