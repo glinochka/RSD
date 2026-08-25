@@ -220,7 +220,7 @@ async def process_chat_target(
     *,
     max_replies_per_run: int = 10,
 ) -> dict[str, Any]:
-    if chat_target.mode == ChatMode.INACTIVE.value:
+    if chat_target.mode in {ChatMode.INACTIVE.value, ChatMode.SHILLING.value}:
         return {"status": "skipped", "reason": "mode"}
     if chat_target.join_status != ChatJoinStatus.JOINED.value:
         return {"status": "skipped", "reason": "not_joined"}

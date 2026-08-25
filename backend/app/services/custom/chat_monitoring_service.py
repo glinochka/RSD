@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .rotation_service import select_account_for_action
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import execute_with_telegram_retry
-from ...alembic.models import ChatJoinStatus, ChatMessage, ChatTarget, CustomAutomation, CustomLead, CustomLeadMessage, CustomPrompt, LeadStatus, PromptType, SocialAccount
+from ...alembic.models import ChatJoinStatus, ChatMessage, ChatMode, ChatTarget, CustomAutomation, CustomLead, CustomLeadMessage, CustomPrompt, LeadStatus, PromptType, SocialAccount
 from ...config import settings
 from ...services.ai_authoring import ai_client
 
@@ -366,7 +366,8 @@ async def scan_chats_and_process(
                 ChatTarget.custom_automation_id == automation_id,
                 ChatTarget.is_active.is_(True),
                 ChatTarget.join_status == ChatJoinStatus.JOINED.value,
-                ChatTarget.mode != "inactive",
+                ChatTarget.mode != ChatMode.INACTIVE.value,
+                ChatTarget.mode != ChatMode.SHILLING.value,
             )
         )
         chats = result.scalars().all()

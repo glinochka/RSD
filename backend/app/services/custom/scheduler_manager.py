@@ -25,6 +25,7 @@ from .discussion_service import run_discussion_pass
 from .amocrm_service import run_amocrm_sync_for_automation
 from .chat_discovery_service import run_pending_discovery_for_automation
 from .lead_warmup_service import run_lead_warmup_pass
+from .shilling_service import run_shilling_pass
 
 logger = getLogger(__name__)
 
@@ -62,6 +63,7 @@ class CustomAutomationScheduler:
             "join": settings.CUSTOM_JOIN_INTERVAL_SECONDS,
             "discovery": settings.CUSTOM_DISCOVERY_INTERVAL_SECONDS,
             "neurocommenting": settings.CUSTOM_NEUROCOMMENTING_INTERVAL_SECONDS,
+            "shilling": settings.CUSTOM_SHILLING_INTERVAL_SECONDS,
             "discussion": settings.CUSTOM_DISCUSSION_INTERVAL_SECONDS,
             "lead_warmup": settings.CUSTOM_LEAD_WARMUP_INTERVAL_SECONDS,
             "dmp_poll": settings.DMP_ONE_POLL_INTERVAL_SECONDS,
@@ -75,6 +77,7 @@ class CustomAutomationScheduler:
             "join": run_join_pending_for_automation,
             "discovery": run_pending_discovery_for_automation,
             "neurocommenting": run_neurocommenting_pass,
+            "shilling": run_shilling_pass,
             "discussion": run_discussion_pass,
             "lead_warmup": run_lead_warmup_pass,
             "dmp_poll": poll_pending_imports,
@@ -90,6 +93,7 @@ class CustomAutomationScheduler:
                 automation.is_digital_footprint_enabled,
                 automation.is_dmp_one_enabled,
                 automation.is_amocrm_enabled,
+                automation.is_shilling_enabled,
             ]
         )
 
@@ -98,8 +102,10 @@ class CustomAutomationScheduler:
         jobs = {"join", "discovery"}
         if automation.is_chat_monitoring_enabled:
             jobs.add("monitor")
-        if automation.is_neurocommenting_enabled:
+        if automation.is_neurocommenting_enabled or automation.is_shilling_enabled:
             jobs.add("neurocommenting")
+        if automation.is_shilling_enabled:
+            jobs.add("shilling")
         if automation.is_digital_footprint_enabled:
             jobs.add("discussion")
         if automation.is_chat_monitoring_enabled or automation.is_dmp_one_enabled:

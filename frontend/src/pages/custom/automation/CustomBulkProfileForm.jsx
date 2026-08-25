@@ -6,6 +6,7 @@ const ACCOUNT_CLASSES = [
   { value: 'one_day', label: 'Однодневный' },
   { value: 'mid', label: 'Средний' },
   { value: 'trusted', label: 'Доверенный' },
+  { value: 'shilling', label: 'Шиллинг' },
 ];
 
 const STATUSES = [

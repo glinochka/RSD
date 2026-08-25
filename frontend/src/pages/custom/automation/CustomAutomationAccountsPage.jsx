@@ -10,12 +10,14 @@ const ACCOUNT_CLASSES = [
   { value: 'one_day', label: 'Однодневный' },
   { value: 'mid', label: 'Средний' },
   { value: 'trusted', label: 'Доверенный' },
+  { value: 'shilling', label: 'Шиллинг' },
 ];
 
 const CLASS_STATUS = {
   one_day: 'crm-status--pending',
   mid: 'crm-status--completed',
   trusted: 'crm-status--confirmed',
+  shilling: 'crm-status--cancelled',
 };
 
 const STATUSES = [
@@ -209,6 +211,10 @@ const CustomAutomationAccountsPage = () => {
           </div>
         </div>
       ) : null}
+
+      <p className="crm-subtitle">
+        Класс «Шиллинг» только для парных диалогов: не комментинг, не ЛС. Нужны минимум два разных аккаунта — один юзербот сам себе не отвечает.
+      </p>
 
       <CustomBulkProfileForm automationId={id} onSuccess={loadAccounts} />
 

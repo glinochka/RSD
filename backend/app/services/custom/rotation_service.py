@@ -1,6 +1,6 @@
 """Account selection (rotation) and daily limits for /custom automations."""
 import random
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from logging import getLogger
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -16,6 +16,7 @@ ACTION_ALLOWED_CLASSES = {
     "commenting": {AccountClass.ONE_DAY.value, AccountClass.MID.value, AccountClass.TRUSTED.value},
     "dm": {AccountClass.TRUSTED.value, AccountClass.MID.value},
     "discussion": {AccountClass.ONE_DAY.value, AccountClass.MID.value, AccountClass.TRUSTED.value},
+    "shilling": {AccountClass.SHILLING.value},
 }
 
 
@@ -23,15 +24,22 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def _tz(tz_name: str = "Europe/Moscow"):
+    try:
+        return ZoneInfo(tz_name)
+    except Exception:
+        return timezone(timedelta(hours=3))
+
+
 def _local_today(tz_name: str = "Europe/Moscow") -> datetime.date:
-    return datetime.now(ZoneInfo(tz_name)).date()
+    return datetime.now(_tz(tz_name)).date()
 
 
 def _needs_reset(reset_at: datetime | None, tz_name: str = "Europe/Moscow") -> bool:
     if not reset_at:
         return True
     try:
-        reset_date = reset_at.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(tz_name)).date()
+        reset_date = reset_at.replace(tzinfo=timezone.utc).astimezone(_tz(tz_name)).date()
     except Exception:
         reset_date = reset_at.date()
     return reset_date != _local_today(tz_name)
@@ -130,16 +138,20 @@ async def select_account_for_action(
     action_type: str,
     thread_id: int | None = None,
     exclude_banned: bool = True,
+    exclude_account_ids: set[int] | None = None,
+    consume_quota: bool = True,
 ) -> SocialAccount | None:
     """Pick an account from the default pool respecting class, rotation strategy and daily limits.
 
     Args:
         session: active async SQLAlchemy session.
         automation: CustomAutomation instance or its id.
-        action_type: one of "commenting", "dm", "discussion".
+        action_type: one of "commenting", "dm", "discussion", "shilling".
         thread_id: optional lead/thread id. For ``dm`` and ``discussion`` an already assigned
             account is returned if it is still eligible.
         exclude_banned: skip banned accounts.
+        exclude_account_ids: never return these account ids (used to pick a second shilling speaker).
+        consume_quota: increment daily_messages_sent / last_used_at. False for read-only scans.
 
     Returns:
         A SocialAccount instance or None if no eligible account exists.
@@ -168,6 +180,8 @@ async def select_account_for_action(
     _reset_counters_if_needed(accounts)
 
     eligible = _filter_eligible(rows, allowed_classes, automation_obj.max_daily_messages_per_account, exclude_banned)
+    if exclude_account_ids:
+        eligible = [row for row in eligible if row[1].id not in exclude_account_ids]
     if not eligible:
         logger.info("No eligible accounts for automation %s action %s", automation_id, action_type)
         return None
@@ -177,9 +191,12 @@ async def select_account_for_action(
         if lead and lead.assigned_account_id:
             assigned = await session.get(SocialAccount, lead.assigned_account_id)
             if assigned and assigned.is_active and not (exclude_banned and assigned.is_banned):
-                if assigned.account_class in allowed_classes and assigned.daily_messages_sent < automation_obj.max_daily_messages_per_account:
-                    assigned.daily_messages_sent += 1
-                    assigned.last_used_at = _utc_now()
+                if exclude_account_ids and assigned.id in exclude_account_ids:
+                    pass
+                elif assigned.account_class in allowed_classes and assigned.daily_messages_sent < automation_obj.max_daily_messages_per_account:
+                    if consume_quota:
+                        assigned.daily_messages_sent += 1
+                        assigned.last_used_at = _utc_now()
                     return assigned
                 logger.info(
                     "Assigned account %s for thread %s is not eligible (class=%s, sent=%s)",
@@ -197,10 +214,58 @@ async def select_account_for_action(
     else:
         selected = _select_round_robin(eligible)
 
-    selected.daily_messages_sent += 1
-    selected.last_used_at = _utc_now()
+    if consume_quota:
+        selected.daily_messages_sent += 1
+        selected.last_used_at = _utc_now()
 
     if thread_id and lead:
         lead.assigned_account_id = selected.id
 
+    return selected
+
+
+def accounts_are_distinct(*accounts: SocialAccount) -> bool:
+    """True when every account is a different userbot (id, session file, phone)."""
+    live = [account for account in accounts if account is not None]
+    if len(live) < 2:
+        return False
+    ids = [account.id for account in live]
+    if len(ids) != len(set(ids)):
+        return False
+    sessions = [account.session_file_path for account in live if account.session_file_path]
+    if len(sessions) != len(set(sessions)):
+        return False
+    phones = [account.phone_number for account in live if account.phone_number]
+    if len(phones) != len(set(phones)):
+        return False
+    return True
+
+
+async def select_distinct_accounts_for_action(
+    session: AsyncSession,
+    automation: CustomAutomation | int,
+    action_type: str,
+    count: int = 2,
+    exclude_banned: bool = True,
+    exclude_account_ids: set[int] | None = None,
+    consume_quota: bool = True,
+) -> list[SocialAccount]:
+    """Pick ``count`` distinct accounts. Returns [] if a full distinct set cannot be formed."""
+    selected: list[SocialAccount] = []
+    excluded = set(exclude_account_ids or set())
+    for _ in range(count):
+        account = await select_account_for_action(
+            session,
+            automation,
+            action_type,
+            exclude_banned=exclude_banned,
+            exclude_account_ids=excluded,
+            consume_quota=consume_quota,
+        )
+        if account is None:
+            return []
+        selected.append(account)
+        excluded.add(account.id)
+    if len(selected) < count or not accounts_are_distinct(*selected):
+        return []
     return selected

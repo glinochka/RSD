@@ -22,6 +22,8 @@ const ACTION_LABELS = {
   discussion: 'Обсуждения',
   dm: 'ЛС',
   chat_monitoring: 'Мониторинг',
+  shilling_chat: 'Шиллинг в чате',
+  shilling_post: 'Шиллинг под постом',
 };
 
 const CustomAutomationDashboardPage = () => {

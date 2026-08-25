@@ -19,6 +19,7 @@ const MODES = [
   { value: 'monitoring', label: 'Мониторинг' },
   { value: 'neurocommenting', label: 'Нейрокомментинг' },
   { value: 'discussion', label: 'Обсуждения' },
+  { value: 'shilling', label: 'Шиллинг' },
   { value: 'inactive', label: 'Неактивен' },
 ];
 
@@ -187,6 +188,11 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
             reply_probability: (Number(editing.reply_probability) || 0) / 100,
           },
         });
+      } else if (editing.mode === 'shilling') {
+        await customService.updateChatShillingConfig(id, chatId, {
+          mode: editing.mode,
+          shillingConfig: {},
+        });
       } else {
         await customService.updateChatNeurocommentingConfig(id, chatId, {
           mode: editing.mode,
@@ -206,7 +212,10 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
       <div className="crm-header">
         <div>
           <h1 className="crm-title">Чаты</h1>
-          <p className="crm-subtitle">Залейте Excel со ссылками — система сама вступает. Автопоиск, если списка нет.</p>
+          <p className="crm-subtitle">
+            Залейте Excel со ссылками — система сама вступает. Автопоиск, если списка нет.
+            Под постами нейрокомментинг и шиллинг не пересекаются: действие срабатывает примерно в 20% постов.
+          </p>
         </div>
         <div className="crm-stats">
           <div className="crm-stat">
@@ -352,6 +361,11 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
                           </div>
                         </>
                       ) : null}
+                      {editing.mode === 'shilling' ? (
+                        <p className="form-hint">
+                          Два аккаунта класса «шиллинг» пишут нативный диалог. Случайно с 8:00 до 20:00 МСК, не каждый день (40%). Один юзербот сам себе не отвечает.
+                        </p>
+                      ) : null}
                       {editing.mode === 'discussion' ? (
                         <>
                           <div className="form-group">
@@ -392,6 +406,7 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
                         {chat.mode === 'discussion'
                           ? ` · часы ${formatActivityHours(chat.discussion_config) || 'все'} · ${Math.round((chat.discussion_config?.reply_probability || 0) * 100)}%`
                           : ''}
+                        {chat.mode === 'shilling' ? ' · 8:00–20:00 МСК · 40% в день' : ''}
                         {` · попыток ${chat.join_attempts}`}
                       </p>
                       <div className="crm-item-actions">

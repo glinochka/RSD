@@ -137,6 +137,7 @@ class CustomAutomationSettingsResponse(BaseModel):
     is_digital_footprint_enabled: bool
     is_dmp_one_enabled: bool
     is_amocrm_enabled: bool
+    is_shilling_enabled: bool
     lead_manager_contact: str | None = None
     status: str = "draft"
     warnings: list[str] = []
@@ -156,6 +157,7 @@ class CustomAutomationSettingsUpdate(BaseModel):
     is_digital_footprint_enabled: bool | None = None
     is_dmp_one_enabled: bool | None = None
     is_amocrm_enabled: bool | None = None
+    is_shilling_enabled: bool | None = None
     lead_manager_contact: str | None = None
     status: str | None = None
 
@@ -281,6 +283,7 @@ class ChatTargetUpdate(BaseModel):
     mode: Optional[str] = None
     neurocommenting_config: Optional[dict] = None
     discussion_config: Optional[dict] = None
+    shilling_config: Optional[dict] = None
 
 
 class NeurocommentingRunResponse(BaseModel):
@@ -291,6 +294,11 @@ class NeurocommentingRunResponse(BaseModel):
 class DiscussionRunResponse(BaseModel):
     chats_processed: int
     replies_sent: int
+
+
+class ShillingRunResponse(BaseModel):
+    chats_processed: int
+    dialogues_sent: int
 
 
 class DmpOneImportCreate(BaseModel):
@@ -423,6 +431,7 @@ class ChatTargetResponse(BaseModel):
     last_scanned_at: Optional[datetime] = None
     neurocommenting_config: Optional[dict] = None
     discussion_config: Optional[dict] = None
+    shilling_config: Optional[dict] = None
     created_at: datetime
     updated_at: datetime
 

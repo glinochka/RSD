@@ -172,6 +172,28 @@ DEFAULT_PROMPTS: dict[str, dict[str, Any]] = {
         "max_tokens": 200,
         "response_format": "json",
     },
+    PromptType.SHILLING.value: {
+        "name": "Shilling",
+        "content": """Ты пишешь нативный диалог двух незнакомцев в Telegram (партизанский маркетинг).
+Первый жалуется или спрашивает совет по теме оффера. Второй отвечает как живой человек из своего опыта и мягко рекомендует сервис заказчика.
+Без ссылок, без хештегов, без рекламного тона, без «всем советую». 1-2 предложения на реплику.
+Если уместно, второй может предложить скинуть контакт в личку.
+
+Индустрия/оффер: {industry}
+Клиент: {client_name}
+Чат: {chat_title}
+Контекст поста (может быть пусто): {post_text}
+
+Верни ТОЛЬКО JSON:
+{
+  "setup": "реплика первого",
+  "reply": "реплика второго"
+}""",
+        "model": "deepseek-chat",
+        "temperature": 0.85,
+        "max_tokens": 300,
+        "response_format": "json",
+    },
 }
 
 
@@ -184,6 +206,7 @@ PROMPT_VARIABLES: dict[str, list[str]] = {
     PromptType.CHAT_RELEVANCE.value: ["query", "title", "description", "chat_type", "participants_count"],
     PromptType.LEAD_QUALIFICATION.value: ["history", "last_incoming"],
     PromptType.PROFILE_BIO.value: ["industry", "name"],
+    PromptType.SHILLING.value: ["industry", "client_name", "chat_title", "post_text"],
 }
 
 
@@ -216,6 +239,7 @@ async def create_default_prompts(session: AsyncSession, automation_id: int) -> N
 
 
 async def list_prompts(session: AsyncSession, automation_id: int) -> list[CustomPrompt]:
+    await create_default_prompts(session, automation_id)
     result = await session.execute(
         select(CustomPrompt).where(
             CustomPrompt.custom_automation_id == automation_id,

@@ -83,6 +83,7 @@ const CustomAutomationSettingsPage = () => {
         max_daily_messages_per_account: form.max_daily_messages_per_account,
         is_chat_monitoring_enabled: form.is_chat_monitoring_enabled,
         is_neurocommenting_enabled: form.is_neurocommenting_enabled,
+        is_shilling_enabled: form.is_shilling_enabled,
         is_digital_footprint_enabled: form.is_digital_footprint_enabled,
         is_dmp_one_enabled: form.is_dmp_one_enabled,
         is_amocrm_enabled: form.is_amocrm_enabled,
@@ -175,6 +176,7 @@ const CustomAutomationSettingsPage = () => {
           {[
             { name: 'is_chat_monitoring_enabled', label: 'Мониторинг чатов и перехват заявок' },
             { name: 'is_neurocommenting_enabled', label: 'Нейрокомментинг' },
+            { name: 'is_shilling_enabled', label: 'Шиллинг (парный нативный диалог)' },
             { name: 'is_digital_footprint_enabled', label: 'Цифровой след в дискуссиях' },
             { name: 'is_dmp_one_enabled', label: 'DMP.one' },
             { name: 'is_amocrm_enabled', label: 'AmoCRM (только фулфилмент)' },
@@ -192,6 +194,9 @@ const CustomAutomationSettingsPage = () => {
               </label>
             </div>
           ))}
+          <span className="form-hint">
+            Шиллинг: два аккаунта класса «шиллинг» общаются как живые люди. В чатах — случайно с 8:00 до 20:00 МСК с вероятностью 40% (не каждый день). Под постами — общее действие с нейрокомментингом на ~20% постов, никогда оба сразу.
+          </span>
         </div>
 
         <div className="settings-section">
@@ -210,6 +215,7 @@ const CustomAutomationSettingsPage = () => {
             </select>
             <span className="form-hint">
               Только для нейрокомментинга и массовых публичных действий. Диалог с лидом всегда ведёт один аккаунт.
+              Шиллинг использует отдельный класс аккаунтов (минимум два) и не пересекается с нейрокомментингом под одним постом.
             </span>
           </div>
           <div className="form-group">

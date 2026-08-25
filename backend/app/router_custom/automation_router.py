@@ -83,6 +83,7 @@ from ..services.custom.prompt_service import (
     toggle_prompt,
     update_prompt,
 )
+from ..services.custom.shilling_service import run_shilling_pass
 from ..utils.JWT import create_access_token
 from ..utils.security import verify_password
 from ..alembic.database import async_session_maker
@@ -190,6 +191,7 @@ async def update_automation_settings(
             db_automation.is_digital_footprint_enabled,
             db_automation.is_dmp_one_enabled,
             db_automation.is_amocrm_enabled,
+            db_automation.is_shilling_enabled,
         ])
         if modules_on and db_automation.status == "draft":
             db_automation.status = "active"
@@ -652,6 +654,37 @@ async def run_discussion(
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
     background_tasks.add_task(run_discussion_pass, automation_id)
+    return {"status": "started"}
+
+
+@router.patch("/automations/{automation_id}/chats/{chat_id}/shilling-config", response_model=ChatTargetResponse)
+async def update_chat_shilling_config(
+    automation_id: int,
+    chat_id: int,
+    payload: ChatTargetUpdate,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        chat = await session.get(ChatTarget, chat_id)
+        if not chat or chat.custom_automation_id != automation_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat not found")
+        if payload.mode is not None:
+            chat.mode = payload.mode
+        if payload.shilling_config is not None:
+            chat.shilling_config = payload.shilling_config
+        chat.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        await session.commit()
+        await session.refresh(chat)
+        return ChatTargetResponse.model_validate(chat)
+
+
+@router.post("/automations/{automation_id}/chats/shilling")
+async def run_shilling(
+    automation_id: int,
+    background_tasks: BackgroundTasks,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    background_tasks.add_task(run_shilling_pass, automation_id)
     return {"status": "started"}
 
 

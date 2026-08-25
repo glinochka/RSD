@@ -458,6 +458,29 @@ const customService = {
     return handleResponse(response);
   },
 
+  async updateChatShillingConfig(automationId, chatId, { mode, shillingConfig }) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CHAT_SHILLING_CONFIG(automationId, chatId)}`,
+      {
+        method: 'PATCH',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ mode, shilling_config: shillingConfig }),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async runShilling(automationId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CHAT_SHILLING_RUN(automationId)}`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      },
+    );
+    return handleResponse(response);
+  },
+
   async createDiscoveryTask(automationId, data) {
     const response = await fetch(
       `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CHAT_DISCOVERY(automationId)}`,

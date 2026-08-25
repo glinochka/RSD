@@ -1991,12 +1991,14 @@ class AccountClass(str, Enum):
     ONE_DAY = "one_day"
     MID = "mid"
     TRUSTED = "trusted"
+    SHILLING = "shilling"
 
 
 class ChatMode(str, Enum):
     MONITORING = "monitoring"
     NEUROCOMMENTING = "neurocommenting"
     DISCUSSION = "discussion"
+    SHILLING = "shilling"
     INACTIVE = "inactive"
 
 
@@ -2024,6 +2026,7 @@ class PromptType(str, Enum):
     PROFILE_BIO = "profile_bio"
     LEAD_QUALIFICATION = "lead_qualification"
     DMP_OUTREACH = "dmp_outreach"
+    SHILLING = "shilling"
 
 
 class LeadStatus(str, Enum):
@@ -2081,6 +2084,9 @@ class CustomAutomation(Base):
         Boolean, default=False, server_default="false", nullable=False
     )
     is_amocrm_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    is_shilling_enabled: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", nullable=False
     )
 
@@ -2409,6 +2415,9 @@ class ChatTarget(Base):
         JSONB, default=dict, nullable=False
     )
     discussion_config: Mapped[dict] = mapped_column(
+        JSONB, default=dict, nullable=False
+    )
+    shilling_config: Mapped[dict] = mapped_column(
         JSONB, default=dict, nullable=False
     )
     join_status: Mapped[str] = mapped_column(

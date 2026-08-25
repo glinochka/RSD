@@ -6,6 +6,7 @@ const MODES = [
   { value: 'monitoring', label: 'Мониторинг' },
   { value: 'neurocommenting', label: 'Нейрокомментинг' },
   { value: 'discussion', label: 'Обсуждения' },
+  { value: 'shilling', label: 'Шиллинг' },
 ];
 
 const CustomAutomationChatDiscoveryPage = () => {

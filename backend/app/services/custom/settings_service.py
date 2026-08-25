@@ -48,12 +48,14 @@ async def validate_settings(
     trusted = counts.get(AccountClass.TRUSTED.value, 0)
     mid = counts.get(AccountClass.MID.value, 0)
     one_day = counts.get(AccountClass.ONE_DAY.value, 0)
+    shilling = counts.get(AccountClass.SHILLING.value, 0)
 
     can_enable["chat_monitoring"] = trusted >= 1
     can_enable["neurocommenting"] = (one_day + mid) >= 1
     can_enable["discussion"] = (one_day + mid + trusted) >= 1
     can_enable["dmp_one"] = (one_day + mid + trusted) >= 1
     can_enable["amocrm"] = True
+    can_enable["shilling"] = shilling >= 2
 
     if automation.is_chat_monitoring_enabled and not can_enable["chat_monitoring"]:
         warnings.append(
@@ -74,6 +76,11 @@ async def validate_settings(
         warnings.append(
             "DMP.one включён, но нет активных аккаунтов пула для прогрева. "
             "Добавьте аккаунты или отключите модуль."
+        )
+    if automation.is_shilling_enabled and not can_enable["shilling"]:
+        warnings.append(
+            "Шиллинг включён, но в пуле меньше двух активных аккаунтов класса «шиллинг». "
+            "Назначьте минимум два разных аккаунта или отключите модуль — один юзербот не отвечает сам себе."
         )
     if automation.max_daily_messages_per_account <= 0:
         warnings.append("Дневной лимит сообщений на аккаунт равен 0 — сообщения не будут отправляться.")

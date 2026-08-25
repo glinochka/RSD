@@ -116,6 +116,9 @@ _ASYNC_SESSION_MAKER_PATCH_TARGETS = (
     "app.services.custom.chat_monitoring_service.async_session_maker",
     "app.services.custom.dmp_one_service.async_session_maker",
     "app.services.custom.amocrm_service.async_session_maker",
+    "app.services.custom.neurocommenting_service.async_session_maker",
+    "app.services.custom.shilling_service.async_session_maker",
+    "app.services.custom.discussion_service.async_session_maker",
 )
 
 

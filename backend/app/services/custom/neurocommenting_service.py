@@ -9,7 +9,9 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .post_engagement import NEUROCOMMENTING, SHILLING, SKIP, claim_post_engagement
 from .rotation_service import select_account_for_action
+from .shilling_service import perform_post_shilling
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import execute_with_telegram_retry
 from ...alembic.models import AutomationActionLog, ChatJoinStatus, ChatMode, ChatTarget, CustomAutomation, CustomPrompt, PromptType, SocialAccount
@@ -163,10 +165,18 @@ async def process_chat_target(
     *,
     max_comments_per_run: int = 5,
 ) -> dict[str, Any]:
-    if chat_target.mode == ChatMode.INACTIVE.value:
+    if chat_target.mode in {ChatMode.INACTIVE.value, ChatMode.SHILLING.value, ChatMode.DISCUSSION.value}:
         return {"status": "skipped", "reason": "mode"}
     if chat_target.join_status != ChatJoinStatus.JOINED.value:
         return {"status": "skipped", "reason": "not_joined"}
+
+    automation = await session.get(CustomAutomation, automation_id)
+    if not automation:
+        return {"status": "skipped", "reason": "automation_missing"}
+    neuro_enabled = bool(automation.is_neurocommenting_enabled)
+    shilling_enabled = bool(automation.is_shilling_enabled)
+    if not neuro_enabled and not shilling_enabled:
+        return {"status": "skipped", "reason": "feature_disabled"}
 
     config = chat_target.neurocommenting_config or {}
     max_per_day = int(config.get("max_per_day") or 10)
@@ -175,7 +185,8 @@ async def process_chat_target(
     if last_commented_at and (_utc_now() - last_commented_at) < timedelta(minutes=frequency_minutes):
         return {"status": "skipped", "reason": "frequency"}
 
-    account = await select_account_for_action(session, automation_id, "commenting")
+    scanner_action = "commenting" if neuro_enabled else "shilling"
+    account = await select_account_for_action(session, automation_id, scanner_action, consume_quota=False)
     if not account:
         return {"status": "skipped", "reason": "no_account"}
 
@@ -206,10 +217,36 @@ async def process_chat_target(
         return {"status": "error", "error": str(exc)}
 
     sent = 0
+    shilled = 0
     for post in posts[:max_comments_per_run]:
-        if account.daily_messages_sent >= max_per_day:
-            break
         if await _already_commented(session, automation_id, chat_target.id, post.id):
+            continue
+
+        claimed = await claim_post_engagement(
+            session,
+            automation_id=automation_id,
+            chat_target_id=chat_target.id,
+            post_id=post.id,
+            account_id=account.id,
+            neuro_enabled=neuro_enabled,
+            shilling_enabled=shilling_enabled,
+        )
+        if claimed == SKIP:
+            continue
+        if claimed == SHILLING:
+            result = await perform_post_shilling(
+                session,
+                automation,
+                chat_target,
+                post.id,
+                post_text=post.text or "",
+            )
+            if result.get("status") == "ok":
+                shilled += 1
+            continue
+        if claimed != NEUROCOMMENTING or not neuro_enabled:
+            continue
+        if account.daily_messages_sent >= max_per_day:
             continue
 
         comment = await _generate_comment(session, automation_id, post_text=post.text, chat_title=chat_target.title or "")
@@ -225,7 +262,7 @@ async def process_chat_target(
     chat_target.last_scanned_at = _utc_now()
     chat_target.updated_at = _utc_now()
     await session.commit()
-    return {"status": "ok", "sent": sent}
+    return {"status": "ok", "sent": sent, "shilled": shilled}
 
 
 async def run_neurocommenting_pass(automation_id: int) -> dict[str, Any]:
@@ -235,8 +272,10 @@ async def run_neurocommenting_pass(automation_id: int) -> dict[str, Any]:
     chat_count = 0
     async with async_session_maker() as session:
         automation = await session.get(CustomAutomation, automation_id)
-        if not automation or not automation.is_neurocommenting_enabled:
-            logger.info("Neurocommenting disabled or automation not found for %s", automation_id)
+        if not automation or not (
+            automation.is_neurocommenting_enabled or automation.is_shilling_enabled
+        ):
+            logger.info("Post engagement disabled or automation not found for %s", automation_id)
             return {"status": "skipped", "reason": "feature_disabled", "chats_processed": 0, "comments_sent": 0}
 
         result = await session.execute(

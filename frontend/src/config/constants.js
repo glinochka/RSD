@@ -317,6 +317,9 @@ export const API_ROUTES = {
   CUSTOM_AUTOMATION_CHAT_DISCUSSION_CONFIG: (id, chatId) =>
     `/api/custom/automations/${id}/chats/${chatId}/discussion-config`,
   CUSTOM_AUTOMATION_CHAT_DISCUSSION_RUN: (id) => `/api/custom/automations/${id}/chats/discussion`,
+  CUSTOM_AUTOMATION_CHAT_SHILLING_CONFIG: (id, chatId) =>
+    `/api/custom/automations/${id}/chats/${chatId}/shilling-config`,
+  CUSTOM_AUTOMATION_CHAT_SHILLING_RUN: (id) => `/api/custom/automations/${id}/chats/shilling`,
 };
 
 export const AGENT_ROLES = {

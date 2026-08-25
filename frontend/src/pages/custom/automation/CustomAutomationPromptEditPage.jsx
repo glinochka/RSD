@@ -14,6 +14,7 @@ const VARIABLE_HINTS = {
   lead_qualification: ['history', 'last_incoming'],
   chat_relevance: ['query', 'title', 'description', 'chat_type', 'participants_count'],
   profile_bio: ['industry', 'name'],
+  shilling: ['industry', 'client_name', 'chat_title', 'post_text'],
 };
 
 const PROMPT_TYPE_LABELS = {
@@ -25,6 +26,7 @@ const PROMPT_TYPE_LABELS = {
   lead_qualification: 'Квалификация лида',
   chat_relevance: 'Релевантность чата',
   profile_bio: 'Профиль bio',
+  shilling: 'Шиллинг',
 };
 
 const CustomAutomationPromptEditPage = () => {
