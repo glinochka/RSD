@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import customService from '../../../services/customService';
+import { NAVIGATION_ROUTES } from '../../../config/constants';
 import { PROMPT_TYPE_LABELS, VARIABLE_HINTS } from './activityLabels';
 import '../../../styles/projectCRMPage.css';
 import '../../../styles/projectSettingsPage.css';
