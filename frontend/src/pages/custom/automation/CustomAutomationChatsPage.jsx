@@ -226,7 +226,7 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
       {tab === 'discovery' ? <CustomAutomationChatDiscoveryPage /> : null}
       {tab !== 'list' ? null : (
         <>
-          <div className="settings-actions" style={{ marginBottom: 16, flexWrap: 'wrap' }}>
+          <div className="settings-actions">
             <button type="button" onClick={() => setShowForm((s) => !s)} className="btn btn-outline">
               {showForm ? 'Скрыть форму' : 'Добавить чат'}
             </button>

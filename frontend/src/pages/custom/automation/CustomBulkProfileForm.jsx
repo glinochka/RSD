@@ -69,7 +69,7 @@ const CustomBulkProfileForm = ({ automationId, onSuccess }) => {
   return (
     <div className="settings-section">
       <div className="crm-item-header">
-        <h3 className="settings-section-title">Массовое обновление профилей</h3>
+        <h3 className="crm-item-title">Массовое обновление профилей</h3>
         <button type="button" onClick={() => setIsOpen(false)} className="btn btn-outline">
           Скрыть
         </button>

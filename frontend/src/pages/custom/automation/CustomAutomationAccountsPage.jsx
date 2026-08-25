@@ -196,7 +196,7 @@ const CustomAutomationAccountsPage = () => {
       ) : null}
 
       {accounts.length > 0 ? (
-        <div className="crm-stats" style={{ marginBottom: 16 }}>
+        <div className="crm-stats">
           {ACCOUNT_CLASSES.filter((c) => c.value).map((c) => (
             <div key={c.value} className="crm-stat">
               <span className="crm-stat-value">{distribution[c.value] || 0}</span>

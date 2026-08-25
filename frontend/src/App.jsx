@@ -3,8 +3,8 @@
  * Root component with routing and context providers
  */
 
-import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import React, { useEffect } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { HelmetProvider } from 'react-helmet-async';
 import { AuthProvider } from './context/AuthContext';
 import { NotificationProvider } from './context/NotificationContext';
@@ -63,6 +63,34 @@ import CustomAutomationPromptEditPage from './pages/custom/automation/CustomAuto
 
 // Website Builder Pages
 import { PreviewPage, WebsitePublicPage, ConstructorPage, WebsiteCreatePage } from './website-builder/pages';
+
+const HideRsdWidgetOnCustom = () => {
+  const { pathname } = useLocation();
+
+  useEffect(() => {
+    if (!pathname.startsWith('/custom')) {
+      const root = document.querySelector('.rsd-widget-root');
+      if (root) {
+        root.style.display = '';
+      }
+      return undefined;
+    }
+
+    const hide = () => {
+      const root = document.querySelector('.rsd-widget-root');
+      if (root) {
+        root.style.display = 'none';
+      }
+    };
+    hide();
+    const observer = new MutationObserver(hide);
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [pathname]);
+
+  return null;
+};
+
 const App = () => {
   return (
     <ErrorBoundary>
@@ -70,6 +98,7 @@ const App = () => {
         <Router>
           <DocumentHead />
           <ReferralCapture />
+          <HideRsdWidgetOnCustom />
           <AuthProvider>
             <NotificationProvider>
               <NotificationContainer />

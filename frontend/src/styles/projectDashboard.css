@@ -1,6 +1,9 @@
 /** Project Dashboard Styles */
 
 .project-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
   padding: var(--spacing-lg);
 }
 
@@ -30,6 +33,11 @@
   to {
     transform: rotate(360deg);
   }
+}
+
+.project-dashboard .dashboard-header,
+.project-dashboard .dashboard-stats-grid {
+  margin-bottom: 0;
 }
 
 /* Header */

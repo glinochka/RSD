@@ -7,6 +7,7 @@ function initRsdWidget() {
   const env = import.meta.env;
   const apiKey = (env.VITE_WIDGET_API_KEY || '').trim();
   if (!apiKey || typeof document === 'undefined') return;
+  if (window.location.pathname.startsWith('/custom')) return;
 
   if (document.querySelector('script[data-rsd-widget="1"]')) return;
 

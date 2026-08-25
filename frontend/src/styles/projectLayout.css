@@ -189,6 +189,12 @@
   padding: var(--spacing-lg);
 }
 
+.project-content > .project-crm-page,
+.project-content > .project-settings-page,
+.project-content > .project-dashboard {
+  padding: 0;
+}
+
 /* Mobile Sidebar Overlay */
 .project-sidebar-overlay {
   display: none;
