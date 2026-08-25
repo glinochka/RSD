@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import CustomSelect from '../../../components/CustomSelect';
+import FeatureToggle from '../../../components/FeatureToggle';
 import customService from '../../../services/customService';
 import { useCustomAuth } from '../../../components/custom/useCustomAuth';
 import '../../../styles/projectSettingsPage.css';
@@ -88,7 +90,6 @@ const CustomAutomationSettingsPage = () => {
         is_dmp_one_enabled: form.is_dmp_one_enabled,
         is_amocrm_enabled: form.is_amocrm_enabled,
         lead_manager_contact: form.lead_manager_contact,
-        status: form.status,
       };
       const data = await customService.updateAutomationSettings(id, payload);
       setSettings(data);
@@ -140,9 +141,7 @@ const CustomAutomationSettingsPage = () => {
       <div className="settings-header">
         <div>
           <h1 className="settings-title">Настройки</h1>
-          <p className="settings-subtitle">
-            Модули, ротация и доступ клиента. После включения система работает сама — подливайте аккаунты и чаты.
-          </p>
+          <p className="settings-subtitle">Модули, ротация и доступ клиента.</p>
         </div>
       </div>
 
@@ -159,64 +158,37 @@ const CustomAutomationSettingsPage = () => {
 
       <form className="settings-form" onSubmit={handleSubmit}>
         <div className="settings-section">
-          <h3 className="settings-section-title">Статус</h3>
-          <div className="form-group">
-            <label htmlFor="status">Воркеры</label>
-            <select id="status" name="status" value={form.status || 'draft'} onChange={handleChange}>
-              <option value="draft">Черновик</option>
-              <option value="active">Активна</option>
-              <option value="paused">Пауза</option>
-              <option value="archived">Архив</option>
-            </select>
+          <h3 className="settings-section-title">Модули</h3>
+          <div className="settings-toggles">
+            {[
+              { name: 'is_chat_monitoring_enabled', label: 'Мониторинг чатов' },
+              { name: 'is_neurocommenting_enabled', label: 'Нейрокомментинг' },
+              { name: 'is_shilling_enabled', label: 'Шиллинг' },
+              { name: 'is_digital_footprint_enabled', label: 'Цифровой след' },
+              { name: 'is_dmp_one_enabled', label: 'DMP.one' },
+              { name: 'is_amocrm_enabled', label: 'AmoCRM' },
+            ].map((field) => (
+              <FeatureToggle
+                key={field.name}
+                title={field.label}
+                checked={Boolean(form[field.name])}
+                onChange={(checked) => setForm((prev) => ({ ...prev, [field.name]: checked }))}
+              />
+            ))}
           </div>
         </div>
 
         <div className="settings-section">
-          <h3 className="settings-section-title">Модули</h3>
-          {[
-            { name: 'is_chat_monitoring_enabled', label: 'Мониторинг чатов и перехват заявок' },
-            { name: 'is_neurocommenting_enabled', label: 'Нейрокомментинг' },
-            { name: 'is_shilling_enabled', label: 'Шиллинг (парный нативный диалог)' },
-            { name: 'is_digital_footprint_enabled', label: 'Цифровой след в дискуссиях' },
-            { name: 'is_dmp_one_enabled', label: 'DMP.one' },
-            { name: 'is_amocrm_enabled', label: 'AmoCRM (только фулфилмент)' },
-          ].map((field) => (
-            <div key={field.name} className="form-group">
-              <label htmlFor={field.name}>
-                <input
-                  id={field.name}
-                  type="checkbox"
-                  name={field.name}
-                  checked={Boolean(form[field.name])}
-                  onChange={handleChange}
-                />{' '}
-                {field.label}
-              </label>
-            </div>
-          ))}
-          <span className="form-hint">
-            Шиллинг: два аккаунта класса «шиллинг» общаются как живые люди. В чатах — случайно с 8:00 до 20:00 МСК с вероятностью 40% (не каждый день). Под постами — общее действие с нейрокомментингом на ~20% постов, никогда оба сразу.
-          </span>
-        </div>
-
-        <div className="settings-section">
-          <h3 className="settings-section-title">Ротация однодневок</h3>
+          <h3 className="settings-section-title">Ротация</h3>
           <div className="form-group">
             <label htmlFor="rotation_strategy">Стратегия</label>
-            <select
+            <CustomSelect
               id="rotation_strategy"
               name="rotation_strategy"
               value={form.rotation_strategy || 'round_robin'}
+              options={ROTATION_STRATEGIES}
               onChange={handleChange}
-            >
-              {ROTATION_STRATEGIES.map((item) => (
-                <option key={item.value} value={item.value}>{item.label}</option>
-              ))}
-            </select>
-            <span className="form-hint">
-              Только для нейрокомментинга и массовых публичных действий. Диалог с лидом всегда ведёт один аккаунт.
-              Шиллинг использует отдельный класс аккаунтов (минимум два) и не пересекается с нейрокомментингом под одним постом.
-            </span>
+            />
           </div>
           <div className="form-group">
             <label htmlFor="max_daily_messages_per_account">Лимит сообщений на аккаунт в сутки</label>
@@ -243,7 +215,6 @@ const CustomAutomationSettingsPage = () => {
               onChange={handleChange}
               placeholder="Telegram / email / webhook"
             />
-            <span className="form-hint">Нужен, если AmoCRM выключена.</span>
           </div>
         </div>
 

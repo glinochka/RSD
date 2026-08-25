@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import CustomSelect from '../../../components/CustomSelect';
+import FeatureToggle from '../../../components/FeatureToggle';
 import customService from '../../../services/customService';
 
 const ACCOUNT_CLASSES = [
@@ -82,27 +84,21 @@ const CustomBulkProfileForm = ({ automationId, onSuccess }) => {
       <form onSubmit={handleSubmit}>
         <div className="form-group">
           <label htmlFor="bulk-class">Класс</label>
-          <select
+          <CustomSelect
             id="bulk-class"
             value={form.accountClass}
+            options={ACCOUNT_CLASSES}
             onChange={(e) => setForm((f) => ({ ...f, accountClass: e.target.value }))}
-          >
-            {ACCOUNT_CLASSES.map((c) => (
-              <option key={c.value} value={c.value}>{c.label}</option>
-            ))}
-          </select>
+          />
         </div>
         <div className="form-group">
           <label htmlFor="bulk-status">Статус</label>
-          <select
+          <CustomSelect
             id="bulk-status"
             value={form.status}
+            options={STATUSES}
             onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}
-          >
-            {STATUSES.map((s) => (
-              <option key={s.value} value={s.value}>{s.label}</option>
-            ))}
-          </select>
+          />
         </div>
         <div className="form-group">
           <label htmlFor="bulk-bio">
@@ -117,15 +113,11 @@ const CustomBulkProfileForm = ({ automationId, onSuccess }) => {
           />
         </div>
         <div className="form-group">
-          <label htmlFor="generateUnique">
-            <input
-              id="generateUnique"
-              type="checkbox"
-              checked={form.generateUnique}
-              onChange={(e) => setForm((f) => ({ ...f, generateUnique: e.target.checked }))}
-            />{' '}
-            Генерировать уникальные bio через LLM (игнорирует шаблон)
-          </label>
+          <FeatureToggle
+            title="Уникальные bio"
+            checked={form.generateUnique}
+            onChange={(checked) => setForm((f) => ({ ...f, generateUnique: checked }))}
+          />
         </div>
         <div className="form-group">
           <label htmlFor="bulk-avatar">Аватар</label>

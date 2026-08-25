@@ -85,7 +85,7 @@ const CustomSelect = ({
         <div className="custom-select-dropdown" role="listbox" aria-labelledby={id}>
           {options.map((option) => (
             <button
-              key={option.value}
+              key={option.value === '' || option.value == null ? `empty:${option.label}` : option.value}
               type="button"
               className={`custom-select-option ${option.value === value ? 'selected' : ''} ${
                 option.disabled ? 'disabled' : ''

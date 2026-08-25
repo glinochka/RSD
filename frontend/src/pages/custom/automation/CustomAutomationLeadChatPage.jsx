@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import CustomSelect from '../../../components/CustomSelect';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
 import customService from '../../../services/customService';
 import '../../../styles/projectCRMPage.css';
@@ -115,11 +116,13 @@ const CustomAutomationLeadChatPage = () => {
           <p className="form-hint">Источник: {lead.source}</p>
           <div className="form-group">
             <label htmlFor="lead-chat-status">Статус</label>
-            <select id="lead-chat-status" value={lead.status} onChange={handleStatusChange} disabled={updatingStatus}>
-              {LEAD_STATUSES.map((s) => (
-                <option key={s.value} value={s.value}>{s.label}</option>
-              ))}
-            </select>
+            <CustomSelect
+              id="lead-chat-status"
+              value={lead.status}
+              options={LEAD_STATUSES}
+              onChange={handleStatusChange}
+              disabled={updatingStatus}
+            />
           </div>
         </div>
       ) : null}

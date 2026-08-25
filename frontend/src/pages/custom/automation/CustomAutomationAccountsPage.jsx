@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import CustomSelect from '../../../components/CustomSelect';
 import customService from '../../../services/customService';
 import CustomBulkProfileForm from './CustomBulkProfileForm';
 import '../../../styles/projectCRMPage.css';
@@ -212,37 +213,27 @@ const CustomAutomationAccountsPage = () => {
         </div>
       ) : null}
 
-      <p className="crm-subtitle">
-        Класс «Шиллинг» только для парных диалогов: не комментинг, не ЛС. Нужны минимум два разных аккаунта — один юзербот сам себе не отвечает.
-      </p>
-
       <CustomBulkProfileForm automationId={id} onSuccess={loadAccounts} />
 
       <form onSubmit={handleSearchSubmit} className="settings-section">
         <h3 className="settings-section-title">Фильтр</h3>
         <div className="form-group">
           <label htmlFor="acc-status">Статус</label>
-          <select
+          <CustomSelect
             id="acc-status"
             value={filters.status}
+            options={STATUSES}
             onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}
-          >
-            {STATUSES.map((s) => (
-              <option key={s.value} value={s.value}>{s.label}</option>
-            ))}
-          </select>
+          />
         </div>
         <div className="form-group">
           <label htmlFor="acc-class">Класс</label>
-          <select
+          <CustomSelect
             id="acc-class"
             value={filters.accountClass}
+            options={ACCOUNT_CLASSES}
             onChange={(e) => setFilters((f) => ({ ...f, accountClass: e.target.value }))}
-          >
-            {ACCOUNT_CLASSES.map((c) => (
-              <option key={c.value} value={c.value}>{c.label}</option>
-            ))}
-          </select>
+          />
         </div>
         <div className="form-group">
           <label htmlFor="acc-search">Поиск</label>
@@ -292,15 +283,12 @@ const CustomAutomationAccountsPage = () => {
               </span>
               <div className="form-group">
                 <label htmlFor={`class-${account.id}`}>Класс</label>
-                <select
+                <CustomSelect
                   id={`class-${account.id}`}
                   value={account.assigned_class}
+                  options={ACCOUNT_CLASSES.filter((c) => c.value)}
                   onChange={(e) => handleClassChange(account.id, e.target.value)}
-                >
-                  {ACCOUNT_CLASSES.filter((c) => c.value).map((c) => (
-                    <option key={c.value} value={c.value}>{c.label}</option>
-                  ))}
-                </select>
+                />
               </div>
               <span className={`crm-status ${CLASS_STATUS[account.assigned_class] || ''}`}>
                 {ACCOUNT_CLASSES.find((c) => c.value === account.assigned_class)?.label || account.assigned_class}

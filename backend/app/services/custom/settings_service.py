@@ -80,7 +80,7 @@ async def validate_settings(
     if automation.is_shilling_enabled and not can_enable["shilling"]:
         warnings.append(
             "Шиллинг включён, но в пуле меньше двух активных аккаунтов класса «шиллинг». "
-            "Назначьте минимум два разных аккаунта или отключите модуль — один юзербот не отвечает сам себе."
+            "Назначьте минимум два аккаунта или отключите модуль."
         )
     if automation.max_daily_messages_per_account <= 0:
         warnings.append("Дневной лимит сообщений на аккаунт равен 0 — сообщения не будут отправляться.")

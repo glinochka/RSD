@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import CustomSelect from '../../../components/CustomSelect';
 import customService from '../../../services/customService';
 import '../../../styles/projectCRMPage.css';
 import '../../../styles/projectDashboard.css';
@@ -114,7 +115,7 @@ const CustomAutomationDmpPage = () => {
       <div className="crm-header">
         <div>
           <h1 className="crm-title">DMP.one</h1>
-          <p className="crm-subtitle">Заказ контактов. Создание заказа — единственное ручное действие с деньгами.</p>
+          <p className="crm-subtitle">Заказ контактов.</p>
         </div>
       </div>
 
@@ -158,15 +159,12 @@ const CustomAutomationDmpPage = () => {
         <h3 className="settings-section-title">Новый заказ</h3>
         <div className="form-group">
           <label htmlFor="dmp-type">Тип импорта</label>
-          <select
+          <CustomSelect
             id="dmp-type"
             value={form.importType}
+            options={DMP_IMPORT_TYPES}
             onChange={(e) => setForm((f) => ({ ...f, importType: e.target.value }))}
-          >
-            {DMP_IMPORT_TYPES.map((t) => (
-              <option key={t.value} value={t.value}>{t.label}</option>
-            ))}
-          </select>
+          />
         </div>
         <div className="form-group">
           <label htmlFor="dmp-source">Источник (URL, сайт, номера)</label>

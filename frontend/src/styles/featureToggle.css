@@ -84,6 +84,14 @@
   transform: translateX(20px);
 }
 
+.feature-toggle--compact .feature-toggle__main {
+  padding: var(--spacing-xs) var(--spacing-sm);
+}
+
+.feature-toggle--compact .feature-toggle__title {
+  font-size: var(--font-size-sm);
+}
+
 .pricing-modal-autopay-wrap {
   margin-bottom: var(--spacing-base);
 }

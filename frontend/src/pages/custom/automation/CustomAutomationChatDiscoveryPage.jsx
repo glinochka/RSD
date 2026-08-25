@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import CustomSelect from '../../../components/CustomSelect';
+import FeatureToggle from '../../../components/FeatureToggle';
 import customService from '../../../services/customService';
 
 const MODES = [
@@ -135,15 +137,12 @@ const CustomAutomationChatDiscoveryPage = () => {
         </div>
         <div className="form-group">
           <label htmlFor="discovery-mode">Режим чатов</label>
-          <select
+          <CustomSelect
             id="discovery-mode"
             value={form.mode}
+            options={MODES}
             onChange={(e) => setForm((prev) => ({ ...prev, mode: e.target.value }))}
-          >
-            {MODES.map((m) => (
-              <option key={m.value} value={m.value}>{m.label}</option>
-            ))}
-          </select>
+          />
         </div>
         <div className="form-group">
           <label htmlFor="discovery-max">Макс. чатов</label>
@@ -169,15 +168,11 @@ const CustomAutomationChatDiscoveryPage = () => {
           />
         </div>
         <div className="form-group">
-          <label htmlFor="require_approval">
-            <input
-              id="require_approval"
-              type="checkbox"
-              checked={form.require_approval}
-              onChange={(e) => setForm((prev) => ({ ...prev, require_approval: e.target.checked }))}
-            />{' '}
-            Требовать ручного одобрения перед вступлением
-          </label>
+          <FeatureToggle
+            title="Ручное одобрение"
+            checked={form.require_approval}
+            onChange={(checked) => setForm((prev) => ({ ...prev, require_approval: checked }))}
+          />
         </div>
         <div className="settings-actions">
           <button type="submit" disabled={isStarting} className="btn btn-black">
@@ -209,14 +204,11 @@ const CustomAutomationChatDiscoveryPage = () => {
                 <>
                   {(task.found_chats || []).map((chat, idx) => (
                     <div key={chat.id || idx} className="form-group">
-                      <label>
-                        <input
-                          type="checkbox"
-                          checked={selected[task.id]?.includes(idx) || false}
-                          onChange={() => toggleSelected(task.id, idx)}
-                        />{' '}
-                        {chat.title || chat.username || 'Без названия'}
-                      </label>
+                      <FeatureToggle
+                        title={chat.title || chat.username || 'Без названия'}
+                        checked={selected[task.id]?.includes(idx) || false}
+                        onChange={() => toggleSelected(task.id, idx)}
+                      />
                       <span className="form-hint">
                         {chat.chat_type} · {chat.participants_count || 0} участников · релевантность {Math.round((chat.score || 0) * 100)}%
                         {chat.reason ? ` · ${chat.reason}` : ''}

@@ -137,7 +137,7 @@ const CustomAutomationAmocrmPage = () => {
       <div className="settings-header">
         <div>
           <h1 className="settings-title">AmoCRM</h1>
-          <p className="settings-subtitle">Подключение воронки. Для SEO SaaS этот раздел скрыт.</p>
+          <p className="settings-subtitle">Подключение воронки.</p>
         </div>
         <span className={`crm-status ${enabled ? 'crm-status--confirmed' : 'crm-status--completed'}`}>
           {enabled ? 'Включено' : 'Отключено'}

@@ -126,7 +126,12 @@
 
 /* Form Elements */
 .form-group {
+  position: relative;
   margin-bottom: var(--spacing-md);
+}
+
+.form-group:focus-within {
+  z-index: 2;
 }
 
 .form-group label {
@@ -144,6 +149,7 @@
 .form-group input[type="url"],
 .form-group select,
 .form-group textarea {
+
   width: 100%;
   padding: var(--spacing-sm) var(--spacing-md);
   font-size: 0.9375rem;
@@ -166,6 +172,16 @@
 .form-group textarea {
   resize: vertical;
   min-height: 100px;
+}
+
+.settings-toggles {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.form-group .custom-select {
+  width: 100%;
 }
 
 .form-hint {

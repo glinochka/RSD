@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import CustomSelect from '../../../components/CustomSelect';
 import customService from '../../../services/customService';
 import CustomAutomationChatDiscoveryPage from './CustomAutomationChatDiscoveryPage';
 import '../../../styles/projectCRMPage.css';
@@ -212,10 +213,7 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
       <div className="crm-header">
         <div>
           <h1 className="crm-title">Чаты</h1>
-          <p className="crm-subtitle">
-            Залейте Excel со ссылками — система сама вступает. Автопоиск, если списка нет.
-            Под постами нейрокомментинг и шиллинг не пересекаются: действие срабатывает примерно в 20% постов.
-          </p>
+          <p className="crm-subtitle">Залейте Excel со ссылками — система сама вступает. Автопоиск, если списка нет.</p>
         </div>
         <div className="crm-stats">
           <div className="crm-stat">
@@ -299,11 +297,12 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
           <div className="settings-section">
             <div className="form-group">
               <label htmlFor="chat-filter">Статус вступления</label>
-              <select id="chat-filter" value={filter} onChange={(e) => setFilter(e.target.value)}>
-                {JOIN_STATUSES.map((s) => (
-                  <option key={s.value} value={s.value}>{s.label}</option>
-                ))}
-              </select>
+              <CustomSelect
+                id="chat-filter"
+                value={filter}
+                options={JOIN_STATUSES}
+                onChange={(e) => setFilter(e.target.value)}
+              />
             </div>
           </div>
 
@@ -327,15 +326,12 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
                     <>
                       <div className="form-group">
                         <label htmlFor={`mode-${chat.id}`}>Режим</label>
-                        <select
+                        <CustomSelect
                           id={`mode-${chat.id}`}
                           value={editing.mode}
+                          options={MODES}
                           onChange={(e) => setEditing((ed) => ({ ...ed, mode: e.target.value }))}
-                        >
-                          {MODES.map((m) => (
-                            <option key={m.value} value={m.value}>{m.label}</option>
-                          ))}
-                        </select>
+                        />
                       </div>
                       {editing.mode === 'neurocommenting' ? (
                         <>
@@ -360,11 +356,6 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
                             />
                           </div>
                         </>
-                      ) : null}
-                      {editing.mode === 'shilling' ? (
-                        <p className="form-hint">
-                          Два аккаунта класса «шиллинг» пишут нативный диалог. Случайно с 8:00 до 20:00 МСК, не каждый день (40%). Один юзербот сам себе не отвечает.
-                        </p>
                       ) : null}
                       {editing.mode === 'discussion' ? (
                         <>
@@ -406,7 +397,6 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
                         {chat.mode === 'discussion'
                           ? ` · часы ${formatActivityHours(chat.discussion_config) || 'все'} · ${Math.round((chat.discussion_config?.reply_probability || 0) * 100)}%`
                           : ''}
-                        {chat.mode === 'shilling' ? ' · 8:00–20:00 МСК · 40% в день' : ''}
                         {` · попыток ${chat.join_attempts}`}
                       </p>
                       <div className="crm-item-actions">

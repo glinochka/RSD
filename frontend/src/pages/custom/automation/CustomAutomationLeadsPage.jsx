@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import CustomSelect from '../../../components/CustomSelect';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
 import customService from '../../../services/customService';
 import '../../../styles/projectCRMPage.css';
@@ -114,11 +115,12 @@ const CustomAutomationLeadsPage = () => {
       <div className="settings-section">
         <div className="form-group">
           <label htmlFor="lead-filter">Статус</label>
-          <select id="lead-filter" value={filter} onChange={(e) => setFilter(e.target.value)}>
-            {STATUS_FILTERS.map((s) => (
-              <option key={s.value} value={s.value}>{s.label}</option>
-            ))}
-          </select>
+          <CustomSelect
+            id="lead-filter"
+            value={filter}
+            options={STATUS_FILTERS}
+            onChange={(e) => setFilter(e.target.value)}
+          />
         </div>
       </div>
 
@@ -147,16 +149,13 @@ const CustomAutomationLeadsPage = () => {
               <span className="crm-date">{lead.created_at ? new Date(lead.created_at).toLocaleString() : ''}</span>
               <div className="form-group">
                 <label htmlFor={`lead-status-${lead.id}`}>Статус</label>
-                <select
+                <CustomSelect
                   id={`lead-status-${lead.id}`}
                   value={lead.status}
+                  options={LEAD_STATUSES}
                   onChange={(e) => handleStatusChange(lead.id, e.target.value)}
                   disabled={updating[lead.id]}
-                >
-                  {LEAD_STATUSES.map((s) => (
-                    <option key={s.value} value={s.value}>{s.label}</option>
-                  ))}
-                </select>
+                />
               </div>
               <div className="crm-item-actions">
                 <button type="button" onClick={() => openChat(lead.id)} className="btn btn-black">
