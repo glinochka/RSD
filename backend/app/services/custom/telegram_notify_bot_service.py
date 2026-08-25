@@ -1,6 +1,7 @@
 """Telegram bot for DMP lead alerts: login then password, then push notifications."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -8,20 +9,23 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...alembic.database import async_session_maker
 from ...alembic.models import CustomAutomation, CustomAutomationCredential, CustomBotSubscriber, CustomLead, LeadStatus
 from ...config import settings
 from ...utils.crypto import decrypt_token, encrypt_token
 from ...utils.security import verify_password
-from .google_sheets_service import ensure_header_and_append
+from .google_sheets_service import decrypt_service_account, ensure_header_and_append, parse_spreadsheet_id
 
 logger = logging.getLogger(__name__)
 
 MAX_FAILED_ATTEMPTS = 5
 LOCK_MINUTES = 15
 PASSWORD_WAIT_SECONDS = 300
+SEND_ATTEMPTS = 3
+RETRY_BATCH = 50
 TELEGRAM_API = "https://api.telegram.org/bot"
 
 
@@ -137,12 +141,164 @@ async def disconnect_telegram_bot(automation: CustomAutomation) -> None:
     automation.updated_at = _utc_now()
 
 
-async def send_bot_message(token: str, chat_id: int, text: str) -> bool:
-    result = await _telegram_api(token, "sendMessage", {"chat_id": chat_id, "text": text})
-    if not result.get("ok"):
-        logger.warning("Telegram sendMessage failed chat %s: %s", chat_id, result.get("description"))
+async def send_bot_message(token: str, chat_id: int, text: str) -> dict[str, Any]:
+    last: dict[str, Any] = {"ok": False}
+    for attempt in range(SEND_ATTEMPTS):
+        result = await _telegram_api(token, "sendMessage", {"chat_id": chat_id, "text": text})
+        last = result if isinstance(result, dict) else {"ok": False}
+        if last.get("ok"):
+            return last
+        description = str(last.get("description") or "")
+        if _is_permanent_telegram_error(description):
+            logger.warning("Telegram sendMessage permanent fail chat %s: %s", chat_id, description)
+            return last
+        if attempt + 1 < SEND_ATTEMPTS:
+            await asyncio.sleep(0.4 * (attempt + 1))
+    logger.warning("Telegram sendMessage failed chat %s: %s", chat_id, last.get("description"))
+    return last
+
+
+def _is_permanent_telegram_error(description: str) -> bool:
+    text = (description or "").lower()
+    return any(
+        needle in text
+        for needle in (
+            "bot was blocked",
+            "forbidden",
+            "chat not found",
+            "user is deactivated",
+            "bot can't initiate",
+        )
+    )
+
+
+def _notified_chat_ids(lead: CustomLead) -> list[int]:
+    raw = lead.bot_notified_chat_ids or []
+    ids: list[int] = []
+    for item in raw:
+        try:
+            ids.append(int(item))
+        except (TypeError, ValueError):
+            continue
+    return ids
+
+
+def _sheets_configured(automation: CustomAutomation) -> bool:
+    if not parse_spreadsheet_id(automation.google_sheets_spreadsheet_id):
         return False
-    return True
+    try:
+        return decrypt_service_account(automation) is not None
+    except Exception:
+        return False
+
+
+async def restore_telegram_webhook(automation: CustomAutomation) -> dict[str, Any]:
+    """Re-bind webhook after container restart. Never drops pending updates or subscribers."""
+    token = decrypt_bot_token(automation)
+    if not token:
+        return {"ok": False, "reason": "no_token"}
+    secret = ensure_bot_webhook_secret(automation)
+    webhook_url = public_bot_webhook_url(automation.id, secret)
+    if not webhook_url:
+        return {"ok": False, "reason": "no_base_url"}
+    info = await _telegram_api(token, "getWebhookInfo")
+    current = str(((info.get("result") or {}) if isinstance(info, dict) else {}).get("url") or "")
+    if current == webhook_url:
+        return {"ok": True, "unchanged": True, "webhook_url": webhook_url}
+    hooked = await _telegram_api(
+        token,
+        "setWebhook",
+        {"url": webhook_url, "secret_token": secret, "drop_pending_updates": False},
+    )
+    if not hooked.get("ok"):
+        logger.warning(
+            "Failed to restore Telegram webhook for automation %s: %s",
+            automation.id,
+            hooked.get("description"),
+        )
+        return {"ok": False, "reason": hooked.get("description") or "setWebhook failed"}
+    logger.info("Restored Telegram webhook for automation %s", automation.id)
+    return {"ok": True, "restored": True, "webhook_url": webhook_url}
+
+
+async def restore_all_telegram_webhooks() -> dict[str, Any]:
+    restored = 0
+    skipped = 0
+    async with async_session_maker() as session:
+        result = await session.execute(
+            select(CustomAutomation).where(CustomAutomation.telegram_bot_token_enc.is_not(None))
+        )
+        automations = list(result.scalars().all())
+        for automation in automations:
+            try:
+                info = await restore_telegram_webhook(automation)
+                if info.get("ok"):
+                    restored += 1
+                else:
+                    skipped += 1
+            except Exception:
+                skipped += 1
+                logger.exception("Webhook restore failed for automation %s", automation.id)
+        await session.commit()
+    return {"restored": restored, "skipped": skipped, "total": len(automations)}
+
+
+async def _deliver_bot(
+    session: AsyncSession,
+    automation: CustomAutomation,
+    lead: CustomLead,
+) -> dict[str, Any]:
+    token = decrypt_bot_token(automation)
+    if not token:
+        return {"sent": 0, "pending": True, "reason": "no_token"}
+    already = set(_notified_chat_ids(lead))
+    result = await session.execute(
+        select(CustomBotSubscriber).where(
+            CustomBotSubscriber.custom_automation_id == automation.id,
+            CustomBotSubscriber.status == "subscribed",
+        )
+    )
+    subscribers = list(result.scalars().all())
+    if not subscribers:
+        return {"sent": 0, "pending": True, "reason": "no_subscribers"}
+
+    text = format_dmp_lead_message(lead)
+    sent = 0
+    now = _utc_now()
+    for subscriber in subscribers:
+        chat_id = int(subscriber.telegram_chat_id)
+        if chat_id in already:
+            continue
+        response = await send_bot_message(token, chat_id, text)
+        if response.get("ok"):
+            already.add(chat_id)
+            sent += 1
+            continue
+        if _is_permanent_telegram_error(str(response.get("description") or "")):
+            subscriber.status = "idle"
+            subscriber.updated_at = now
+            logger.warning("Unsubscribed chat %s after permanent Telegram error", chat_id)
+
+    lead.bot_notified_chat_ids = sorted(already)
+    remaining = [row for row in subscribers if int(row.telegram_chat_id) not in already and row.status == "subscribed"]
+    if not remaining and already:
+        lead.bot_notified_at = now
+    return {"sent": sent, "pending": bool(remaining) or not already}
+
+
+async def _deliver_sheets(session: AsyncSession, automation: CustomAutomation, lead: CustomLead) -> dict[str, Any]:
+    if lead.sheets_synced_at:
+        return {"ok": True, "skipped": True}
+    if not _sheets_configured(automation):
+        return {"ok": False, "reason": "sheets_not_configured"}
+    try:
+        sheets = await ensure_header_and_append(session, automation, lead)
+    except Exception as exc:
+        logger.warning("Google Sheets append failed for lead %s: %s", lead.id, exc)
+        return {"ok": False, "reason": str(exc)[:200]}
+    if sheets.get("ok"):
+        lead.sheets_synced_at = _utc_now()
+    return sheets
 
 
 def _is_locked(subscriber: CustomBotSubscriber) -> bool:
@@ -323,37 +479,65 @@ async def dispatch_dmp_notifications(
     automation: CustomAutomation,
     lead: CustomLead,
 ) -> dict[str, Any]:
-    text = format_dmp_lead_message(lead)
-    token = decrypt_bot_token(automation)
-    sent = 0
-    if token:
-        result = await session.execute(
-            select(CustomBotSubscriber).where(
-                CustomBotSubscriber.custom_automation_id == automation.id,
-                CustomBotSubscriber.status == "subscribed",
-            )
-        )
-        for subscriber in result.scalars().all():
-            if await send_bot_message(token, int(subscriber.telegram_chat_id), text):
-                sent += 1
-    sheets: dict[str, Any] = {"ok": False, "reason": "skipped"}
-    try:
-        sheets = await ensure_header_and_append(session, automation, lead)
-    except Exception as exc:
-        logger.warning("Google Sheets append failed for lead %s: %s", lead.id, exc)
-        sheets = {"ok": False, "reason": str(exc)[:200]}
-
+    bot = await _deliver_bot(session, automation, lead)
+    sheets = await _deliver_sheets(session, automation, lead)
     now = _utc_now()
     lead.status = LeadStatus.TRANSFERRED.value
-    lead.transferred_at = now
+    lead.transferred_at = lead.transferred_at or now
     lead.status_history = (lead.status_history or []) + [
         {
             "status": LeadStatus.TRANSFERRED.value,
             "changed_at": now.isoformat(),
-            "bot_sent": sent,
+            "bot_sent": bot.get("sent") or 0,
+            "bot_pending": bool(bot.get("pending")),
             "sheets": sheets.get("ok"),
         }
     ]
     lead.updated_at = now
     await session.commit()
-    return {"transferred": True, "bot_sent": sent, "sheets": sheets}
+    return {"transferred": True, "bot_sent": bot.get("sent") or 0, "bot_pending": bool(bot.get("pending")), "sheets": sheets}
+
+
+def _lead_needs_notify(automation: CustomAutomation, lead: CustomLead) -> bool:
+    if not lead.bot_notified_at:
+        return True
+    if not lead.sheets_synced_at and _sheets_configured(automation):
+        return True
+    return False
+
+
+async def retry_pending_dmp_notifications(automation_id: int) -> dict[str, Any]:
+    """Push missed bot/sheet deliveries after downtime. Does not require /start."""
+    retried = 0
+    async with async_session_maker() as session:
+        automation = await session.get(CustomAutomation, automation_id)
+        if not automation:
+            return {"retried": 0, "reason": "automation_not_found"}
+        try:
+            await restore_telegram_webhook(automation)
+        except Exception:
+            logger.exception("Webhook restore failed for automation %s", automation_id)
+        await session.commit()
+
+        result = await session.execute(
+            select(CustomLead.id)
+            .where(
+                CustomLead.custom_automation_id == automation_id,
+                CustomLead.source == "dmp_one",
+                or_(
+                    CustomLead.bot_notified_at.is_(None),
+                    CustomLead.sheets_synced_at.is_(None),
+                ),
+            )
+            .order_by(CustomLead.created_at.asc())
+            .limit(RETRY_BATCH)
+        )
+        lead_ids = [row[0] for row in result.all()]
+        for lead_id in lead_ids:
+            automation = await session.get(CustomAutomation, automation_id)
+            lead = await session.get(CustomLead, lead_id)
+            if not automation or not lead or not _lead_needs_notify(automation, lead):
+                continue
+            await dispatch_dmp_notifications(session, automation, lead)
+            retried += 1
+    return {"retried": retried}

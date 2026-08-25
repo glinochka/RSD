@@ -1099,6 +1099,8 @@ class TestBuiltinSolutions:
 
 class FakeTelegramClient:
     sent: list[dict] = []
+    webhooks: list[dict] = []
+    fail_send = False
 
     def __init__(self, *args, **kwargs):
         pass
@@ -1111,7 +1113,17 @@ class FakeTelegramClient:
 
     async def post(self, url, json=None):
         payload = dict(json or {})
+        if "setWebhook" in url:
+            FakeTelegramClient.webhooks.append(payload)
         if "sendMessage" in url:
+            if FakeTelegramClient.fail_send:
+                class FailResp:
+                    content = b'{"ok":false}'
+
+                    def json(self):
+                        return {"ok": False, "description": "Bad Gateway"}
+
+                return FailResp()
             FakeTelegramClient.sent.append(payload)
 
         class Resp:
@@ -1120,6 +1132,8 @@ class FakeTelegramClient:
             def json(self):
                 if "getMe" in url:
                     return {"ok": True, "result": {"username": "notify_bot"}}
+                if "getWebhookInfo" in url:
+                    return {"ok": True, "result": {"url": ""}}
                 return {"ok": True}
 
         return Resp()
@@ -1180,7 +1194,7 @@ class TestDmpBotPipeline:
         await test_session.commit()
         automation_id = custom_automation.id
         jobs = CustomAutomationScheduler._enabled_jobs(custom_automation)
-        assert jobs == {"dmp_poll"}
+        assert jobs == {"dmp_poll", "dmp_notify"}
         assert "join" not in jobs
         assert "lead_warmup" not in jobs
 
@@ -1371,5 +1385,142 @@ class TestDmpBotPipeline:
             )
             assert dmp.status_code == 200, dmp.text
             assert append.await_count == 1
+
+    async def test_persisted_subscriber_gets_lead_without_start(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from app.alembic.models import CustomBotSubscriber
+        from app.services.custom.telegram_notify_bot_service import dispatch_dmp_notifications
+        from app.utils.crypto import encrypt_token
+
+        custom_automation.solution_kind = "dmp_bot"
+        custom_automation.telegram_bot_token_enc = encrypt_token("123456:test-token")
+        await test_session.commit()
+        test_session.add(
+            CustomBotSubscriber(
+                custom_automation_id=custom_automation.id,
+                telegram_chat_id=999001,
+                status="subscribed",
+            )
+        )
+        lead = CustomLead(
+            custom_automation_id=custom_automation.id,
+            source="dmp_one",
+            contact_type="phone",
+            contact_value="79001230000",
+            status="new",
+            dmp_raw_data={"phone": "79001230000", "website": "persist.example.com"},
+        )
+        test_session.add(lead)
+        await test_session.commit()
+        await test_session.refresh(lead)
+        FakeTelegramClient.sent = []
+        FakeTelegramClient.fail_send = False
+        with patch("app.services.custom.telegram_notify_bot_service.httpx.AsyncClient", FakeTelegramClient):
+            result = await dispatch_dmp_notifications(test_session, custom_automation, lead)
+        assert result["bot_sent"] == 1
+        assert result["bot_pending"] is False
+        await test_session.refresh(lead)
+        assert lead.bot_notified_at is not None
+        assert 999001 in (lead.bot_notified_chat_ids or [])
+        assert any("79001230000" in (item.get("text") or "") for item in FakeTelegramClient.sent)
+
+    async def test_retry_sends_after_telegram_outage_without_start(
+        self,
+        test_session: AsyncSession,
+        test_engine,
+        custom_automation: CustomAutomation,
+    ):
+        from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession as SAAsyncSession
+        from app.alembic.models import CustomBotSubscriber
+        from app.services.custom import telegram_notify_bot_service as bot_service
+        from app.utils.crypto import encrypt_token
+        from app.config import settings
+
+        custom_automation.solution_kind = "dmp_bot"
+        custom_automation.telegram_bot_token_enc = encrypt_token("123456:test-token")
+        custom_automation.telegram_bot_webhook_secret = "botsecret"
+        await test_session.commit()
+        automation_id = custom_automation.id
+        test_session.add(
+            CustomBotSubscriber(
+                custom_automation_id=automation_id,
+                telegram_chat_id=999002,
+                status="subscribed",
+            )
+        )
+        lead = CustomLead(
+            custom_automation_id=automation_id,
+            source="dmp_one",
+            contact_type="phone",
+            contact_value="79001230001",
+            status="new",
+            dmp_raw_data={"phone": "79001230001"},
+        )
+        test_session.add(lead)
+        await test_session.commit()
+        lead_id = lead.id
+        FakeTelegramClient.sent = []
+        FakeTelegramClient.fail_send = True
+        FakeTelegramClient.webhooks = []
+        with patch.object(bot_service, "SEND_ATTEMPTS", 1), patch(
+            "app.services.custom.telegram_notify_bot_service.httpx.AsyncClient",
+            FakeTelegramClient,
+        ):
+            first = await bot_service.dispatch_dmp_notifications(test_session, custom_automation, lead)
+        assert first["bot_pending"] is True
+        await test_session.refresh(lead)
+        assert lead.bot_notified_at is None
+        FakeTelegramClient.fail_send = False
+        FakeTelegramClient.sent = []
+        factory = async_sessionmaker(test_engine, expire_on_commit=False, class_=SAAsyncSession)
+        with patch.object(bot_service, "async_session_maker", factory), patch(
+            "app.services.custom.telegram_notify_bot_service.httpx.AsyncClient",
+            FakeTelegramClient,
+        ), patch.object(settings, "BASE_URL", "https://app.example.com"):
+            retried = await bot_service.retry_pending_dmp_notifications(automation_id)
+        assert retried["retried"] >= 1
+        test_session.expire(lead)
+        await test_session.refresh(lead)
+        assert lead.bot_notified_at is not None
+        assert any("79001230001" in (item.get("text") or "") for item in FakeTelegramClient.sent)
+        assert FakeTelegramClient.webhooks
+        assert FakeTelegramClient.webhooks[-1].get("drop_pending_updates") is False
+
+    async def test_restore_webhook_keeps_subscribers(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from app.alembic.models import CustomBotSubscriber
+        from app.services.custom.telegram_notify_bot_service import restore_telegram_webhook
+        from app.utils.crypto import encrypt_token
+        from app.config import settings
+
+        custom_automation.solution_kind = "dmp_bot"
+        custom_automation.telegram_bot_token_enc = encrypt_token("123456:test-token")
+        custom_automation.telegram_bot_webhook_secret = "keepsecret"
+        await test_session.commit()
+        test_session.add(
+            CustomBotSubscriber(
+                custom_automation_id=custom_automation.id,
+                telegram_chat_id=999003,
+                status="subscribed",
+            )
+        )
+        await test_session.commit()
+        FakeTelegramClient.webhooks = []
+        with patch("app.services.custom.telegram_notify_bot_service.httpx.AsyncClient", FakeTelegramClient), patch.object(
+            settings, "BASE_URL", "https://app.example.com"
+        ):
+            info = await restore_telegram_webhook(custom_automation)
+        assert info.get("ok") is True
+        assert FakeTelegramClient.webhooks[-1].get("drop_pending_updates") is False
+        subscriber = await test_session.scalar(
+            select(CustomBotSubscriber).where(CustomBotSubscriber.telegram_chat_id == 999003)
+        )
+        assert subscriber.status == "subscribed"
 
 

@@ -2592,6 +2592,9 @@ class CustomLead(Base):
     amocrm_status_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     transferred_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_message_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    bot_notified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    sheets_synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    bot_notified_chat_ids: Mapped[list | None] = mapped_column(JSONB, default=list, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
 

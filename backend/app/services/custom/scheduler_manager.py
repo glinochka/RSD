@@ -26,6 +26,7 @@ from .amocrm_service import run_amocrm_sync_for_automation
 from .chat_discovery_service import run_pending_discovery_for_automation
 from .lead_warmup_service import run_lead_warmup_pass
 from .shilling_service import run_shilling_pass
+from .telegram_notify_bot_service import restore_all_telegram_webhooks, retry_pending_dmp_notifications
 
 logger = getLogger(__name__)
 
@@ -67,6 +68,7 @@ class CustomAutomationScheduler:
             "discussion": settings.CUSTOM_DISCUSSION_INTERVAL_SECONDS,
             "lead_warmup": settings.CUSTOM_LEAD_WARMUP_INTERVAL_SECONDS,
             "dmp_poll": settings.DMP_ONE_POLL_INTERVAL_SECONDS,
+            "dmp_notify": 60,
             "amocrm_sync": settings.CUSTOM_AMOCRM_SYNC_INTERVAL_SECONDS,
         }
 
@@ -81,6 +83,7 @@ class CustomAutomationScheduler:
             "discussion": run_discussion_pass,
             "lead_warmup": run_lead_warmup_pass,
             "dmp_poll": poll_pending_imports,
+            "dmp_notify": retry_pending_dmp_notifications,
             "amocrm_sync": run_amocrm_sync_for_automation,
         }
 
@@ -102,7 +105,7 @@ class CustomAutomationScheduler:
         from .solution_templates import is_dmp_notify_pipeline, qualification_enabled
 
         if is_dmp_notify_pipeline(automation):
-            jobs: set[str] = set()
+            jobs: set[str] = {"dmp_notify"}
             if automation.is_dmp_one_enabled:
                 jobs.add("dmp_poll")
             if qualification_enabled(automation):
@@ -206,6 +209,11 @@ class CustomAutomationScheduler:
                 await ensure_builtin_solutions(session)
         except Exception as exc:
             logger.exception("Failed to seed built-in custom solutions: %s", exc)
+        try:
+            restored = await restore_all_telegram_webhooks()
+            logger.info("Restored Telegram notify webhooks: %s", restored)
+        except Exception as exc:
+            logger.exception("Failed to restore Telegram notify webhooks: %s", exc)
         refresh_interval = settings.CUSTOM_SCHEDULER_REFRESH_INTERVAL_SECONDS
         while not self._stop_event.is_set():
             try:
