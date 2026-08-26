@@ -47,6 +47,7 @@ const CustomAutomationAccountsPage = () => {
   const [isHealthChecking, setIsHealthChecking] = useState(false);
   const [savingNameId, setSavingNameId] = useState(null);
   const [nameDrafts, setNameDrafts] = useState({});
+  const [bioDrafts, setBioDrafts] = useState({});
   const [filters, setFilters] = useState({
     status: '',
     accountClass: '',
@@ -156,8 +157,9 @@ const CustomAutomationAccountsPage = () => {
     }
   };
 
-  const handleSaveName = async (account) => {
+  const handleSaveProfile = async (account) => {
     const name = (nameDrafts[account.id] ?? account.display_name ?? '').trim();
+    const bio = (bioDrafts[account.id] ?? account.bio ?? '').trim();
     if (!name) {
       setError('Имя не может быть пустым');
       return;
@@ -165,10 +167,10 @@ const CustomAutomationAccountsPage = () => {
     setSavingNameId(account.id);
     setError(null);
     try {
-      await customService.updateAccount(id, account.id, { displayName: name });
+      await customService.updateAccount(id, account.id, { displayName: name, bio });
       await loadAccounts();
     } catch (err) {
-      setError(err.message || 'Не удалось сменить имя');
+      setError(err.message || 'Не удалось сохранить профиль');
     } finally {
       setSavingNameId(null);
     }
@@ -181,11 +183,17 @@ const CustomAutomationAccountsPage = () => {
     setError(null);
     setUploadSuccess(null);
     try {
-      await customService.bulkUpdateProfiles(id, {
+      const result = await customService.bulkUpdateProfiles(id, {
         avatar: file,
         accountIds: [account.id],
       });
-      setUploadSuccess('Аватар в очереди на обновление. Обновите список через минуту.');
+      const failed = (result.results || []).find((row) => row.status === 'error');
+      if (failed) {
+        setError(failed.error || 'Не удалось обновить аватар');
+        return;
+      }
+      setUploadSuccess('Аватар обновлён');
+      await loadAccounts();
     } catch (err) {
       setError(err.message || 'Не удалось обновить аватар');
     }
@@ -340,7 +348,7 @@ const CustomAutomationAccountsPage = () => {
         <div className="crm-list">
           {accounts.map((account) => {
             const statusMeta = accountStatusMeta(account);
-            const avatarSrc = mediaUrl(account.avatar_url);
+            const avatarSrc = mediaUrl(account.avatar_url, account.updated_at || account.last_health_check_at);
             const title = account.display_name || account.username || account.phone_number || `Аккаунт #${account.id}`;
             return (
             <div key={account.id} className="crm-item crm-account-card">
@@ -381,12 +389,23 @@ const CustomAutomationAccountsPage = () => {
                 {account.added_at ? ` · добавлен ${new Date(account.added_at).toLocaleString()}` : ''}
               </span>
               <div className="form-group">
-                <label htmlFor={`name-${account.id}`}>Имя аккаунта</label>
+                <label htmlFor={`name-${account.id}`}>Имя</label>
                 <input
                   id={`name-${account.id}`}
                   type="text"
                   value={nameDrafts[account.id] ?? account.display_name ?? ''}
                   onChange={(e) => setNameDrafts((prev) => ({ ...prev, [account.id]: e.target.value }))}
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor={`bio-${account.id}`}>Описание</label>
+                <textarea
+                  id={`bio-${account.id}`}
+                  rows={2}
+                  maxLength={140}
+                  value={bioDrafts[account.id] ?? account.bio ?? ''}
+                  onChange={(e) => setBioDrafts((prev) => ({ ...prev, [account.id]: e.target.value }))}
+                  placeholder="О себе в Telegram"
                 />
               </div>
               <div className="form-group">
@@ -419,9 +438,9 @@ const CustomAutomationAccountsPage = () => {
                   type="button"
                   className="btn btn-black"
                   disabled={savingNameId === account.id}
-                  onClick={() => handleSaveName(account)}
+                  onClick={() => handleSaveProfile(account)}
                 >
-                  {savingNameId === account.id ? 'Сохранение...' : 'Сохранить имя'}
+                  {savingNameId === account.id ? 'Сохранение...' : 'Сохранить'}
                 </button>
                 <button
                   type="button"

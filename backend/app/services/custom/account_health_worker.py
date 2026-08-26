@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .account_classification_service import classify_account
 from .telegram_account_client import TelegramAccountClient
-from .telegram_error_handler import update_account_after_telegram_error
+from .telegram_error_handler import SessionInvalidError, update_account_after_telegram_error
 from ...alembic.database import async_session_maker
 from ...alembic.models import AccountClass, AccountPool, CustomAutomation, PoolAccount, SocialAccount
 from ...config import settings
@@ -53,24 +53,41 @@ class AccountHealthWorker:
         if social_account.session_file_path:
             session_path = _media_root() / social_account.session_file_path
             if session_path.exists():
-                try:
-                    need_spam_check = True
-                    checked_at = social_account.spamblock_checked_at
-                    if checked_at is not None:
-                        then = checked_at.replace(tzinfo=None) if getattr(checked_at, "tzinfo", None) else checked_at
-                        need_spam_check = (_utc_now() - then) >= _SPAMBLOCK_RECHECK
-                    async with TelegramAccountClient(str(session_path)) as client:
-                        info = await client.get_info()
-                        if need_spam_check:
-                            spam_state = await client.check_spamblock()
-                        if info.get("has_avatar"):
-                            try:
-                                avatar_bytes = await client.download_avatar()
-                            except Exception as exc:
-                                logger.warning("Could not download avatar for %s: %s", account_id, exc)
-                except Exception as exc:
-                    error_kind = await update_account_after_telegram_error(session, social_account, exc)
-                    logger.warning("Health check failed for account %s: %s (%s)", account_id, exc, error_kind)
+                last_exc: Exception | None = None
+                for attempt in range(2):
+                    try:
+                        need_spam_check = True
+                        checked_at = social_account.spamblock_checked_at
+                        if checked_at is not None:
+                            then = checked_at.replace(tzinfo=None) if getattr(checked_at, "tzinfo", None) else checked_at
+                            need_spam_check = (_utc_now() - then) >= _SPAMBLOCK_RECHECK
+                        async with TelegramAccountClient(str(session_path)) as client:
+                            info = await client.get_info()
+                            if need_spam_check:
+                                spam_state = await client.check_spamblock()
+                            if info.get("has_avatar"):
+                                try:
+                                    avatar_bytes = await client.download_avatar()
+                                except Exception as exc:
+                                    logger.warning("Could not download avatar for %s: %s", account_id, exc)
+                        last_exc = None
+                        break
+                    except Exception as exc:
+                        last_exc = exc
+                        if attempt == 0 and isinstance(exc, SessionInvalidError):
+                            logger.warning(
+                                "Health check session error for account %s, retrying: %s",
+                                account_id,
+                                exc,
+                            )
+                            await asyncio.sleep(2)
+                            continue
+                        error_kind = await update_account_after_telegram_error(session, social_account, exc)
+                        logger.warning("Health check failed for account %s: %s (%s)", account_id, exc, error_kind)
+                        break
+                if last_exc is not None and error_kind is None:
+                    error_kind = await update_account_after_telegram_error(session, social_account, last_exc)
+                    logger.warning("Health check failed for account %s: %s (%s)", account_id, last_exc, error_kind)
             else:
                 social_account.is_active = False
                 error_kind = "session_invalid"

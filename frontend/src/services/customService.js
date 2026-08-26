@@ -13,7 +13,7 @@ const CUSTOM_IS_ADMIN_KEY = ENV_CONFIG.STORAGE_KEYS.CUSTOM_IS_ADMIN;
 
 const getBaseUrl = () => ENV_CONFIG.API.BASE_URL || '';
 
-export const mediaUrl = (path) => {
+export const mediaUrl = (path, cacheKey) => {
   if (!path) {
     return '';
   }
@@ -21,7 +21,12 @@ export const mediaUrl = (path) => {
     return path;
   }
   const normalized = path.startsWith('/') ? path : `/${path}`;
-  return `${getBaseUrl()}${normalized}`;
+  const url = `${getBaseUrl()}${normalized}`;
+  if (!cacheKey) {
+    return url;
+  }
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}v=${encodeURIComponent(cacheKey)}`;
 };
 
 const getCustomToken = () => {
@@ -356,13 +361,16 @@ const customService = {
       return this.updateAccount(automationId, accountId, { assignedClass });
     },
 
-    async updateAccount(automationId, accountId, { assignedClass, displayName } = {}) {
+    async updateAccount(automationId, accountId, { assignedClass, displayName, bio } = {}) {
       const body = {};
       if (assignedClass !== undefined) {
         body.assigned_class = assignedClass;
       }
       if (displayName !== undefined) {
         body.display_name = displayName;
+      }
+      if (bio !== undefined) {
+        body.bio = bio;
       }
       const response = await fetch(
         `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ACCOUNTS(automationId)}/${accountId}`,

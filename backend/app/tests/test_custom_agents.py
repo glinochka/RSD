@@ -2177,6 +2177,9 @@ class TestAccountHealthSpamblockAndDelete:
         with patch(
             "app.services.custom.account_health_worker.TelegramAccountClient",
             return_value=_FakeClient(),
+        ), patch(
+            "app.services.custom.account_health_worker.asyncio.sleep",
+            new=AsyncMock(),
         ):
             result = await AccountHealthWorker().process_account(
                 test_session, custom_automation.id, account_id
@@ -2317,6 +2320,61 @@ class TestAccountProfile:
             )
         assert response.status_code == 200, response.text
         assert response.json()["display_name"] == "Новое Имя"
+
+    async def test_patch_bio(
+        self,
+        client: AsyncClient,
+        client_token: str,
+        custom_automation: CustomAutomation,
+        test_session: AsyncSession,
+    ):
+        from app.services.account_pool_service import get_or_create_default_pool
+
+        pool = await get_or_create_default_pool(test_session, custom_automation.id)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number="+79990000042",
+            username="bioedit",
+            display_name="Имя",
+            bio="Старое",
+            current_bio="Старое",
+            encrypted_session="x",
+            session_file_path="sessions/bioedit.session",
+            is_active=True,
+        )
+        test_session.add(account)
+        await test_session.flush()
+        test_session.add(
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account.id,
+                assigned_class=AccountClass.ONE_DAY.value,
+                custom_automation_id=custom_automation.id,
+            )
+        )
+        await test_session.commit()
+
+        async def fake_bio(session, automation_id, social_account, bio):
+            social_account.bio = bio
+            social_account.current_bio = bio
+            return bio
+
+        with patch(
+            "app.router_custom.automation_router.update_account_bio",
+            fake_bio,
+        ):
+            response = await client.patch(
+                f"/api/custom/automations/{custom_automation.id}/accounts/{account.id}",
+                headers={"Authorization": f"Bearer {client_token}"},
+                json={"bio": "Новое описание"},
+            )
+        assert response.status_code == 200, response.text
+        assert response.json()["bio"] == "Новое описание"
+
+    async def test_bulk_worker_exposes_process_accounts(self):
+        from app.services.custom.bulk_profile_service import BulkProfileUpdateWorker
+
+        assert callable(BulkProfileUpdateWorker().process_accounts)
 
 
 

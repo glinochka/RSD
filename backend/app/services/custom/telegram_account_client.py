@@ -4,6 +4,7 @@ import io
 import random
 import re
 from logging import getLogger
+from pathlib import Path
 from typing import Any
 
 from telethon import TelegramClient
@@ -23,6 +24,18 @@ _MAX_BIO_LENGTH = 160
 _PHONE_DIGITS_RE = re.compile(r"\D+")
 _SPAMBOT = "SpamBot"
 _SPAMBOT_WAIT_SECONDS = 2.0
+_session_locks: dict[str, asyncio.Lock] = {}
+_session_locks_guard = asyncio.Lock()
+
+
+async def _lock_for_session(session_path: str) -> asyncio.Lock:
+    key = str(Path(session_path).resolve())
+    async with _session_locks_guard:
+        lock = _session_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            _session_locks[key] = lock
+        return lock
 
 
 def normalize_telegram_phone(value: str | None) -> str | None:
@@ -49,40 +62,51 @@ class TelegramAccountClient:
         self.session_path = session_path
         self.api_id, self.api_hash = resolve_api_credentials(api_id, api_hash, prefer_desktop=True)
         self.client = TelegramClient(self.session_path, self.api_id, self.api_hash)
+        self._session_lock: asyncio.Lock | None = None
 
     async def __aenter__(self) -> "TelegramAccountClient":
         from .telegram_error_handler import _looks_like_session_error
 
+        self._session_lock = await _lock_for_session(self.session_path)
+        await self._session_lock.acquire()
         try:
-            await self.client.connect()
-        except Exception as exc:
-            if isinstance(exc, AuthKeyError) or _looks_like_session_error(exc):
-                try:
-                    await self.client.disconnect()
-                except Exception:
-                    pass
-                raise SessionInvalidError(str(exc)) from exc
+            try:
+                await self.client.connect()
+            except Exception as exc:
+                if isinstance(exc, AuthKeyError) or _looks_like_session_error(exc):
+                    try:
+                        await self.client.disconnect()
+                    except Exception:
+                        pass
+                    raise SessionInvalidError(str(exc)) from exc
+                raise
+            try:
+                authorized = await self.client.is_user_authorized()
+            except Exception as exc:
+                if isinstance(exc, AuthKeyError) or _looks_like_session_error(exc):
+                    try:
+                        await self.client.disconnect()
+                    except Exception:
+                        pass
+                    raise SessionInvalidError(str(exc)) from exc
+                raise
+            if not authorized:
+                await self.client.disconnect()
+                raise SessionInvalidError("Session is not authorized")
+            return self
+        except Exception:
+            self._session_lock.release()
+            self._session_lock = None
             raise
-        try:
-            authorized = await self.client.is_user_authorized()
-        except Exception as exc:
-            if isinstance(exc, AuthKeyError) or _looks_like_session_error(exc):
-                try:
-                    await self.client.disconnect()
-                except Exception:
-                    pass
-                raise SessionInvalidError(str(exc)) from exc
-            raise
-        if not authorized:
-            await self.client.disconnect()
-            raise SessionInvalidError("Session is not authorized")
-        return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
         try:
             await self.client.disconnect()
         except Exception as exc_close:
             logger.debug("Error disconnecting Telegram client: %s", exc_close)
+        if self._session_lock is not None:
+            self._session_lock.release()
+            self._session_lock = None
 
     async def get_info(self) -> dict[str, Any]:
         """Return public profile metadata without modifying the account."""

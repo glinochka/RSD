@@ -82,7 +82,12 @@ from ..services.custom.account_connect_service import (
 )
 from ..services.custom.account_health_worker import AccountHealthWorker
 from ..services.telegram_userbot_auth import TelegramUserbotAuthError
-from ..services.custom.bulk_profile_service import BulkProfileUpdateWorker, _save_uploaded_avatar, update_account_display_name
+from ..services.custom.bulk_profile_service import (
+    BulkProfileUpdateWorker,
+    _save_uploaded_avatar,
+    update_account_bio,
+    update_account_display_name,
+)
 from ..services.custom.chat_discovery_service import (
     approve_discovered_chats,
     create_discovery_task,
@@ -365,6 +370,7 @@ def _account_response(
         max_daily_messages_per_account=max_daily,
         added_at=pool_account.added_at,
         last_health_check_at=social_account.last_health_check_at,
+        updated_at=social_account.updated_at,
     )
 
 
@@ -809,14 +815,15 @@ async def bulk_update_profiles(
             )
 
     worker = BulkProfileUpdateWorker()
-    background_tasks.add_task(
-        worker.process_accounts,
-        automation_id,
-        account_ids,
-        avatar_relative_path=avatar_relative_path,
-        bio_template=data.bio_template,
-        generate_unique=data.generate_unique,
-    )
+    job_kwargs = {
+        "avatar_relative_path": avatar_relative_path,
+        "bio_template": data.bio_template,
+        "generate_unique": data.generate_unique,
+    }
+    if len(account_ids) <= 5:
+        results = await worker.process_accounts(automation_id, account_ids, **job_kwargs)
+        return AccountBulkUpdateProfilesResponse(queued=len(account_ids), results=results)
+    background_tasks.add_task(worker.process_accounts, automation_id, account_ids, **job_kwargs)
     return AccountBulkUpdateProfilesResponse(queued=len(account_ids))
 
 
@@ -827,7 +834,7 @@ async def update_account(
     payload: AccountClassUpdate,
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
-    if payload.assigned_class is None and payload.display_name is None:
+    if payload.assigned_class is None and payload.display_name is None and payload.bio is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nothing to update")
     async with async_session_maker() as session:
         row = await session.execute(
@@ -851,6 +858,13 @@ async def update_account(
         if payload.display_name is not None:
             try:
                 await update_account_display_name(session, automation_id, social_account, payload.display_name)
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+            except Exception as exc:
+                raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)[:255]) from exc
+        if payload.bio is not None:
+            try:
+                await update_account_bio(session, automation_id, social_account, payload.bio)
             except ValueError as exc:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
             except Exception as exc:

@@ -231,6 +231,7 @@ class AccountBulkClassifyResponse(BaseModel):
 class AccountClassUpdate(BaseModel):
     assigned_class: Optional[str] = Field(default=None, min_length=1, max_length=32)
     display_name: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    bio: Optional[str] = Field(default=None, max_length=140)
 
 
 class AccountQrStartRequest(BaseModel):
@@ -271,6 +272,7 @@ class AccountBulkUpdateProfilesRequest(BaseModel):
 
 class AccountBulkUpdateProfilesResponse(BaseModel):
     queued: int
+    results: list[dict[str, Any]] | None = None
 
 
 class AccountResponse(BaseModel):
@@ -300,6 +302,7 @@ class AccountResponse(BaseModel):
     max_daily_messages_per_account: int = 50
     added_at: datetime
     last_health_check_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
 
 class AccountQrStartResponse(BaseModel):

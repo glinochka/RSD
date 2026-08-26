@@ -234,37 +234,6 @@ class BulkProfileUpdateWorker:
             "applied_avatar": applied_avatar,
         }
 
-
-async def update_account_display_name(
-    session: AsyncSession,
-    automation_id: int,
-    social_account: SocialAccount,
-    display_name: str,
-) -> str:
-    name = (display_name or "").strip()
-    if not name:
-        raise ValueError("empty display name")
-    if not social_account.session_file_path:
-        raise ValueError("no session")
-    session_path = _media_root() / social_account.session_file_path
-    if not session_path.exists():
-        raise ValueError("Session file missing")
-    async with TelegramAccountClient(str(session_path)) as client:
-        stored = await execute_with_telegram_retry(
-            session,
-            social_account,
-            lambda: client.set_display_name(name),
-            action_type="profile_update",
-            target_id=f"account:{social_account.id}",
-            target_type="profile",
-            payload={"display_name": name},
-            automation_id=automation_id,
-        )
-    social_account.display_name = stored or name
-    social_account.updated_at = _utc_now()
-    await session.commit()
-    return social_account.display_name
-
     async def process_accounts(
         self,
         automation_id: int,
@@ -293,3 +262,65 @@ async def update_account_display_name(
                     logger.exception("Bulk profile update failed for account %s: %s", account_id, exc)
                     results.append({"account_id": account_id, "status": "error", "error": str(exc)})
         return results
+
+
+async def _require_session_path(social_account: SocialAccount) -> Path:
+    if not social_account.session_file_path:
+        raise ValueError("no session")
+    session_path = _media_root() / social_account.session_file_path
+    if not session_path.exists():
+        raise ValueError("Session file missing")
+    return session_path
+
+
+async def update_account_display_name(
+    session: AsyncSession,
+    automation_id: int,
+    social_account: SocialAccount,
+    display_name: str,
+) -> str:
+    name = (display_name or "").strip()
+    if not name:
+        raise ValueError("empty display name")
+    session_path = await _require_session_path(social_account)
+    async with TelegramAccountClient(str(session_path)) as client:
+        stored = await execute_with_telegram_retry(
+            session,
+            social_account,
+            lambda: client.set_display_name(name),
+            action_type="profile_update",
+            target_id=f"account:{social_account.id}",
+            target_type="profile",
+            payload={"display_name": name},
+            automation_id=automation_id,
+        )
+    social_account.display_name = stored or name
+    social_account.updated_at = _utc_now()
+    await session.commit()
+    return social_account.display_name
+
+
+async def update_account_bio(
+    session: AsyncSession,
+    automation_id: int,
+    social_account: SocialAccount,
+    bio: str,
+) -> str:
+    text = (bio or "").strip()[:140]
+    session_path = await _require_session_path(social_account)
+    async with TelegramAccountClient(str(session_path)) as client:
+        await execute_with_telegram_retry(
+            session,
+            social_account,
+            lambda: client.set_bio(text),
+            action_type="profile_update",
+            target_id=f"account:{social_account.id}",
+            target_type="profile",
+            payload={"bio": text},
+            automation_id=automation_id,
+        )
+    social_account.bio = text
+    social_account.current_bio = text
+    social_account.updated_at = _utc_now()
+    await session.commit()
+    return text
