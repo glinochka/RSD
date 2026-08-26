@@ -398,12 +398,12 @@ class AccountBanStatsResponse(BaseModel):
 
 class ChatTargetCreate(BaseModel):
     provider: str = "telegram"
+    invite_link: str = Field(..., min_length=1, max_length=512)
+    mode: str = "monitoring"
     external_chat_id: Optional[str] = None
-    invite_link: Optional[str] = None
     title: Optional[str] = None
     description: Optional[str] = None
     chat_type: Optional[str] = None
-    mode: str = "monitoring"
 
 
 class ChatTargetUpdate(BaseModel):
@@ -583,6 +583,7 @@ class ChatTargetResponse(BaseModel):
     joined_at: Optional[datetime] = None
     is_active: bool
     last_scanned_at: Optional[datetime] = None
+    last_join_error: Optional[str] = None
     neurocommenting_config: Optional[dict] = None
     discussion_config: Optional[dict] = None
     shilling_config: Optional[dict] = None

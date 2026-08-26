@@ -21,6 +21,7 @@ from .chat_scope import (
 from .lead_keywords import matched_lead_keyword, normalize_lead_keywords
 from .rotation_service import select_account_for_action
 from .telegram_account_client import TelegramAccountClient
+from .telegram_invite import chat_entity_key
 from .telegram_error_handler import execute_with_telegram_retry
 from ...alembic.models import ChatJoinStatus, ChatMessage, ChatTarget, CustomAutomation, CustomLead, CustomLeadMessage, CustomPrompt, LeadStatus, PromptType, SocialAccount
 from ...config import settings
@@ -158,7 +159,7 @@ async def fetch_messages_for_chat(
     messages = []
     try:
         async with TelegramAccountClient(str(session_path)) as client:
-            entity = await client.get_entity(chat_target.invite_link or chat_target.external_chat_id or chat_target.title)
+            entity = await client.get_entity(chat_entity_key(chat_target))
             apply_entity_metadata(chat_target, entity)
             if not is_group_chat(chat_target):
                 return []

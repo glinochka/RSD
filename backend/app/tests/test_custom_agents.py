@@ -666,6 +666,210 @@ class TestChatImportAndDedup:
         assert count == 1
 
 
+class TestChatCreateAndJoin:
+    async def _add_pool_account(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+        tmp_path,
+        monkeypatch,
+    ) -> SocialAccount:
+        from app.config import settings
+        from app.services.account_pool_service import get_or_create_default_pool
+
+        monkeypatch.setattr(settings, "MEDIA_ROOT", str(tmp_path))
+        session_rel = "sessions/join_acc.session"
+        session_file = tmp_path / session_rel
+        session_file.parent.mkdir(parents=True, exist_ok=True)
+        session_file.write_bytes(b"session")
+
+        pool = await get_or_create_default_pool(test_session, custom_automation.id)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number="+79990000111",
+            username="joinbot",
+            display_name="Join Bot",
+            account_class=AccountClass.TRUSTED.value,
+            encrypted_session="mock",
+            session_file_path=session_rel,
+            is_active=True,
+            is_banned=False,
+        )
+        test_session.add(account)
+        await test_session.flush()
+        test_session.add(
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account.id,
+                assigned_class=AccountClass.TRUSTED.value,
+                custom_automation_id=custom_automation.id,
+            )
+        )
+        await test_session.commit()
+        await test_session.refresh(account)
+        return account
+
+    async def test_create_rejects_bad_link(
+        self,
+        client: AsyncClient,
+        custom_automation: CustomAutomation,
+        client_token: str,
+    ):
+        response = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/chats",
+            json={"invite_link": "https://google.com/x"},
+            headers={"Authorization": f"Bearer {client_token}"},
+        )
+        assert response.status_code == 400
+
+    async def test_create_resolves_title_and_type_from_telegram(
+        self,
+        client: AsyncClient,
+        custom_automation: CustomAutomation,
+        client_token: str,
+        test_session: AsyncSession,
+        tmp_path,
+        monkeypatch,
+    ):
+        from app.services.custom.chat_join_service import create_chat_from_link
+
+        await self._add_pool_account(test_session, custom_automation, tmp_path, monkeypatch)
+
+        class FakeChannel:
+            id = 555
+            title = "SEO Chat"
+            broadcast = False
+            megagroup = True
+            username = "seo_chat"
+
+        class FakeClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def get_entity(self, identifier):
+                assert identifier in {"seo_chat", "https://t.me/seo_chat"}
+                return FakeChannel()
+
+            async def __call__(self, request):
+                return FakeChannel()
+
+        with patch(
+            "app.services.custom.chat_join_service.TelegramAccountClient",
+            return_value=FakeClient(),
+        ), patch(
+            "app.router_custom.automation_router.join_pending_chats",
+            new=AsyncMock(),
+        ):
+            chat = await create_chat_from_link(test_session, custom_automation.id, "@SEO_chat")
+            response = await client.post(
+                f"/api/custom/automations/{custom_automation.id}/chats",
+                json={"invite_link": "t.me/seo_chat"},
+                headers={"Authorization": f"Bearer {client_token}"},
+            )
+
+        assert chat.title == "SEO Chat"
+        assert chat.chat_type == "chat"
+        assert chat.invite_link == "https://t.me/seo_chat"
+        assert chat.external_chat_id == "555"
+        assert response.status_code == 400
+        assert "уже добавлен" in response.json()["detail"]
+
+    async def test_join_public_channel_and_private_invite(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+        tmp_path,
+        monkeypatch,
+    ):
+        from telethon.errors import UserAlreadyParticipantError
+
+        from app.services.custom.chat_join_service import _try_join_chat
+
+        account = await self._add_pool_account(test_session, custom_automation, tmp_path, monkeypatch)
+
+        class FakeChannel:
+            def __init__(self, *, chat_id, title, broadcast):
+                self.id = chat_id
+                self.title = title
+                self.broadcast = broadcast
+                self.megagroup = not broadcast
+                self.username = "news" if broadcast else None
+
+        class FakeClient:
+            def __init__(self, entity, already=False):
+                self.entity = entity
+                self.already = already
+                self.calls = []
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def get_entity(self, identifier):
+                self.calls.append(("get_entity", identifier))
+                return self.entity
+
+            async def __call__(self, request):
+                name = type(request).__name__
+                self.calls.append(name)
+                if self.already and name in {"JoinChannelRequest", "ImportChatInviteRequest"}:
+                    raise UserAlreadyParticipantError(request=None)
+                return self.entity
+
+        channel = ChatTarget(
+            custom_automation_id=custom_automation.id,
+            provider="telegram",
+            invite_link="t.me/news_channel",
+            mode="monitoring",
+            source="manual",
+            join_status="pending",
+            is_active=True,
+        )
+        group = ChatTarget(
+            custom_automation_id=custom_automation.id,
+            provider="telegram",
+            invite_link="+AbCdEfGhIjKl",
+            mode="monitoring",
+            source="manual",
+            join_status="pending",
+            is_active=True,
+        )
+        test_session.add_all([channel, group])
+        await test_session.commit()
+        await test_session.refresh(channel)
+        await test_session.refresh(group)
+
+        public_client = FakeClient(FakeChannel(chat_id=10, title="News", broadcast=True))
+        with patch(
+            "app.services.custom.chat_join_service.TelegramAccountClient",
+            return_value=public_client,
+        ):
+            result = await _try_join_chat(test_session, channel, account)
+        assert result["status"] == "joined"
+        assert channel.title == "News"
+        assert channel.chat_type == "channel"
+        assert channel.invite_link == "https://t.me/news_channel"
+        assert "JoinChannelRequest" in public_client.calls
+
+        private_client = FakeClient(FakeChannel(chat_id=20, title="Leads", broadcast=False), already=True)
+        with patch(
+            "app.services.custom.chat_join_service.TelegramAccountClient",
+            return_value=private_client,
+        ):
+            result = await _try_join_chat(test_session, group, account)
+        assert result["status"] == "joined"
+        assert group.title == "Leads"
+        assert group.chat_type == "chat"
+        assert group.invite_link == "https://t.me/+AbCdEfGhIjKl"
+        assert "ImportChatInviteRequest" in private_client.calls
+        assert "CheckChatInviteRequest" in private_client.calls
+
+
 class TestLeadKeywords:
     async def test_normalize_and_match(self):
         from app.services.custom.lead_keywords import matched_lead_keyword, normalize_lead_keywords

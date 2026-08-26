@@ -1,8 +1,9 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import CustomSelect from '../../../components/CustomSelect';
 import CustomFileButton from '../../../components/custom/CustomFileButton';
 import customService from '../../../services/customService';
+import { parseTelegramChatRef } from '../../../utils/telegramChatLink';
 import CustomAutomationChatDiscoveryPage from './CustomAutomationChatDiscoveryPage';
 import { CHAT_TYPE_LABELS } from './activityLabels';
 import '../../../styles/projectCRMPage.css';
@@ -17,6 +18,10 @@ const JOIN_STATUSES = [
   { value: 'error', label: 'Ошибка' },
   { value: 'banned', label: 'Бан' },
 ];
+
+const JOIN_STATUS_LABELS = Object.fromEntries(
+  JOIN_STATUSES.filter((item) => item.value).map((item) => [item.value, item.label])
+);
 
 function chatTypeLabel(chat) {
   const key = (chat.chat_type || '').toLowerCase();
@@ -33,15 +38,13 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
   const [message, setMessage] = useState(null);
   const [isImporting, setIsImporting] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
   const [tab, setTab] = useState(defaultTab);
   const [filter, setFilter] = useState('');
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({
-    invite_link: '',
-    title: '',
-    description: '',
-    chat_type: '',
-  });
+  const [inviteLink, setInviteLink] = useState('');
+
+  const parsedLink = useMemo(() => parseTelegramChatRef(inviteLink), [inviteLink]);
 
   const loadChats = useCallback(async () => {
     try {
@@ -92,13 +95,24 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
 
   const handleCreate = async (e) => {
     e.preventDefault();
+    if (!parsedLink.ok) {
+      setError(parsedLink.error || 'Некорректная ссылка');
+      return;
+    }
+    setIsCreating(true);
+    setError(null);
+    setMessage(null);
     try {
-      await customService.createChat(id, form);
+      const created = await customService.createChat(id, { invite_link: inviteLink.trim() });
       setShowForm(false);
-      setForm({ invite_link: '', title: '', description: '', chat_type: '' });
+      setInviteLink('');
+      const foundTitle = created.title || created.invite_link;
+      setMessage(`Нашли ${chatTypeLabel(created).toLowerCase()}: ${foundTitle}. Юзерботы вступают в фоне`);
       await loadChats();
     } catch (err) {
       setError(err.message || 'Failed to create chat');
+    } finally {
+      setIsCreating(false);
     }
   };
 
@@ -137,6 +151,12 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
       setError(err.message || 'Failed to update chat');
     }
   };
+
+  const inputClass = parsedLink.empty
+    ? ''
+    : parsedLink.ok
+      ? 'input-valid'
+      : 'input-invalid';
 
   return (
     <div className="project-crm-page">
@@ -189,43 +209,28 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
             <form onSubmit={handleCreate} className="settings-section">
               <h3 className="settings-section-title">Новый чат</h3>
               <div className="form-group">
-                <label htmlFor="chat-invite">Ссылка или invite</label>
+                <label htmlFor="chat-invite">Ссылка, @username или имя</label>
                 <input
                   id="chat-invite"
                   type="text"
-                  value={form.invite_link}
-                  onChange={(e) => setForm((f) => ({ ...f, invite_link: e.target.value }))}
+                  value={inviteLink}
+                  className={inputClass}
+                  placeholder="https://t.me/name, t.me/name, @name или name"
+                  onChange={(e) => setInviteLink(e.target.value)}
+                  autoComplete="off"
                 />
-              </div>
-              <div className="form-group">
-                <label htmlFor="chat-title">Название</label>
-                <input
-                  id="chat-title"
-                  type="text"
-                  value={form.title}
-                  onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
-                />
-              </div>
-              <div className="form-group">
-                <label htmlFor="chat-description">Описание</label>
-                <input
-                  id="chat-description"
-                  type="text"
-                  value={form.description}
-                  onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-                />
-              </div>
-              <div className="form-group">
-                <label htmlFor="chat-type">Тип (channel/chat)</label>
-                <input
-                  id="chat-type"
-                  type="text"
-                  value={form.chat_type}
-                  onChange={(e) => setForm((f) => ({ ...f, chat_type: e.target.value }))}
-                />
+                {parsedLink.empty ? (
+                  <span className="form-hint">Название и тип подтянутся сами после того, как юзербот найдёт чат или канал</span>
+                ) : parsedLink.ok ? (
+                  <span className="form-hint form-hint--ok">{parsedLink.canonical}</span>
+                ) : (
+                  <span className="form-hint form-hint--error">{parsedLink.error}</span>
+                )}
               </div>
               <div className="settings-actions">
-                <button type="submit" className="btn btn-black">Сохранить</button>
+                <button type="submit" className="btn btn-black" disabled={isCreating || !parsedLink.ok}>
+                  {isCreating ? 'Ищем...' : 'Добавить'}
+                </button>
               </div>
             </form>
           ) : null}
@@ -255,7 +260,7 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
                 <div key={chat.id} className="crm-item">
                   <div className="crm-item-header">
                     <h5 className="crm-item-title">{chat.title || `Chat #${chat.id}`}</h5>
-                    <span className="crm-status">{chat.join_status}</span>
+                    <span className="crm-status">{JOIN_STATUS_LABELS[chat.join_status] || chat.join_status}</span>
                   </div>
                   <p className="crm-item-subtitle">{chat.invite_link || chat.external_chat_id || '-'}</p>
                   <p className="crm-item-subtitle">
@@ -263,6 +268,9 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
                     {chat.is_active && chat.mode !== 'inactive' ? ' · в работе' : ' · пауза'}
                     {` · попыток ${chat.join_attempts}`}
                   </p>
+                  {chat.last_join_error ? (
+                    <p className="crm-item-subtitle form-hint--error">{chat.last_join_error}</p>
+                  ) : null}
                   <div className="crm-item-actions">
                     <button type="button" onClick={() => handlePauseToggle(chat)} className="btn btn-outline">
                       {chat.is_active && chat.mode !== 'inactive' ? 'Пауза' : 'Включить'}

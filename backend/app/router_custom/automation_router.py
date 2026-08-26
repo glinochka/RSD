@@ -97,7 +97,7 @@ from ..services.custom.chat_discovery_service import (
     run_discovery_task,
 )
 from ..services.custom.chat_import_service import import_chats_from_file, retry_import_errors
-from ..services.custom.chat_join_service import join_pending_chats
+from ..services.custom.chat_join_service import create_chat_from_link, join_pending_chats
 from ..services.custom.chat_monitoring_service import scan_chats_and_process
 from ..services.custom.amocrm_service import (
     build_oauth_authorization_url,
@@ -945,28 +945,22 @@ async def list_chats(
 async def create_chat(
     automation_id: int,
     payload: ChatTargetCreate,
+    background_tasks: BackgroundTasks,
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
-    async with async_session_maker() as session:
-        chat = ChatTarget(
-            custom_automation_id=automation_id,
-            provider=payload.provider,
-            external_chat_id=payload.external_chat_id,
-            invite_link=payload.invite_link,
-            title=payload.title,
-            description=payload.description,
-            chat_type=payload.chat_type,
-            mode=payload.mode,
-            join_status="pending",
-            join_attempts=0,
-            is_active=True,
-            created_at=datetime.now(timezone.utc).replace(tzinfo=None),
-            updated_at=datetime.now(timezone.utc).replace(tzinfo=None),
-        )
-        session.add(chat)
-        await session.commit()
-        await session.refresh(chat)
-        return ChatTargetResponse.model_validate(chat)
+    try:
+        async with async_session_maker() as session:
+            chat = await create_chat_from_link(
+                session,
+                automation_id,
+                payload.invite_link,
+                mode=payload.mode,
+            )
+            response = ChatTargetResponse.model_validate(chat)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    background_tasks.add_task(_join_chats_background, automation_id)
+    return response
 
 
 @router.patch("/automations/{automation_id}/chats/{chat_id}/neurocommenting-config", response_model=ChatTargetResponse)

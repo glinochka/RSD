@@ -15,6 +15,7 @@ from .rotation_service import select_account_for_action
 from .shilling_service import _moscow_day_utc_range
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import execute_with_telegram_retry
+from .telegram_invite import chat_entity_key
 from ...alembic.models import AutomationActionLog, ChatJoinStatus, ChatTarget, CustomPrompt, PromptType, SocialAccount
 from ...config import settings
 from ...services.ai_authoring import ai_client
@@ -197,7 +198,7 @@ async def _send_reply(
     try:
         async with TelegramAccountClient(str(session_path)) as client:
             entity = await client.get_entity(
-                chat_target.invite_link or chat_target.external_chat_id or chat_target.title
+                chat_entity_key(chat_target)
             )
             sent = await execute_with_telegram_retry(
                 session,
@@ -280,7 +281,7 @@ async def process_chat_target(
     try:
         async with TelegramAccountClient(str(session_path)) as client:
             entity = await client.get_entity(
-                chat_target.invite_link or chat_target.external_chat_id or chat_target.title
+                chat_entity_key(chat_target)
             )
             apply_entity_metadata(chat_target, entity)
             if not is_group_chat(chat_target):

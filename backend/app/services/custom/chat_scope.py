@@ -34,30 +34,55 @@ def is_group_chat(chat_target: ChatTarget) -> bool:
     return not is_broadcast_channel(chat_target)
 
 
-def entity_chat_type(entity: Any) -> str | None:
-    target = entity
+def unwrap_telegram_chat(entity: Any) -> Any:
+    """Channel/Chat from get_entity, join Updates, or CheckChatInvite results."""
+    if entity is None:
+        return None
+    nested = getattr(entity, "chat", None)
+    if nested is not None:
+        return nested
     chats = getattr(entity, "chats", None)
     if chats:
-        target = chats[0]
+        return chats[0]
+    return entity
+
+
+def is_user_peer(entity: Any) -> bool:
+    target = unwrap_telegram_chat(entity)
+    if target is None:
+        return False
+    name = type(target).__name__
+    if name in {"User", "UserEmpty", "UserForbidden"}:
+        return True
+    if getattr(target, "title", None):
+        return False
+    if getattr(target, "broadcast", False) or getattr(target, "megagroup", False):
+        return False
+    return getattr(target, "first_name", None) is not None
+
+
+def entity_chat_type(entity: Any) -> str | None:
+    target = unwrap_telegram_chat(entity)
     if target is None:
         return None
     if getattr(target, "broadcast", False):
         return "channel"
+    if getattr(target, "channel", False) and not getattr(target, "megagroup", False):
+        return "channel"
+    if is_user_peer(target):
+        return None
     return "chat"
 
 
 def apply_entity_metadata(chat_target: ChatTarget, entity: Any) -> None:
-    target = entity
-    chats = getattr(entity, "chats", None)
-    if chats:
-        target = chats[0]
-    if target is None:
+    target = unwrap_telegram_chat(entity)
+    if target is None or is_user_peer(target):
         return
     chat_id = getattr(target, "id", None)
     if chat_id:
         chat_target.external_chat_id = str(chat_id)
     title = getattr(target, "title", None) or getattr(target, "username", None)
-    if title and not chat_target.title:
+    if title:
         chat_target.title = str(title)[:255]
     detected = entity_chat_type(entity)
     if detected:

@@ -17,6 +17,7 @@ from telethon.tl.functions.users import GetFullUserRequest
 from telethon.tl.types import InputPhoneContact
 
 from .telegram_error_handler import SessionInvalidError, parse_spambot_reply
+from .telegram_invite import TelegramChatRefError, parse_telegram_chat_ref
 from ..telegram_userbot_auth import create_telegram_client
 
 logger = getLogger(__name__)
@@ -341,18 +342,23 @@ class TelegramAccountClient:
         text = identifier.strip()
         if not text:
             raise ValueError("empty peer identifier")
+        try:
+            parsed = parse_telegram_chat_ref(text)
+        except TelegramChatRefError:
+            parsed = None
+        if parsed is not None:
+            if parsed.kind == "invite":
+                from telethon.tl.functions.messages import CheckChatInviteRequest
+
+                result = await self.client(CheckChatInviteRequest(parsed.value))
+                chat = getattr(result, "chat", None)
+                if chat is not None:
+                    return chat
+            else:
+                return await self.client.get_entity(parsed.lookup_value)
         phone = normalize_telegram_phone(text)
         if phone and (text.startswith("+") or text.replace(" ", "").replace("-", "").isdigit()):
             return await self.resolve_phone(phone)
-        if "t.me/" in text.lower():
-            path = text.split("t.me/", 1)[-1].strip("/")
-            if path.startswith("+") or path.lower().startswith("joinchat/"):
-                phone_from_link = normalize_telegram_phone(path)
-                if phone_from_link:
-                    return await self.resolve_phone(phone_from_link)
-                return await self.client.get_entity(text)
-            username = path.split("/")[0].split("?")[0]
-            return await self.client.get_entity(username)
         if text.lstrip("-").isdigit():
             return await self.client.get_entity(int(text))
         return await self.client.get_entity(text)

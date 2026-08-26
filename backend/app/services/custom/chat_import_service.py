@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...alembic.database import async_session_maker
 from ...alembic.models import ChatImportJob, ChatSource, ChatTarget, ChatJoinStatus, ChatMode
 from ...config import settings
+from .telegram_invite import parse_telegram_chat_ref
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,15 @@ def _normalize_link(link: str | None) -> str | None:
     if link in {"-", "nan", "null", "None"}:
         return None
     return link
+
+
+def _normalize_invite(link: str | None) -> tuple[str | None, str | None]:
+    raw = _normalize_link(link)
+    if not raw:
+        return None, None
+    parsed = parse_telegram_chat_ref(raw)
+    external_id = parsed.value if parsed.kind == "channel_id" else None
+    return parsed.canonical, external_id
 
 
 def _normalize_title(title: str | None) -> str | None:
@@ -135,8 +145,8 @@ async def import_chats_from_file(
     errors = []
     for idx, row in enumerate(rows, start=1):
         try:
-            invite_link = _normalize_link(row.get("invite_link") or row.get("link") or row.get("url"))
-            external_chat_id = _normalize_link(row.get("external_chat_id") or row.get("chat_id"))
+            invite_link, invite_id = _normalize_invite(row.get("invite_link") or row.get("link") or row.get("url"))
+            external_chat_id = _normalize_link(row.get("external_chat_id") or row.get("chat_id")) or invite_id
             title = _normalize_title(row.get("title") or row.get("name") or row.get("chat_name"))
             description = _normalize_title(row.get("description") or row.get("about"))
             chat_type = _normalize_link(row.get("chat_type") or row.get("type"))
@@ -190,8 +200,8 @@ async def retry_import_errors(
     for idx, row in enumerate(rows, start=1):
         if any(err.get("row") == idx for err in job.error_log):
             try:
-                invite_link = _normalize_link(row.get("invite_link") or row.get("link") or row.get("url"))
-                external_chat_id = _normalize_link(row.get("external_chat_id") or row.get("chat_id"))
+                invite_link, invite_id = _normalize_invite(row.get("invite_link") or row.get("link") or row.get("url"))
+                external_chat_id = _normalize_link(row.get("external_chat_id") or row.get("chat_id")) or invite_id
                 title = _normalize_title(row.get("title") or row.get("name") or row.get("chat_name"))
                 description = _normalize_title(row.get("description") or row.get("about"))
                 chat_type = _normalize_link(row.get("chat_type") or row.get("type"))

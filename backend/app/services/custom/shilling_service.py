@@ -18,6 +18,7 @@ from .chat_scope import is_group_chat, is_paused
 from .post_engagement import SHILLING as POST_SHILLING, get_post_engagement_claim, post_target_id
 from .rotation_service import accounts_are_distinct, select_distinct_accounts_for_action
 from .telegram_account_client import TelegramAccountClient
+from .telegram_invite import chat_entity_key
 from .telegram_error_handler import execute_with_telegram_retry
 from ...alembic.models import (
     AutomationActionLog,
@@ -223,7 +224,7 @@ async def _send_message(
     try:
         async with TelegramAccountClient(str(path)) as client:
             entity = await client.get_entity(
-                chat_target.invite_link or chat_target.external_chat_id or chat_target.title
+                chat_entity_key(chat_target)
             )
 
             async def _send():

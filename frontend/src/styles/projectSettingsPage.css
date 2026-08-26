@@ -191,6 +191,22 @@
   margin-top: var(--spacing-xs);
 }
 
+.form-group input.input-invalid {
+  border-color: #dc2626;
+}
+
+.form-group input.input-valid {
+  border-color: #16a34a;
+}
+
+.form-hint--error {
+  color: #dc2626;
+}
+
+.form-hint--ok {
+  color: #16a34a;
+}
+
 /* Actions */
 .settings-actions {
   display: flex;
