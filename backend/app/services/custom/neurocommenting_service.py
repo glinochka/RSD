@@ -118,6 +118,8 @@ async def _send_comment(
     account: SocialAccount,
     post_id: int,
     text: str,
+    *,
+    post_text: str = "",
 ) -> bool:
     if not account.session_file_path:
         return False
@@ -125,6 +127,13 @@ async def _send_comment(
     if not session_path.exists():
         return False
 
+    payload = {
+        "chat_target_id": chat_target.id,
+        "chat_title": chat_target.title,
+        "post_id": post_id,
+        "post_text": (post_text or "")[:500],
+        "text": text,
+    }
     try:
         async with TelegramAccountClient(str(session_path)) as client:
             entity = await client.get_entity(
@@ -137,7 +146,7 @@ async def _send_comment(
                 action_type="neurocommenting",
                 target_id=f"{chat_target.id}:{post_id}",
                 target_type="chat_post",
-                payload={"chat_target_id": chat_target.id, "post_id": post_id, "text": text},
+                payload=payload,
                 automation_id=automation_id,
             )
     except Exception as exc:
@@ -151,7 +160,7 @@ async def _send_comment(
         target_id=f"{chat_target.id}:{post_id}",
         target_type="chat_post",
         result="success",
-        payload={"chat_target_id": chat_target.id, "post_id": post_id, "text": text},
+        payload=payload,
         created_at=_utc_now(),
     )
     session.add(log)
@@ -259,7 +268,9 @@ async def process_chat_target(
         if not comment:
             continue
 
-        success = await _send_comment(session, automation_id, chat_target, account, post.id, comment)
+        success = await _send_comment(
+            session, automation_id, chat_target, account, post.id, comment, post_text=post.text or ""
+        )
         if success:
             sent += 1
             account.daily_messages_sent += 1

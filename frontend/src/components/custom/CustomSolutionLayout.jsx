@@ -14,6 +14,12 @@ const DashboardIcon = () => (
   </svg>
 );
 
+const ActivityIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+  </svg>
+);
+
 const UsersIcon = () => (
   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
     <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
@@ -80,6 +86,7 @@ const getNavItems = (automationId, features) => {
   const isDmpBot = features?.solution_kind === 'dmp_bot';
   return [
     { id: 'dashboard', label: 'Дашборд', icon: DashboardIcon, path: NAVIGATION_ROUTES.CUSTOM_AUTOMATION_DASHBOARD(automationId) },
+    { id: 'activity', label: 'Активность', icon: ActivityIcon, path: NAVIGATION_ROUTES.CUSTOM_AUTOMATION_ACTIVITY(automationId) },
     {
       id: 'accounts',
       label: 'Аккаунты',

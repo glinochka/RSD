@@ -17,15 +17,46 @@ export const CHAT_TYPE_LABELS = {
 };
 
 export const ACTION_LABELS = {
-  neurocommenting: 'Нейрокомментинг',
-  discussion: 'Искусственная активность в чатах',
-  dm: 'ЛС',
   chat_monitoring: 'Перехват заявок',
-  dmp_outreach: 'DMP прогрев',
-  lead_warmup: 'Прогрев лида',
-  lead_delivery: 'Передача МОПу',
-  shilling_chat: 'Шиллинг в чате',
-  shilling_post: 'Шиллинг под постом',
+  neurocommenting: 'Нейрокомментинг',
+  shilling: 'Шиллинг',
+  discussion: 'Искусственная активность',
+  dmp: 'Отписка в DMP',
+  unsubscribe: 'Отписка',
+  amocrm_transfer: 'Лид ушёл в Amo',
+};
+
+export const ACTIVITY_FEED_FILTERS = [
+  { value: '', label: 'Все типы' },
+  { value: 'neurocommenting', label: 'Нейрокомментинг' },
+  { value: 'chat_monitoring', label: 'Перехват заявок' },
+  { value: 'shilling', label: 'Шиллинг' },
+  { value: 'discussion', label: 'Искусственная активность' },
+  { value: 'dmp', label: 'Отписка в DMP' },
+];
+
+export const ACTIVITY_FEED_SORT = [
+  { value: 'newest', label: 'Сначала новые' },
+  { value: 'oldest', label: 'Сначала старые' },
+];
+
+export const DASHBOARD_ACTIVITY_KEYS = [
+  'chat_monitoring',
+  'neurocommenting',
+  'shilling',
+  'unsubscribe',
+  'amocrm_transfer',
+];
+
+export const DASHBOARD_ACTIVITY_GROUP = {
+  dm: 'chat_monitoring',
+  chat_monitoring: 'chat_monitoring',
+  neurocommenting: 'neurocommenting',
+  shilling: 'shilling',
+  shilling_chat: 'shilling',
+  shilling_post: 'shilling',
+  unsubscribe: 'unsubscribe',
+  amocrm_transfer: 'amocrm_transfer',
 };
 
 export const PROMPT_TYPE_LABELS = {

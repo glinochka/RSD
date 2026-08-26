@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
-import { ACTION_LABELS } from './activityLabels';
+import { ACTION_LABELS, DASHBOARD_ACTIVITY_GROUP, DASHBOARD_ACTIVITY_KEYS } from './activityLabels';
 import '../../../styles/projectDashboard.css';
 import '../../../styles/projectCRMPage.css';
 
@@ -57,10 +57,17 @@ const CustomAutomationDashboardPage = () => {
   const funnel = STATUS_ORDER
     .map((status) => [STATUS_LABELS[status], data.leads?.by_status?.[status] || 0])
     .filter(([, count]) => count > 0);
-  const actions24h = Object.entries(data.actions?.last_24h || {}).map(([key, count]) => [
-    ACTION_LABELS[key] || key,
-    count,
-  ]);
+  const grouped24h = {};
+  Object.entries(data.actions?.last_24h || {}).forEach(([key, count]) => {
+    const group = DASHBOARD_ACTIVITY_GROUP[key];
+    if (!group || !count) {
+      return;
+    }
+    grouped24h[group] = (grouped24h[group] || 0) + count;
+  });
+  const actions24h = DASHBOARD_ACTIVITY_KEYS
+    .filter((key) => grouped24h[key])
+    .map((key) => [ACTION_LABELS[key], grouped24h[key]]);
 
   return (
     <div className="project-dashboard">
@@ -161,6 +168,9 @@ const CustomAutomationDashboardPage = () => {
       <div className="dashboard-section">
         <div className="dashboard-section-header">
           <h2 className="dashboard-section-title">Активность за 24 часа</h2>
+          <Link to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_ACTIVITY(id)} className="btn btn-outline">
+            Все
+          </Link>
         </div>
         {actions24h.length === 0 ? (
           <p className="dashboard-subtitle">Нет действий за сутки.</p>

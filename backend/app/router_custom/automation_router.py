@@ -45,6 +45,7 @@ from .schemas import (
     CustomAutomationLoginRequest,
     CustomAutomationSettingsResponse,
     CustomAutomationSettingsValidationResponse,
+    ActivityFeedResponse,
     AmocrmCredentialsUpdate,
     AmocrmOAuthStartRequest,
     AmocrmOAuthStartResponse,
@@ -115,6 +116,7 @@ from ..services.custom.amocrm_service import (
 )
 from ..services.custom.lead_warmup_service import auto_transfer_lead
 from ..services.custom.analytics_service import get_automation_dashboard
+from ..services.custom.activity_feed_service import FEED_ACTIVITY_TYPES, list_activity_feed
 from ..services.custom.discussion_service import run_discussion_pass
 from ..services.custom.settings_service import validate_settings
 from ..services.custom.dmp_one_service import (
@@ -268,6 +270,31 @@ async def automation_dashboard(
     async with async_session_maker() as session:
         data = await get_automation_dashboard(session, automation_id)
         return CustomAutomationDashboardResponse.model_validate(data)
+
+
+@router.get("/automations/{automation_id}/activity", response_model=ActivityFeedResponse)
+async def automation_activity(
+    automation_id: int,
+    activity_type: Optional[str] = None,
+    sort: str = "newest",
+    limit: int = 20,
+    offset: int = 0,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    if activity_type and activity_type not in FEED_ACTIVITY_TYPES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown activity type")
+    if sort not in {"newest", "oldest"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown sort")
+    async with async_session_maker() as session:
+        data = await list_activity_feed(
+            session,
+            automation_id,
+            activity_type=activity_type,
+            sort=sort,
+            limit=limit,
+            offset=offset,
+        )
+        return ActivityFeedResponse.model_validate(data)
 
 
 @router.get("/automations/{automation_id}/settings", response_model=CustomAutomationSettingsResponse)

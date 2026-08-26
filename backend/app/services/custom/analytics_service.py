@@ -16,9 +16,71 @@ from ...alembic.models import (
     SocialAccount,
 )
 
+# Product actions for the dashboard «Активность» widget — not system jobs.
+DASHBOARD_ACTIVITY_TYPES = (
+    "dm",
+    "chat_monitoring",
+    "neurocommenting",
+    "shilling_chat",
+    "shilling_post",
+    "unsubscribe",
+)
+
+DASHBOARD_ACTIVITY_GROUP = {
+    "dm": "chat_monitoring",
+    "chat_monitoring": "chat_monitoring",
+    "neurocommenting": "neurocommenting",
+    "shilling_chat": "shilling",
+    "shilling_post": "shilling",
+    "unsubscribe": "unsubscribe",
+}
+
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _group_activity_counts(raw: dict[str, int]) -> dict[str, int]:
+    grouped: dict[str, int] = {}
+    for action_type, count in raw.items():
+        key = DASHBOARD_ACTIVITY_GROUP.get(action_type)
+        if not key or not count:
+            continue
+        grouped[key] = grouped.get(key, 0) + int(count)
+    return grouped
+
+
+async def _count_actions_by_type(
+    session: AsyncSession,
+    automation_id: int,
+    *,
+    since: datetime | None = None,
+) -> dict[str, int]:
+    stmt = select(AutomationActionLog.action_type, func.count(AutomationActionLog.id)).where(
+        AutomationActionLog.custom_automation_id == automation_id,
+        AutomationActionLog.result == "success",
+        AutomationActionLog.action_type.in_(DASHBOARD_ACTIVITY_TYPES),
+    )
+    if since is not None:
+        stmt = stmt.where(AutomationActionLog.created_at >= since)
+    result = await session.execute(stmt.group_by(AutomationActionLog.action_type))
+    return {action_type: count for action_type, count in result.all()}
+
+
+async def _count_amocrm_transfers(
+    session: AsyncSession,
+    automation_id: int,
+    *,
+    since: datetime | None = None,
+) -> int:
+    stmt = select(func.count(CustomLead.id)).where(
+        CustomLead.custom_automation_id == automation_id,
+        CustomLead.amocrm_lead_id.isnot(None),
+        CustomLead.transferred_at.isnot(None),
+    )
+    if since is not None:
+        stmt = stmt.where(CustomLead.transferred_at >= since)
+    return int(await session.scalar(stmt) or 0)
 
 
 async def _account_stats(session: AsyncSession, automation_id: int) -> dict[str, Any]:
@@ -160,32 +222,25 @@ async def _action_stats(session: AsyncSession, automation_id: int) -> dict[str, 
     since_24h = _utc_now() - timedelta(hours=24)
     since_7d = _utc_now() - timedelta(days=7)
 
-    counts_24h = {}
-    result = await session.execute(
-        select(AutomationActionLog.action_type, func.count(AutomationActionLog.id)).where(
-            AutomationActionLog.custom_automation_id == automation_id,
-            AutomationActionLog.created_at >= since_24h,
-            AutomationActionLog.result == "success",
-        ).group_by(AutomationActionLog.action_type)
+    counts_24h = _group_activity_counts(
+        await _count_actions_by_type(session, automation_id, since=since_24h)
     )
-    for action_type, count in result.all():
-        counts_24h[action_type] = count
+    counts_7d = _group_activity_counts(
+        await _count_actions_by_type(session, automation_id, since=since_7d)
+    )
 
-    counts_7d = {}
-    result = await session.execute(
-        select(AutomationActionLog.action_type, func.count(AutomationActionLog.id)).where(
-            AutomationActionLog.custom_automation_id == automation_id,
-            AutomationActionLog.created_at >= since_7d,
-            AutomationActionLog.result == "success",
-        ).group_by(AutomationActionLog.action_type)
-    )
-    for action_type, count in result.all():
-        counts_7d[action_type] = count
+    amo_24h = await _count_amocrm_transfers(session, automation_id, since=since_24h)
+    if amo_24h:
+        counts_24h["amocrm_transfer"] = amo_24h
+    amo_7d = await _count_amocrm_transfers(session, automation_id, since=since_7d)
+    if amo_7d:
+        counts_7d["amocrm_transfer"] = amo_7d
 
     total = await session.scalar(
         select(func.count(AutomationActionLog.id)).where(
             AutomationActionLog.custom_automation_id == automation_id,
             AutomationActionLog.result == "success",
+            AutomationActionLog.action_type.in_(DASHBOARD_ACTIVITY_TYPES),
         )
     )
 

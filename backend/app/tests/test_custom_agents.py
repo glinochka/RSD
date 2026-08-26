@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.alembic.models import (
     AccountClass,
     AccountPool,
+    AutomationActionLog,
     ChatDiscoveryTask,
     ChatMessage,
     ChatTarget,
@@ -17,6 +18,7 @@ from app.alembic.models import (
     CustomAutomation,
     CustomAutomationCredential,
     CustomLead,
+    CustomLeadMessage,
     PoolAccount,
     SocialAccount,
 )
@@ -122,6 +124,311 @@ class TestCustomClient:
         assert response.status_code == 200
         data = response.json()
         assert data["automation_id"] == custom_automation.id
+
+
+class TestDashboardActivity:
+    async def test_last_24h_keeps_product_actions_only(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from datetime import datetime, timedelta, timezone
+
+        from app.services.account_pool_service import get_or_create_default_pool
+        from app.services.custom.analytics_service import get_automation_dashboard
+
+        pool = await get_or_create_default_pool(test_session, custom_automation.id)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number="+79990000999",
+            username="activity_acc",
+            display_name="Activity",
+            account_class=AccountClass.TRUSTED.value,
+            encrypted_session="mock_encrypted_session",
+            session_file_path="sessions/activity_acc.session",
+            is_active=True,
+            is_banned=False,
+        )
+        test_session.add(account)
+        await test_session.flush()
+        test_session.add(
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account.id,
+                assigned_class=AccountClass.TRUSTED.value,
+                custom_automation_id=custom_automation.id,
+            )
+        )
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        for action_type, count in (
+            ("profile_update", 4),
+            ("discussion", 3),
+            ("dmp_outreach", 2),
+            ("lead_warmup", 2),
+            ("dm", 5),
+            ("neurocommenting", 2),
+            ("shilling_chat", 1),
+            ("shilling_post", 2),
+            ("unsubscribe", 1),
+        ):
+            for _ in range(count):
+                test_session.add(
+                    AutomationActionLog(
+                        custom_automation_id=custom_automation.id,
+                        social_account_id=account.id,
+                        action_type=action_type,
+                        target_id="t",
+                        target_type="chat",
+                        result="success",
+                        payload={},
+                        created_at=now - timedelta(hours=1),
+                    )
+                )
+        test_session.add(
+            CustomLead(
+                custom_automation_id=custom_automation.id,
+                source="chat_monitoring",
+                contact_type="telegram",
+                contact_value="amo_lead",
+                status="transferred",
+                amocrm_lead_id="777",
+                transferred_at=now - timedelta(hours=2),
+            )
+        )
+        await test_session.commit()
+
+        data = await get_automation_dashboard(test_session, custom_automation.id)
+        last_24h = data["actions"]["last_24h"]
+        assert last_24h == {
+            "chat_monitoring": 5,
+            "neurocommenting": 2,
+            "shilling": 3,
+            "unsubscribe": 1,
+            "amocrm_transfer": 1,
+        }
+        assert "profile_update" not in last_24h
+        assert "discussion" not in last_24h
+
+
+class TestActivityFeed:
+    async def test_feed_filters_and_sorts_telegram_blocks(
+        self,
+        client: AsyncClient,
+        client_token: str,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from datetime import datetime, timedelta, timezone
+
+        from app.alembic.models import ChatJoinStatus
+        from app.services.account_pool_service import get_or_create_default_pool
+
+        pool = await get_or_create_default_pool(test_session, custom_automation.id)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number="+79990000888",
+            username="feed_acc",
+            display_name="Feed Acc",
+            account_class=AccountClass.TRUSTED.value,
+            encrypted_session="mock_encrypted_session",
+            session_file_path="sessions/feed_acc.session",
+            is_active=True,
+            is_banned=False,
+        )
+        test_session.add(account)
+        await test_session.flush()
+        test_session.add(
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account.id,
+                assigned_class=AccountClass.TRUSTED.value,
+                custom_automation_id=custom_automation.id,
+            )
+        )
+        chat = ChatTarget(
+            custom_automation_id=custom_automation.id,
+            provider="telegram",
+            external_chat_id="-1001",
+            title="Канал оффера",
+            chat_type="channel",
+            mode="monitoring",
+            source="manual",
+            join_status=ChatJoinStatus.JOINED.value,
+            is_active=True,
+        )
+        test_session.add(chat)
+        await test_session.flush()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        test_session.add(
+            AutomationActionLog(
+                custom_automation_id=custom_automation.id,
+                social_account_id=account.id,
+                action_type="neurocommenting",
+                target_id=f"{chat.id}:11",
+                target_type="chat_post",
+                result="success",
+                payload={"chat_target_id": chat.id, "post_id": 11, "post_text": "Новый пост", "text": "Круто"},
+                created_at=now - timedelta(hours=3),
+            )
+        )
+        test_session.add(
+            AutomationActionLog(
+                custom_automation_id=custom_automation.id,
+                social_account_id=account.id,
+                action_type="shilling_chat",
+                target_id=str(chat.id),
+                target_type="chat",
+                result="success",
+                payload={
+                    "chat_target_id": chat.id,
+                    "setup": "А чем вы пользуетесь?",
+                    "reply": "Мы на этом сервисе",
+                    "setup_account_id": account.id,
+                    "reply_account_id": account.id,
+                },
+                created_at=now - timedelta(hours=2),
+            )
+        )
+        test_session.add(
+            AutomationActionLog(
+                custom_automation_id=custom_automation.id,
+                social_account_id=account.id,
+                action_type="shilling_chat",
+                target_id=f"{chat.id}:skip",
+                target_type="chat",
+                result="success",
+                payload={"reason": "daily_probability"},
+                created_at=now - timedelta(hours=2),
+            )
+        )
+        test_session.add(
+            AutomationActionLog(
+                custom_automation_id=custom_automation.id,
+                social_account_id=account.id,
+                action_type="discussion",
+                target_id=f"{chat.id}:5",
+                target_type="chat_thread",
+                result="success",
+                payload={"chat_target_id": chat.id, "source_text": "Кто пробовал?", "text": "Мы пробовали"},
+                created_at=now - timedelta(hours=1),
+            )
+        )
+        test_session.add(
+            AutomationActionLog(
+                custom_automation_id=custom_automation.id,
+                social_account_id=account.id,
+                action_type="profile_update",
+                target_id=f"account:{account.id}",
+                target_type="account",
+                result="success",
+                payload={"bio": "x"},
+                created_at=now,
+            )
+        )
+        chat_message = ChatMessage(
+            custom_automation_id=custom_automation.id,
+            chat_target_id=chat.id,
+            external_message_id="77",
+            external_chat_id="-1001",
+            sender_name="Иван",
+            sender_username="ivan",
+            text="Нужен расчёт поставки",
+            sent_at=now - timedelta(minutes=40),
+            is_processed=True,
+            matched_intent="lead",
+        )
+        test_session.add(chat_message)
+        await test_session.flush()
+        intercept = CustomLead(
+            custom_automation_id=custom_automation.id,
+            source="chat_monitoring",
+            contact_type="telegram",
+            contact_value="ivan",
+            full_name="Иван",
+            chat_message_id=chat_message.id,
+            assigned_account_id=account.id,
+            status="warming",
+            created_at=now - timedelta(minutes=39),
+            last_message_at=now - timedelta(minutes=38),
+        )
+        dmp_lead = CustomLead(
+            custom_automation_id=custom_automation.id,
+            source="dmp_one",
+            contact_type="telegram",
+            contact_value="dmp_user",
+            full_name="DMP Лид",
+            company="ООО Ромашка",
+            status="warming",
+            created_at=now - timedelta(minutes=10),
+            last_message_at=now - timedelta(minutes=9),
+        )
+        test_session.add_all([intercept, dmp_lead])
+        await test_session.flush()
+        test_session.add_all([
+            CustomLeadMessage(
+                custom_lead_id=intercept.id,
+                direction="incoming",
+                text="Нужен расчёт поставки",
+                sent_at=now - timedelta(minutes=40),
+            ),
+            CustomLeadMessage(
+                custom_lead_id=intercept.id,
+                social_account_id=account.id,
+                direction="outgoing",
+                text="Напишите объём, посчитаем",
+                sent_at=now - timedelta(minutes=38),
+            ),
+            CustomLeadMessage(
+                custom_lead_id=dmp_lead.id,
+                social_account_id=account.id,
+                direction="outgoing",
+                text="Привет, это по вашей заявке",
+                sent_at=now - timedelta(minutes=9),
+            ),
+        ])
+        await test_session.commit()
+
+        headers = {"Authorization": f"Bearer {client_token}"}
+        all_resp = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/activity",
+            headers=headers,
+        )
+        assert all_resp.status_code == 200, all_resp.text
+        payload = all_resp.json()
+        types = [item["activity_type"] for item in payload["items"]]
+        assert payload["total"] == 5
+        assert "profile_update" not in types
+        assert set(types) == {"neurocommenting", "shilling", "discussion", "chat_monitoring", "dmp"}
+        assert types[0] == "dmp"
+
+        neuro = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/activity",
+            params={"activity_type": "neurocommenting"},
+            headers=headers,
+        )
+        assert neuro.status_code == 200
+        neuro_items = neuro.json()["items"]
+        assert len(neuro_items) == 1
+        assert neuro_items[0]["comment"] == "Круто"
+        assert neuro_items[0]["post_text"] == "Новый пост"
+        assert neuro_items[0]["chat"]["title"] == "Канал оффера"
+
+        oldest = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/activity",
+            params={"sort": "oldest"},
+            headers=headers,
+        )
+        assert oldest.json()["items"][0]["activity_type"] == "neurocommenting"
+
+        intercept_resp = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/activity",
+            params={"activity_type": "chat_monitoring"},
+            headers=headers,
+        )
+        intercept_item = intercept_resp.json()["items"][0]
+        assert intercept_item["user_message"] == "Нужен расчёт поставки"
+        assert intercept_item["dm_reply"] == "Напишите объём, посчитаем"
+        assert len(intercept_item["messages"]) == 2
 
 
 class TestAccountPoolAndRotation:

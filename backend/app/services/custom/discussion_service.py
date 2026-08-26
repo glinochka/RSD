@@ -214,6 +214,11 @@ async def _send_reply(
         logger.warning("Send discussion reply failed for chat %s message %s: %s", chat_target.id, message.id, exc)
         return False
 
+    sender = getattr(message, "sender", None)
+    source_author = " ".join(
+        filter(None, [getattr(sender, "first_name", None), getattr(sender, "last_name", None)])
+    ).strip() or getattr(sender, "username", None)
+
     log = AutomationActionLog(
         custom_automation_id=automation_id,
         social_account_id=account.id,
@@ -223,8 +228,11 @@ async def _send_reply(
         result="success",
         payload={
             "chat_target_id": chat_target.id,
+            "chat_title": chat_target.title,
             "external_message_id": str(message.id),
             "reply_message_id": str(reply_message_id) if reply_message_id else None,
+            "source_text": (getattr(message, "text", None) or "")[:500],
+            "source_author": source_author,
             "text": text,
         },
         created_at=_utc_now(),

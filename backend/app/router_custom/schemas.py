@@ -69,6 +69,48 @@ class CustomAutomationDashboardResponse(BaseModel):
     updated_at: str
 
 
+class ActivityChatPreview(BaseModel):
+    id: int | None = None
+    title: str | None = None
+    chat_type: str | None = None
+
+
+class ActivityMessagePreview(BaseModel):
+    direction: str
+    text: str
+    sent_at: datetime | None = None
+    author: str | None = None
+
+
+class ActivityItemResponse(BaseModel):
+    id: str
+    activity_type: str
+    created_at: datetime
+    chat: ActivityChatPreview | None = None
+    lead_id: int | None = None
+    post_id: int | None = None
+    post_text: str | None = None
+    comment: str | None = None
+    user_message: str | None = None
+    user_name: str | None = None
+    dm_reply: str | None = None
+    source_text: str | None = None
+    reply: str | None = None
+    setup: str | None = None
+    setup_author: str | None = None
+    reply_author: str | None = None
+    lead_name: str | None = None
+    lead_contact: str | None = None
+    lead_company: str | None = None
+    messages: list[ActivityMessagePreview] = []
+    shilling_kind: str | None = None
+
+
+class ActivityFeedResponse(BaseModel):
+    items: list[ActivityItemResponse]
+    total: int
+
+
 class CustomAdminDashboardAutomationSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
