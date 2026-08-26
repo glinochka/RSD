@@ -1,6 +1,7 @@
 """Bulk profile update (bio + avatar) for Telegram accounts."""
 import json
 import logging
+import shutil
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -182,10 +183,11 @@ class BulkProfileUpdateWorker:
                 if avatar_relative_path:
                     avatar_path = _media_root() / avatar_relative_path
                     if avatar_path.exists():
+                        avatar_bytes = avatar_path.read_bytes()
                         await execute_with_telegram_retry(
                             session,
                             social_account,
-                            lambda: client.set_avatar(str(avatar_path)),
+                            lambda: client.set_avatar(avatar_bytes),
                             action_type="profile_update",
                             target_id=f"account:{account_id}",
                             target_type="profile",
@@ -193,6 +195,11 @@ class BulkProfileUpdateWorker:
                             automation_id=automation_id,
                         )
                         applied_avatar = True
+                        dest = _media_root() / "avatars" / str(automation_id) / f"{account_id}.jpg"
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copyfile(avatar_path, dest)
+                        social_account.avatar_file_path = str(dest.relative_to(_media_root()))
+                        social_account.avatar_url = f"/media/{social_account.avatar_file_path}"
         except Exception as exc:
             error_message = str(exc)
             await _log_action(
@@ -226,6 +233,37 @@ class BulkProfileUpdateWorker:
             "applied_bio": applied_bio,
             "applied_avatar": applied_avatar,
         }
+
+
+async def update_account_display_name(
+    session: AsyncSession,
+    automation_id: int,
+    social_account: SocialAccount,
+    display_name: str,
+) -> str:
+    name = (display_name or "").strip()
+    if not name:
+        raise ValueError("empty display name")
+    if not social_account.session_file_path:
+        raise ValueError("no session")
+    session_path = _media_root() / social_account.session_file_path
+    if not session_path.exists():
+        raise ValueError("Session file missing")
+    async with TelegramAccountClient(str(session_path)) as client:
+        stored = await execute_with_telegram_retry(
+            session,
+            social_account,
+            lambda: client.set_display_name(name),
+            action_type="profile_update",
+            target_id=f"account:{social_account.id}",
+            target_type="profile",
+            payload={"display_name": name},
+            automation_id=automation_id,
+        )
+    social_account.display_name = stored or name
+    social_account.updated_at = _utc_now()
+    await session.commit()
+    return social_account.display_name
 
     async def process_accounts(
         self,

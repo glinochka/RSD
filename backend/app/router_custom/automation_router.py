@@ -72,6 +72,7 @@ from .schemas import (
 )
 from .dependencies import get_current_custom_automation
 from ..services.account_pool_service import bulk_upload_sessions, delete_pool_account
+from ..services.custom.lead_keywords import normalize_lead_keywords
 from ..services.custom.account_connect_service import (
     poll_account_qr,
     request_account_sms,
@@ -81,7 +82,7 @@ from ..services.custom.account_connect_service import (
 )
 from ..services.custom.account_health_worker import AccountHealthWorker
 from ..services.telegram_userbot_auth import TelegramUserbotAuthError
-from ..services.custom.bulk_profile_service import BulkProfileUpdateWorker, _save_uploaded_avatar
+from ..services.custom.bulk_profile_service import BulkProfileUpdateWorker, _save_uploaded_avatar, update_account_display_name
 from ..services.custom.chat_discovery_service import (
     approve_discovered_chats,
     create_discovery_task,
@@ -176,6 +177,7 @@ async def _settings_payload(session, db_automation) -> dict:
         await session.refresh(db_automation)
     validation = await validate_settings(session, db_automation)
     response = CustomAutomationSettingsResponse.model_validate(db_automation).model_dump()
+    response["lead_keywords"] = normalize_lead_keywords(db_automation.lead_keywords)
     response["warnings"] = validation["warnings"]
     response["amocrm_redirect_uri"] = get_redirect_uri()
     if (db_automation.is_dmp_one_enabled or is_dmp_notify_pipeline(db_automation)) and db_automation.dmp_webhook_secret:
@@ -284,6 +286,8 @@ async def update_automation_settings(
     async with async_session_maker() as session:
         db_automation = await session.merge(automation)
         update_data = payload.model_dump(exclude_unset=True)
+        if "lead_keywords" in update_data:
+            update_data["lead_keywords"] = normalize_lead_keywords(update_data.get("lead_keywords"))
         for field, value in update_data.items():
             setattr(db_automation, field, value)
         if is_dmp_notify_pipeline(db_automation):
@@ -341,6 +345,10 @@ def _account_response(
         phone_number=social_account.phone_number,
         username=social_account.username,
         display_name=social_account.display_name,
+        bio=social_account.current_bio or social_account.bio,
+        avatar_url=social_account.avatar_url
+        or (f"/media/{social_account.avatar_file_path}" if social_account.avatar_file_path else None),
+        avatar_file_path=social_account.avatar_file_path,
         account_class=social_account.account_class,
         assigned_class=pool_account.assigned_class,
         status=_session_status(social_account),
@@ -358,6 +366,26 @@ def _account_response(
         added_at=pool_account.added_at,
         last_health_check_at=social_account.last_health_check_at,
     )
+
+
+def _apply_chat_target_update(chat: ChatTarget, payload: ChatTargetUpdate) -> None:
+    if payload.is_active is not None:
+        chat.is_active = payload.is_active
+        if payload.mode is None:
+            chat.mode = "monitoring" if payload.is_active else "inactive"
+    if payload.mode is not None:
+        chat.mode = payload.mode
+        if payload.mode == "inactive":
+            chat.is_active = False
+        elif payload.is_active is None:
+            chat.is_active = True
+    if payload.neurocommenting_config is not None:
+        chat.neurocommenting_config = payload.neurocommenting_config
+    if payload.discussion_config is not None:
+        chat.discussion_config = payload.discussion_config
+    if payload.shilling_config is not None:
+        chat.shilling_config = payload.shilling_config
+    chat.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _userbot_auth_http_error(exc: TelegramUserbotAuthError) -> HTTPException:
@@ -793,12 +821,14 @@ async def bulk_update_profiles(
 
 
 @router.patch("/automations/{automation_id}/accounts/{account_id}", response_model=AccountResponse)
-async def update_account_class(
+async def update_account(
     automation_id: int,
     account_id: int,
     payload: AccountClassUpdate,
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
+    if payload.assigned_class is None and payload.display_name is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nothing to update")
     async with async_session_maker() as session:
         row = await session.execute(
             select(PoolAccount, SocialAccount)
@@ -814,9 +844,17 @@ async def update_account_class(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
 
         pool_account, social_account = result
-        pool_account.assigned_class = payload.assigned_class
-        social_account.account_class = payload.assigned_class
-        social_account.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        if payload.assigned_class is not None:
+            pool_account.assigned_class = payload.assigned_class
+            social_account.account_class = payload.assigned_class
+            social_account.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        if payload.display_name is not None:
+            try:
+                await update_account_display_name(session, automation_id, social_account, payload.display_name)
+            except ValueError as exc:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+            except Exception as exc:
+                raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)[:255]) from exc
         await session.commit()
         await session.refresh(pool_account)
         await session.refresh(social_account)
@@ -901,11 +939,7 @@ async def update_chat_neurocommenting_config(
         chat = await session.get(ChatTarget, chat_id)
         if not chat or chat.custom_automation_id != automation_id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat not found")
-        if payload.mode is not None:
-            chat.mode = payload.mode
-        if payload.neurocommenting_config is not None:
-            chat.neurocommenting_config = payload.neurocommenting_config
-        chat.updated_at = datetime.now(timezone.utc)
+        _apply_chat_target_update(chat, payload)
         await session.commit()
         await session.refresh(chat)
         return ChatTargetResponse.model_validate(chat)
@@ -932,11 +966,7 @@ async def update_chat_discussion_config(
         chat = await session.get(ChatTarget, chat_id)
         if not chat or chat.custom_automation_id != automation_id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat not found")
-        if payload.mode is not None:
-            chat.mode = payload.mode
-        if payload.discussion_config is not None:
-            chat.discussion_config = payload.discussion_config
-        chat.updated_at = datetime.now(timezone.utc)
+        _apply_chat_target_update(chat, payload)
         await session.commit()
         await session.refresh(chat)
         return ChatTargetResponse.model_validate(chat)
@@ -963,11 +993,7 @@ async def update_chat_shilling_config(
         chat = await session.get(ChatTarget, chat_id)
         if not chat or chat.custom_automation_id != automation_id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat not found")
-        if payload.mode is not None:
-            chat.mode = payload.mode
-        if payload.shilling_config is not None:
-            chat.shilling_config = payload.shilling_config
-        chat.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        _apply_chat_target_update(chat, payload)
         await session.commit()
         await session.refresh(chat)
         return ChatTargetResponse.model_validate(chat)

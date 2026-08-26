@@ -2074,6 +2074,7 @@ class CustomAutomation(Base):
     is_chat_monitoring_enabled: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", nullable=False
     )
+    lead_keywords: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     is_neurocommenting_enabled: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", nullable=False
     )

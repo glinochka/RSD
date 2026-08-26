@@ -126,12 +126,22 @@ class TelegramAccountClient:
         text = (bio or "").strip()[:_MAX_BIO_LENGTH]
         await self.client(UpdateProfileRequest(about=text))
 
+    async def set_display_name(self, display_name: str) -> str:
+        """Update Telegram first/last name. Returns the stored display name."""
+        parts = (display_name or "").strip().split(None, 1)
+        first = (parts[0] if parts else "User")[:64]
+        last = (parts[1] if len(parts) > 1 else "")[:64]
+        await self.client(UpdateProfileRequest(first_name=first, last_name=last))
+        return f"{first} {last}".strip()
+
     async def set_avatar(self, avatar: str | bytes) -> None:
         """Upload a new profile photo from a file path or bytes."""
         if isinstance(avatar, str):
             uploaded = await self.client.upload_file(avatar)
         else:
-            uploaded = await self.client.upload_file(io.BytesIO(avatar))
+            buf = io.BytesIO(avatar)
+            buf.name = "avatar.jpg"
+            uploaded = await self.client.upload_file(buf)
         await self.client(UploadProfilePhotoRequest(file=uploaded))
 
     async def send_message(self, recipient: str | int, text: str) -> None:

@@ -139,6 +139,7 @@ class CustomAutomationSettingsResponse(BaseModel):
     rotation_strategy: str
     max_daily_messages_per_account: int
     is_chat_monitoring_enabled: bool
+    lead_keywords: list[str] = Field(default_factory=list)
     is_neurocommenting_enabled: bool
     is_digital_footprint_enabled: bool
     is_dmp_one_enabled: bool
@@ -176,6 +177,7 @@ class CustomAutomationSettingsUpdate(BaseModel):
     rotation_strategy: str | None = None
     max_daily_messages_per_account: int | None = None
     is_chat_monitoring_enabled: bool | None = None
+    lead_keywords: list[str] | None = None
     is_neurocommenting_enabled: bool | None = None
     is_digital_footprint_enabled: bool | None = None
     is_dmp_one_enabled: bool | None = None
@@ -227,7 +229,8 @@ class AccountBulkClassifyResponse(BaseModel):
 
 
 class AccountClassUpdate(BaseModel):
-    assigned_class: str = Field(..., min_length=1, max_length=32)
+    assigned_class: Optional[str] = Field(default=None, min_length=1, max_length=32)
+    display_name: Optional[str] = Field(default=None, min_length=1, max_length=128)
 
 
 class AccountQrStartRequest(BaseModel):
@@ -278,6 +281,9 @@ class AccountResponse(BaseModel):
     phone_number: Optional[str] = None
     username: Optional[str] = None
     display_name: Optional[str] = None
+    bio: Optional[str] = None
+    avatar_url: Optional[str] = None
+    avatar_file_path: Optional[str] = None
     account_class: str
     assigned_class: str
     status: str
@@ -357,6 +363,7 @@ class ChatTargetCreate(BaseModel):
 
 class ChatTargetUpdate(BaseModel):
     mode: Optional[str] = None
+    is_active: Optional[bool] = None
     neurocommenting_config: Optional[dict] = None
     discussion_config: Optional[dict] = None
     shilling_config: Optional[dict] = None

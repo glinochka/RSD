@@ -359,6 +359,149 @@ class TestChatImportAndDedup:
         assert count == 1
 
 
+class TestLeadKeywords:
+    async def test_normalize_and_match(self):
+        from app.services.custom.lead_keywords import matched_lead_keyword, normalize_lead_keywords
+
+        assert normalize_lead_keywords(["SEO", "seo", "  сайт  ", "x", "нужен сайт"]) == [
+            "seo",
+            "сайт",
+            "нужен сайт",
+        ]
+        assert normalize_lead_keywords("купить, заявка\nсайт") == ["купить", "заявка", "сайт"]
+        assert normalize_lead_keywords([]) == []
+        assert matched_lead_keyword("Кто делает SEO под ключ?", ["seo"]) == "seo"
+        assert matched_lead_keyword("Ребята, нужен сайт завтра", ["нужен сайт"]) == "нужен сайт"
+        assert matched_lead_keyword("привет как дела", ["seo"]) is None
+        assert matched_lead_keyword("сколько стоит индонезия", ["ии"]) is None
+        assert matched_lead_keyword("нужно ии для чата", ["ии"]) == "ии"
+
+    async def _add_message(
+        self,
+        session: AsyncSession,
+        automation: CustomAutomation,
+        text: str,
+        *,
+        external_id: str = "42",
+    ) -> ChatMessage:
+        from datetime import datetime, timezone
+
+        chat = ChatTarget(
+            custom_automation_id=automation.id,
+            provider="telegram",
+            external_chat_id="111",
+            title="Test",
+            mode="monitoring",
+            source="manual",
+            join_status="joined",
+            is_active=True,
+        )
+        session.add(chat)
+        await session.commit()
+        await session.refresh(chat)
+        message = ChatMessage(
+            custom_automation_id=automation.id,
+            chat_target_id=chat.id,
+            external_message_id=external_id,
+            external_chat_id="111",
+            sender_id="99",
+            sender_username="lead",
+            sender_name="Lead",
+            text=text,
+            sent_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            dedup_key=f"telegram:111:{external_id}",
+            is_processed=False,
+            is_duplicate=False,
+        )
+        session.add(message)
+        await session.commit()
+        await session.refresh(message)
+        return message
+
+    async def test_keyword_miss_skips_llm(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from app.services.custom.chat_monitoring_service import process_unprocessed_messages
+
+        custom_automation.lead_keywords = ["seo"]
+        await test_session.commit()
+        message = await self._add_message(test_session, custom_automation, "привет как дела")
+        with patch(
+            "app.services.custom.chat_monitoring_service._classify_message",
+            new=AsyncMock(),
+        ) as classify:
+            result = await process_unprocessed_messages(test_session, custom_automation.id)
+        classify.assert_not_called()
+        await test_session.refresh(message)
+        assert message.is_processed is True
+        assert message.matched_intent == "no_keyword"
+        assert result["leads_created"] == 0
+
+    async def test_empty_keywords_skip_llm(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from app.services.custom.chat_monitoring_service import process_unprocessed_messages
+
+        message = await self._add_message(test_session, custom_automation, "Кто делает SEO?")
+        with patch(
+            "app.services.custom.chat_monitoring_service._classify_message",
+            new=AsyncMock(),
+        ) as classify:
+            await process_unprocessed_messages(test_session, custom_automation.id)
+        classify.assert_not_called()
+        await test_session.refresh(message)
+        assert message.matched_intent == "no_keyword"
+
+    async def test_keyword_hit_calls_classify(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from app.services.custom.chat_monitoring_service import process_unprocessed_messages
+
+        custom_automation.lead_keywords = ["seo"]
+        await test_session.commit()
+        message = await self._add_message(test_session, custom_automation, "Кто делает SEO?")
+        with patch(
+            "app.services.custom.chat_monitoring_service._classify_message",
+            new=AsyncMock(
+                return_value={
+                    "is_lead": False,
+                    "confidence": 0.1,
+                    "reason": "no",
+                    "contact_type": "telegram",
+                    "contact_value": "",
+                }
+            ),
+        ) as classify:
+            await process_unprocessed_messages(test_session, custom_automation.id)
+        classify.assert_called_once()
+        await test_session.refresh(message)
+        assert message.is_processed is True
+        assert message.matched_intent == "not_lead"
+
+    async def test_settings_roundtrip_and_warning(
+        self,
+        client: AsyncClient,
+        custom_automation: CustomAutomation,
+        client_token: str,
+    ):
+        response = await client.patch(
+            f"/api/custom/automations/{custom_automation.id}/settings",
+            json={"lead_keywords": ["SEO", "seo", "  сайт  ", "x"]},
+            headers={"Authorization": f"Bearer {client_token}"},
+        )
+        assert response.status_code == 200
+        assert response.json()["lead_keywords"] == ["seo", "сайт"]
+
+        empty = await client.patch(
+            f"/api/custom/automations/{custom_automation.id}/settings",
+            json={"is_chat_monitoring_enabled": True, "lead_keywords": []},
+            headers={"Authorization": f"Bearer {client_token}"},
+        )
+        assert empty.status_code == 200
+        warnings = empty.json()["warnings"]
+        assert any("ключев" in warning.lower() for warning in warnings)
+
+
 class TestSchedulerContracts:
     async def test_job_factories_accept_automation_id_only(self):
         import inspect
@@ -457,6 +600,7 @@ class TestShilling:
         automation: CustomAutomation,
         *,
         mode: str = "shilling",
+        chat_type: str = "chat",
     ) -> ChatTarget:
         from app.alembic.models import ChatJoinStatus, ChatMode
 
@@ -465,6 +609,7 @@ class TestShilling:
             provider="telegram",
             external_chat_id="222",
             title="Shill chat",
+            chat_type=chat_type,
             mode=mode or ChatMode.SHILLING.value,
             source="manual",
             join_status=ChatJoinStatus.JOINED.value,
@@ -540,7 +685,7 @@ class TestShilling:
             account_id=account.id,
             neuro_enabled=True,
             shilling_enabled=True,
-            roll=lambda: 0.5,
+            pick_gap=lambda: 1,
         )
         assert skipped == SKIP
         again = await claim_post_engagement(
@@ -551,7 +696,7 @@ class TestShilling:
             account_id=account.id,
             neuro_enabled=True,
             shilling_enabled=True,
-            roll=lambda: 0.01,
+            pick_gap=lambda: 1,
             pick=lambda options: "shilling",
         )
         assert again == SKIP
@@ -564,7 +709,7 @@ class TestShilling:
             account_id=account.id,
             neuro_enabled=True,
             shilling_enabled=True,
-            roll=lambda: 0.01,
+            pick_gap=lambda: 1,
             pick=lambda options: "neurocommenting",
         )
         second = await claim_post_engagement(
@@ -575,7 +720,7 @@ class TestShilling:
             account_id=account.id,
             neuro_enabled=True,
             shilling_enabled=True,
-            roll=lambda: 0.01,
+            pick_gap=lambda: 1,
             pick=lambda options: "shilling",
         )
         assert first == "neurocommenting"
@@ -673,6 +818,203 @@ class TestShilling:
         assert {result["setup_account_id"], result["reply_account_id"]} == {a.id, b.id}
         used = {call.args[3].id for call in send.await_args_list}
         assert used == {a.id, b.id}
+
+    async def test_shilling_runs_without_per_chat_mode(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from app.services.custom.rotation_service import select_distinct_accounts_for_action
+        from app.services.custom.shilling_service import process_shilling_chat
+
+        await self._add_account(
+            test_session, custom_automation, account_class=AccountClass.SHILLING.value, username="mode_a", phone="+79990000021"
+        )
+        await self._add_account(
+            test_session, custom_automation, account_class=AccountClass.SHILLING.value, username="mode_b", phone="+79990000022"
+        )
+        chat = await self._add_chat(test_session, custom_automation, mode="monitoring")
+        custom_automation.is_shilling_enabled = True
+        await test_session.commit()
+        pair = await select_distinct_accounts_for_action(test_session, custom_automation.id, "shilling", count=2)
+        assert len(pair) == 2
+        result = await process_shilling_chat(
+            test_session,
+            custom_automation,
+            chat,
+            now=None,
+            roll=lambda: 0.9,
+        )
+        assert result["reason"] in {"skip", "wait"}
+
+    async def test_chat_shilling_skips_channels(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from app.services.custom.shilling_service import process_shilling_chat
+
+        await self._add_account(
+            test_session, custom_automation, account_class=AccountClass.SHILLING.value, username="ch_a", phone="+79990000023"
+        )
+        await self._add_account(
+            test_session, custom_automation, account_class=AccountClass.SHILLING.value, username="ch_b", phone="+79990000024"
+        )
+        chat = await self._add_chat(test_session, custom_automation, mode="monitoring", chat_type="channel")
+        custom_automation.is_shilling_enabled = True
+        await test_session.commit()
+        result = await process_shilling_chat(test_session, custom_automation, chat)
+        assert result["reason"] == "channel"
+
+    async def test_shilling_cooldown_two_days(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from datetime import datetime, timedelta, timezone
+        from zoneinfo import ZoneInfo
+
+        from app.alembic.models import AutomationActionLog
+        from app.services.custom.shilling_service import decide_chat_shilling_today
+
+        try:
+            moscow = ZoneInfo("Europe/Moscow")
+        except Exception:
+            moscow = timezone(timedelta(hours=3))
+        now = datetime(2026, 8, 26, 12, 0, tzinfo=moscow)
+        account = await self._add_account(
+            test_session, custom_automation, account_class=AccountClass.SHILLING.value, username="cool", phone="+79990000025"
+        )
+        chat = await self._add_chat(test_session, custom_automation, mode="monitoring")
+        test_session.add(
+            AutomationActionLog(
+                custom_automation_id=custom_automation.id,
+                social_account_id=account.id,
+                action_type="shilling_chat",
+                target_id=str(chat.id),
+                target_type="chat",
+                result="success",
+                payload={},
+                created_at=(now - timedelta(days=1)).astimezone(timezone.utc).replace(tzinfo=None),
+            )
+        )
+        await test_session.commit()
+        decision = await decide_chat_shilling_today(
+            test_session,
+            custom_automation,
+            chat,
+            account.id,
+            roll=lambda: 0.01,
+            now=now,
+        )
+        assert decision == "done"
+
+    async def test_post_cadence_skips_between_actions(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from app.services.custom.post_engagement import SKIP, claim_post_engagement
+
+        account = await self._add_account(
+            test_session, custom_automation, account_class=AccountClass.ONE_DAY.value, username="cadence", phone="+79990000026"
+        )
+        results = []
+        for post_id in range(20, 26):
+            results.append(
+                await claim_post_engagement(
+                    test_session,
+                    automation_id=custom_automation.id,
+                    chat_target_id=7,
+                    post_id=post_id,
+                    account_id=account.id,
+                    neuro_enabled=True,
+                    shilling_enabled=False,
+                    pick_gap=lambda: 2,
+                    pick=lambda options: "neurocommenting",
+                )
+            )
+        assert results[0] == SKIP
+        assert results[1] == SKIP
+        assert results[2] == "neurocommenting"
+        assert results[3] == SKIP
+        assert results[4] == SKIP
+        assert results[5] == "neurocommenting"
+
+    async def test_monitoring_ignores_shilling_messages(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from datetime import datetime, timezone
+
+        from app.alembic.models import AutomationActionLog
+        from app.services.custom.chat_monitoring_service import save_chat_message
+        from app.services.custom.chat_scope import load_own_sender_keys, load_shilling_message_ids, message_is_own_activity
+
+        account = await self._add_account(
+            test_session, custom_automation, account_class=AccountClass.SHILLING.value, username="shill_bot", phone="+79990000027"
+        )
+        chat = await self._add_chat(test_session, custom_automation, mode="monitoring")
+        test_session.add(
+            AutomationActionLog(
+                custom_automation_id=custom_automation.id,
+                social_account_id=account.id,
+                action_type="shilling_chat",
+                target_id=str(chat.id),
+                target_type="chat",
+                result="success",
+                payload={"setup_message_id": 501, "reply_message_id": 502, "chat_target_id": chat.id},
+                created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            )
+        )
+        await test_session.commit()
+        own_keys = await load_own_sender_keys(test_session, custom_automation.id)
+        shill_ids = await load_shilling_message_ids(test_session, custom_automation.id, chat.id)
+        payload = {
+            "external_message_id": "501",
+            "external_chat_id": "222",
+            "sender_id": "1",
+            "sender_username": "shill_bot",
+            "sender_name": "shill_bot",
+            "text": "Кто шарит в SEO?",
+            "sent_at": datetime.now(timezone.utc).replace(tzinfo=None),
+        }
+        assert message_is_own_activity(payload, own_keys, shill_ids) is True
+        saved = await save_chat_message(test_session, chat, payload, ignore_as="own_activity")
+        assert saved is not None
+        assert saved.is_processed is True
+        assert saved.matched_intent == "own_activity"
+
+    async def test_discussion_once_per_chat_per_day(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from datetime import datetime, timezone
+
+        from app.alembic.models import AutomationActionLog
+        from app.services.custom.discussion_service import _already_replied_today, process_chat_target
+
+        chat = await self._add_chat(test_session, custom_automation, mode="monitoring")
+        account = await self._add_account(
+            test_session, custom_automation, account_class=AccountClass.ONE_DAY.value, username="disc", phone="+79990000028"
+        )
+        test_session.add(
+            AutomationActionLog(
+                custom_automation_id=custom_automation.id,
+                social_account_id=account.id,
+                action_type="discussion",
+                target_id=f"{chat.id}:99",
+                target_type="chat_thread",
+                result="success",
+                payload={"chat_target_id": chat.id},
+                created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            )
+        )
+        await test_session.commit()
+        assert await _already_replied_today(test_session, custom_automation.id, chat.id) is True
+        result = await process_chat_target(test_session, custom_automation.id, chat, max_daily=50)
+        assert result["reason"] == "daily_limit"
+
+    async def test_neurocommenting_skips_groups(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from app.services.custom.neurocommenting_service import process_chat_target
+
+        chat = await self._add_chat(test_session, custom_automation, mode="monitoring", chat_type="chat")
+        custom_automation.is_neurocommenting_enabled = True
+        await test_session.commit()
+        result = await process_chat_target(test_session, custom_automation.id, chat)
+        assert result["reason"] == "not_channel"
 
     async def test_settings_require_two_shilling_accounts(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
@@ -1882,6 +2224,100 @@ class TestAccountHealthSpamblockAndDelete:
         assert response.status_code == 204, response.text
         test_session.expire_all()
         assert await test_session.get(SocialAccount, account_id) is None
+
+
+class TestAccountProfile:
+    async def test_account_list_includes_avatar_and_bio(
+        self,
+        client: AsyncClient,
+        client_token: str,
+        custom_automation: CustomAutomation,
+        test_session: AsyncSession,
+    ):
+        from app.services.account_pool_service import get_or_create_default_pool
+
+        pool = await get_or_create_default_pool(test_session, custom_automation.id)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number="+79990000040",
+            username="face",
+            display_name="Иван Тестов",
+            bio="Короткое био",
+            current_bio="Короткое био",
+            avatar_file_path="avatars/1/40.jpg",
+            avatar_url="/media/avatars/1/40.jpg",
+            encrypted_session="x",
+            session_file_path="sessions/face.session",
+            is_active=True,
+        )
+        test_session.add(account)
+        await test_session.flush()
+        test_session.add(
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account.id,
+                assigned_class=AccountClass.ONE_DAY.value,
+                custom_automation_id=custom_automation.id,
+            )
+        )
+        await test_session.commit()
+        response = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/accounts",
+            headers={"Authorization": f"Bearer {client_token}"},
+        )
+        assert response.status_code == 200, response.text
+        item = next(row for row in response.json()["items"] if row["id"] == account.id)
+        assert item["display_name"] == "Иван Тестов"
+        assert item["bio"] == "Короткое био"
+        assert item["avatar_url"] == "/media/avatars/1/40.jpg"
+
+    async def test_patch_display_name(
+        self,
+        client: AsyncClient,
+        client_token: str,
+        custom_automation: CustomAutomation,
+        test_session: AsyncSession,
+    ):
+        from app.services.account_pool_service import get_or_create_default_pool
+
+        pool = await get_or_create_default_pool(test_session, custom_automation.id)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number="+79990000041",
+            username="rename",
+            display_name="Старое",
+            encrypted_session="x",
+            session_file_path="sessions/rename.session",
+            is_active=True,
+        )
+        test_session.add(account)
+        await test_session.flush()
+        test_session.add(
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account.id,
+                assigned_class=AccountClass.ONE_DAY.value,
+                custom_automation_id=custom_automation.id,
+            )
+        )
+        await test_session.commit()
+
+        async def fake_update(session, automation_id, social_account, display_name):
+            social_account.display_name = display_name
+            return display_name
+
+        with patch(
+            "app.router_custom.automation_router.update_account_display_name",
+            fake_update,
+        ):
+            response = await client.patch(
+                f"/api/custom/automations/{custom_automation.id}/accounts/{account.id}",
+                headers={"Authorization": f"Bearer {client_token}"},
+                json={"display_name": "Новое Имя"},
+            )
+        assert response.status_code == 200, response.text
+        assert response.json()["display_name"] == "Новое Имя"
+
 
 
 

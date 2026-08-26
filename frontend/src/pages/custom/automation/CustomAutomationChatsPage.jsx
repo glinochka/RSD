@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import CustomSelect from '../../../components/CustomSelect';
 import customService from '../../../services/customService';
 import CustomAutomationChatDiscoveryPage from './CustomAutomationChatDiscoveryPage';
-import { CHAT_MODE_OPTIONS } from './activityLabels';
+import { CHAT_TYPE_LABELS } from './activityLabels';
 import '../../../styles/projectCRMPage.css';
 import '../../../styles/projectSettingsPage.css';
 
@@ -17,29 +17,9 @@ const JOIN_STATUSES = [
   { value: 'banned', label: 'Бан' },
 ];
 
-const MODES = CHAT_MODE_OPTIONS;
-
-function parseActivityHours(value) {
-  if (!value || value.trim() === '') {
-    return [];
-  }
-  return value
-    .split(',')
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .map((part) => {
-      const [start, end] = part.split('-').map((s) => parseInt(s.trim(), 10));
-      return [start, end];
-    })
-    .filter(([start, end]) => Number.isFinite(start) && Number.isFinite(end));
-}
-
-function formatActivityHours(config) {
-  const hours = config?.activity_hours || [];
-  if (!Array.isArray(hours) || hours.length === 0) {
-    return '';
-  }
-  return hours.map(([start, end]) => `${start}-${end}`).join(', ');
+function chatTypeLabel(chat) {
+  const key = (chat.chat_type || '').toLowerCase();
+  return CHAT_TYPE_LABELS[key] || (key ? chat.chat_type : 'Чат');
 }
 
 const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
@@ -61,7 +41,6 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
     description: '',
     chat_type: '',
   });
-  const [editing, setEditing] = useState({});
 
   const loadChats = useCallback(async () => {
     try {
@@ -149,57 +128,14 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
     }
   };
 
-  const startEdit = (chat) => {
-    const neuro = chat.neurocommenting_config || {};
-    const disc = chat.discussion_config || {};
-    setEditing({
-      chatId: chat.id,
-      mode: chat.mode || 'monitoring',
-      max_per_day: neuro.max_per_day || 10,
-      frequency_minutes: neuro.frequency_minutes || 60,
-      activity_hours: formatActivityHours(disc),
-      reply_probability: (disc.reply_probability ?? 0.3) * 100,
-    });
-  };
-
-  const cancelEdit = () => {
-    setEditing({});
-  };
-
-  const saveEdit = async (chatId) => {
+  const handlePauseToggle = async (chat) => {
+    const nextActive = !(chat.is_active && chat.mode !== 'inactive');
     try {
-      if (editing.mode === 'neurocommenting') {
-        await customService.updateChatNeurocommentingConfig(id, chatId, {
-          mode: editing.mode,
-          neurocommentingConfig: {
-            max_per_day: Number(editing.max_per_day) || 10,
-            frequency_minutes: Number(editing.frequency_minutes) || 60,
-          },
-        });
-      } else if (editing.mode === 'discussion') {
-        await customService.updateChatDiscussionConfig(id, chatId, {
-          mode: editing.mode,
-          discussionConfig: {
-            activity_hours: parseActivityHours(editing.activity_hours),
-            reply_probability: (Number(editing.reply_probability) || 0) / 100,
-          },
-        });
-      } else if (editing.mode === 'shilling') {
-        await customService.updateChatShillingConfig(id, chatId, {
-          mode: editing.mode,
-          shillingConfig: {},
-        });
-      } else {
-        await customService.updateChatNeurocommentingConfig(id, chatId, {
-          mode: editing.mode,
-          neurocommentingConfig: {},
-        });
-      }
-      setEditing({});
+      await customService.updateChatNeurocommentingConfig(id, chat.id, { isActive: nextActive });
       await loadChats();
-      setMessage('Настройки чата сохранены');
+      setMessage(nextActive ? 'Чат снова в работе' : 'Чат на паузе');
     } catch (err) {
-      setError(err.message || 'Failed to update chat config');
+      setError(err.message || 'Failed to update chat');
     }
   };
 
@@ -208,7 +144,9 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
       <div className="crm-header">
         <div>
           <h1 className="crm-title">Чаты</h1>
-          <p className="crm-subtitle">Залейте Excel со ссылками — система сама вступает. Автопоиск, если списка нет.</p>
+          <p className="crm-subtitle">
+            Модули из Настроек работают сразу во всех вступивших чатах и каналах. Здесь можно только поставить чат на паузу.
+          </p>
         </div>
         <div className="crm-stats">
           <div className="crm-stat">
@@ -317,89 +255,17 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
                     <span className="crm-status">{chat.join_status}</span>
                   </div>
                   <p className="crm-item-subtitle">{chat.invite_link || chat.external_chat_id || '-'}</p>
-                  {editing.chatId === chat.id ? (
-                    <>
-                      <div className="form-group">
-                        <label htmlFor={`mode-${chat.id}`}>Режим</label>
-                        <CustomSelect
-                          id={`mode-${chat.id}`}
-                          value={editing.mode}
-                          options={MODES}
-                          onChange={(e) => setEditing((ed) => ({ ...ed, mode: e.target.value }))}
-                        />
-                      </div>
-                      {editing.mode === 'neurocommenting' ? (
-                        <>
-                          <div className="form-group">
-                            <label htmlFor={`max-${chat.id}`}>max/день</label>
-                            <input
-                              id={`max-${chat.id}`}
-                              type="number"
-                              min={1}
-                              value={editing.max_per_day}
-                              onChange={(e) => setEditing((ed) => ({ ...ed, max_per_day: e.target.value }))}
-                            />
-                          </div>
-                          <div className="form-group">
-                            <label htmlFor={`freq-${chat.id}`}>частота (мин)</label>
-                            <input
-                              id={`freq-${chat.id}`}
-                              type="number"
-                              min={1}
-                              value={editing.frequency_minutes}
-                              onChange={(e) => setEditing((ed) => ({ ...ed, frequency_minutes: e.target.value }))}
-                            />
-                          </div>
-                        </>
-                      ) : null}
-                      {editing.mode === 'discussion' ? (
-                        <>
-                          <div className="form-group">
-                            <label htmlFor={`hours-${chat.id}`}>часы активности (9-18, 20-23)</label>
-                            <input
-                              id={`hours-${chat.id}`}
-                              type="text"
-                              placeholder="9-18, 20-23"
-                              value={editing.activity_hours}
-                              onChange={(e) => setEditing((ed) => ({ ...ed, activity_hours: e.target.value }))}
-                            />
-                          </div>
-                          <div className="form-group">
-                            <label htmlFor={`prob-${chat.id}`}>вероятность ответа (%)</label>
-                            <input
-                              id={`prob-${chat.id}`}
-                              type="number"
-                              min={0}
-                              max={100}
-                              value={editing.reply_probability}
-                              onChange={(e) => setEditing((ed) => ({ ...ed, reply_probability: e.target.value }))}
-                            />
-                          </div>
-                        </>
-                      ) : null}
-                      <div className="crm-item-actions">
-                        <button type="button" onClick={() => saveEdit(chat.id)} className="btn btn-black">Сохранить</button>
-                        <button type="button" onClick={cancelEdit} className="btn btn-outline">Отмена</button>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <p className="crm-item-subtitle">
-                        {MODES.find((m) => m.value === chat.mode)?.label || chat.mode}
-                        {chat.mode === 'neurocommenting'
-                          ? ` · max/день ${chat.neurocommenting_config?.max_per_day || 10} · ${chat.neurocommenting_config?.frequency_minutes || 60} мин`
-                          : ''}
-                        {chat.mode === 'discussion'
-                          ? ` · часы ${formatActivityHours(chat.discussion_config) || 'все'} · ${Math.round((chat.discussion_config?.reply_probability || 0) * 100)}%`
-                          : ''}
-                        {` · попыток ${chat.join_attempts}`}
-                      </p>
-                      <div className="crm-item-actions">
-                        <button type="button" onClick={() => startEdit(chat)} className="btn btn-outline">Настроить</button>
-                        <button type="button" onClick={() => handleDelete(chat.id)} className="btn btn-outline">Удалить</button>
-                      </div>
-                    </>
-                  )}
+                  <p className="crm-item-subtitle">
+                    {chatTypeLabel(chat)}
+                    {chat.is_active && chat.mode !== 'inactive' ? ' · в работе' : ' · пауза'}
+                    {` · попыток ${chat.join_attempts}`}
+                  </p>
+                  <div className="crm-item-actions">
+                    <button type="button" onClick={() => handlePauseToggle(chat)} className="btn btn-outline">
+                      {chat.is_active && chat.mode !== 'inactive' ? 'Пауза' : 'Включить'}
+                    </button>
+                    <button type="button" onClick={() => handleDelete(chat.id)} className="btn btn-outline">Удалить</button>
+                  </div>
                 </div>
               ))}
             </div>

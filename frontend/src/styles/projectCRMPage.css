@@ -314,6 +314,34 @@
   color: #991b1b;
 }
 
+.crm-account-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-md);
+}
+
+.crm-account-meta {
+  min-width: 0;
+  flex: 1;
+}
+
+.crm-account-avatar {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: #e5e7eb;
+}
+
+.crm-account-avatar--placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  color: #374151;
+}
+
 .crm-item-actions {
   display: flex;
   flex-wrap: wrap;

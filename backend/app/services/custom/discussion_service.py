@@ -10,10 +10,12 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .chat_scope import apply_entity_metadata, is_group_chat, is_paused, load_own_sender_keys, load_shilling_message_ids, message_is_own_activity
 from .rotation_service import select_account_for_action
+from .shilling_service import _moscow_day_utc_range
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import execute_with_telegram_retry
-from ...alembic.models import AutomationActionLog, ChatJoinStatus, ChatMode, ChatTarget, CustomPrompt, PromptType, SocialAccount
+from ...alembic.models import AutomationActionLog, ChatJoinStatus, ChatTarget, CustomPrompt, PromptType, SocialAccount
 from ...config import settings
 from ...services.ai_authoring import ai_client
 
@@ -110,6 +112,26 @@ def _is_active_hour(config: dict) -> bool:
         if start <= hour <= end:
             return True
     return False
+
+
+async def _already_replied_today(
+    session: AsyncSession,
+    automation_id: int,
+    chat_target_id: int,
+    now: datetime | None = None,
+) -> bool:
+    start, end = _moscow_day_utc_range(now=now)
+    row = await session.scalar(
+        select(AutomationActionLog).where(
+            AutomationActionLog.custom_automation_id == automation_id,
+            AutomationActionLog.action_type == "discussion",
+            AutomationActionLog.result == "success",
+            AutomationActionLog.target_id.like(f"{chat_target_id}:%"),
+            AutomationActionLog.created_at >= start,
+            AutomationActionLog.created_at < end,
+        )
+    )
+    return row is not None
 
 
 async def _already_replied_to_message(
@@ -218,12 +240,17 @@ async def process_chat_target(
     chat_target: ChatTarget,
     max_daily: int,
     *,
-    max_replies_per_run: int = 10,
+    max_replies_per_run: int = 1,
 ) -> dict[str, Any]:
-    if chat_target.mode in {ChatMode.INACTIVE.value, ChatMode.SHILLING.value}:
-        return {"status": "skipped", "reason": "mode"}
+    if is_paused(chat_target):
+        return {"status": "skipped", "reason": "paused"}
+    if not is_group_chat(chat_target):
+        return {"status": "skipped", "reason": "channel"}
     if chat_target.join_status != ChatJoinStatus.JOINED.value:
         return {"status": "skipped", "reason": "not_joined"}
+
+    if await _already_replied_today(session, automation_id, chat_target.id):
+        return {"status": "skipped", "reason": "daily_limit"}
 
     config = chat_target.discussion_config or {}
     if not _is_active_hour(config):
@@ -247,6 +274,10 @@ async def process_chat_target(
             entity = await client.get_entity(
                 chat_target.invite_link or chat_target.external_chat_id or chat_target.title
             )
+            apply_entity_metadata(chat_target, entity)
+            if not is_group_chat(chat_target):
+                await session.commit()
+                return {"status": "skipped", "reason": "channel"}
             history = await client.client.get_messages(entity, limit=50)
             for msg in history:
                 if not msg or not msg.text or msg.id is None:
@@ -262,6 +293,8 @@ async def process_chat_target(
         return {"status": "error", "error": str(exc)}
 
     messages.sort(key=lambda m: m.id)
+    own_keys = await load_own_sender_keys(session, automation_id)
+    shill_ids = await load_shilling_message_ids(session, automation_id, chat_target.id)
 
     sent = 0
     for msg in messages:
@@ -269,6 +302,22 @@ async def process_chat_target(
             break
         if account.daily_messages_sent >= max_daily:
             break
+        sender = getattr(msg, "sender", None)
+        sender_username = getattr(sender, "username", None)
+        sender_name = " ".join(
+            filter(None, [getattr(sender, "first_name", None), getattr(sender, "last_name", None)])
+        ).strip()
+        if message_is_own_activity(
+            {
+                "external_message_id": str(msg.id),
+                "sender_username": sender_username,
+                "sender_name": sender_name or sender_username,
+                "sender_id": str(getattr(sender, "id", "") or ""),
+            },
+            own_keys,
+            shill_ids,
+        ):
+            continue
         if await _already_replied_to_message(session, automation_id, chat_target.id, msg.id):
             continue
 
@@ -316,7 +365,7 @@ async def run_discussion_pass(automation_id: int) -> dict[str, Any]:
                 ChatTarget.custom_automation_id == automation_id,
                 ChatTarget.is_active.is_(True),
                 ChatTarget.join_status == ChatJoinStatus.JOINED.value,
-                ChatTarget.mode != ChatMode.INACTIVE.value,
+                ChatTarget.mode != "inactive",
             )
         )
         chats = result.scalars().all()

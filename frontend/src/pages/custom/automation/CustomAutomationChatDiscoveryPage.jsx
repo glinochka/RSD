@@ -1,11 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import CustomSelect from '../../../components/CustomSelect';
-import FeatureToggle from '../../../components/FeatureToggle';
 import customService from '../../../services/customService';
-import { CHAT_MODE_OPTIONS_WITHOUT_INACTIVE } from './activityLabels';
-
-const MODES = CHAT_MODE_OPTIONS_WITHOUT_INACTIVE;
+import FeatureToggle from '../../../components/FeatureToggle';
 
 const CustomAutomationChatDiscoveryPage = () => {
   const { id } = useParams();
@@ -16,7 +12,6 @@ const CustomAutomationChatDiscoveryPage = () => {
   const [message, setMessage] = useState(null);
   const [form, setForm] = useState({
     query: '',
-    mode: 'monitoring',
     max_chats: 30,
     require_approval: false,
     relevance_threshold: 0.6,
@@ -59,7 +54,7 @@ const CustomAutomationChatDiscoveryPage = () => {
     try {
       await customService.createDiscoveryTask(id, {
         query: form.query,
-        mode: form.mode,
+        mode: 'monitoring',
         max_chats: Number(form.max_chats),
         require_approval: form.require_approval,
         relevance_threshold: Number(form.relevance_threshold),
@@ -129,15 +124,6 @@ const CustomAutomationChatDiscoveryPage = () => {
             onChange={(e) => setForm((prev) => ({ ...prev, query: e.target.value }))}
             placeholder="SEO оптимизация"
             required
-          />
-        </div>
-        <div className="form-group">
-          <label htmlFor="discovery-mode">Режим чатов</label>
-          <CustomSelect
-            id="discovery-mode"
-            value={form.mode}
-            options={MODES}
-            onChange={(e) => setForm((prev) => ({ ...prev, mode: e.target.value }))}
           />
         </div>
         <div className="form-group">

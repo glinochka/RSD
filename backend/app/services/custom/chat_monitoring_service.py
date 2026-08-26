@@ -10,10 +10,19 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .chat_scope import (
+    apply_entity_metadata,
+    is_group_chat,
+    is_paused,
+    load_own_sender_keys,
+    load_shilling_message_ids,
+    message_is_own_activity,
+)
+from .lead_keywords import matched_lead_keyword, normalize_lead_keywords
 from .rotation_service import select_account_for_action
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import execute_with_telegram_retry
-from ...alembic.models import ChatJoinStatus, ChatMessage, ChatMode, ChatTarget, CustomAutomation, CustomLead, CustomLeadMessage, CustomPrompt, LeadStatus, PromptType, SocialAccount
+from ...alembic.models import ChatJoinStatus, ChatMessage, ChatTarget, CustomAutomation, CustomLead, CustomLeadMessage, CustomPrompt, LeadStatus, PromptType, SocialAccount
 from ...config import settings
 from ...services.ai_authoring import ai_client
 
@@ -150,9 +159,14 @@ async def fetch_messages_for_chat(
     try:
         async with TelegramAccountClient(str(session_path)) as client:
             entity = await client.get_entity(chat_target.invite_link or chat_target.external_chat_id or chat_target.title)
+            apply_entity_metadata(chat_target, entity)
+            if not is_group_chat(chat_target):
+                return []
             history = await client.get_messages(entity, limit=limit)
             for msg in history:
                 if not msg or not msg.text:
+                    continue
+                if getattr(msg, "out", False):
                     continue
                 sender = msg.sender
                 sender_id = getattr(sender, "id", None)
@@ -160,7 +174,7 @@ async def fetch_messages_for_chat(
                 sender_name = " ".join(filter(None, [getattr(sender, "first_name", None), getattr(sender, "last_name", None)])).strip()
                 messages.append({
                     "external_message_id": str(msg.id),
-                    "external_chat_id": str(entity.id),
+                    "external_chat_id": str(getattr(entity, "id", chat_target.external_chat_id) or ""),
                     "sender_id": str(sender_id) if sender_id else None,
                     "sender_username": sender_username,
                     "sender_name": sender_name or sender_username,
@@ -177,6 +191,8 @@ async def save_chat_message(
     session: AsyncSession,
     chat_target: ChatTarget,
     data: dict[str, Any],
+    *,
+    ignore_as: str | None = None,
 ) -> ChatMessage | None:
     dedup_key = f"telegram:{data['external_chat_id']}:{data['external_message_id']}"
 
@@ -200,8 +216,9 @@ async def save_chat_message(
         text=data["text"],
         sent_at=data["sent_at"],
         dedup_key=dedup_key,
-        is_processed=False,
+        is_processed=bool(ignore_as),
         is_duplicate=False,
+        matched_intent=ignore_as,
         created_at=_utc_now(),
     )
     session.add(message)
@@ -323,11 +340,37 @@ async def process_unprocessed_messages(
         ).order_by(ChatMessage.sent_at.asc())
     )
     messages = result.scalars().all()
+    own_keys = await load_own_sender_keys(session, automation_id)
+    shill_ids_by_chat: dict[int, set[str]] = {}
+    automation = await session.get(CustomAutomation, automation_id)
+    keywords = normalize_lead_keywords(getattr(automation, "lead_keywords", None) if automation else None)
 
     leads_created = 0
     errors = 0
     for chat_message in messages:
         try:
+            chat_id = chat_message.chat_target_id
+            if chat_id not in shill_ids_by_chat:
+                shill_ids_by_chat[chat_id] = await load_shilling_message_ids(session, automation_id, chat_id)
+            if message_is_own_activity(
+                {
+                    "external_message_id": chat_message.external_message_id,
+                    "sender_username": chat_message.sender_username,
+                    "sender_name": chat_message.sender_name,
+                    "sender_id": chat_message.sender_id,
+                },
+                own_keys,
+                shill_ids_by_chat[chat_id],
+            ):
+                chat_message.is_processed = True
+                chat_message.matched_intent = "own_activity"
+                await session.commit()
+                continue
+            if not matched_lead_keyword(chat_message.text, keywords):
+                chat_message.is_processed = True
+                chat_message.matched_intent = "no_keyword"
+                await session.commit()
+                continue
             classification = await _classify_message(session, automation_id, chat_message.text)
             if classification["is_lead"] and classification["confidence"] >= confidence_threshold:
                 success = await _send_dm_and_create_lead(session, automation_id, chat_message, classification)
@@ -366,18 +409,27 @@ async def scan_chats_and_process(
                 ChatTarget.custom_automation_id == automation_id,
                 ChatTarget.is_active.is_(True),
                 ChatTarget.join_status == ChatJoinStatus.JOINED.value,
-                ChatTarget.mode != ChatMode.INACTIVE.value,
-                ChatTarget.mode != ChatMode.SHILLING.value,
+                ChatTarget.mode != "inactive",
             )
         )
         chats = result.scalars().all()
+        own_keys = await load_own_sender_keys(session, automation_id)
 
         fetched = 0
         for chat_target in chats:
+            if is_paused(chat_target) or not is_group_chat(chat_target):
+                continue
             try:
+                shill_ids = await load_shilling_message_ids(session, automation_id, chat_target.id)
                 messages = await fetch_messages_for_chat(session, chat_target, limit=message_limit)
+                if not is_group_chat(chat_target):
+                    chat_target.last_scanned_at = _utc_now()
+                    chat_target.updated_at = _utc_now()
+                    await session.commit()
+                    continue
                 for data in messages:
-                    await save_chat_message(session, chat_target, data)
+                    ignore = "own_activity" if message_is_own_activity(data, own_keys, shill_ids) else None
+                    await save_chat_message(session, chat_target, data, ignore_as=ignore)
                 chat_target.last_scanned_at = _utc_now()
                 chat_target.updated_at = _utc_now()
                 await session.commit()

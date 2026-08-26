@@ -5,6 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.models import AccountClass, CustomAutomation, CustomAutomationCredential, PoolAccount, SocialAccount
+from .lead_keywords import normalize_lead_keywords
 
 
 async def count_accounts_by_class(session: AsyncSession, automation_id: int) -> dict[str, int]:
@@ -89,6 +90,11 @@ async def validate_settings(
             "Перехват заявок включён, но нет активных trusted-аккаунтов для отправки ЛС. "
             "Добавьте/классифицируйте аккаунты trusted или отключите модуль."
         )
+    if automation.is_chat_monitoring_enabled:
+        if not normalize_lead_keywords(getattr(automation, "lead_keywords", None)):
+            warnings.append(
+                "Перехват заявок включён, но нет ключевых слов — сообщения не уйдут в LLM и в ЛС."
+            )
     if automation.is_neurocommenting_enabled and not can_enable["neurocommenting"]:
         warnings.append(
             "Нейрокомментинг включён, но нет активных one_day/mid-аккаунтов. "

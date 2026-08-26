@@ -353,6 +353,10 @@ app.mount(
     name="website_assets",
 )
 
+media_root = Path(settings.MEDIA_ROOT)
+media_root.mkdir(parents=True, exist_ok=True)
+app.mount("/media", StaticFiles(directory=str(media_root.resolve())), name="media")
+
 
 if __name__ == "__main__":
 

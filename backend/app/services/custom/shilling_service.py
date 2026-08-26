@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .chat_scope import is_group_chat, is_paused
 from .post_engagement import SHILLING as POST_SHILLING, get_post_engagement_claim, post_target_id
 from .rotation_service import accounts_are_distinct, select_distinct_accounts_for_action
 from .telegram_account_client import TelegramAccountClient
@@ -21,7 +22,6 @@ from .telegram_error_handler import execute_with_telegram_retry
 from ...alembic.models import (
     AutomationActionLog,
     ChatJoinStatus,
-    ChatMode,
     ChatTarget,
     CustomAutomation,
     CustomPrompt,
@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 CHAT_WINDOW_START_HOUR = 8
 CHAT_WINDOW_END_HOUR = 20
 CHAT_SHILL_PROBABILITY = 0.40
+CHAT_SHILL_COOLDOWN_DAYS = 2
 CHAT_SHILL_ACTION = "shilling_chat"
 POST_SHILL_ACTION = "shilling_post"
 REPLY_DELAY_MIN_SECONDS = 8.0
@@ -260,6 +261,7 @@ async def _log(
     result: str,
     payload: dict[str, Any] | None = None,
     error_message: str | None = None,
+    created_at: datetime | None = None,
 ) -> AutomationActionLog:
     log = AutomationActionLog(
         custom_automation_id=automation_id,
@@ -270,7 +272,7 @@ async def _log(
         result=result,
         error_message=error_message,
         payload=payload or {},
-        created_at=_utc_now(),
+        created_at=created_at or _utc_now(),
     )
     session.add(log)
     await session.commit()
@@ -380,6 +382,7 @@ async def perform_shilling_dialogue(
             "setup_message_id": first_id,
             "reply_message_id": second_id,
             "comment_to": comment_to,
+            "chat_target_id": chat_target.id,
         },
     )
     return {
@@ -418,6 +421,18 @@ async def perform_post_shilling(
     )
 
 
+def _moscow_period_utc_range(days: int, now: datetime | None = None) -> tuple[datetime, datetime]:
+    moscow = _moscow_now(now)
+    end_date = moscow.date()
+    start_date = end_date - timedelta(days=max(days, 1) - 1)
+    start = datetime.combine(start_date, time.min, tzinfo=_moscow_tz())
+    end = datetime.combine(end_date, time.min, tzinfo=_moscow_tz()) + timedelta(days=1)
+    return (
+        start.astimezone(timezone.utc).replace(tzinfo=None),
+        end.astimezone(timezone.utc).replace(tzinfo=None),
+    )
+
+
 async def get_today_chat_logs(
     session: AsyncSession,
     automation_id: int,
@@ -437,6 +452,31 @@ async def get_today_chat_logs(
         .order_by(AutomationActionLog.id.asc())
     )
     return list(result.scalars().all())
+
+
+async def last_successful_chat_shill(
+    session: AsyncSession,
+    automation_id: int,
+    chat_target_id: int,
+    now: datetime | None = None,
+    *,
+    days: int = CHAT_SHILL_COOLDOWN_DAYS,
+) -> AutomationActionLog | None:
+    start, end = _moscow_period_utc_range(days, now=now)
+    result = await session.execute(
+        select(AutomationActionLog)
+        .where(
+            AutomationActionLog.custom_automation_id == automation_id,
+            AutomationActionLog.action_type == CHAT_SHILL_ACTION,
+            AutomationActionLog.target_id == str(chat_target_id),
+            AutomationActionLog.result == "success",
+            AutomationActionLog.created_at >= start,
+            AutomationActionLog.created_at < end,
+        )
+        .order_by(AutomationActionLog.id.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
 
 
 async def get_today_chat_decision(
@@ -464,10 +504,12 @@ async def decide_chat_shilling_today(
     now: datetime | None = None,
     scheduled_at: datetime | None = None,
 ) -> str:
-    """Once per Moscow day: skip (60%) or run at a random time between 08:00 and 20:00.
+    """At most once per 2 Moscow days after a success; 40% chance once per day, 08:00–20:00.
 
     Returns skip | wait | due | done.
     """
+    if await last_successful_chat_shill(session, automation.id, chat_target.id, now=now):
+        return "done"
     existing = await get_today_chat_decision(session, automation.id, chat_target.id, now=now)
     moscow = _moscow_now(now)
     if existing:
@@ -504,6 +546,7 @@ async def decide_chat_shilling_today(
             target_type="chat",
             result="skip",
             payload={"reason": "daily_probability"},
+            created_at=_moscow_now(now).astimezone(timezone.utc).replace(tzinfo=None),
         )
         return "skip"
 
@@ -520,6 +563,7 @@ async def decide_chat_shilling_today(
             target_type="chat",
             result="pending",
             payload={"scheduled_at": moscow.isoformat()},
+            created_at=moscow.astimezone(timezone.utc).replace(tzinfo=None),
         )
         return "due"
 
@@ -532,6 +576,7 @@ async def decide_chat_shilling_today(
         target_type="chat",
         result="scheduled",
         payload={"scheduled_at": when.isoformat()},
+        created_at=moscow.astimezone(timezone.utc).replace(tzinfo=None),
     )
     return "wait"
 
@@ -542,8 +587,10 @@ async def process_shilling_chat(
     chat_target: ChatTarget,
     **kwargs: Any,
 ) -> dict[str, Any]:
-    if chat_target.mode != ChatMode.SHILLING.value:
-        return {"status": "skipped", "reason": "mode"}
+    if is_paused(chat_target):
+        return {"status": "skipped", "reason": "paused"}
+    if not is_group_chat(chat_target):
+        return {"status": "skipped", "reason": "channel"}
     if chat_target.join_status != ChatJoinStatus.JOINED.value:
         return {"status": "skipped", "reason": "not_joined"}
 
@@ -594,7 +641,7 @@ async def run_shilling_pass(automation_id: int) -> dict[str, Any]:
                 ChatTarget.custom_automation_id == automation_id,
                 ChatTarget.is_active.is_(True),
                 ChatTarget.join_status == ChatJoinStatus.JOINED.value,
-                ChatTarget.mode == ChatMode.SHILLING.value,
+                ChatTarget.mode != "inactive",
             )
         )
         chats = result.scalars().all()

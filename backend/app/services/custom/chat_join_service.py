@@ -12,6 +12,7 @@ from telethon.errors import FloodWaitError, InviteHashExpiredError, UserAlreadyP
 from telethon.tl.functions.channels import JoinChannelRequest
 from telethon.tl.functions.messages import ImportChatInviteRequest
 
+from .chat_scope import apply_entity_metadata
 from .rotation_service import select_account_for_action
 from .telegram_account_client import TelegramAccountClient
 from ...alembic.models import ChatJoinStatus, ChatTarget, SocialAccount
@@ -89,9 +90,7 @@ async def _try_join_chat(
                     pass
 
             if entity is not None:
-                chat_id = getattr(getattr(entity, "chats", [None])[0] if hasattr(entity, "chats") else entity, "id", None)
-                if chat_id:
-                    chat_target.external_chat_id = str(chat_id)
+                apply_entity_metadata(chat_target, entity)
 
         return {
             "status": "joined",

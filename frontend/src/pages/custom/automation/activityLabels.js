@@ -7,17 +7,14 @@ export const ACTIVITY_MODULE_TOGGLES = [
   { name: 'is_amocrm_enabled', label: 'AmoCRM' },
 ];
 
-export const CHAT_MODE_OPTIONS = [
-  { value: 'monitoring', label: 'Перехват заявок' },
-  { value: 'neurocommenting', label: 'Нейрокомментинг' },
-  { value: 'discussion', label: 'Искусственная активность в чатах' },
-  { value: 'shilling', label: 'Шиллинг' },
-  { value: 'inactive', label: 'Неактивен' },
-];
-
-export const CHAT_MODE_OPTIONS_WITHOUT_INACTIVE = CHAT_MODE_OPTIONS.filter(
-  (option) => option.value !== 'inactive',
-);
+export const CHAT_TYPE_LABELS = {
+  channel: 'Канал',
+  broadcast: 'Канал',
+  chat: 'Чат',
+  group: 'Чат',
+  supergroup: 'Чат',
+  megagroup: 'Чат',
+};
 
 export const ACTION_LABELS = {
   neurocommenting: 'Нейрокомментинг',

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import CustomSelect from '../../../components/CustomSelect';
-import customService from '../../../services/customService';
+import customService, { mediaUrl } from '../../../services/customService';
 import CustomBulkProfileForm from './CustomBulkProfileForm';
 import CustomAccountConnectForm from './CustomAccountConnectForm';
 import '../../../styles/projectCRMPage.css';
@@ -45,6 +45,8 @@ const CustomAutomationAccountsPage = () => {
   const [banStats, setBanStats] = useState(null);
   const [healthCheckMessage, setHealthCheckMessage] = useState(null);
   const [isHealthChecking, setIsHealthChecking] = useState(false);
+  const [savingNameId, setSavingNameId] = useState(null);
+  const [nameDrafts, setNameDrafts] = useState({});
   const [filters, setFilters] = useState({
     status: '',
     accountClass: '',
@@ -151,6 +153,41 @@ const CustomAutomationAccountsPage = () => {
       await loadAccounts();
     } catch (err) {
       setError(err.message || 'Failed to update class');
+    }
+  };
+
+  const handleSaveName = async (account) => {
+    const name = (nameDrafts[account.id] ?? account.display_name ?? '').trim();
+    if (!name) {
+      setError('Имя не может быть пустым');
+      return;
+    }
+    setSavingNameId(account.id);
+    setError(null);
+    try {
+      await customService.updateAccount(id, account.id, { displayName: name });
+      await loadAccounts();
+    } catch (err) {
+      setError(err.message || 'Не удалось сменить имя');
+    } finally {
+      setSavingNameId(null);
+    }
+  };
+
+  const handleAccountAvatar = async (account, file) => {
+    if (!file) {
+      return;
+    }
+    setError(null);
+    setUploadSuccess(null);
+    try {
+      await customService.bulkUpdateProfiles(id, {
+        avatar: file,
+        accountIds: [account.id],
+      });
+      setUploadSuccess('Аватар в очереди на обновление. Обновите список через минуту.');
+    } catch (err) {
+      setError(err.message || 'Не удалось обновить аватар');
     }
   };
 
@@ -303,15 +340,31 @@ const CustomAutomationAccountsPage = () => {
         <div className="crm-list">
           {accounts.map((account) => {
             const statusMeta = accountStatusMeta(account);
+            const avatarSrc = mediaUrl(account.avatar_url);
+            const title = account.display_name || account.username || account.phone_number || `Аккаунт #${account.id}`;
             return (
-            <div key={account.id} className="crm-item">
-              <div className="crm-item-header">
-                <h5 className="crm-item-title">{account.phone_number || account.username || `Аккаунт #${account.id}`}</h5>
-                <span className={`crm-status ${statusMeta.className}`}>
-                  {statusMeta.label}
-                </span>
+            <div key={account.id} className="crm-item crm-account-card">
+              <div className="crm-account-head">
+                {avatarSrc ? (
+                  <img className="crm-account-avatar" src={avatarSrc} alt="" />
+                ) : (
+                  <div className="crm-account-avatar crm-account-avatar--placeholder" aria-hidden="true">
+                    {String(title).slice(0, 1).toUpperCase()}
+                  </div>
+                )}
+                <div className="crm-account-meta">
+                  <div className="crm-item-header">
+                    <h5 className="crm-item-title">{title}</h5>
+                    <span className={`crm-status ${statusMeta.className}`}>
+                      {statusMeta.label}
+                    </span>
+                  </div>
+                  <p className="crm-item-subtitle">{account.bio || 'Нет описания'}</p>
+                  <p className="crm-item-subtitle">
+                    {account.phone_number || account.username || `#${account.id}`}
+                  </p>
+                </div>
               </div>
-              {account.display_name ? <p className="crm-item-subtitle">{account.display_name}</p> : null}
               <p className="crm-item-subtitle">
                 {account.is_spamblocked ? <span className="crm-status crm-status--spamblock">СПАМБЛОК</span> : null}
                 {account.is_spamblocked ? ' · ' : ''}
@@ -328,6 +381,28 @@ const CustomAutomationAccountsPage = () => {
                 {account.added_at ? ` · добавлен ${new Date(account.added_at).toLocaleString()}` : ''}
               </span>
               <div className="form-group">
+                <label htmlFor={`name-${account.id}`}>Имя аккаунта</label>
+                <input
+                  id={`name-${account.id}`}
+                  type="text"
+                  value={nameDrafts[account.id] ?? account.display_name ?? ''}
+                  onChange={(e) => setNameDrafts((prev) => ({ ...prev, [account.id]: e.target.value }))}
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor={`avatar-${account.id}`}>Аватар</label>
+                <input
+                  id={`avatar-${account.id}`}
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => {
+                    const file = e.target.files && e.target.files[0];
+                    handleAccountAvatar(account, file);
+                    e.target.value = '';
+                  }}
+                />
+              </div>
+              <div className="form-group">
                 <label htmlFor={`class-${account.id}`}>Класс</label>
                 <CustomSelect
                   id={`class-${account.id}`}
@@ -340,6 +415,14 @@ const CustomAutomationAccountsPage = () => {
                 {ACCOUNT_CLASSES.find((c) => c.value === account.assigned_class)?.label || account.assigned_class}
               </span>
               <div className="settings-actions">
+                <button
+                  type="button"
+                  className="btn btn-black"
+                  disabled={savingNameId === account.id}
+                  onClick={() => handleSaveName(account)}
+                >
+                  {savingNameId === account.id ? 'Сохранение...' : 'Сохранить имя'}
+                </button>
                 <button
                   type="button"
                   className="btn btn-outline btn-danger"

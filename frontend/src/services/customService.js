@@ -13,6 +13,17 @@ const CUSTOM_IS_ADMIN_KEY = ENV_CONFIG.STORAGE_KEYS.CUSTOM_IS_ADMIN;
 
 const getBaseUrl = () => ENV_CONFIG.API.BASE_URL || '';
 
+export const mediaUrl = (path) => {
+  if (!path) {
+    return '';
+  }
+  if (/^https?:\/\//i.test(path) || path.startsWith('data:')) {
+    return path;
+  }
+  const normalized = path.startsWith('/') ? path : `/${path}`;
+  return `${getBaseUrl()}${normalized}`;
+};
+
 const getCustomToken = () => {
   const token = getStorageItem(CUSTOM_TOKEN_KEY);
   return typeof token === 'string' && token.trim() ? token.trim() : null;
@@ -342,12 +353,23 @@ const customService = {
   },
 
     async updateAccountClass(automationId, accountId, assignedClass) {
+      return this.updateAccount(automationId, accountId, { assignedClass });
+    },
+
+    async updateAccount(automationId, accountId, { assignedClass, displayName } = {}) {
+      const body = {};
+      if (assignedClass !== undefined) {
+        body.assigned_class = assignedClass;
+      }
+      if (displayName !== undefined) {
+        body.display_name = displayName;
+      }
       const response = await fetch(
         `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ACCOUNTS(automationId)}/${accountId}`,
         {
           method: 'PATCH',
           headers: getAuthHeaders(),
-          body: JSON.stringify({ assigned_class: assignedClass }),
+          body: JSON.stringify(body),
         },
       );
       return handleResponse(response);
@@ -490,13 +512,17 @@ const customService = {
     return handleResponse(response);
   },
 
-  async updateChatNeurocommentingConfig(automationId, chatId, { mode, neurocommentingConfig }) {
+  async updateChatNeurocommentingConfig(automationId, chatId, { mode, isActive, neurocommentingConfig }) {
     const response = await fetch(
       `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CHAT_NEUROCOMMENTING_CONFIG(automationId, chatId)}`,
       {
         method: 'PATCH',
         headers: getAuthHeaders(),
-        body: JSON.stringify({ mode, neurocommenting_config: neurocommentingConfig }),
+        body: JSON.stringify({
+          mode,
+          is_active: isActive,
+          neurocommenting_config: neurocommentingConfig,
+        }),
       },
     );
     return handleResponse(response);

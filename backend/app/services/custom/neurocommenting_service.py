@@ -2,19 +2,20 @@
 import json
 import logging
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .chat_scope import apply_entity_metadata, is_broadcast_channel, is_paused
 from .post_engagement import NEUROCOMMENTING, SHILLING, SKIP, claim_post_engagement
 from .rotation_service import select_account_for_action
 from .shilling_service import perform_post_shilling
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import execute_with_telegram_retry
-from ...alembic.models import AutomationActionLog, ChatJoinStatus, ChatMode, ChatTarget, CustomAutomation, CustomPrompt, PromptType, SocialAccount
+from ...alembic.models import AutomationActionLog, ChatJoinStatus, ChatTarget, CustomAutomation, CustomPrompt, PromptType, SocialAccount
 from ...config import settings
 from ...services.ai_authoring import ai_client
 
@@ -165,10 +166,12 @@ async def process_chat_target(
     *,
     max_comments_per_run: int = 5,
 ) -> dict[str, Any]:
-    if chat_target.mode in {ChatMode.INACTIVE.value, ChatMode.SHILLING.value, ChatMode.DISCUSSION.value}:
-        return {"status": "skipped", "reason": "mode"}
+    if is_paused(chat_target):
+        return {"status": "skipped", "reason": "paused"}
     if chat_target.join_status != ChatJoinStatus.JOINED.value:
         return {"status": "skipped", "reason": "not_joined"}
+    if chat_target.chat_type and not is_broadcast_channel(chat_target):
+        return {"status": "skipped", "reason": "not_channel"}
 
     automation = await session.get(CustomAutomation, automation_id)
     if not automation:
@@ -180,10 +183,6 @@ async def process_chat_target(
 
     config = chat_target.neurocommenting_config or {}
     max_per_day = int(config.get("max_per_day") or 10)
-    frequency_minutes = int(config.get("frequency_minutes") or 60)
-    last_commented_at = chat_target.last_scanned_at  # reuse as last comment time
-    if last_commented_at and (_utc_now() - last_commented_at) < timedelta(minutes=frequency_minutes):
-        return {"status": "skipped", "reason": "frequency"}
 
     scanner_action = "commenting" if neuro_enabled else "shilling"
     account = await select_account_for_action(session, automation_id, scanner_action, consume_quota=False)
@@ -203,6 +202,10 @@ async def process_chat_target(
             entity = await client.get_entity(
                 chat_target.invite_link or chat_target.external_chat_id or chat_target.title
             )
+            apply_entity_metadata(chat_target, entity)
+            if not is_broadcast_channel(chat_target):
+                await session.commit()
+                return {"status": "skipped", "reason": "not_channel"}
             history = await client.client.get_messages(entity, limit=30)
             for msg in history:
                 if not msg or not msg.text or msg.id is None:
@@ -216,9 +219,10 @@ async def process_chat_target(
         logger.warning("Fetch posts for chat %s failed: %s", chat_target.id, exc)
         return {"status": "error", "error": str(exc)}
 
+    posts.sort(key=lambda msg: int(msg.id))
     sent = 0
     shilled = 0
-    for post in posts[:max_comments_per_run]:
+    for post in posts:
         if await _already_commented(session, automation_id, chat_target.id, post.id):
             continue
 
@@ -233,6 +237,8 @@ async def process_chat_target(
         )
         if claimed == SKIP:
             continue
+        if sent + shilled >= max_comments_per_run:
+            break
         if claimed == SHILLING:
             result = await perform_post_shilling(
                 session,
@@ -283,7 +289,7 @@ async def run_neurocommenting_pass(automation_id: int) -> dict[str, Any]:
                 ChatTarget.custom_automation_id == automation_id,
                 ChatTarget.is_active.is_(True),
                 ChatTarget.join_status == ChatJoinStatus.JOINED.value,
-                ChatTarget.mode != ChatMode.INACTIVE.value,
+                ChatTarget.mode != "inactive",
             )
         )
         chats = result.scalars().all()
