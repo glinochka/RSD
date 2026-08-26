@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import CustomSelect from '../../../components/CustomSelect';
+import CustomFileButton from '../../../components/custom/CustomFileButton';
 import customService, { mediaUrl } from '../../../services/customService';
 import CustomBulkProfileForm from './CustomBulkProfileForm';
 import CustomAccountConnectForm from './CustomAccountConnectForm';
@@ -113,8 +114,7 @@ const CustomAutomationAccountsPage = () => {
     loadAccounts();
   };
 
-  const handleFileChange = async (e) => {
-    const file = e.target.files[0];
+  const handleFileChange = async (file) => {
     if (!file) {
       return;
     }
@@ -131,7 +131,6 @@ const CustomAutomationAccountsPage = () => {
       setUploadError(err.message || 'Upload failed');
     } finally {
       setIsUploading(false);
-      e.target.value = '';
     }
   };
 
@@ -251,16 +250,14 @@ const CustomAutomationAccountsPage = () => {
           <button type="button" onClick={handleBulkClassify} disabled={isClassifying} className="btn btn-outline">
             {isClassifying ? 'Проверка...' : 'Переклассифировать'}
           </button>
-          <label className="btn btn-black">
-            <input
-              type="file"
-              accept=".zip,.csv,.session"
-              onChange={handleFileChange}
-              disabled={isUploading}
-              style={{ display: 'none' }}
-            />
+          <CustomFileButton
+            accept=".zip,.csv,.session"
+            variant="black"
+            busy={isUploading}
+            onFile={handleFileChange}
+          >
             {isUploading ? 'Загрузка...' : 'Загрузить ZIP / CSV / .session'}
-          </label>
+          </CustomFileButton>
         </div>
       </div>
 
@@ -416,16 +413,13 @@ const CustomAutomationAccountsPage = () => {
               </div>
               <div className="form-group">
                 <label htmlFor={`avatar-${account.id}`}>Аватар</label>
-                <input
+                <CustomFileButton
                   id={`avatar-${account.id}`}
-                  type="file"
                   accept="image/*"
-                  onChange={(e) => {
-                    const file = e.target.files && e.target.files[0];
-                    handleAccountAvatar(account, file);
-                    e.target.value = '';
-                  }}
-                />
+                  onFile={(file) => handleAccountAvatar(account, file)}
+                >
+                  Выбрать фото
+                </CustomFileButton>
               </div>
               <div className="form-group">
                 <label htmlFor={`class-${account.id}`}>Класс</label>

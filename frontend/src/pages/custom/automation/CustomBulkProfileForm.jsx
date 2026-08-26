@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import CustomSelect from '../../../components/CustomSelect';
+import CustomFileButton from '../../../components/custom/CustomFileButton';
 import FeatureToggle from '../../../components/FeatureToggle';
 import customService from '../../../services/customService';
 
@@ -56,8 +57,7 @@ const CustomBulkProfileForm = ({ automationId, onSuccess }) => {
     }
   };
 
-  const handleFileChange = (e) => {
-    const file = e.target.files[0];
+  const handleFileChange = (file) => {
     setAvatar(file || null);
   };
 
@@ -121,8 +121,14 @@ const CustomBulkProfileForm = ({ automationId, onSuccess }) => {
         </div>
         <div className="form-group">
           <label htmlFor="bulk-avatar">Аватар</label>
-          <input id="bulk-avatar" type="file" accept="image/*" onChange={handleFileChange} />
-          {avatar ? <span className="form-hint">{avatar.name}</span> : null}
+          <CustomFileButton
+            id="bulk-avatar"
+            accept="image/*"
+            fileName={avatar ? avatar.name : null}
+            onFile={handleFileChange}
+          >
+            Выбрать фото
+          </CustomFileButton>
         </div>
         <div className="settings-actions">
           <button type="submit" disabled={isSubmitting} className="btn btn-black">

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import CustomSelect from '../../../components/CustomSelect';
+import CustomFileButton from '../../../components/custom/CustomFileButton';
 import customService from '../../../services/customService';
 import CustomAutomationChatDiscoveryPage from './CustomAutomationChatDiscoveryPage';
 import { CHAT_TYPE_LABELS } from './activityLabels';
@@ -70,8 +71,7 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
     loadJobs();
   }, [loadChats, loadJobs]);
 
-  const handleImport = async (e) => {
-    const file = e.target.files[0];
+  const handleImport = async (file) => {
     if (!file) {
       return;
     }
@@ -87,7 +87,6 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
       setError(err.message || 'Import failed');
     } finally {
       setIsImporting(false);
-      e.target.value = '';
     }
   };
 
@@ -170,10 +169,14 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
             <button type="button" onClick={() => setShowForm((s) => !s)} className="btn btn-outline">
               {showForm ? 'Скрыть форму' : 'Добавить чат'}
             </button>
-            <label className="btn btn-black">
-              <input type="file" accept=".csv,.xlsx,.xls" onChange={handleImport} disabled={isImporting} style={{ display: 'none' }} />
+            <CustomFileButton
+              accept=".csv,.xlsx,.xls"
+              variant="black"
+              busy={isImporting}
+              onFile={handleImport}
+            >
               {isImporting ? 'Импорт...' : 'Импорт Excel'}
-            </label>
+            </CustomFileButton>
             <button type="button" onClick={handleJoin} disabled={isJoining} className="btn btn-outline">
               {isJoining ? '...' : 'Вступить сейчас'}
             </button>
