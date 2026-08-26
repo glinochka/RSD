@@ -19,6 +19,7 @@ ACTION_ALLOWED_CLASSES = {
     "discussion": {AccountClass.ONE_DAY.value, AccountClass.MID.value, AccountClass.TRUSTED.value},
     "shilling": {AccountClass.SHILLING.value},
 }
+_DM_ACTIONS = {"dm", "dmp_outreach"}
 
 
 def _utc_now() -> datetime:
@@ -78,12 +79,16 @@ def _filter_eligible(
     allowed_classes: set[str],
     max_daily: int,
     exclude_banned: bool,
+    *,
+    exclude_spamblocked: bool = False,
 ) -> list[tuple[PoolAccount, SocialAccount]]:
     eligible = []
     for pool_account, social_account in rows:
         if not social_account.is_active:
             continue
         if exclude_banned and social_account.is_banned:
+            continue
+        if exclude_spamblocked and social_account.is_spamblocked:
             continue
         if social_account.account_class not in allowed_classes:
             continue
@@ -180,7 +185,14 @@ async def select_account_for_action(
     accounts = [social for _, social in rows]
     _reset_counters_if_needed(accounts)
 
-    eligible = _filter_eligible(rows, allowed_classes, automation_obj.max_daily_messages_per_account, exclude_banned)
+    exclude_spamblocked = action_type in _DM_ACTIONS
+    eligible = _filter_eligible(
+        rows,
+        allowed_classes,
+        automation_obj.max_daily_messages_per_account,
+        exclude_banned,
+        exclude_spamblocked=exclude_spamblocked,
+    )
     if exclude_account_ids:
         eligible = [row for row in eligible if row[1].id not in exclude_account_ids]
     if not eligible:
@@ -191,7 +203,13 @@ async def select_account_for_action(
         lead = await session.get(CustomLead, thread_id)
         if lead and lead.assigned_account_id:
             assigned = await session.get(SocialAccount, lead.assigned_account_id)
-            if assigned and assigned.is_active and not (exclude_banned and assigned.is_banned):
+            assigned_ok = bool(
+                assigned
+                and assigned.is_active
+                and not (exclude_banned and assigned.is_banned)
+                and not (exclude_spamblocked and assigned.is_spamblocked)
+            )
+            if assigned_ok:
                 if exclude_account_ids and assigned.id in exclude_account_ids:
                     pass
                 elif assigned.account_class in allowed_classes and assigned.daily_messages_sent < automation_obj.max_daily_messages_per_account:

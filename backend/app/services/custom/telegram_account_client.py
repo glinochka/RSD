@@ -1,4 +1,5 @@
 """Telegram client wrapper for checking a single .session account."""
+import asyncio
 import io
 import random
 import re
@@ -13,12 +14,15 @@ from telethon.tl.functions.photos import UploadProfilePhotoRequest
 from telethon.tl.functions.users import GetFullUserRequest
 from telethon.tl.types import InputPhoneContact
 
+from .telegram_error_handler import SessionInvalidError, parse_spambot_reply
 from ..telegram_userbot_auth import resolve_api_credentials
 
 logger = getLogger(__name__)
 
 _MAX_BIO_LENGTH = 160
 _PHONE_DIGITS_RE = re.compile(r"\D+")
+_SPAMBOT = "SpamBot"
+_SPAMBOT_WAIT_SECONDS = 2.0
 
 
 def normalize_telegram_phone(value: str | None) -> str | None:
@@ -47,10 +51,31 @@ class TelegramAccountClient:
         self.client = TelegramClient(self.session_path, self.api_id, self.api_hash)
 
     async def __aenter__(self) -> "TelegramAccountClient":
-        await self.client.connect()
-        if not await self.client.is_user_authorized():
+        from .telegram_error_handler import _looks_like_session_error
+
+        try:
+            await self.client.connect()
+        except Exception as exc:
+            if isinstance(exc, AuthKeyError) or _looks_like_session_error(exc):
+                try:
+                    await self.client.disconnect()
+                except Exception:
+                    pass
+                raise SessionInvalidError(str(exc)) from exc
+            raise
+        try:
+            authorized = await self.client.is_user_authorized()
+        except Exception as exc:
+            if isinstance(exc, AuthKeyError) or _looks_like_session_error(exc):
+                try:
+                    await self.client.disconnect()
+                except Exception:
+                    pass
+                raise SessionInvalidError(str(exc)) from exc
+            raise
+        if not authorized:
             await self.client.disconnect()
-            raise RuntimeError("Session is not authorized")
+            raise SessionInvalidError("Session is not authorized")
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
@@ -178,6 +203,40 @@ class TelegramAccountClient:
         last = (me.last_name or "").strip()
         name = f"{first} {last}".strip()
         return name or (me.username or "").strip() or f"user_{me.id}"
+
+    async def check_spamblock(self) -> dict[str, Any]:
+        """Ask @SpamBot whether the account has a global DM spamblock.
+
+        A ban in one chat is not a spamblock and is ignored here.
+        """
+        from telethon.errors import PeerFloodError
+
+        try:
+            await self.client.send_message(_SPAMBOT, "/start")
+        except PeerFloodError:
+            return {"spamblocked": True, "source": "peer_flood"}
+        except Exception as exc:
+            logger.warning("SpamBot /start failed: %s", exc)
+            return {"spamblocked": None, "source": "error"}
+
+        await asyncio.sleep(_SPAMBOT_WAIT_SECONDS)
+        try:
+            messages = await self.client.get_messages(_SPAMBOT, limit=5)
+        except Exception as exc:
+            logger.warning("SpamBot history failed: %s", exc)
+            return {"spamblocked": None, "source": "error"}
+
+        texts: list[str] = []
+        for message in messages or []:
+            text = str(getattr(message, "message", None) or getattr(message, "text", None) or "").strip()
+            if text:
+                texts.append(text)
+        blob = "\n".join(texts)
+        return {
+            "spamblocked": parse_spambot_reply(blob),
+            "source": "spambot",
+            "raw": texts[0] if texts else "",
+        }
 
     async def _get_dialogs_count(self, limit: int = 100) -> int:
         try:

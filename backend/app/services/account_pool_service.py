@@ -398,3 +398,36 @@ async def bulk_upload_sessions(
         "skipped": skipped,
         "errors": errors,
     }
+
+
+async def delete_pool_account(
+    session: AsyncSession,
+    automation_id: int,
+    account_id: int,
+) -> None:
+    row = await session.execute(
+        select(PoolAccount, SocialAccount)
+        .join(SocialAccount, PoolAccount.social_account_id == SocialAccount.id)
+        .where(
+            PoolAccount.custom_automation_id == automation_id,
+            SocialAccount.id == account_id,
+        )
+    )
+    result = row.one_or_none()
+    if not result:
+        raise ValueError("Account not found")
+    pool_account, social_account = result
+    session_rel = social_account.session_file_path
+    avatar_rel = social_account.avatar_file_path
+    await session.delete(pool_account)
+    await session.delete(social_account)
+    await session.commit()
+    media_root = _media_root()
+    for relative in (session_rel, avatar_rel):
+        if not relative:
+            continue
+        path = media_root / relative
+        try:
+            path.unlink(missing_ok=True)
+        except Exception:
+            pass

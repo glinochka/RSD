@@ -2260,8 +2260,13 @@ class SocialAccount(Base):
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False, index=True)
     is_banned: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False, index=True)
+    is_spamblocked: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False, index=True
+    )
     banned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     ban_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    spamblocked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    spamblock_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_health_check_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     daily_messages_sent: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)

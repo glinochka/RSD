@@ -92,6 +92,24 @@ const CustomAutomationDashboardPage = () => {
         </div>
         <div className="dashboard-stat-card">
           <div className="dashboard-stat-content">
+            <span className="dashboard-stat-value">{data.accounts?.active ?? 0}</span>
+            <span className="dashboard-stat-label">Активные аккаунты</span>
+          </div>
+        </div>
+        <div className="dashboard-stat-card">
+          <div className="dashboard-stat-content">
+            <span className="dashboard-stat-value">{data.accounts?.revoked ?? 0}</span>
+            <span className="dashboard-stat-label">Сессия отозвана</span>
+          </div>
+        </div>
+        <div className="dashboard-stat-card">
+          <div className="dashboard-stat-content">
+            <span className="dashboard-stat-value">{data.accounts?.spamblocked ?? 0}</span>
+            <span className="dashboard-stat-label">СПАМБЛОК</span>
+          </div>
+        </div>
+        <div className="dashboard-stat-card">
+          <div className="dashboard-stat-content">
             <span className="dashboard-stat-value">{data.accounts?.banned ?? 0}</span>
             <span className="dashboard-stat-label">Баны аккаунтов</span>
           </div>

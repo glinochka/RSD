@@ -1,6 +1,6 @@
 """Background worker that checks Telegram accounts and updates their profiles."""
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from logging import getLogger
 from pathlib import Path
 from typing import Any
@@ -16,6 +16,8 @@ from ...alembic.models import AccountClass, AccountPool, CustomAutomation, PoolA
 from ...config import settings
 
 logger = getLogger(__name__)
+
+_SPAMBLOCK_RECHECK = timedelta(hours=6)
 
 
 def _utc_now() -> datetime:
@@ -47,12 +49,20 @@ class AccountHealthWorker:
         info = None
         avatar_bytes = None
         error_kind = None
+        spam_state = None
         if social_account.session_file_path:
             session_path = _media_root() / social_account.session_file_path
             if session_path.exists():
                 try:
+                    need_spam_check = True
+                    checked_at = social_account.spamblock_checked_at
+                    if checked_at is not None:
+                        then = checked_at.replace(tzinfo=None) if getattr(checked_at, "tzinfo", None) else checked_at
+                        need_spam_check = (_utc_now() - then) >= _SPAMBLOCK_RECHECK
                     async with TelegramAccountClient(str(session_path)) as client:
                         info = await client.get_info()
+                        if need_spam_check:
+                            spam_state = await client.check_spamblock()
                         if info.get("has_avatar"):
                             try:
                                 avatar_bytes = await client.download_avatar()
@@ -62,11 +72,27 @@ class AccountHealthWorker:
                     error_kind = await update_account_after_telegram_error(session, social_account, exc)
                     logger.warning("Health check failed for account %s: %s (%s)", account_id, exc, error_kind)
             else:
+                social_account.is_active = False
+                error_kind = "session_invalid"
                 logger.warning("Session file missing for account %s: %s", account_id, social_account.session_file_path)
+        else:
+            social_account.is_active = False
+
+        if error_kind in {"session_invalid", "banned", "spamblock"}:
+            social_account.last_health_check_at = _utc_now()
+            social_account.updated_at = _utc_now()
+            await session.commit()
+            return {
+                "account_id": account_id,
+                "status": error_kind,
+                "classification": None,
+                "error": error_kind,
+            }
 
         classification = classify_account(info)
 
         if info:
+            social_account.is_active = True
             social_account.username = info.get("username") or social_account.username
             social_account.phone_number = info.get("phone_number") or social_account.phone_number
             social_account.display_name = info.get("display_name") or social_account.display_name
@@ -74,6 +100,16 @@ class AccountHealthWorker:
             social_account.current_bio = info.get("bio") or social_account.current_bio
             social_account.friends_count = info.get("dialogs_count")
             social_account.activity_score = self._activity_score(info)
+
+        if spam_state is not None:
+            blocked = spam_state.get("spamblocked")
+            social_account.spamblock_checked_at = _utc_now()
+            if blocked is True:
+                social_account.is_spamblocked = True
+                social_account.spamblocked_at = social_account.spamblocked_at or _utc_now()
+            elif blocked is False:
+                social_account.is_spamblocked = False
+                social_account.spamblocked_at = None
 
         if avatar_bytes:
             try:

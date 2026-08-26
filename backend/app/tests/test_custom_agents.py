@@ -1,4 +1,5 @@
 """Backend tests for /custom mass-automation subsystem."""
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -1597,7 +1598,7 @@ class TestAccountQrConnect:
         assert data["already_authorized"] is True
         assert data["account"]["username"] == "qruser"
         assert data["account"]["phone_number"] == "+79991112233"
-        assert data["account"]["status"] == "loaded"
+        assert data["account"]["status"] == "active"
         test_session.expire_all()
         saved = await test_session.scalar(select(SocialAccount).where(SocialAccount.username == "qruser"))
         assert saved is not None
@@ -1734,6 +1735,154 @@ class TestAccountQrConnect:
         saved = await test_session.scalar(select(SocialAccount).where(SocialAccount.username == "twofauser"))
         assert saved is not None
         assert saved.session_file_path
+
+
+class TestAccountHealthSpamblockAndDelete:
+    async def test_spambot_parser(self):
+        from app.services.custom.telegram_error_handler import parse_spambot_reply
+
+        assert parse_spambot_reply("Good news, no limits are currently applied to your account.") is False
+        assert parse_spambot_reply("Ваш аккаунт свободен от каких-либо ограничений.") is False
+        assert parse_spambot_reply(
+            "I'm afraid some Telegram users found your messages annoying and have reported them as spam. Your account is now limited."
+        ) is True
+        assert parse_spambot_reply("На ваш аккаунт наложены некоторые ограничения.") is True
+        assert parse_spambot_reply("") is None
+        assert parse_spambot_reply("hello") is None
+
+    async def test_channel_ban_does_not_mark_account_banned(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from app.services.account_pool_service import get_or_create_default_pool
+        from app.services.custom.telegram_error_handler import update_account_after_telegram_error
+
+        pool = await get_or_create_default_pool(test_session, custom_automation.id)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number="+79990000011",
+            username="chatban",
+            encrypted_session="x",
+            session_file_path="sessions/chatban.session",
+            is_active=True,
+            is_banned=False,
+        )
+        test_session.add(account)
+        await test_session.flush()
+        test_session.add(
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account.id,
+                assigned_class=AccountClass.ONE_DAY.value,
+                custom_automation_id=custom_automation.id,
+            )
+        )
+        await test_session.commit()
+        kind = await update_account_after_telegram_error(
+            test_session, account, Exception("USER_BANNED_IN_CHANNEL")
+        )
+        assert kind == "chat_restricted"
+        await test_session.refresh(account)
+        assert account.is_banned is False
+        assert account.is_active is True
+
+    async def test_revoked_session_marked_inactive(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+        tmp_path,
+        monkeypatch,
+    ):
+        from app.config import settings
+        from app.services.account_pool_service import get_or_create_default_pool
+        from app.services.custom.account_health_worker import AccountHealthWorker
+        from app.services.custom.telegram_error_handler import SessionInvalidError
+
+        monkeypatch.setattr(settings, "MEDIA_ROOT", str(tmp_path))
+        pool = await get_or_create_default_pool(test_session, custom_automation.id)
+        session_rel = Path("sessions") / str(custom_automation.id) / "revoked.session"
+        session_file = tmp_path / session_rel
+        session_file.parent.mkdir(parents=True, exist_ok=True)
+        session_file.write_bytes(b"SQLite format 3\x00" + b"\x00" * 32)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number="+79990000012",
+            username="revokeduser",
+            encrypted_session="x",
+            session_file_path=str(session_rel).replace("\\", "/"),
+            is_active=True,
+            is_banned=False,
+        )
+        test_session.add(account)
+        await test_session.flush()
+        test_session.add(
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account.id,
+                assigned_class=AccountClass.ONE_DAY.value,
+                custom_automation_id=custom_automation.id,
+            )
+        )
+        await test_session.commit()
+        account_id = account.id
+
+        class _FakeClient:
+            async def __aenter__(self):
+                raise SessionInvalidError("Session is not authorized")
+
+            async def __aexit__(self, *args):
+                return False
+
+        with patch(
+            "app.services.custom.account_health_worker.TelegramAccountClient",
+            return_value=_FakeClient(),
+        ):
+            result = await AccountHealthWorker().process_account(
+                test_session, custom_automation.id, account_id
+            )
+        assert result["status"] == "session_invalid"
+        test_session.expire_all()
+        saved = await test_session.get(SocialAccount, account_id)
+        assert saved.is_active is False
+        assert saved.is_banned is False
+
+    async def test_delete_account(
+        self,
+        client: AsyncClient,
+        client_token: str,
+        custom_automation: CustomAutomation,
+        test_session: AsyncSession,
+    ):
+        from app.services.account_pool_service import get_or_create_default_pool
+
+        pool = await get_or_create_default_pool(test_session, custom_automation.id)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number="+79990000013",
+            username="todelete",
+            encrypted_session="x",
+            session_file_path="sessions/todelete.session",
+            is_active=True,
+        )
+        test_session.add(account)
+        await test_session.flush()
+        test_session.add(
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account.id,
+                assigned_class=AccountClass.ONE_DAY.value,
+                custom_automation_id=custom_automation.id,
+            )
+        )
+        await test_session.commit()
+        account_id = account.id
+        response = await client.delete(
+            f"/api/custom/automations/{custom_automation.id}/accounts/{account_id}",
+            headers={"Authorization": f"Bearer {client_token}"},
+        )
+        assert response.status_code == 204, response.text
+        test_session.expire_all()
+        assert await test_session.get(SocialAccount, account_id) is None
+
 
 
 

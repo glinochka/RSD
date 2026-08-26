@@ -341,17 +341,28 @@ const customService = {
     return handleResponse(response);
   },
 
-  async updateAccountClass(automationId, accountId, assignedClass) {
-    const response = await fetch(
-      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ACCOUNTS(automationId)}/${accountId}`,
-      {
-        method: 'PATCH',
-        headers: getAuthHeaders(),
-        body: JSON.stringify({ assigned_class: assignedClass }),
-      },
-    );
-    return handleResponse(response);
-  },
+    async updateAccountClass(automationId, accountId, assignedClass) {
+      const response = await fetch(
+        `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ACCOUNTS(automationId)}/${accountId}`,
+        {
+          method: 'PATCH',
+          headers: getAuthHeaders(),
+          body: JSON.stringify({ assigned_class: assignedClass }),
+        },
+      );
+      return handleResponse(response);
+    },
+
+    async deleteAccount(automationId, accountId) {
+      const response = await fetch(
+        `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ACCOUNTS(automationId)}/${accountId}`,
+        {
+          method: 'DELETE',
+          headers: getAuthHeaders(),
+        },
+      );
+      return handleResponse(response);
+    },
 
   async getAutomationSettings(automationId) {
     const response = await fetch(

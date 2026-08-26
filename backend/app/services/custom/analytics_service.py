@@ -44,6 +44,24 @@ async def _account_stats(session: AsyncSession, automation_id: int) -> dict[str,
             SocialAccount.is_banned.is_(True),
         )
     )
+    revoked = await session.scalar(
+        select(func.count(SocialAccount.id)).join(
+            PoolAccount, PoolAccount.social_account_id == SocialAccount.id
+        ).where(
+            PoolAccount.custom_automation_id == automation_id,
+            SocialAccount.is_active.is_(False),
+            SocialAccount.is_banned.is_(False),
+            SocialAccount.session_file_path.isnot(None),
+        )
+    )
+    spamblocked = await session.scalar(
+        select(func.count(SocialAccount.id)).join(
+            PoolAccount, PoolAccount.social_account_id == SocialAccount.id
+        ).where(
+            PoolAccount.custom_automation_id == automation_id,
+            SocialAccount.is_spamblocked.is_(True),
+        )
+    )
 
     class_counts = {}
     for cls in AccountClass:
@@ -61,6 +79,8 @@ async def _account_stats(session: AsyncSession, automation_id: int) -> dict[str,
         "total": total or 0,
         "active": active or 0,
         "banned": banned or 0,
+        "revoked": revoked or 0,
+        "spamblocked": spamblocked or 0,
         "by_class": class_counts,
     }
 

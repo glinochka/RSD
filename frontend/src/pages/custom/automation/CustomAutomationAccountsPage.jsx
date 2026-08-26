@@ -24,7 +24,10 @@ const CLASS_STATUS = {
 
 const STATUSES = [
   { value: '', label: 'Все статусы' },
-  { value: 'loaded', label: 'Загружено' },
+  { value: 'active', label: 'Активен' },
+  { value: 'revoked', label: 'Сессия отозвана' },
+  { value: 'spamblock', label: 'СПАМБЛОК' },
+  { value: 'banned', label: 'Бан' },
   { value: 'empty', label: 'Пусто' },
 ];
 
@@ -151,6 +154,33 @@ const CustomAutomationAccountsPage = () => {
     }
   };
 
+  const handleDeleteAccount = async (account) => {
+    const label = account.phone_number || account.username || `#${account.id}`;
+    if (!window.confirm(`Удалить аккаунт ${label}?`)) {
+      return;
+    }
+    try {
+      await customService.deleteAccount(id, account.id);
+      await loadAccounts();
+      await loadBanStats();
+    } catch (err) {
+      setError(err.message || 'Не удалось удалить аккаунт');
+    }
+  };
+
+  const accountStatusMeta = (account) => {
+    if (account.is_banned) {
+      return { label: 'Бан', className: 'crm-status--cancelled' };
+    }
+    if (account.status === 'revoked' || account.is_active === false) {
+      return { label: 'Сессия отозвана', className: 'crm-status--revoked' };
+    }
+    if (account.status === 'empty') {
+      return { label: 'Пусто', className: 'crm-status--pending' };
+    }
+    return { label: 'Активен', className: 'crm-status--confirmed' };
+  };
+
   const distribution = accounts.reduce((acc, a) => {
     acc[a.assigned_class] = (acc[a.assigned_class] || 0) + 1;
     return acc;
@@ -197,6 +227,15 @@ const CustomAutomationAccountsPage = () => {
             Пополните пул или снизьте активность.
           </p>
         </div>
+      ) : null}
+
+      {banStats ? (
+        <p className="form-hint">
+          Активны {banStats.active}
+          {banStats.revoked ? ` · отозваны ${banStats.revoked}` : ''}
+          {banStats.spamblocked ? ` · СПАМБЛОК ${banStats.spamblocked}` : ''}
+          {banStats.banned ? ` · бан ${banStats.banned}` : ''}
+        </p>
       ) : null}
 
       {accounts.length > 0 ? (
@@ -262,17 +301,21 @@ const CustomAutomationAccountsPage = () => {
         </div>
       ) : (
         <div className="crm-list">
-          {accounts.map((account) => (
+          {accounts.map((account) => {
+            const statusMeta = accountStatusMeta(account);
+            return (
             <div key={account.id} className="crm-item">
               <div className="crm-item-header">
                 <h5 className="crm-item-title">{account.phone_number || account.username || `Аккаунт #${account.id}`}</h5>
-                <span className={`crm-status ${account.status === 'loaded' ? 'crm-status--confirmed' : 'crm-status--pending'}`}>
-                  {account.status === 'loaded' ? 'Загружено' : 'Пусто'}
+                <span className={`crm-status ${statusMeta.className}`}>
+                  {statusMeta.label}
                 </span>
               </div>
               {account.display_name ? <p className="crm-item-subtitle">{account.display_name}</p> : null}
               <p className="crm-item-subtitle">
-                {account.is_banned ? 'Забанен · ' : ''}
+                {account.is_spamblocked ? <span className="crm-status crm-status--spamblock">СПАМБЛОК</span> : null}
+                {account.is_spamblocked ? ' · ' : ''}
+                {account.is_banned ? 'Бан · ' : ''}
                 {account.risk_score !== null && account.trust_score !== null
                   ? `Risk ${account.risk_score} · Trust ${account.trust_score} · `
                   : ''}
@@ -296,8 +339,18 @@ const CustomAutomationAccountsPage = () => {
               <span className={`crm-status ${CLASS_STATUS[account.assigned_class] || ''}`}>
                 {ACCOUNT_CLASSES.find((c) => c.value === account.assigned_class)?.label || account.assigned_class}
               </span>
+              <div className="settings-actions">
+                <button
+                  type="button"
+                  className="btn btn-outline btn-danger"
+                  onClick={() => handleDeleteAccount(account)}
+                >
+                  Удалить
+                </button>
+              </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

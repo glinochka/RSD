@@ -71,7 +71,7 @@ from .schemas import (
     TelegramBotSettingsUpdate,
 )
 from .dependencies import get_current_custom_automation
-from ..services.account_pool_service import bulk_upload_sessions
+from ..services.account_pool_service import bulk_upload_sessions, delete_pool_account
 from ..services.custom.account_connect_service import (
     poll_account_qr,
     request_account_sms,
@@ -322,6 +322,14 @@ async def validate_automation_settings(
         return CustomAutomationSettingsValidationResponse(**validation)
 
 
+def _session_status(social_account: SocialAccount) -> str:
+    if not social_account.session_file_path:
+        return "empty"
+    if not social_account.is_active:
+        return "revoked"
+    return "active"
+
+
 def _account_response(
     pool_account: PoolAccount,
     social_account: SocialAccount,
@@ -335,9 +343,10 @@ def _account_response(
         display_name=social_account.display_name,
         account_class=social_account.account_class,
         assigned_class=pool_account.assigned_class,
-        status="loaded" if social_account.session_file_path else "empty",
+        status=_session_status(social_account),
         is_active=social_account.is_active,
         is_banned=social_account.is_banned,
+        is_spamblocked=bool(getattr(social_account, "is_spamblocked", False)),
         auto_classified=social_account.auto_classified,
         risk_score=social_account.risk_score,
         trust_score=social_account.trust_score,
@@ -386,8 +395,20 @@ async def list_accounts(
         )
         if account_class:
             stmt = stmt.where(PoolAccount.assigned_class == account_class)
-        if status == "loaded":
-            stmt = stmt.where(SocialAccount.session_file_path.isnot(None))
+        if status == "loaded" or status == "active":
+            stmt = stmt.where(
+                SocialAccount.session_file_path.isnot(None),
+                SocialAccount.is_active.is_(True),
+            )
+        elif status == "revoked":
+            stmt = stmt.where(
+                SocialAccount.session_file_path.isnot(None),
+                SocialAccount.is_active.is_(False),
+            )
+        elif status == "spamblock":
+            stmt = stmt.where(SocialAccount.is_spamblocked.is_(True))
+        elif status == "banned":
+            stmt = stmt.where(SocialAccount.is_banned.is_(True))
         elif status == "empty":
             stmt = stmt.where(SocialAccount.session_file_path.is_(None))
         if search:
@@ -425,7 +446,9 @@ async def account_ban_stats(
             )
         )
         if not pool:
-            return AccountBanStatsResponse(total=0, active=0, banned=0, banned_percent=0.0, alert=False)
+            return AccountBanStatsResponse(
+                total=0, active=0, banned=0, revoked=0, spamblocked=0, banned_percent=0.0, alert=False
+            )
         total = await session.scalar(
             select(func.count(PoolAccount.id)).where(PoolAccount.account_pool_id == pool.id)
         )
@@ -437,7 +460,33 @@ async def account_ban_stats(
                 SocialAccount.is_banned.is_(True),
             )
         )
-        active = (total or 0) - (banned or 0)
+        active = await session.scalar(
+            select(func.count(PoolAccount.id))
+            .join(SocialAccount, PoolAccount.social_account_id == SocialAccount.id)
+            .where(
+                PoolAccount.account_pool_id == pool.id,
+                SocialAccount.is_active.is_(True),
+                SocialAccount.is_banned.is_(False),
+            )
+        )
+        revoked = await session.scalar(
+            select(func.count(PoolAccount.id))
+            .join(SocialAccount, PoolAccount.social_account_id == SocialAccount.id)
+            .where(
+                PoolAccount.account_pool_id == pool.id,
+                SocialAccount.is_active.is_(False),
+                SocialAccount.is_banned.is_(False),
+                SocialAccount.session_file_path.isnot(None),
+            )
+        )
+        spamblocked = await session.scalar(
+            select(func.count(PoolAccount.id))
+            .join(SocialAccount, PoolAccount.social_account_id == SocialAccount.id)
+            .where(
+                PoolAccount.account_pool_id == pool.id,
+                SocialAccount.is_spamblocked.is_(True),
+            )
+        )
         banned_percent = round((banned or 0) / total, 2) if total else 0.0
         alert_threshold = float(settings.CUSTOM_BAN_ALERT_THRESHOLD or 0.3)
         is_alert = banned_percent >= alert_threshold
@@ -448,8 +497,10 @@ async def account_ban_stats(
             )
         return AccountBanStatsResponse(
             total=total or 0,
-            active=active,
+            active=active or 0,
             banned=banned or 0,
+            revoked=revoked or 0,
+            spamblocked=spamblocked or 0,
             banned_percent=banned_percent,
             alert_threshold=alert_threshold,
             alert=is_alert,
@@ -466,7 +517,11 @@ async def run_account_health_check(
     results = await worker.check_all_accounts_for_automation(automation_id)
     ok = sum(1 for r in results if r.get("status") == "ok")
     fallback = sum(1 for r in results if r.get("status") == "fallback")
-    error = sum(1 for r in results if r.get("status") in {"error", "not_found"})
+    error = sum(
+        1
+        for r in results
+        if r.get("status") in {"error", "not_found", "session_invalid", "banned", "spamblock"}
+    )
     return AccountHealthCheckResponse(
         results=[AccountHealthCheckResult(**r) for r in results],
         total=len(results),
@@ -766,6 +821,19 @@ async def update_account_class(
         await session.refresh(pool_account)
         await session.refresh(social_account)
         return _account_response(pool_account, social_account)
+
+
+@router.delete("/automations/{automation_id}/accounts/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_account(
+    automation_id: int,
+    account_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        try:
+            await delete_pool_account(session, automation_id, account_id)
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found") from None
 
 
 # --- Chat targets ---

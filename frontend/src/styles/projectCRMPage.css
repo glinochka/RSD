@@ -269,6 +269,18 @@
   color: #991b1b;
 }
 
+.crm-status--revoked {
+  background: #e5e7eb;
+  color: #374151;
+}
+
+.crm-status--spamblock {
+  background: #ffedd5;
+  color: #9a3412;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
 .crm-status--completed {
   background: #f3f4f6;
   color: #4b5563;
