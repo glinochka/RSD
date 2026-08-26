@@ -158,7 +158,7 @@ async def fetch_messages_for_chat(
 
     messages = []
     try:
-        async with TelegramAccountClient(str(session_path)) as client:
+        async with TelegramAccountClient.for_account(account) as client:
             entity = await client.get_entity(chat_entity_key(chat_target))
             apply_entity_metadata(chat_target, entity)
             if not is_group_chat(chat_target):
@@ -259,7 +259,7 @@ async def _send_dm_and_create_lead(
         return False
 
     try:
-        async with TelegramAccountClient(str(session_path)) as client:
+        async with TelegramAccountClient.for_account(account) as client:
             recipient = chat_message.sender_username or chat_message.sender_id
             if not recipient:
                 logger.warning("No recipient for message %s", chat_message.id)

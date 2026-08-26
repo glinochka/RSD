@@ -195,9 +195,9 @@ async def _telegram_ids_distinct(account_a: SocialAccount, account_b: SocialAcco
     if not path_a or not path_b:
         return True
     try:
-        async with TelegramAccountClient(str(path_a)) as client_a:
+        async with TelegramAccountClient.for_account(account_a) as client_a:
             me_a = await client_a.client.get_me()
-        async with TelegramAccountClient(str(path_b)) as client_b:
+        async with TelegramAccountClient.for_account(account_b) as client_b:
             me_b = await client_b.client.get_me()
         return bool(me_a and me_b and me_a.id != me_b.id)
     except Exception as exc:
@@ -222,7 +222,7 @@ async def _send_message(
     if not path:
         return None
     try:
-        async with TelegramAccountClient(str(path)) as client:
+        async with TelegramAccountClient.for_account(account) as client:
             entity = await client.get_entity(
                 chat_entity_key(chat_target)
             )

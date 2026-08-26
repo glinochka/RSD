@@ -197,7 +197,7 @@ async def _search_telegram(
         unique.append(candidate)
 
     try:
-        async with TelegramAccountClient(str(session_path)) as client:
+        async with TelegramAccountClient.for_account(account) as client:
             try:
                 search = await client(
                     SearchRequest(q=query, limit=min(100, max(20, max_results * 3)))

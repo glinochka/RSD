@@ -136,7 +136,7 @@ async def _send_comment(
         "text": text,
     }
     try:
-        async with TelegramAccountClient(str(session_path)) as client:
+        async with TelegramAccountClient.for_account(account) as client:
             entity = await client.get_entity(
                 chat_entity_key(chat_target)
             )
@@ -208,7 +208,7 @@ async def process_chat_target(
 
     posts = []
     try:
-        async with TelegramAccountClient(str(session_path)) as client:
+        async with TelegramAccountClient.for_account(account) as client:
             entity = await client.get_entity(
                 chat_entity_key(chat_target)
             )

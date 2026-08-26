@@ -4,7 +4,6 @@ from __future__ import annotations
 import logging
 import random
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
@@ -16,9 +15,9 @@ from telethon.tl.functions.messages import CheckChatInviteRequest, ImportChatInv
 from .chat_scope import apply_entity_metadata, is_user_peer, unwrap_telegram_chat
 from .rotation_service import select_account_for_action
 from .telegram_account_client import TelegramAccountClient
+from .telegram_error_handler import SessionInvalidError
 from .telegram_invite import TelegramChatRef, TelegramChatRefError, parse_telegram_chat_ref
 from ...alembic.models import ChatJoinStatus, ChatMode, ChatSource, ChatTarget, SocialAccount
-from ...config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -43,10 +42,6 @@ _LOOKUP_ERRORS = {
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
-
-
-def _media_root() -> Path:
-    return Path(settings.MEDIA_ROOT).resolve()
 
 
 def is_private_invite_link(link: str | None) -> bool:
@@ -133,12 +128,8 @@ async def _try_join_chat(
     chat_target: ChatTarget,
     account: SocialAccount,
 ) -> dict[str, Any]:
-    if not account.session_file_path:
+    if not account.session_file_path and not getattr(account, "encrypted_session", None):
         return {"status": "failed", "error": "no session file"}
-
-    session_path = _media_root() / account.session_file_path
-    if not session_path.exists():
-        return {"status": "failed", "error": "session file missing"}
 
     try:
         parsed = _parse_chat_ref(chat_target)
@@ -146,7 +137,7 @@ async def _try_join_chat(
         return {"status": "failed", "error": "invalid invite link"}
 
     try:
-        async with TelegramAccountClient(str(session_path)) as client:
+        async with TelegramAccountClient.for_account(account) as client:
             try:
                 if parsed.kind == "invite":
                     entity = await _join_private(client, parsed)
@@ -182,6 +173,9 @@ async def _try_join_chat(
         return {"status": "failed", "error": "Ссылка-приглашение истекла"}
     except UserAlreadyParticipantError:
         return {"status": "joined", "joined_at": _utc_now(), "joined_by_account_id": account.id}
+    except SessionInvalidError as exc:
+        logger.warning("Join chat %s skipped account %s: %s", chat_target.id, account.id, exc)
+        return {"status": "failed", "error": "session_invalid", "retry_account": True}
     except ValueError as exc:
         return {"status": "failed", "error": str(exc)[:255]}
     except Exception as exc:
@@ -194,27 +188,44 @@ async def preview_chat_entity(
     automation_id: int,
     parsed: TelegramChatRef,
 ) -> Any:
-    account = await select_account_for_action(
-        session, automation_id, "commenting", consume_quota=False
-    )
-    if not account or not account.session_file_path:
+    tried: set[int] = set()
+    last_session_error: Exception | None = None
+    entity = None
+    while True:
+        account = await select_account_for_action(
+            session,
+            automation_id,
+            "commenting",
+            consume_quota=False,
+            exclude_account_ids=tried,
+        )
+        if not account:
+            break
+        tried.add(account.id)
+        try:
+            async with TelegramAccountClient.for_account(account) as client:
+                entity = await _resolve_entity(client, parsed)
+            break
+        except FloodWaitError as exc:
+            wait_seconds = exc.seconds or 60
+            raise ValueError(f"Telegram просит подождать {wait_seconds} сек.") from exc
+        except SessionInvalidError as exc:
+            last_session_error = exc
+            logger.warning("Preview chat %s skipped account %s: %s", parsed.canonical, account.id, exc)
+            continue
+        except TelegramChatRefError:
+            raise
+        except Exception as exc:
+            logger.warning("Preview chat %s failed: %s", parsed.canonical, exc)
+            raise ValueError(_friendly_telegram_error(exc, "Не удалось найти чат или канал")) from exc
+
+    if entity is None:
+        if last_session_error:
+            raise ValueError(
+                "Не удалось войти в Telegram, чтобы найти чат. "
+                "Если вы не выходили из аккаунта — подождите и попробуйте снова."
+            ) from last_session_error
         raise ValueError("Нет подключённого юзербота, чтобы найти чат")
-
-    session_path = _media_root() / account.session_file_path
-    if not session_path.exists():
-        raise ValueError("Нет файла сессии юзербота")
-
-    try:
-        async with TelegramAccountClient(str(session_path)) as client:
-            entity = await _resolve_entity(client, parsed)
-    except FloodWaitError as exc:
-        wait_seconds = exc.seconds or 60
-        raise ValueError(f"Telegram просит подождать {wait_seconds} сек.") from exc
-    except TelegramChatRefError:
-        raise
-    except Exception as exc:
-        logger.warning("Preview chat %s failed: %s", parsed.canonical, exc)
-        raise ValueError(_friendly_telegram_error(exc, "Не удалось найти чат или канал")) from exc
 
     if is_user_peer(entity):
         raise ValueError("Это пользователь, а не чат или канал")
@@ -302,17 +313,32 @@ async def join_pending_chats(
 
     results = []
     for chat_target in chats:
-        account = await select_account_for_action(session, automation_id, "commenting")
-        if not account:
-            results.append({"chat_target_id": chat_target.id, "status": "skipped", "error": "no eligible account"})
-            continue
-
+        excluded: set[int] = set()
+        join_result: dict[str, Any] | None = None
+        account = None
         chat_target.join_status = ChatJoinStatus.JOINING.value
         chat_target.join_attempts += 1
         chat_target.last_join_attempt_at = now
         await session.commit()
 
-        join_result = await _try_join_chat(session, chat_target, account)
+        for _ in range(3):
+            account = await select_account_for_action(
+                session,
+                automation_id,
+                "commenting",
+                exclude_account_ids=excluded,
+            )
+            if not account:
+                join_result = {"status": "skipped", "error": "no eligible account"}
+                break
+            excluded.add(account.id)
+            join_result = await _try_join_chat(session, chat_target, account)
+            if join_result["status"] == "joined" or not join_result.get("retry_account"):
+                break
+
+        if join_result is None:
+            join_result = {"status": "skipped", "error": "no eligible account"}
+
         chat_target.updated_at = now
 
         if join_result["status"] == "joined":
@@ -325,9 +351,15 @@ async def join_pending_chats(
             chat_target.join_status = ChatJoinStatus.RATE_LIMITED.value
             chat_target.next_join_attempt_at = join_result.get("next_join_attempt_at")
             chat_target.last_join_error = join_result.get("error")
-        else:
-            chat_target.join_status = ChatJoinStatus.ERROR.value
+        elif join_result["status"] == "skipped":
+            chat_target.join_status = ChatJoinStatus.PENDING.value
             chat_target.last_join_error = join_result.get("error")
+        else:
+            error = join_result.get("error")
+            if error == "session_invalid":
+                error = "Не удалось войти в Telegram. Если вы не выходили из аккаунта — подождите и попробуйте снова."
+            chat_target.join_status = ChatJoinStatus.ERROR.value
+            chat_target.last_join_error = error
             chat_target.next_join_attempt_at = now + timedelta(minutes=random.randint(2, 5))
 
         await session.commit()

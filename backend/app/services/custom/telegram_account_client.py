@@ -4,10 +4,11 @@ import io
 import random
 import re
 import shutil
+import sqlite3
 import tempfile
 from logging import getLogger
 from pathlib import Path
-from typing import Any
+from typing import Any, IO
 
 from telethon.errors import AuthKeyError, RPCError
 from telethon.tl.functions.account import UpdateProfileRequest
@@ -42,35 +43,55 @@ async def _lock_for_session(session_path: str) -> asyncio.Lock:
         return lock
 
 
-def _session_stem(path: Path) -> str:
-    text = str(path)
-    return text[:-8] if text.endswith(".session") else text
+def _clear_session_sidecars(path: Path) -> None:
+    for suffix in _SESSION_SIDECARS:
+        extra = Path(str(path) + suffix)
+        extra.unlink(missing_ok=True)
 
 
 def session_file_has_auth_key(path: Path) -> bool:
+    """Read auth_key without opening a Telethon SQLiteSession (that can rewrite the file)."""
     if not path.is_file() or path.stat().st_size < 16:
         return False
     try:
-        from telethon.sessions import SQLiteSession
-
-        sess = SQLiteSession(_session_stem(path))
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
         try:
-            key = sess.auth_key
-            raw = getattr(key, "key", None) if key is not None else None
-            return bool(raw)
+            row = conn.execute("SELECT auth_key FROM sessions").fetchone()
+            return bool(row and row[0])
         finally:
-            sess.close()
+            conn.close()
     except Exception:
         return False
 
 
 def copy_session_bundle(src: Path, dest: Path) -> None:
+    """Copy a Telethon sqlite session as a consistent snapshot.
+
+    Never reuse Telethon's SQLiteSession here: opening the live file can
+    create a WAL and overwrite a valid auth key with an empty one.
+    """
     dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dest)
-    for suffix in _SESSION_SIDECARS:
-        extra = Path(str(src) + suffix)
-        if extra.is_file():
-            shutil.copy2(extra, Path(str(dest) + suffix))
+    try:
+        src_conn = sqlite3.connect(str(src), timeout=30)
+        try:
+            src_conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            if dest.exists():
+                dest.unlink()
+            _clear_session_sidecars(dest)
+            dst_conn = sqlite3.connect(str(dest))
+            try:
+                src_conn.backup(dst_conn)
+            finally:
+                dst_conn.close()
+        finally:
+            src_conn.close()
+        _clear_session_sidecars(dest)
+    except Exception:
+        shutil.copy2(src, dest)
+        for suffix in _SESSION_SIDECARS:
+            extra = Path(str(src) + suffix)
+            if extra.is_file():
+                shutil.copy2(extra, Path(str(dest) + suffix))
 
 
 def restore_encrypted_session_file(encrypted_session: str | None, dest: Path) -> bool:
@@ -85,10 +106,41 @@ def restore_encrypted_session_file(encrypted_session: str | None, dest: Path) ->
             return False
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(data)
+        _clear_session_sidecars(dest)
         return True
     except Exception as exc:
         logger.warning("Could not restore encrypted session to %s: %s", dest, exc)
         return False
+
+
+def _acquire_session_file_lock(session_path: str) -> IO[bytes]:
+    lock_path = Path(str(Path(session_path).resolve()) + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(lock_path, "a+b")
+    try:
+        import fcntl
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    except ImportError:
+        pass
+    return handle
+
+
+def _release_session_file_lock(handle: IO[bytes] | None) -> None:
+    if handle is None:
+        return
+    try:
+        import fcntl
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    except ImportError:
+        pass
+    except Exception:
+        pass
+    try:
+        handle.close()
+    except Exception:
+        pass
 
 
 def _make_client(session_path: str, *, api_id: int | None = None, api_hash: str | None = None):
@@ -138,9 +190,9 @@ class TelegramAccountClient:
         self.api_id = 0
         self.api_hash = ""
         self._session_lock: asyncio.Lock | None = None
+        self._file_lock: IO[bytes] | None = None
         self._work_dir: Path | None = None
         self._work_path: Path | None = None
-        self._entered_ok = False
 
     @classmethod
     def for_account(cls, account, *, api_id: int | None = None, api_hash: str | None = None) -> "TelegramAccountClient":
@@ -155,6 +207,23 @@ class TelegramAccountClient:
             encrypted_session=getattr(account, "encrypted_session", None),
         )
 
+    async def _close_client(self) -> None:
+        client = self.client
+        self.client = None
+        if client is None:
+            return
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
+        session = getattr(client, "session", None)
+        closer = getattr(session, "close", None)
+        if callable(closer):
+            try:
+                closer()
+            except Exception:
+                pass
+
     def _cleanup_work_dir(self) -> None:
         if self._work_dir and self._work_dir.exists():
             shutil.rmtree(self._work_dir, ignore_errors=True)
@@ -168,6 +237,7 @@ class TelegramAccountClient:
                 logger.warning("Restored session file from encrypted backup: %s", original)
         if not original.is_file():
             raise SessionInvalidError("Session file missing")
+        self._cleanup_work_dir()
         self._work_dir = Path(tempfile.mkdtemp(prefix="rsd_tg_"))
         self._work_path = self._work_dir / "account.session"
         copy_session_bundle(original, self._work_path)
@@ -176,11 +246,7 @@ class TelegramAccountClient:
     async def _connect_work_copy(self) -> bool:
         from .telegram_error_handler import _looks_like_session_error
 
-        if self.client is not None:
-            try:
-                await self.client.disconnect()
-            except Exception:
-                pass
+        await self._close_client()
         self.client, self.api_id, self.api_hash = _make_client(
             str(self._work_path),
             api_id=self._api_id,
@@ -190,74 +256,59 @@ class TelegramAccountClient:
             await self.client.connect()
         except Exception as exc:
             if isinstance(exc, AuthKeyError) or _looks_like_session_error(exc):
-                try:
-                    await self.client.disconnect()
-                except Exception:
-                    pass
+                await self._close_client()
                 raise SessionInvalidError(str(exc) or SESSION_RECONNECT_HINT) from exc
             raise
         try:
             authorized = await self.client.is_user_authorized()
         except Exception as exc:
             if isinstance(exc, AuthKeyError) or _looks_like_session_error(exc):
-                try:
-                    await self.client.disconnect()
-                except Exception:
-                    pass
+                await self._close_client()
                 raise SessionInvalidError(str(exc) or SESSION_RECONNECT_HINT) from exc
             raise
         if authorized:
             return True
-        try:
-            await self.client.disconnect()
-        except Exception:
-            pass
+        await self._close_client()
         return False
+
+    def _release_locks(self) -> None:
+        _release_session_file_lock(self._file_lock)
+        self._file_lock = None
+        if self._session_lock is not None:
+            self._session_lock.release()
+            self._session_lock = None
 
     async def __aenter__(self) -> "TelegramAccountClient":
         self._session_lock = await _lock_for_session(self.session_path)
         await self._session_lock.acquire()
         try:
+            self._file_lock = await asyncio.to_thread(_acquire_session_file_lock, self.session_path)
             self._prepare_work_copy()
             authorized = await self._connect_work_copy()
             if not authorized and self._encrypted_session:
                 original = Path(self.session_path)
                 if restore_encrypted_session_file(self._encrypted_session, original):
                     logger.warning("Retrying Telegram login after restoring session %s", original)
-                    copy_session_bundle(original, self._work_path)
+                    self._prepare_work_copy()
                     authorized = await self._connect_work_copy()
             if not authorized:
                 raise SessionInvalidError(SESSION_RECONNECT_HINT)
-            self._entered_ok = True
             return self
         except Exception:
+            await self._close_client()
             self._cleanup_work_dir()
-            if self._session_lock is not None:
-                self._session_lock.release()
-                self._session_lock = None
+            self._release_locks()
             raise
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
-        authorized = False
-        if self.client is not None:
-            try:
-                if self._entered_ok:
-                    authorized = bool(await self.client.is_user_authorized())
-            except Exception:
-                authorized = False
-            try:
-                await self.client.disconnect()
-            except Exception as exc_close:
-                logger.debug("Error disconnecting Telegram client: %s", exc_close)
-        if authorized and self._work_path and self._work_path.is_file():
-            try:
-                copy_session_bundle(self._work_path, Path(self.session_path))
-            except Exception as exc_copy:
-                logger.warning("Could not copy session back to %s: %s", self.session_path, exc_copy)
-        self._cleanup_work_dir()
-        if self._session_lock is not None:
-            self._session_lock.release()
-            self._session_lock = None
+        try:
+            await self._close_client()
+        finally:
+            # Never copy the temp sqlite back. A failed/unauthorized connect can
+            # write a new unregistered auth key into the work copy; copying that
+            # onto the original is what looks like a "revoked" session.
+            self._cleanup_work_dir()
+            self._release_locks()
 
     async def get_info(self) -> dict[str, Any]:
         """Return public profile metadata without modifying the account."""

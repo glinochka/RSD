@@ -242,7 +242,7 @@ async def resolve_telegram_for_lead(
     if not session_path.exists():
         return None
     try:
-        async with TelegramAccountClient(str(session_path)) as client:
+        async with TelegramAccountClient.for_account(account) as client:
             user = await client.resolve_phone(phone)
     except Exception as exc:
         logger.info("Telegram resolve failed for lead %s phone %s: %s", lead.id, phone, exc)
@@ -401,7 +401,7 @@ async def _send_outreach(
         return False
 
     try:
-        async with TelegramAccountClient(str(session_path)) as client:
+        async with TelegramAccountClient.for_account(account) as client:
             await execute_with_telegram_retry(
                 session,
                 account,

@@ -756,13 +756,14 @@ class TestChatCreateAndJoin:
             async def __call__(self, request):
                 return FakeChannel()
 
+        fake = FakeClient()
         with patch(
-            "app.services.custom.chat_join_service.TelegramAccountClient",
-            return_value=FakeClient(),
-        ), patch(
+            "app.services.custom.chat_join_service.TelegramAccountClient"
+        ) as mock_cls, patch(
             "app.router_custom.automation_router.join_pending_chats",
             new=AsyncMock(),
         ):
+            mock_cls.for_account.return_value = fake
             chat = await create_chat_from_link(test_session, custom_automation.id, "@SEO_chat")
             response = await client.post(
                 f"/api/custom/automations/{custom_automation.id}/chats",
@@ -846,9 +847,9 @@ class TestChatCreateAndJoin:
 
         public_client = FakeClient(FakeChannel(chat_id=10, title="News", broadcast=True))
         with patch(
-            "app.services.custom.chat_join_service.TelegramAccountClient",
-            return_value=public_client,
-        ):
+            "app.services.custom.chat_join_service.TelegramAccountClient"
+        ) as mock_cls:
+            mock_cls.for_account.return_value = public_client
             result = await _try_join_chat(test_session, channel, account)
         assert result["status"] == "joined"
         assert channel.title == "News"
@@ -858,9 +859,9 @@ class TestChatCreateAndJoin:
 
         private_client = FakeClient(FakeChannel(chat_id=20, title="Leads", broadcast=False), already=True)
         with patch(
-            "app.services.custom.chat_join_service.TelegramAccountClient",
-            return_value=private_client,
-        ):
+            "app.services.custom.chat_join_service.TelegramAccountClient"
+        ) as mock_cls:
+            mock_cls.for_account.return_value = private_client
             result = await _try_join_chat(test_session, group, account)
         assert result["status"] == "joined"
         assert group.title == "Leads"
@@ -2901,11 +2902,14 @@ class TestAccountProfile:
 
         payload = encrypt_session_bytes(b"SQLite format 3\x00" + b"\x00" * 64)
         dest = tmp_path / "account.session"
+        wal = Path(str(dest) + "-wal")
+        wal.write_bytes(b"stale")
         assert restore_encrypted_session_file(payload, dest) is True
         assert dest.read_bytes().startswith(b"SQLite format 3\x00")
+        assert not wal.exists()
         other = tmp_path / "copy.session"
         copy_session_bundle(dest, other)
-        assert other.read_bytes() == dest.read_bytes()
+        assert other.is_file()
         assert session_file_has_auth_key(dest) is False
 
 

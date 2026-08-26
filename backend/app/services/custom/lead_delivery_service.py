@@ -116,7 +116,7 @@ async def _send_telegram(
 
     text = await build_lead_handoff_text(session, lead, await session.get(CustomAutomation, automation_id))
     try:
-        async with TelegramAccountClient(str(session_path)) as client:
+        async with TelegramAccountClient.for_account(account) as client:
             await execute_with_telegram_retry(
                 session,
                 account,

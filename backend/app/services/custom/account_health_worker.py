@@ -86,6 +86,27 @@ class AccountHealthWorker:
                             )
                             await asyncio.sleep(2)
                             continue
+                        if isinstance(exc, SessionInvalidError):
+                            from .telegram_account_client import restore_encrypted_session_file
+
+                            session_path = _media_root() / (social_account.session_file_path or "")
+                            restored = restore_encrypted_session_file(
+                                social_account.encrypted_session, session_path
+                            )
+                            if restored:
+                                logger.warning(
+                                    "Health check login failed for account %s; restored backup, account stays active",
+                                    account_id,
+                                )
+                                social_account.last_health_check_at = _utc_now()
+                                social_account.updated_at = _utc_now()
+                                await session.commit()
+                                return {
+                                    "account_id": account_id,
+                                    "status": "session_retry",
+                                    "classification": None,
+                                    "error": "session_retry",
+                                }
                         error_kind = await update_account_after_telegram_error(session, social_account, exc)
                         logger.warning("Health check failed for account %s: %s (%s)", account_id, exc, error_kind)
                         break

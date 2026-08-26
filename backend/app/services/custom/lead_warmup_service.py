@@ -212,7 +212,7 @@ async def _process_lead(
 
     incoming: list[dict[str, Any]] = []
     try:
-        async with TelegramAccountClient(str(session_path)) as client:
+        async with TelegramAccountClient.for_account(account) as client:
             entity = await client.resolve_peer(peer)
             history = await client.get_messages(entity, limit=20)
             cutoff = lead.last_message_at
@@ -277,7 +277,7 @@ async def _process_lead(
         return {"lead_id": lead.id, "status": "waiting"}
 
     try:
-        async with TelegramAccountClient(str(session_path)) as client:
+        async with TelegramAccountClient.for_account(account) as client:
             await execute_with_telegram_retry(
                 session,
                 account,
