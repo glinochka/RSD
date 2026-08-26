@@ -3,11 +3,12 @@ import asyncio
 import io
 import random
 import re
+import shutil
+import tempfile
 from logging import getLogger
 from pathlib import Path
 from typing import Any
 
-from telethon import TelegramClient
 from telethon.errors import AuthKeyError, RPCError
 from telethon.tl.functions.account import UpdateProfileRequest
 from telethon.tl.functions.contacts import ImportContactsRequest
@@ -16,7 +17,7 @@ from telethon.tl.functions.users import GetFullUserRequest
 from telethon.tl.types import InputPhoneContact
 
 from .telegram_error_handler import SessionInvalidError, parse_spambot_reply
-from ..telegram_userbot_auth import resolve_api_credentials
+from ..telegram_userbot_auth import create_telegram_client
 
 logger = getLogger(__name__)
 
@@ -24,8 +25,10 @@ _MAX_BIO_LENGTH = 160
 _PHONE_DIGITS_RE = re.compile(r"\D+")
 _SPAMBOT = "SpamBot"
 _SPAMBOT_WAIT_SECONDS = 2.0
+SESSION_RECONNECT_HINT = "Нет входа в Telegram. Подключите аккаунт заново по QR или SMS."
 _session_locks: dict[str, asyncio.Lock] = {}
 _session_locks_guard = asyncio.Lock()
+_SESSION_SIDECARS = ("-journal", "-wal", "-shm")
 
 
 async def _lock_for_session(session_path: str) -> asyncio.Lock:
@@ -36,6 +39,65 @@ async def _lock_for_session(session_path: str) -> asyncio.Lock:
             lock = asyncio.Lock()
             _session_locks[key] = lock
         return lock
+
+
+def _session_stem(path: Path) -> str:
+    text = str(path)
+    return text[:-8] if text.endswith(".session") else text
+
+
+def session_file_has_auth_key(path: Path) -> bool:
+    if not path.is_file() or path.stat().st_size < 16:
+        return False
+    try:
+        from telethon.sessions import SQLiteSession
+
+        sess = SQLiteSession(_session_stem(path))
+        try:
+            key = sess.auth_key
+            raw = getattr(key, "key", None) if key is not None else None
+            return bool(raw)
+        finally:
+            sess.close()
+    except Exception:
+        return False
+
+
+def copy_session_bundle(src: Path, dest: Path) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dest)
+    for suffix in _SESSION_SIDECARS:
+        extra = Path(str(src) + suffix)
+        if extra.is_file():
+            shutil.copy2(extra, Path(str(dest) + suffix))
+
+
+def restore_encrypted_session_file(encrypted_session: str | None, dest: Path) -> bool:
+    payload = (encrypted_session or "").strip()
+    if not payload.startswith("fernet1:"):
+        return False
+    try:
+        from ..account_pool_service import decrypt_session_bytes, _is_valid_telegram_session
+
+        data = decrypt_session_bytes(payload)
+        if not _is_valid_telegram_session(data):
+            return False
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(data)
+        return True
+    except Exception as exc:
+        logger.warning("Could not restore encrypted session to %s: %s", dest, exc)
+        return False
+
+
+def _make_client(session_path: str, *, api_id: int | None = None, api_hash: str | None = None):
+    client, resolved_id, resolved_hash = create_telegram_client(
+        api_id=api_id,
+        api_hash=api_hash,
+        session_path=session_path,
+        prefer_desktop=True,
+    )
+    return client, resolved_id, resolved_hash
 
 
 def normalize_telegram_phone(value: str | None) -> str | None:
@@ -54,56 +116,144 @@ def normalize_telegram_phone(value: str | None) -> str | None:
 class TelegramAccountClient:
     """Connect to a saved Telethon .session and read public profile info.
 
-    Uses the same API credential fallback chain as the rest of the platform
-    (custom env -> global env -> opentele -> Telethon built-in).
+    Always opens a temp copy of the sqlite file so a failed auth cannot wipe
+    the original. If `encrypted_session` is set, a wiped file is restored once.
+    Uses the same API credential chain as QR/SMS login.
     """
 
-    def __init__(self, session_path: str, *, api_id: int | None = None, api_hash: str | None = None):
+    def __init__(
+        self,
+        session_path: str,
+        *,
+        api_id: int | None = None,
+        api_hash: str | None = None,
+        encrypted_session: str | None = None,
+    ):
         self.session_path = session_path
-        self.api_id, self.api_hash = resolve_api_credentials(api_id, api_hash, prefer_desktop=True)
-        self.client = TelegramClient(self.session_path, self.api_id, self.api_hash)
+        self._encrypted_session = encrypted_session
+        self._api_id = api_id
+        self._api_hash = api_hash
+        self.client = None
+        self.api_id = 0
+        self.api_hash = ""
         self._session_lock: asyncio.Lock | None = None
+        self._work_dir: Path | None = None
+        self._work_path: Path | None = None
+        self._entered_ok = False
 
-    async def __aenter__(self) -> "TelegramAccountClient":
+    @classmethod
+    def for_account(cls, account, *, api_id: int | None = None, api_hash: str | None = None) -> "TelegramAccountClient":
+        from ...config import settings
+
+        rel = (getattr(account, "session_file_path", None) or "").strip()
+        path = Path(settings.MEDIA_ROOT).resolve() / rel
+        return cls(
+            str(path),
+            api_id=api_id,
+            api_hash=api_hash,
+            encrypted_session=getattr(account, "encrypted_session", None),
+        )
+
+    def _cleanup_work_dir(self) -> None:
+        if self._work_dir and self._work_dir.exists():
+            shutil.rmtree(self._work_dir, ignore_errors=True)
+        self._work_dir = None
+        self._work_path = None
+
+    def _prepare_work_copy(self) -> Path:
+        original = Path(self.session_path)
+        if self._encrypted_session and not session_file_has_auth_key(original):
+            if restore_encrypted_session_file(self._encrypted_session, original):
+                logger.warning("Restored session file from encrypted backup: %s", original)
+        if not original.is_file():
+            raise SessionInvalidError("Session file missing")
+        self._work_dir = Path(tempfile.mkdtemp(prefix="rsd_tg_"))
+        self._work_path = self._work_dir / "account.session"
+        copy_session_bundle(original, self._work_path)
+        return self._work_path
+
+    async def _connect_work_copy(self) -> bool:
         from .telegram_error_handler import _looks_like_session_error
 
+        if self.client is not None:
+            try:
+                await self.client.disconnect()
+            except Exception:
+                pass
+        self.client, self.api_id, self.api_hash = _make_client(
+            str(self._work_path),
+            api_id=self._api_id,
+            api_hash=self._api_hash,
+        )
+        try:
+            await self.client.connect()
+        except Exception as exc:
+            if isinstance(exc, AuthKeyError) or _looks_like_session_error(exc):
+                try:
+                    await self.client.disconnect()
+                except Exception:
+                    pass
+                raise SessionInvalidError(str(exc) or SESSION_RECONNECT_HINT) from exc
+            raise
+        try:
+            authorized = await self.client.is_user_authorized()
+        except Exception as exc:
+            if isinstance(exc, AuthKeyError) or _looks_like_session_error(exc):
+                try:
+                    await self.client.disconnect()
+                except Exception:
+                    pass
+                raise SessionInvalidError(str(exc) or SESSION_RECONNECT_HINT) from exc
+            raise
+        if authorized:
+            return True
+        try:
+            await self.client.disconnect()
+        except Exception:
+            pass
+        return False
+
+    async def __aenter__(self) -> "TelegramAccountClient":
         self._session_lock = await _lock_for_session(self.session_path)
         await self._session_lock.acquire()
         try:
-            try:
-                await self.client.connect()
-            except Exception as exc:
-                if isinstance(exc, AuthKeyError) or _looks_like_session_error(exc):
-                    try:
-                        await self.client.disconnect()
-                    except Exception:
-                        pass
-                    raise SessionInvalidError(str(exc)) from exc
-                raise
-            try:
-                authorized = await self.client.is_user_authorized()
-            except Exception as exc:
-                if isinstance(exc, AuthKeyError) or _looks_like_session_error(exc):
-                    try:
-                        await self.client.disconnect()
-                    except Exception:
-                        pass
-                    raise SessionInvalidError(str(exc)) from exc
-                raise
+            self._prepare_work_copy()
+            authorized = await self._connect_work_copy()
+            if not authorized and self._encrypted_session:
+                original = Path(self.session_path)
+                if restore_encrypted_session_file(self._encrypted_session, original):
+                    logger.warning("Retrying Telegram login after restoring session %s", original)
+                    copy_session_bundle(original, self._work_path)
+                    authorized = await self._connect_work_copy()
             if not authorized:
-                await self.client.disconnect()
-                raise SessionInvalidError("Session is not authorized")
+                raise SessionInvalidError(SESSION_RECONNECT_HINT)
+            self._entered_ok = True
             return self
         except Exception:
-            self._session_lock.release()
-            self._session_lock = None
+            self._cleanup_work_dir()
+            if self._session_lock is not None:
+                self._session_lock.release()
+                self._session_lock = None
             raise
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
-        try:
-            await self.client.disconnect()
-        except Exception as exc_close:
-            logger.debug("Error disconnecting Telegram client: %s", exc_close)
+        authorized = False
+        if self.client is not None:
+            try:
+                if self._entered_ok:
+                    authorized = bool(await self.client.is_user_authorized())
+            except Exception:
+                authorized = False
+            try:
+                await self.client.disconnect()
+            except Exception as exc_close:
+                logger.debug("Error disconnecting Telegram client: %s", exc_close)
+        if authorized and self._work_path and self._work_path.is_file():
+            try:
+                copy_session_bundle(self._work_path, Path(self.session_path))
+            except Exception as exc_copy:
+                logger.warning("Could not copy session back to %s: %s", self.session_path, exc_copy)
+        self._cleanup_work_dir()
         if self._session_lock is not None:
             self._session_lock.release()
             self._session_lock = None

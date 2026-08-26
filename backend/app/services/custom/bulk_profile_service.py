@@ -10,8 +10,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .telegram_account_client import TelegramAccountClient
-from .telegram_error_handler import execute_with_telegram_retry
+from .telegram_account_client import SESSION_RECONNECT_HINT, TelegramAccountClient
+from .telegram_error_handler import SessionInvalidError, execute_with_telegram_retry
 from ...alembic.models import AutomationActionLog, CustomPrompt, PromptType, SocialAccount
 from ...config import settings
 from ...services.ai_authoring import ai_client
@@ -139,6 +139,10 @@ class BulkProfileUpdateWorker:
 
         session_path = _media_root() / social_account.session_file_path
         if not session_path.exists():
+            from .telegram_account_client import restore_encrypted_session_file
+
+            restore_encrypted_session_file(social_account.encrypted_session, session_path)
+        if not session_path.exists():
             await _log_action(
                 session,
                 automation_id=automation_id,
@@ -167,7 +171,7 @@ class BulkProfileUpdateWorker:
         applied_avatar = False
         applied_bio = False
         try:
-            async with TelegramAccountClient(str(session_path)) as client:
+            async with TelegramAccountClient.for_account(social_account) as client:
                 if bio:
                     await execute_with_telegram_retry(
                         session,
@@ -200,6 +204,18 @@ class BulkProfileUpdateWorker:
                         shutil.copyfile(avatar_path, dest)
                         social_account.avatar_file_path = str(dest.relative_to(_media_root()))
                         social_account.avatar_url = f"/media/{social_account.avatar_file_path}"
+        except SessionInvalidError as exc:
+            error_message = str(exc) or SESSION_RECONNECT_HINT
+            await _log_action(
+                session,
+                automation_id=automation_id,
+                social_account_id=account_id,
+                action_type="profile_update",
+                result="error",
+                payload={"bio": bio, "avatar": avatar_relative_path},
+                error_message=error_message,
+            )
+            return {"account_id": account_id, "status": "error", "error": error_message}
         except Exception as exc:
             error_message = str(exc)
             await _log_action(
@@ -216,6 +232,7 @@ class BulkProfileUpdateWorker:
         if applied_bio:
             social_account.bio = bio
             social_account.current_bio = bio
+        social_account.is_active = True
         social_account.updated_at = _utc_now()
         await session.commit()
 
@@ -283,7 +300,7 @@ async def update_account_display_name(
     if not name:
         raise ValueError("empty display name")
     session_path = await _require_session_path(social_account)
-    async with TelegramAccountClient(str(session_path)) as client:
+    async with TelegramAccountClient.for_account(social_account) as client:
         stored = await execute_with_telegram_retry(
             session,
             social_account,
@@ -295,6 +312,7 @@ async def update_account_display_name(
             automation_id=automation_id,
         )
     social_account.display_name = stored or name
+    social_account.is_active = True
     social_account.updated_at = _utc_now()
     await session.commit()
     return social_account.display_name
@@ -308,7 +326,7 @@ async def update_account_bio(
 ) -> str:
     text = (bio or "").strip()[:140]
     session_path = await _require_session_path(social_account)
-    async with TelegramAccountClient(str(session_path)) as client:
+    async with TelegramAccountClient.for_account(social_account) as client:
         await execute_with_telegram_retry(
             session,
             social_account,
@@ -321,6 +339,7 @@ async def update_account_bio(
         )
     social_account.bio = text
     social_account.current_bio = text
+    social_account.is_active = True
     social_account.updated_at = _utc_now()
     await session.commit()
     return text

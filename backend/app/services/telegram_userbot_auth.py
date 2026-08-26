@@ -126,15 +126,19 @@ def create_telegram_client(
     api_id: int | None = None,
     api_hash: str | None = None,
     session_string: str = "",
+    session_path: str | None = None,
     prefer_desktop: bool = True,
 ):
     """TelegramClient with opentele when installed, otherwise Telethon."""
     resolved_id, resolved_hash = resolve_api_credentials(
         api_id, api_hash, prefer_desktop=prefer_desktop
     )
-    from telethon.sessions import StringSession
+    if session_path:
+        session = session_path
+    else:
+        from telethon.sessions import StringSession
 
-    session = StringSession((session_string or "").strip())
+        session = StringSession((session_string or "").strip())
     if opentele_available():
         from opentele.tl import TelegramClient
 

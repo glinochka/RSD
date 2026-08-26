@@ -189,7 +189,13 @@ const CustomAutomationAccountsPage = () => {
       });
       const failed = (result.results || []).find((row) => row.status === 'error');
       if (failed) {
-        setError(failed.error || 'Не удалось обновить аватар');
+        const raw = String(failed.error || '');
+        const sessionLost = /нет входа|not authorized|sessioninvalid|session file missing/i.test(raw);
+        setError(
+          sessionLost
+            ? 'Нет входа в Telegram. Подключите аккаунт заново по QR или SMS.'
+            : (raw || 'Не удалось обновить аватар'),
+        );
         return;
       }
       setUploadSuccess('Аватар обновлён');

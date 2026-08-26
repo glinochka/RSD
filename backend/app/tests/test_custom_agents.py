@@ -2174,9 +2174,13 @@ class TestAccountHealthSpamblockAndDelete:
             async def __aexit__(self, *args):
                 return False
 
+        fake = _FakeClient()
+        mock_cls = MagicMock()
+        mock_cls.return_value = fake
+        mock_cls.for_account.return_value = fake
         with patch(
             "app.services.custom.account_health_worker.TelegramAccountClient",
-            return_value=_FakeClient(),
+            mock_cls,
         ), patch(
             "app.services.custom.account_health_worker.asyncio.sleep",
             new=AsyncMock(),
@@ -2375,6 +2379,23 @@ class TestAccountProfile:
         from app.services.custom.bulk_profile_service import BulkProfileUpdateWorker
 
         assert callable(BulkProfileUpdateWorker().process_accounts)
+
+    async def test_restore_encrypted_session_and_copy(self, tmp_path):
+        from app.services.account_pool_service import encrypt_session_bytes
+        from app.services.custom.telegram_account_client import (
+            copy_session_bundle,
+            restore_encrypted_session_file,
+            session_file_has_auth_key,
+        )
+
+        payload = encrypt_session_bytes(b"SQLite format 3\x00" + b"\x00" * 64)
+        dest = tmp_path / "account.session"
+        assert restore_encrypted_session_file(payload, dest) is True
+        assert dest.read_bytes().startswith(b"SQLite format 3\x00")
+        other = tmp_path / "copy.session"
+        copy_session_bundle(dest, other)
+        assert other.read_bytes() == dest.read_bytes()
+        assert session_file_has_auth_key(dest) is False
 
 
 

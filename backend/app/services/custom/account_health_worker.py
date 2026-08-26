@@ -52,6 +52,10 @@ class AccountHealthWorker:
         spam_state = None
         if social_account.session_file_path:
             session_path = _media_root() / social_account.session_file_path
+            if not session_path.exists():
+                from .telegram_account_client import restore_encrypted_session_file
+
+                restore_encrypted_session_file(social_account.encrypted_session, session_path)
             if session_path.exists():
                 last_exc: Exception | None = None
                 for attempt in range(2):
@@ -61,7 +65,7 @@ class AccountHealthWorker:
                         if checked_at is not None:
                             then = checked_at.replace(tzinfo=None) if getattr(checked_at, "tzinfo", None) else checked_at
                             need_spam_check = (_utc_now() - then) >= _SPAMBLOCK_RECHECK
-                        async with TelegramAccountClient(str(session_path)) as client:
+                        async with TelegramAccountClient.for_account(social_account) as client:
                             info = await client.get_info()
                             if need_spam_check:
                                 spam_state = await client.check_spamblock()
