@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .chat_inspect_service import probe_comments_readonly
 from .chat_scope import apply_entity_metadata, is_broadcast_channel, is_paused
 from .post_engagement import NEUROCOMMENTING, SHILLING, SKIP, claim_post_engagement
 from .rotation_service import select_account_for_action
@@ -182,6 +183,8 @@ async def process_chat_target(
         return {"status": "skipped", "reason": "not_joined"}
     if chat_target.chat_type and not is_broadcast_channel(chat_target):
         return {"status": "skipped", "reason": "not_channel"}
+    if chat_target.comments_open is False:
+        return {"status": "skipped", "reason": "comments_closed"}
 
     automation = await session.get(CustomAutomation, automation_id)
     if not automation:
@@ -209,6 +212,21 @@ async def process_chat_target(
     posts = []
     try:
         async with TelegramAccountClient.for_account(account) as client:
+            probe = await probe_comments_readonly(client, chat_target)
+            if probe.members_count:
+                chat_target.members_count = probe.members_count
+            if probe.last_activity_at:
+                chat_target.last_activity_at = probe.last_activity_at
+            if probe.comments_open is not None:
+                chat_target.comments_open = probe.comments_open
+            chat_target.comments_checked_at = _utc_now()
+            chat_target.comments_check_error = probe.error
+            if probe.account_blocked:
+                await session.commit()
+                return {"status": "skipped", "reason": "account_blocked"}
+            if probe.comments_open is False:
+                await session.commit()
+                return {"status": "skipped", "reason": "comments_closed"}
             entity = await client.get_entity(
                 chat_entity_key(chat_target)
             )

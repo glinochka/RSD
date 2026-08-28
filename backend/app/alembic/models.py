@@ -2120,6 +2120,7 @@ class CustomAutomation(Base):
     google_sheets_spreadsheet_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
     google_sheets_worksheet: Mapped[str | None] = mapped_column(String(128), nullable=True)
     google_sheets_credentials_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    account_setup_templates: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
 
     created_by_admin_id: Mapped[int | None] = mapped_column(
         ForeignKey("custom_admins.id", ondelete="SET NULL"), nullable=True, index=True
@@ -2368,6 +2369,7 @@ class ChatImportJob(Base):
     total_rows: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     processed_rows: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     error_rows: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    duplicate_rows: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     error_log: Mapped[dict] = mapped_column(
         JSONB, default=list, nullable=False
     )
@@ -2490,6 +2492,11 @@ class ChatTarget(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False, index=True)
     last_scanned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_message_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    members_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_activity_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    comments_open: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    comments_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    comments_check_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
 

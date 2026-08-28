@@ -1,9 +1,9 @@
 """Automation (client) routes for /custom."""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from logging import getLogger
 from typing import Any, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy import func, or_, select
 
@@ -18,6 +18,7 @@ from .schemas import (
     AccountHealthCheckResponse,
     AccountHealthCheckResult,
     AccountListResponse,
+    AccountPrepareStatusResponse,
     AccountQrStartRequest,
     AccountQrStartResponse,
     AccountQrStatusRequest,
@@ -27,6 +28,8 @@ from .schemas import (
     AccountSmsRequest,
     AccountSmsStartResponse,
     AccountSmsVerifyRequest,
+    AccountSetupTemplateUpdate,
+    AccountSetupTemplatesResponse,
     AccountUploadResponse,
     ChatDiscoveryActionResponse,
     ChatDiscoveryApproveRequest,
@@ -35,6 +38,7 @@ from .schemas import (
     ChatDiscoveryTaskResponse,
     ChatImportJobListResponse,
     ChatImportJobResponse,
+    ChatInspectStatusResponse,
     ChatMessageListResponse,
     ChatMessageResponse,
     ChatTargetCreate,
@@ -97,6 +101,13 @@ from ..services.custom.chat_discovery_service import (
     run_discovery_task,
 )
 from ..services.custom.chat_import_service import import_chats_from_file, retry_import_errors
+from ..services.custom.chat_inspect_service import get_inspect_status, mark_inspect_running, run_inspect_comments
+from ..services.custom.account_prepare_service import (
+    get_prepare_status,
+    mark_prepare_running,
+    merge_setup_template,
+    prepare_accounts,
+)
 from ..services.custom.chat_join_service import create_chat_from_link, join_pending_chats
 from ..services.custom.chat_monitoring_service import scan_chats_and_process
 from ..services.custom.amocrm_service import (
@@ -709,6 +720,22 @@ async def sms_account_verify(
     )
 
 
+@router.get("/automations/{automation_id}/accounts/setup-templates", response_model=AccountSetupTemplatesResponse)
+async def get_account_setup_templates(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    return AccountSetupTemplatesResponse(templates=dict(automation.account_setup_templates or {}))
+
+
+@router.get("/automations/{automation_id}/accounts/prepare-status", response_model=AccountPrepareStatusResponse)
+async def account_prepare_status(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    return AccountPrepareStatusResponse(**get_prepare_status(automation_id))
+
+
 @router.get("/automations/{automation_id}/accounts/{account_id}", response_model=AccountResponse)
 async def get_account(
     automation_id: int,
@@ -744,6 +771,42 @@ async def bulk_upload_accounts(
         result = await bulk_upload_sessions(session, automation_id, archive, assign_class)
     background_tasks.add_task(AccountHealthWorker().check_all_accounts_for_automation, automation_id)
     return AccountUploadResponse(**result)
+
+
+@router.patch("/automations/{automation_id}/accounts/setup-templates", response_model=AccountSetupTemplatesResponse)
+async def update_account_setup_template(
+    automation_id: int,
+    payload: AccountSetupTemplateUpdate,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        auto_row = await session.get(CustomAutomation, automation_id)
+        if not auto_row:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Automation not found")
+        auto_row.account_setup_templates = merge_setup_template(
+            auto_row.account_setup_templates,
+            payload.account_class,
+            bio_template=payload.bio_template,
+            generate_unique=payload.generate_unique,
+        )
+        auto_row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        await session.commit()
+        await session.refresh(auto_row)
+        return AccountSetupTemplatesResponse(templates=dict(auto_row.account_setup_templates or {}))
+
+
+@router.post("/automations/{automation_id}/accounts/prepare", response_model=AccountPrepareStatusResponse)
+async def start_account_prepare(
+    automation_id: int,
+    background_tasks: BackgroundTasks,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    current = get_prepare_status(automation_id)
+    if current.get("status") == "running":
+        return AccountPrepareStatusResponse(**current)
+    mark_prepare_running(automation_id)
+    background_tasks.add_task(prepare_accounts, automation_id)
+    return AccountPrepareStatusResponse(status="running", alive=current.get("alive") or 0)
 
 
 @router.post("/automations/{automation_id}/accounts/bulk-classify", response_model=AccountBulkClassifyResponse)
@@ -841,6 +904,19 @@ async def bulk_update_profiles(
                 detail="No accounts to update",
             )
 
+        if data.save_as_template:
+            auto_row = await session.get(CustomAutomation, automation_id)
+            if auto_row is not None:
+                auto_row.account_setup_templates = merge_setup_template(
+                    auto_row.account_setup_templates,
+                    data.account_class,
+                    bio_template=data.bio_template,
+                    generate_unique=data.generate_unique,
+                    avatar_relative_path=avatar_relative_path,
+                )
+                auto_row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                await session.commit()
+
     worker = BulkProfileUpdateWorker()
     job_kwargs = {
         "avatar_relative_path": avatar_relative_path,
@@ -921,20 +997,37 @@ async def delete_account(
 async def list_chats(
     automation_id: int,
     join_status: Optional[str] = None,
-    limit: int = 50,
-    offset: int = 0,
+    comments_open: Optional[bool] = None,
+    comments_unchecked: Optional[bool] = None,
+    min_members: Optional[int] = Query(None, ge=0),
+    max_members: Optional[int] = Query(None, ge=0),
+    activity_within_hours: Optional[int] = Query(None, ge=1, le=24 * 90),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
     async with async_session_maker() as session:
-        stmt = select(ChatTarget).where(ChatTarget.custom_automation_id == automation_id)
+        filters = [ChatTarget.custom_automation_id == automation_id]
         if join_status:
-            stmt = stmt.where(ChatTarget.join_status == join_status)
-        stmt = stmt.order_by(ChatTarget.created_at.desc()).limit(limit).offset(offset)
+            filters.append(ChatTarget.join_status == join_status)
+        if comments_unchecked:
+            filters.append(ChatTarget.comments_open.is_(None))
+        elif comments_open is not None:
+            filters.append(ChatTarget.comments_open.is_(comments_open))
+        if min_members is not None:
+            filters.append(ChatTarget.members_count.is_not(None))
+            filters.append(ChatTarget.members_count >= min_members)
+        if max_members is not None:
+            filters.append(ChatTarget.members_count.is_not(None))
+            filters.append(ChatTarget.members_count <= max_members)
+        if activity_within_hours:
+            since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=activity_within_hours)
+            filters.append(ChatTarget.last_activity_at.is_not(None))
+            filters.append(ChatTarget.last_activity_at >= since)
+        stmt = select(ChatTarget).where(*filters).order_by(ChatTarget.created_at.desc()).limit(limit).offset(offset)
         result = await session.execute(stmt)
         items = result.scalars().all()
-        total = await session.scalar(
-            select(func.count(ChatTarget.id)).where(ChatTarget.custom_automation_id == automation_id)
-        )
+        total = await session.scalar(select(func.count(ChatTarget.id)).where(*filters))
         return ChatTargetListResponse(
             items=[ChatTargetResponse.model_validate(c) for c in items],
             total=total or 0,
@@ -1096,12 +1189,21 @@ async def bulk_import_chats(
 ):
     content = await archive.read()
     async with async_session_maker() as session:
-        job = await import_chats_from_file(
-            session,
-            automation_id=automation_id,
-            filename=archive.filename or "import.csv",
-            content=content,
-        )
+        try:
+            job = await import_chats_from_file(
+                session,
+                automation_id=automation_id,
+                filename=archive.filename or "import.csv",
+                content=content,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except Exception as exc:
+            logger.exception("Chat import failed: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Не удалось прочитать файл. Проверьте формат и размер.",
+            ) from exc
         return ChatImportJobResponse.model_validate(job)
 
 
@@ -1142,6 +1244,29 @@ async def retry_import_job(
         if not job or job.custom_automation_id != automation_id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Import job not found")
         return ChatImportJobResponse.model_validate(job)
+
+
+@router.post("/automations/{automation_id}/chats/inspect-comments", response_model=ChatInspectStatusResponse)
+async def start_inspect_comments(
+    automation_id: int,
+    background_tasks: BackgroundTasks,
+    force: bool = False,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    current = get_inspect_status(automation_id)
+    if current.get("status") == "running":
+        return ChatInspectStatusResponse(**current)
+    mark_inspect_running(automation_id)
+    background_tasks.add_task(run_inspect_comments, automation_id, force)
+    return ChatInspectStatusResponse(status="running", total=current.get("total") or 0)
+
+
+@router.get("/automations/{automation_id}/chats/inspect-status", response_model=ChatInspectStatusResponse)
+async def chat_inspect_status(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    return ChatInspectStatusResponse(**get_inspect_status(automation_id))
 
 
 @router.post("/automations/{automation_id}/chats/join")

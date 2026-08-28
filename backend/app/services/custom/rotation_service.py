@@ -12,12 +12,15 @@ from ...alembic.models import AccountClass, AccountPool, CustomAutomation, Custo
 
 logger = getLogger(__name__)
 
+_ALL_CLASSES = {item.value for item in AccountClass}
 ACTION_ALLOWED_CLASSES = {
     "commenting": {AccountClass.ONE_DAY.value, AccountClass.MID.value, AccountClass.TRUSTED.value},
     "dm": {AccountClass.TRUSTED.value, AccountClass.MID.value},
     "dmp_outreach": {AccountClass.TRUSTED.value},
     "discussion": {AccountClass.ONE_DAY.value, AccountClass.MID.value, AccountClass.TRUSTED.value},
     "shilling": {AccountClass.SHILLING.value},
+    "inspect": set(_ALL_CLASSES),
+    "prepare_join": set(_ALL_CLASSES),
 }
 _DM_ACTIONS = {"dm", "dmp_outreach"}
 
@@ -136,6 +139,34 @@ def _select_risk_weighted(eligible: list[tuple[PoolAccount, SocialAccount]]) -> 
         if cumulative >= threshold:
             return eligible[idx][1]
     return eligible[-1][1]
+
+
+async def list_alive_session_accounts(
+    session: AsyncSession,
+    automation_id: int,
+    *,
+    assigned_class: str | None = None,
+    exclude_banned: bool = True,
+) -> list[SocialAccount]:
+    """All connected pool accounts, any class. Used for comment inspect and preparation joins."""
+    pool = await _default_pool(session, automation_id)
+    if not pool:
+        return []
+    rows = await _load_pool_accounts(session, pool.id)
+    alive: list[SocialAccount] = []
+    for pool_account, social in rows:
+        if not social.is_active:
+            continue
+        if exclude_banned and social.is_banned:
+            continue
+        if not social.session_file_path and not getattr(social, "encrypted_session", None):
+            continue
+        if assigned_class and (
+            pool_account.assigned_class != assigned_class and social.account_class != assigned_class
+        ):
+            continue
+        alive.append(social)
+    return alive
 
 
 async def select_account_for_action(

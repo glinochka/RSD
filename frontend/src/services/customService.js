@@ -304,6 +304,39 @@ const customService = {
     return handleResponse(response);
   },
 
+  async getAccountSetupTemplates(automationId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ACCOUNTS_SETUP_TEMPLATES(automationId)}`,
+      {
+        method: 'GET',
+        headers: getAuthHeaders(),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async startAccountPrepare(automationId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ACCOUNTS_PREPARE(automationId)}`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async getAccountPrepareStatus(automationId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ACCOUNTS_PREPARE_STATUS(automationId)}`,
+      {
+        method: 'GET',
+        headers: getAuthHeaders(),
+      },
+    );
+    return handleResponse(response);
+  },
+
   async startAccountQr(automationId, assignClass = 'one_day') {
     const response = await fetch(
       `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ACCOUNTS_QR_START(automationId)}`,
@@ -440,10 +473,34 @@ const customService = {
     return handleResponse(response);
   },
 
-  async getChats(automationId, { joinStatus, limit, offset } = {}) {
+  async getChats(automationId, {
+    joinStatus,
+    commentsOpen,
+    commentsUnchecked,
+    minMembers,
+    maxMembers,
+    activityWithinHours,
+    limit,
+    offset,
+  } = {}) {
     const params = new URLSearchParams();
     if (joinStatus) {
       params.set('join_status', joinStatus);
+    }
+    if (commentsOpen === true || commentsOpen === false) {
+      params.set('comments_open', commentsOpen ? 'true' : 'false');
+    }
+    if (commentsUnchecked) {
+      params.set('comments_unchecked', 'true');
+    }
+    if (minMembers !== undefined && minMembers !== '' && minMembers !== null) {
+      params.set('min_members', String(minMembers));
+    }
+    if (maxMembers !== undefined && maxMembers !== '' && maxMembers !== null) {
+      params.set('max_members', String(maxMembers));
+    }
+    if (activityWithinHours) {
+      params.set('activity_within_hours', String(activityWithinHours));
     }
     if (limit !== undefined) {
       params.set('limit', String(limit));
@@ -524,6 +581,29 @@ const customService = {
       method: 'GET',
       headers: getAuthHeaders(),
     });
+    return handleResponse(response);
+  },
+
+  async inspectChatComments(automationId, force = false) {
+    const params = force ? '?force=true' : '';
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CHAT_INSPECT_COMMENTS(automationId)}${params}`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async getChatInspectStatus(automationId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CHAT_INSPECT_STATUS(automationId)}`,
+      {
+        method: 'GET',
+        headers: getAuthHeaders(),
+      },
+    );
     return handleResponse(response);
   },
 
@@ -941,7 +1021,7 @@ const customService = {
     return handleResponse(response);
   },
 
-  async bulkUpdateProfiles(automationId, { avatar, accountIds, accountClass, status, bioTemplate, generateUnique }) {
+  async bulkUpdateProfiles(automationId, { avatar, accountIds, accountClass, status, bioTemplate, generateUnique, saveAsTemplate }) {
     const formData = new FormData();
     if (avatar) {
       formData.append('avatar', avatar);
@@ -952,6 +1032,7 @@ const customService = {
       status: status || undefined,
       bio_template: bioTemplate || '',
       generate_unique: Boolean(generateUnique),
+      save_as_template: Boolean(saveAsTemplate),
     };
     formData.append('payload', JSON.stringify(payload));
 

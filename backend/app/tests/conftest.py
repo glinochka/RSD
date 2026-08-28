@@ -119,6 +119,8 @@ _ASYNC_SESSION_MAKER_PATCH_TARGETS = (
     "app.services.custom.neurocommenting_service.async_session_maker",
     "app.services.custom.shilling_service.async_session_maker",
     "app.services.custom.discussion_service.async_session_maker",
+    "app.services.custom.chat_inspect_service.async_session_maker",
+    "app.services.custom.account_prepare_service.async_session_maker",
     "app.services.custom.telegram_notify_bot_service.async_session_maker",
     "app.services.custom.scheduler_manager.async_session_maker",
 )

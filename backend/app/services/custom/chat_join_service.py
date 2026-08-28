@@ -289,6 +289,58 @@ async def create_chat_from_link(
     return chat
 
 
+async def join_loaded_chats_for_accounts(
+    session: AsyncSession,
+    automation_id: int,
+    account_ids: list[int] | None = None,
+) -> dict[str, Any]:
+    """Every alive account joins every loaded chat. Failures on one account do not unwind others."""
+    from .rotation_service import list_alive_session_accounts
+
+    accounts = await list_alive_session_accounts(session, automation_id)
+    if account_ids:
+        wanted = set(account_ids)
+        accounts = [account for account in accounts if account.id in wanted]
+    chats = (
+        await session.execute(
+            select(ChatTarget).where(
+                ChatTarget.custom_automation_id == automation_id,
+                ChatTarget.is_active.is_(True),
+                ChatTarget.provider == "telegram",
+            )
+        )
+    ).scalars().all()
+    joined_chats: set[int] = set()
+    attempts = 0
+    for account in accounts:
+        for chat_target in chats:
+            attempts += 1
+            result = await _try_join_chat(session, chat_target, account)
+            if result.get("status") == "joined":
+                joined_chats.add(chat_target.id)
+                if chat_target.join_status != ChatJoinStatus.JOINED.value:
+                    chat_target.join_status = ChatJoinStatus.JOINED.value
+                    chat_target.joined_at = result.get("joined_at") or _utc_now()
+                    chat_target.joined_by_account_id = result.get("joined_by_account_id")
+                    chat_target.last_join_error = None
+                    chat_target.next_join_attempt_at = None
+            elif result.get("status") == "rate_limited":
+                chat_target.last_join_error = result.get("error")
+                chat_target.next_join_attempt_at = result.get("next_join_attempt_at")
+                if chat_target.join_status != ChatJoinStatus.JOINED.value:
+                    chat_target.join_status = ChatJoinStatus.RATE_LIMITED.value
+            elif chat_target.join_status != ChatJoinStatus.JOINED.value:
+                chat_target.last_join_error = result.get("error")
+            chat_target.updated_at = _utc_now()
+        await session.commit()
+    return {
+        "accounts": len(accounts),
+        "chats": len(chats),
+        "attempts": attempts,
+        "joined_chats": len(joined_chats),
+    }
+
+
 async def join_pending_chats(
     session: AsyncSession,
     automation_id: int,

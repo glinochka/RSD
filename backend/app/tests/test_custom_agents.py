@@ -624,6 +624,98 @@ class TestChatImportAndDedup:
         ).scalars().all()
         assert len(chats) == 2
 
+    async def test_import_dedup_and_russian_excel(self, test_session: AsyncSession, custom_automation: CustomAutomation):
+        import io
+
+        import openpyxl
+
+        from app.alembic.models import ChatImportJob
+        from app.services.custom.chat_import_service import import_chats_from_file, parse_members_count, parse_relative_activity
+
+        assert parse_members_count(562514) == 562514
+        assert parse_members_count(526221431013646) is None
+        assert parse_members_count("17 000") == 17000
+        activity = parse_relative_activity("5 часов")
+        assert activity is not None
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Telegram"
+        ws.append(["Название", "Ссылка", "Тип", "Участники", "Активность", "Ключ"])
+        long_title = "К" * 400
+        ws.append(["Канал А", "https://t.me/insta_aaa", "channel", 1200, "5 часов", "Инстаграм"])
+        ws.append(["Дубль в файле", "https://t.me/insta_aaa", "channel", 1200, "1 час", "Инстаграм"])
+        ws.append(["Мусор участники", "https://t.me/insta_bbb", "channel", 526221431013646, "2 дня", "Инстаграм"])
+        ws.append([long_title, "https://t.me/insta_ccc", "channel", 500, "", "Инстаграм"])
+        buf = io.BytesIO()
+        wb.save(buf)
+
+        job = await import_chats_from_file(
+            test_session,
+            automation_id=custom_automation.id,
+            filename="Инстаграм.xlsx",
+            content=buf.getvalue(),
+        )
+        assert job.processed_rows == 3
+        assert job.duplicate_rows == 1
+        chats = (
+            await test_session.execute(
+                select(ChatTarget).where(ChatTarget.custom_automation_id == custom_automation.id)
+            )
+        ).scalars().all()
+        by_link = {chat.invite_link: chat for chat in chats}
+        assert by_link["https://t.me/insta_aaa"].members_count == 1200
+        assert by_link["https://t.me/insta_aaa"].last_activity_at is not None
+        assert by_link["https://t.me/insta_bbb"].members_count is None
+        assert len(by_link["https://t.me/insta_ccc"].title or "") == 255
+
+        job2 = await import_chats_from_file(
+            test_session,
+            automation_id=custom_automation.id,
+            filename="Инстаграм.xlsx",
+            content=buf.getvalue(),
+        )
+        assert job2.processed_rows == 0
+        assert job2.duplicate_rows == 4
+        again = (
+            await test_session.execute(
+                select(func.count(ChatTarget.id)).where(ChatTarget.custom_automation_id == custom_automation.id)
+            )
+        ).scalar_one()
+        assert again == 3
+        jobs = (
+            await test_session.execute(
+                select(ChatImportJob).where(ChatImportJob.custom_automation_id == custom_automation.id)
+            )
+        ).scalars().all()
+        assert jobs
+
+    async def test_instagram_xlsx_does_not_crash(self, test_session: AsyncSession, custom_automation: CustomAutomation):
+        from pathlib import Path
+
+        from app.services.custom.chat_import_service import import_chats_from_file
+
+        xlsx = Path(__file__).resolve().parents[3] / "Инстаграм.xlsx"
+        if not xlsx.exists():
+            pytest.skip("sample workbook missing")
+        job = await import_chats_from_file(
+            test_session,
+            automation_id=custom_automation.id,
+            filename=xlsx.name,
+            content=xlsx.read_bytes(),
+        )
+        assert job.processed_rows > 800
+        assert job.error_rows == 0
+        chats = (
+            await test_session.execute(
+                select(ChatTarget).where(ChatTarget.custom_automation_id == custom_automation.id)
+            )
+        ).scalars().all()
+        assert all(len(chat.title or "") <= 255 for chat in chats)
+        assert all((chat.invite_link or "")[:512] == (chat.invite_link or "") for chat in chats)
+        huge = [chat for chat in chats if chat.members_count and chat.members_count > 50_000_000]
+        assert huge == []
+
     async def test_message_dedup(self, test_session: AsyncSession, custom_automation: CustomAutomation):
         from app.services.custom.chat_monitoring_service import save_chat_message
 
@@ -664,6 +756,108 @@ class TestChatImportAndDedup:
             select(func.count()).select_from(ChatMessage).where(ChatMessage.chat_target_id == chat.id)
         )
         assert count == 1
+
+
+class TestCommentInspect:
+    async def _add_account(
+        self,
+        session: AsyncSession,
+        automation: CustomAutomation,
+        *,
+        account_class: str,
+        username: str,
+        phone: str,
+    ) -> SocialAccount:
+        from app.services.account_pool_service import get_or_create_default_pool
+
+        pool = await get_or_create_default_pool(session, automation.id)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number=phone,
+            username=username,
+            display_name=username,
+            account_class=account_class,
+            encrypted_session="mock_encrypted_session",
+            session_file_path=f"sessions/{username}.session",
+            is_active=True,
+            is_banned=False,
+        )
+        session.add(account)
+        await session.flush()
+        session.add(
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account.id,
+                assigned_class=account_class,
+                custom_automation_id=automation.id,
+            )
+        )
+        await session.commit()
+        await session.refresh(account)
+        return account
+
+    async def test_derive_comments_open(self):
+        from app.services.custom.chat_inspect_service import derive_comments_open
+
+        assert derive_comments_open(is_broadcast=True, linked_chat_id=123) is True
+        assert derive_comments_open(is_broadcast=True, linked_chat_id=None) is False
+        assert derive_comments_open(is_broadcast=True, linked_chat_id=123, discussion_send_banned=True) is False
+        assert derive_comments_open(is_broadcast=False, linked_chat_id=None, discussion_send_banned=False) is True
+
+    async def test_inspect_assigns_each_chat_once(
+        self, test_session: AsyncSession, test_engine, custom_automation: CustomAutomation
+    ):
+        from unittest.mock import patch
+
+        from sqlalchemy.ext.asyncio import async_sessionmaker
+
+        from app.services.custom.chat_inspect_service import CommentProbe, inspect_chats_comments
+
+        await self._add_account(
+            test_session, custom_automation, account_class=AccountClass.SHILLING.value, username="ins_a", phone="+79991110001"
+        )
+        await self._add_account(
+            test_session, custom_automation, account_class=AccountClass.ONE_DAY.value, username="ins_b", phone="+79991110002"
+        )
+        chats = []
+        for idx in range(3):
+            chat = ChatTarget(
+                custom_automation_id=custom_automation.id,
+                provider="telegram",
+                invite_link=f"https://t.me/inspect_{idx}",
+                title=f"Inspect {idx}",
+                chat_type="channel",
+                mode="monitoring",
+                source="bulk_import",
+                join_status="pending",
+                is_active=True,
+            )
+            test_session.add(chat)
+            chats.append(chat)
+        await test_session.commit()
+        seen: list[int] = []
+
+        class _CM:
+            async def __aenter__(self):
+                return object()
+
+            async def __aexit__(self, *args):
+                return False
+
+        async def fake_probe(_client, chat):
+            seen.append(chat.id)
+            return CommentProbe(comments_open=True, members_count=10)
+
+        factory = async_sessionmaker(test_engine, expire_on_commit=False, class_=AsyncSession)
+        with patch("app.services.custom.chat_inspect_service.TelegramAccountClient.for_account", return_value=_CM()):
+            with patch("app.services.custom.chat_inspect_service.probe_comments_readonly", side_effect=fake_probe):
+                result = await inspect_chats_comments(
+                    custom_automation.id, force=True, session_factory=factory
+                )
+
+        assert result["status"] == "completed"
+        assert sorted(seen) == sorted(chat.id for chat in chats)
+        assert len(seen) == 3
 
 
 class TestChatCreateAndJoin:
@@ -1527,6 +1721,52 @@ class TestShilling:
         await test_session.commit()
         result = await process_chat_target(test_session, custom_automation.id, chat)
         assert result["reason"] == "not_channel"
+
+    async def test_neurocommenting_skips_closed_comments_before_llm(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from unittest.mock import patch
+
+        from app.services.custom.neurocommenting_service import process_chat_target
+
+        chat = await self._add_chat(test_session, custom_automation, mode="monitoring", chat_type="channel")
+        chat.comments_open = False
+        custom_automation.is_neurocommenting_enabled = True
+        await test_session.commit()
+        with patch("app.services.custom.neurocommenting_service._generate_comment") as generate:
+            result = await process_chat_target(test_session, custom_automation.id, chat)
+        assert result["reason"] == "comments_closed"
+        generate.assert_not_called()
+
+    async def test_post_shilling_skips_llm_when_comments_closed(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from unittest.mock import patch
+
+        from app.services.custom.shilling_service import perform_shilling_dialogue
+
+        await self._add_account(
+            test_session, custom_automation, account_class=AccountClass.SHILLING.value, username="sh_a", phone="+79990000041"
+        )
+        await self._add_account(
+            test_session, custom_automation, account_class=AccountClass.SHILLING.value, username="sh_b", phone="+79990000042"
+        )
+        chat = await self._add_chat(test_session, custom_automation, mode="monitoring", chat_type="channel")
+        chat.comments_open = False
+        custom_automation.is_shilling_enabled = True
+        await test_session.commit()
+        with patch("app.services.custom.shilling_service.generate_shilling_dialogue") as generate:
+            result = await perform_shilling_dialogue(
+                test_session,
+                custom_automation,
+                chat,
+                action_type="shilling_post",
+                target_id="1:1",
+                target_type="chat_post",
+                comment_to=10,
+            )
+        assert result["reason"] == "comments_closed"
+        generate.assert_not_called()
 
     async def test_settings_require_two_shilling_accounts(
         self, test_session: AsyncSession, custom_automation: CustomAutomation

@@ -41,6 +41,9 @@ const CustomAutomationAccountsPage = () => {
   const [uploadError, setUploadError] = useState(null);
   const [uploadSuccess, setUploadSuccess] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadSummary, setUploadSummary] = useState(null);
+  const [prepareStatus, setPrepareStatus] = useState(null);
+  const [isPreparing, setIsPreparing] = useState(false);
   const [classifyMessage, setClassifyMessage] = useState(null);
   const [isClassifying, setIsClassifying] = useState(false);
   const [banStats, setBanStats] = useState(null);
@@ -92,6 +95,74 @@ const CustomAutomationAccountsPage = () => {
     loadBanStats();
   }, [loadBanStats]);
 
+  useEffect(() => {
+    if (!uploadSummary || !id) {
+      return undefined;
+    }
+    let stopped = false;
+    const tick = async () => {
+      try {
+        await loadBanStats();
+      } catch {
+        // ignore
+      }
+      if (!stopped) {
+        timer = window.setTimeout(tick, 4000);
+      }
+    };
+    let timer = window.setTimeout(tick, 2500);
+    const stop = window.setTimeout(() => {
+      stopped = true;
+      window.clearTimeout(timer);
+    }, 90000);
+    return () => {
+      stopped = true;
+      window.clearTimeout(timer);
+      window.clearTimeout(stop);
+    };
+  }, [uploadSummary, id, loadBanStats]);
+
+  const handlePrepare = async () => {
+    setIsPreparing(true);
+    setError(null);
+    try {
+      const started = await customService.startAccountPrepare(id);
+      setPrepareStatus(started);
+    } catch (err) {
+      setError(err.message || 'Не удалось начать подготовку');
+      setIsPreparing(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!prepareStatus || prepareStatus.status === 'completed' || prepareStatus.status === 'error' || !id) {
+      if (prepareStatus && prepareStatus.status !== 'running') {
+        setIsPreparing(false);
+      }
+      return undefined;
+    }
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const data = await customService.getAccountPrepareStatus(id);
+        if (!cancelled) {
+          setPrepareStatus(data);
+          if (data.status === 'completed') {
+            await loadAccounts();
+            await loadBanStats();
+          }
+        }
+      } catch {
+        // ignore
+      }
+    };
+    const timer = window.setInterval(poll, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [prepareStatus, id, loadAccounts, loadBanStats]);
+
   const handleHealthCheck = async () => {
     setHealthCheckMessage(null);
     setIsHealthChecking(true);
@@ -123,10 +194,17 @@ const CustomAutomationAccountsPage = () => {
     setIsUploading(true);
     try {
       const result = await customService.bulkUploadAccounts(id, file, filters.accountClass || 'one_day');
+      setUploadSummary({
+        created: result.created,
+        skipped: result.skipped,
+        errors: (result.errors || []).length,
+      });
+      setPrepareStatus(null);
       setUploadSuccess(
         `Загружено: ${result.created}, пропущено: ${result.skipped}, ошибок: ${result.errors.length}`,
       );
       await loadAccounts();
+      await loadBanStats();
     } catch (err) {
       setUploadError(err.message || 'Upload failed');
     } finally {
@@ -266,6 +344,48 @@ const CustomAutomationAccountsPage = () => {
       {uploadSuccess ? <p className="crm-flash">{uploadSuccess}</p> : null}
       {uploadError ? <p className="crm-flash crm-flash--error">{uploadError}</p> : null}
       {error ? <p className="crm-flash crm-flash--error">{error}</p> : null}
+
+      {uploadSummary ? (
+        <div className="settings-section">
+          <h3 className="settings-section-title">После залива</h3>
+          <div className="crm-stats">
+            <div className="crm-stat">
+              <span className="crm-stat-value">{uploadSummary.created}</span>
+              <span className="crm-stat-label">Залито сессий</span>
+            </div>
+            <div className="crm-stat">
+              <span className="crm-stat-value">{banStats ? banStats.active : '…'}</span>
+              <span className="crm-stat-label">Живые</span>
+            </div>
+          </div>
+          {prepareStatus?.status === 'running' ? (
+            <p className="form-hint">
+              Подготовка: профили {prepareStatus.profiles_done || 0}, вступили в чаты {prepareStatus.chats_joined || 0}
+            </p>
+          ) : null}
+          {prepareStatus?.status === 'completed' ? (
+            <p className="form-hint">
+              Готово: оформлено {prepareStatus.profiles_done || 0}, чатов {prepareStatus.chats_joined || 0}
+            </p>
+          ) : null}
+          {prepareStatus?.status === 'error' ? (
+            <p className="form-hint form-hint--error">{prepareStatus.error || 'Ошибка подготовки'}</p>
+          ) : null}
+          <p className="form-hint">
+            Оформление идёт по шаблонам из «Массовое обновление профилей». Затем аккаунты вступают в уже загруженные чаты.
+          </p>
+          <div className="settings-actions">
+            <button
+              type="button"
+              className="btn btn-black"
+              disabled={isPreparing || prepareStatus?.status === 'running'}
+              onClick={handlePrepare}
+            >
+              {isPreparing || prepareStatus?.status === 'running' ? 'Подготовка...' : 'Начать подготовку'}
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {banStats && banStats.alert ? (
         <div className="settings-section settings-section--danger">

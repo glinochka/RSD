@@ -1,24 +1,50 @@
 """Bulk import ChatTarget rows from CSV/XLSX files."""
+from __future__ import annotations
+
 import csv
 import io
 import logging
+import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...alembic.database import async_session_maker
-from ...alembic.models import ChatImportJob, ChatSource, ChatTarget, ChatJoinStatus, ChatMode
+from ...alembic.models import ChatImportJob, ChatJoinStatus, ChatMode, ChatSource, ChatTarget
 from ...config import settings
-from .telegram_invite import parse_telegram_chat_ref
+from .telegram_invite import TelegramChatRefError, parse_telegram_chat_ref
 
 logger = logging.getLogger(__name__)
 
-
 _PROVIDER = "telegram"
+MAX_IMPORT_BYTES = 20 * 1024 * 1024
+MAX_IMPORT_ROWS = 5000
+MAX_CELL_CHARS = 2048
+MAX_TITLE_CHARS = 255
+MAX_LINK_CHARS = 512
+MAX_TYPE_CHARS = 32
+MAX_DESCRIPTION_CHARS = 500
+MAX_ERROR_LOG = 50
+BATCH_COMMIT = 100
+MAX_PLAUSIBLE_MEMBERS = 50_000_000
+
+_LINK_KEYS = ("invite_link", "link", "url", "href", "ссылка")
+_TITLE_KEYS = ("title", "name", "chat_name", "название", "имя")
+_TYPE_KEYS = ("chat_type", "type", "тип")
+_ID_KEYS = ("external_chat_id", "chat_id", "id")
+_DESC_KEYS = ("description", "about", "описание")
+_MEMBERS_KEYS = ("members", "members_count", "participants", "subscribers", "участники", "подписчики")
+_ACTIVITY_KEYS = ("activity", "last_activity", "last_activity_at", "активность")
+_TOPIC_KEYS = ("ключ", "key", "topic", "keyword")
+
+_ACTIVITY_RE = re.compile(
+    r"(\d+)\s*"
+    r"(мин(?:ут[аы]?)?|час(?:а|ов)?|дн(?:я|ей)?|день|сут(?:ки|ок)?|недел[яиь]?|месяц(?:а|ев)?)",
+    re.IGNORECASE,
+)
 
 
 def _utc_now() -> datetime:
@@ -29,31 +55,116 @@ def _media_root() -> Path:
     return Path(settings.MEDIA_ROOT).resolve()
 
 
-def _normalize_link(link: str | None) -> str | None:
-    if not link:
+def _cell_text(value: Any) -> str | None:
+    if value is None:
         return None
-    link = link.strip()
-    if link in {"-", "nan", "null", "None"}:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, float):
+        if value != value:  # NaN
+            return None
+        if value.is_integer():
+            value = int(value)
+    text = str(value).strip()
+    if not text or text.lower() in {"-", "nan", "nat", "null", "none", "n/a"}:
         return None
-    return link
+    if len(text) > MAX_CELL_CHARS:
+        text = text[:MAX_CELL_CHARS]
+    return text
+
+
+def _normalize_header(raw: Any) -> str:
+    text = str(raw or "").replace("\ufeff", "").strip().lower().replace("ё", "е")
+    return " ".join(text.split())
+
+
+def _row_get(row: dict[str, Any], keys: tuple[str, ...]) -> str | None:
+    for key in keys:
+        value = _cell_text(row.get(key))
+        if value:
+            return value
+    for raw_key, raw_val in row.items():
+        header = _normalize_header(raw_key)
+        if any(header == key or header.startswith(f"{key} ") for key in keys):
+            value = _cell_text(raw_val)
+            if value:
+                return value
+    return None
+
+
+def parse_members_count(raw: Any) -> int | None:
+    """Drop Excel garbage (timestamps / huge ids). Keep plausible subscriber counts."""
+    if raw is None or isinstance(raw, bool):
+        return None
+    if isinstance(raw, datetime):
+        return None
+    if isinstance(raw, float):
+        if raw != raw:
+            return None
+        raw = int(raw) if raw.is_integer() else raw
+    if isinstance(raw, int):
+        n = raw
+    else:
+        text = _cell_text(raw)
+        if not text:
+            return None
+        digits = re.sub(r"[^\d]", "", text)
+        if not digits:
+            return None
+        try:
+            n = int(digits)
+        except ValueError:
+            return None
+    if n <= 0 or n > MAX_PLAUSIBLE_MEMBERS:
+        return None
+    return n
+
+
+def parse_relative_activity(raw: Any, *, now: datetime | None = None) -> datetime | None:
+    if isinstance(raw, datetime):
+        value = raw
+        if value.tzinfo is not None:
+            value = value.astimezone(timezone.utc).replace(tzinfo=None)
+        return value
+    text = _cell_text(raw)
+    if not text:
+        return None
+    match = _ACTIVITY_RE.search(text.replace(".", " "))
+    if not match:
+        return None
+    amount = int(match.group(1))
+    unit = match.group(2).lower()
+    if unit.startswith("мин"):
+        delta = timedelta(minutes=amount)
+    elif unit.startswith("час"):
+        delta = timedelta(hours=amount)
+    elif unit.startswith("недел"):
+        delta = timedelta(weeks=amount)
+    elif unit.startswith("месяц"):
+        delta = timedelta(days=30 * amount)
+    else:
+        delta = timedelta(days=amount)
+    return (now or _utc_now()) - delta
 
 
 def _normalize_invite(link: str | None) -> tuple[str | None, str | None]:
-    raw = _normalize_link(link)
+    raw = _cell_text(link)
     if not raw:
         return None, None
-    parsed = parse_telegram_chat_ref(raw)
+    try:
+        parsed = parse_telegram_chat_ref(raw)
+    except TelegramChatRefError:
+        return raw[:MAX_LINK_CHARS], None
     external_id = parsed.value if parsed.kind == "channel_id" else None
-    return parsed.canonical, external_id
+    return parsed.canonical[:MAX_LINK_CHARS], external_id
 
 
-def _normalize_title(title: str | None) -> str | None:
-    if not title:
-        return None
-    title = title.strip()
-    if title in {"-", "nan", "null", "None"}:
-        return None
-    return title
+def _dedup_key(invite_link: str | None, external_chat_id: str | None) -> str | None:
+    if invite_link:
+        return f"link:{invite_link.strip().lower()}"
+    if external_chat_id:
+        return f"id:{str(external_chat_id).strip().lower()}"
+    return None
 
 
 def _read_csv(content: bytes) -> list[dict[str, Any]]:
@@ -61,9 +172,18 @@ def _read_csv(content: bytes) -> list[dict[str, Any]]:
     reader = csv.DictReader(io.StringIO(text))
     rows = []
     for raw in reader:
-        row = {k.strip().lower(): (v.strip() if v else None) for k, v in raw.items()}
+        if len(rows) >= MAX_IMPORT_ROWS:
+            break
+        row = {_normalize_header(k): _cell_text(v) for k, v in raw.items() if k}
         rows.append(row)
     return rows
+
+
+def _pick_excel_sheet(wb):
+    for name in wb.sheetnames:
+        if str(name).strip().lower() == "telegram":
+            return wb[name]
+    return wb.active
 
 
 def _read_excel(content: bytes) -> list[dict[str, Any]]:
@@ -73,21 +193,27 @@ def _read_excel(content: bytes) -> list[dict[str, Any]]:
         raise RuntimeError("openpyxl is not installed; cannot import Excel files") from exc
 
     wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
-    ws = wb.active
-    rows = list(ws.iter_rows(values_only=True))
-    if not rows:
-        return []
-    headers = [str(cell).strip().lower() if cell else "" for cell in rows[0]]
-    result = []
-    for values in rows[1:]:
-        row = {}
-        for idx, header in enumerate(headers):
-            if not header:
-                continue
-            value = values[idx] if idx < len(values) else None
-            row[header] = str(value).strip() if value is not None else None
-        result.append(row)
-    return result
+    try:
+        ws = _pick_excel_sheet(wb)
+        rows_iter = ws.iter_rows(values_only=True)
+        header_row = next(rows_iter, None)
+        if not header_row:
+            return []
+        headers = [_normalize_header(cell) for cell in header_row]
+        result: list[dict[str, Any]] = []
+        for values in rows_iter:
+            if len(result) >= MAX_IMPORT_ROWS:
+                break
+            row: dict[str, Any] = {}
+            for idx, header in enumerate(headers):
+                if not header:
+                    continue
+                row[header] = values[idx] if idx < len(values) else None
+            if any(_cell_text(v) for v in row.values()):
+                result.append(row)
+        return result
+    finally:
+        wb.close()
 
 
 def _parse_rows(content: bytes, filename: str) -> list[dict[str, Any]]:
@@ -102,14 +228,84 @@ def _parse_rows(content: bytes, filename: str) -> list[dict[str, Any]]:
         return _read_excel(content)
 
 
+def parse_import_row(row: dict[str, Any], *, now: datetime | None = None) -> dict[str, Any]:
+    invite_link, invite_id = _normalize_invite(_row_get(row, _LINK_KEYS))
+    external_chat_id = _cell_text(_row_get(row, _ID_KEYS)) or invite_id
+    title = _cell_text(_row_get(row, _TITLE_KEYS))
+    if title:
+        title = title[:MAX_TITLE_CHARS]
+    description = _cell_text(_row_get(row, _DESC_KEYS))
+    topic = _cell_text(_row_get(row, _TOPIC_KEYS))
+    if not description and topic:
+        description = topic
+    if description:
+        description = description[:MAX_DESCRIPTION_CHARS]
+    chat_type = _cell_text(_row_get(row, _TYPE_KEYS))
+    if chat_type:
+        chat_type = chat_type[:MAX_TYPE_CHARS].lower()
+        if chat_type in {"канал", "channel", "broadcast"}:
+            chat_type = "channel"
+        elif chat_type in {"чат", "группа", "group", "megagroup", "chat"}:
+            chat_type = "chat"
+    members_count = parse_members_count(_row_get(row, _MEMBERS_KEYS) or row.get("участники"))
+    if members_count is None:
+        for key in _MEMBERS_KEYS:
+            if key in row:
+                members_count = parse_members_count(row.get(key))
+                break
+    last_activity_at = parse_relative_activity(
+        _row_get(row, _ACTIVITY_KEYS) or row.get("активность"),
+        now=now,
+    )
+    if not invite_link and not external_chat_id and not title:
+        raise ValueError("empty row")
+    return {
+        "invite_link": invite_link,
+        "external_chat_id": external_chat_id,
+        "title": title,
+        "description": description,
+        "chat_type": chat_type,
+        "members_count": members_count,
+        "last_activity_at": last_activity_at,
+        "dedup_key": _dedup_key(invite_link, external_chat_id),
+    }
+
+
+async def _existing_keys(session: AsyncSession, automation_id: int) -> set[str]:
+    result = await session.execute(
+        select(ChatTarget.invite_link, ChatTarget.external_chat_id).where(
+            ChatTarget.custom_automation_id == automation_id
+        )
+    )
+    keys: set[str] = set()
+    for invite_link, external_chat_id in result.all():
+        key = _dedup_key(invite_link, external_chat_id)
+        if key:
+            keys.add(key)
+        if invite_link:
+            try:
+                canonical = parse_telegram_chat_ref(invite_link).canonical
+                keys.add(_dedup_key(canonical, None) or "")
+            except TelegramChatRefError:
+                pass
+    keys.discard("")
+    return keys
+
+
 async def _save_import_file(automation_id: int, job_id: int, filename: str, content: bytes) -> str:
     root = _media_root()
     imports_dir = root / "chat_imports" / str(automation_id) / str(job_id)
     imports_dir.mkdir(parents=True, exist_ok=True)
-    safe_name = f"{int(time.time())}_{filename.replace(' ', '_')}"
+    safe_name = f"{int(time.time())}_{Path(filename).name.replace(' ', '_')[:80]}"
     target = imports_dir / safe_name
     target.write_bytes(content)
     return str(target.relative_to(root))
+
+
+def _append_error(errors: list[dict[str, Any]], row_idx: int, message: str) -> None:
+    if len(errors) >= MAX_ERROR_LOG:
+        return
+    errors.append({"row": row_idx, "error": str(message)[:255]})
 
 
 async def import_chats_from_file(
@@ -120,15 +316,21 @@ async def import_chats_from_file(
     content: bytes,
     created_by_admin_id: int | None = None,
 ) -> ChatImportJob:
+    if content is None:
+        raise ValueError("empty file")
+    if len(content) > MAX_IMPORT_BYTES:
+        raise ValueError("Файл слишком большой (больше 20 МБ)")
+
     rows = _parse_rows(content, filename)
     job = ChatImportJob(
         custom_automation_id=automation_id,
-        file_name=filename,
+        file_name=(filename or "import.xlsx")[:255],
         file_path=None,
         status="pending",
         total_rows=len(rows),
         processed_rows=0,
         error_rows=0,
+        duplicate_rows=0,
         error_log=[],
         created_by_admin_id=created_by_admin_id,
         created_at=_utc_now(),
@@ -141,45 +343,56 @@ async def import_chats_from_file(
     file_path = await _save_import_file(automation_id, job.id, filename, content)
     job.file_path = file_path
 
+    existing = await _existing_keys(session, automation_id)
+    seen: set[str] = set()
     created = 0
-    errors = []
+    duplicates = 0
+    errors: list[dict[str, Any]] = []
+    now = _utc_now()
+
     for idx, row in enumerate(rows, start=1):
         try:
-            invite_link, invite_id = _normalize_invite(row.get("invite_link") or row.get("link") or row.get("url"))
-            external_chat_id = _normalize_link(row.get("external_chat_id") or row.get("chat_id")) or invite_id
-            title = _normalize_title(row.get("title") or row.get("name") or row.get("chat_name"))
-            description = _normalize_title(row.get("description") or row.get("about"))
-            chat_type = _normalize_link(row.get("chat_type") or row.get("type"))
-
-            if not invite_link and not external_chat_id and not title:
-                raise ValueError("empty row")
-
+            parsed = parse_import_row(row, now=now)
+            key = parsed["dedup_key"]
+            if key and (key in existing or key in seen):
+                duplicates += 1
+                continue
+            if key:
+                seen.add(key)
             target = ChatTarget(
                 custom_automation_id=automation_id,
                 provider=_PROVIDER,
-                external_chat_id=external_chat_id,
-                invite_link=invite_link,
-                title=title,
-                description=description,
-                chat_type=chat_type,
+                external_chat_id=parsed["external_chat_id"],
+                invite_link=parsed["invite_link"],
+                title=parsed["title"],
+                description=parsed["description"],
+                chat_type=parsed["chat_type"],
+                members_count=parsed["members_count"],
+                last_activity_at=parsed["last_activity_at"],
                 mode=ChatMode.MONITORING.value,
                 source=ChatSource.BULK_IMPORT.value,
                 import_job_id=job.id,
                 join_status=ChatJoinStatus.PENDING.value,
                 join_attempts=0,
                 is_active=True,
-                created_at=_utc_now(),
-                updated_at=_utc_now(),
+                created_at=now,
+                updated_at=now,
             )
             session.add(target)
             created += 1
+            if created % BATCH_COMMIT == 0:
+                await session.flush()
         except Exception as exc:
-            errors.append({"row": idx, "error": str(exc)})
+            _append_error(errors, idx, str(exc))
 
     job.processed_rows = created
+    job.duplicate_rows = duplicates
     job.error_rows = len(errors)
     job.error_log = errors
-    job.status = "completed" if not errors else "completed_with_errors"
+    if created == 0 and duplicates and not errors:
+        job.status = "completed"
+    else:
+        job.status = "completed" if not errors else "completed_with_errors"
     job.updated_at = _utc_now()
     await session.commit()
     await session.refresh(job)
@@ -195,42 +408,50 @@ async def retry_import_errors(
         return None
     content = (_media_root() / job.file_path).read_bytes()
     rows = _parse_rows(content, job.file_name)
-
+    existing = await _existing_keys(session, job.custom_automation_id)
+    seen: set[str] = set()
     created = 0
+    now = _utc_now()
+    remaining = []
     for idx, row in enumerate(rows, start=1):
-        if any(err.get("row") == idx for err in job.error_log):
-            try:
-                invite_link, invite_id = _normalize_invite(row.get("invite_link") or row.get("link") or row.get("url"))
-                external_chat_id = _normalize_link(row.get("external_chat_id") or row.get("chat_id")) or invite_id
-                title = _normalize_title(row.get("title") or row.get("name") or row.get("chat_name"))
-                description = _normalize_title(row.get("description") or row.get("about"))
-                chat_type = _normalize_link(row.get("chat_type") or row.get("type"))
-                if not invite_link and not external_chat_id and not title:
-                    raise ValueError("empty row")
-                target = ChatTarget(
+        if not any(err.get("row") == idx for err in (job.error_log or [])):
+            continue
+        try:
+            parsed = parse_import_row(row, now=now)
+            key = parsed["dedup_key"]
+            if key and (key in existing or key in seen):
+                continue
+            if key:
+                seen.add(key)
+            session.add(
+                ChatTarget(
                     custom_automation_id=job.custom_automation_id,
                     provider=_PROVIDER,
-                    external_chat_id=external_chat_id,
-                    invite_link=invite_link,
-                    title=title,
-                    description=description,
-                    chat_type=chat_type,
+                    external_chat_id=parsed["external_chat_id"],
+                    invite_link=parsed["invite_link"],
+                    title=parsed["title"],
+                    description=parsed["description"],
+                    chat_type=parsed["chat_type"],
+                    members_count=parsed["members_count"],
+                    last_activity_at=parsed["last_activity_at"],
                     mode=ChatMode.MONITORING.value,
                     source=ChatSource.BULK_IMPORT.value,
                     import_job_id=job.id,
                     join_status=ChatJoinStatus.PENDING.value,
                     join_attempts=0,
                     is_active=True,
-                    created_at=_utc_now(),
-                    updated_at=_utc_now(),
+                    created_at=now,
+                    updated_at=now,
                 )
-                session.add(target)
-                created += 1
-            except Exception as exc:
-                logger.warning("Retry import row %s failed: %s", idx, exc)
+            )
+            created += 1
+        except Exception as exc:
+            logger.warning("Retry import row %s failed: %s", idx, exc)
+            remaining.append({"row": idx, "error": str(exc)[:255]})
 
     job.processed_rows += created
-    job.error_rows = max(0, job.error_rows - created)
+    job.error_rows = len(remaining)
+    job.error_log = remaining
     job.updated_at = _utc_now()
     await session.commit()
     await session.refresh(job)

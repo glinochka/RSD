@@ -323,6 +323,18 @@ async def perform_shilling_dialogue(
     if not await _telegram_ids_distinct(account_a, account_b):
         return {"status": "skipped", "reason": "same_telegram_user"}
 
+    if comment_to is not None:
+        from .chat_inspect_service import ensure_comment_access
+
+        if chat_target.comments_open is False:
+            return {"status": "skipped", "reason": "comments_closed"}
+        for speaker in (account_a, account_b):
+            probe = await ensure_comment_access(session, chat_target, speaker)
+            if probe.account_blocked:
+                return {"status": "skipped", "reason": "account_blocked"}
+            if probe.comments_open is False:
+                return {"status": "skipped", "reason": "comments_closed"}
+
     setup, reply = await generate_shilling_dialogue(
         session,
         automation,

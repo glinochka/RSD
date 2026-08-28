@@ -43,6 +43,7 @@ const CustomBulkProfileForm = ({ automationId, onSuccess }) => {
         status: form.status || undefined,
         bioTemplate: form.bioTemplate,
         generateUnique: form.generateUnique,
+        saveAsTemplate: true,
       });
       setMessage(`В очереди на обновление профилей: ${result.queued}`);
       setAvatar(null);
@@ -129,6 +130,7 @@ const CustomBulkProfileForm = ({ automationId, onSuccess }) => {
           >
             Выбрать фото
           </CustomFileButton>
+          <span className="form-hint">Шаблон сохранится для «Начать подготовку» по выбранному классу</span>
         </div>
         <div className="settings-actions">
           <button type="submit" disabled={isSubmitting} className="btn btn-black">

@@ -310,6 +310,7 @@ class AccountBulkUpdateProfilesRequest(BaseModel):
     status: str | None = None
     bio_template: str = ""
     generate_unique: bool = False
+    save_as_template: bool = False
 
 
 class AccountBulkUpdateProfilesResponse(BaseModel):
@@ -383,6 +384,24 @@ class AccountHealthCheckResponse(BaseModel):
     ok: int
     fallback: int
     error: int
+
+
+class AccountPrepareStatusResponse(BaseModel):
+    status: str
+    alive: int = 0
+    profiles_done: int = 0
+    chats_joined: int = 0
+    error: Optional[str] = None
+
+
+class AccountSetupTemplatesResponse(BaseModel):
+    templates: dict[str, Any] = {}
+
+
+class AccountSetupTemplateUpdate(BaseModel):
+    account_class: str = Field(..., min_length=1, max_length=32)
+    bio_template: str = ""
+    generate_unique: bool = False
 
 
 class AccountBanStatsResponse(BaseModel):
@@ -584,6 +603,11 @@ class ChatTargetResponse(BaseModel):
     is_active: bool
     last_scanned_at: Optional[datetime] = None
     last_join_error: Optional[str] = None
+    members_count: Optional[int] = None
+    last_activity_at: Optional[datetime] = None
+    comments_open: Optional[bool] = None
+    comments_checked_at: Optional[datetime] = None
+    comments_check_error: Optional[str] = None
     neurocommenting_config: Optional[dict] = None
     discussion_config: Optional[dict] = None
     shilling_config: Optional[dict] = None
@@ -606,6 +630,7 @@ class ChatImportJobResponse(BaseModel):
     total_rows: int
     processed_rows: int
     error_rows: int
+    duplicate_rows: int = 0
     error_log: list = []
     created_at: datetime
     updated_at: datetime
@@ -614,6 +639,16 @@ class ChatImportJobResponse(BaseModel):
 class ChatImportJobListResponse(BaseModel):
     items: list[ChatImportJobResponse]
     total: int
+
+
+class ChatInspectStatusResponse(BaseModel):
+    status: str
+    total: int = 0
+    checked: int = 0
+    comments_open: int = 0
+    comments_closed: int = 0
+    errors: int = 0
+    error: Optional[str] = None
 
 
 class ChatDiscoveryCreate(BaseModel):
