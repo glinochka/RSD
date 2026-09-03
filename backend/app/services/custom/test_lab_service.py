@@ -1,9 +1,12 @@
 """Admin-only test lab: join targets, shill, neurocomment, fake DMP — no delays."""
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,12 +15,13 @@ from .account_roles import effective_roles
 from .chat_join_service import create_chat_from_link, join_loaded_chats_for_accounts
 from .chat_scope import is_broadcast_channel, is_lab_chat
 from .dmp_one_service import process_dmp_lead
-from .neurocommenting_service import process_chat_target
-from .shilling_service import process_shilling_chat
+from .neurocommenting_service import _generate_comment, _send_comment, process_chat_target
+from .rotation_service import select_account_for_action
+from .shilling_service import perform_post_shilling, process_shilling_chat
 from .telegram_account_client import normalize_telegram_phone
 from .telegram_invite import TelegramChatRefError, parse_telegram_chat_ref
 from ...alembic.models import (
-    AccountRole,
+    AccountRole as AccountRoleEnum,
     ChatJoinStatus,
     ChatMode,
     ChatSource,
@@ -31,9 +35,32 @@ from ...alembic.models import (
 
 logger = logging.getLogger(__name__)
 
+CHANNEL_WATCH_SECONDS = 300
+CHANNEL_WATCH_POLL_SECONDS = 8
+CHANNEL_ACTIVITY_NEURO = "neurocommenting"
+CHANNEL_ACTIVITY_SHILLING = "shilling"
+
+ListPostsFn = Callable[..., Awaitable[list[Any]]]
+SleepFn = Callable[[float], Awaitable[None]]
+
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def lab_result(
+    *,
+    ok: bool,
+    detail: str,
+    status: str | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    return {
+        "ok": ok,
+        "status": status or ("success" if ok else "error"),
+        "detail": detail,
+        **extra,
+    }
 
 
 def normalize_target_username(raw: str | None) -> str:
@@ -58,6 +85,7 @@ def serialize_lab(automation: CustomAutomation, chats: list[ChatTarget] | None =
         "chat_username": automation.test_chat_username or "",
         "channel": _chat_payload(channel),
         "chat": _chat_payload(group),
+        "watch": current_channel_watch(automation.id),
     }
 
 
@@ -147,10 +175,26 @@ async def save_lab_targets(
     return serialize_lab(automation, chats)
 
 
-async def join_lab_targets(session: AsyncSession, automation_id: int) -> dict[str, Any]:
+async def join_lab_targets(
+    session: AsyncSession,
+    automation_id: int,
+    *,
+    channel_username: str | None = None,
+    chat_username: str | None = None,
+) -> dict[str, Any]:
+    automation = await session.get(CustomAutomation, automation_id)
+    if automation is None:
+        return lab_result(ok=False, detail="Автоматизация не найдена.")
+    if channel_username is not None or chat_username is not None:
+        await save_lab_targets(
+            session,
+            automation,
+            channel_username=channel_username,
+            chat_username=chat_username,
+        )
     chats = await list_lab_chats(session, automation_id)
     if not chats:
-        return {"status": "skipped", "reason": "no_targets", "joined_chats": 0}
+        return lab_result(ok=False, detail="Укажите канал или чат и нажмите «Вступить».")
     result = await join_loaded_chats_for_accounts(
         session,
         automation_id,
@@ -158,13 +202,46 @@ async def join_lab_targets(session: AsyncSession, automation_id: int) -> dict[st
         include_lab=True,
         rate_limit=False,
     )
-    return {"status": "ok", **result}
+    joined = int(result.get("joined_chats") or 0)
+    total = int(result.get("chats") or len(chats))
+    if joined:
+        return lab_result(
+            ok=True,
+            detail=f"Вступили в {joined} из {total} целей.",
+            **result,
+        )
+    return lab_result(
+        ok=False,
+        detail="Не удалось вступить ни в одну цель. Проверьте аккаунты и ссылки.",
+        **result,
+    )
+
+
+async def _has_role(session: AsyncSession, automation_id: int, role: str, *, min_count: int = 1) -> bool:
+    result = await session.execute(
+        select(SocialAccount, PoolAccount)
+        .join(PoolAccount, PoolAccount.social_account_id == SocialAccount.id)
+        .where(
+            PoolAccount.custom_automation_id == automation_id,
+            SocialAccount.is_active.is_(True),
+            SocialAccount.is_banned.is_(False),
+        )
+    )
+    count = 0
+    for social, pool in result.all():
+        if role in effective_roles(pool, social):
+            count += 1
+            if count >= min_count:
+                return True
+    return False
 
 
 async def activate_lab_shilling(session: AsyncSession, automation: CustomAutomation) -> dict[str, Any]:
     chats = [chat for chat in await list_lab_chats(session, automation.id) if not is_broadcast_channel(chat)]
     if not chats:
-        return {"status": "skipped", "reason": "no_chat"}
+        return lab_result(ok=False, detail="Нет целевого чата. Укажите чат и нажмите «Вступить».")
+    if not await _has_role(session, automation.id, AccountRoleEnum.SHILLING.value, min_count=2):
+        return lab_result(ok=False, detail="Нужно минимум 2 живых аккаунта с функцией «Шиллинг».")
     sent = 0
     results = []
     for chat in chats:
@@ -182,17 +259,24 @@ async def activate_lab_shilling(session: AsyncSession, automation: CustomAutomat
         results.append({"chat_id": chat.id, **outcome})
         if outcome.get("status") == "ok":
             sent += 1
-    return {"status": "ok" if sent else "skipped", "dialogues_sent": sent, "results": results}
+    if sent:
+        return lab_result(ok=True, detail=f"Шиллинг в чате выполнен ({sent} диалогов).", sent=sent, results=results)
+    reasons = [item.get("reason") or item.get("status") for item in results]
+    detail = "Шиллинг в чате не выполнен."
+    if reasons:
+        detail = f"{detail} {'; '.join(str(r) for r in reasons if r)}"
+    return lab_result(ok=False, detail=detail, sent=0, results=results)
 
 
 async def run_lab_neurocommenting(session: AsyncSession, automation_id: int) -> dict[str, Any]:
+    """Immediate scan — kept for scheduler compatibility."""
     chats = [
         chat
         for chat in await list_lab_chats(session, automation_id)
         if is_broadcast_channel(chat)
     ]
     if not chats:
-        return {"status": "skipped", "reason": "no_channel"}
+        return lab_result(ok=False, detail="Нет целевого канала.")
     sent = 0
     results = []
     for chat in chats:
@@ -205,7 +289,9 @@ async def run_lab_neurocommenting(session: AsyncSession, automation_id: int) -> 
         )
         results.append({"chat_id": chat.id, **outcome})
         sent += int(outcome.get("sent") or 0)
-    return {"status": "ok", "comments_sent": sent, "results": results}
+    if sent:
+        return lab_result(ok=True, detail=f"Комментарии отправлены: {sent}.", sent=sent, results=results)
+    return lab_result(ok=False, detail="Комментарии не отправлены.", sent=0, results=results)
 
 
 async def simulate_dmp(
@@ -215,15 +301,16 @@ async def simulate_dmp(
 ) -> dict[str, Any]:
     phone = normalize_telegram_phone(phone) or (phone or "").strip()
     if not phone:
-        return {"status": "error", "reason": "empty_phone"}
+        return lab_result(ok=False, detail="Введите номер получателя.")
 
     result = await session.execute(
         select(SocialAccount, PoolAccount)
         .join(PoolAccount, PoolAccount.social_account_id == SocialAccount.id)
         .where(PoolAccount.custom_automation_id == automation.id)
     )
+    rows = list(result.all())
     target_account = None
-    for social, _pool in result.all():
+    for social, _pool in rows:
         number = normalize_telegram_phone(social.phone_number or "") or (social.phone_number or "")
         if number and number == phone:
             target_account = social
@@ -239,22 +326,13 @@ async def simulate_dmp(
             contact_type = "phone"
             contact_value = target_account.phone_number
 
-    dmp_accounts = await session.execute(
-        select(SocialAccount, PoolAccount)
-        .join(PoolAccount, PoolAccount.social_account_id == SocialAccount.id)
-        .where(
-            PoolAccount.custom_automation_id == automation.id,
-            SocialAccount.is_active.is_(True),
-            SocialAccount.is_banned.is_(False),
-        )
-    )
     has_dmp_role = False
-    for social, pool in dmp_accounts.all():
-        if AccountRole.DMP.value in effective_roles(pool, social):
+    for social, pool in rows:
+        if AccountRoleEnum.DMP.value in effective_roles(pool, social):
             has_dmp_role = True
             break
     if not has_dmp_role:
-        return {"status": "skipped", "reason": "no_dmp_account"}
+        return lab_result(ok=False, detail="Нет живого аккаунта с функцией «DMP».")
 
     lead = CustomLead(
         custom_automation_id=automation.id,
@@ -270,11 +348,301 @@ async def simulate_dmp(
     session.add(lead)
     await session.flush()
     outcome = await process_dmp_lead(session, automation, lead)
-    return {
-        "status": "ok",
-        "lead_id": lead.id,
-        "found_account_id": target_account.id if target_account else None,
-        "contact_type": lead.contact_type,
-        "contact_value": lead.contact_value,
+    outreach = outcome.get("outreach")
+    if outreach or outcome.get("status") in {"warming", "transferred", "converted"}:
+        return lab_result(
+            ok=True,
+            detail=f"DMP выполнен для @{contact_value.lstrip('@') if contact_type == 'telegram' else contact_value}.",
+            lead_id=lead.id,
+            found_account_id=target_account.id if target_account else None,
+            **outcome,
+        )
+    reason = outcome.get("reason") or outcome.get("status") or "неизвестно"
+    return lab_result(
+        ok=False,
+        detail=f"DMP не выполнен: {reason}.",
+        lead_id=lead.id,
+        found_account_id=target_account.id if target_account else None,
         **outcome,
-    }
+    )
+
+
+@dataclass
+class ChannelWatch:
+    automation_id: int
+    activity: str
+    status: str
+    detail: str
+    started_at: float
+    wait_seconds: int
+    seen_ids: set[int] = field(default_factory=set)
+    post_id: int | None = None
+    ok: bool | None = None
+    task: asyncio.Task[None] | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        elapsed = max(0, int(time.monotonic() - self.started_at))
+        left = max(0, self.wait_seconds - elapsed) if self.status == "waiting" else 0
+        return lab_result(
+            ok=bool(self.ok) if self.ok is not None else False,
+            status=self.status,
+            detail=self.detail,
+            activity=self.activity,
+            seconds_left=left,
+            post_id=self.post_id,
+        )
+
+
+_WATCHES: dict[int, ChannelWatch] = {}
+_WATCH_LOCK = asyncio.Lock()
+
+
+def current_channel_watch(automation_id: int) -> dict[str, Any] | None:
+    watch = _WATCHES.get(automation_id)
+    if watch is None:
+        return None
+    return watch.as_dict()
+
+
+async def _list_channel_posts(
+    session: AsyncSession,
+    automation_id: int,
+    chat_target: ChatTarget,
+    *,
+    limit: int = 20,
+) -> list[Any]:
+    account = await select_account_for_action(session, automation_id, "commenting", consume_quota=False)
+    if account is None:
+        account = await select_account_for_action(session, automation_id, "shilling", consume_quota=False)
+    if account is None:
+        raise RuntimeError("Нет живых аккаунтов для чтения канала.")
+    from .chat_inspect_service import probe_comments_readonly
+    from .chat_scope import apply_entity_metadata
+    from .telegram_account_client import TelegramAccountClient
+    from .telegram_invite import chat_entity_key
+
+    async with TelegramAccountClient.for_account(account) as client:
+        entity = await client.get_entity(chat_entity_key(chat_target))
+        apply_entity_metadata(chat_target, entity)
+        history = await client.client.get_messages(entity, limit=limit)
+    posts = [msg for msg in history if msg and getattr(msg, "id", None) is not None]
+    posts.sort(key=lambda msg: int(msg.id))
+    return posts
+
+
+async def start_channel_activity(
+    session: AsyncSession,
+    automation: CustomAutomation,
+    activity: str,
+    *,
+    wait_seconds: int = CHANNEL_WATCH_SECONDS,
+    poll_seconds: int = CHANNEL_WATCH_POLL_SECONDS,
+    list_posts: ListPostsFn | None = None,
+    sleeper: SleepFn | None = None,
+    spawn: bool = True,
+) -> dict[str, Any]:
+    activity = (activity or "").strip().lower()
+    if activity not in {CHANNEL_ACTIVITY_NEURO, CHANNEL_ACTIVITY_SHILLING}:
+        return lab_result(ok=False, detail="Выберите нейрокомментинг или шиллинг в комментариях.")
+
+    chats = [chat for chat in await list_lab_chats(session, automation.id) if is_broadcast_channel(chat)]
+    if not chats:
+        return lab_result(ok=False, detail="Нет целевого канала. Укажите канал и нажмите «Вступить».")
+    channel = chats[0]
+    if channel.join_status != ChatJoinStatus.JOINED.value:
+        return lab_result(ok=False, detail="Аккаунты ещё не вступили в канал. Сначала нажмите «Вступить».")
+
+    if activity == CHANNEL_ACTIVITY_NEURO:
+        if not await _has_role(session, automation.id, AccountRoleEnum.NEUROCOMMENTING.value):
+            return lab_result(ok=False, detail="Нет живых аккаунтов с функцией «Нейрокомментинг».")
+    elif not await _has_role(session, automation.id, AccountRoleEnum.SHILLING.value, min_count=2):
+        return lab_result(ok=False, detail="Для шиллинга в комментариях нужно минимум 2 живых аккаунта с функцией «Шиллинг».")
+
+    list_posts_fn = list_posts or (
+        lambda s, _automation, chat, limit=20: _list_channel_posts(s, automation.id, chat, limit=limit)
+    )
+    try:
+        existing = await list_posts_fn(session, automation, channel, limit=20)
+    except Exception as exc:
+        logger.exception("test lab failed to snapshot channel posts")
+        return lab_result(ok=False, detail=f"Не удалось прочитать канал: {exc}")
+
+    seen_ids = {int(getattr(post, "id")) for post in existing if getattr(post, "id", None) is not None}
+    label = "нейрокомментинг" if activity == CHANNEL_ACTIVITY_NEURO else "шиллинг в комментариях"
+    watch = ChannelWatch(
+        automation_id=automation.id,
+        activity=activity,
+        status="waiting",
+        detail=f"Ждём новый пост в канале (до {wait_seconds // 60} мин.), затем запустим {label}.",
+        started_at=time.monotonic(),
+        wait_seconds=wait_seconds,
+        seen_ids=seen_ids,
+        ok=None,
+    )
+    async with _WATCH_LOCK:
+        previous = _WATCHES.get(automation.id)
+        if previous and previous.task and not previous.task.done():
+            previous.task.cancel()
+        _WATCHES[automation.id] = watch
+        if spawn:
+            watch.task = asyncio.create_task(
+                _run_channel_watch(
+                    automation.id,
+                    channel.id,
+                    activity,
+                    wait_seconds=wait_seconds,
+                    poll_seconds=poll_seconds,
+                    list_posts=list_posts,
+                    sleeper=sleeper,
+                )
+            )
+    return watch.as_dict()
+
+
+async def get_channel_activity_status(automation_id: int) -> dict[str, Any]:
+    watch = current_channel_watch(automation_id)
+    if watch is None:
+        return lab_result(ok=False, status="idle", detail="Ожидание поста не запущено.")
+    return watch
+
+
+async def _run_channel_watch(
+    automation_id: int,
+    channel_id: int,
+    activity: str,
+    *,
+    wait_seconds: int,
+    poll_seconds: int,
+    list_posts: ListPostsFn | None,
+    sleeper: SleepFn | None,
+) -> None:
+    from ...alembic.database import async_session_maker
+
+    sleep = sleeper or asyncio.sleep
+    deadline = time.monotonic() + wait_seconds
+    first_tick = True
+    try:
+        while time.monotonic() < deadline:
+            if not first_tick:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                await sleep(min(poll_seconds, remaining))
+            first_tick = False
+            async with async_session_maker() as session:
+                automation = await session.get(CustomAutomation, automation_id)
+                channel = await session.get(ChatTarget, channel_id)
+                watch = _WATCHES.get(automation_id)
+                if automation is None or channel is None or watch is None or watch.activity != activity:
+                    return
+                list_posts_fn = list_posts or (
+                    lambda s, _automation, chat, limit=8: _list_channel_posts(s, automation_id, chat, limit=limit)
+                )
+                try:
+                    posts = await list_posts_fn(session, automation, channel, limit=8)
+                except Exception as exc:
+                    watch.status = "error"
+                    watch.ok = False
+                    watch.detail = f"Не удалось прочитать канал: {exc}"
+                    return
+                fresh = [
+                    post
+                    for post in posts
+                    if getattr(post, "id", None) is not None and int(post.id) not in watch.seen_ids
+                ]
+                if not fresh:
+                    continue
+                post = fresh[0]
+                watch.post_id = int(post.id)
+                outcome = await _react_to_post(session, automation, channel, post, activity)
+                await session.commit()
+                watch.ok = bool(outcome.get("ok"))
+                watch.status = "success" if watch.ok else "error"
+                watch.detail = str(outcome.get("detail") or "Активность не выполнена.")
+                watch.post_id = int(outcome.get("post_id") or post.id)
+                return
+        watch = _WATCHES.get(automation_id)
+        if watch is not None and watch.status == "waiting":
+            watch.status = "timeout"
+            watch.ok = False
+            watch.detail = "За 5 минут новый пост не вышел. Активность не выполнялась."
+    except asyncio.CancelledError:
+        watch = _WATCHES.get(automation_id)
+        if watch is not None and watch.status == "waiting":
+            watch.status = "error"
+            watch.ok = False
+            watch.detail = "Ожидание остановлено."
+        raise
+    except Exception:
+        logger.exception("test lab channel watch failed")
+        watch = _WATCHES.get(automation_id)
+        if watch is not None:
+            watch.status = "error"
+            watch.ok = False
+            watch.detail = "Внутренняя ошибка ожидания поста."
+
+
+async def _react_to_post(
+    session: AsyncSession,
+    automation: CustomAutomation,
+    channel: ChatTarget,
+    post: Any,
+    activity: str,
+) -> dict[str, Any]:
+    post_id = int(getattr(post, "id"))
+    post_text = str(getattr(post, "text", None) or getattr(post, "message", None) or "")
+
+    if activity == CHANNEL_ACTIVITY_SHILLING:
+        outcome = await perform_post_shilling(
+            session,
+            automation,
+            channel,
+            post_id,
+            post_text=post_text,
+            delay_seconds=0,
+        )
+        if outcome.get("status") == "ok":
+            return lab_result(
+                ok=True,
+                detail="Шиллинг в комментариях выполнен.",
+                post_id=post_id,
+                **outcome,
+            )
+        reason = outcome.get("reason") or outcome.get("status") or "неизвестно"
+        return lab_result(
+            ok=False,
+            detail=f"Шиллинг в комментариях не выполнен: {reason}.",
+            post_id=post_id,
+            **outcome,
+        )
+
+    account = await select_account_for_action(session, automation.id, "commenting", consume_quota=False)
+    if account is None:
+        return lab_result(ok=False, detail="Нет живых аккаунтов с функцией «Нейрокомментинг».", post_id=post_id)
+    comment = await _generate_comment(
+        session,
+        automation.id,
+        post_text=post_text,
+        chat_title=channel.title or "",
+    )
+    if not comment:
+        return lab_result(ok=False, detail="Не удалось сгенерировать комментарий.", post_id=post_id)
+    sent = await _send_comment(
+        session,
+        automation.id,
+        channel,
+        account,
+        post_id,
+        comment,
+        post_text=post_text,
+    )
+    if sent:
+        return lab_result(ok=True, detail="Комментарий оставлен.", post_id=post_id, comment=comment)
+    return lab_result(ok=False, detail="Не удалось отправить комментарий.", post_id=post_id)
+
+
+def reset_channel_watches() -> None:
+    for watch in list(_WATCHES.values()):
+        if watch.task and not watch.task.done():
+            watch.task.cancel()
+    _WATCHES.clear()

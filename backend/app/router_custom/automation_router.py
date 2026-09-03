@@ -33,7 +33,10 @@ from .schemas import (
     AccountSetupTemplatesResponse,
     AccountUploadResponse,
     AccountWarmupStartResponse,
+    TestLabActionResponse,
+    TestLabChannelActivityRequest,
     TestLabDmpRequest,
+    TestLabJoinRequest,
     TestLabResponse,
     TestLabUpdate,
     ChatDiscoveryActionResponse,
@@ -175,12 +178,14 @@ from ..services.custom.account_warmup_service import (
 from ..services.custom.account_roles import normalize_roles
 from ..services.custom.test_lab_service import (
     activate_lab_shilling,
+    get_channel_activity_status,
     join_lab_targets,
     list_lab_chats,
     run_lab_neurocommenting,
     save_lab_targets,
     serialize_lab,
     simulate_dmp,
+    start_channel_activity,
 )
 from ..services.custom.shilling_service import encode_shilling_lines, parse_shilling_lines, run_shilling_pass
 from ..utils.JWT import create_access_token
@@ -930,17 +935,24 @@ async def update_test_lab(
         return TestLabResponse.model_validate(data)
 
 
-@router.post("/automations/{automation_id}/test/join")
+@router.post("/automations/{automation_id}/test/join", response_model=TestLabActionResponse)
 async def join_test_lab(
     automation_id: int,
+    payload: TestLabJoinRequest | None = None,
     automation: CustomAutomation = Depends(get_current_custom_automation),
     admin=Depends(get_current_custom_admin),
 ):
     async with async_session_maker() as session:
-        return await join_lab_targets(session, automation_id)
+        body = payload or TestLabJoinRequest()
+        return await join_lab_targets(
+            session,
+            automation_id,
+            channel_username=body.channel_username,
+            chat_username=body.chat_username,
+        )
 
 
-@router.post("/automations/{automation_id}/test/shilling")
+@router.post("/automations/{automation_id}/test/shilling", response_model=TestLabActionResponse)
 async def run_test_lab_shilling(
     automation_id: int,
     automation: CustomAutomation = Depends(get_current_custom_automation),
@@ -951,7 +963,7 @@ async def run_test_lab_shilling(
         return await activate_lab_shilling(session, db_automation)
 
 
-@router.post("/automations/{automation_id}/test/neurocommenting")
+@router.post("/automations/{automation_id}/test/neurocommenting", response_model=TestLabActionResponse)
 async def run_test_lab_neurocommenting(
     automation_id: int,
     automation: CustomAutomation = Depends(get_current_custom_automation),
@@ -961,7 +973,28 @@ async def run_test_lab_neurocommenting(
         return await run_lab_neurocommenting(session, automation_id)
 
 
-@router.post("/automations/{automation_id}/test/dmp")
+@router.get("/automations/{automation_id}/test/channel-activity", response_model=TestLabActionResponse)
+async def get_test_lab_channel_activity(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+    admin=Depends(get_current_custom_admin),
+):
+    return await get_channel_activity_status(automation_id)
+
+
+@router.post("/automations/{automation_id}/test/channel-activity", response_model=TestLabActionResponse)
+async def start_test_lab_channel_activity(
+    automation_id: int,
+    payload: TestLabChannelActivityRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+    admin=Depends(get_current_custom_admin),
+):
+    async with async_session_maker() as session:
+        db_automation = await session.merge(automation)
+        return await start_channel_activity(session, db_automation, payload.activity)
+
+
+@router.post("/automations/{automation_id}/test/dmp", response_model=TestLabActionResponse)
 async def run_test_lab_dmp(
     automation_id: int,
     payload: TestLabDmpRequest,

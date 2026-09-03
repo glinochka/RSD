@@ -833,16 +833,44 @@ class TestLabChatPayload(BaseModel):
     last_join_error: Optional[str] = None
 
 
+class TestLabWatchPayload(BaseModel):
+    ok: bool = False
+    status: str = "idle"
+    detail: str = ""
+    activity: Optional[str] = None
+    seconds_left: int = 0
+    post_id: Optional[int] = None
+
+
 class TestLabResponse(BaseModel):
     channel_username: str = ""
     chat_username: str = ""
     channel: Optional[TestLabChatPayload] = None
     chat: Optional[TestLabChatPayload] = None
+    watch: Optional[TestLabWatchPayload] = None
 
 
 class TestLabUpdate(BaseModel):
     channel_username: Optional[str] = None
     chat_username: Optional[str] = None
+
+
+class TestLabJoinRequest(BaseModel):
+    channel_username: Optional[str] = None
+    chat_username: Optional[str] = None
+
+
+class TestLabChannelActivityRequest(BaseModel):
+    activity: str = Field(..., min_length=3, max_length=32)
+
+
+class TestLabActionResponse(BaseModel):
+    ok: bool
+    status: str
+    detail: str
+    activity: Optional[str] = None
+    seconds_left: Optional[int] = None
+    post_id: Optional[int] = None
 
 
 class TestLabDmpRequest(BaseModel):

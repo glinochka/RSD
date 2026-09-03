@@ -432,3 +432,50 @@
   border: 1px solid var(--color-border);
   border-radius: 8px;
 }
+
+.test-lab-status {
+  margin-top: var(--spacing-md);
+  padding: var(--spacing-md);
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: #f9fafb;
+}
+
+.test-lab-status strong {
+  display: block;
+  margin-bottom: var(--spacing-xs);
+  font-size: 0.9375rem;
+}
+
+.test-lab-status p {
+  margin: 0;
+  font-size: 0.9375rem;
+  color: var(--color-text-secondary);
+}
+
+.test-lab-status--success {
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+
+.test-lab-status--success strong {
+  color: #166534;
+}
+
+.test-lab-status--waiting {
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+
+.test-lab-status--waiting strong {
+  color: #1d4ed8;
+}
+
+.test-lab-status--error {
+  border-color: #fca5a5;
+  background: #fef2f2;
+}
+
+.test-lab-status--error strong {
+  color: #991b1b;
+}

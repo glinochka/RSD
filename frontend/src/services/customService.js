@@ -501,12 +501,13 @@ const customService = {
     return handleResponse(response);
   },
 
-  async joinTestLab(automationId) {
+  async joinTestLab(automationId, data = {}) {
     const response = await fetch(
       `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_TEST_JOIN(automationId)}`,
       {
         method: 'POST',
         headers: getAuthHeaders(),
+        body: JSON.stringify(data),
       },
     );
     return handleResponse(response);
@@ -517,6 +518,29 @@ const customService = {
       `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_TEST_SHILLING(automationId)}`,
       {
         method: 'POST',
+        headers: getAuthHeaders(),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async startTestLabChannelActivity(automationId, activity) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_TEST_CHANNEL_ACTIVITY(automationId)}`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ activity }),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async getTestLabChannelActivity(automationId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_TEST_CHANNEL_ACTIVITY(automationId)}`,
+      {
+        method: 'GET',
         headers: getAuthHeaders(),
       },
     );

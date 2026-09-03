@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Navigate, useParams } from 'react-router-dom';
 import customService from '../../../services/customService';
 import { useCustomAuth } from '../../../components/custom/useCustomAuth';
@@ -6,26 +6,64 @@ import { NAVIGATION_ROUTES } from '../../../config/constants';
 import '../../../styles/projectSettingsPage.css';
 import '../../../styles/projectCRMPage.css';
 
-const formatResult = (value) => {
-  if (value == null) {
-    return '';
-  }
-  if (typeof value === 'string') {
-    return value;
-  }
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-};
-
 const targetLabel = (target) => {
   if (!target) {
     return 'ещё не создан';
   }
   const name = target.title || target.username || `#${target.id}`;
   return `${name} · ${target.join_status || 'pending'}`;
+};
+
+const statusTone = (result) => {
+  if (!result) {
+    return '';
+  }
+  if (result.status === 'waiting') {
+    return 'test-lab-status--waiting';
+  }
+  if (result.ok || result.status === 'success') {
+    return 'test-lab-status--success';
+  }
+  return 'test-lab-status--error';
+};
+
+const statusTitle = (result) => {
+  if (!result) {
+    return '';
+  }
+  if (result.status === 'waiting') {
+    return 'Ждём';
+  }
+  if (result.ok || result.status === 'success') {
+    return 'Успешно';
+  }
+  if (result.status === 'timeout') {
+    return 'Таймаут';
+  }
+  return 'Ошибка';
+};
+
+const formatSeconds = (seconds) => {
+  const left = Math.max(0, Number(seconds) || 0);
+  const mins = Math.floor(left / 60);
+  const secs = left % 60;
+  return `${mins}:${String(secs).padStart(2, '0')}`;
+};
+
+const TestLabStatus = ({ result }) => {
+  if (!result) {
+    return null;
+  }
+  return (
+    <div className={`test-lab-status ${statusTone(result)}`}>
+      <strong>{statusTitle(result)}</strong>
+      <p>{result.detail}</p>
+      {result.status === 'waiting' && result.seconds_left != null ? (
+        <p className="form-hint">Осталось: {formatSeconds(result.seconds_left)}</p>
+      ) : null}
+      {result.post_id ? <p className="form-hint">Пост #{result.post_id}</p> : null}
+    </div>
+  );
 };
 
 const CustomAutomationTestPage = () => {
@@ -38,8 +76,15 @@ const CustomAutomationTestPage = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState(null);
-  const [message, setMessage] = useState(null);
-  const [lastResult, setLastResult] = useState(null);
+  const [actionResults, setActionResults] = useState({});
+  const pollRef = useRef(null);
+
+  const setActionResult = (key, result) => {
+    if (!result) {
+      return;
+    }
+    setActionResults((prev) => ({ ...prev, [key]: result }));
+  };
 
   const loadLab = useCallback(async () => {
     setIsLoading(true);
@@ -48,6 +93,9 @@ const CustomAutomationTestPage = () => {
       setLab(data);
       setChannelUsername(data.channel_username || '');
       setChatUsername(data.chat_username || '');
+      if (data.watch) {
+        setActionResult('channel', data.watch);
+      }
       setError(null);
     } catch (err) {
       setError(err.message || 'Не удалось загрузить тест');
@@ -62,20 +110,54 @@ const CustomAutomationTestPage = () => {
     }
   }, [isAdmin, loadLab]);
 
-  const runAction = async (name, fn, successText) => {
-    setBusy(name);
+  const stopWatchPoll = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
+
+  const startWatchPoll = useCallback(() => {
+    stopWatchPoll();
+    pollRef.current = setInterval(async () => {
+      try {
+        const watch = await customService.getTestLabChannelActivity(id);
+        setActionResult('channel', watch);
+        if (watch.status !== 'waiting') {
+          stopWatchPoll();
+          await loadLab();
+        }
+      } catch (err) {
+        stopWatchPoll();
+        setError(err.message || 'Не удалось проверить ожидание поста');
+      }
+    }, 4000);
+  }, [id, loadLab, stopWatchPoll]);
+
+  useEffect(() => () => stopWatchPoll(), [stopWatchPoll]);
+
+  useEffect(() => {
+    const watch = actionResults.channel;
+    if (watch?.status === 'waiting' && !pollRef.current) {
+      startWatchPoll();
+    }
+  }, [actionResults.channel, startWatchPoll]);
+
+  const runAction = async (key, fn) => {
+    setBusy(key);
     setError(null);
-    setMessage(null);
     try {
       const result = await fn();
-      setLastResult(result);
-      if (successText) {
-        setMessage(successText);
-      }
+      setActionResult(key, result);
       await loadLab();
       return result;
     } catch (err) {
       setError(err.message || 'Ошибка теста');
+      setActionResult(key, {
+        ok: false,
+        status: 'error',
+        detail: err.message || 'Ошибка теста',
+      });
       return null;
     } finally {
       setBusy('');
@@ -86,32 +168,36 @@ const CustomAutomationTestPage = () => {
     return <Navigate to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_DASHBOARD(id)} replace />;
   }
 
-  const handleSaveAndJoin = async (e) => {
+  const handleJoin = async (e) => {
     e.preventDefault();
-    await runAction(
-      'save',
-      async () => {
-        await customService.updateTestLab(id, {
-          channel_username: channelUsername,
-          chat_username: chatUsername,
-        });
-        return customService.joinTestLab(id);
-      },
-      'Цели сохранены, аккаунты вступают без пауз.',
-    );
+    await runAction('join', () => customService.joinTestLab(id, {
+      channel_username: channelUsername,
+      chat_username: chatUsername,
+    }));
   };
 
-  const handleJoin = () => runAction('join', () => customService.joinTestLab(id), 'Аккаунты вступают в целевые канал и чат.');
-  const handleShilling = () => runAction(
-    'shilling',
-    () => customService.runTestLabShilling(id),
-    'Шиллинг запущен в целевом чате (аккаунты с функцией шиллинга).',
-  );
-  const handleNeuro = () => runAction(
-    'neuro',
-    () => customService.runTestLabNeurocommenting(id),
-    'Проверка постов: нейрокомментинг без задержек.',
-  );
+  const handleChatShilling = () => runAction('chatShilling', () => customService.runTestLabShilling(id));
+
+  const handleChannelNeuro = async () => {
+    const result = await runAction(
+      'channel',
+      () => customService.startTestLabChannelActivity(id, 'neurocommenting'),
+    );
+    if (result?.status === 'waiting') {
+      startWatchPoll();
+    }
+  };
+
+  const handleChannelShilling = async () => {
+    const result = await runAction(
+      'channel',
+      () => customService.startTestLabChannelActivity(id, 'shilling'),
+    );
+    if (result?.status === 'waiting') {
+      startWatchPoll();
+    }
+  };
+
   const handleDmp = async (e) => {
     e.preventDefault();
     const phone = dmpPhone.trim();
@@ -119,11 +205,7 @@ const CustomAutomationTestPage = () => {
       setError('Введите номер, как будто он пришёл из DMP');
       return;
     }
-    await runAction(
-      'dmp',
-      () => customService.runTestLabDmp(id, phone),
-      'Искусственный DMP: ищем аккаунт с этим номером и пишем от DMP-аккаунта.',
-    );
+    await runAction('dmp', () => customService.runTestLabDmp(id, phone));
   };
 
   if (isLoading && !lab) {
@@ -145,14 +227,12 @@ const CustomAutomationTestPage = () => {
         </div>
       </div>
 
-      {message ? <p className="crm-flash">{message}</p> : null}
       {error ? <p className="crm-flash crm-flash--error">{error}</p> : null}
 
-      <form onSubmit={handleSaveAndJoin} className="settings-section">
+      <form onSubmit={handleJoin} className="settings-section">
         <h3 className="settings-section-title">Целевые канал и чат</h3>
         <p className="form-hint">
-          Один канал и один чат. После сохранения аккаунты входят и ждут.
-          Пост в канал → нейрокомментинг. Шиллинг — отдельной кнопкой в чате.
+          Один канал и один чат. «Вступить» сохраняет ссылки и сразу вводит аккаунты.
         </p>
         <div className="form-group">
           <label htmlFor="test-channel">Канал</label>
@@ -178,36 +258,39 @@ const CustomAutomationTestPage = () => {
         </div>
         <div className="settings-actions">
           <button type="submit" className="btn btn-black" disabled={Boolean(busy)}>
-            {busy === 'save' ? 'Вступаем...' : 'Сохранить и вступить'}
-          </button>
-          <button type="button" className="btn btn-outline" disabled={Boolean(busy)} onClick={handleJoin}>
-            {busy === 'join' ? 'Вступаем...' : 'Только вступить'}
+            {busy === 'join' ? 'Вступаем...' : 'Вступить'}
           </button>
         </div>
+        <TestLabStatus result={actionResults.join} />
       </form>
 
       <div className="settings-section">
-        <h3 className="settings-section-title">Шиллинг</h3>
+        <h3 className="settings-section-title">Шиллинг в чате</h3>
         <p className="form-hint">
-          Аккаунты с функцией шиллинга пишут в целевом чате фиксированные вопрос и ответ из промптов.
+          Аккаунты с функцией «Шиллинг» пишут в целевом чате фиксированные вопрос и ответ из промптов.
         </p>
         <div className="settings-actions">
-          <button type="button" className="btn btn-black" disabled={Boolean(busy)} onClick={handleShilling}>
-            {busy === 'shilling' ? 'Шиллим...' : 'Активировать шиллинг'}
+          <button type="button" className="btn btn-black" disabled={Boolean(busy)} onClick={handleChatShilling}>
+            {busy === 'chatShilling' ? 'Шиллим...' : 'Активировать шиллинг'}
           </button>
         </div>
+        <TestLabStatus result={actionResults.chatShilling} />
       </div>
 
       <div className="settings-section">
-        <h3 className="settings-section-title">Нейрокомментинг</h3>
+        <h3 className="settings-section-title">Нейрокомментинг и шиллинг в комментариях</h3>
         <p className="form-hint">
-          Опубликуйте пост в целевом канале. Планировщик подхватит его сам; кнопка ниже проверяет сразу.
+          Аккаунты ждут новый пост в целевом канале до 5 минут. Как только пост вышел — сразу выполняется выбранная активность.
         </p>
         <div className="settings-actions">
-          <button type="button" className="btn btn-outline" disabled={Boolean(busy)} onClick={handleNeuro}>
-            {busy === 'neuro' ? 'Проверяем...' : 'Проверить посты'}
+          <button type="button" className="btn btn-black" disabled={Boolean(busy)} onClick={handleChannelNeuro}>
+            {busy === 'channel' ? 'Запускаем...' : 'Активировать нейрокомментинг'}
+          </button>
+          <button type="button" className="btn btn-outline" disabled={Boolean(busy)} onClick={handleChannelShilling}>
+            {busy === 'channel' ? 'Запускаем...' : 'Активировать шиллинг'}
           </button>
         </div>
+        <TestLabStatus result={actionResults.channel} />
       </div>
 
       <form onSubmit={handleDmp} className="settings-section">
@@ -230,14 +313,8 @@ const CustomAutomationTestPage = () => {
             {busy === 'dmp' ? 'Отписываем...' : 'Запустить DMP'}
           </button>
         </div>
+        <TestLabStatus result={actionResults.dmp} />
       </form>
-
-      {lastResult ? (
-        <div className="settings-section">
-          <h3 className="settings-section-title">Последний ответ</h3>
-          <p className="crm-prompt-preview">{formatResult(lastResult)}</p>
-        </div>
-      ) : null}
     </div>
   );
 };

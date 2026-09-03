@@ -3788,6 +3788,246 @@ class TestAccountRolesWarmupAndLab:
         assert data["channel"] is not None
         assert data["chat"] is not None
 
+    async def test_join_saves_targets_and_returns_status(
+        self,
+        client: AsyncClient,
+        custom_automation: CustomAutomation,
+        admin_token: str,
+    ):
+        async def fake_create(session, automation_id, raw_link, mode=None):
+            chat_type = "channel" if (mode or "") == "neurocommenting" else "chat"
+            chat = ChatTarget(
+                custom_automation_id=automation_id,
+                provider="telegram",
+                invite_link=raw_link,
+                title=raw_link,
+                chat_type=chat_type,
+                mode=mode or "inactive",
+                source="test",
+                join_status="pending",
+                is_active=True,
+            )
+            session.add(chat)
+            await session.commit()
+            await session.refresh(chat)
+            return chat
+
+        with patch("app.services.custom.test_lab_service.create_chat_from_link", fake_create):
+            with patch(
+                "app.services.custom.test_lab_service.join_loaded_chats_for_accounts",
+                new=AsyncMock(return_value={"joined_chats": 2, "chats": 2}),
+            ):
+                response = await client.post(
+                    f"/api/custom/automations/{custom_automation.id}/test/join",
+                    headers={"Authorization": f"Bearer {admin_token}"},
+                    json={"channel_username": "@demochan", "chat_username": "@demochat"},
+                )
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["ok"] is True
+        assert data["status"] == "success"
+        assert "Вступили" in data["detail"]
+
+    async def test_channel_watch_reacts_to_new_post(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from types import SimpleNamespace
+
+        from app.services.custom.test_lab_service import (
+            CHANNEL_ACTIVITY_NEURO,
+            reset_channel_watches,
+            start_channel_activity,
+        )
+
+        reset_channel_watches()
+        custom_automation.test_channel_username = "demochan"
+        channel = ChatTarget(
+            custom_automation_id=custom_automation.id,
+            provider="telegram",
+            invite_link="@demochan",
+            title="Demo channel",
+            chat_type="channel",
+            mode="neurocommenting",
+            source="test",
+            join_status="joined",
+            is_active=True,
+        )
+        test_session.add(channel)
+        await test_session.commit()
+        await self._add_account(
+            test_session,
+            custom_automation,
+            account_class=AccountClass.ONE_DAY.value,
+            username="neuro_watch",
+            phone="+79991000008",
+            roles=["neurocommenting"],
+        )
+
+        posts = [SimpleNamespace(id=1, text="old post")]
+
+        async def fake_list_posts(_session, _automation, _channel, limit=20):
+            return posts[:limit]
+
+        async def fake_react(session, automation, chat, post, activity):
+            return {
+                "ok": True,
+                "status": "success",
+                "detail": "Комментарий оставлен.",
+                "post_id": int(post.id),
+            }
+
+        class SessionMaker:
+            def __init__(self, session):
+                self.session = session
+
+            def __call__(self):
+                return self
+
+            async def __aenter__(self):
+                return self.session
+
+            async def __aexit__(self, *_args):
+                return False
+
+        with patch(
+            "app.services.custom.test_lab_service._list_channel_posts",
+            new=AsyncMock(side_effect=fake_list_posts),
+        ):
+            started = await start_channel_activity(
+                test_session,
+                custom_automation,
+                CHANNEL_ACTIVITY_NEURO,
+                wait_seconds=2,
+                poll_seconds=1,
+                spawn=False,
+            )
+            assert started["status"] == "waiting"
+            posts.append(SimpleNamespace(id=2, text="fresh post"))
+            with patch(
+                "app.services.custom.test_lab_service._react_to_post",
+                new=AsyncMock(side_effect=fake_react),
+            ), patch(
+                "app.alembic.database.async_session_maker",
+                SessionMaker(test_session),
+            ):
+                from app.services.custom.test_lab_service import _run_channel_watch
+
+                await _run_channel_watch(
+                    custom_automation.id,
+                    channel.id,
+                    CHANNEL_ACTIVITY_NEURO,
+                    wait_seconds=2,
+                    poll_seconds=1,
+                    list_posts=fake_list_posts,
+                    sleeper=AsyncMock(),
+                )
+        from app.services.custom.test_lab_service import current_channel_watch
+
+        watch = current_channel_watch(custom_automation.id)
+        assert watch is not None
+        assert watch["status"] == "success"
+        assert watch["ok"] is True
+        assert watch["post_id"] == 2
+        reset_channel_watches()
+
+    async def test_channel_watch_times_out(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from types import SimpleNamespace
+
+        from app.services.custom.test_lab_service import (
+            CHANNEL_ACTIVITY_SHILLING,
+            reset_channel_watches,
+            start_channel_activity,
+            _run_channel_watch,
+        )
+
+        reset_channel_watches()
+        custom_automation.test_channel_username = "demochan"
+        channel = ChatTarget(
+            custom_automation_id=custom_automation.id,
+            provider="telegram",
+            invite_link="@demochan",
+            title="Demo channel",
+            chat_type="channel",
+            mode="neurocommenting",
+            source="test",
+            join_status="joined",
+            is_active=True,
+        )
+        test_session.add(channel)
+        await test_session.commit()
+        await self._add_account(
+            test_session,
+            custom_automation,
+            account_class=AccountClass.SHILLING.value,
+            username="shill_a",
+            phone="+79991000009",
+            roles=["shilling"],
+        )
+        await self._add_account(
+            test_session,
+            custom_automation,
+            account_class=AccountClass.SHILLING.value,
+            username="shill_b",
+            phone="+79991000010",
+            roles=["shilling"],
+        )
+
+        posts = [SimpleNamespace(id=1, text="only post")]
+
+        async def fake_list_posts(_session, _automation, _channel, limit=20):
+            return posts[:limit]
+
+        class SessionMaker:
+            def __init__(self, session):
+                self.session = session
+
+            def __call__(self):
+                return self
+
+            async def __aenter__(self):
+                return self.session
+
+            async def __aexit__(self, *_args):
+                return False
+
+        with patch(
+            "app.services.custom.test_lab_service._list_channel_posts",
+            new=AsyncMock(side_effect=fake_list_posts),
+        ), patch(
+            "app.alembic.database.async_session_maker",
+            SessionMaker(test_session),
+        ):
+            await start_channel_activity(
+                test_session,
+                custom_automation,
+                CHANNEL_ACTIVITY_SHILLING,
+                wait_seconds=1,
+                poll_seconds=1,
+                spawn=False,
+            )
+            await _run_channel_watch(
+                custom_automation.id,
+                channel.id,
+                CHANNEL_ACTIVITY_SHILLING,
+                wait_seconds=1,
+                poll_seconds=1,
+                list_posts=fake_list_posts,
+                sleeper=AsyncMock(),
+            )
+        from app.services.custom.test_lab_service import current_channel_watch
+
+        watch = current_channel_watch(custom_automation.id)
+        assert watch is not None
+        assert watch["status"] == "timeout"
+        assert watch["ok"] is False
+        reset_channel_watches()
+
     async def test_scheduler_starts_test_watch_when_channel_set(self):
         from types import SimpleNamespace
 
