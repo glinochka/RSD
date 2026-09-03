@@ -78,10 +78,16 @@ def _extract_invite_hash(link: str) -> str | None:
 
 
 def _friendly_telegram_error(exc: Exception, fallback: str) -> str:
-    mapped = _LOOKUP_ERRORS.get(type(exc).__name__)
-    if mapped:
-        return mapped
+    cause: BaseException | None = exc
+    while cause is not None:
+        mapped = _LOOKUP_ERRORS.get(type(cause).__name__)
+        if mapped:
+            return mapped
+        cause = cause.__cause__
     text = str(exc) or type(exc).__name__
+    lower = text.lower()
+    if "no user has" in lower or "username is not in use" in lower:
+        return "Такого чата или канала нет — проверьте @username или вставьте ссылку-приглашение"
     return f"{fallback}: {text[:180]}"
 
 
@@ -187,6 +193,18 @@ async def _try_join_chat(
     except InviteHashExpiredError:
         return {"status": "failed", "error": "Ссылка-приглашение истекла"}
     except UserAlreadyParticipantError:
+        try:
+            async with TelegramAccountClient.for_account(account) as client:
+                entity = await _resolve_entity(client, parsed)
+                if entity is not None:
+                    apply_entity_metadata(chat_target, entity)
+                    chat_target.invite_link = parsed.canonical
+        except Exception as exc:
+            logger.warning(
+                "Join chat %s already participant but metadata refresh failed: %s",
+                chat_target.id,
+                exc,
+            )
         return {"status": "joined", "joined_at": _utc_now(), "joined_by_account_id": account.id}
     except SessionInvalidError as exc:
         logger.warning("Join chat %s skipped account %s: %s", chat_target.id, account.id, exc)

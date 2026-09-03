@@ -80,12 +80,22 @@ def test_apply_entity_metadata_channel_and_group():
     apply_entity_metadata(target, channel)
     assert target.title == "News"
     assert target.chat_type == "channel"
-    assert target.external_chat_id == "42"
+    assert target.external_chat_id == "-10042"
 
     group = _Chat(id=7, title="SEO", broadcast=False, megagroup=True)
     apply_entity_metadata(target, group)
     assert target.title == "SEO"
     assert target.chat_type == "chat"
+    assert target.external_chat_id == "-1007"
+
+
+def test_chat_entity_key_prefers_username_over_ambiguous_positive_id():
+    chat = _Chat(
+        external_chat_id="4301235049",
+        invite_link="https://t.me/seo_chat",
+        title="SEO",
+    )
+    assert chat_entity_key(chat) == "seo_chat"
 
 
 def test_invite_preview_without_id_is_group():

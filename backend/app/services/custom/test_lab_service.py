@@ -55,11 +55,14 @@ def lab_result(
     status: str | None = None,
     **extra: Any,
 ) -> dict[str, Any]:
+    extra.pop("ok", None)
+    extra.pop("status", None)
+    extra.pop("detail", None)
     return {
         "ok": ok,
-        "status": status or ("success" if ok else "error"),
         "detail": detail,
         **extra,
+        "status": status or ("success" if ok else "error"),
     }
 
 
@@ -168,9 +171,15 @@ async def save_lab_targets(
     await session.refresh(automation)
 
     if channel_username:
-        await _upsert_lab_chat(session, automation.id, channel_username, mode=ChatMode.NEUROCOMMENTING.value)
+        try:
+            await _upsert_lab_chat(session, automation.id, channel_username, mode=ChatMode.NEUROCOMMENTING.value)
+        except ValueError as exc:
+            raise ValueError(f"Канал @{channel_username}: {exc}") from exc
     if chat_username:
-        await _upsert_lab_chat(session, automation.id, chat_username, mode=ChatMode.SHILLING.value)
+        try:
+            await _upsert_lab_chat(session, automation.id, chat_username, mode=ChatMode.SHILLING.value)
+        except ValueError as exc:
+            raise ValueError(f"Чат @{chat_username}: {exc}") from exc
     chats = await list_lab_chats(session, automation.id)
     return serialize_lab(automation, chats)
 
@@ -186,12 +195,15 @@ async def join_lab_targets(
     if automation is None:
         return lab_result(ok=False, detail="Автоматизация не найдена.")
     if channel_username is not None or chat_username is not None:
-        await save_lab_targets(
-            session,
-            automation,
-            channel_username=channel_username,
-            chat_username=chat_username,
-        )
+        try:
+            await save_lab_targets(
+                session,
+                automation,
+                channel_username=channel_username,
+                chat_username=chat_username,
+            )
+        except ValueError as exc:
+            return lab_result(ok=False, detail=str(exc))
     chats = await list_lab_chats(session, automation_id)
     if not chats:
         return lab_result(ok=False, detail="Укажите канал или чат и нажмите «Вступить».")
@@ -263,8 +275,13 @@ async def activate_lab_shilling(session: AsyncSession, automation: CustomAutomat
         return lab_result(ok=True, detail=f"Шиллинг в чате выполнен ({sent} диалогов).", sent=sent, results=results)
     reasons = [item.get("reason") or item.get("status") for item in results]
     detail = "Шиллинг в чате не выполнен."
-    if reasons:
-        detail = f"{detail} {'; '.join(str(r) for r in reasons if r)}"
+    unique = []
+    for reason in reasons:
+        text = str(reason) if reason else ""
+        if text and text not in unique:
+            unique.append(text)
+    if unique:
+        detail = f"{detail} {'; '.join(unique)}"
     return lab_result(ok=False, detail=detail, sent=0, results=results)
 
 
@@ -349,21 +366,24 @@ async def simulate_dmp(
     await session.flush()
     outcome = await process_dmp_lead(session, automation, lead)
     outreach = outcome.get("outreach")
+    payload = {
+        **outcome,
+        "lead_id": lead.id,
+        "found_account_id": target_account.id if target_account else None,
+    }
+    for key in ("ok", "status", "detail"):
+        payload.pop(key, None)
     if outreach or outcome.get("status") in {"warming", "transferred", "converted"}:
         return lab_result(
             ok=True,
             detail=f"DMP выполнен для @{contact_value.lstrip('@') if contact_type == 'telegram' else contact_value}.",
-            lead_id=lead.id,
-            found_account_id=target_account.id if target_account else None,
-            **outcome,
+            **payload,
         )
     reason = outcome.get("reason") or outcome.get("status") or "неизвестно"
     return lab_result(
         ok=False,
         detail=f"DMP не выполнен: {reason}.",
-        lead_id=lead.id,
-        found_account_id=target_account.id if target_account else None,
-        **outcome,
+        **payload,
     )
 
 
@@ -605,15 +625,13 @@ async def _react_to_post(
             return lab_result(
                 ok=True,
                 detail="Шиллинг в комментариях выполнен.",
-                post_id=post_id,
-                **outcome,
+                **{**outcome, "post_id": post_id},
             )
         reason = outcome.get("reason") or outcome.get("status") or "неизвестно"
         return lab_result(
             ok=False,
             detail=f"Шиллинг в комментариях не выполнен: {reason}.",
-            post_id=post_id,
-            **outcome,
+            **{**outcome, "post_id": post_id},
         )
 
     account = await select_account_for_action(session, automation.id, "commenting", consume_quota=False)

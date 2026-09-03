@@ -105,6 +105,14 @@ def parse_telegram_chat_ref(raw: str | None) -> TelegramChatRef:
 
 def chat_entity_key(chat_target: Any) -> str | int:
     """Best Telethon get_entity argument for a saved ChatTarget."""
+    link = getattr(chat_target, "invite_link", None)
+    if link:
+        try:
+            parsed = parse_telegram_chat_ref(str(link))
+            if parsed.kind == "username":
+                return parsed.lookup_value
+        except TelegramChatRefError:
+            pass
     ext = getattr(chat_target, "external_chat_id", None)
     if ext:
         text = str(ext).strip()

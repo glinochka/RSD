@@ -83,15 +83,37 @@ def apply_entity_metadata(chat_target: ChatTarget, entity: Any) -> None:
     target = unwrap_telegram_chat(entity)
     if target is None or is_user_peer(target):
         return
-    chat_id = getattr(target, "id", None)
-    if chat_id:
-        chat_target.external_chat_id = str(chat_id)
+    peer_id = marked_peer_id(entity)
+    if peer_id:
+        chat_target.external_chat_id = peer_id
     title = getattr(target, "title", None) or getattr(target, "username", None)
     if title:
         chat_target.title = str(title)[:255]
     detected = entity_chat_type(entity)
     if detected:
         chat_target.chat_type = detected
+
+
+def marked_peer_id(entity: Any) -> str | None:
+    """Telethon marked id: negative for chats/channels, positive only for users."""
+    target = unwrap_telegram_chat(entity)
+    if target is None or is_user_peer(target):
+        return None
+    try:
+        from telethon.utils import get_peer_id
+
+        return str(get_peer_id(target))
+    except Exception:
+        pass
+    cid = getattr(target, "id", None)
+    if cid is None:
+        return None
+    raw = int(cid)
+    if raw <= 0:
+        return str(raw)
+    if getattr(target, "broadcast", False) or getattr(target, "megagroup", False) or getattr(target, "channel", False):
+        return str(-int(f"100{raw}"))
+    return str(-raw)
 
 
 async def load_own_sender_keys(session: AsyncSession, automation_id: int) -> set[str]:

@@ -969,7 +969,7 @@ class TestChatCreateAndJoin:
         assert chat.title == "SEO Chat"
         assert chat.chat_type == "chat"
         assert chat.invite_link == "https://t.me/seo_chat"
-        assert chat.external_chat_id == "555"
+        assert chat.external_chat_id == "-100555"
         assert response.status_code == 400
         assert "уже добавлен" in response.json()["detail"]
 
@@ -3828,6 +3828,44 @@ class TestAccountRolesWarmupAndLab:
         assert data["status"] == "success"
         assert "Вступили" in data["detail"]
 
+    async def test_join_returns_error_when_chat_not_found(
+        self,
+        client: AsyncClient,
+        custom_automation: CustomAutomation,
+        admin_token: str,
+    ):
+        async def fake_create(session, automation_id, raw_link, mode=None):
+            if "badchat" in str(raw_link).lower():
+                raise ValueError("Такого чата или канала нет")
+            chat_type = "channel" if (mode or "") == "neurocommenting" else "chat"
+            chat = ChatTarget(
+                custom_automation_id=automation_id,
+                provider="telegram",
+                invite_link=raw_link,
+                title=raw_link,
+                chat_type=chat_type,
+                mode=mode or "inactive",
+                source="test",
+                join_status="pending",
+                is_active=True,
+            )
+            session.add(chat)
+            await session.commit()
+            await session.refresh(chat)
+            return chat
+
+        with patch("app.services.custom.test_lab_service.create_chat_from_link", new=AsyncMock(side_effect=fake_create)):
+            response = await client.post(
+                f"/api/custom/automations/{custom_automation.id}/test/join",
+                headers={"Authorization": f"Bearer {admin_token}"},
+                json={"channel_username": "@goodchan", "chat_username": "@badchat"},
+            )
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["ok"] is False
+        assert data["status"] == "error"
+        assert "badchat" in data["detail"].lower()
+
     async def test_channel_watch_reacts_to_new_post(
         self,
         test_session: AsyncSession,
@@ -4027,6 +4065,44 @@ class TestAccountRolesWarmupAndLab:
         assert watch["status"] == "timeout"
         assert watch["ok"] is False
         reset_channel_watches()
+
+    async def test_simulate_dmp_does_not_duplicate_lead_id(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from app.services.custom.test_lab_service import simulate_dmp
+
+        await self._add_account(
+            test_session,
+            custom_automation,
+            account_class=AccountClass.TRUSTED.value,
+            username="dmp_sender",
+            phone="+79991000011",
+            roles=["dmp"],
+        )
+        target = await self._add_account(
+            test_session,
+            custom_automation,
+            account_class=AccountClass.ONE_DAY.value,
+            username="dmp_target",
+            phone="+79991000012",
+            roles=[],
+        )
+
+        async def fake_process(_session, _automation, lead):
+            return {"lead_id": lead.id, "status": "warming", "outreach": True}
+
+        with patch(
+            "app.services.custom.test_lab_service.process_dmp_lead",
+            new=AsyncMock(side_effect=fake_process),
+        ):
+            result = await simulate_dmp(test_session, custom_automation, target.phone_number)
+
+        assert result["ok"] is True
+        assert result["status"] == "success"
+        assert result["lead_id"] is not None
+        assert "DMP выполнен" in result["detail"]
 
     async def test_scheduler_starts_test_watch_when_channel_set(self):
         from types import SimpleNamespace
