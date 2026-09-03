@@ -20,6 +20,7 @@ from .telegram_invite import chat_entity_key
 from ...alembic.models import AutomationActionLog, ChatJoinStatus, ChatTarget, CustomAutomation, CustomPrompt, PromptType, SocialAccount
 from ...config import settings
 from ...services.ai_authoring import ai_client
+from .prompt_service import render_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -76,9 +77,9 @@ async def _generate_comment(
     post_text: str,
     chat_title: str,
 ) -> str:
-    prompt = (await _load_prompt(session, automation_id)).format(
-        post_text=post_text or "",
-        chat_title=chat_title or "",
+    prompt = render_prompt(
+        await _load_prompt(session, automation_id),
+        {"post_text": post_text or "", "chat_title": chat_title or ""},
     )
     try:
         response = await ai_client.chat.completions.create(

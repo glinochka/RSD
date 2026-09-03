@@ -4066,6 +4066,18 @@ class TestAccountRolesWarmupAndLab:
         assert watch["ok"] is False
         reset_channel_watches()
 
+    async def test_neurocommenting_prompt_render_keeps_json_schema(self):
+        from app.services.custom.neurocommenting_service import DEFAULT_NEUROCOMMENTING_PROMPT
+        from app.services.custom.prompt_service import render_prompt
+
+        rendered = render_prompt(
+            DEFAULT_NEUROCOMMENTING_PROMPT,
+            {"post_text": "Тестовый пост", "chat_title": "Канал"},
+        )
+        assert "Тестовый пост" in rendered
+        assert "Канал" in rendered
+        assert '"comment"' in rendered
+
     async def test_serialize_lab_finds_channel_by_mode_not_only_broadcast_type(
         self,
         test_session: AsyncSession,
