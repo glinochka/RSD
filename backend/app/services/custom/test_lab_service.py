@@ -12,8 +12,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .account_roles import effective_roles
-from .chat_join_service import create_chat_from_link, join_loaded_chats_for_accounts
-from .chat_scope import is_broadcast_channel, is_lab_chat
+from .chat_join_service import create_chat_from_link, join_loaded_chats_for_accounts, preview_chat_entity
+from .chat_scope import apply_entity_metadata, is_broadcast_channel, is_lab_chat
 from .dmp_one_service import process_dmp_lead
 from .neurocommenting_service import _generate_comment, _send_comment, process_chat_target
 from .rotation_service import select_account_for_action
@@ -79,10 +79,57 @@ def normalize_target_username(raw: str | None) -> str:
         return value.lstrip("@").split("/")[-1].strip()
 
 
+def _chat_username_matches(chat: ChatTarget, username: str | None) -> bool:
+    want = normalize_target_username(username).lower()
+    if not want:
+        return False
+    for raw in (chat.invite_link, chat.external_chat_id, chat.title):
+        if not raw:
+            continue
+        text = str(raw).strip()
+        try:
+            parsed = parse_telegram_chat_ref(text)
+            if parsed.kind == "username" and parsed.value.lower() == want:
+                return True
+            if parsed.canonical.lower().rstrip("/").endswith(f"/{want}"):
+                return True
+        except TelegramChatRefError:
+            pass
+        if text.lower().lstrip("@").split("/")[-1] == want:
+            return True
+    return False
+
+
+def pick_lab_channel(automation: CustomAutomation, chats: list[ChatTarget]) -> ChatTarget | None:
+    active = [chat for chat in chats if is_lab_chat(chat) and chat.is_active]
+    for chat in active:
+        if chat.mode == ChatMode.NEUROCOMMENTING.value:
+            return chat
+    want = automation.test_channel_username
+    if want:
+        for chat in active:
+            if _chat_username_matches(chat, want):
+                return chat
+    return next((chat for chat in active if is_broadcast_channel(chat)), None)
+
+
+def pick_lab_group(automation: CustomAutomation, chats: list[ChatTarget]) -> ChatTarget | None:
+    active = [chat for chat in chats if is_lab_chat(chat) and chat.is_active]
+    for chat in active:
+        if chat.mode == ChatMode.SHILLING.value:
+            return chat
+    want = automation.test_chat_username
+    if want:
+        for chat in active:
+            if _chat_username_matches(chat, want):
+                return chat
+    return next((chat for chat in active if not is_broadcast_channel(chat)), None)
+
+
 def serialize_lab(automation: CustomAutomation, chats: list[ChatTarget] | None = None) -> dict[str, Any]:
     chats = chats or []
-    channel = next((chat for chat in chats if is_lab_chat(chat) and is_broadcast_channel(chat)), None)
-    group = next((chat for chat in chats if is_lab_chat(chat) and not is_broadcast_channel(chat)), None)
+    channel = pick_lab_channel(automation, chats)
+    group = pick_lab_group(automation, chats)
     return {
         "channel_username": automation.test_channel_username or "",
         "chat_username": automation.test_chat_username or "",
@@ -110,6 +157,7 @@ async def list_lab_chats(session: AsyncSession, automation_id: int) -> list[Chat
         select(ChatTarget).where(
             ChatTarget.custom_automation_id == automation_id,
             ChatTarget.source == ChatSource.TEST.value,
+            ChatTarget.is_active.is_(True),
         )
     )
     return list(result.scalars().all())
@@ -133,6 +181,12 @@ async def _upsert_lab_chat(
         existing.source = ChatSource.TEST.value
         existing.mode = mode
         existing.is_active = True
+        try:
+            entity = await preview_chat_entity(session, automation_id, parsed)
+            apply_entity_metadata(existing, entity)
+            existing.invite_link = parsed.canonical
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
         await session.commit()
         await session.refresh(existing)
         return existing
@@ -249,17 +303,17 @@ async def _has_role(session: AsyncSession, automation_id: int, role: str, *, min
 
 
 async def activate_lab_shilling(session: AsyncSession, automation: CustomAutomation) -> dict[str, Any]:
-    chats = [chat for chat in await list_lab_chats(session, automation.id) if not is_broadcast_channel(chat)]
-    if not chats:
+    chats = await list_lab_chats(session, automation.id)
+    chat = pick_lab_group(automation, chats)
+    if chat is None:
         return lab_result(ok=False, detail="Нет целевого чата. Укажите чат и нажмите «Вступить».")
     if not await _has_role(session, automation.id, AccountRoleEnum.SHILLING.value, min_count=2):
         return lab_result(ok=False, detail="Нужно минимум 2 живых аккаунта с функцией «Шиллинг».")
     sent = 0
     results = []
-    for chat in chats:
-        if chat.join_status != ChatJoinStatus.JOINED.value:
-            results.append({"chat_id": chat.id, "status": "not_joined"})
-            continue
+    if chat.join_status != ChatJoinStatus.JOINED.value:
+        results.append({"chat_id": chat.id, "status": "not_joined"})
+    else:
         outcome = await process_shilling_chat(
             session,
             automation,
@@ -287,25 +341,24 @@ async def activate_lab_shilling(session: AsyncSession, automation: CustomAutomat
 
 async def run_lab_neurocommenting(session: AsyncSession, automation_id: int) -> dict[str, Any]:
     """Immediate scan — kept for scheduler compatibility."""
-    chats = [
-        chat
-        for chat in await list_lab_chats(session, automation_id)
-        if is_broadcast_channel(chat)
-    ]
-    if not chats:
+    automation = await session.get(CustomAutomation, automation_id)
+    if automation is None:
+        return lab_result(ok=False, detail="Автоматизация не найдена.")
+    chats = await list_lab_chats(session, automation_id)
+    channel = pick_lab_channel(automation, chats)
+    if channel is None:
         return lab_result(ok=False, detail="Нет целевого канала.")
     sent = 0
     results = []
-    for chat in chats:
-        outcome = await process_chat_target(
-            session,
-            automation_id,
-            chat,
-            lab_mode=True,
-            max_comments_per_run=10,
-        )
-        results.append({"chat_id": chat.id, **outcome})
-        sent += int(outcome.get("sent") or 0)
+    outcome = await process_chat_target(
+        session,
+        automation_id,
+        channel,
+        lab_mode=True,
+        max_comments_per_run=10,
+    )
+    results.append({"chat_id": channel.id, **outcome})
+    sent += int(outcome.get("sent") or 0)
     if sent:
         return lab_result(ok=True, detail=f"Комментарии отправлены: {sent}.", sent=sent, results=results)
     return lab_result(ok=False, detail="Комментарии не отправлены.", sent=0, results=results)
@@ -465,10 +518,16 @@ async def start_channel_activity(
     if activity not in {CHANNEL_ACTIVITY_NEURO, CHANNEL_ACTIVITY_SHILLING}:
         return lab_result(ok=False, detail="Выберите нейрокомментинг или шиллинг в комментариях.")
 
-    chats = [chat for chat in await list_lab_chats(session, automation.id) if is_broadcast_channel(chat)]
-    if not chats:
+    chats = await list_lab_chats(session, automation.id)
+    channel = pick_lab_channel(automation, chats)
+    if channel is None:
+        want = (automation.test_channel_username or "").strip()
+        if want:
+            return lab_result(
+                ok=False,
+                detail=f"Канал @{want.lstrip('@')} не сохранён. Нажмите «Вступить» ещё раз или проверьте @username.",
+            )
         return lab_result(ok=False, detail="Нет целевого канала. Укажите канал и нажмите «Вступить».")
-    channel = chats[0]
     if channel.join_status != ChatJoinStatus.JOINED.value:
         return lab_result(ok=False, detail="Аккаунты ещё не вступили в канал. Сначала нажмите «Вступить».")
 

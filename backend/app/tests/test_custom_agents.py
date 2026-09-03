@@ -4066,6 +4066,49 @@ class TestAccountRolesWarmupAndLab:
         assert watch["ok"] is False
         reset_channel_watches()
 
+    async def test_serialize_lab_finds_channel_by_mode_not_only_broadcast_type(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from app.services.custom.test_lab_service import list_lab_chats, serialize_lab
+
+        custom_automation.test_channel_username = "seojarvistest"
+        custom_automation.test_chat_username = "seojarvistestchat"
+        test_session.add(
+            ChatTarget(
+                custom_automation_id=custom_automation.id,
+                provider="telegram",
+                invite_link="https://t.me/seojarvistest",
+                title="SEO Jarvis Test",
+                chat_type="chat",
+                mode="neurocommenting",
+                source="test",
+                join_status="joined",
+                is_active=True,
+            )
+        )
+        test_session.add(
+            ChatTarget(
+                custom_automation_id=custom_automation.id,
+                provider="telegram",
+                invite_link="https://t.me/seojarvistestchat",
+                title="SEO Jarvis Chat",
+                chat_type="chat",
+                mode="shilling",
+                source="test",
+                join_status="joined",
+                is_active=True,
+            )
+        )
+        await test_session.commit()
+        chats = await list_lab_chats(test_session, custom_automation.id)
+        data = serialize_lab(custom_automation, chats)
+        assert data["channel"] is not None
+        assert data["chat"] is not None
+        assert "seojarvistest" in (data["channel"]["username"] or "")
+        assert data["channel"]["join_status"] == "joined"
+
     async def test_simulate_dmp_does_not_duplicate_lead_id(
         self,
         test_session: AsyncSession,
