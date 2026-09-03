@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import logging
 import random
-import re
 from collections.abc import Callable
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
@@ -14,7 +13,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .chat_scope import is_group_chat, is_paused
+from .chat_scope import is_paused, is_group_chat, is_lab_chat
 from .post_engagement import SHILLING as POST_SHILLING, get_post_engagement_claim, post_target_id
 from .rotation_service import accounts_are_distinct, select_distinct_accounts_for_action
 from .telegram_account_client import TelegramAccountClient
@@ -30,7 +29,6 @@ from ...alembic.models import (
     SocialAccount,
 )
 from ...config import settings
-from ...services.ai_authoring import ai_client
 
 logger = logging.getLogger(__name__)
 
@@ -43,21 +41,8 @@ POST_SHILL_ACTION = "shilling_post"
 REPLY_DELAY_MIN_SECONDS = 8.0
 REPLY_DELAY_MAX_SECONDS = 25.0
 
-DEFAULT_SHILLING_PROMPT = """Ты пишешь нативный диалог двух незнакомцев в Telegram (партизанский маркетинг).
-Первый жалуется или спрашивает совет по теме оффера. Второй отвечает как живой человек из своего опыта и мягко рекомендует сервис заказчика.
-Без ссылок, без хештегов, без рекламного тона, без «всем советую». 1-2 предложения на реплику.
-Если уместно, второй может предложить скинуть контакт в личку.
-
-Индустрия/оффер: {industry}
-Клиент: {client_name}
-Чат: {chat_title}
-Контекст поста (может быть пусто): {post_text}
-
-Верни ТОЛЬКО JSON:
-{
-  "setup": "реплика первого",
-  "reply": "реплика второго"
-}"""
+DEFAULT_SHILLING_SETUP = "Кто-нибудь уже пробовал сервис, о котором тут пишут? Не хочу влететь."
+DEFAULT_SHILLING_REPLY = "Пользуюсь сам уже какое-то время, по работе зашёл. Если надо — могу в личке набросать, как подключался."
 
 
 def _moscow_tz():
@@ -107,14 +92,6 @@ def _media_root() -> Path:
     return Path(settings.MEDIA_ROOT).resolve()
 
 
-def _extract_json(text: str) -> dict[str, Any]:
-    raw = (text or "").strip()
-    if raw.startswith("```"):
-        raw = re.sub(r"^```(?:json)?\s*", "", raw)
-        raw = re.sub(r"\s*```$", "", raw)
-    return json.loads(raw)
-
-
 def _session_path(account: SocialAccount) -> Path | None:
     if not account.session_file_path:
         return None
@@ -122,24 +99,26 @@ def _session_path(account: SocialAccount) -> Path | None:
     return path if path.exists() else None
 
 
-async def _load_prompt(session: AsyncSession, automation_id: int) -> str:
-    prompt = await session.scalar(
-        select(CustomPrompt).where(
-            CustomPrompt.custom_automation_id == automation_id,
-            CustomPrompt.prompt_type == PromptType.SHILLING.value,
-            CustomPrompt.is_active.is_(True),
-        ).order_by(CustomPrompt.created_at.desc())
+def parse_shilling_lines(content: str | None) -> tuple[str, str]:
+    raw = (content or "").strip()
+    if not raw:
+        return "", ""
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        data = None
+    if isinstance(data, dict):
+        setup = str(data.get("setup") or data.get("question") or "").strip()
+        reply = str(data.get("reply") or data.get("answer") or "").strip()
+        return setup[:500], reply[:500]
+    return "", ""
+
+
+def encode_shilling_lines(setup: str, reply: str) -> str:
+    return json.dumps(
+        {"setup": (setup or "").strip(), "reply": (reply or "").strip()},
+        ensure_ascii=False,
     )
-    if prompt and prompt.content:
-        return str(prompt.content).strip()
-    return DEFAULT_SHILLING_PROMPT
-
-
-def _format_prompt(template: str, **kwargs: str) -> str:
-    rendered = template
-    for key, value in kwargs.items():
-        rendered = rendered.replace(f"{{{key}}}", value)
-    return rendered
 
 
 async def generate_shilling_dialogue(
@@ -149,27 +128,17 @@ async def generate_shilling_dialogue(
     chat_title: str,
     post_text: str = "",
 ) -> tuple[str, str]:
-    prompt = _format_prompt(
-        await _load_prompt(session, automation.id),
-        industry=automation.industry or "",
-        client_name=automation.client_name or "",
-        chat_title=chat_title or "",
-        post_text=post_text or "",
+    prompt = await session.scalar(
+        select(CustomPrompt).where(
+            CustomPrompt.custom_automation_id == automation.id,
+            CustomPrompt.prompt_type == PromptType.SHILLING.value,
+            CustomPrompt.is_active.is_(True),
+        ).order_by(CustomPrompt.created_at.desc())
     )
-    try:
-        response = await ai_client.chat.completions.create(
-            model="deepseek-chat",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=300,
-            temperature=0.85,
-        )
-        data = _extract_json(response.choices[0].message.content or "")
-        setup = str(data.get("setup") or "").strip()[:500]
-        reply = str(data.get("reply") or "").strip()[:500]
+    setup, reply = parse_shilling_lines(prompt.content if prompt else "")
+    if setup and reply:
         return setup, reply
-    except Exception as exc:
-        logger.warning("Shilling dialogue generation failed: %s", exc)
-        return "", ""
+    return DEFAULT_SHILLING_SETUP, DEFAULT_SHILLING_REPLY
 
 
 async def _pick_speaker_pair(
@@ -600,6 +569,10 @@ async def process_shilling_chat(
     chat_target: ChatTarget,
     **kwargs: Any,
 ) -> dict[str, Any]:
+    include_lab = bool(kwargs.pop("include_lab", False))
+    skip_schedule = bool(kwargs.pop("skip_schedule", False))
+    if is_lab_chat(chat_target) and not include_lab:
+        return {"status": "skipped", "reason": "lab"}
     if is_paused(chat_target):
         return {"status": "skipped", "reason": "paused"}
     if not is_group_chat(chat_target):
@@ -614,17 +587,20 @@ async def process_shilling_chat(
         return {"status": "skipped", "reason": "need_two_accounts"}
     placeholder_account_id = available[0].id
 
-    decision = await decide_chat_shilling_today(
-        session,
-        automation,
-        chat_target,
-        placeholder_account_id,
-        now=kwargs.pop("now", None),
-        roll=kwargs.pop("roll", None),
-        scheduled_at=kwargs.pop("scheduled_at", None),
-    )
-    if decision != "due":
-        return {"status": "skipped", "reason": decision}
+    if not skip_schedule:
+        decision = await decide_chat_shilling_today(
+            session,
+            automation,
+            chat_target,
+            placeholder_account_id,
+            now=kwargs.pop("now", None),
+            roll=kwargs.pop("roll", None),
+            scheduled_at=kwargs.pop("scheduled_at", None),
+        )
+        if decision != "due":
+            return {"status": "skipped", "reason": decision}
+    else:
+        kwargs.setdefault("delay_seconds", 0)
 
     result = await perform_shilling_dialogue(
         session,
@@ -657,7 +633,7 @@ async def run_shilling_pass(automation_id: int) -> dict[str, Any]:
                 ChatTarget.mode != "inactive",
             )
         )
-        chats = result.scalars().all()
+        chats = [chat for chat in result.scalars().all() if not is_lab_chat(chat)]
         for chat_target in chats:
             try:
                 res = await process_shilling_chat(session, automation, chat_target)

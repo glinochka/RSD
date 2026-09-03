@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.models import AccountClass, AccountPool, CustomAutomation, CustomLead, PoolAccount, SocialAccount
+from .account_roles import account_matches_action
 
 logger = getLogger(__name__)
 
@@ -23,6 +24,7 @@ ACTION_ALLOWED_CLASSES = {
     "prepare_join": set(_ALL_CLASSES),
 }
 _DM_ACTIONS = {"dm", "dmp_outreach"}
+_KNOWN_ACTIONS = set(ACTION_ALLOWED_CLASSES)
 
 
 def _utc_now() -> datetime:
@@ -79,7 +81,7 @@ def _reset_counters_if_needed(accounts: list[SocialAccount]) -> None:
 
 def _filter_eligible(
     rows: list[tuple[PoolAccount, SocialAccount]],
-    allowed_classes: set[str],
+    action_type: str,
     max_daily: int,
     exclude_banned: bool,
     *,
@@ -93,7 +95,7 @@ def _filter_eligible(
             continue
         if exclude_spamblocked and social_account.is_spamblocked:
             continue
-        if social_account.account_class not in allowed_classes:
+        if not account_matches_action(pool_account, social_account, action_type):
             continue
         if not social_account.session_file_path:
             continue
@@ -202,8 +204,7 @@ async def select_account_for_action(
         logger.warning("Automation %s not found for rotation", automation_id)
         return None
 
-    allowed_classes = ACTION_ALLOWED_CLASSES.get(action_type)
-    if allowed_classes is None:
+    if action_type not in _KNOWN_ACTIONS:
         logger.warning("Unknown action type %s", action_type)
         return None
 
@@ -219,7 +220,7 @@ async def select_account_for_action(
     exclude_spamblocked = action_type in _DM_ACTIONS
     eligible = _filter_eligible(
         rows,
-        allowed_classes,
+        action_type,
         automation_obj.max_daily_messages_per_account,
         exclude_banned,
         exclude_spamblocked=exclude_spamblocked,
@@ -240,10 +241,15 @@ async def select_account_for_action(
                 and not (exclude_banned and assigned.is_banned)
                 and not (exclude_spamblocked and assigned.is_spamblocked)
             )
+            assigned_row = next((row for row in rows if assigned and row[1].id == assigned.id), None)
+            assigned_pool = assigned_row[0] if assigned_row else None
             if assigned_ok:
                 if exclude_account_ids and assigned.id in exclude_account_ids:
                     pass
-                elif assigned.account_class in allowed_classes and assigned.daily_messages_sent < automation_obj.max_daily_messages_per_account:
+                elif (
+                    account_matches_action(assigned_pool, assigned, action_type)
+                    and assigned.daily_messages_sent < automation_obj.max_daily_messages_per_account
+                ):
                     if consume_quota:
                         assigned.daily_messages_sent += 1
                         assigned.last_used_at = _utc_now()

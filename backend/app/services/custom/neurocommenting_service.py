@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .chat_inspect_service import probe_comments_readonly
-from .chat_scope import apply_entity_metadata, is_broadcast_channel, is_paused
+from .chat_scope import apply_entity_metadata, is_broadcast_channel, is_lab_chat, is_paused
 from .post_engagement import NEUROCOMMENTING, SHILLING, SKIP, claim_post_engagement
 from .rotation_service import select_account_for_action
 from .shilling_service import perform_post_shilling
@@ -176,7 +176,11 @@ async def process_chat_target(
     chat_target: ChatTarget,
     *,
     max_comments_per_run: int = 5,
+    include_lab: bool = False,
+    lab_mode: bool = False,
 ) -> dict[str, Any]:
+    if is_lab_chat(chat_target) and not (include_lab or lab_mode):
+        return {"status": "skipped", "reason": "lab"}
     if is_paused(chat_target):
         return {"status": "skipped", "reason": "paused"}
     if chat_target.join_status != ChatJoinStatus.JOINED.value:
@@ -189,13 +193,13 @@ async def process_chat_target(
     automation = await session.get(CustomAutomation, automation_id)
     if not automation:
         return {"status": "skipped", "reason": "automation_missing"}
-    neuro_enabled = bool(automation.is_neurocommenting_enabled)
-    shilling_enabled = bool(automation.is_shilling_enabled)
+    neuro_enabled = bool(automation.is_neurocommenting_enabled) or lab_mode
+    shilling_enabled = bool(automation.is_shilling_enabled) and not lab_mode
     if not neuro_enabled and not shilling_enabled:
         return {"status": "skipped", "reason": "feature_disabled"}
 
     config = chat_target.neurocommenting_config or {}
-    max_per_day = int(config.get("max_per_day") or 10)
+    max_per_day = 10 ** 9 if lab_mode else int(config.get("max_per_day") or 10)
 
     scanner_action = "commenting" if neuro_enabled else "shilling"
     account = await select_account_for_action(session, automation_id, scanner_action, consume_quota=False)
@@ -322,7 +326,7 @@ async def run_neurocommenting_pass(automation_id: int) -> dict[str, Any]:
                 ChatTarget.mode != "inactive",
             )
         )
-        chats = result.scalars().all()
+        chats = [chat for chat in result.scalars().all() if not is_lab_chat(chat)]
         for chat_target in chats:
             try:
                 res = await process_chat_target(session, automation_id, chat_target)
@@ -331,5 +335,41 @@ async def run_neurocommenting_pass(automation_id: int) -> dict[str, Any]:
                     total_sent += int(res["sent"])
             except Exception as exc:
                 logger.exception("Neurocommenting failed for chat %s: %s", chat_target.id, exc)
+
+    return {"chats_processed": chat_count, "comments_sent": total_sent}
+
+
+async def run_lab_neurocommenting_pass(automation_id: int) -> dict[str, Any]:
+    from ...alembic.database import async_session_maker
+
+    total_sent = 0
+    chat_count = 0
+    async with async_session_maker() as session:
+        automation = await session.get(CustomAutomation, automation_id)
+        if not automation or not (automation.test_channel_username or "").strip():
+            return {"status": "skipped", "reason": "no_lab_channel", "chats_processed": 0, "comments_sent": 0}
+
+        result = await session.execute(
+            select(ChatTarget).where(
+                ChatTarget.custom_automation_id == automation_id,
+                ChatTarget.is_active.is_(True),
+                ChatTarget.join_status == ChatJoinStatus.JOINED.value,
+            )
+        )
+        chats = [chat for chat in result.scalars().all() if is_lab_chat(chat) and is_broadcast_channel(chat)]
+        for chat_target in chats:
+            try:
+                res = await process_chat_target(
+                    session,
+                    automation_id,
+                    chat_target,
+                    lab_mode=True,
+                    max_comments_per_run=10,
+                )
+                chat_count += 1
+                if res.get("sent"):
+                    total_sent += int(res["sent"])
+            except Exception as exc:
+                logger.exception("Lab neurocommenting failed for chat %s: %s", chat_target.id, exc)
 
     return {"chats_processed": chat_count, "comments_sent": total_sent}

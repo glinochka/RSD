@@ -149,6 +149,12 @@ const CustomAutomationSettingsPage = () => {
             partner_utm_url: form.partner_utm_url,
             partner_promo_code: form.partner_promo_code,
             conversion_check_url: form.conversion_check_url,
+            account_warmup_usernames: isAdmin
+              ? (form.account_warmup_usernames || []).map((item) => String(item || '').trim()).filter(Boolean)
+              : undefined,
+            account_warmup_messages: isAdmin
+              ? (form.account_warmup_messages || []).map((item) => String(item || '').trim()).filter(Boolean)
+              : undefined,
           };
       const data = await customService.updateAutomationSettings(id, payload);
       setSettings(data);
@@ -383,6 +389,50 @@ const CustomAutomationSettingsPage = () => {
           </div>
         </div>
         )}
+
+        {isAdmin && settings.solution_kind !== 'dmp_bot' ? (
+          <div className="settings-section">
+            <h3 className="settings-section-title">Прогрев аккаунтов</h3>
+            <p className="form-hint">
+              1–3 юзернейма доверенных аккаунтов, которым новые сессии пишут мини-диалог на второй и третий день.
+              {form.account_warmup_enabled
+                ? ' Прогрев включён — следующие заливы идут в прогрев.'
+                : ' Прогрев ещё не включён: кнопка «Начать прогрев» в разделе Аккаунты.'}
+            </p>
+            {[0, 1, 2].map((index) => (
+              <div key={`warmup-user-${index}`} className="form-group">
+                <label htmlFor={`warmup-user-${index}`}>Юзернейм {index + 1}</label>
+                <input
+                  id={`warmup-user-${index}`}
+                  type="text"
+                  value={(form.account_warmup_usernames || [])[index] || ''}
+                  onChange={(e) => {
+                    const next = [...(form.account_warmup_usernames || [])];
+                    next[index] = e.target.value;
+                    setForm((prev) => ({ ...prev, account_warmup_usernames: next }));
+                  }}
+                  placeholder="@username"
+                />
+              </div>
+            ))}
+            {[0, 1, 2].map((index) => (
+              <div key={`warmup-msg-${index}`} className="form-group">
+                <label htmlFor={`warmup-msg-${index}`}>Сообщение {index + 1}</label>
+                <input
+                  id={`warmup-msg-${index}`}
+                  type="text"
+                  value={(form.account_warmup_messages || [])[index] || ''}
+                  onChange={(e) => {
+                    const next = [...(form.account_warmup_messages || [])];
+                    next[index] = e.target.value;
+                    setForm((prev) => ({ ...prev, account_warmup_messages: next }));
+                  }}
+                  placeholder={index === 0 ? 'Привет' : index === 1 ? 'Как дела?' : 'Что нового?'}
+                />
+              </div>
+            ))}
+          </div>
+        ) : null}
 
         <div className="settings-actions">
           <button type="submit" className="btn btn-black" disabled={isSaving}>

@@ -2006,6 +2006,14 @@ class ChatSource(str, Enum):
     MANUAL = "manual"
     BULK_IMPORT = "bulk_import"
     AI_DISCOVERY = "ai_discovery"
+    TEST = "test"
+
+
+class AccountRole(str, Enum):
+    NEUROCOMMENTING = "neurocommenting"
+    LEAD_INTERCEPT = "lead_intercept"
+    SHILLING = "shilling"
+    DMP = "dmp"
 
 
 class ChatJoinStatus(str, Enum):
@@ -2121,6 +2129,13 @@ class CustomAutomation(Base):
     google_sheets_worksheet: Mapped[str | None] = mapped_column(String(128), nullable=True)
     google_sheets_credentials_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
     account_setup_templates: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    account_warmup_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    account_warmup_usernames: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    account_warmup_messages: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    test_channel_username: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    test_chat_username: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     created_by_admin_id: Mapped[int | None] = mapped_column(
         ForeignKey("custom_admins.id", ondelete="SET NULL"), nullable=True, index=True
@@ -2345,6 +2360,13 @@ class PoolAccount(Base):
     assigned_class: Mapped[str] = mapped_column(
         String(32), default=AccountClass.ONE_DAY.value, server_default="one_day", nullable=False, index=True
     )
+    roles: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    warmup_status: Mapped[str] = mapped_column(
+        String(32), default="idle", server_default="idle", nullable=False, index=True
+    )
+    warmup_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    warmup_last_dialog_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    warmup_dialog_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     added_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
     removed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)

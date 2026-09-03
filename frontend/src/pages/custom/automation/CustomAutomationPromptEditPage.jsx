@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
-import { PROMPT_TYPE_LABELS, VARIABLE_HINTS } from './activityLabels';
+import { parseShillingContent, PROMPT_TYPE_LABELS, VARIABLE_HINTS } from './activityLabels';
 import '../../../styles/projectSettingsPage.css';
 import '../../../styles/projectCRMPage.css';
 
@@ -23,11 +23,16 @@ const CustomAutomationPromptEditPage = () => {
     try {
       const data = await customService.getPrompt(id, promptId);
       setPrompt(data);
+      const pair = data.prompt_type === 'shilling'
+        ? parseShillingContent(data.content)
+        : { setup: '', reply: '' };
       setForm({
         content: data.content,
         model: data.model,
         temperature: data.temperature,
         max_tokens: data.max_tokens,
+        shilling_setup: data.shilling_setup || pair.setup,
+        shilling_reply: data.shilling_reply || pair.reply,
       });
       const vars = VARIABLE_HINTS[data.prompt_type] || [];
       const initial = {};
@@ -65,12 +70,17 @@ const CustomAutomationPromptEditPage = () => {
     setMessage(null);
     setError(null);
     try {
-      const payload = {
-        content: form.content,
-        model: form.model,
-        temperature: Number(form.temperature),
-        max_tokens: Number(form.max_tokens),
-      };
+      const payload = prompt.prompt_type === 'shilling'
+        ? {
+            shilling_setup: form.shilling_setup || '',
+            shilling_reply: form.shilling_reply || '',
+          }
+        : {
+            content: form.content,
+            model: form.model,
+            temperature: Number(form.temperature),
+            max_tokens: Number(form.max_tokens),
+          };
       await customService.updatePrompt(id, promptId, payload);
       setMessage('Промпт сохранён. Создана новая версия.');
       await loadPrompt();
@@ -136,6 +146,32 @@ const CustomAutomationPromptEditPage = () => {
       <form onSubmit={handleSubmit} className="settings-form">
         <div className="settings-section">
           <h3 className="settings-section-title">Параметры</h3>
+          {prompt.prompt_type === 'shilling' ? (
+            <>
+              <p className="form-hint">Фиксированные фразы. Первый аккаунт пишет вопрос, второй — ответ.</p>
+              <div className="form-group">
+                <label htmlFor="shilling_setup">1. Сообщение (вопрос)</label>
+                <textarea
+                  id="shilling_setup"
+                  name="shilling_setup"
+                  value={form.shilling_setup || ''}
+                  onChange={handleChange}
+                  rows={4}
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="shilling_reply">2. Сообщение (ответ)</label>
+                <textarea
+                  id="shilling_reply"
+                  name="shilling_reply"
+                  value={form.shilling_reply || ''}
+                  onChange={handleChange}
+                  rows={4}
+                />
+              </div>
+            </>
+          ) : (
+            <>
           <div className="form-group">
             <label htmlFor="model">Модель</label>
             <input id="model" type="text" name="model" value={form.model} onChange={handleChange} />
@@ -162,6 +198,8 @@ const CustomAutomationPromptEditPage = () => {
             <span className="form-hint">Переменные: {variables.map((v) => `{${v}}`).join(', ')}</span>
             <textarea id="content" name="content" value={form.content} onChange={handleChange} rows={12} />
           </div>
+            </>
+          )}
           <div className="settings-actions">
             <button type="submit" disabled={isSaving} className="btn btn-black">
               {isSaving ? 'Сохранение...' : 'Сохранить новую версию'}
@@ -170,6 +208,7 @@ const CustomAutomationPromptEditPage = () => {
         </div>
       </form>
 
+      {prompt.prompt_type === 'shilling' ? null : (
       <div className="settings-section">
         <h3 className="settings-section-title">Тестирование</h3>
         {variables.map((v) => (
@@ -206,6 +245,7 @@ const CustomAutomationPromptEditPage = () => {
           </>
         ) : null}
       </div>
+      )}
     </div>
   );
 };

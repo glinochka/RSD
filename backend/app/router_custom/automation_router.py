@@ -31,6 +31,10 @@ from .schemas import (
     AccountSetupTemplateUpdate,
     AccountSetupTemplatesResponse,
     AccountUploadResponse,
+    AccountWarmupStartResponse,
+    TestLabDmpRequest,
+    TestLabResponse,
+    TestLabUpdate,
     ChatDiscoveryActionResponse,
     ChatDiscoveryApproveRequest,
     ChatDiscoveryCreate,
@@ -75,7 +79,7 @@ from .schemas import (
     GoogleSheetsSettingsUpdate,
     TelegramBotSettingsUpdate,
 )
-from .dependencies import get_current_custom_automation
+from .dependencies import get_current_custom_admin, get_current_custom_automation, optional_is_custom_admin
 from ..services.account_pool_service import bulk_upload_sessions, delete_pool_account
 from ..services.custom.lead_keywords import normalize_lead_keywords
 from ..services.custom.account_connect_service import (
@@ -162,7 +166,21 @@ from ..services.custom.prompt_service import (
     toggle_prompt,
     update_prompt,
 )
-from ..services.custom.shilling_service import run_shilling_pass
+from ..services.custom.account_warmup_service import (
+    normalize_warmup_messages,
+    normalize_warmup_usernames,
+)
+from ..services.custom.account_roles import normalize_roles
+from ..services.custom.test_lab_service import (
+    activate_lab_shilling,
+    join_lab_targets,
+    list_lab_chats,
+    run_lab_neurocommenting,
+    save_lab_targets,
+    serialize_lab,
+    simulate_dmp,
+)
+from ..services.custom.shilling_service import encode_shilling_lines, parse_shilling_lines, run_shilling_pass
 from ..utils.JWT import create_access_token
 from ..utils.security import verify_password
 from ..alembic.database import async_session_maker
@@ -173,6 +191,7 @@ from ..alembic.models import (
     ChatDiscoveryTask,
     ChatImportJob,
     ChatMessage,
+    ChatSource,
     ChatTarget,
     CustomAutomation,
     CustomAutomationCredential,
@@ -188,7 +207,7 @@ logger = getLogger(__name__)
 router = APIRouter()
 
 
-async def _settings_payload(session, db_automation) -> dict:
+async def _settings_payload(session, db_automation, *, is_admin: bool = True) -> dict:
     if (db_automation.is_dmp_one_enabled or is_dmp_notify_pipeline(db_automation)) and not db_automation.dmp_webhook_secret:
         ensure_dmp_webhook_secret(db_automation)
         await session.commit()
@@ -216,6 +235,13 @@ async def _settings_payload(session, db_automation) -> dict:
     response["google_sheets_service_account_email"] = (
         service_account_email(db_automation) if response["google_sheets_credentials_set"] else None
     )
+    response["account_warmup_usernames"] = normalize_warmup_usernames(db_automation.account_warmup_usernames)
+    response["account_warmup_messages"] = normalize_warmup_messages(db_automation.account_warmup_messages)
+    response["account_warmup_enabled"] = bool(db_automation.account_warmup_enabled)
+    if not is_admin:
+        response.pop("account_warmup_usernames", None)
+        response.pop("account_warmup_messages", None)
+        response.pop("account_warmup_enabled", None)
     response.pop("telegram_bot_token_enc", None)
     response.pop("google_sheets_credentials_enc", None)
     return response
@@ -312,12 +338,13 @@ async def automation_activity(
 async def get_automation_settings(
     automation_id: int,
     automation: CustomAutomation = Depends(get_current_custom_automation),
+    is_admin: bool = Depends(optional_is_custom_admin),
 ):
     async with async_session_maker() as session:
         db_automation = await session.get(CustomAutomation, automation_id)
         if not db_automation:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Automation not found")
-        return await _settings_payload(session, db_automation)
+        return await _settings_payload(session, db_automation, is_admin=is_admin)
 
 
 @router.patch("/automations/{automation_id}/settings", response_model=CustomAutomationSettingsResponse)
@@ -325,12 +352,24 @@ async def update_automation_settings(
     automation_id: int,
     payload: CustomAutomationSettingsUpdate,
     automation: CustomAutomation = Depends(get_current_custom_automation),
+    is_admin: bool = Depends(optional_is_custom_admin),
 ):
     async with async_session_maker() as session:
         db_automation = await session.merge(automation)
         update_data = payload.model_dump(exclude_unset=True)
+        if not is_admin:
+            for field in ("account_warmup_usernames", "account_warmup_messages", "account_warmup_enabled"):
+                update_data.pop(field, None)
         if "lead_keywords" in update_data:
             update_data["lead_keywords"] = normalize_lead_keywords(update_data.get("lead_keywords"))
+        if "account_warmup_usernames" in update_data:
+            update_data["account_warmup_usernames"] = normalize_warmup_usernames(
+                update_data.get("account_warmup_usernames")
+            )
+        if "account_warmup_messages" in update_data:
+            update_data["account_warmup_messages"] = normalize_warmup_messages(
+                update_data.get("account_warmup_messages")
+            )
         for field, value in update_data.items():
             setattr(db_automation, field, value)
         if is_dmp_notify_pipeline(db_automation):
@@ -350,7 +389,7 @@ async def update_automation_settings(
         db_automation.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         await session.commit()
         await session.refresh(db_automation)
-        return await _settings_payload(session, db_automation)
+        return await _settings_payload(session, db_automation, is_admin=is_admin)
 
 
 @router.get(
@@ -377,6 +416,15 @@ def _session_status(social_account: SocialAccount) -> str:
     return "active"
 
 
+def _prompt_response(prompt) -> CustomPromptResponse:
+    data = CustomPromptResponse.model_validate(prompt).model_dump()
+    if prompt.prompt_type == "shilling":
+        setup, reply = parse_shilling_lines(prompt.content)
+        data["shilling_setup"] = setup
+        data["shilling_reply"] = reply
+    return CustomPromptResponse.model_validate(data)
+
+
 def _account_response(
     pool_account: PoolAccount,
     social_account: SocialAccount,
@@ -394,6 +442,10 @@ def _account_response(
         avatar_file_path=social_account.avatar_file_path,
         account_class=social_account.account_class,
         assigned_class=pool_account.assigned_class,
+        roles=normalize_roles(pool_account.roles),
+        warmup_status=pool_account.warmup_status or "idle",
+        warmup_started_at=pool_account.warmup_started_at,
+        warmup_dialog_count=pool_account.warmup_dialog_count or 0,
         status=_session_status(social_account),
         is_active=social_account.is_active,
         is_banned=social_account.is_banned,
@@ -445,6 +497,7 @@ async def list_accounts(
     automation_id: int,
     status: Optional[str] = None,
     account_class: Optional[str] = None,
+    role: Optional[str] = None,
     search: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
@@ -467,6 +520,10 @@ async def list_accounts(
         )
         if account_class:
             stmt = stmt.where(PoolAccount.assigned_class == account_class)
+        if role:
+            from sqlalchemy import cast, String
+
+            stmt = stmt.where(cast(PoolAccount.roles, String).like(f'%"{role}"%'))
         if status == "loaded" or status == "active":
             stmt = stmt.where(
                 SocialAccount.session_file_path.isnot(None),
@@ -759,6 +816,102 @@ async def get_account(
         return _account_response(pool_account, social_account, automation.max_daily_messages_per_account)
 
 
+@router.post("/automations/{automation_id}/accounts/warmup/start", response_model=AccountWarmupStartResponse)
+async def start_account_warmup(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+    admin=Depends(get_current_custom_admin),
+):
+    async with async_session_maker() as session:
+        db_automation = await session.get(CustomAutomation, automation_id)
+        if not db_automation:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Automation not found")
+        db_automation.account_warmup_enabled = True
+        db_automation.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        await session.commit()
+        await session.refresh(db_automation)
+        return AccountWarmupStartResponse(
+            account_warmup_enabled=True,
+            account_warmup_usernames=normalize_warmup_usernames(db_automation.account_warmup_usernames),
+        )
+
+
+@router.get("/automations/{automation_id}/test", response_model=TestLabResponse)
+async def get_test_lab(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+    admin=Depends(get_current_custom_admin),
+):
+    async with async_session_maker() as session:
+        db_automation = await session.get(CustomAutomation, automation_id)
+        chats = await list_lab_chats(session, automation_id)
+        return TestLabResponse.model_validate(serialize_lab(db_automation, chats))
+
+
+@router.patch("/automations/{automation_id}/test", response_model=TestLabResponse)
+async def update_test_lab(
+    automation_id: int,
+    payload: TestLabUpdate,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+    admin=Depends(get_current_custom_admin),
+):
+    async with async_session_maker() as session:
+        db_automation = await session.merge(automation)
+        try:
+            data = await save_lab_targets(
+                session,
+                db_automation,
+                channel_username=payload.channel_username,
+                chat_username=payload.chat_username,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        return TestLabResponse.model_validate(data)
+
+
+@router.post("/automations/{automation_id}/test/join")
+async def join_test_lab(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+    admin=Depends(get_current_custom_admin),
+):
+    async with async_session_maker() as session:
+        return await join_lab_targets(session, automation_id)
+
+
+@router.post("/automations/{automation_id}/test/shilling")
+async def run_test_lab_shilling(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+    admin=Depends(get_current_custom_admin),
+):
+    async with async_session_maker() as session:
+        db_automation = await session.merge(automation)
+        return await activate_lab_shilling(session, db_automation)
+
+
+@router.post("/automations/{automation_id}/test/neurocommenting")
+async def run_test_lab_neurocommenting(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+    admin=Depends(get_current_custom_admin),
+):
+    async with async_session_maker() as session:
+        return await run_lab_neurocommenting(session, automation_id)
+
+
+@router.post("/automations/{automation_id}/test/dmp")
+async def run_test_lab_dmp(
+    automation_id: int,
+    payload: TestLabDmpRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+    admin=Depends(get_current_custom_admin),
+):
+    async with async_session_maker() as session:
+        db_automation = await session.merge(automation)
+        return await simulate_dmp(session, db_automation, payload.phone)
+
+
 @router.post("/automations/{automation_id}/accounts/bulk-upload", response_model=AccountUploadResponse)
 async def bulk_upload_accounts(
     automation_id: int,
@@ -937,7 +1090,7 @@ async def update_account(
     payload: AccountClassUpdate,
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
-    if payload.assigned_class is None and payload.display_name is None and payload.bio is None:
+    if payload.assigned_class is None and payload.roles is None and payload.display_name is None and payload.bio is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nothing to update")
     async with async_session_maker() as session:
         row = await session.execute(
@@ -958,6 +1111,8 @@ async def update_account(
             pool_account.assigned_class = payload.assigned_class
             social_account.account_class = payload.assigned_class
             social_account.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        if payload.roles is not None:
+            pool_account.roles = normalize_roles(payload.roles)
         if payload.display_name is not None:
             try:
                 await update_account_display_name(session, automation_id, social_account, payload.display_name)
@@ -1007,7 +1162,10 @@ async def list_chats(
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
     async with async_session_maker() as session:
-        filters = [ChatTarget.custom_automation_id == automation_id]
+        filters = [
+            ChatTarget.custom_automation_id == automation_id,
+            ChatTarget.source != ChatSource.TEST.value,
+        ]
         if join_status:
             filters.append(ChatTarget.join_status == join_status)
         if comments_unchecked:
@@ -1839,7 +1997,7 @@ async def list_automation_prompts(
     async with async_session_maker() as session:
         items = await list_prompts(session, automation_id)
         return CustomPromptListResponse(
-            items=[CustomPromptResponse.model_validate(p) for p in items],
+            items=[_prompt_response(p) for p in items],
         )
 
 
@@ -1853,7 +2011,7 @@ async def get_automation_prompt(
         prompt = await get_prompt(session, automation_id, prompt_id)
         if not prompt:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Prompt not found")
-        return CustomPromptResponse.model_validate(prompt)
+        return _prompt_response(prompt)
 
 
 @router.patch("/automations/{automation_id}/prompts/{prompt_id}", response_model=CustomPromptResponse)
@@ -1865,17 +2023,23 @@ async def update_automation_prompt(
 ):
     async with async_session_maker() as session:
         try:
+            content = payload.content
+            if payload.shilling_setup is not None or payload.shilling_reply is not None:
+                content = encode_shilling_lines(
+                    payload.shilling_setup or "",
+                    payload.shilling_reply or "",
+                )
             prompt = await update_prompt(
                 session,
                 automation_id,
                 prompt_id,
-                content=payload.content,
+                content=content,
                 model=payload.model,
                 temperature=payload.temperature,
                 max_tokens=payload.max_tokens,
                 is_active=payload.is_active,
             )
-            return CustomPromptResponse.model_validate(prompt)
+            return _prompt_response(prompt)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
@@ -1889,7 +2053,7 @@ async def toggle_automation_prompt(
     async with async_session_maker() as session:
         try:
             prompt = await toggle_prompt(session, automation_id, prompt_id)
-            return CustomPromptResponse.model_validate(prompt)
+            return _prompt_response(prompt)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 

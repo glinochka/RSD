@@ -1217,6 +1217,8 @@ class TestSchedulerContracts:
         assert "discovery" in factories
         assert "join" in factories
         assert "lead_warmup" in factories
+        assert "account_warmup" in factories
+        assert "test_watch" in factories
         for name, fn in factories.items():
             params = [
                 p for p in inspect.signature(fn).parameters.values()
@@ -1251,6 +1253,8 @@ class TestSchedulerContracts:
         assert "join" in jobs
         assert "monitor" in jobs
         assert "lead_warmup" in jobs
+        assert "account_warmup" in jobs
+        assert "test_watch" not in jobs
 
 
 class TestLeadDeliveryParsing:
@@ -3152,6 +3156,519 @@ class TestAccountProfile:
         assert other.is_file()
         assert session_file_has_auth_key(dest) is False
 
+
+class TestAccountRolesWarmupAndLab:
+    async def _add_account(
+        self,
+        session: AsyncSession,
+        automation: CustomAutomation,
+        *,
+        account_class: str,
+        username: str,
+        phone: str,
+        roles=None,
+        warmup_status: str = "idle",
+    ) -> SocialAccount:
+        from app.services.account_pool_service import get_or_create_default_pool
+
+        pool = await get_or_create_default_pool(session, automation.id)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number=phone,
+            username=username,
+            display_name=username,
+            account_class=account_class,
+            encrypted_session="mock_encrypted_session",
+            session_file_path=f"sessions/{username}.session",
+            is_active=True,
+            is_banned=False,
+        )
+        session.add(account)
+        await session.flush()
+        session.add(
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account.id,
+                assigned_class=account_class,
+                custom_automation_id=automation.id,
+                roles=list(roles or []),
+                warmup_status=warmup_status,
+            )
+        )
+        await session.commit()
+        await session.refresh(account)
+        return account
+
+    async def test_explicit_roles_override_class(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from app.services.custom.rotation_service import select_account_for_action
+
+        await self._add_account(
+            test_session,
+            custom_automation,
+            account_class=AccountClass.ONE_DAY.value,
+            username="role_shill",
+            phone="+79991000001",
+            roles=["shilling"],
+        )
+        shill = await select_account_for_action(test_session, custom_automation.id, "shilling")
+        comment = await select_account_for_action(test_session, custom_automation.id, "commenting")
+        assert shill is not None and shill.username == "role_shill"
+        assert comment is None
+
+    async def test_empty_roles_keep_class_fallback(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from app.services.custom.rotation_service import select_account_for_action
+
+        await self._add_account(
+            test_session,
+            custom_automation,
+            account_class=AccountClass.ONE_DAY.value,
+            username="class_neuro",
+            phone="+79991000002",
+            roles=[],
+        )
+        comment = await select_account_for_action(test_session, custom_automation.id, "commenting")
+        shill = await select_account_for_action(test_session, custom_automation.id, "shilling")
+        assert comment is not None and comment.username == "class_neuro"
+        assert shill is None
+
+    async def test_warmup_blocks_production_but_allows_join(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from app.services.custom.rotation_service import select_account_for_action
+
+        await self._add_account(
+            test_session,
+            custom_automation,
+            account_class=AccountClass.ONE_DAY.value,
+            username="warming_acc",
+            phone="+79991000003",
+            warmup_status="rest",
+        )
+        assert await select_account_for_action(test_session, custom_automation.id, "commenting") is None
+        joined = await select_account_for_action(
+            test_session, custom_automation.id, "prepare_join", consume_quota=False
+        )
+        assert joined is not None
+
+    async def test_patch_account_roles(
+        self,
+        client: AsyncClient,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+        client_token: str,
+    ):
+        account = await self._add_account(
+            test_session,
+            custom_automation,
+            account_class=AccountClass.MID.value,
+            username="role_patch",
+            phone="+79991000004",
+        )
+        response = await client.patch(
+            f"/api/custom/automations/{custom_automation.id}/accounts/{account.id}",
+            headers={"Authorization": f"Bearer {client_token}"},
+            json={"roles": ["neurocommenting", "dmp", "shilling"]},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["roles"] == ["neurocommenting", "dmp", "shilling"]
+
+    async def test_fixed_shilling_phrases_from_prompt(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from app.alembic.models import CustomPrompt, PromptType
+        from app.services.custom.shilling_service import encode_shilling_lines, generate_shilling_dialogue
+
+        prompt = await test_session.scalar(
+            select(CustomPrompt).where(
+                CustomPrompt.custom_automation_id == custom_automation.id,
+                CustomPrompt.prompt_type == PromptType.SHILLING.value,
+            )
+        )
+        prompt.content = encode_shilling_lines("Это вопрос?", "Это ответ.")
+        await test_session.commit()
+        setup, reply = await generate_shilling_dialogue(
+            test_session, custom_automation, chat_title="Demo"
+        )
+        assert setup == "Это вопрос?"
+        assert reply == "Это ответ."
+
+    async def test_default_shilling_prompt_is_json_pair(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from app.alembic.models import CustomPrompt, PromptType
+        from app.services.custom.shilling_service import generate_shilling_dialogue, parse_shilling_lines
+
+        row = await test_session.scalar(
+            select(CustomPrompt).where(
+                CustomPrompt.custom_automation_id == custom_automation.id,
+                CustomPrompt.prompt_type == PromptType.SHILLING.value,
+            )
+        )
+        setup, reply = parse_shilling_lines(row.content)
+        assert setup
+        assert reply
+        generated = await generate_shilling_dialogue(test_session, custom_automation, chat_title="x")
+        assert generated == (setup, reply)
+
+    async def test_process_shilling_skips_lab_chat(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from app.services.custom.shilling_service import process_shilling_chat
+
+        chat = ChatTarget(
+            custom_automation_id=custom_automation.id,
+            provider="telegram",
+            external_chat_id="lab-shill",
+            title="Lab chat",
+            chat_type="chat",
+            mode="shilling",
+            source="test",
+            join_status="joined",
+            is_active=True,
+        )
+        test_session.add(chat)
+        await test_session.commit()
+        custom_automation.is_shilling_enabled = True
+        result = await process_shilling_chat(test_session, custom_automation, chat)
+        assert result["status"] == "skipped"
+        assert result["reason"] == "lab"
+
+    async def test_join_rate_limit_is_one_to_three_minutes(self):
+        from app.services.custom.chat_join_service import (
+            JOIN_DELAY_MAX_SECONDS,
+            JOIN_DELAY_MIN_SECONDS,
+            _sleep_between_joins,
+        )
+
+        delays = []
+
+        async def sleeper(seconds):
+            delays.append(seconds)
+
+        with patch("app.services.custom.chat_join_service.random.uniform", return_value=97):
+            await _sleep_between_joins(rate_limit=True, sleeper=sleeper)
+            await _sleep_between_joins(rate_limit=False, sleeper=sleeper)
+        assert delays == [97]
+        assert JOIN_DELAY_MIN_SECONDS == 60
+        assert JOIN_DELAY_MAX_SECONDS == 180
+
+    async def test_join_loaded_skips_lab_and_can_disable_delay(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from app.services.custom.chat_join_service import join_loaded_chats_for_accounts
+
+        await self._add_account(
+            test_session,
+            custom_automation,
+            account_class=AccountClass.ONE_DAY.value,
+            username="joiner",
+            phone="+79991000005",
+        )
+        lab = ChatTarget(
+            custom_automation_id=custom_automation.id,
+            provider="telegram",
+            external_chat_id="lab-join",
+            title="Lab channel",
+            chat_type="channel",
+            mode="neurocommenting",
+            source="test",
+            join_status="pending",
+            is_active=True,
+        )
+        prod = ChatTarget(
+            custom_automation_id=custom_automation.id,
+            provider="telegram",
+            external_chat_id="prod-join",
+            title="Prod chat",
+            chat_type="chat",
+            mode="monitoring",
+            source="manual",
+            join_status="pending",
+            is_active=True,
+        )
+        test_session.add_all([lab, prod])
+        await test_session.commit()
+        delays = []
+
+        async def sleeper(seconds):
+            delays.append(seconds)
+
+        async def fake_join(session, chat_target, account):
+            return {"status": "joined", "joined_at": None, "joined_by_account_id": account.id}
+
+        with patch(
+            "app.services.custom.chat_join_service._try_join_chat",
+            new=AsyncMock(side_effect=fake_join),
+        ):
+            skipped = await join_loaded_chats_for_accounts(
+                test_session, custom_automation.id, rate_limit=False, sleeper=sleeper
+            )
+            assert skipped["chats"] == 1
+            assert delays == []
+            included = await join_loaded_chats_for_accounts(
+                test_session,
+                custom_automation.id,
+                include_lab=True,
+                rate_limit=False,
+                sleeper=sleeper,
+            )
+        assert included["chats"] == 2
+
+    async def test_warmup_enrolls_only_after_flag(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from app.services.account_pool_service import _create_social_account, get_or_create_default_pool
+
+        pool = await get_or_create_default_pool(test_session, custom_automation.id)
+        custom_automation.account_warmup_enabled = False
+        await test_session.commit()
+        first = await _create_social_account(
+            test_session,
+            custom_automation.id,
+            pool.id,
+            provider="telegram",
+            phone_number="+79991000006",
+            username="before_flag",
+            display_name="before_flag",
+            account_class=AccountClass.ONE_DAY.value,
+            encrypted_session="x",
+            session_file_path="sessions/before_flag.session",
+        )
+        await test_session.commit()
+        first_pool = await test_session.scalar(
+            select(PoolAccount).where(PoolAccount.social_account_id == first.id)
+        )
+        assert first_pool.warmup_status == "idle"
+
+        custom_automation.account_warmup_enabled = True
+        await test_session.commit()
+        second = await _create_social_account(
+            test_session,
+            custom_automation.id,
+            pool.id,
+            provider="telegram",
+            phone_number="+79991000007",
+            username="after_flag",
+            display_name="after_flag",
+            account_class=AccountClass.ONE_DAY.value,
+            encrypted_session="x",
+            session_file_path="sessions/after_flag.session",
+        )
+        await test_session.commit()
+        second_pool = await test_session.scalar(
+            select(PoolAccount).where(PoolAccount.social_account_id == second.id)
+        )
+        assert second_pool.warmup_status == "rest"
+        await test_session.refresh(first_pool)
+        assert first_pool.warmup_status == "idle"
+
+    async def test_warmup_due_next_moscow_day(self):
+        from datetime import date, datetime, timezone
+
+        from app.services.custom.account_warmup_service import _due_for_dialog
+
+        pool = PoolAccount(
+            custom_automation_id=1,
+            account_pool_id=1,
+            social_account_id=1,
+            warmup_status="rest",
+            warmup_started_at=datetime(2026, 9, 1, 12, 0),
+        )
+        with patch(
+            "app.services.custom.account_warmup_service._moscow_date",
+            side_effect=lambda value=None: date(2026, 9, 1) if value is None else date(2026, 9, 1),
+        ):
+            assert _due_for_dialog(pool) is False
+        with patch(
+            "app.services.custom.account_warmup_service._moscow_date",
+            side_effect=lambda value=None: date(2026, 9, 2) if value is None else date(2026, 9, 1),
+        ):
+            assert _due_for_dialog(pool) is True
+        pool.warmup_status = "warming"
+        pool.warmup_last_dialog_at = datetime(2026, 9, 2, 12, 0, tzinfo=timezone.utc).replace(tzinfo=None)
+        with patch(
+            "app.services.custom.account_warmup_service._moscow_date",
+            side_effect=lambda value=None: date(2026, 9, 3) if value is None else date(2026, 9, 2),
+        ):
+            assert _due_for_dialog(pool) is True
+
+    async def test_client_cannot_open_test_or_warmup(
+        self,
+        client: AsyncClient,
+        custom_automation: CustomAutomation,
+        client_token: str,
+        admin_token: str,
+    ):
+        headers = {"Authorization": f"Bearer {client_token}"}
+        admin = {"Authorization": f"Bearer {admin_token}"}
+        denied = await client.get(f"/api/custom/automations/{custom_automation.id}/test", headers=headers)
+        assert denied.status_code == 401
+        start = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/accounts/warmup/start",
+            headers=headers,
+        )
+        assert start.status_code == 401
+        opened = await client.get(f"/api/custom/automations/{custom_automation.id}/test", headers=admin)
+        assert opened.status_code == 200
+        started = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/accounts/warmup/start",
+            headers=admin,
+        )
+        assert started.status_code == 200
+        assert started.json()["account_warmup_enabled"] is True
+
+    async def test_client_cannot_change_warmup_usernames(
+        self,
+        client: AsyncClient,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+        client_token: str,
+        admin_token: str,
+    ):
+        custom_automation.account_warmup_usernames = ["secret_peer"]
+        custom_automation.account_warmup_messages = ["Привет", "Как дела?"]
+        await test_session.commit()
+        patched = await client.patch(
+            f"/api/custom/automations/{custom_automation.id}/settings",
+            headers={"Authorization": f"Bearer {client_token}"},
+            json={"account_warmup_usernames": ["hacked"]},
+        )
+        assert patched.status_code == 200
+        client_view = patched.json()
+        assert client_view.get("account_warmup_usernames") in ([], None)
+        admin_view = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/settings",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        assert admin_view.status_code == 200
+        assert admin_view.json()["account_warmup_usernames"] == ["secret_peer"]
+
+    async def test_lab_chats_are_hidden_from_chat_list(
+        self,
+        client: AsyncClient,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+        client_token: str,
+    ):
+        test_session.add_all(
+            [
+                ChatTarget(
+                    custom_automation_id=custom_automation.id,
+                    provider="telegram",
+                    external_chat_id="hidden-lab",
+                    title="Lab hidden",
+                    chat_type="channel",
+                    mode="neurocommenting",
+                    source="test",
+                    join_status="joined",
+                    is_active=True,
+                ),
+                ChatTarget(
+                    custom_automation_id=custom_automation.id,
+                    provider="telegram",
+                    external_chat_id="visible-prod",
+                    title="Visible prod",
+                    chat_type="chat",
+                    mode="monitoring",
+                    source="manual",
+                    join_status="joined",
+                    is_active=True,
+                ),
+            ]
+        )
+        await test_session.commit()
+        response = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/chats",
+            headers={"Authorization": f"Bearer {client_token}"},
+        )
+        assert response.status_code == 200
+        titles = [item["title"] for item in response.json()["items"]]
+        assert "Lab hidden" not in titles
+        assert "Visible prod" in titles
+
+    async def test_admin_can_save_lab_targets(
+        self,
+        client: AsyncClient,
+        custom_automation: CustomAutomation,
+        admin_token: str,
+    ):
+        async def fake_create(session, automation_id, raw_link, mode=None):
+            chat_type = "channel" if (mode or "") == "neurocommenting" else "chat"
+            chat = ChatTarget(
+                custom_automation_id=automation_id,
+                provider="telegram",
+                invite_link=raw_link,
+                title=raw_link,
+                chat_type=chat_type,
+                mode=mode or "inactive",
+                source="manual",
+                join_status="pending",
+                is_active=True,
+            )
+            session.add(chat)
+            await session.commit()
+            await session.refresh(chat)
+            return chat
+
+        with patch("app.services.custom.test_lab_service.create_chat_from_link", fake_create):
+            response = await client.patch(
+                f"/api/custom/automations/{custom_automation.id}/test",
+                headers={"Authorization": f"Bearer {admin_token}"},
+                json={"channel_username": "@demochan", "chat_username": "@demochat"},
+            )
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["channel_username"] == "demochan"
+        assert data["chat_username"] == "demochat"
+        assert data["channel"] is not None
+        assert data["chat"] is not None
+
+    async def test_scheduler_starts_test_watch_when_channel_set(self):
+        from types import SimpleNamespace
+
+        from app.services.custom.scheduler_manager import CustomAutomationScheduler
+
+        jobs = CustomAutomationScheduler._enabled_jobs(
+            SimpleNamespace(
+                is_chat_monitoring_enabled=False,
+                is_neurocommenting_enabled=False,
+                is_digital_footprint_enabled=False,
+                is_dmp_one_enabled=False,
+                is_amocrm_enabled=False,
+                is_shilling_enabled=False,
+                test_channel_username="demochan",
+            )
+        )
+        assert "test_watch" in jobs
+        assert "account_warmup" in jobs
+
+    async def test_prompt_patch_saves_shilling_pair(
+        self,
+        client: AsyncClient,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+        client_token: str,
+    ):
+        from app.alembic.models import CustomPrompt, PromptType
+
+        prompt = await test_session.scalar(
+            select(CustomPrompt).where(
+                CustomPrompt.custom_automation_id == custom_automation.id,
+                CustomPrompt.prompt_type == PromptType.SHILLING.value,
+            )
+        )
+        response = await client.patch(
+            f"/api/custom/automations/{custom_automation.id}/prompts/{prompt.id}",
+            headers={"Authorization": f"Bearer {client_token}"},
+            json={"shilling_setup": "Кто пробовал?", "shilling_reply": "Я пользуюсь."},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["shilling_setup"] == "Кто пробовал?"
+        assert response.json()["shilling_reply"] == "Я пользуюсь."
 
 
 

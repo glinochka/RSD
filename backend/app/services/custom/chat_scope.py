@@ -10,6 +10,7 @@ from ...alembic.models import (
     AccountPool,
     AutomationActionLog,
     ChatMode,
+    ChatSource,
     ChatTarget,
     PoolAccount,
     SocialAccount,
@@ -17,6 +18,10 @@ from ...alembic.models import (
 
 CHANNEL_TYPES = {"channel", "broadcast"}
 SHILLING_ACTIONS = ("shilling_chat", "shilling_post")
+
+
+def is_lab_chat(chat_target: ChatTarget) -> bool:
+    return (chat_target.source or "").strip().lower() == ChatSource.TEST.value
 
 
 def is_paused(chat_target: ChatTarget) -> bool:

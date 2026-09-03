@@ -243,6 +243,7 @@ async def client(test_engine, test_session) -> AsyncGenerator[AsyncClient, None]
         'sentence_transformers': mock_sentence_transformers,
         'pikepdf': mock_pikepdf,
         'img2pdf': mock_img2pdf,
+        'app.services.max_userbot_auth': MagicMock(),
     }):
         
         # --- 3. ПАТЧИНГ ФУНКЦИЙ КРИПТОГРАФИИ ---

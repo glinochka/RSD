@@ -150,3 +150,15 @@ async def get_current_custom_automation_credential(
                 detail="Credential access denied",
             )
         return credential
+
+
+async def optional_is_custom_admin(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(http_bearer),
+) -> bool:
+    if not credentials or not credentials.credentials:
+        return False
+    try:
+        decode_access_token_payload(credentials.credentials, "custom_admin")
+        return True
+    except HTTPException:
+        return False

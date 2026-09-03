@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .chat_scope import (
     apply_entity_metadata,
     is_group_chat,
+    is_lab_chat,
     is_paused,
     load_own_sender_keys,
     load_shilling_message_ids,
@@ -418,6 +419,8 @@ async def scan_chats_and_process(
 
         fetched = 0
         for chat_target in chats:
+            if is_lab_chat(chat_target):
+                continue
             if is_paused(chat_target) or not is_group_chat(chat_target):
                 continue
             try:

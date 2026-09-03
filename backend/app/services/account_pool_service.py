@@ -14,7 +14,7 @@ from fastapi import UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..alembic.models import AccountClass, AccountPool, PoolAccount, SocialAccount
+from ..alembic.models import AccountClass, AccountPool, CustomAutomation, PoolAccount, SocialAccount
 from ..config import settings
 
 
@@ -149,6 +149,10 @@ async def _create_social_account(
     )
     session.add(pool_account)
     await session.flush()
+    automation = await session.get(CustomAutomation, automation_id)
+    from .custom.account_warmup_service import enroll_pool_account
+
+    enroll_pool_account(automation, pool_account)
     return social_account
 
 

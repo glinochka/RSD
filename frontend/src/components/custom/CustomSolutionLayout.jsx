@@ -60,6 +60,14 @@ const PlugIcon = () => (
   </svg>
 );
 
+const TestIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M10 2v7.5L4.8 18.2A2 2 0 0 0 6.5 21h11a2 2 0 0 0 1.7-2.8L14 9.5V2" />
+    <path d="M8 2h8" />
+    <path d="M8.5 14h7" />
+  </svg>
+);
+
 const SettingsIcon = () => (
   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
     <circle cx="12" cy="12" r="3" />
@@ -82,7 +90,7 @@ const MenuIcon = () => (
   </svg>
 );
 
-const getNavItems = (automationId, features) => {
+const getNavItems = (automationId, features, isAdmin) => {
   const isDmpBot = features?.solution_kind === 'dmp_bot';
   return [
     { id: 'dashboard', label: 'Дашборд', icon: DashboardIcon, path: NAVIGATION_ROUTES.CUSTOM_AUTOMATION_DASHBOARD(automationId) },
@@ -122,6 +130,13 @@ const getNavItems = (automationId, features) => {
       icon: PlugIcon,
       path: NAVIGATION_ROUTES.CUSTOM_AUTOMATION_AMOCRM(automationId),
       hidden: isDmpBot || !features?.is_amocrm_enabled,
+    },
+    {
+      id: 'test',
+      label: 'Тест',
+      icon: TestIcon,
+      path: NAVIGATION_ROUTES.CUSTOM_AUTOMATION_TEST(automationId),
+      hidden: !isAdmin || isDmpBot,
     },
     { id: 'settings', label: 'Настройки', icon: SettingsIcon, path: NAVIGATION_ROUTES.CUSTOM_AUTOMATION_SETTINGS(automationId) },
   ];
@@ -163,7 +178,7 @@ const CustomSolutionLayout = () => {
     return <Navigate to={NAVIGATION_ROUTES.CUSTOM_LOGIN} replace />;
   }
 
-  const navItems = getNavItems(id, features).filter((item) => !item.hidden);
+  const navItems = getNavItems(id, features, isAdmin).filter((item) => !item.hidden);
   const isActive = (path) => location.pathname === path || location.pathname.startsWith(`${path}/`);
 
   return (

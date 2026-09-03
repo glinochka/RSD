@@ -207,6 +207,9 @@ class CustomAutomationSettingsResponse(BaseModel):
     google_sheets_worksheet: str | None = None
     google_sheets_credentials_set: bool = False
     google_sheets_service_account_email: str | None = None
+    account_warmup_enabled: bool = False
+    account_warmup_usernames: list[str] = Field(default_factory=list)
+    account_warmup_messages: list[str] = Field(default_factory=list)
 
 
 class CustomAutomationSettingsValidationResponse(BaseModel):
@@ -231,6 +234,9 @@ class CustomAutomationSettingsUpdate(BaseModel):
     partner_promo_code: str | None = None
     conversion_check_url: str | None = None
     status: str | None = None
+    account_warmup_usernames: list[str] | None = None
+    account_warmup_messages: list[str] | None = None
+    account_warmup_enabled: bool | None = None
 
 
 class CustomAutomationCredentialCreate(BaseModel):
@@ -272,6 +278,7 @@ class AccountBulkClassifyResponse(BaseModel):
 
 class AccountClassUpdate(BaseModel):
     assigned_class: Optional[str] = Field(default=None, min_length=1, max_length=32)
+    roles: Optional[list[str]] = None
     display_name: Optional[str] = Field(default=None, min_length=1, max_length=128)
     bio: Optional[str] = Field(default=None, max_length=140)
 
@@ -331,6 +338,10 @@ class AccountResponse(BaseModel):
     avatar_file_path: Optional[str] = None
     account_class: str
     assigned_class: str
+    roles: list[str] = Field(default_factory=list)
+    warmup_status: str = "idle"
+    warmup_started_at: Optional[datetime] = None
+    warmup_dialog_count: int = 0
     status: str
     is_active: bool
     is_banned: bool
@@ -558,6 +569,8 @@ class CustomPromptResponse(BaseModel):
     version: int
     created_at: datetime
     updated_at: datetime
+    shilling_setup: Optional[str] = None
+    shilling_reply: Optional[str] = None
 
 
 class CustomPromptListResponse(BaseModel):
@@ -570,6 +583,8 @@ class CustomPromptUpdate(BaseModel):
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
     is_active: Optional[bool] = None
+    shilling_setup: Optional[str] = None
+    shilling_reply: Optional[str] = None
 
 
 class CustomPromptTestRequest(BaseModel):
@@ -780,3 +795,33 @@ class CustomLeadResponse(BaseModel):
 class CustomLeadListResponse(BaseModel):
     items: list[CustomLeadResponse]
     total: int
+
+
+class AccountWarmupStartResponse(BaseModel):
+    account_warmup_enabled: bool
+    account_warmup_usernames: list[str] = Field(default_factory=list)
+
+
+class TestLabChatPayload(BaseModel):
+    id: int
+    title: Optional[str] = None
+    username: Optional[str] = None
+    chat_type: Optional[str] = None
+    join_status: Optional[str] = None
+    last_join_error: Optional[str] = None
+
+
+class TestLabResponse(BaseModel):
+    channel_username: str = ""
+    chat_username: str = ""
+    channel: Optional[TestLabChatPayload] = None
+    chat: Optional[TestLabChatPayload] = None
+
+
+class TestLabUpdate(BaseModel):
+    channel_username: Optional[str] = None
+    chat_username: Optional[str] = None
+
+
+class TestLabDmpRequest(BaseModel):
+    phone: str = Field(..., min_length=5, max_length=32)

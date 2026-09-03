@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
-import { PROMPT_TYPE_LABELS, VARIABLE_HINTS } from './activityLabels';
+import { parseShillingContent, PROMPT_TYPE_LABELS, VARIABLE_HINTS } from './activityLabels';
 import '../../../styles/projectCRMPage.css';
 import '../../../styles/projectSettingsPage.css';
 
@@ -88,9 +88,18 @@ const CustomAutomationPromptsPage = () => {
                     </span>
                   </div>
                   <p className="crm-item-subtitle">
-                    v{prompt.version} · {prompt.model} · temp {prompt.temperature} · max_tokens {prompt.max_tokens}
+                    {prompt.prompt_type === 'shilling'
+                      ? `Фиксированные фразы · v${prompt.version}`
+                      : `v${prompt.version} · ${prompt.model} · temp ${prompt.temperature} · max_tokens ${prompt.max_tokens}`}
                   </p>
-                  <p className="crm-prompt-preview">{prompt.content}</p>
+                  <p className="crm-prompt-preview">
+                    {prompt.prompt_type === 'shilling'
+                      ? (() => {
+                          const pair = parseShillingContent(prompt.content);
+                          return `Вопрос: ${prompt.shilling_setup || pair.setup || '—'}\nОтвет: ${prompt.shilling_reply || pair.reply || '—'}`;
+                        })()
+                      : prompt.content}
+                  </p>
                   <div className="crm-item-actions">
                     <Link
                       to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_PROMPT_EDIT(id, prompt.id)}

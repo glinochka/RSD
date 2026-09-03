@@ -61,6 +61,7 @@ import CustomAutomationDmpPage from './pages/custom/automation/CustomAutomationD
 import CustomAutomationAmocrmPage from './pages/custom/automation/CustomAutomationAmocrmPage';
 import CustomAutomationPromptsPage from './pages/custom/automation/CustomAutomationPromptsPage';
 import CustomAutomationPromptEditPage from './pages/custom/automation/CustomAutomationPromptEditPage';
+import CustomAutomationTestPage from './pages/custom/automation/CustomAutomationTestPage';
 
 // Website Builder Pages
 import { PreviewPage, WebsitePublicPage, ConstructorPage, WebsiteCreatePage } from './website-builder/pages';
@@ -235,6 +236,7 @@ const App = () => {
                   <Route path="amocrm" element={<CustomAutomationAmocrmPage />} />
                   <Route path="prompts" element={<CustomAutomationPromptsPage />} />
                   <Route path="prompts/:promptId/edit" element={<CustomAutomationPromptEditPage />} />
+                  <Route path="test" element={<CustomAutomationTestPage />} />
                 </Route>
 
                 {/* Website Builder Routes */}

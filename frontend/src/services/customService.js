@@ -234,13 +234,16 @@ const customService = {
     return handleResponse(response);
   },
 
-  async getAutomationAccounts(automationId, { status, accountClass, search, limit, offset } = {}) {
+  async getAutomationAccounts(automationId, { status, accountClass, role, search, limit, offset } = {}) {
     const params = new URLSearchParams();
     if (status) {
       params.set('status', status);
     }
     if (accountClass) {
       params.set('account_class', accountClass);
+    }
+    if (role) {
+      params.set('role', role);
     }
     if (search) {
       params.set('search', search);
@@ -417,7 +420,7 @@ const customService = {
       return this.updateAccount(automationId, accountId, { assignedClass });
     },
 
-    async updateAccount(automationId, accountId, { assignedClass, displayName, bio } = {}) {
+    async updateAccount(automationId, accountId, { assignedClass, displayName, bio, roles } = {}) {
       const body = {};
       if (assignedClass !== undefined) {
         body.assigned_class = assignedClass;
@@ -427,6 +430,9 @@ const customService = {
       }
       if (bio !== undefined) {
         body.bio = bio;
+      }
+      if (roles !== undefined) {
+        body.roles = roles;
       }
       const response = await fetch(
         `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ACCOUNTS(automationId)}/${accountId}`,
@@ -447,8 +453,87 @@ const customService = {
           headers: getAuthHeaders(),
         },
       );
-      return handleResponse(response);
-    },
+    return handleResponse(response);
+  },
+
+  async startAccountWarmup(automationId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ACCOUNTS_WARMUP_START(automationId)}`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async getTestLab(automationId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_TEST(automationId)}`,
+      {
+        method: 'GET',
+        headers: getAuthHeaders(),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async updateTestLab(automationId, data) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_TEST(automationId)}`,
+      {
+        method: 'PATCH',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(data),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async joinTestLab(automationId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_TEST_JOIN(automationId)}`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async runTestLabShilling(automationId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_TEST_SHILLING(automationId)}`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async runTestLabNeurocommenting(automationId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_TEST_NEUROCOMMENTING(automationId)}`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async runTestLabDmp(automationId, phone) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_TEST_DMP(automationId)}`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ phone }),
+      },
+    );
+    return handleResponse(response);
+  },
 
   async getAutomationSettings(automationId) {
     const response = await fetch(

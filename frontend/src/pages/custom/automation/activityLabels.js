@@ -68,7 +68,7 @@ export const PROMPT_TYPE_LABELS = {
   lead_qualification: 'Квалификация лида',
   chat_relevance: 'Релевантность чата',
   profile_bio: 'Профиль bio',
-  shilling: 'Шиллинг',
+  shilling: 'Шиллинг: вопрос и ответ',
 };
 
 export const SOLUTION_KIND_LABELS = {
@@ -94,5 +94,41 @@ export const VARIABLE_HINTS = {
   lead_qualification: ['history', 'last_incoming', 'partner_utm_url', 'partner_promo_code'],
   chat_relevance: ['query', 'title', 'description', 'chat_type', 'participants_count'],
   profile_bio: ['industry', 'name'],
-  shilling: ['industry', 'client_name', 'chat_title', 'post_text'],
+  shilling: [],
+};
+
+export const ACCOUNT_ROLE_OPTIONS = [
+  { value: 'neurocommenting', label: 'Нейрокомментинг' },
+  { value: 'lead_intercept', label: 'Перехват заявок' },
+  { value: 'shilling', label: 'Шиллинг' },
+  { value: 'dmp', label: 'DMP' },
+];
+
+export const ACCOUNT_ROLE_LABELS = {
+  neurocommenting: 'Нейрокомментинг',
+  lead_intercept: 'Перехват заявок',
+  shilling: 'Шиллинг',
+  dmp: 'DMP',
+};
+
+export const WARMUP_STATUS_LABELS = {
+  idle: 'Без прогрева',
+  rest: 'Прогрев: день отдыха',
+  warming: 'Прогрев: диалог',
+  complete: 'Прогрев завершён',
+};
+
+export const parseShillingContent = (content) => {
+  try {
+    const data = JSON.parse(content || '');
+    if (data && typeof data === 'object') {
+      return {
+        setup: data.setup || data.question || '',
+        reply: data.reply || data.answer || '',
+      };
+    }
+  } catch {
+    // plain text is not a shilling pair
+  }
+  return { setup: '', reply: '' };
 };

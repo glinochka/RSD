@@ -1,4 +1,5 @@
 """CustomPrompt management: defaults, versioning, testing."""
+import json
 import re
 from datetime import datetime, timezone
 from typing import Any
@@ -182,25 +183,17 @@ DEFAULT_PROMPTS: dict[str, dict[str, Any]] = {
         "response_format": "json",
     },
     PromptType.SHILLING.value: {
-        "name": "Shilling",
-        "content": """Ты пишешь нативный диалог двух незнакомцев в Telegram (партизанский маркетинг).
-Первый жалуется или спрашивает совет по теме оффера. Второй отвечает как живой человек из своего опыта и мягко рекомендует сервис заказчика.
-Без ссылок, без хештегов, без рекламного тона, без «всем советую». 1-2 предложения на реплику.
-Если уместно, второй может предложить скинуть контакт в личку.
-
-Индустрия/оффер: {industry}
-Клиент: {client_name}
-Чат: {chat_title}
-Контекст поста (может быть пусто): {post_text}
-
-Верни ТОЛЬКО JSON:
-{
-  "setup": "реплика первого",
-  "reply": "реплика второго"
-}""",
+        "name": "Шиллинг: вопрос и ответ",
+        "content": json.dumps(
+            {
+                "setup": "Кто-нибудь уже пробовал сервис, о котором тут пишут? Не хочу влететь.",
+                "reply": "Пользуюсь сам уже какое-то время, по работе зашёл. Если надо — могу в личке набросать, как подключался.",
+            },
+            ensure_ascii=False,
+        ),
         "model": "deepseek-chat",
-        "temperature": 0.85,
-        "max_tokens": 300,
+        "temperature": 0.0,
+        "max_tokens": 200,
         "response_format": "json",
     },
 }
@@ -223,7 +216,7 @@ PROMPT_VARIABLES: dict[str, list[str]] = {
     PromptType.CHAT_RELEVANCE.value: ["query", "title", "description", "chat_type", "participants_count"],
     PromptType.LEAD_QUALIFICATION.value: ["history", "last_incoming", "partner_utm_url", "partner_promo_code"],
     PromptType.PROFILE_BIO.value: ["industry", "name"],
-    PromptType.SHILLING.value: ["industry", "client_name", "chat_title", "post_text"],
+    PromptType.SHILLING.value: [],
 }
 
 SOLUTION_PROMPT_OVERRIDES: dict[str, dict[str, dict[str, Any]]] = {
@@ -511,6 +504,16 @@ async def test_prompt(
         rendered = rendered.replace(f"{{{key}}}", str(value))
 
     missing = [v for v in PROMPT_VARIABLES.get(prompt.prompt_type, []) if f"{{{v}}}" in rendered]
+
+    if prompt.prompt_type == PromptType.SHILLING.value:
+        from .shilling_service import parse_shilling_lines
+
+        setup, reply = parse_shilling_lines(prompt.content)
+        return {
+            "rendered": prompt.content,
+            "output": f"{setup}\n---\n{reply}".strip(),
+            "missing_variables": [] if setup and reply else ["setup", "reply"],
+        }
 
     try:
         response = await ai_client.chat.completions.create(

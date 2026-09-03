@@ -3,6 +3,10 @@ import { useParams } from 'react-router-dom';
 import CustomSelect from '../../../components/CustomSelect';
 import CustomFileButton from '../../../components/custom/CustomFileButton';
 import customService, { mediaUrl } from '../../../services/customService';
+import { useCustomAuth } from '../../../components/custom/useCustomAuth';
+import CustomBulkProfileForm from './CustomBulkProfileForm';
+import CustomAccountConnectForm from './CustomAccountConnectForm';
+import { ACCOUNT_ROLE_LABELS, ACCOUNT_ROLE_OPTIONS, WARMUP_STATUS_LABELS } from './activityLabels';
 import CustomBulkProfileForm from './CustomBulkProfileForm';
 import CustomAccountConnectForm from './CustomAccountConnectForm';
 import '../../../styles/projectCRMPage.css';
@@ -15,6 +19,8 @@ const ACCOUNT_CLASSES = [
   { value: 'trusted', label: 'Доверенный' },
   { value: 'shilling', label: 'Шиллинг' },
 ];
+
+const ROLE_FILTERS = [{ value: '', label: 'Все функции' }, ...ACCOUNT_ROLE_OPTIONS];
 
 const CLASS_STATUS = {
   one_day: 'crm-status--pending',
@@ -34,6 +40,7 @@ const STATUSES = [
 
 const CustomAutomationAccountsPage = () => {
   const { id } = useParams();
+  const { isAdmin } = useCustomAuth();
   const [accounts, setAccounts] = useState([]);
   const [total, setTotal] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
@@ -49,12 +56,16 @@ const CustomAutomationAccountsPage = () => {
   const [banStats, setBanStats] = useState(null);
   const [healthCheckMessage, setHealthCheckMessage] = useState(null);
   const [isHealthChecking, setIsHealthChecking] = useState(false);
+  const [warmupEnabled, setWarmupEnabled] = useState(false);
+  const [isStartingWarmup, setIsStartingWarmup] = useState(false);
+  const [warmupMessage, setWarmupMessage] = useState(null);
   const [savingNameId, setSavingNameId] = useState(null);
   const [nameDrafts, setNameDrafts] = useState({});
   const [bioDrafts, setBioDrafts] = useState({});
   const [filters, setFilters] = useState({
     status: '',
     accountClass: '',
+    role: '',
     search: '',
   });
 
@@ -64,6 +75,7 @@ const CustomAutomationAccountsPage = () => {
       const data = await customService.getAutomationAccounts(id, {
         status: filters.status || undefined,
         accountClass: filters.accountClass || undefined,
+        role: filters.role || undefined,
         search: filters.search || undefined,
         limit: 50,
         offset: 0,
@@ -76,7 +88,7 @@ const CustomAutomationAccountsPage = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [id, filters.status, filters.accountClass, filters.search]);
+  }, [id, filters.status, filters.accountClass, filters.role, filters.search]);
 
   useEffect(() => {
     loadAccounts();
@@ -94,6 +106,17 @@ const CustomAutomationAccountsPage = () => {
   useEffect(() => {
     loadBanStats();
   }, [loadBanStats]);
+
+  useEffect(() => {
+    if (!isAdmin) {
+      return undefined;
+    }
+    customService
+      .getAutomationSettings(id)
+      .then((data) => setWarmupEnabled(Boolean(data.account_warmup_enabled)))
+      .catch(() => {});
+    return undefined;
+  }, [id, isAdmin]);
 
   useEffect(() => {
     if (!uploadSummary || !id) {
@@ -234,6 +257,30 @@ const CustomAutomationAccountsPage = () => {
     }
   };
 
+  const handleRolesChange = async (accountId, roles) => {
+    try {
+      await customService.updateAccount(id, accountId, { roles });
+      await loadAccounts();
+    } catch (err) {
+      setError(err.message || 'Не удалось сохранить функции');
+    }
+  };
+
+  const handleStartWarmup = async () => {
+    setIsStartingWarmup(true);
+    setWarmupMessage(null);
+    setError(null);
+    try {
+      const data = await customService.startAccountWarmup(id);
+      setWarmupEnabled(Boolean(data.account_warmup_enabled));
+      setWarmupMessage('Прогрев включён. Он применится только к аккаунтам, которые зальёте после этой кнопки.');
+    } catch (err) {
+      setError(err.message || 'Не удалось включить прогрев');
+    } finally {
+      setIsStartingWarmup(false);
+    }
+  };
+
   const handleSaveProfile = async (account) => {
     const name = (nameDrafts[account.id] ?? account.display_name ?? '').trim();
     const bio = (bioDrafts[account.id] ?? account.bio ?? '').trim();
@@ -309,8 +356,10 @@ const CustomAutomationAccountsPage = () => {
     return { label: 'Активен', className: 'crm-status--confirmed' };
   };
 
-  const distribution = accounts.reduce((acc, a) => {
-    acc[a.assigned_class] = (acc[a.assigned_class] || 0) + 1;
+  const roleDistribution = accounts.reduce((acc, a) => {
+    (a.roles || []).forEach((role) => {
+      acc[role] = (acc[role] || 0) + 1;
+    });
     return acc;
   }, {});
 
@@ -339,12 +388,36 @@ const CustomAutomationAccountsPage = () => {
         </div>
       </div>
 
+      {warmupMessage ? <p className="crm-flash">{warmupMessage}</p> : null}
       {classifyMessage ? <p className="crm-flash">{classifyMessage}</p> : null}
       {healthCheckMessage ? <p className="crm-flash">{healthCheckMessage}</p> : null}
       {uploadSuccess ? <p className="crm-flash">{uploadSuccess}</p> : null}
       {uploadError ? <p className="crm-flash crm-flash--error">{uploadError}</p> : null}
       {error ? <p className="crm-flash crm-flash--error">{error}</p> : null}
 
+      {isAdmin ? (
+        <div className="settings-section">
+          <h3 className="settings-section-title">Прогрев аккаунтов</h3>
+          <p className="form-hint">
+            После включения прогрев идёт только для следующих заливов: первый день — отдых, второй —
+            мини-диалог с доверенным аккаунтом, на третий день то же и прогрев завершён.
+            Юзернеймы задаются в настройках.
+          </p>
+          <p className="form-hint">
+            {warmupEnabled ? 'Прогрев включён для новых заливов.' : 'Прогрев выключен.'}
+          </p>
+          <div className="settings-actions">
+            <button
+              type="button"
+              className="btn btn-black"
+              disabled={isStartingWarmup || warmupEnabled}
+              onClick={handleStartWarmup}
+            >
+              {isStartingWarmup ? 'Включаем...' : warmupEnabled ? 'Прогрев включён' : 'Начать прогрев'}
+            </button>
+          </div>
+        </div>
+      ) : null}
       {uploadSummary ? (
         <div className="settings-section">
           <h3 className="settings-section-title">После залива</h3>
@@ -408,9 +481,9 @@ const CustomAutomationAccountsPage = () => {
 
       {accounts.length > 0 ? (
         <div className="crm-stats">
-          {ACCOUNT_CLASSES.filter((c) => c.value).map((c) => (
+          {ACCOUNT_ROLE_OPTIONS.map((c) => (
             <div key={c.value} className="crm-stat">
-              <span className="crm-stat-value">{distribution[c.value] || 0}</span>
+              <span className="crm-stat-value">{roleDistribution[c.value] || 0}</span>
               <span className="crm-stat-label">{c.label}</span>
             </div>
           ))}
@@ -434,6 +507,15 @@ const CustomAutomationAccountsPage = () => {
             value={filters.status}
             options={STATUSES}
             onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}
+          />
+        </div>
+        <div className="form-group">
+          <label htmlFor="acc-role">Функция</label>
+          <CustomSelect
+            id="acc-role"
+            value={filters.role}
+            options={ROLE_FILTERS}
+            onChange={(e) => setFilters((f) => ({ ...f, role: e.target.value }))}
           />
         </div>
         <div className="form-group">
@@ -500,6 +582,8 @@ const CustomAutomationAccountsPage = () => {
                 {account.is_spamblocked ? <span className="crm-status crm-status--spamblock">СПАМБЛОК</span> : null}
                 {account.is_spamblocked ? ' · ' : ''}
                 {account.is_banned ? 'Бан · ' : ''}
+                {WARMUP_STATUS_LABELS[account.warmup_status] || ''}
+                {account.warmup_status && account.warmup_status !== 'idle' ? ' · ' : ''}
                 {account.risk_score !== null && account.trust_score !== null
                   ? `Risk ${account.risk_score} · Trust ${account.trust_score} · `
                   : ''}
@@ -542,6 +626,17 @@ const CustomAutomationAccountsPage = () => {
                 </CustomFileButton>
               </div>
               <div className="form-group">
+                <label htmlFor={`roles-${account.id}`}>Функции</label>
+                <CustomSelect
+                  id={`roles-${account.id}`}
+                  multiple
+                  value={account.roles || []}
+                  options={ACCOUNT_ROLE_OPTIONS}
+                  placeholder="Не выбрано"
+                  onChange={(e) => handleRolesChange(account.id, e.target.value)}
+                />
+              </div>
+              <div className="form-group">
                 <label htmlFor={`class-${account.id}`}>Класс</label>
                 <CustomSelect
                   id={`class-${account.id}`}
@@ -551,7 +646,8 @@ const CustomAutomationAccountsPage = () => {
                 />
               </div>
               <span className={`crm-status ${CLASS_STATUS[account.assigned_class] || ''}`}>
-                {ACCOUNT_CLASSES.find((c) => c.value === account.assigned_class)?.label || account.assigned_class}
+                {(account.roles || []).map((role) => ACCOUNT_ROLE_LABELS[role] || role).join(' · ')
+                  || 'По классу'}
               </span>
               <div className="settings-actions">
                 <button

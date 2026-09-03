@@ -290,6 +290,7 @@ export const API_ROUTES = {
   CUSTOM_AUTOMATION_ACCOUNTS_SETUP_TEMPLATES: (id) => `/api/custom/automations/${id}/accounts/setup-templates`,
   CUSTOM_AUTOMATION_ACCOUNTS_PREPARE: (id) => `/api/custom/automations/${id}/accounts/prepare`,
   CUSTOM_AUTOMATION_ACCOUNTS_PREPARE_STATUS: (id) => `/api/custom/automations/${id}/accounts/prepare-status`,
+  CUSTOM_AUTOMATION_ACCOUNTS_WARMUP_START: (id) => `/api/custom/automations/${id}/accounts/warmup/start`,
   CUSTOM_AUTOMATION_ACCOUNTS_QR_START: (id) => `/api/custom/automations/${id}/accounts/qr/start`,
   CUSTOM_AUTOMATION_ACCOUNTS_QR_STATUS: (id) => `/api/custom/automations/${id}/accounts/qr/status`,
   CUSTOM_AUTOMATION_ACCOUNTS_QR_2FA: (id) => `/api/custom/automations/${id}/accounts/qr/verify_2fa`,
@@ -336,6 +337,11 @@ export const API_ROUTES = {
   CUSTOM_AUTOMATION_CHAT_SHILLING_CONFIG: (id, chatId) =>
     `/api/custom/automations/${id}/chats/${chatId}/shilling-config`,
   CUSTOM_AUTOMATION_CHAT_SHILLING_RUN: (id) => `/api/custom/automations/${id}/chats/shilling`,
+  CUSTOM_AUTOMATION_TEST: (id) => `/api/custom/automations/${id}/test`,
+  CUSTOM_AUTOMATION_TEST_JOIN: (id) => `/api/custom/automations/${id}/test/join`,
+  CUSTOM_AUTOMATION_TEST_SHILLING: (id) => `/api/custom/automations/${id}/test/shilling`,
+  CUSTOM_AUTOMATION_TEST_NEUROCOMMENTING: (id) => `/api/custom/automations/${id}/test/neurocommenting`,
+  CUSTOM_AUTOMATION_TEST_DMP: (id) => `/api/custom/automations/${id}/test/dmp`,
 };
 
 export const AGENT_ROLES = {
@@ -407,6 +413,7 @@ export const NAVIGATION_ROUTES = {
   CUSTOM_AUTOMATION_AMOCRM: (id) => `/custom/automations/${id}/amocrm`,
   CUSTOM_AUTOMATION_PROMPTS: (id) => `/custom/automations/${id}/prompts`,
   CUSTOM_AUTOMATION_PROMPT_EDIT: (id, promptId) => `/custom/automations/${id}/prompts/${promptId}/edit`,
+  CUSTOM_AUTOMATION_TEST: (id) => `/custom/automations/${id}/test`,
 };
 
 // User-facing messages; backend detail (FastAPI) is preferred when present (see errorUtils).

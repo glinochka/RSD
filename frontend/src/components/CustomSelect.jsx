@@ -11,6 +11,7 @@ const CustomSelect = ({
   className = '',
   error = false,
   placeholder = '',
+  multiple = false,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const selectRef = useRef(null);
@@ -37,8 +38,16 @@ const CustomSelect = ({
     };
   }, [isOpen]);
 
-  const selectedOption = options.find((option) => option.value === value);
-  const displayLabel = selectedOption?.label || placeholder;
+  const selectedValues = multiple
+    ? (Array.isArray(value) ? value : [])
+    : value;
+  const selectedOptions = multiple
+    ? options.filter((option) => selectedValues.includes(option.value))
+    : options.filter((option) => option.value === value);
+  const selectedOption = selectedOptions[0];
+  const displayLabel = multiple
+    ? (selectedOptions.length ? selectedOptions.map((option) => option.label).join(', ') : placeholder)
+    : (selectedOption?.label || placeholder);
   const buttonClassName = [
     'custom-select-trigger',
     className,
@@ -50,6 +59,19 @@ const CustomSelect = ({
   const handleSelectOption = (nextValue) => {
     const optionToSelect = options.find((option) => option.value === nextValue);
     if (optionToSelect?.disabled) {
+      return;
+    }
+    if (multiple) {
+      const current = Array.isArray(value) ? [...value] : [];
+      const next = current.includes(nextValue)
+        ? current.filter((item) => item !== nextValue)
+        : [...current, nextValue];
+      onChange({
+        target: {
+          name,
+          value: next,
+        },
+      });
       return;
     }
     onChange({
@@ -74,7 +96,9 @@ const CustomSelect = ({
       >
         <span
           className={`custom-select-value ${
-            !selectedOption && placeholder ? 'custom-select-value--placeholder' : ''
+            (multiple ? selectedOptions.length === 0 : !selectedOption) && placeholder
+              ? 'custom-select-value--placeholder'
+              : ''
           }`}
         >
           {displayLabel}
@@ -83,19 +107,27 @@ const CustomSelect = ({
       </button>
       {isOpen && !disabled && (
         <div className="custom-select-dropdown" role="listbox" aria-labelledby={id}>
-          {options.map((option) => (
+          {options.map((option) => {
+            const isSelected = multiple
+              ? selectedValues.includes(option.value)
+              : option.value === value;
+            return (
             <button
               key={option.value === '' || option.value == null ? `empty:${option.label}` : option.value}
               type="button"
-              className={`custom-select-option ${option.value === value ? 'selected' : ''} ${
+              className={`custom-select-option ${isSelected ? 'selected' : ''} ${
                 option.disabled ? 'disabled' : ''
               }`}
               onClick={() => handleSelectOption(option.value)}
               disabled={option.disabled}
             >
+              {multiple ? (
+                <span className={`custom-select-check ${isSelected ? 'checked' : ''}`} aria-hidden="true" />
+              ) : null}
               {option.label}
             </button>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

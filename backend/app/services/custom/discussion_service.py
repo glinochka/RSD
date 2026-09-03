@@ -10,7 +10,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .chat_scope import apply_entity_metadata, is_group_chat, is_paused, load_own_sender_keys, load_shilling_message_ids, message_is_own_activity
+from .chat_scope import apply_entity_metadata, is_group_chat, is_lab_chat, is_paused, load_own_sender_keys, load_shilling_message_ids, message_is_own_activity
 from .rotation_service import select_account_for_action
 from .shilling_service import _moscow_day_utc_range
 from .telegram_account_client import TelegramAccountClient
@@ -377,7 +377,7 @@ async def run_discussion_pass(automation_id: int) -> dict[str, Any]:
                 ChatTarget.mode != "inactive",
             )
         )
-        chats = result.scalars().all()
+        chats = [chat for chat in result.scalars().all() if not is_lab_chat(chat)]
         for chat_target in chats:
             try:
                 res = await process_chat_target(session, automation_id, chat_target, max_daily)
