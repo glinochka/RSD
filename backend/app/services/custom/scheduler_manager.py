@@ -24,6 +24,7 @@ from .neurocommenting_service import run_lab_neurocommenting_pass, run_neurocomm
 from .discussion_service import run_discussion_pass
 from .amocrm_service import run_amocrm_sync_for_automation
 from .chat_discovery_service import run_pending_discovery_for_automation
+from .inbound_dm_service import run_inbound_dm_pass
 from .lead_warmup_service import run_lead_warmup_pass
 from .account_warmup_service import run_account_warmup_pass
 from .shilling_service import run_shilling_pass
@@ -68,6 +69,7 @@ class CustomAutomationScheduler:
             "shilling": settings.CUSTOM_SHILLING_INTERVAL_SECONDS,
             "discussion": settings.CUSTOM_DISCUSSION_INTERVAL_SECONDS,
             "lead_warmup": settings.CUSTOM_LEAD_WARMUP_INTERVAL_SECONDS,
+            "inbound_dm": settings.CUSTOM_INBOUND_DM_INTERVAL_SECONDS,
             "account_warmup": settings.CUSTOM_ACCOUNT_WARMUP_INTERVAL_SECONDS,
             "test_watch": settings.CUSTOM_TEST_WATCH_INTERVAL_SECONDS,
             "dmp_poll": settings.DMP_ONE_POLL_INTERVAL_SECONDS,
@@ -85,6 +87,7 @@ class CustomAutomationScheduler:
             "shilling": run_shilling_pass,
             "discussion": run_discussion_pass,
             "lead_warmup": run_lead_warmup_pass,
+            "inbound_dm": run_inbound_dm_pass,
             "account_warmup": run_account_warmup_pass,
             "test_watch": run_lab_neurocommenting_pass,
             "dmp_poll": poll_pending_imports,
@@ -117,7 +120,7 @@ class CustomAutomationScheduler:
                 jobs.add("lead_warmup")
             return jobs
 
-        jobs = {"join", "discovery", "account_warmup"}
+        jobs = {"join", "discovery", "account_warmup", "inbound_dm"}
         if (getattr(automation, "test_channel_username", None) or "").strip():
             jobs.add("test_watch")
         if automation.is_chat_monitoring_enabled:

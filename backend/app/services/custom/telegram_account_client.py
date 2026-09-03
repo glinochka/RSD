@@ -400,6 +400,9 @@ class TelegramAccountClient:
     async def get_messages(self, *args: Any, **kwargs: Any) -> Any:
         return await self.client.get_messages(*args, **kwargs)
 
+    async def get_dialogs(self, limit: int = 30) -> Any:
+        return await self.client.get_dialogs(limit=limit)
+
     async def get_entity(self, identifier: Any) -> Any:
         return await self.resolve_peer(identifier)
 

@@ -24,6 +24,7 @@ ACTION_ALLOWED_CLASSES = {
     "prepare_join": set(_ALL_CLASSES),
 }
 _DM_ACTIONS = {"dm", "dmp_outreach"}
+_UNLIMITED_QUOTA_ACTIONS = _DM_ACTIONS | {"lead_warmup"}
 _KNOWN_ACTIONS = set(ACTION_ALLOWED_CLASSES)
 
 
@@ -99,7 +100,7 @@ def _filter_eligible(
             continue
         if not social_account.session_file_path:
             continue
-        if social_account.daily_messages_sent >= max_daily:
+        if action_type not in _UNLIMITED_QUOTA_ACTIONS and social_account.daily_messages_sent >= max_daily:
             continue
         eligible.append((pool_account, social_account))
     return eligible
@@ -248,9 +249,12 @@ async def select_account_for_action(
                     pass
                 elif (
                     account_matches_action(assigned_pool, assigned, action_type)
-                    and assigned.daily_messages_sent < automation_obj.max_daily_messages_per_account
+                    and (
+                        action_type in _UNLIMITED_QUOTA_ACTIONS
+                        or assigned.daily_messages_sent < automation_obj.max_daily_messages_per_account
+                    )
                 ):
-                    if consume_quota:
+                    if consume_quota and action_type not in _UNLIMITED_QUOTA_ACTIONS:
                         assigned.daily_messages_sent += 1
                         assigned.last_used_at = _utc_now()
                     return assigned
@@ -270,7 +274,7 @@ async def select_account_for_action(
     else:
         selected = _select_round_robin(eligible)
 
-    if consume_quota:
+    if consume_quota and action_type not in _UNLIMITED_QUOTA_ACTIONS:
         selected.daily_messages_sent += 1
         selected.last_used_at = _utc_now()
 

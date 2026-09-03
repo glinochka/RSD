@@ -52,6 +52,7 @@ import CustomSolutionsListPage from './pages/custom/admin/CustomSolutionsListPag
 import CustomNewSolutionPage from './pages/custom/admin/CustomNewSolutionPage';
 import CustomAutomationDashboardPage from './pages/custom/automation/CustomAutomationDashboardPage';
 import CustomAutomationActivityPage from './pages/custom/automation/CustomAutomationActivityPage';
+import CustomAutomationErrorsPage from './pages/custom/automation/CustomAutomationErrorsPage';
 import CustomAutomationAccountsPage from './pages/custom/automation/CustomAutomationAccountsPage';
 import CustomAutomationSettingsPage from './pages/custom/automation/CustomAutomationSettingsPage';
 import CustomAutomationChatsPage from './pages/custom/automation/CustomAutomationChatsPage';
@@ -226,6 +227,7 @@ const App = () => {
                   <Route index element={<Navigate to="dashboard" replace />} />
                   <Route path="dashboard" element={<CustomAutomationDashboardPage />} />
                   <Route path="activity" element={<CustomAutomationActivityPage />} />
+                  <Route path="errors" element={<CustomAutomationErrorsPage />} />
                   <Route path="accounts" element={<CustomAutomationAccountsPage />} />
                   <Route path="settings" element={<CustomAutomationSettingsPage />} />
                   <Route path="chats" element={<CustomAutomationChatsPage />} />

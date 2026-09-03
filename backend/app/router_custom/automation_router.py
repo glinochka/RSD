@@ -58,6 +58,7 @@ from .schemas import (
     CustomAutomationSettingsResponse,
     CustomAutomationSettingsValidationResponse,
     ActivityFeedResponse,
+    ErrorFeedResponse,
     AmocrmCredentialsUpdate,
     AmocrmOAuthStartRequest,
     AmocrmOAuthStartResponse,
@@ -118,6 +119,7 @@ from ..services.custom.account_prepare_service import (
     prepare_accounts,
 )
 from ..services.custom.chat_join_service import create_chat_from_link, join_pending_chats
+from ..services.custom.chat_membership_service import bulk_membership_counts
 from ..services.custom.chat_monitoring_service import scan_chats_and_process
 from ..services.custom.amocrm_service import (
     build_oauth_authorization_url,
@@ -137,6 +139,7 @@ from ..services.custom.amocrm_service import (
 from ..services.custom.lead_warmup_service import auto_transfer_lead
 from ..services.custom.analytics_service import get_automation_dashboard
 from ..services.custom.activity_feed_service import FEED_ACTIVITY_TYPES, list_activity_feed
+from ..services.custom.error_feed_service import list_error_feed
 from ..services.custom.discussion_service import run_discussion_pass
 from ..services.custom.settings_service import validate_settings
 from ..services.custom.dmp_one_service import (
@@ -341,6 +344,25 @@ async def automation_activity(
             offset=offset,
         )
         return ActivityFeedResponse.model_validate(data)
+
+
+@router.get("/automations/{automation_id}/errors", response_model=ErrorFeedResponse)
+async def automation_errors(
+    automation_id: int,
+    action_type: Optional[str] = None,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await list_error_feed(
+            session,
+            automation_id,
+            action_type=action_type,
+            limit=limit,
+            offset=offset,
+        )
+        return ErrorFeedResponse.model_validate(data)
 
 
 @router.get("/automations/{automation_id}/settings", response_model=CustomAutomationSettingsResponse)
@@ -1280,8 +1302,16 @@ async def list_chats(
         result = await session.execute(stmt)
         items = result.scalars().all()
         total = await session.scalar(select(func.count(ChatTarget.id)).where(*filters))
+        counts = await bulk_membership_counts(session, [chat.id for chat in items])
+        serialized = []
+        for chat in items:
+            row = ChatTargetResponse.model_validate(chat)
+            stats = counts.get(chat.id, {"joined": 0, "total": 0})
+            row.memberships_joined = stats.get("joined", 0)
+            row.memberships_total = stats.get("total", 0)
+            serialized.append(row)
         return ChatTargetListResponse(
-            items=[ChatTargetResponse.model_validate(c) for c in items],
+            items=serialized,
             total=total or 0,
         )
 

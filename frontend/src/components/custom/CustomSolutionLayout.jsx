@@ -95,6 +95,7 @@ const getNavItems = (automationId, features, isAdmin) => {
   return [
     { id: 'dashboard', label: 'Дашборд', icon: DashboardIcon, path: NAVIGATION_ROUTES.CUSTOM_AUTOMATION_DASHBOARD(automationId) },
     { id: 'activity', label: 'Активность', icon: ActivityIcon, path: NAVIGATION_ROUTES.CUSTOM_AUTOMATION_ACTIVITY(automationId) },
+    { id: 'errors', label: 'Баги и ошибки', icon: ActivityIcon, path: NAVIGATION_ROUTES.CUSTOM_AUTOMATION_ERRORS(automationId) },
     {
       id: 'accounts',
       label: 'Аккаунты',

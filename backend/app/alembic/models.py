@@ -2019,6 +2019,7 @@ class AccountRole(str, Enum):
 class ChatJoinStatus(str, Enum):
     PENDING = "pending"
     JOINING = "joining"
+    PARTIAL = "partial"
     JOINED = "joined"
     RATE_LIMITED = "rate_limited"
     ERROR = "error"
@@ -2035,6 +2036,7 @@ class PromptType(str, Enum):
     LEAD_QUALIFICATION = "lead_qualification"
     DMP_OUTREACH = "dmp_outreach"
     SHILLING = "shilling"
+    INBOUND_DM = "inbound_dm"
 
 
 class LeadStatus(str, Enum):
@@ -2564,6 +2566,42 @@ class ChatTarget(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
 
     automation: Mapped["CustomAutomation"] = relationship(back_populates="chat_targets")
+    memberships: Mapped[list["AccountChatMembership"]] = relationship(
+        back_populates="chat_target",
+        cascade="all, delete-orphan",
+    )
+
+
+class AccountChatMembership(Base):
+    __tablename__ = "account_chat_memberships"
+    __table_args__ = (
+        UniqueConstraint("social_account_id", "chat_target_id", name="uq_account_chat_membership"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    custom_automation_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_automations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    social_account_id: Mapped[int] = mapped_column(
+        ForeignKey("social_accounts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    chat_target_id: Mapped[int] = mapped_column(
+        ForeignKey("chat_targets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    join_status: Mapped[str] = mapped_column(
+        String(32), default=ChatJoinStatus.PENDING.value, server_default="pending", nullable=False, index=True
+    )
+    join_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    last_join_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_join_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    next_join_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    joined_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    chat_target: Mapped["ChatTarget"] = relationship(back_populates="memberships")
+    social_account: Mapped["SocialAccount"] = relationship()
 
 
 class ChatMessage(Base):

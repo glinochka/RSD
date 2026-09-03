@@ -34,8 +34,6 @@ logger = logging.getLogger(__name__)
 
 CHAT_WINDOW_START_HOUR = 8
 CHAT_WINDOW_END_HOUR = 20
-CHAT_SHILL_PROBABILITY = 0.40
-CHAT_SHILL_COOLDOWN_DAYS = 2
 CHAT_SHILL_ACTION = "shilling_chat"
 POST_SHILL_ACTION = "shilling_post"
 REPLY_DELAY_MIN_SECONDS = 8.0
@@ -465,10 +463,9 @@ async def last_successful_chat_shill(
     automation_id: int,
     chat_target_id: int,
     now: datetime | None = None,
-    *,
-    days: int = CHAT_SHILL_COOLDOWN_DAYS,
 ) -> AutomationActionLog | None:
-    start, end = _moscow_period_utc_range(days, now=now)
+    """Successful chat shill today (Moscow day)."""
+    start, end = _moscow_day_utc_range(now=now)
     result = await session.execute(
         select(AutomationActionLog)
         .where(
@@ -510,10 +507,11 @@ async def decide_chat_shilling_today(
     now: datetime | None = None,
     scheduled_at: datetime | None = None,
 ) -> str:
-    """At most once per 2 Moscow days after a success; 40% chance once per day, 08:00–20:00.
+    """At most once per Moscow day per chat; random time 08:00–20:00 MSK.
 
     Returns skip | wait | due | done.
     """
+    del roll
     if await last_successful_chat_shill(session, automation.id, chat_target.id, now=now):
         return "done"
     existing = await get_today_chat_decision(session, automation.id, chat_target.id, now=now)
@@ -540,21 +538,6 @@ async def decide_chat_shilling_today(
 
     if not _in_chat_window(now):
         return "wait"
-
-    rand = roll or random.random
-    if rand() >= CHAT_SHILL_PROBABILITY:
-        await _log(
-            session,
-            automation_id=automation.id,
-            account_id=account_id,
-            action_type=CHAT_SHILL_ACTION,
-            target_id=str(chat_target.id),
-            target_type="chat",
-            result="skip",
-            payload={"reason": "daily_probability"},
-            created_at=_moscow_now(now).astimezone(timezone.utc).replace(tzinfo=None),
-        )
-        return "skip"
 
     when = scheduled_at or _random_time_today(moscow)
     if when.tzinfo is None:

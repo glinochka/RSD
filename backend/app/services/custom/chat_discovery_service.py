@@ -387,6 +387,9 @@ async def _create_chat_target_from_candidate(
     )
     session.add(chat_target)
     await session.flush()
+    from .chat_membership_service import ensure_memberships_for_chat
+
+    await ensure_memberships_for_chat(session, task.custom_automation_id, chat_target)
     candidate["chat_target_id"] = chat_target.id
     candidate["approved"] = approved
     return chat_target

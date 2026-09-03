@@ -171,6 +171,9 @@ async def run_account_warmup_pass(automation_id: int) -> dict[str, Any]:
             if pool_account.warmup_dialog_count >= 2:
                 pool_account.warmup_status = "complete"
                 completed += 1
+                from .chat_membership_service import ensure_memberships_for_account
+
+                await ensure_memberships_for_account(session, automation.id, social.id)
             else:
                 pool_account.warmup_status = "warming"
             await session.commit()

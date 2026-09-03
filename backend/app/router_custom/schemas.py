@@ -111,6 +111,27 @@ class ActivityFeedResponse(BaseModel):
     total: int
 
 
+class ErrorFeedItemResponse(BaseModel):
+    id: int
+    created_at: datetime
+    action_type: str
+    action_label: str
+    result: str
+    error_message: str | None = None
+    target_id: str | None = None
+    target_type: str | None = None
+    account: str | None = None
+    account_id: int | None = None
+    chat_title: str | None = None
+    chat_id: int | None = None
+    context: dict = Field(default_factory=dict)
+
+
+class ErrorFeedResponse(BaseModel):
+    items: list[ErrorFeedItemResponse]
+    total: int
+
+
 class CustomAdminDashboardAutomationSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -645,6 +666,8 @@ class ChatTargetResponse(BaseModel):
     comments_open: Optional[bool] = None
     comments_checked_at: Optional[datetime] = None
     comments_check_error: Optional[str] = None
+    memberships_joined: int = 0
+    memberships_total: int = 0
     neurocommenting_config: Optional[dict] = None
     discussion_config: Optional[dict] = None
     shilling_config: Optional[dict] = None

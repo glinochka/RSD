@@ -13,7 +13,7 @@ from ...alembic.models import AutomationActionLog
 
 
 POST_ENGAGEMENT_ACTION = "post_engagement"
-MIN_POST_GAP = 1
+MIN_POST_GAP = 2
 MAX_POST_GAP = 2
 
 NEUROCOMMENTING = "neurocommenting"
@@ -144,7 +144,7 @@ async def claim_post_engagement(
 ) -> ClaimResult:
     """Decide once per post: skip / neurocommenting / shilling.
 
-    Cadence is 1 action per 2–3 posts on a channel (skip 1 or 2 after each action).
+    Cadence is 1 action per 3 posts on a channel (skip 2 after each action).
     If both modules are on, exactly one of them wins. Later callers reuse the first claim.
     `roll` is ignored; kept so older tests can still pass it.
     """

@@ -13,17 +13,25 @@ from telethon.errors import FloodWaitError, InviteHashExpiredError, UserAlreadyP
 from telethon.tl.functions.channels import JoinChannelRequest
 from telethon.tl.functions.messages import CheckChatInviteRequest, ImportChatInviteRequest
 
+from .chat_membership_service import (
+    bulk_membership_counts,
+    ensure_memberships_for_automation,
+    ensure_memberships_for_chat,
+    membership_counts,
+    pick_next_pending_membership,
+    sync_chat_join_status,
+)
 from .chat_scope import apply_entity_metadata, is_lab_chat, is_user_peer, unwrap_telegram_chat
 from .rotation_service import select_account_for_action
 from .telegram_account_client import TelegramAccountClient
-from .telegram_error_handler import SessionInvalidError
+from .telegram_error_handler import SessionInvalidError, log_action_error
 from .telegram_invite import TelegramChatRef, TelegramChatRefError, parse_telegram_chat_ref
-from ...alembic.models import ChatJoinStatus, ChatMode, ChatSource, ChatTarget, SocialAccount
+from ...alembic.models import AccountChatMembership, ChatJoinStatus, ChatMode, ChatSource, ChatTarget, SocialAccount
 
 logger = logging.getLogger(__name__)
 
-JOIN_DELAY_MIN_SECONDS = 60
-JOIN_DELAY_MAX_SECONDS = 180
+JOIN_DELAY_MIN_SECONDS = 120
+JOIN_DELAY_MAX_SECONDS = 300
 
 try:
     from telethon.errors import InviteRequestSentError
@@ -216,6 +224,56 @@ async def _try_join_chat(
         return {"status": "failed", "error": _friendly_telegram_error(exc, "Не удалось вступить")[:255]}
 
 
+async def _apply_membership_result(
+    session: AsyncSession,
+    membership: AccountChatMembership,
+    chat_target: ChatTarget,
+    account: SocialAccount,
+    join_result: dict[str, Any],
+    *,
+    automation_id: int,
+) -> None:
+    now = _utc_now()
+    membership.join_attempts += 1
+    membership.last_join_attempt_at = now
+    membership.updated_at = now
+
+    if join_result["status"] == "joined":
+        membership.join_status = ChatJoinStatus.JOINED.value
+        membership.joined_at = join_result.get("joined_at") or now
+        membership.next_join_attempt_at = None
+        membership.last_join_error = None
+    elif join_result["status"] == "rate_limited":
+        membership.join_status = ChatJoinStatus.RATE_LIMITED.value
+        membership.next_join_attempt_at = join_result.get("next_join_attempt_at")
+        membership.last_join_error = join_result.get("error")
+    elif join_result["status"] == "skipped":
+        membership.last_join_error = join_result.get("error")
+    else:
+        error = join_result.get("error")
+        if error == "session_invalid":
+            error = "Не удалось войти в Telegram. Если вы не выходили из аккаунта — подождите и попробуйте снова."
+        membership.join_status = ChatJoinStatus.ERROR.value
+        membership.last_join_error = error
+        membership.next_join_attempt_at = now + timedelta(minutes=random.randint(2, 5))
+        await log_action_error(
+            session,
+            account,
+            action_type="join_chat",
+            target_id=str(chat_target.id),
+            target_type="chat",
+            error_message=str(error or "join_failed")[:2000],
+            payload={
+                "chat_target_id": chat_target.id,
+                "membership_id": membership.id,
+                "account_id": account.id,
+            },
+            automation_id=automation_id,
+        )
+
+    await sync_chat_join_status(session, chat_target)
+
+
 async def preview_chat_entity(
     session: AsyncSession,
     automation_id: int,
@@ -317,9 +375,50 @@ async def create_chat_from_link(
             raise ValueError("Этот чат уже добавлен")
 
     session.add(chat)
+    await session.flush()
+    await ensure_memberships_for_chat(session, automation_id, chat)
     await session.commit()
     await session.refresh(chat)
     return chat
+
+
+async def join_next_membership(
+    session: AsyncSession,
+    automation_id: int,
+    *,
+    max_attempts: int = 3,
+) -> dict[str, Any] | None:
+    """Process one pending account×chat join (scheduler entry)."""
+    await ensure_memberships_for_automation(session, automation_id)
+    membership = await pick_next_pending_membership(session, automation_id, max_attempts=max_attempts)
+    if not membership:
+        return None
+
+    chat_target = await session.get(ChatTarget, membership.chat_target_id)
+    account = await session.get(SocialAccount, membership.social_account_id)
+    if not chat_target or not account:
+        return {"status": "skipped", "reason": "missing_entities"}
+
+    membership.join_status = ChatJoinStatus.JOINING.value
+    membership.updated_at = _utc_now()
+    await session.commit()
+
+    join_result = await _try_join_chat(session, chat_target, account)
+    await _apply_membership_result(
+        session,
+        membership,
+        chat_target,
+        account,
+        join_result,
+        automation_id=automation_id,
+    )
+    await session.commit()
+    return {
+        "membership_id": membership.id,
+        "chat_target_id": chat_target.id,
+        "account_id": account.id,
+        "status": join_result.get("status"),
+    }
 
 
 async def join_loaded_chats_for_accounts(
@@ -332,14 +431,13 @@ async def join_loaded_chats_for_accounts(
     rate_limit: bool = True,
     sleeper=None,
 ) -> dict[str, Any]:
-    """Every alive account joins loaded chats. Joins are shuffled with a 1–3 minute gap."""
+    """Every alive account joins loaded chats. One pair per step when rate_limit=True."""
     from .rotation_service import list_alive_session_accounts
 
     accounts = await list_alive_session_accounts(session, automation_id)
     if account_ids:
         wanted = set(account_ids)
         accounts = [account for account in accounts if account.id in wanted]
-    random.shuffle(accounts)
     chats = (
         await session.execute(
             select(ChatTarget).where(
@@ -354,38 +452,61 @@ async def join_loaded_chats_for_accounts(
         chats = [chat for chat in chats if chat.id in wanted_chats]
     if not include_lab:
         chats = [chat for chat in chats if not is_lab_chat(chat_target=chat)]
-    random.shuffle(chats)
-    joined_chats: set[int] = set()
+    for chat in chats:
+        await ensure_memberships_for_chat(
+            session,
+            automation_id,
+            chat,
+            account_ids=[account.id for account in accounts],
+        )
+    await session.commit()
+
     attempts = 0
-    pending_pairs = [(account, chat_target) for account in accounts for chat_target in chats]
-    random.shuffle(pending_pairs)
-    for index, (account, chat_target) in enumerate(pending_pairs):
+    joined_pairs = 0
+    while True:
+        membership = await pick_next_pending_membership(session, automation_id)
+        if not membership:
+            break
+        if account_ids and membership.social_account_id not in set(account_ids):
+            membership.join_status = ChatJoinStatus.PENDING.value
+            await session.commit()
+            continue
+        if chat_ids and membership.chat_target_id not in set(chat_ids):
+            continue
+        chat_target = await session.get(ChatTarget, membership.chat_target_id)
+        account = await session.get(SocialAccount, membership.social_account_id)
+        if not chat_target or not account:
+            break
         attempts += 1
-        result = await _try_join_chat(session, chat_target, account)
-        if result.get("status") == "joined":
-            joined_chats.add(chat_target.id)
-            if chat_target.join_status != ChatJoinStatus.JOINED.value:
-                chat_target.join_status = ChatJoinStatus.JOINED.value
-                chat_target.joined_at = result.get("joined_at") or _utc_now()
-                chat_target.joined_by_account_id = result.get("joined_by_account_id")
-                chat_target.last_join_error = None
-                chat_target.next_join_attempt_at = None
-        elif result.get("status") == "rate_limited":
-            chat_target.last_join_error = result.get("error")
-            chat_target.next_join_attempt_at = result.get("next_join_attempt_at")
-            if chat_target.join_status != ChatJoinStatus.JOINED.value:
-                chat_target.join_status = ChatJoinStatus.RATE_LIMITED.value
-        elif chat_target.join_status != ChatJoinStatus.JOINED.value:
-            chat_target.last_join_error = result.get("error")
-        chat_target.updated_at = _utc_now()
-        if index < len(pending_pairs) - 1:
-            await _sleep_between_joins(rate_limit=rate_limit, sleeper=sleeper)
+        join_result = await _try_join_chat(session, chat_target, account)
+        if join_result.get("status") == "joined":
+            joined_pairs += 1
+        await _apply_membership_result(
+            session,
+            membership,
+            chat_target,
+            account,
+            join_result,
+            automation_id=automation_id,
+        )
         await session.commit()
+        if rate_limit:
+            break
+        remaining = await pick_next_pending_membership(session, automation_id)
+        if remaining:
+            await _sleep_between_joins(rate_limit=False, sleeper=sleeper)
+
+    joined_chats = 0
+    for chat in chats:
+        joined, total = await membership_counts(session, chat.id)
+        if total and joined >= total:
+            joined_chats += 1
     return {
         "accounts": len(accounts),
         "chats": len(chats),
         "attempts": attempts,
-        "joined_chats": len(joined_chats),
+        "joined_chats": joined_chats,
+        "joined_pairs": joined_pairs,
     }
 
 
@@ -396,88 +517,33 @@ async def join_pending_chats(
     max_attempts: int = 3,
     rate_limit: bool = True,
     sleeper=None,
+    max_pairs: int | None = 1,
 ) -> list[dict[str, Any]]:
-    """Attempt to join all chats that are pending or ready for retry."""
-    now = _utc_now()
-    result = await session.execute(
-        select(ChatTarget).where(
-            ChatTarget.custom_automation_id == automation_id,
-            ChatTarget.is_active.is_(True),
-            ChatTarget.provider == "telegram",
-            ChatTarget.join_status.in_(
-                [ChatJoinStatus.PENDING.value, ChatJoinStatus.JOINING.value, ChatJoinStatus.RATE_LIMITED.value]
-            ),
-            ChatTarget.join_attempts < max_attempts,
-            (ChatTarget.next_join_attempt_at.is_(None)) | (ChatTarget.next_join_attempt_at <= now),
-        )
-    )
-    chats = result.scalars().all()
-    chats = [chat for chat in chats if not is_lab_chat(chat)]
-    random.shuffle(chats)
-
-    results = []
-    for index, chat_target in enumerate(chats):
-        excluded: set[int] = set()
-        join_result: dict[str, Any] | None = None
-        account = None
-        chat_target.join_status = ChatJoinStatus.JOINING.value
-        chat_target.join_attempts += 1
-        chat_target.last_join_attempt_at = now
-        await session.commit()
-
-        for _ in range(3):
-            account = await select_account_for_action(
-                session,
-                automation_id,
-                "prepare_join",
-                exclude_account_ids=excluded,
-                consume_quota=False,
-            )
-            if not account:
-                join_result = {"status": "skipped", "error": "no eligible account"}
-                break
-            excluded.add(account.id)
-            join_result = await _try_join_chat(session, chat_target, account)
-            if join_result["status"] == "joined" or not join_result.get("retry_account"):
-                break
-
-        if join_result is None:
-            join_result = {"status": "skipped", "error": "no eligible account"}
-
-        chat_target.updated_at = now
-
-        if join_result["status"] == "joined":
-            chat_target.join_status = ChatJoinStatus.JOINED.value
-            chat_target.joined_at = join_result.get("joined_at")
-            chat_target.joined_by_account_id = join_result.get("joined_by_account_id")
-            chat_target.next_join_attempt_at = None
-            chat_target.last_join_error = None
-        elif join_result["status"] == "rate_limited":
-            chat_target.join_status = ChatJoinStatus.RATE_LIMITED.value
-            chat_target.next_join_attempt_at = join_result.get("next_join_attempt_at")
-            chat_target.last_join_error = join_result.get("error")
-        elif join_result["status"] == "skipped":
-            chat_target.join_status = ChatJoinStatus.PENDING.value
-            chat_target.last_join_error = join_result.get("error")
-        else:
-            error = join_result.get("error")
-            if error == "session_invalid":
-                error = "Не удалось войти в Telegram. Если вы не выходили из аккаунта — подождите и попробуйте снова."
-            chat_target.join_status = ChatJoinStatus.ERROR.value
-            chat_target.last_join_error = error
-            chat_target.next_join_attempt_at = now + timedelta(minutes=random.randint(2, 5))
-
-        await session.commit()
-        results.append({"chat_target_id": chat_target.id, "status": join_result["status"]})
-        if index < len(chats) - 1:
-            await _sleep_between_joins(rate_limit=rate_limit, sleeper=sleeper)
-
+    """Join pending account×chat pairs. Default: one pair per call (scheduler)."""
+    results: list[dict[str, Any]] = []
+    pairs = max_pairs if max_pairs is not None else (1 if rate_limit else 10_000)
+    for index in range(pairs):
+        outcome = await join_next_membership(session, automation_id, max_attempts=max_attempts)
+        if not outcome:
+            break
+        results.append(outcome)
+        if index < pairs - 1 and rate_limit:
+            await _sleep_between_joins(rate_limit=True, sleeper=sleeper)
     return results
 
 
 async def run_join_pending_for_automation(automation_id: int) -> list[dict[str, Any]]:
-    """Scheduler entrypoint: open a session and join pending chats."""
+    """Scheduler entrypoint: open a session and join one pending membership."""
     from ...alembic.database import async_session_maker
 
     async with async_session_maker() as session:
-        return await join_pending_chats(session, automation_id)
+        return await join_pending_chats(session, automation_id, max_pairs=1)
+
+
+__all__ = [
+    "create_chat_from_link",
+    "join_loaded_chats_for_accounts",
+    "join_pending_chats",
+    "preview_chat_entity",
+    "run_join_pending_for_automation",
+]

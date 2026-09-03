@@ -14,7 +14,8 @@ const JOIN_STATUSES = [
   { value: '', label: 'Все статусы' },
   { value: 'pending', label: 'В очереди' },
   { value: 'joining', label: 'Вступаем' },
-  { value: 'joined', label: 'Вступили' },
+  { value: 'partial', label: 'Частично вступили' },
+  { value: 'joined', label: 'Все вступили' },
   { value: 'rate_limited', label: 'Rate limit' },
   { value: 'error', label: 'Ошибка' },
   { value: 'banned', label: 'Бан' },
@@ -180,11 +181,18 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
       const result = await customService.bulkImportChats(id, file);
       const duplicates = result.duplicate_rows || 0;
       setMessage(
-        `Импорт: новых ${result.processed_rows} из ${result.total_rows}`
+        `Файл обработан: новых ${result.processed_rows} из ${result.total_rows}`
           + (duplicates ? `, дубликатов ${duplicates}` : '')
-          + `, ошибок ${result.error_rows}`,
+          + `, ошибок ${result.error_rows}. Вступление аккаунтов идёт в фоне (2–5 мин между попытками).`,
       );
-      setShowFilters(true);
+      setShowFilters(false);
+      setFilters({
+        joinStatus: '',
+        comments: '',
+        activityHours: '',
+        minMembers: '',
+        maxMembers: '',
+      });
       setOffset(0);
       await loadChats();
       await loadJobs();
@@ -484,6 +492,9 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
                   <p className="crm-item-subtitle">{chat.invite_link || chat.external_chat_id || '-'}</p>
                   <p className="crm-item-subtitle">
                     {chatTypeLabel(chat)}
+                    {chat.memberships_total > 0
+                      ? ` · вступили ${chat.memberships_joined}/${chat.memberships_total} акк.`
+                      : ''}
                     {chat.is_active && chat.mode !== 'inactive' ? ' · в работе' : ' · пауза'}
                     {chat.members_count != null ? ` · ${chat.members_count} подп.` : ''}
                     {` · ${formatActivity(chat.last_activity_at)}`}
@@ -536,9 +547,10 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
                       <span className="crm-status">{job.status}</span>
                     </div>
                     <p className="crm-item-subtitle">
-                      {job.processed_rows} / {job.total_rows}
+                      Парсинг: {job.processed_rows} / {job.total_rows}
                       {job.duplicate_rows ? ` · дубликатов ${job.duplicate_rows}` : ''}
                       {` · ошибок ${job.error_rows}`}
+                      {' · вступление аккаунтов в фоне'}
                     </p>
                   </div>
                 ))}

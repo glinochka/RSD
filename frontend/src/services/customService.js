@@ -234,6 +234,26 @@ const customService = {
     return handleResponse(response);
   },
 
+  async getAutomationErrors(automationId, { actionType, limit, offset } = {}) {
+    const params = new URLSearchParams();
+    if (actionType) {
+      params.set('action_type', actionType);
+    }
+    if (limit !== undefined) {
+      params.set('limit', String(limit));
+    }
+    if (offset !== undefined) {
+      params.set('offset', String(offset));
+    }
+    const query = params.toString();
+    const url = `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ERRORS(automationId)}${query ? `?${query}` : ''}`;
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+    return handleResponse(response);
+  },
+
   async getAutomationAccounts(automationId, { status, accountClass, role, search, limit, offset } = {}) {
     const params = new URLSearchParams();
     if (status) {

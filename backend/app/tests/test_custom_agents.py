@@ -1398,9 +1398,20 @@ class TestShilling:
             account_id=account.id,
             neuro_enabled=True,
             shilling_enabled=True,
-            pick_gap=lambda: 1,
+            pick_gap=lambda: 2,
         )
         assert skipped == SKIP
+        skipped_again = await claim_post_engagement(
+            test_session,
+            automation_id=custom_automation.id,
+            chat_target_id=1,
+            post_id=11,
+            account_id=account.id,
+            neuro_enabled=True,
+            shilling_enabled=True,
+            pick_gap=lambda: 2,
+        )
+        assert skipped_again == SKIP
         again = await claim_post_engagement(
             test_session,
             automation_id=custom_automation.id,
@@ -1409,7 +1420,7 @@ class TestShilling:
             account_id=account.id,
             neuro_enabled=True,
             shilling_enabled=True,
-            pick_gap=lambda: 1,
+            pick_gap=lambda: 2,
             pick=lambda options: "shilling",
         )
         assert again == SKIP
@@ -1418,31 +1429,31 @@ class TestShilling:
             test_session,
             automation_id=custom_automation.id,
             chat_target_id=1,
-            post_id=11,
+            post_id=12,
             account_id=account.id,
             neuro_enabled=True,
             shilling_enabled=True,
-            pick_gap=lambda: 1,
+            pick_gap=lambda: 2,
             pick=lambda options: "neurocommenting",
         )
         second = await claim_post_engagement(
             test_session,
             automation_id=custom_automation.id,
             chat_target_id=1,
-            post_id=11,
+            post_id=12,
             account_id=account.id,
             neuro_enabled=True,
             shilling_enabled=True,
-            pick_gap=lambda: 1,
+            pick_gap=lambda: 2,
             pick=lambda options: "shilling",
         )
         assert first == "neurocommenting"
         assert second == "neurocommenting"
-        claim = await get_post_engagement_claim(test_session, custom_automation.id, 1, 11)
+        claim = await get_post_engagement_claim(test_session, custom_automation.id, 1, 12)
         assert claim is not None
         assert claim.result == "neurocommenting"
 
-    async def test_chat_daily_probability_not_rerolled(
+    async def test_chat_daily_schedule_not_rerolled(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
     ):
         from datetime import datetime, timedelta, timezone
@@ -1465,7 +1476,6 @@ class TestShilling:
             custom_automation,
             chat,
             account.id,
-            roll=lambda: 0.9,
             now=noon,
         )
         second = await decide_chat_shilling_today(
@@ -1473,11 +1483,10 @@ class TestShilling:
             custom_automation,
             chat,
             account.id,
-            roll=lambda: 0.01,
             now=noon,
         )
-        assert first == "skip"
-        assert second == "skip"
+        assert first == second
+        assert first in {"wait", "due"}
         logs = (
             await test_session.execute(
                 select(func.count()).select_from(AutomationActionLog).where(
@@ -1628,7 +1637,7 @@ class TestShilling:
         result = await process_shilling_chat(test_session, custom_automation, chat)
         assert result["reason"] == "channel"
 
-    async def test_shilling_cooldown_two_days(
+    async def test_shilling_once_per_day_blocks_repeat(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
     ):
         from datetime import datetime, timedelta, timezone
@@ -1664,10 +1673,31 @@ class TestShilling:
             custom_automation,
             chat,
             account.id,
-            roll=lambda: 0.01,
             now=now,
         )
-        assert decision == "done"
+        assert decision in {"wait", "due"}
+
+        test_session.add(
+            AutomationActionLog(
+                custom_automation_id=custom_automation.id,
+                social_account_id=account.id,
+                action_type="shilling_chat",
+                target_id=str(chat.id),
+                target_type="chat",
+                result="success",
+                payload={},
+                created_at=now.astimezone(timezone.utc).replace(tzinfo=None),
+            )
+        )
+        await test_session.commit()
+        decision_today = await decide_chat_shilling_today(
+            test_session,
+            custom_automation,
+            chat,
+            account.id,
+            now=now,
+        )
+        assert decision_today == "done"
 
     async def test_post_cadence_skips_between_actions(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
@@ -3567,8 +3597,8 @@ class TestAccountRolesWarmupAndLab:
             await _sleep_between_joins(rate_limit=True, sleeper=sleeper)
             await _sleep_between_joins(rate_limit=False, sleeper=sleeper)
         assert delays == [97]
-        assert JOIN_DELAY_MIN_SECONDS == 60
-        assert JOIN_DELAY_MAX_SECONDS == 180
+        assert JOIN_DELAY_MIN_SECONDS == 120
+        assert JOIN_DELAY_MAX_SECONDS == 300
 
     async def test_join_loaded_skips_lab_and_can_disable_delay(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
@@ -4438,6 +4468,225 @@ class TestAccountProxies:
         for row in rows:
             counts[row.proxy_id] = counts.get(row.proxy_id, 0) + 1
         assert sorted(counts.values()) == [1, 2]
+
+
+class TestProductionFieldLogic:
+    async def _add_account(
+        self,
+        session: AsyncSession,
+        automation: CustomAutomation,
+        *,
+        account_class: str,
+        username: str,
+        phone: str,
+    ) -> SocialAccount:
+        from app.services.account_pool_service import get_or_create_default_pool
+        from app.services.custom.account_roles import default_roles_for_class
+
+        pool = await get_or_create_default_pool(session, automation.id)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number=phone,
+            username=username,
+            display_name=username,
+            account_class=account_class,
+            encrypted_session="mock_encrypted_session",
+            session_file_path=f"sessions/{username}.session",
+            is_active=True,
+            is_banned=False,
+        )
+        session.add(account)
+        await session.flush()
+        session.add(
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account.id,
+                assigned_class=account_class,
+                custom_automation_id=automation.id,
+                roles=default_roles_for_class(account_class),
+            )
+        )
+        await session.commit()
+        await session.refresh(account)
+        return account
+
+    async def _add_chat(self, session: AsyncSession, automation: CustomAutomation) -> ChatTarget:
+        from app.alembic.models import ChatJoinStatus
+
+        chat = ChatTarget(
+            custom_automation_id=automation.id,
+            provider="telegram",
+            external_chat_id="join-chat",
+            invite_link="https://t.me/joinchat",
+            title="Join chat",
+            chat_type="chat",
+            mode="monitoring",
+            source="manual",
+            join_status=ChatJoinStatus.PENDING.value,
+            is_active=True,
+        )
+        session.add(chat)
+        await session.commit()
+        await session.refresh(chat)
+        return chat
+
+    async def test_memberships_created_for_all_accounts(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from app.alembic.models import AccountChatMembership
+        from app.services.custom.chat_membership_service import ensure_memberships_for_chat
+
+        await self._add_account(
+            test_session, custom_automation, account_class=AccountClass.TRUSTED.value, username="join_a", phone="+79991110001"
+        )
+        await self._add_account(
+            test_session, custom_automation, account_class=AccountClass.MID.value, username="join_b", phone="+79991110002"
+        )
+        chat = await self._add_chat(test_session, custom_automation)
+        created = await ensure_memberships_for_chat(test_session, custom_automation.id, chat)
+        await test_session.commit()
+        assert created == 2
+        total = (
+            await test_session.execute(
+                select(func.count()).select_from(AccountChatMembership).where(
+                    AccountChatMembership.chat_target_id == chat.id
+                )
+            )
+        ).scalar_one()
+        assert total == 2
+
+    async def test_sync_chat_join_status_partial(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from app.alembic.models import AccountChatMembership, ChatJoinStatus
+        from app.services.custom.chat_membership_service import ensure_memberships_for_chat, sync_chat_join_status
+
+        a = await self._add_account(
+            test_session, custom_automation, account_class=AccountClass.TRUSTED.value, username="partial_a", phone="+79991110003"
+        )
+        await self._add_account(
+            test_session, custom_automation, account_class=AccountClass.MID.value, username="partial_b", phone="+79991110004"
+        )
+        chat = await self._add_chat(test_session, custom_automation)
+        await ensure_memberships_for_chat(test_session, custom_automation.id, chat)
+        membership = await test_session.scalar(
+            select(AccountChatMembership).where(
+                AccountChatMembership.chat_target_id == chat.id,
+                AccountChatMembership.social_account_id == a.id,
+            )
+        )
+        membership.join_status = ChatJoinStatus.JOINED.value
+        await test_session.commit()
+        status = await sync_chat_join_status(test_session, chat)
+        await test_session.commit()
+        assert status == ChatJoinStatus.PARTIAL.value
+
+    async def test_dm_not_blocked_by_daily_cap(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from app.services.custom.rotation_service import select_account_for_action
+
+        custom_automation.max_daily_messages_per_account = 1
+        account = await self._add_account(
+            test_session, custom_automation, account_class=AccountClass.TRUSTED.value, username="dm_cap", phone="+79991110005"
+        )
+        account.daily_messages_sent = 5
+        await test_session.commit()
+        selected = await select_account_for_action(test_session, custom_automation.id, "dm", consume_quota=False)
+        assert selected is not None
+        assert selected.id == account.id
+
+    async def test_post_engagement_gap_two_skips(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from app.services.custom.post_engagement import SKIP, claim_post_engagement
+
+        account = await self._add_account(
+            test_session, custom_automation, account_class=AccountClass.TRUSTED.value, username="gap_acc", phone="+79991110006"
+        )
+        first = await claim_post_engagement(
+            test_session,
+            automation_id=custom_automation.id,
+            chat_target_id=1,
+            post_id=10,
+            account_id=account.id,
+            neuro_enabled=True,
+            shilling_enabled=False,
+            pick_gap=lambda: 2,
+        )
+        assert first == SKIP
+        second = await claim_post_engagement(
+            test_session,
+            automation_id=custom_automation.id,
+            chat_target_id=1,
+            post_id=11,
+            account_id=account.id,
+            neuro_enabled=True,
+            shilling_enabled=False,
+            pick_gap=lambda: 2,
+        )
+        assert second == SKIP
+        third = await claim_post_engagement(
+            test_session,
+            automation_id=custom_automation.id,
+            chat_target_id=1,
+            post_id=12,
+            account_id=account.id,
+            neuro_enabled=True,
+            shilling_enabled=False,
+            pick_gap=lambda: 2,
+            pick=lambda options: options[0],
+        )
+        assert third == "neurocommenting"
+
+    async def test_error_feed_lists_failures(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from app.alembic.models import AutomationActionLog
+        from app.services.custom.error_feed_service import list_error_feed
+
+        account = await self._add_account(
+            test_session, custom_automation, account_class=AccountClass.TRUSTED.value, username="err_acc", phone="+79991110007"
+        )
+        test_session.add(
+            AutomationActionLog(
+                custom_automation_id=custom_automation.id,
+                social_account_id=account.id,
+                action_type="join_chat",
+                target_id="42",
+                target_type="chat",
+                result="error",
+                error_message="FloodWait",
+                payload={"chat_target_id": 42},
+            )
+        )
+        await test_session.commit()
+        data = await list_error_feed(test_session, custom_automation.id)
+        assert data["total"] == 1
+        assert data["items"][0]["action_type"] == "join_chat"
+        assert data["items"][0]["error_message"] == "FloodWait"
+
+    async def test_inbound_dm_skips_existing_lead_peer(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from app.alembic.models import CustomLead, LeadStatus
+        from app.services.custom.inbound_dm_service import _lead_exists_for_peer
+
+        account = await self._add_account(
+            test_session, custom_automation, account_class=AccountClass.SHILLING.value, username="in_dm", phone="+79991110008"
+        )
+        test_session.add(
+            CustomLead(
+                custom_automation_id=custom_automation.id,
+                source="chat_monitoring",
+                contact_type="telegram",
+                contact_value="12345",
+                assigned_account_id=account.id,
+                status=LeadStatus.WARMING.value,
+            )
+        )
+        await test_session.commit()
+        assert await _lead_exists_for_peer(test_session, custom_automation.id, account.id, 12345, None) is True
 
 
 

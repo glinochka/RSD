@@ -304,8 +304,6 @@ async def _process_lead(
     )
     lead.last_message_at = _utc_now()
     lead.updated_at = _utc_now()
-    account.daily_messages_sent = (account.daily_messages_sent or 0) + 1
-    account.last_used_at = _utc_now()
     await session.commit()
     return {"lead_id": lead.id, "status": "replied"}
 
