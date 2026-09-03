@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import CustomSelect from '../../../components/CustomSelect';
 import FeatureToggle from '../../../components/FeatureToggle';
+import CustomFileButton from '../../../components/custom/CustomFileButton';
 import customService from '../../../services/customService';
 import { useCustomAuth } from '../../../components/custom/useCustomAuth';
 import CustomAutomationIntegrationsBlock from './CustomAutomationIntegrationsBlock';
@@ -149,6 +150,7 @@ const CustomAutomationSettingsPage = () => {
             partner_utm_url: form.partner_utm_url,
             partner_promo_code: form.partner_promo_code,
             conversion_check_url: form.conversion_check_url,
+            proxy_list_text: form.proxy_list_text || '',
             account_warmup_usernames: isAdmin
               ? (form.account_warmup_usernames || []).map((item) => String(item || '').trim()).filter(Boolean)
               : undefined,
@@ -386,6 +388,53 @@ const CustomAutomationSettingsPage = () => {
               onChange={handleChange}
               placeholder={settings.solution_kind === 'fulfillment' ? '@mop_account' : 'Telegram / email / webhook'}
             />
+          </div>
+        </div>
+        )}
+
+        {settings.solution_kind === 'dmp_bot' ? null : (
+        <div className="settings-section">
+          <h3 className="settings-section-title">Прокси</h3>
+          <p className="form-hint">
+            Один прокси на строку. При сохранении список равномерно раздаётся по аккаунтам,
+            чтобы Telegram не видел все запросы с IP сервера.
+            Форматы: <code>host:port</code>, <code>host:port:user:pass</code>,{' '}
+            <code>socks5://user:pass@host:port</code>.
+          </p>
+          {settings.proxy_count > 0 ? (
+            <p className="form-hint">
+              {settings.proxy_count} прокси на {settings.accounts_with_proxy || 0} аккаунтов
+              {Array.isArray(settings.proxy_distribution) && settings.proxy_distribution.length
+                ? ` — ${settings.proxy_distribution
+                    .map((item) => `${item.host}:${item.port} (${item.account_count})`)
+                    .join(', ')}`
+                : ''}
+              .
+            </p>
+          ) : (
+            <p className="form-hint">Пока нет прокси — аккаунты ходят с IP VPS.</p>
+          )}
+          <div className="form-group">
+            <label htmlFor="proxy_list_text">Список прокси</label>
+            <textarea
+              id="proxy_list_text"
+              name="proxy_list_text"
+              rows={8}
+              value={form.proxy_list_text || ''}
+              onChange={handleChange}
+              placeholder={'1.2.3.4:1080\n5.6.7.8:1080:user:pass\nsocks5://user:pass@9.8.7.6:1080'}
+            />
+          </div>
+          <div className="settings-actions">
+            <CustomFileButton
+              accept=".txt,text/plain"
+              onFile={async (file) => {
+                const text = await file.text();
+                setForm((prev) => ({ ...prev, proxy_list_text: text }));
+              }}
+            >
+              Загрузить .txt
+            </CustomFileButton>
           </div>
         </div>
         )}

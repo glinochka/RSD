@@ -173,6 +173,14 @@ class CustomAutomationListResponse(BaseModel):
     total: int
 
 
+class ProxyDistributionItem(BaseModel):
+    id: int
+    scheme: str
+    host: str
+    port: int
+    account_count: int
+
+
 class CustomAutomationSettingsResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True, extra="allow")
 
@@ -210,6 +218,10 @@ class CustomAutomationSettingsResponse(BaseModel):
     account_warmup_enabled: bool = False
     account_warmup_usernames: list[str] = Field(default_factory=list)
     account_warmup_messages: list[str] = Field(default_factory=list)
+    proxy_list_text: str | None = None
+    proxy_count: int = 0
+    accounts_with_proxy: int = 0
+    proxy_distribution: list[ProxyDistributionItem] = Field(default_factory=list)
 
 
 class CustomAutomationSettingsValidationResponse(BaseModel):
@@ -237,6 +249,7 @@ class CustomAutomationSettingsUpdate(BaseModel):
     account_warmup_usernames: list[str] | None = None
     account_warmup_messages: list[str] | None = None
     account_warmup_enabled: bool | None = None
+    proxy_list_text: str | None = None
 
 
 class CustomAutomationCredentialCreate(BaseModel):
@@ -356,7 +369,9 @@ class AccountResponse(BaseModel):
     max_daily_messages_per_account: int = 50
     added_at: datetime
     last_health_check_at: Optional[datetime] = None
+    spamblock_checked_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    proxy_label: Optional[str] = None
 
 
 class AccountQrStartResponse(BaseModel):
@@ -395,6 +410,13 @@ class AccountHealthCheckResponse(BaseModel):
     ok: int
     fallback: int
     error: int
+
+
+class AccountSpamblockCheckResponse(BaseModel):
+    account: AccountResponse
+    spamblocked: bool | None = None
+    source: str | None = None
+    detail: str
 
 
 class AccountPrepareStatusResponse(BaseModel):

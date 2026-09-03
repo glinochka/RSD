@@ -143,12 +143,19 @@ def _release_session_file_lock(handle: IO[bytes] | None) -> None:
         pass
 
 
-def _make_client(session_path: str, *, api_id: int | None = None, api_hash: str | None = None):
+def _make_client(
+    session_path: str,
+    *,
+    api_id: int | None = None,
+    api_hash: str | None = None,
+    proxy: dict | None = None,
+):
     client, resolved_id, resolved_hash = create_telegram_client(
         api_id=api_id,
         api_hash=api_hash,
         session_path=session_path,
         prefer_desktop=True,
+        proxy=proxy,
     )
     return client, resolved_id, resolved_hash
 
@@ -181,11 +188,13 @@ class TelegramAccountClient:
         api_id: int | None = None,
         api_hash: str | None = None,
         encrypted_session: str | None = None,
+        proxy: dict | None = None,
     ):
         self.session_path = session_path
         self._encrypted_session = encrypted_session
         self._api_id = api_id
         self._api_hash = api_hash
+        self._proxy = proxy
         self.client = None
         self.api_id = 0
         self.api_hash = ""
@@ -195,8 +204,16 @@ class TelegramAccountClient:
         self._work_path: Path | None = None
 
     @classmethod
-    def for_account(cls, account, *, api_id: int | None = None, api_hash: str | None = None) -> "TelegramAccountClient":
+    def for_account(
+        cls,
+        account,
+        *,
+        api_id: int | None = None,
+        api_hash: str | None = None,
+        proxy: dict | None = None,
+    ) -> "TelegramAccountClient":
         from ...config import settings
+        from .proxy_service import telethon_proxy_from_account
 
         rel = (getattr(account, "session_file_path", None) or "").strip()
         path = Path(settings.MEDIA_ROOT).resolve() / rel
@@ -205,6 +222,7 @@ class TelegramAccountClient:
             api_id=api_id,
             api_hash=api_hash,
             encrypted_session=getattr(account, "encrypted_session", None),
+            proxy=proxy if proxy is not None else telethon_proxy_from_account(account),
         )
 
     async def _close_client(self) -> None:
@@ -251,6 +269,7 @@ class TelegramAccountClient:
             str(self._work_path),
             api_id=self._api_id,
             api_hash=self._api_hash,
+            proxy=self._proxy,
         )
         try:
             await self.client.connect()

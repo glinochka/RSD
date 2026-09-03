@@ -72,6 +72,7 @@ def _create_qr_token(
     auth_id: str,
     pending_session: str,
     assign_class: str,
+    proxy_id: int | None = None,
 ) -> str:
     return custom_account_qr_auth_token.create(
         automation_id=int(automation_id),
@@ -80,6 +81,7 @@ def _create_qr_token(
         auth_id=str(auth_id),
         encrypted_pending_session=encrypt_token(pending_session or ""),
         assign_class=assign_class,
+        proxy_id=int(proxy_id) if proxy_id else 0,
     )
 
 
@@ -100,6 +102,7 @@ def _create_sms_token(
     phone_code_hash: str,
     pending_session: str,
     assign_class: str,
+    proxy_id: int | None = None,
 ) -> str:
     return custom_account_sms_auth_token.create(
         automation_id=int(automation_id),
@@ -109,6 +112,7 @@ def _create_sms_token(
         phone_code_hash=phone_code_hash,
         encrypted_pending_session=encrypt_token(pending_session or ""),
         assign_class=assign_class,
+        proxy_id=int(proxy_id) if proxy_id else 0,
     )
 
 
@@ -145,6 +149,7 @@ async def persist_authorized_session(
     session_string: str,
     assign_class: str,
     me: dict[str, Any] | None = None,
+    preferred_proxy_id: int | None = None,
 ) -> tuple[PoolAccount, SocialAccount, bool]:
     async with _persist_lock:
         existing = await _load_persisted(session, auth_id, automation_id)
@@ -160,11 +165,21 @@ async def persist_authorized_session(
                 username=_profile_username(me),
                 display_name=_display_name(me),
                 telegram_id=_telegram_id(me),
+                preferred_proxy_id=preferred_proxy_id,
             )
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
         _persisted_by_auth_id[auth_id] = (pair[0].id, pair[1].id)
         return pair[0], pair[1], True
+
+
+def _token_proxy_id(token_data: dict[str, Any]) -> int | None:
+    raw = token_data.get("proxy_id")
+    try:
+        value = int(raw or 0)
+    except (TypeError, ValueError):
+        return None
+    return value or None
 
 
 async def start_account_qr(
@@ -173,9 +188,12 @@ async def start_account_qr(
     *,
     assign_class: str | None = None,
 ) -> dict[str, Any]:
+    from .proxy_service import resolve_connect_proxy
+
     chosen_class = normalize_assign_class(assign_class)
+    proxy_id, proxy = await resolve_connect_proxy(session, automation_id)
     try:
-        result = await start_qr_login()
+        result = await start_qr_login(proxy=proxy)
     except TelegramUserbotAuthError:
         raise
     except Exception as exc:
@@ -192,6 +210,7 @@ async def start_account_qr(
         auth_id=auth_id,
         pending_session=pending,
         assign_class=chosen_class,
+        proxy_id=proxy_id,
     )
     payload: dict[str, Any] = {
         "auth_token": auth_token,
@@ -212,6 +231,7 @@ async def start_account_qr(
             session_string=pending,
             assign_class=chosen_class,
             me=me,
+            preferred_proxy_id=proxy_id,
         )
         payload["pool_account"] = pool_account
         payload["social_account"] = social_account
@@ -255,6 +275,7 @@ async def poll_account_qr(
             session_string=session_string,
             assign_class=assign_class,
             me=me,
+            preferred_proxy_id=_token_proxy_id(token_data),
         )
         payload["pool_account"] = pool_account
         payload["social_account"] = social_account
@@ -279,11 +300,19 @@ async def verify_account_qr_2fa(
     qr_state = await get_qr_status(auth_id=auth_id)
     if qr_state.get("session_string"):
         pending_session = str(qr_state["session_string"])
+    from .proxy_service import load_telethon_proxy
+
+    proxy_id, proxy = await load_telethon_proxy(
+        session,
+        _token_proxy_id(token_data),
+        automation_id=automation_id,
+    )
     result = await complete_qr_2fa(
         api_id=api_id,
         api_hash=api_hash,
         session_string=pending_session,
         password=password,
+        proxy=proxy,
     )
     session_string = str(result.get("session_string") or "").strip()
     if not session_string:
@@ -296,16 +325,20 @@ async def verify_account_qr_2fa(
         session_string=session_string,
         assign_class=assign_class,
         me=me,
+        preferred_proxy_id=proxy_id,
     )
     return pool_account, social_account
 
 
 async def request_account_sms(
+    session: AsyncSession,
     automation_id: int,
     *,
     phone_number: str,
     assign_class: str | None = None,
 ) -> dict[str, Any]:
+    from .proxy_service import resolve_connect_proxy
+
     chosen_class = normalize_assign_class(assign_class)
     phone = (phone_number or "").strip()
     if len(phone) < 5:
@@ -319,7 +352,8 @@ async def request_account_sms(
             detail=f"Telethon не установлен на сервере: {exc}",
         ) from exc
 
-    client, api_id, api_hash = create_telegram_client(prefer_desktop=True)
+    proxy_id, proxy = await resolve_connect_proxy(session, automation_id)
+    client, api_id, api_hash = create_telegram_client(prefer_desktop=True, proxy=proxy)
     phone_code_hash = None
     pending_session_string = ""
     try:
@@ -355,6 +389,7 @@ async def request_account_sms(
         phone_code_hash=str(phone_code_hash),
         pending_session=pending_session_string,
         assign_class=chosen_class,
+        proxy_id=proxy_id,
     )
     return {"auth_token": auth_token}
 
@@ -394,11 +429,19 @@ async def verify_account_sms(
             detail=f"Telethon не установлен на сервере: {exc}",
         ) from exc
 
+    from .proxy_service import load_telethon_proxy
+
+    proxy_id, proxy = await load_telethon_proxy(
+        session,
+        _token_proxy_id(token_data),
+        automation_id=automation_id,
+    )
     client, api_id, api_hash = create_telegram_client(
         api_id=api_id,
         api_hash=api_hash,
         session_string=pending_session or "",
         prefer_desktop=True,
+        proxy=proxy,
     )
     try:
         await client.connect()
@@ -454,5 +497,6 @@ async def verify_account_sms(
         session_string=session_string,
         assign_class=assign_class,
         me=profile,
+        preferred_proxy_id=proxy_id,
     )
     return pool_account, social_account

@@ -128,6 +128,7 @@ def create_telegram_client(
     session_string: str = "",
     session_path: str | None = None,
     prefer_desktop: bool = True,
+    proxy: dict | None = None,
 ):
     """TelegramClient with opentele when installed, otherwise Telethon."""
     resolved_id, resolved_hash = resolve_api_credentials(
@@ -139,15 +140,18 @@ def create_telegram_client(
         from telethon.sessions import StringSession
 
         session = StringSession((session_string or "").strip())
+    client_kwargs = {}
+    if proxy:
+        client_kwargs["proxy"] = proxy
     if opentele_available():
         from opentele.tl import TelegramClient
 
         api = _build_api_data(resolved_id, resolved_hash)
-        return TelegramClient(session, api=api), resolved_id, resolved_hash
+        return TelegramClient(session, api=api, **client_kwargs), resolved_id, resolved_hash
     from telethon import TelegramClient
 
     return (
-        TelegramClient(session, resolved_id, resolved_hash),
+        TelegramClient(session, resolved_id, resolved_hash, **client_kwargs),
         resolved_id,
         resolved_hash,
     )
@@ -256,6 +260,7 @@ async def start_qr_login(
     *,
     api_id: int | None = None,
     api_hash: str | None = None,
+    proxy: dict | None = None,
 ) -> dict[str, Any]:
     await _purge_stale_qr_states()
     auth_id = uuid.uuid4().hex
@@ -263,6 +268,7 @@ async def start_qr_login(
         api_id=api_id,
         api_hash=api_hash,
         prefer_desktop=True,
+        proxy=proxy,
     )
     try:
         await client.connect()
@@ -355,6 +361,7 @@ async def complete_qr_2fa(
     api_hash: str,
     session_string: str,
     password: str,
+    proxy: dict | None = None,
 ) -> dict[str, Any]:
     from telethon.errors import PasswordHashInvalidError
 
@@ -366,6 +373,7 @@ async def complete_qr_2fa(
         api_id=api_id,
         api_hash=api_hash,
         session_string=session_string,
+        proxy=proxy,
     )
     try:
         await client.connect()

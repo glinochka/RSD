@@ -287,6 +287,17 @@ const customService = {
     return handleResponse(response);
   },
 
+  async checkAccountSpamblock(automationId, accountId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ACCOUNT_SPAMBLOCK_CHECK(automationId, accountId)}`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      },
+    );
+    return handleResponse(response);
+  },
+
   async bulkUploadAccounts(automationId, file, assignClass = 'one_day') {
     const formData = new FormData();
     formData.append('archive', file);

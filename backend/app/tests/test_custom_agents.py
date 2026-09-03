@@ -599,8 +599,7 @@ class TestSettings:
         data = response.json()
         assert data["is_chat_monitoring_enabled"] is True
         assert "warnings" in data
-        # No trusted accounts exist, so enabling monitoring should warn.
-        assert any("trusted" in warning for warning in data["warnings"])
+        assert any("перехват" in warning.lower() for warning in data["warnings"])
 
 
 class TestChatImportAndDedup:
@@ -2992,6 +2991,160 @@ class TestAccountHealthSpamblockAndDelete:
         test_session.expire_all()
         assert await test_session.get(SocialAccount, account_id) is None
 
+    async def test_manual_spamblock_check_marks_account(
+        self,
+        client: AsyncClient,
+        client_token: str,
+        custom_automation: CustomAutomation,
+        test_session: AsyncSession,
+    ):
+        from app.services.account_pool_service import get_or_create_default_pool
+
+        pool = await get_or_create_default_pool(test_session, custom_automation.id)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number="+79990000014",
+            username="spamcheck",
+            encrypted_session="x",
+            session_file_path="sessions/spamcheck.session",
+            is_active=True,
+            is_spamblocked=False,
+        )
+        test_session.add(account)
+        await test_session.flush()
+        test_session.add(
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account.id,
+                assigned_class=AccountClass.ONE_DAY.value,
+                custom_automation_id=custom_automation.id,
+            )
+        )
+        await test_session.commit()
+        account_id = account.id
+        automation_id = custom_automation.id
+
+        class _FakeClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def check_spamblock(self):
+                return {"spamblocked": True, "source": "spambot", "raw": "limited"}
+
+        fake = _FakeClient()
+        mock_cls = MagicMock()
+        mock_cls.for_account.return_value = fake
+        with patch("app.services.custom.account_health_worker.TelegramAccountClient", mock_cls):
+            response = await client.post(
+                f"/api/custom/automations/{automation_id}/accounts/{account_id}/spamblock-check",
+                headers={"Authorization": f"Bearer {client_token}"},
+            )
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["spamblocked"] is True
+        assert data["account"]["is_spamblocked"] is True
+        assert "спамблок" in data["detail"].lower()
+        test_session.expire_all()
+        saved = await test_session.get(SocialAccount, account_id)
+        assert saved.is_spamblocked is True
+        assert saved.spamblock_checked_at is not None
+
+    async def test_manual_spamblock_check_clears_flag(
+        self,
+        client: AsyncClient,
+        client_token: str,
+        custom_automation: CustomAutomation,
+        test_session: AsyncSession,
+    ):
+        from app.services.account_pool_service import get_or_create_default_pool
+
+        pool = await get_or_create_default_pool(test_session, custom_automation.id)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number="+79990000015",
+            username="cleanspam",
+            encrypted_session="x",
+            session_file_path="sessions/cleanspam.session",
+            is_active=True,
+            is_spamblocked=True,
+        )
+        test_session.add(account)
+        await test_session.flush()
+        test_session.add(
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account.id,
+                assigned_class=AccountClass.ONE_DAY.value,
+                custom_automation_id=custom_automation.id,
+            )
+        )
+        await test_session.commit()
+        account_id = account.id
+        automation_id = custom_automation.id
+
+        class _FakeClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def check_spamblock(self):
+                return {"spamblocked": False, "source": "spambot", "raw": "ok"}
+
+        fake = _FakeClient()
+        mock_cls = MagicMock()
+        mock_cls.for_account.return_value = fake
+        with patch("app.services.custom.account_health_worker.TelegramAccountClient", mock_cls):
+            response = await client.post(
+                f"/api/custom/automations/{automation_id}/accounts/{account_id}/spamblock-check",
+                headers={"Authorization": f"Bearer {client_token}"},
+            )
+        assert response.status_code == 200, response.text
+        assert response.json()["spamblocked"] is False
+        assert response.json()["account"]["is_spamblocked"] is False
+        test_session.expire_all()
+        saved = await test_session.get(SocialAccount, account_id)
+        assert saved.is_spamblocked is False
+
+    async def test_manual_spamblock_check_requires_session(
+        self,
+        client: AsyncClient,
+        client_token: str,
+        custom_automation: CustomAutomation,
+        test_session: AsyncSession,
+    ):
+        from app.services.account_pool_service import get_or_create_default_pool
+
+        pool = await get_or_create_default_pool(test_session, custom_automation.id)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number="+79990000016",
+            username="nosession",
+            encrypted_session="x",
+            session_file_path=None,
+            is_active=True,
+        )
+        test_session.add(account)
+        await test_session.flush()
+        test_session.add(
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account.id,
+                assigned_class=AccountClass.ONE_DAY.value,
+                custom_automation_id=custom_automation.id,
+            )
+        )
+        await test_session.commit()
+        response = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/accounts/{account.id}/spamblock-check",
+            headers={"Authorization": f"Bearer {client_token}"},
+        )
+        assert response.status_code == 422
+
 
 class TestAccountProfile:
     async def test_account_list_includes_avatar_and_bio(
@@ -3677,6 +3830,191 @@ class TestAccountRolesWarmupAndLab:
         assert response.status_code == 200, response.text
         assert response.json()["shilling_setup"] == "Кто пробовал?"
         assert response.json()["shilling_reply"] == "Я пользуюсь."
+
+
+class TestAccountProxies:
+    async def _add_account(
+        self,
+        session: AsyncSession,
+        automation: CustomAutomation,
+        *,
+        username: str,
+        phone: str,
+    ) -> SocialAccount:
+        from app.services.account_pool_service import get_or_create_default_pool
+
+        pool = await get_or_create_default_pool(session, automation.id)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number=phone,
+            username=username,
+            display_name=username,
+            account_class=AccountClass.ONE_DAY.value,
+            encrypted_session="mock_encrypted_session",
+            session_file_path=f"sessions/{username}.session",
+            is_active=True,
+            is_banned=False,
+        )
+        session.add(account)
+        await session.flush()
+        session.add(
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account.id,
+                assigned_class=AccountClass.ONE_DAY.value,
+                custom_automation_id=automation.id,
+                roles=["neurocommenting"],
+            )
+        )
+        await session.commit()
+        await session.refresh(account)
+        return account
+
+    async def test_parse_proxy_formats(self):
+        from app.services.custom.proxy_service import parse_proxy_line, parse_proxy_list
+
+        url = parse_proxy_line("socks5://user:p%40ss@10.0.0.1:1080")
+        assert url["scheme"] == "socks5"
+        assert url["host"] == "10.0.0.1"
+        assert url["port"] == 1080
+        assert url["username"] == "user"
+        assert url["password"] == "p@ss"
+
+        colon = parse_proxy_line("11.0.0.2:1080:login:secret:extra")
+        assert colon["host"] == "11.0.0.2"
+        assert colon["username"] == "login"
+        assert colon["password"] == "secret:extra"
+
+        at = parse_proxy_line("login:secret@12.0.0.3:9050")
+        assert at["host"] == "12.0.0.3"
+        assert at["port"] == 9050
+
+        plain = parse_proxy_line("13.0.0.4:1080")
+        assert plain["username"] is None
+        assert plain["scheme"] == "socks5"
+
+        items, errors = parse_proxy_list(
+            "# comment\n\n10.0.0.1:1080\n10.0.0.1:1080\nbad line\n11.0.0.2:1080:u:p\n"
+        )
+        assert [item["host"] for item in items] == ["10.0.0.1", "11.0.0.2"]
+        assert len(errors) == 1
+
+    async def test_settings_roundtrip_even_distribution(
+        self,
+        client: AsyncClient,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+        client_token: str,
+    ):
+        from app.alembic.models import CustomProxy
+
+        for index in range(5):
+            await self._add_account(
+                test_session,
+                custom_automation,
+                username=f"proxy_acc_{index}",
+                phone=f"+7999200000{index}",
+            )
+        headers = {"Authorization": f"Bearer {client_token}"}
+        response = await client.patch(
+            f"/api/custom/automations/{custom_automation.id}/settings",
+            headers=headers,
+            json={"proxy_list_text": "10.1.1.1:1080\n10.1.1.2:1080:user:pass"},
+        )
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["proxy_count"] == 2
+        assert data["accounts_with_proxy"] == 5
+        counts = sorted(item["account_count"] for item in data["proxy_distribution"])
+        assert counts == [2, 3]
+        assert "10.1.1.1:1080" in (data["proxy_list_text"] or "")
+
+        automation_id = custom_automation.id
+        test_session.expire_all()
+        proxies = (
+            await test_session.execute(
+                select(CustomProxy).where(CustomProxy.custom_automation_id == automation_id)
+            )
+        ).scalars().all()
+        assert len(proxies) == 2
+        links = (
+            await test_session.execute(
+                select(PoolAccount).where(PoolAccount.custom_automation_id == automation_id)
+            )
+        ).scalars().all()
+        assigned = [row.proxy_id for row in links]
+        assert None not in assigned
+        assert set(assigned) == {proxies[0].id, proxies[1].id}
+
+        listed = await client.get(
+            f"/api/custom/automations/{automation_id}/accounts",
+            headers=headers,
+        )
+        assert listed.status_code == 200
+        labels = {item["proxy_label"] for item in listed.json()["items"]}
+        assert labels == {"socks5://10.1.1.1:1080", "socks5://10.1.1.2:1080"}
+
+        invalid = await client.patch(
+            f"/api/custom/automations/{automation_id}/settings",
+            headers=headers,
+            json={"proxy_list_text": "not-a-proxy"},
+        )
+        assert invalid.status_code == 422
+
+    async def test_new_account_gets_least_loaded_proxy(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from app.services.account_pool_service import _create_social_account, get_or_create_default_pool
+        from app.services.custom.proxy_service import replace_proxy_list, telethon_proxy_from_account
+
+        for index in range(2):
+            await self._add_account(
+                test_session,
+                custom_automation,
+                username=f"seed_{index}",
+                phone=f"+7999300000{index}",
+            )
+        await replace_proxy_list(
+            test_session,
+            custom_automation,
+            "10.2.2.1:1080\n10.2.2.2:1080",
+        )
+        await test_session.commit()
+        pool = await get_or_create_default_pool(test_session, custom_automation.id)
+        created = await _create_social_account(
+            test_session,
+            custom_automation.id,
+            pool.id,
+            provider="telegram",
+            phone_number="+79993000009",
+            username="new_proxy_acc",
+            display_name="new_proxy_acc",
+            account_class=AccountClass.ONE_DAY.value,
+            encrypted_session="mock_encrypted_session",
+            session_file_path="sessions/new_proxy_acc.session",
+        )
+        await test_session.commit()
+        await test_session.refresh(created)
+        payload = created.telegram_proxy or {}
+        assert payload.get("host") in {"10.2.2.1", "10.2.2.2"}
+        telethon = telethon_proxy_from_account(created)
+        assert telethon is not None
+        assert telethon["proxy_type"] == "socks5"
+        assert telethon["addr"] == payload["host"]
+        assert telethon["port"] == 1080
+
+        counts = {}
+        rows = (
+            await test_session.execute(
+                select(PoolAccount).where(PoolAccount.custom_automation_id == custom_automation.id)
+            )
+        ).scalars().all()
+        for row in rows:
+            counts[row.proxy_id] = counts.get(row.proxy_id, 0) + 1
+        assert sorted(counts.values()) == [1, 2]
+
 
 
 

@@ -2136,6 +2136,7 @@ class CustomAutomation(Base):
     account_warmup_messages: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
     test_channel_username: Mapped[str | None] = mapped_column(String(128), nullable=True)
     test_chat_username: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    proxy_list_text: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_by_admin_id: Mapped[int | None] = mapped_column(
         ForeignKey("custom_admins.id", ondelete="SET NULL"), nullable=True, index=True
@@ -2195,6 +2196,38 @@ class CustomAutomation(Base):
     bot_subscribers: Mapped[list["CustomBotSubscriber"]] = relationship(
         back_populates="automation",
         cascade="all, delete-orphan",
+    )
+    proxies: Mapped[list["CustomProxy"]] = relationship(
+        back_populates="automation",
+        cascade="all, delete-orphan",
+    )
+
+
+class CustomProxy(Base):
+    __tablename__ = "custom_proxies"
+    __table_args__ = (
+        UniqueConstraint("custom_automation_id", "fingerprint", name="uq_custom_proxy_fingerprint"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    custom_automation_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_automations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    scheme: Mapped[str] = mapped_column(String(16), default="socks5", server_default="socks5", nullable=False)
+    host: Mapped[str] = mapped_column(String(255), nullable=False)
+    port: Mapped[int] = mapped_column(Integer, nullable=False)
+    username: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    password_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    automation: Mapped["CustomAutomation"] = relationship(back_populates="proxies")
+    pool_accounts: Mapped[list["PoolAccount"]] = relationship(
+        back_populates="proxy",
+        foreign_keys="PoolAccount.proxy_id",
     )
 
 
@@ -2285,6 +2318,7 @@ class SocialAccount(Base):
     spamblocked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     spamblock_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    telegram_proxy: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     last_health_check_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     daily_messages_sent: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     daily_messages_reset_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -2367,12 +2401,19 @@ class PoolAccount(Base):
     warmup_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     warmup_last_dialog_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     warmup_dialog_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    proxy_id: Mapped[int | None] = mapped_column(
+        ForeignKey("custom_proxies.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     added_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
     removed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     account_pool: Mapped["AccountPool"] = relationship(back_populates="pool_accounts")
     social_account: Mapped["SocialAccount"] = relationship(back_populates="pool_links")
+    proxy: Mapped["CustomProxy | None"] = relationship(
+        back_populates="pool_accounts",
+        foreign_keys=[proxy_id],
+    )
 
 
 class ChatImportJob(Base):

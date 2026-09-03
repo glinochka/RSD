@@ -54,6 +54,8 @@ const CustomAutomationAccountsPage = () => {
   const [banStats, setBanStats] = useState(null);
   const [healthCheckMessage, setHealthCheckMessage] = useState(null);
   const [isHealthChecking, setIsHealthChecking] = useState(false);
+  const [checkingSpamblockId, setCheckingSpamblockId] = useState(null);
+  const [spamblockMessage, setSpamblockMessage] = useState(null);
   const [warmupEnabled, setWarmupEnabled] = useState(false);
   const [isStartingWarmup, setIsStartingWarmup] = useState(false);
   const [warmupMessage, setWarmupMessage] = useState(null);
@@ -198,6 +200,22 @@ const CustomAutomationAccountsPage = () => {
       setHealthCheckMessage(err.message || 'Health check failed');
     } finally {
       setIsHealthChecking(false);
+    }
+  };
+
+  const handleCheckSpamblock = async (account) => {
+    setCheckingSpamblockId(account.id);
+    setSpamblockMessage(null);
+    setError(null);
+    try {
+      const result = await customService.checkAccountSpamblock(id, account.id);
+      setSpamblockMessage(result.detail || (result.spamblocked ? 'СПАМБЛОК' : 'Ограничений нет'));
+      await loadAccounts();
+      await loadBanStats();
+    } catch (err) {
+      setError(err.message || 'Не удалось проверить спамблок');
+    } finally {
+      setCheckingSpamblockId(null);
     }
   };
 
@@ -389,6 +407,7 @@ const CustomAutomationAccountsPage = () => {
       {warmupMessage ? <p className="crm-flash">{warmupMessage}</p> : null}
       {classifyMessage ? <p className="crm-flash">{classifyMessage}</p> : null}
       {healthCheckMessage ? <p className="crm-flash">{healthCheckMessage}</p> : null}
+      {spamblockMessage ? <p className="crm-flash">{spamblockMessage}</p> : null}
       {uploadSuccess ? <p className="crm-flash">{uploadSuccess}</p> : null}
       {uploadError ? <p className="crm-flash crm-flash--error">{uploadError}</p> : null}
       {error ? <p className="crm-flash crm-flash--error">{error}</p> : null}
@@ -582,6 +601,7 @@ const CustomAutomationAccountsPage = () => {
                 {account.is_banned ? 'Бан · ' : ''}
                 {WARMUP_STATUS_LABELS[account.warmup_status] || ''}
                 {account.warmup_status && account.warmup_status !== 'idle' ? ' · ' : ''}
+                {account.proxy_label ? `${account.proxy_label} · ` : ''}
                 {account.risk_score !== null && account.trust_score !== null
                   ? `Risk ${account.risk_score} · Trust ${account.trust_score} · `
                   : ''}
@@ -592,6 +612,9 @@ const CustomAutomationAccountsPage = () => {
                   ? `Последнее использование ${new Date(account.last_used_at).toLocaleString()}`
                   : 'Ещё не использовался'}
                 {account.added_at ? ` · добавлен ${new Date(account.added_at).toLocaleString()}` : ''}
+                {account.spamblock_checked_at
+                  ? ` · спамблок ${new Date(account.spamblock_checked_at).toLocaleString()}`
+                  : ''}
               </span>
               <div className="form-group">
                 <label htmlFor={`name-${account.id}`}>Имя</label>
@@ -649,6 +672,14 @@ const CustomAutomationAccountsPage = () => {
                   || 'Молчит'}
               </span>
               <div className="settings-actions">
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  disabled={checkingSpamblockId === account.id || account.status === 'empty'}
+                  onClick={() => handleCheckSpamblock(account)}
+                >
+                  {checkingSpamblockId === account.id ? 'Проверяем...' : 'Проверить спамблок'}
+                </button>
                 <button
                   type="button"
                   className="btn btn-black"

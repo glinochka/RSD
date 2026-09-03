@@ -17,6 +17,7 @@ from .schemas import (
     AccountConnectResponse,
     AccountHealthCheckResponse,
     AccountHealthCheckResult,
+    AccountSpamblockCheckResponse,
     AccountListResponse,
     AccountPrepareStatusResponse,
     AccountQrStartRequest,
@@ -82,6 +83,7 @@ from .schemas import (
 from .dependencies import get_current_custom_admin, get_current_custom_automation, optional_is_custom_admin
 from ..services.account_pool_service import bulk_upload_sessions, delete_pool_account
 from ..services.custom.lead_keywords import normalize_lead_keywords
+from ..services.custom.proxy_service import ProxyParseError, proxy_label, proxy_settings_payload, replace_proxy_list
 from ..services.custom.account_connect_service import (
     poll_account_qr,
     request_account_sms,
@@ -238,6 +240,8 @@ async def _settings_payload(session, db_automation, *, is_admin: bool = True) ->
     response["account_warmup_usernames"] = normalize_warmup_usernames(db_automation.account_warmup_usernames)
     response["account_warmup_messages"] = normalize_warmup_messages(db_automation.account_warmup_messages)
     response["account_warmup_enabled"] = bool(db_automation.account_warmup_enabled)
+    proxy_payload = await proxy_settings_payload(session, db_automation)
+    response.update(proxy_payload)
     if not is_admin:
         response.pop("account_warmup_usernames", None)
         response.pop("account_warmup_messages", None)
@@ -370,8 +374,14 @@ async def update_automation_settings(
             update_data["account_warmup_messages"] = normalize_warmup_messages(
                 update_data.get("account_warmup_messages")
             )
+        proxy_list_text = update_data.pop("proxy_list_text", None)
         for field, value in update_data.items():
             setattr(db_automation, field, value)
+        if proxy_list_text is not None:
+            try:
+                await replace_proxy_list(session, db_automation, proxy_list_text)
+            except ProxyParseError as exc:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
         if is_dmp_notify_pipeline(db_automation):
             lock_dmp_bot_modules(db_automation)
         modules_on = any([
@@ -460,7 +470,9 @@ def _account_response(
         max_daily_messages_per_account=max_daily,
         added_at=pool_account.added_at,
         last_health_check_at=social_account.last_health_check_at,
+        spamblock_checked_at=getattr(social_account, "spamblock_checked_at", None),
         updated_at=social_account.updated_at,
+        proxy_label=proxy_label(getattr(social_account, "telegram_proxy", None)),
     )
 
 
@@ -748,11 +760,13 @@ async def sms_account_request(
     payload: AccountSmsRequest,
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
-    result = await request_account_sms(
-        automation_id,
-        phone_number=payload.phone_number,
-        assign_class=payload.assign_class,
-    )
+    async with async_session_maker() as session:
+        result = await request_account_sms(
+            session,
+            automation_id,
+            phone_number=payload.phone_number,
+            assign_class=payload.assign_class,
+        )
     return AccountSmsStartResponse(auth_token=result["auth_token"])
 
 
@@ -814,6 +828,53 @@ async def get_account(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
         pool_account, social_account = result
         return _account_response(pool_account, social_account, automation.max_daily_messages_per_account)
+
+
+def _spamblock_check_detail(result: dict) -> str:
+    status_value = str(result.get("status") or "")
+    if status_value == "no_session":
+        return "Нет сессии Telegram. Подключите аккаунт заново по QR или SMS."
+    if status_value in {"session_invalid", "session_retry"}:
+        return "Нет входа в Telegram. Подключите аккаунт заново по QR или SMS."
+    if status_value == "banned":
+        return "Аккаунт забанен."
+    if result.get("spamblocked") is True:
+        return "Telegram ограничил аккаунт (спамблок)."
+    if result.get("spamblocked") is False:
+        return "Ограничений нет."
+    if status_value == "ok":
+        return "SpamBot не дал однозначный ответ."
+    return "Не удалось проверить спамблок."
+
+
+@router.post(
+    "/automations/{automation_id}/accounts/{account_id}/spamblock-check",
+    response_model=AccountSpamblockCheckResponse,
+)
+async def check_account_spamblock(
+    automation_id: int,
+    account_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        result = await AccountHealthWorker().check_account_spamblock(session, automation_id, account_id)
+        if result.get("status") == "not_found":
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+        if result.get("status") == "no_session":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=_spamblock_check_detail(result),
+            )
+        return AccountSpamblockCheckResponse(
+            account=_account_response(
+                result["pool_account"],
+                result["social_account"],
+                automation.max_daily_messages_per_account,
+            ),
+            spamblocked=result.get("spamblocked"),
+            source=result.get("source"),
+            detail=_spamblock_check_detail(result),
+        )
 
 
 @router.post("/automations/{automation_id}/accounts/warmup/start", response_model=AccountWarmupStartResponse)

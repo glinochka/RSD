@@ -139,6 +139,13 @@ async def validate_settings(
         warnings.append("Дневной лимит сообщений на аккаунт равен 0 — сообщения не будут отправляться.")
     if total_active == 0:
         warnings.append("В автоматизации нет активных аккаунтов пула — все действия будут пропущены.")
+    from .proxy_service import count_active_proxies
+
+    if total_active > 0 and await count_active_proxies(session, automation.id) == 0:
+        warnings.append(
+            "Нет прокси — все аккаунты ходят в Telegram с IP сервера. "
+            "Залейте прокси в настройках, чтобы размазать запросы по разным адресам."
+        )
     kind = (automation.solution_kind or "generic").strip()
     manager_set = bool((automation.lead_manager_contact or "").strip())
     if kind == "fulfillment" and not manager_set:

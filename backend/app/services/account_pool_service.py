@@ -124,6 +124,7 @@ async def _create_social_account(
     account_class: str,
     encrypted_session: str,
     session_file_path: str | None,
+    preferred_proxy_id: int | None = None,
 ) -> SocialAccount:
     social_account = SocialAccount(
         provider=provider,
@@ -151,8 +152,15 @@ async def _create_social_account(
     await session.flush()
     automation = await session.get(CustomAutomation, automation_id)
     from .custom.account_warmup_service import enroll_pool_account
+    from .custom.proxy_service import assign_proxy_to_new_account
 
     enroll_pool_account(automation, pool_account)
+    await assign_proxy_to_new_account(
+        session,
+        pool_account,
+        social_account,
+        preferred_proxy_id=preferred_proxy_id,
+    )
     return social_account
 
 
@@ -167,6 +175,7 @@ async def _save_session_file(
     phone_number: str | None = None,
     username: str | None = None,
     display_name: str | None = None,
+    preferred_proxy_id: int | None = None,
 ) -> SocialAccount:
     sessions_dir = _automation_sessions_dir(automation_id)
     safe_name = _safe_filename(archive_name)
@@ -186,6 +195,7 @@ async def _save_session_file(
         account_class=assign_class,
         encrypted_session=encrypted,
         session_file_path=relative_path,
+        preferred_proxy_id=preferred_proxy_id,
     )
 
 
@@ -261,6 +271,7 @@ async def add_account_from_session_string(
     username: str | None = None,
     display_name: str | None = None,
     telegram_id: int | None = None,
+    preferred_proxy_id: int | None = None,
 ) -> tuple[PoolAccount, SocialAccount]:
     """Persist an authorized StringSession as a pool .session account."""
     data = await asyncio.to_thread(string_session_to_sqlite_bytes, session_string)
@@ -287,6 +298,15 @@ async def add_account_from_session_string(
         social.display_name = display_name or social.display_name
         social.is_active = True
         social.updated_at = _utc_now()
+        if not pool_account.proxy_id:
+            from .custom.proxy_service import assign_proxy_to_new_account
+
+            await assign_proxy_to_new_account(
+                session,
+                pool_account,
+                social,
+                preferred_proxy_id=preferred_proxy_id,
+            )
         await session.flush()
         await session.commit()
         await session.refresh(social)
@@ -304,6 +324,7 @@ async def add_account_from_session_string(
         phone_number=phone_number,
         username=username,
         display_name=display_name,
+        preferred_proxy_id=preferred_proxy_id,
     )
     pool_account = await session.scalar(
         select(PoolAccount).where(

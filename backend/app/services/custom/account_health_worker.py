@@ -144,14 +144,7 @@ class AccountHealthWorker:
             social_account.activity_score = self._activity_score(info)
 
         if spam_state is not None:
-            blocked = spam_state.get("spamblocked")
-            social_account.spamblock_checked_at = _utc_now()
-            if blocked is True:
-                social_account.is_spamblocked = True
-                social_account.spamblocked_at = social_account.spamblocked_at or _utc_now()
-            elif blocked is False:
-                social_account.is_spamblocked = False
-                social_account.spamblocked_at = None
+            self._apply_spam_state(social_account, spam_state)
 
         if avatar_bytes:
             try:
@@ -189,6 +182,84 @@ class AccountHealthWorker:
         has_bio = 1 if info.get("bio") else 0
         premium = 1 if info.get("is_premium") else 0
         return min(100.0, dialogs * 0.5 + has_avatar * 10 + has_bio * 5 + premium * 10)
+
+    @staticmethod
+    def _apply_spam_state(social_account: SocialAccount, spam_state: dict[str, Any]) -> None:
+        blocked = spam_state.get("spamblocked")
+        social_account.spamblock_checked_at = _utc_now()
+        if blocked is True:
+            social_account.is_spamblocked = True
+            social_account.spamblocked_at = social_account.spamblocked_at or _utc_now()
+        elif blocked is False:
+            social_account.is_spamblocked = False
+            social_account.spamblocked_at = None
+        social_account.updated_at = _utc_now()
+
+    async def check_account_spamblock(
+        self,
+        session: AsyncSession,
+        automation_id: int,
+        account_id: int,
+    ) -> dict[str, Any]:
+        """Ask @SpamBot now, ignoring the periodic 6-hour skip."""
+        row = await session.execute(
+            select(PoolAccount, SocialAccount)
+            .join(SocialAccount, PoolAccount.social_account_id == SocialAccount.id)
+            .where(
+                PoolAccount.custom_automation_id == automation_id,
+                SocialAccount.id == account_id,
+            )
+        )
+        result = row.one_or_none()
+        if not result:
+            return {"status": "not_found"}
+        pool_account, social_account = result
+        if not (social_account.session_file_path or "").strip():
+            return {
+                "status": "no_session",
+                "pool_account": pool_account,
+                "social_account": social_account,
+            }
+
+        session_path = _media_root() / social_account.session_file_path
+        if not session_path.exists():
+            from .telegram_account_client import restore_encrypted_session_file
+
+            restore_encrypted_session_file(social_account.encrypted_session, session_path)
+
+        spam_state: dict[str, Any] | None = None
+        try:
+            async with TelegramAccountClient.for_account(social_account) as client:
+                spam_state = await client.check_spamblock()
+        except Exception as exc:
+            error_kind = await update_account_after_telegram_error(session, social_account, exc)
+            social_account.last_health_check_at = _utc_now()
+            social_account.updated_at = _utc_now()
+            await session.commit()
+            await session.refresh(social_account)
+            await session.refresh(pool_account)
+            return {
+                "status": error_kind or "error",
+                "spamblocked": True if error_kind == "spamblock" else None,
+                "source": "error",
+                "detail": str(exc) or error_kind,
+                "pool_account": pool_account,
+                "social_account": social_account,
+            }
+
+        self._apply_spam_state(social_account, spam_state or {})
+        social_account.last_health_check_at = _utc_now()
+        await session.commit()
+        await session.refresh(social_account)
+        await session.refresh(pool_account)
+        blocked = None if spam_state is None else spam_state.get("spamblocked")
+        return {
+            "status": "ok",
+            "spamblocked": blocked,
+            "source": (spam_state or {}).get("source"),
+            "pool_account": pool_account,
+            "social_account": social_account,
+        }
 
     async def process_accounts(self, automation_id: int, account_ids: list[int]) -> list[dict[str, Any]]:
         results = []
