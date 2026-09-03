@@ -1532,6 +1532,59 @@ class TestShilling:
         used = {call.args[3].id for call in send.await_args_list}
         assert used == {a.id, b.id}
 
+    async def test_post_shilling_reply_targets_discussion_thread(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from unittest.mock import AsyncMock, patch
+
+        from app.services.custom.shilling_service import perform_shilling_dialogue
+
+        await self._add_account(
+            test_session, custom_automation, account_class=AccountClass.SHILLING.value, username="post_a", phone="+79990000043"
+        )
+        await self._add_account(
+            test_session, custom_automation, account_class=AccountClass.SHILLING.value, username="post_b", phone="+79990000044"
+        )
+        chat = await self._add_chat(test_session, custom_automation, mode="monitoring", chat_type="channel")
+        chat.comments_open = True
+        await test_session.commit()
+
+        async def fake_sleep(_seconds):
+            return None
+
+        with patch(
+            "app.services.custom.shilling_service.generate_shilling_dialogue",
+            new=AsyncMock(return_value=("Вопрос?", "Ответ.")),
+        ), patch(
+            "app.services.custom.shilling_service._telegram_ids_distinct",
+            new=AsyncMock(return_value=True),
+        ), patch(
+            "app.services.custom.chat_inspect_service.ensure_comment_access",
+            new=AsyncMock(return_value=type("Probe", (), {"account_blocked": False, "comments_open": True})()),
+        ), patch(
+            "app.services.custom.shilling_service._send_message",
+            new=AsyncMock(side_effect=[101, 102]),
+        ) as send:
+            result = await perform_shilling_dialogue(
+                test_session,
+                custom_automation,
+                chat,
+                action_type="shilling_post",
+                target_id="1:10",
+                target_type="chat_post",
+                comment_to=10,
+                delay_seconds=0,
+                sleep=fake_sleep,
+            )
+        assert result["status"] == "ok"
+        first_call = send.await_args_list[0].kwargs
+        second_call = send.await_args_list[1].kwargs
+        assert first_call["comment_to"] == 10
+        assert first_call.get("discussion_post_id") is None
+        assert second_call["discussion_post_id"] == 10
+        assert second_call["reply_to"] == 101
+        assert second_call.get("comment_to") is None
+
     async def test_shilling_runs_without_per_chat_mode(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
     ):

@@ -40,6 +40,7 @@ CHAT_SHILL_ACTION = "shilling_chat"
 POST_SHILL_ACTION = "shilling_post"
 REPLY_DELAY_MIN_SECONDS = 8.0
 REPLY_DELAY_MAX_SECONDS = 25.0
+COMMENT_REPLY_DELAY_MIN_SECONDS = 5.0
 
 DEFAULT_SHILLING_SETUP = "Кто-нибудь уже пробовал сервис, о котором тут пишут? Не хочу влететь."
 DEFAULT_SHILLING_REPLY = "Пользуюсь сам уже какое-то время, по работе зашёл. Если надо — могу в личке набросать, как подключался."
@@ -174,6 +175,19 @@ async def _telegram_ids_distinct(account_a: SocialAccount, account_b: SocialAcco
         return True
 
 
+async def _discussion_entity_for_post(client: TelegramAccountClient, channel_entity: Any, post_id: int) -> Any:
+    from telethon import functions
+
+    result = await client(functions.messages.GetDiscussionMessageRequest(peer=channel_entity, msg_id=post_id))
+    root = min(result.messages, key=lambda msg: msg.id)
+    discussion = next(
+        chat
+        for chat in result.chats
+        if getattr(getattr(root, "peer_id", None), "channel_id", None) == chat.id
+    )
+    return await client.client.get_input_entity(discussion)
+
+
 async def _send_message(
     session: AsyncSession,
     automation_id: int,
@@ -185,6 +199,7 @@ async def _send_message(
     target_id: str,
     reply_to: int | None = None,
     comment_to: int | None = None,
+    discussion_post_id: int | None = None,
     payload: dict[str, Any] | None = None,
 ) -> int | None:
     path = _session_path(account)
@@ -192,17 +207,24 @@ async def _send_message(
         return None
     try:
         async with TelegramAccountClient.for_account(account) as client:
-            entity = await client.get_entity(
+            channel_entity = await client.get_entity(
                 chat_entity_key(chat_target)
             )
 
             async def _send():
+                if discussion_post_id is not None and reply_to is not None:
+                    discussion_entity = await _discussion_entity_for_post(
+                        client,
+                        channel_entity,
+                        discussion_post_id,
+                    )
+                    return await client.client.send_message(discussion_entity, text, reply_to=reply_to)
                 kwargs: dict[str, Any] = {}
                 if comment_to is not None:
                     kwargs["comment_to"] = comment_to
                 if reply_to is not None:
                     kwargs["reply_to"] = reply_to
-                return await client.client.send_message(entity, text, **kwargs)
+                return await client.client.send_message(channel_entity, text, **kwargs)
 
             message = await execute_with_telegram_retry(
                 session,
@@ -210,7 +232,7 @@ async def _send_message(
                 _send,
                 action_type=action_type,
                 target_id=target_id,
-                target_type="chat_post" if comment_to is not None else "chat",
+                target_type="chat_post" if (comment_to is not None or discussion_post_id is not None) else "chat",
                 payload=payload or {},
                 automation_id=automation_id,
             )
@@ -330,6 +352,8 @@ async def perform_shilling_dialogue(
     wait_for = delay_seconds
     if wait_for is None:
         wait_for = random.uniform(REPLY_DELAY_MIN_SECONDS, REPLY_DELAY_MAX_SECONDS)
+    elif comment_to is not None and wait_for < COMMENT_REPLY_DELAY_MIN_SECONDS:
+        wait_for = COMMENT_REPLY_DELAY_MIN_SECONDS
     sleeper = sleep or __import__("asyncio").sleep
     await sleeper(wait_for)
 
@@ -342,7 +366,7 @@ async def perform_shilling_dialogue(
         action_type=action_type,
         target_id=target_id,
         reply_to=first_id,
-        comment_to=comment_to,
+        discussion_post_id=comment_to,
         payload={"role": "reply", "text": reply, "peer_account_id": account_a.id, "reply_to": first_id},
     )
     if not second_id:
