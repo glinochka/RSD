@@ -758,6 +758,62 @@ class TestChatImportAndDedup:
         )
         assert count == 1
 
+    async def test_dedup_keys_match_username_variants(self):
+        from app.services.custom.chat_target_dedup import dedup_keys
+
+        a = dedup_keys("https://t.me/seo_chat", None)
+        b = dedup_keys("https://t.me/seo_chat/", None)
+        assert a & b
+
+    async def test_import_skips_existing_username_alias(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from app.services.custom.chat_import_service import import_chats_from_file
+
+        test_session.add(
+            ChatTarget(
+                custom_automation_id=custom_automation.id,
+                provider="telegram",
+                invite_link="https://t.me/seo_chat",
+                title="SEO Chat",
+                mode="monitoring",
+                source="manual",
+                join_status="pending",
+                is_active=True,
+            )
+        )
+        await test_session.commit()
+
+        csv_content = (
+            "invite_link,title\n"
+            "https://t.me/seo_chat/,Duplicate title\n"
+            "https://t.me/new_chat,New Chat\n"
+        ).encode("utf-8")
+        job = await import_chats_from_file(
+            test_session,
+            automation_id=custom_automation.id,
+            filename="chats.csv",
+            content=csv_content,
+        )
+        assert job.processed_rows == 1
+        assert job.duplicate_rows == 1
+        total = await test_session.scalar(
+            select(func.count(ChatTarget.id)).where(
+                ChatTarget.custom_automation_id == custom_automation.id
+            )
+        )
+        assert total == 2
+
+    async def test_seo_saas_prompt_catalog_has_marker_and_inbound_dm(self):
+        from app.alembic.prompt_data.seo_saas_prompts import PROMPT_MARKER, SEO_SAAS_PROMPTS
+        from app.alembic.models import PromptType
+
+        assert PromptType.INBOUND_DM.value in SEO_SAAS_PROMPTS
+        assert PROMPT_MARKER in SEO_SAAS_PROMPTS[PromptType.LEAD_QUALIFICATION.value]["content"]
+        assert "SEO-Джарвис" in SEO_SAAS_PROMPTS[PromptType.DMP_OUTREACH.value]["content"]
+
 
 class TestCommentInspect:
     async def _add_account(

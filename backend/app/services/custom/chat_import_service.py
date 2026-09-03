@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.models import ChatImportJob, ChatJoinStatus, ChatMode, ChatSource, ChatTarget
 from ...config import settings
+from .chat_target_dedup import dedup_keys, load_existing_dedup_keys
 from .telegram_invite import TelegramChatRefError, parse_telegram_chat_ref
 
 logger = logging.getLogger(__name__)
@@ -257,8 +258,9 @@ def parse_import_row(row: dict[str, Any], *, now: datetime | None = None) -> dic
         _row_get(row, _ACTIVITY_KEYS) or row.get("активность"),
         now=now,
     )
-    if not invite_link and not external_chat_id and not title:
-        raise ValueError("empty row")
+    if not invite_link and not external_chat_id:
+        raise ValueError("укажите ссылку или id чата/канала")
+    keys = dedup_keys(invite_link, external_chat_id)
     return {
         "invite_link": invite_link,
         "external_chat_id": external_chat_id,
@@ -267,29 +269,13 @@ def parse_import_row(row: dict[str, Any], *, now: datetime | None = None) -> dic
         "chat_type": chat_type,
         "members_count": members_count,
         "last_activity_at": last_activity_at,
-        "dedup_key": _dedup_key(invite_link, external_chat_id),
+        "dedup_key": next(iter(keys), None),
+        "dedup_keys": keys,
     }
 
 
 async def _existing_keys(session: AsyncSession, automation_id: int) -> set[str]:
-    result = await session.execute(
-        select(ChatTarget.invite_link, ChatTarget.external_chat_id).where(
-            ChatTarget.custom_automation_id == automation_id
-        )
-    )
-    keys: set[str] = set()
-    for invite_link, external_chat_id in result.all():
-        key = _dedup_key(invite_link, external_chat_id)
-        if key:
-            keys.add(key)
-        if invite_link:
-            try:
-                canonical = parse_telegram_chat_ref(invite_link).canonical
-                keys.add(_dedup_key(canonical, None) or "")
-            except TelegramChatRefError:
-                pass
-    keys.discard("")
-    return keys
+    return await load_existing_dedup_keys(session, automation_id)
 
 
 async def _save_import_file(automation_id: int, job_id: int, filename: str, content: bytes) -> str:
@@ -353,12 +339,13 @@ async def import_chats_from_file(
     for idx, row in enumerate(rows, start=1):
         try:
             parsed = parse_import_row(row, now=now)
-            key = parsed["dedup_key"]
-            if key and (key in existing or key in seen):
+            row_keys = set(parsed.get("dedup_keys") or [])
+            if not row_keys:
+                raise ValueError("укажите ссылку или id чата/канала")
+            if row_keys & existing or row_keys & seen:
                 duplicates += 1
                 continue
-            if key:
-                seen.add(key)
+            seen.update(row_keys)
             target = ChatTarget(
                 custom_automation_id=automation_id,
                 provider=_PROVIDER,
@@ -422,11 +409,12 @@ async def retry_import_errors(
             continue
         try:
             parsed = parse_import_row(row, now=now)
-            key = parsed["dedup_key"]
-            if key and (key in existing or key in seen):
+            row_keys = set(parsed.get("dedup_keys") or [])
+            if not row_keys:
                 continue
-            if key:
-                seen.add(key)
+            if row_keys & existing or row_keys & seen:
+                continue
+            seen.update(row_keys)
             session.add(
                 ChatTarget(
                     custom_automation_id=job.custom_automation_id,
@@ -457,6 +445,9 @@ async def retry_import_errors(
     job.error_rows = len(remaining)
     job.error_log = remaining
     job.updated_at = _utc_now()
+    from .chat_membership_service import ensure_memberships_for_automation
+
+    await ensure_memberships_for_automation(session, job.custom_automation_id)
     await session.commit()
     await session.refresh(job)
     return job

@@ -196,6 +196,26 @@ DEFAULT_PROMPTS: dict[str, dict[str, Any]] = {
         "max_tokens": 200,
         "response_format": "json",
     },
+    PromptType.INBOUND_DM.value: {
+        "name": "Inbound DM",
+        "content": """Ты отвечаешь в личных сообщениях Telegram от имени живого человека.
+
+Входящее сообщение:
+{incoming}
+
+Контекст продукта/сервиса:
+{product_context}
+
+Ссылка с UTM: {partner_utm_url}
+Промокод: {partner_promo_code}
+
+Дай короткий нативный ответ (1–3 предложения). Если спрашивают ссылку или промокод — дай их, если поля не пустые.
+Верни ТОЛЬКО текст ответа без кавычек и JSON.""",
+        "model": "deepseek-chat",
+        "temperature": 0.7,
+        "max_tokens": 350,
+        "response_format": None,
+    },
 }
 
 
@@ -217,88 +237,10 @@ PROMPT_VARIABLES: dict[str, list[str]] = {
     PromptType.LEAD_QUALIFICATION.value: ["history", "last_incoming", "partner_utm_url", "partner_promo_code"],
     PromptType.PROFILE_BIO.value: ["industry", "name"],
     PromptType.SHILLING.value: [],
+    PromptType.INBOUND_DM.value: ["incoming", "product_context", "partner_utm_url", "partner_promo_code"],
 }
 
 SOLUTION_PROMPT_OVERRIDES: dict[str, dict[str, dict[str, Any]]] = {
-    "seo_saas": {
-        PromptType.CHAT_MONITORING_TRIGGER.value: {
-            "name": "Перехват заявок: триггер",
-            "content": """Ты анализируешь сообщение в Telegram-чате.
-Это заявка, если человек ищет SEO, продвижение сайта, рост органики, аудит, ссылки, контент или SaaS для SEO.
-
-Верни ТОЛЬКО валидный JSON без markdown:
-{
-  "is_lead": true/false,
-  "confidence": 0.0-1.0,
-  "reason": "краткое объяснение",
-  "contact_type": "telegram",
-  "contact_value": "username или id отправителя, если видно"
-}
-
-Сообщение:
-{text}""",
-        },
-        PromptType.CHAT_MONITORING_RESPONSE.value: {
-            "name": "Перехват заявок: ответ",
-            "content": """Напиши короткое ЛС от живого человека, который сам пользуется SEO-сервисом.
-Помоги с вопросом. Если уместно, мягко намекни на инструмент. Без рекламного тона.
-
-Сообщение из чата:
-{text}
-
-Верни ТОЛЬКО JSON:
-{
-  "message": "текст ответа"
-}""",
-        },
-        PromptType.DMP_OUTREACH.value: {
-            "name": "DMP: первое сообщение",
-            "content": """Ты — доверенный аккаунт. Пишешь человеку, который смотрел SEO SaaS.
-Цель: чтобы он зарегистрировался по партнёрской ссылке или ввёл промокод. Не продавай услугу менеджером.
-Не признавайся в пикселе и слежке. 2-4 коротких предложения.
-
-Имя: {name}
-Компания: {company}
-Сайт: {website}
-Ссылка с UTM: {partner_utm_url}
-Промокод: {partner_promo_code}
-Уже регистрировался: {registered}
-
-Если registered=yes — мягко напомни завершить регистрацию или оформить подписку.
-Если ссылка или промокод пустые — не выдумывай их.
-
-Верни ТОЛЬКО JSON:
-{
-  "message": "текст первого сообщения"
-}""",
-        },
-        PromptType.LEAD_QUALIFICATION.value: {
-            "name": "Квалификация лида",
-            "content": """Ты прогреваешь лида SEO SaaS в Telegram.
-Цель — регистрация по ссылке/промокоду, не передача менеджеру.
-
-История переписки:
-{history}
-
-Последнее сообщение лида:
-{last_incoming}
-
-Ссылка с UTM: {partner_utm_url}
-Промокод: {partner_promo_code}
-
-qualified=true, если человек перешёл, зарегистрировался, попросил ссылку/промокод и готов ими воспользоваться.
-lost=true при отказе или спаме.
-continue=true, если нужно ещё одно короткое сообщение.
-
-Верни ТОЛЬКО JSON:
-{
-  "qualified": true/false,
-  "lost": true/false,
-  "continue": true/false,
-  "reply": "следующее короткое сообщение, если continue=true"
-}""",
-        },
-    },
     "fulfillment": {
         PromptType.CHAT_MONITORING_TRIGGER.value: {
             "name": "Перехват заявок: триггер",
@@ -387,7 +329,13 @@ def render_prompt(template: str, variables: dict[str, Any] | None = None) -> str
 
 def prompts_for_kind(kind: str | None) -> dict[str, dict[str, Any]]:
     catalog = {key: dict(value) for key, value in DEFAULT_PROMPTS.items()}
-    overrides = SOLUTION_PROMPT_OVERRIDES.get((kind or "generic").strip().lower(), {})
+    kind_key = (kind or "generic").strip().lower()
+    if kind_key == "seo_saas":
+        from ...alembic.prompt_data.seo_saas_prompts import SEO_SAAS_PROMPTS
+
+        for prompt_type, override in SEO_SAAS_PROMPTS.items():
+            catalog[prompt_type] = {**catalog.get(prompt_type, {}), **override}
+    overrides = SOLUTION_PROMPT_OVERRIDES.get(kind_key, {})
     for prompt_type, override in overrides.items():
         catalog[prompt_type] = {**catalog.get(prompt_type, {}), **override}
     return catalog

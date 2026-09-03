@@ -19,12 +19,14 @@ from .chat_membership_service import (
     ensure_memberships_for_chat,
     membership_counts,
     pick_next_pending_membership,
+    recover_stale_joining_memberships,
     sync_chat_join_status,
 )
 from .chat_scope import apply_entity_metadata, is_lab_chat, is_user_peer, unwrap_telegram_chat
+from .chat_target_dedup import find_existing_chat_target
 from .rotation_service import select_account_for_action
 from .telegram_account_client import TelegramAccountClient
-from .telegram_error_handler import SessionInvalidError, log_action_error
+from .telegram_error_handler import SessionInvalidError, execute_with_telegram_retry, log_action_error
 from .telegram_invite import TelegramChatRef, TelegramChatRefError, parse_telegram_chat_ref
 from ...alembic.models import AccountChatMembership, ChatJoinStatus, ChatMode, ChatSource, ChatTarget, SocialAccount
 
@@ -167,11 +169,24 @@ async def _try_join_chat(
 
     try:
         async with TelegramAccountClient.for_account(account) as client:
-            try:
+            automation_id = int(chat_target.custom_automation_id)
+
+            async def _perform_join() -> Any:
                 if parsed.kind == "invite":
-                    entity = await _join_private(client, parsed)
-                else:
-                    entity = await _join_public(client, parsed)
+                    return await _join_private(client, parsed)
+                return await _join_public(client, parsed)
+
+            try:
+                entity = await execute_with_telegram_retry(
+                    session,
+                    account,
+                    _perform_join,
+                    action_type="join_chat",
+                    target_id=str(chat_target.id),
+                    target_type="chat",
+                    automation_id=automation_id,
+                    max_retries=3,
+                )
             except InviteRequestSentError:
                 try:
                     entity = await _resolve_entity(client, parsed)
@@ -181,6 +196,9 @@ async def _try_join_chat(
                     apply_entity_metadata(chat_target, entity)
                     chat_target.invite_link = parsed.canonical
                 return {"status": "failed", "error": "Нужно одобрение заявки на вступление"}
+            except SessionInvalidError as exc:
+                logger.warning("Join chat %s skipped account %s: %s", chat_target.id, account.id, exc)
+                return {"status": "failed", "error": "session_invalid", "retry_account": True}
 
             if entity is not None:
                 apply_entity_metadata(chat_target, entity)
@@ -237,6 +255,13 @@ async def _apply_membership_result(
     membership.join_attempts += 1
     membership.last_join_attempt_at = now
     membership.updated_at = now
+
+    if join_result.get("retry_account"):
+        membership.join_status = ChatJoinStatus.PENDING.value
+        membership.last_join_error = join_result.get("error")
+        membership.join_attempts = max(0, membership.join_attempts - 1)
+        await sync_chat_join_status(session, chat_target)
+        return
 
     if join_result["status"] == "joined":
         membership.join_status = ChatJoinStatus.JOINED.value
@@ -334,11 +359,11 @@ async def create_chat_from_link(
 ) -> ChatTarget:
     parsed = parse_telegram_chat_ref(raw_link)
 
-    existing = await session.scalar(
-        select(ChatTarget).where(
-            ChatTarget.custom_automation_id == automation_id,
-            ChatTarget.invite_link == parsed.canonical,
-        )
+    existing = await find_existing_chat_target(
+        session,
+        automation_id,
+        invite_link=parsed.canonical,
+        external_chat_id=parsed.value if parsed.kind == "channel_id" else None,
     )
     if existing:
         raise ValueError("Этот чат уже добавлен")
@@ -364,15 +389,14 @@ async def create_chat_from_link(
     )
     apply_entity_metadata(chat, entity)
 
-    if chat.external_chat_id:
-        duplicate = await session.scalar(
-            select(ChatTarget).where(
-                ChatTarget.custom_automation_id == automation_id,
-                ChatTarget.external_chat_id == chat.external_chat_id,
-            )
-        )
-        if duplicate:
-            raise ValueError("Этот чат уже добавлен")
+    duplicate = await find_existing_chat_target(
+        session,
+        automation_id,
+        invite_link=chat.invite_link,
+        external_chat_id=chat.external_chat_id,
+    )
+    if duplicate and duplicate.id != chat.id:
+        raise ValueError("Этот чат уже добавлен")
 
     session.add(chat)
     await session.flush()
@@ -386,10 +410,11 @@ async def join_next_membership(
     session: AsyncSession,
     automation_id: int,
     *,
-    max_attempts: int = 3,
+    max_attempts: int = 5,
 ) -> dict[str, Any] | None:
     """Process one pending account×chat join (scheduler entry)."""
     await ensure_memberships_for_automation(session, automation_id)
+    await recover_stale_joining_memberships(session, automation_id)
     membership = await pick_next_pending_membership(session, automation_id, max_attempts=max_attempts)
     if not membership:
         return None

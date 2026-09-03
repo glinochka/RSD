@@ -19,6 +19,7 @@ from telethon.tl.functions.messages import SearchGlobalRequest
 from telethon.tl.types import InputMessagesFilterEmpty, InputPeerEmpty
 
 from .prompt_service import DEFAULT_PROMPTS
+from .chat_target_dedup import find_existing_chat_target
 from .rotation_service import select_account_for_action
 from .telegram_account_client import TelegramAccountClient
 from ...alembic.models import (
@@ -331,27 +332,15 @@ async def _existing_chat_target(
     automation_id: int,
     candidate: dict[str, Any],
 ) -> ChatTarget | None:
-    external_id = candidate.get("id")
-    username = candidate.get("username")
-    if external_id:
-        existing = await session.scalar(
-            select(ChatTarget).where(
-                ChatTarget.custom_automation_id == automation_id,
-                ChatTarget.external_chat_id == str(external_id),
-            )
-        )
-        if existing:
-            return existing
-    if username:
-        existing = await session.scalar(
-            select(ChatTarget).where(
-                ChatTarget.custom_automation_id == automation_id,
-                ChatTarget.invite_link.ilike(f"%/{username}"),
-            )
-        )
-        if existing:
-            return existing
-    return None
+    invite_link = f"https://t.me/{candidate['username']}" if candidate.get("username") else None
+    external_id = str(candidate["id"]) if candidate.get("id") else None
+    return await find_existing_chat_target(
+        session,
+        automation_id,
+        invite_link=invite_link,
+        external_chat_id=external_id,
+        title=candidate.get("title"),
+    )
 
 
 async def _create_chat_target_from_candidate(

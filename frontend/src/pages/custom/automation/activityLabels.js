@@ -69,6 +69,7 @@ export const PROMPT_TYPE_LABELS = {
   chat_relevance: 'Релевантность чата',
   profile_bio: 'Профиль bio',
   shilling: 'Шиллинг: вопрос и ответ',
+  inbound_dm: 'Входящее ЛС',
 };
 
 export const SOLUTION_KIND_LABELS = {
@@ -95,6 +96,7 @@ export const VARIABLE_HINTS = {
   chat_relevance: ['query', 'title', 'description', 'chat_type', 'participants_count'],
   profile_bio: ['industry', 'name'],
   shilling: [],
+  inbound_dm: ['incoming', 'product_context', 'partner_utm_url', 'partner_promo_code'],
 };
 
 export const ACCOUNT_ROLE_OPTIONS = [

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import func, select
@@ -187,7 +187,7 @@ async def pick_next_pending_membership(
     session: AsyncSession,
     automation_id: int,
     *,
-    max_attempts: int = 3,
+    max_attempts: int = 5,
 ) -> AccountChatMembership | None:
     now = _utc_now()
     result = await session.execute(
@@ -218,6 +218,31 @@ async def pick_next_pending_membership(
 
     random.shuffle(candidates)
     return candidates[0]
+
+
+async def recover_stale_joining_memberships(
+    session: AsyncSession,
+    automation_id: int,
+    *,
+    stale_minutes: int = 15,
+) -> int:
+    cutoff = _utc_now() - timedelta(minutes=stale_minutes)
+    result = await session.execute(
+        select(AccountChatMembership).where(
+            AccountChatMembership.custom_automation_id == automation_id,
+            AccountChatMembership.join_status == ChatJoinStatus.JOINING.value,
+            AccountChatMembership.last_join_attempt_at.is_not(None),
+            AccountChatMembership.last_join_attempt_at < cutoff,
+        )
+    )
+    recovered = 0
+    for membership in result.scalars().all():
+        membership.join_status = ChatJoinStatus.PENDING.value
+        membership.updated_at = _utc_now()
+        recovered += 1
+    if recovered:
+        await session.commit()
+    return recovered
 
 
 async def bulk_membership_counts(
