@@ -443,6 +443,7 @@ class TestAccountPoolAndRotation:
 
     async def test_add_account_and_select_for_action(self, test_session: AsyncSession, custom_automation: CustomAutomation):
         from app.services.account_pool_service import get_or_create_default_pool
+        from app.services.custom.account_roles import default_roles_for_class
         from app.services.custom.rotation_service import select_account_for_action
 
         pool = await get_or_create_default_pool(test_session, custom_automation.id)
@@ -467,6 +468,7 @@ class TestAccountPoolAndRotation:
             social_account_id=account.id,
             assigned_class=AccountClass.TRUSTED.value,
             custom_automation_id=custom_automation.id,
+            roles=default_roles_for_class(AccountClass.TRUSTED.value),
         )
         test_session.add(pool_account)
         await test_session.commit()
@@ -1277,6 +1279,7 @@ class TestShilling:
         phone: str,
     ) -> SocialAccount:
         from app.services.account_pool_service import get_or_create_default_pool
+        from app.services.custom.account_roles import default_roles_for_class
 
         pool = await get_or_create_default_pool(session, automation.id)
         account = SocialAccount(
@@ -1298,6 +1301,7 @@ class TestShilling:
                 social_account_id=account.id,
                 assigned_class=account_class,
                 custom_automation_id=automation.id,
+                roles=default_roles_for_class(account_class),
             )
         )
         await session.commit()
@@ -3217,7 +3221,7 @@ class TestAccountRolesWarmupAndLab:
         assert shill is not None and shill.username == "role_shill"
         assert comment is None
 
-    async def test_empty_roles_keep_class_fallback(
+    async def test_empty_roles_are_silent(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
     ):
         from app.services.custom.rotation_service import select_account_for_action
@@ -3230,10 +3234,13 @@ class TestAccountRolesWarmupAndLab:
             phone="+79991000002",
             roles=[],
         )
-        comment = await select_account_for_action(test_session, custom_automation.id, "commenting")
-        shill = await select_account_for_action(test_session, custom_automation.id, "shilling")
-        assert comment is not None and comment.username == "class_neuro"
-        assert shill is None
+        assert await select_account_for_action(test_session, custom_automation.id, "commenting") is None
+        assert await select_account_for_action(test_session, custom_automation.id, "shilling") is None
+        assert await select_account_for_action(test_session, custom_automation.id, "dm") is None
+        joined = await select_account_for_action(
+            test_session, custom_automation.id, "prepare_join", consume_quota=False
+        )
+        assert joined is not None
 
     async def test_warmup_blocks_production_but_allows_join(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
@@ -3246,6 +3253,7 @@ class TestAccountRolesWarmupAndLab:
             account_class=AccountClass.ONE_DAY.value,
             username="warming_acc",
             phone="+79991000003",
+            roles=["neurocommenting"],
             warmup_status="rest",
         )
         assert await select_account_for_action(test_session, custom_automation.id, "commenting") is None

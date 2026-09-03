@@ -66,8 +66,6 @@ async def validate_settings(
     role_counts = await count_accounts_by_role(session, automation.id)
     total_active = sum(counts.values())
     trusted = counts.get(AccountClass.TRUSTED.value, 0)
-    mid = counts.get(AccountClass.MID.value, 0)
-    one_day = counts.get(AccountClass.ONE_DAY.value, 0)
     shilling = role_counts.get(AccountRole.SHILLING.value, 0)
     intercept = role_counts.get(AccountRole.LEAD_INTERCEPT.value, 0)
     neuro = role_counts.get(AccountRole.NEUROCOMMENTING.value, 0)
@@ -77,7 +75,7 @@ async def validate_settings(
 
     can_enable["chat_monitoring"] = intercept >= 1
     can_enable["neurocommenting"] = neuro >= 1
-    can_enable["discussion"] = (one_day + mid + trusted + neuro + intercept) >= 1
+    can_enable["discussion"] = (neuro + intercept + dmp + shilling) >= 1
     can_enable["dmp_one"] = dmp >= 1
     can_enable["amocrm"] = True
     can_enable["shilling"] = shilling >= 2
@@ -124,8 +122,8 @@ async def validate_settings(
         )
     if automation.is_digital_footprint_enabled and not can_enable["discussion"]:
         warnings.append(
-            "Искусственная активность в чатах включена, но нет активных аккаунтов пула. "
-            "Добавьте аккаунты или отключите модуль."
+            "Искусственная активность в чатах включена, но нет аккаунтов с назначенной функцией. "
+            "Назначьте функции в разделе Аккаунты или отключите модуль."
         )
     if automation.is_dmp_one_enabled and not can_enable["dmp_one"]:
         warnings.append(

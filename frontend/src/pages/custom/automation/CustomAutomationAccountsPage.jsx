@@ -7,8 +7,6 @@ import { useCustomAuth } from '../../../components/custom/useCustomAuth';
 import CustomBulkProfileForm from './CustomBulkProfileForm';
 import CustomAccountConnectForm from './CustomAccountConnectForm';
 import { ACCOUNT_ROLE_LABELS, ACCOUNT_ROLE_OPTIONS, WARMUP_STATUS_LABELS } from './activityLabels';
-import CustomBulkProfileForm from './CustomBulkProfileForm';
-import CustomAccountConnectForm from './CustomAccountConnectForm';
 import '../../../styles/projectCRMPage.css';
 import '../../../styles/projectSettingsPage.css';
 
@@ -632,9 +630,10 @@ const CustomAutomationAccountsPage = () => {
                   multiple
                   value={account.roles || []}
                   options={ACCOUNT_ROLE_OPTIONS}
-                  placeholder="Не выбрано"
+                  placeholder="Молчит"
                   onChange={(e) => handleRolesChange(account.id, e.target.value)}
                 />
+                <span className="form-hint">Пустой список — аккаунт ничего не делает.</span>
               </div>
               <div className="form-group">
                 <label htmlFor={`class-${account.id}`}>Класс</label>
@@ -647,7 +646,7 @@ const CustomAutomationAccountsPage = () => {
               </div>
               <span className={`crm-status ${CLASS_STATUS[account.assigned_class] || ''}`}>
                 {(account.roles || []).map((role) => ACCOUNT_ROLE_LABELS[role] || role).join(' · ')
-                  || 'По классу'}
+                  || 'Молчит'}
               </span>
               <div className="settings-actions">
                 <button

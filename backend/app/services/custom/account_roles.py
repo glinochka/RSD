@@ -19,15 +19,15 @@ ACTION_ROLE = {
     "shilling": AccountRole.SHILLING.value,
 }
 
-CLASS_FALLBACK_ROLES = {
-    AccountClass.ONE_DAY.value: {AccountRole.NEUROCOMMENTING.value},
-    AccountClass.MID.value: {AccountRole.NEUROCOMMENTING.value, AccountRole.LEAD_INTERCEPT.value},
-    AccountClass.TRUSTED.value: {
+CLASS_DEFAULT_ROLES = {
+    AccountClass.ONE_DAY.value: (AccountRole.NEUROCOMMENTING.value,),
+    AccountClass.MID.value: (AccountRole.NEUROCOMMENTING.value, AccountRole.LEAD_INTERCEPT.value),
+    AccountClass.TRUSTED.value: (
         AccountRole.NEUROCOMMENTING.value,
         AccountRole.LEAD_INTERCEPT.value,
         AccountRole.DMP.value,
-    },
-    AccountClass.SHILLING.value: {AccountRole.SHILLING.value},
+    ),
+    AccountClass.SHILLING.value: (AccountRole.SHILLING.value,),
 }
 
 WARMUP_BLOCKED_STATUSES = {"rest", "warming"}
@@ -47,16 +47,12 @@ def normalize_roles(raw) -> list[str]:
     return seen
 
 
+def default_roles_for_class(account_class: str | None) -> list[str]:
+    return list(CLASS_DEFAULT_ROLES.get(account_class or "", ()))
+
+
 def effective_roles(pool_account: PoolAccount | None, social: SocialAccount | None = None) -> set[str]:
-    roles = normalize_roles(getattr(pool_account, "roles", None) if pool_account is not None else None)
-    if roles:
-        return set(roles)
-    account_class = None
-    if social is not None:
-        account_class = social.account_class
-    elif pool_account is not None:
-        account_class = pool_account.assigned_class
-    return set(CLASS_FALLBACK_ROLES.get(account_class or "", set()))
+    return set(normalize_roles(getattr(pool_account, "roles", None) if pool_account is not None else None))
 
 
 def is_warmup_blocked(pool_account: PoolAccount | None, action_type: str) -> bool:
@@ -75,9 +71,8 @@ def account_matches_action(
         return False
     if action_type in WARMUP_OPEN_ACTIONS:
         return True
+    roles = effective_roles(pool_account, social)
     required = ACTION_ROLE.get(action_type)
     if required is None:
-        if action_type == "discussion":
-            return bool(effective_roles(pool_account, social))
-        return True
-    return required in effective_roles(pool_account, social)
+        return bool(roles)
+    return required in roles
