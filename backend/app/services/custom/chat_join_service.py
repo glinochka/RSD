@@ -529,12 +529,48 @@ async def join_next_membership(
     }
 
 
+async def _reset_lab_join_queue(
+    session: AsyncSession,
+    automation_id: int,
+    *,
+    chat_target_ids: list[int],
+    account_ids: list[int],
+) -> int:
+    """Lab: clear exhausted attempts/errors so «Вступить» can retry chats."""
+    if not chat_target_ids or not account_ids:
+        return 0
+    result = await session.execute(
+        select(AccountChatMembership).where(
+            AccountChatMembership.custom_automation_id == automation_id,
+            AccountChatMembership.chat_target_id.in_(chat_target_ids),
+            AccountChatMembership.social_account_id.in_(account_ids),
+            AccountChatMembership.join_status != ChatJoinStatus.JOINED.value,
+        )
+    )
+    now = _utc_now()
+    reset = 0
+    for membership in result.scalars().all():
+        membership.join_status = ChatJoinStatus.PENDING.value
+        membership.join_attempts = 0
+        membership.next_join_attempt_at = None
+        membership.last_join_error = None
+        membership.joined_at = None
+        membership.updated_at = now
+        reset += 1
+    for chat_id in chat_target_ids:
+        chat_target = await session.get(ChatTarget, chat_id)
+        if chat_target:
+            await sync_chat_join_status(session, chat_target)
+    return reset
+
+
 async def sync_memberships_with_telegram(
     session: AsyncSession,
     automation_id: int,
     chat_target: ChatTarget,
     *,
     account_ids: list[int] | None = None,
+    demote: bool = True,
 ) -> tuple[int, int]:
     """Align membership rows with real Telegram participation. Returns (joined, total)."""
     filters = [
@@ -592,46 +628,15 @@ async def sync_memberships_with_telegram(
                 membership.last_join_error = None
                 membership.next_join_attempt_at = None
                 membership.updated_at = now
-        elif membership.join_status == ChatJoinStatus.JOINED.value:
+        elif demote and membership.join_status == ChatJoinStatus.JOINED.value:
             membership.join_status = ChatJoinStatus.PENDING.value
             membership.joined_at = None
             membership.last_join_error = "Не состоит в участниках Telegram"
-            membership.updated_at = now
-        else:
-            membership.last_join_error = membership.last_join_error or "Не состоит в участниках Telegram"
             membership.updated_at = now
 
     await sync_chat_join_status(session, chat_target)
     await session.commit()
     return await membership_counts(session, chat_target.id)
-
-
-async def _requeue_unverified_joined_memberships(
-    session: AsyncSession,
-    automation_id: int,
-    *,
-    chat_target_ids: list[int],
-    account_ids: list[int],
-) -> int:
-    """Lab only: if DB says joined but Telegram says not — put back to pending."""
-    if not chat_target_ids or not account_ids:
-        return 0
-    reset = 0
-    for chat_id in chat_target_ids:
-        chat_target = await session.get(ChatTarget, chat_id)
-        if not chat_target:
-            continue
-        before_joined, _ = await membership_counts(session, chat_id)
-        await sync_memberships_with_telegram(
-            session,
-            automation_id,
-            chat_target,
-            account_ids=account_ids,
-        )
-        after_joined, _ = await membership_counts(session, chat_id)
-        if after_joined < before_joined:
-            reset += before_joined - after_joined
-    return reset
 
 
 async def join_loaded_chats_for_accounts(
@@ -676,7 +681,7 @@ async def join_loaded_chats_for_accounts(
             include_lab=include_lab,
         )
     if include_lab and target_ids:
-        await _requeue_unverified_joined_memberships(
+        await _reset_lab_join_queue(
             session,
             automation_id,
             chat_target_ids=target_ids,
@@ -689,10 +694,12 @@ async def join_loaded_chats_for_accounts(
     failed_pairs = 0
     rate_limited_pairs = 0
     attempted_ids: set[int] = set()
+    pick_max_attempts = 10_000 if include_lab else 5
     while True:
         membership = await pick_next_pending_membership(
             session,
             automation_id,
+            max_attempts=pick_max_attempts,
             include_lab=include_lab,
             chat_target_ids=target_ids if chat_ids else None,
             ignore_retry_delay=ignore_retry_delay,
@@ -734,6 +741,7 @@ async def join_loaded_chats_for_accounts(
         remaining = await pick_next_pending_membership(
             session,
             automation_id,
+            max_attempts=pick_max_attempts,
             include_lab=include_lab,
             chat_target_ids=target_ids if chat_ids else None,
             ignore_retry_delay=ignore_retry_delay,

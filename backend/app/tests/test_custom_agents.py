@@ -3806,7 +3806,7 @@ class TestAccountRolesWarmupAndLab:
             new=AsyncMock(side_effect=fake_join),
         ):
             with patch(
-                "app.services.custom.chat_join_service._requeue_unverified_joined_memberships",
+                "app.services.custom.chat_join_service._reset_lab_join_queue",
                 new=AsyncMock(return_value=0),
             ):
                 skipped = await join_loaded_chats_for_accounts(

@@ -188,20 +188,30 @@ def _chat_payload(chat: ChatTarget | None, *, joined: int | None = None, total: 
 
 
 async def _lab_target_ready(session: AsyncSession, automation_id: int, chat: ChatTarget) -> tuple[bool, int, int]:
-    """Lab gate: at least one pool account must actually be in the chat."""
+    """Lab gate: at least one pool account must be marked joined (or join now)."""
     await ensure_memberships_for_chat(session, automation_id, chat, include_lab=True)
-    joined, total = await sync_memberships_with_telegram(session, automation_id, chat)
-    if joined <= 0:
-        # Self-heal: join may have succeeded in Telegram but DB stayed pending.
-        await join_loaded_chats_for_accounts(
-            session,
-            automation_id,
-            chat_ids=[chat.id],
-            include_lab=True,
-            rate_limit=False,
-            ignore_retry_delay=True,
-        )
-        joined, total = await sync_memberships_with_telegram(session, automation_id, chat)
+    joined, total = await membership_counts(session, chat.id)
+    if joined > 0:
+        return True, joined, total
+    # Promote anyone already in Telegram without demoting others on flaky checks.
+    joined, total = await sync_memberships_with_telegram(
+        session,
+        automation_id,
+        chat,
+        demote=False,
+    )
+    if joined > 0:
+        await session.refresh(chat)
+        return True, joined, total
+    await join_loaded_chats_for_accounts(
+        session,
+        automation_id,
+        chat_ids=[chat.id],
+        include_lab=True,
+        rate_limit=False,
+        ignore_retry_delay=True,
+    )
+    joined, total = await membership_counts(session, chat.id)
     await session.refresh(chat)
     return joined > 0, joined, total
 
