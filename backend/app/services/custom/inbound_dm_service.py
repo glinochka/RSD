@@ -185,8 +185,8 @@ async def _process_account(
                     incoming = str(msg.text).strip()
                     if not incoming:
                         continue
-                    # Wait 1–4 minutes after the message before opening the chat.
-                    if not is_ready_to_reply(msg, external_id):
+                    # Field only: 1–4 min before opening the chat. Test lab never calls this path.
+                    if not is_ready_to_reply(msg, external_id, lab_mode=False):
                         continue
                     try:
                         reply = await _generate_reply(session, automation, incoming)
@@ -211,7 +211,12 @@ async def _process_account(
                         _msg=msg,
                         _reply=reply,
                     ):
-                        await client.human_reply(_entity, _reply, incoming_message=_msg)
+                        await client.human_reply(
+                            _entity,
+                            _reply,
+                            incoming_message=_msg,
+                            lab_mode=False,
+                        )
 
                     await execute_with_telegram_retry(
                         session,

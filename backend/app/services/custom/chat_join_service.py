@@ -617,6 +617,7 @@ async def join_loaded_chats_for_accounts(
     joined_pairs = 0
     failed_pairs = 0
     rate_limited_pairs = 0
+    attempted_ids: set[int] = set()
     while True:
         membership = await pick_next_pending_membership(
             session,
@@ -627,6 +628,10 @@ async def join_loaded_chats_for_accounts(
         )
         if not membership:
             break
+        if membership.id in attempted_ids:
+            # Avoid tight FloodWait retry loops in lab (ignore_retry_delay=True).
+            break
+        attempted_ids.add(membership.id)
         if account_ids and membership.social_account_id not in set(account_ids):
             membership.join_status = ChatJoinStatus.PENDING.value
             await session.commit()
@@ -662,7 +667,8 @@ async def join_loaded_chats_for_accounts(
             chat_target_ids=target_ids if chat_ids else None,
             ignore_retry_delay=ignore_retry_delay,
         )
-        if remaining:
+        if remaining and remaining.id not in attempted_ids:
+            # Artificial pause only in field mode (rate_limit=True never reaches here).
             await _sleep_between_joins(rate_limit=False, sleeper=sleeper)
 
     joined_chats = 0

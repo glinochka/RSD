@@ -407,6 +407,7 @@ class TelegramAccountClient:
         *,
         incoming_message: Any | None = None,
         max_id: int | None = None,
+        lab_mode: bool = False,
     ) -> None:
         """Mark read, show typing, then send — human-like private reply."""
         from .human_dm import human_send_reply
@@ -418,6 +419,7 @@ class TelegramAccountClient:
             text,
             incoming_message=incoming_message,
             max_id=max_id,
+            lab_mode=lab_mode,
         )
 
     async def __call__(self, request: Any) -> Any:

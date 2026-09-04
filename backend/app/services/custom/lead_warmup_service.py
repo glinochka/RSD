@@ -161,6 +161,11 @@ def _peer_from_lead(lead: CustomLead) -> str | int | None:
     return value.lstrip("@")
 
 
+def _is_lab_lead(lead: CustomLead) -> bool:
+    raw = lead.dmp_raw_data
+    return isinstance(raw, dict) and bool(raw.get("lab"))
+
+
 async def _history_text(session: AsyncSession, lead_id: int) -> str:
     result = await session.execute(
         select(CustomLeadMessage)
@@ -249,7 +254,7 @@ async def _process_lead(
 
     if last_tg_message is not None:
         delay_key = f"lead:{lead.id}:{getattr(last_tg_message, 'id', incoming[-1]['external_message_id'])}"
-        if not is_ready_to_reply(last_tg_message, delay_key):
+        if not is_ready_to_reply(last_tg_message, delay_key, lab_mode=_is_lab_lead(lead)):
             return {"lead_id": lead.id, "status": "waiting_delay"}
 
     last_text = ""
@@ -305,8 +310,10 @@ async def _process_lead(
 
     try:
         async with TelegramAccountClient.for_account(account) as client:
+            lab_mode = _is_lab_lead(lead)
+
             async def _send():
-                await client.human_reply(peer, reply, max_id=read_max_id)
+                await client.human_reply(peer, reply, max_id=read_max_id, lab_mode=lab_mode)
 
             await execute_with_telegram_retry(
                 session,
@@ -315,7 +322,7 @@ async def _process_lead(
                 action_type="lead_warmup",
                 target_id=f"lead:{lead.id}",
                 target_type="lead",
-                payload={"text": reply},
+                payload={"text": reply, "lab_mode": lab_mode},
                 automation_id=automation.id,
             )
     except Exception as exc:

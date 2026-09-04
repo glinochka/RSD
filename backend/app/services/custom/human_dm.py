@@ -39,14 +39,25 @@ def message_age_seconds(msg: Any, *, now: datetime | None = None) -> float | Non
     return max(0.0, (current - sent_at).total_seconds())
 
 
-def is_ready_to_reply(msg: Any, external_id: str, *, now: datetime | None = None) -> bool:
+def is_ready_to_reply(
+    msg: Any,
+    external_id: str,
+    *,
+    now: datetime | None = None,
+    lab_mode: bool = False,
+) -> bool:
+    """Field only: wait 1–4 minutes. Test lab replies immediately."""
+    if lab_mode:
+        return True
     age = message_age_seconds(msg, now=now)
     if age is None:
         return True
     return age >= stable_reply_delay_seconds(external_id)
 
 
-def typing_duration_seconds(text: str) -> float:
+def typing_duration_seconds(text: str, *, lab_mode: bool = False) -> float:
+    if lab_mode:
+        return 0.0
     length = max(len((text or "").strip()), 1)
     raw = length / TYPING_CHARS_PER_SECOND
     jitter = random.uniform(0.85, 1.2)
@@ -76,6 +87,8 @@ async def mark_dialog_read(
 
 async def show_typing(client: Any, entity: Any, duration: float) -> None:
     """Keep the typing indicator alive for roughly `duration` seconds."""
+    if duration <= 0:
+        return
     telethon = getattr(client, "client", client)
     remaining = max(float(duration), TYPING_MIN_SECONDS)
     while remaining > 0:
@@ -94,12 +107,17 @@ async def human_send_reply(
     max_id: int | None = None,
     skip_read: bool = False,
     skip_typing: bool = False,
+    lab_mode: bool = False,
 ) -> None:
-    """Read receipt → typing (by reply length) → send."""
+    """Read receipt → typing (by reply length) → send.
+
+    `lab_mode=True` skips field delays (1–4 min open, typing sleeps). Read ack still sent.
+    """
     if not skip_read:
         await mark_dialog_read(client, entity, incoming_message, max_id=max_id)
-        await asyncio.sleep(random.uniform(0.4, 1.2))
-    if not skip_typing:
-        await show_typing(client, entity, typing_duration_seconds(text))
+        if not lab_mode:
+            await asyncio.sleep(random.uniform(0.4, 1.2))
+    if not skip_typing and not lab_mode:
+        await show_typing(client, entity, typing_duration_seconds(text, lab_mode=False))
     telethon = getattr(client, "client", client)
     await telethon.send_message(entity, text)

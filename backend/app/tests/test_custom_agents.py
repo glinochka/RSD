@@ -4905,9 +4905,11 @@ class TestProductionFieldLogic:
         assert stable_reply_delay_seconds("peer:42") == delay
         fresh = SimpleNamespace(date=datetime.utcnow())
         assert is_ready_to_reply(fresh, "peer:42") is False
+        assert is_ready_to_reply(fresh, "peer:42", lab_mode=True) is True
         old = SimpleNamespace(date=datetime.utcnow() - timedelta(minutes=5))
         assert is_ready_to_reply(old, "peer:42") is True
         assert 2.0 <= typing_duration_seconds("ok") <= 18.0
+        assert typing_duration_seconds("hi", lab_mode=True) == 0.0
         assert typing_duration_seconds("x" * 500) >= typing_duration_seconds("hi")
 
     async def test_lab_upsert_reuses_existing_chat_without_duplicate_error(
