@@ -10,7 +10,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from telethon.errors import FloodWaitError, InviteHashExpiredError, UserAlreadyParticipantError
-from telethon.tl.functions.channels import JoinChannelRequest
+from telethon.tl.functions.channels import GetParticipantRequest, JoinChannelRequest
 from telethon.tl.functions.messages import CheckChatInviteRequest, ImportChatInviteRequest
 
 from .chat_membership_service import (
@@ -39,6 +39,12 @@ try:
     from telethon.errors import InviteRequestSentError
 except Exception:  # pragma: no cover - older Telethon
     class InviteRequestSentError(Exception):
+        pass
+
+try:
+    from telethon.errors import UserNotParticipantError
+except Exception:  # pragma: no cover - older Telethon
+    class UserNotParticipantError(Exception):
         pass
 
 
@@ -132,26 +138,75 @@ async def _resolve_entity(client: TelegramAccountClient, parsed: TelegramChatRef
     return await client.get_entity(parsed.lookup_value)
 
 
+async def _is_participant(client: TelegramAccountClient, entity: Any) -> bool:
+    """Confirm the account is actually in the channel/chat (not just able to resolve it)."""
+    target = unwrap_telegram_chat(entity)
+    if target is None or is_user_peer(target):
+        return False
+    try:
+        me = await client.client.get_me()
+    except Exception:
+        return False
+    name = type(target).__name__
+    if name == "Channel" or getattr(target, "broadcast", False) or getattr(target, "megagroup", False):
+        try:
+            await client(GetParticipantRequest(target, me))
+            return True
+        except UserNotParticipantError:
+            return False
+        except Exception as exc:
+            logger.debug("GetParticipant check failed: %s", exc)
+            try:
+                perms = await client.client.get_permissions(target, me)
+                return perms is not None and not bool(getattr(perms, "has_left", False))
+            except Exception:
+                return False
+    try:
+        perms = await client.client.get_permissions(target, me)
+        return perms is not None and not bool(getattr(perms, "has_left", False))
+    except UserNotParticipantError:
+        return False
+    except Exception:
+        return False
+
+
 async def _join_public(client: TelegramAccountClient, parsed: TelegramChatRef) -> Any:
     entity = await client.get_entity(parsed.lookup_value)
     if is_user_peer(entity):
         raise ValueError("Это пользователь, а не чат или канал")
     if _can_join_as_channel(entity):
+        channel = unwrap_telegram_chat(entity)
         try:
-            joined = await client(JoinChannelRequest(unwrap_telegram_chat(entity)))
-            return joined or entity
+            joined = await client(JoinChannelRequest(channel))
+            entity = joined or entity
         except UserAlreadyParticipantError:
-            return entity
+            pass
         except InviteRequestSentError:
             raise
-    return entity
+        if not await _is_participant(client, entity):
+            raise ValueError("Telegram не подтвердил вступление в канал/чат")
+        return entity
+    # Public username that is not a Channel/megagroup — cannot JoinChannel.
+    if await _is_participant(client, entity):
+        return entity
+    raise ValueError("Не удалось вступить: этот тип чата не поддерживает подписку по @username")
 
 
 async def _join_private(client: TelegramAccountClient, parsed: TelegramChatRef) -> Any:
     try:
-        return await client(ImportChatInviteRequest(parsed.value))
+        result = await client(ImportChatInviteRequest(parsed.value))
     except UserAlreadyParticipantError:
-        return await client(CheckChatInviteRequest(parsed.value))
+        result = await client(CheckChatInviteRequest(parsed.value))
+    if not await _is_participant(client, result):
+        # Already-participant path sometimes returns ChatInvite without chat payload.
+        try:
+            entity = await client.get_entity(parsed.lookup_value)
+        except Exception:
+            entity = result
+        if not await _is_participant(client, entity):
+            raise ValueError("Telegram не подтвердил вступление по ссылке-приглашению")
+        return entity
+    return result
 
 
 async def _try_join_chat(
@@ -200,9 +255,15 @@ async def _try_join_chat(
                 logger.warning("Join chat %s skipped account %s: %s", chat_target.id, account.id, exc)
                 return {"status": "failed", "error": "session_invalid", "retry_account": True}
 
-            if entity is not None:
-                apply_entity_metadata(chat_target, entity)
-                chat_target.invite_link = parsed.canonical
+            if entity is None:
+                return {"status": "failed", "error": "Пустой ответ Telegram при вступлении"}
+            apply_entity_metadata(chat_target, entity)
+            chat_target.invite_link = parsed.canonical
+            if not await _is_participant(client, entity):
+                return {
+                    "status": "failed",
+                    "error": "Telegram не подтвердил вступление — аккаунт не в участниках",
+                }
 
         return {
             "status": "joined",
@@ -225,12 +286,18 @@ async def _try_join_chat(
                 if entity is not None:
                     apply_entity_metadata(chat_target, entity)
                     chat_target.invite_link = parsed.canonical
+                if not await _is_participant(client, entity):
+                    return {
+                        "status": "failed",
+                        "error": "Telegram сообщил «уже участник», но аккаунт не в списке",
+                    }
         except Exception as exc:
             logger.warning(
                 "Join chat %s already participant but metadata refresh failed: %s",
                 chat_target.id,
                 exc,
             )
+            return {"status": "failed", "error": "Не удалось подтвердить участие в чате"}
         return {"status": "joined", "joined_at": _utc_now(), "joined_by_account_id": account.id}
     except SessionInvalidError as exc:
         logger.warning("Join chat %s skipped account %s: %s", chat_target.id, account.id, exc)
@@ -446,6 +513,56 @@ async def join_next_membership(
     }
 
 
+async def _requeue_unverified_joined_memberships(
+    session: AsyncSession,
+    automation_id: int,
+    *,
+    chat_target_ids: list[int],
+    account_ids: list[int],
+) -> int:
+    """Lab only: if DB says joined but Telegram says not — put back to pending."""
+    if not chat_target_ids or not account_ids:
+        return 0
+    result = await session.execute(
+        select(AccountChatMembership).where(
+            AccountChatMembership.custom_automation_id == automation_id,
+            AccountChatMembership.chat_target_id.in_(chat_target_ids),
+            AccountChatMembership.social_account_id.in_(account_ids),
+            AccountChatMembership.join_status == ChatJoinStatus.JOINED.value,
+        )
+    )
+    memberships = list(result.scalars().all())
+    reset = 0
+    for membership in memberships:
+        chat_target = await session.get(ChatTarget, membership.chat_target_id)
+        account = await session.get(SocialAccount, membership.social_account_id)
+        if not chat_target or not account:
+            continue
+        try:
+            parsed = _parse_chat_ref(chat_target)
+            async with TelegramAccountClient.for_account(account) as client:
+                entity = await _resolve_entity(client, parsed)
+                ok = await _is_participant(client, entity)
+        except Exception as exc:
+            logger.info(
+                "Lab re-verify join membership %s failed (%s) — requeue",
+                membership.id,
+                exc,
+            )
+            ok = False
+        if ok:
+            continue
+        membership.join_status = ChatJoinStatus.PENDING.value
+        membership.joined_at = None
+        membership.next_join_attempt_at = None
+        membership.last_join_error = "Повтор: аккаунт не найден среди участников"
+        membership.updated_at = _utc_now()
+        membership.join_attempts = 0
+        reset += 1
+        await sync_chat_join_status(session, chat_target)
+    return reset
+
+
 async def join_loaded_chats_for_accounts(
     session: AsyncSession,
     automation_id: int,
@@ -454,6 +571,7 @@ async def join_loaded_chats_for_accounts(
     chat_ids: list[int] | None = None,
     include_lab: bool = False,
     rate_limit: bool = True,
+    ignore_retry_delay: bool = False,
     sleeper=None,
 ) -> dict[str, Any]:
     """Every alive account joins loaded chats. One pair per step when rate_limit=True."""
@@ -477,6 +595,7 @@ async def join_loaded_chats_for_accounts(
         chats = [chat for chat in chats if chat.id in wanted_chats]
     if not include_lab:
         chats = [chat for chat in chats if not is_lab_chat(chat_target=chat)]
+    target_ids = [chat.id for chat in chats]
     for chat in chats:
         await ensure_memberships_for_chat(
             session,
@@ -485,13 +604,26 @@ async def join_loaded_chats_for_accounts(
             account_ids=[account.id for account in accounts],
             include_lab=include_lab,
         )
+    if include_lab and target_ids:
+        await _requeue_unverified_joined_memberships(
+            session,
+            automation_id,
+            chat_target_ids=target_ids,
+            account_ids=[account.id for account in accounts],
+        )
     await session.commit()
 
     attempts = 0
     joined_pairs = 0
+    failed_pairs = 0
+    rate_limited_pairs = 0
     while True:
         membership = await pick_next_pending_membership(
-            session, automation_id, include_lab=include_lab
+            session,
+            automation_id,
+            include_lab=include_lab,
+            chat_target_ids=target_ids if chat_ids else None,
+            ignore_retry_delay=ignore_retry_delay,
         )
         if not membership:
             break
@@ -499,16 +631,19 @@ async def join_loaded_chats_for_accounts(
             membership.join_status = ChatJoinStatus.PENDING.value
             await session.commit()
             continue
-        if chat_ids and membership.chat_target_id not in set(chat_ids):
-            continue
         chat_target = await session.get(ChatTarget, membership.chat_target_id)
         account = await session.get(SocialAccount, membership.social_account_id)
         if not chat_target or not account:
             break
         attempts += 1
         join_result = await _try_join_chat(session, chat_target, account)
-        if join_result.get("status") == "joined":
+        status = join_result.get("status")
+        if status == "joined":
             joined_pairs += 1
+        elif status == "rate_limited":
+            rate_limited_pairs += 1
+        else:
+            failed_pairs += 1
         await _apply_membership_result(
             session,
             membership,
@@ -521,25 +656,48 @@ async def join_loaded_chats_for_accounts(
         if rate_limit:
             break
         remaining = await pick_next_pending_membership(
-            session, automation_id, include_lab=include_lab
+            session,
+            automation_id,
+            include_lab=include_lab,
+            chat_target_ids=target_ids if chat_ids else None,
+            ignore_retry_delay=ignore_retry_delay,
         )
         if remaining:
             await _sleep_between_joins(rate_limit=False, sleeper=sleeper)
 
     joined_chats = 0
+    full_targets = 0
+    per_target: list[dict[str, Any]] = []
     for chat in chats:
         joined, total = await membership_counts(session, chat.id)
+        per_target.append(
+            {
+                "chat_target_id": chat.id,
+                "title": chat.title,
+                "invite_link": chat.invite_link,
+                "joined": joined,
+                "total": total,
+                "join_status": chat.join_status,
+            }
+        )
         if include_lab:
             if joined > 0:
                 joined_chats += 1
+            if total and joined >= total:
+                full_targets += 1
         elif total and joined >= total:
             joined_chats += 1
+            full_targets += 1
     return {
         "accounts": len(accounts),
         "chats": len(chats),
         "attempts": attempts,
         "joined_chats": joined_chats,
         "joined_pairs": joined_pairs,
+        "failed_pairs": failed_pairs,
+        "rate_limited_pairs": rate_limited_pairs,
+        "full_targets": full_targets,
+        "per_target": per_target,
     }
 
 

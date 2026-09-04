@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .human_dm import is_ready_to_reply
 from .prompt_service import render_prompt
 from .rotation_service import list_alive_session_accounts
 from .telegram_account_client import TelegramAccountClient
@@ -184,6 +185,9 @@ async def _process_account(
                     incoming = str(msg.text).strip()
                     if not incoming:
                         continue
+                    # Wait 1–4 minutes after the message before opening the chat.
+                    if not is_ready_to_reply(msg, external_id):
+                        continue
                     try:
                         reply = await _generate_reply(session, automation, incoming)
                     except Exception as exc:
@@ -201,11 +205,18 @@ async def _process_account(
                         continue
                     if not reply:
                         continue
-                    peer = username or peer_id
+
+                    async def _send_human_reply(
+                        _entity=entity,
+                        _msg=msg,
+                        _reply=reply,
+                    ):
+                        await client.human_reply(_entity, _reply, incoming_message=_msg)
+
                     await execute_with_telegram_retry(
                         session,
                         account,
-                        lambda: client.send_message(peer, reply),
+                        _send_human_reply,
                         action_type=INBOUND_DM_ACTION,
                         target_id=external_id,
                         target_type="dm",

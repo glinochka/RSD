@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .amocrm_service import transfer_lead_to_amocrm
 from .dmp_one_service import check_lead_conversion, resolve_telegram_for_lead
+from .human_dm import is_ready_to_reply
 from .lead_dedup import find_canonical_lead, mark_lead_duplicate
 from .lead_delivery_service import deliver_lead_to_manager
 from .prompt_service import render_prompt
@@ -221,6 +222,7 @@ async def _process_lead(
         return {"lead_id": lead.id, "status": "skipped", "reason": "no_peer"}
 
     incoming: list[dict[str, Any]] = []
+    last_tg_message: Any | None = None
     try:
         async with TelegramAccountClient.for_account(account) as client:
             entity = await client.resolve_peer(peer)
@@ -237,12 +239,18 @@ async def _process_lead(
                     "external_message_id": str(msg.id),
                     "sent_at": sent_at or _utc_now(),
                 })
+                last_tg_message = msg
     except Exception as exc:
         logger.warning("Fetch lead dialog %s failed: %s", lead.id, exc)
         return {"lead_id": lead.id, "status": "error", "reason": str(exc)[:200]}
 
     if not incoming:
         return {"lead_id": lead.id, "status": "idle"}
+
+    if last_tg_message is not None:
+        delay_key = f"lead:{lead.id}:{getattr(last_tg_message, 'id', incoming[-1]['external_message_id'])}"
+        if not is_ready_to_reply(last_tg_message, delay_key):
+            return {"lead_id": lead.id, "status": "waiting_delay"}
 
     last_text = ""
     for item in incoming:
@@ -286,12 +294,24 @@ async def _process_lead(
     if not reply or not decision["continue"]:
         return {"lead_id": lead.id, "status": "waiting"}
 
+    read_max_id = None
+    if last_tg_message is not None and getattr(last_tg_message, "id", None) is not None:
+        read_max_id = int(last_tg_message.id)
+    elif incoming:
+        try:
+            read_max_id = int(incoming[-1]["external_message_id"])
+        except (TypeError, ValueError):
+            read_max_id = None
+
     try:
         async with TelegramAccountClient.for_account(account) as client:
+            async def _send():
+                await client.human_reply(peer, reply, max_id=read_max_id)
+
             await execute_with_telegram_retry(
                 session,
                 account,
-                lambda: client.send_message(peer, reply),
+                _send,
                 action_type="lead_warmup",
                 target_id=f"lead:{lead.id}",
                 target_type="lead",

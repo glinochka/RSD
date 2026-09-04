@@ -3805,19 +3805,23 @@ class TestAccountRolesWarmupAndLab:
             "app.services.custom.chat_join_service._try_join_chat",
             new=AsyncMock(side_effect=fake_join),
         ):
-            skipped = await join_loaded_chats_for_accounts(
-                test_session, custom_automation.id, rate_limit=False, sleeper=sleeper
-            )
-            assert skipped["chats"] == 1
-            assert skipped["joined_pairs"] >= 1
-            assert delays == []
-            included = await join_loaded_chats_for_accounts(
-                test_session,
-                custom_automation.id,
-                include_lab=True,
-                rate_limit=False,
-                sleeper=sleeper,
-            )
+            with patch(
+                "app.services.custom.chat_join_service._requeue_unverified_joined_memberships",
+                new=AsyncMock(return_value=0),
+            ):
+                skipped = await join_loaded_chats_for_accounts(
+                    test_session, custom_automation.id, rate_limit=False, sleeper=sleeper
+                )
+                assert skipped["chats"] == 1
+                assert skipped["joined_pairs"] >= 1
+                assert delays == []
+                included = await join_loaded_chats_for_accounts(
+                    test_session,
+                    custom_automation.id,
+                    include_lab=True,
+                    rate_limit=False,
+                    sleeper=sleeper,
+                )
         assert included["chats"] == 2
         assert included["joined_pairs"] >= 1
 
@@ -4017,12 +4021,24 @@ class TestAccountRolesWarmupAndLab:
             await session.refresh(chat)
             return chat
 
+        class _Entity:
+            def __init__(self, username, *, broadcast=False):
+                self.id = abs(hash(username)) % 10_000_000
+                self.title = username
+                self.username = username
+                self.broadcast = broadcast
+                self.megagroup = not broadcast
+
+        async def fake_preview(session, automation_id, parsed):
+            return _Entity(parsed.value, broadcast=True)
+
         with patch("app.services.custom.test_lab_service.create_chat_from_link", fake_create):
-            response = await client.patch(
-                f"/api/custom/automations/{custom_automation.id}/test",
-                headers={"Authorization": f"Bearer {admin_token}"},
-                json={"channel_username": "@demochan", "chat_username": "@demochat"},
-            )
+            with patch("app.services.custom.test_lab_service.preview_chat_entity", fake_preview):
+                response = await client.patch(
+                    f"/api/custom/automations/{custom_automation.id}/test",
+                    headers={"Authorization": f"Bearer {admin_token}"},
+                    json={"channel_username": "@demochan", "chat_username": "@demochat"},
+                )
         assert response.status_code == 200, response.text
         data = response.json()
         assert data["channel_username"] == "demochan"
@@ -4054,21 +4070,46 @@ class TestAccountRolesWarmupAndLab:
             await session.refresh(chat)
             return chat
 
+        class _Entity:
+            def __init__(self, username, *, broadcast=False):
+                self.id = abs(hash(username)) % 10_000_000
+                self.title = username
+                self.username = username
+                self.broadcast = broadcast
+                self.megagroup = not broadcast
+
+        async def fake_preview(session, automation_id, parsed):
+            return _Entity(parsed.value, broadcast=True)
+
         with patch("app.services.custom.test_lab_service.create_chat_from_link", fake_create):
-            with patch(
-                "app.services.custom.test_lab_service.join_loaded_chats_for_accounts",
-                new=AsyncMock(return_value={"joined_chats": 2, "chats": 2}),
-            ):
-                response = await client.post(
-                    f"/api/custom/automations/{custom_automation.id}/test/join",
-                    headers={"Authorization": f"Bearer {admin_token}"},
-                    json={"channel_username": "@demochan", "chat_username": "@demochat"},
-                )
+            with patch("app.services.custom.test_lab_service.preview_chat_entity", fake_preview):
+                with patch(
+                    "app.services.custom.test_lab_service.join_loaded_chats_for_accounts",
+                    new=AsyncMock(
+                        return_value={
+                            "joined_chats": 2,
+                            "chats": 2,
+                            "joined_pairs": 4,
+                            "full_targets": 2,
+                            "accounts": 2,
+                            "attempts": 4,
+                            "per_target": [
+                                {"title": "demochan", "joined": 2, "total": 2},
+                                {"title": "demochat", "joined": 2, "total": 2},
+                            ],
+                        }
+                    ),
+                ):
+                    response = await client.post(
+                        f"/api/custom/automations/{custom_automation.id}/test/join",
+                        headers={"Authorization": f"Bearer {admin_token}"},
+                        json={"channel_username": "@demochan", "chat_username": "@demochat"},
+                    )
         assert response.status_code == 200, response.text
         data = response.json()
         assert data["ok"] is True
         assert data["status"] == "success"
-        assert "Вступили" in data["detail"]
+        assert "аккаунтов" in data["detail"]
 
     async def test_join_returns_error_when_chat_not_found(
         self,
@@ -4846,6 +4887,73 @@ class TestProductionFieldLogic:
         )
         await test_session.commit()
         assert await _lead_exists_for_peer(test_session, custom_automation.id, account.id, 12345, None) is True
+
+    async def test_human_dm_delay_and_typing_bounds(self):
+        from datetime import datetime, timedelta
+        from types import SimpleNamespace
+
+        from app.services.custom.human_dm import (
+            REPLY_DELAY_MAX_SECONDS,
+            REPLY_DELAY_MIN_SECONDS,
+            is_ready_to_reply,
+            stable_reply_delay_seconds,
+            typing_duration_seconds,
+        )
+
+        delay = stable_reply_delay_seconds("peer:42")
+        assert REPLY_DELAY_MIN_SECONDS <= delay <= REPLY_DELAY_MAX_SECONDS
+        assert stable_reply_delay_seconds("peer:42") == delay
+        fresh = SimpleNamespace(date=datetime.utcnow())
+        assert is_ready_to_reply(fresh, "peer:42") is False
+        old = SimpleNamespace(date=datetime.utcnow() - timedelta(minutes=5))
+        assert is_ready_to_reply(old, "peer:42") is True
+        assert 2.0 <= typing_duration_seconds("ok") <= 18.0
+        assert typing_duration_seconds("x" * 500) >= typing_duration_seconds("hi")
+
+    async def test_lab_upsert_reuses_existing_chat_without_duplicate_error(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from app.services.custom.test_lab_service import _upsert_lab_chat
+
+        existing = ChatTarget(
+            custom_automation_id=custom_automation.id,
+            provider="telegram",
+            invite_link="https://t.me/seojarvistest",
+            external_chat_id="123456789",
+            title="SEO",
+            chat_type="channel",
+            mode="monitoring",
+            source="manual",
+            join_status="pending",
+            is_active=True,
+        )
+        test_session.add(existing)
+        await test_session.commit()
+
+        class _Entity:
+            id = 123456789
+            title = "SEO"
+            username = "seojarvistest"
+            broadcast = True
+            megagroup = False
+
+        async def fake_preview(session, automation_id, parsed):
+            return _Entity()
+
+        with patch("app.services.custom.test_lab_service.preview_chat_entity", fake_preview):
+            with patch(
+                "app.services.custom.test_lab_service.ensure_memberships_for_chat",
+                new=AsyncMock(return_value=0),
+            ):
+                chat = await _upsert_lab_chat(
+                    test_session,
+                    custom_automation.id,
+                    "@seojarvistest",
+                    mode="neurocommenting",
+                )
+        assert chat.id == existing.id
+        assert chat.source == "test"
+        assert chat.mode == "neurocommenting"
 
 
 

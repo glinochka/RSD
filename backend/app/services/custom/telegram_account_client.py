@@ -394,6 +394,32 @@ class TelegramAccountClient:
         entity = await self.resolve_peer(recipient)
         await self.client.send_message(entity, text)
 
+    async def send_read_acknowledge(self, entity: Any, message: Any | None = None, **kwargs: Any) -> None:
+        if message is not None:
+            await self.client.send_read_acknowledge(entity, message, **kwargs)
+        else:
+            await self.client.send_read_acknowledge(entity, **kwargs)
+
+    async def human_reply(
+        self,
+        recipient: str | int | Any,
+        text: str,
+        *,
+        incoming_message: Any | None = None,
+        max_id: int | None = None,
+    ) -> None:
+        """Mark read, show typing, then send — human-like private reply."""
+        from .human_dm import human_send_reply
+
+        entity = recipient if not isinstance(recipient, (str, int)) else await self.resolve_peer(recipient)
+        await human_send_reply(
+            self,
+            entity,
+            text,
+            incoming_message=incoming_message,
+            max_id=max_id,
+        )
+
     async def __call__(self, request: Any) -> Any:
         return await self.client(request)
 

@@ -13,7 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .account_roles import effective_roles
 from .chat_join_service import create_chat_from_link, join_loaded_chats_for_accounts, preview_chat_entity
-from .chat_scope import apply_entity_metadata, is_broadcast_channel, is_lab_chat
+from .chat_membership_service import ensure_memberships_for_chat
+from .chat_scope import apply_entity_metadata, is_broadcast_channel, is_lab_chat, unwrap_telegram_chat
+from .chat_target_dedup import find_existing_chat_target
 from .dmp_one_service import process_dmp_lead
 from .neurocommenting_service import _generate_comment, _send_comment, process_chat_target
 from .rotation_service import select_account_for_action
@@ -171,39 +173,81 @@ async def _upsert_lab_chat(
     mode: str,
 ) -> ChatTarget:
     parsed = parse_telegram_chat_ref(username)
-    existing = await session.scalar(
-        select(ChatTarget).where(
-            ChatTarget.custom_automation_id == automation_id,
-            ChatTarget.invite_link == parsed.canonical,
-        )
+    entity = await preview_chat_entity(session, automation_id, parsed)
+    external_id = None
+    unwrapped = unwrap_telegram_chat(entity) or entity
+    if getattr(unwrapped, "id", None) is not None:
+        external_id = str(unwrapped.id)
+
+    existing = await find_existing_chat_target(
+        session,
+        automation_id,
+        invite_link=parsed.canonical,
+        external_chat_id=external_id,
     )
-    if existing:
-        existing.source = ChatSource.TEST.value
-        existing.mode = mode
-        existing.is_active = True
-        try:
-            entity = await preview_chat_entity(session, automation_id, parsed)
-            apply_entity_metadata(existing, entity)
-            existing.invite_link = parsed.canonical
-        except ValueError as exc:
-            raise ValueError(str(exc)) from exc
-        await session.commit()
-        await session.refresh(existing)
-        return existing
+    if existing is None:
+        existing = await session.scalar(
+            select(ChatTarget).where(
+                ChatTarget.custom_automation_id == automation_id,
+                ChatTarget.invite_link == parsed.canonical,
+            )
+        )
+
     previous = await session.scalar(
         select(ChatTarget).where(
             ChatTarget.custom_automation_id == automation_id,
             ChatTarget.source == ChatSource.TEST.value,
             ChatTarget.mode == mode,
+            ChatTarget.is_active.is_(True),
         )
     )
-    if previous and (previous.invite_link or "") != parsed.canonical:
+    if previous and existing and previous.id != existing.id:
         previous.is_active = False
         previous.mode = ChatMode.INACTIVE.value
+    elif previous and existing is None and (previous.invite_link or "") != parsed.canonical:
+        previous.is_active = False
+        previous.mode = ChatMode.INACTIVE.value
+
+    if existing:
+        existing.source = ChatSource.TEST.value
+        existing.mode = mode
+        existing.is_active = True
+        existing.invite_link = parsed.canonical
+        apply_entity_metadata(existing, entity)
+        if external_id:
+            existing.external_chat_id = external_id
+        await ensure_memberships_for_chat(
+            session,
+            automation_id,
+            existing,
+            include_lab=True,
+        )
         await session.commit()
-    chat = await create_chat_from_link(session, automation_id, username, mode=mode)
+        await session.refresh(existing)
+        return existing
+
+    try:
+        chat = await create_chat_from_link(session, automation_id, username, mode=mode)
+    except ValueError as exc:
+        if "уже добавлен" not in str(exc).lower():
+            raise
+        # Race / alternate key: reuse whatever dedup finds now.
+        chat = await find_existing_chat_target(
+            session,
+            automation_id,
+            invite_link=parsed.canonical,
+            external_chat_id=external_id,
+        )
+        if chat is None:
+            raise
     chat.source = ChatSource.TEST.value
+    chat.mode = mode
     chat.is_active = True
+    chat.invite_link = parsed.canonical
+    apply_entity_metadata(chat, entity)
+    if external_id:
+        chat.external_chat_id = external_id
+    await ensure_memberships_for_chat(session, automation_id, chat, include_lab=True)
     await session.commit()
     await session.refresh(chat)
     return chat
@@ -267,24 +311,64 @@ async def join_lab_targets(
         chat_ids=[chat.id for chat in chats],
         include_lab=True,
         rate_limit=False,
+        ignore_retry_delay=True,
     )
-    joined = int(result.get("joined_chats") or 0)
     joined_pairs = int(result.get("joined_pairs") or 0)
     attempts = int(result.get("attempts") or 0)
+    accounts = int(result.get("accounts") or 0)
     total = int(result.get("chats") or len(chats))
-    if joined or joined_pairs:
-        detail = f"Вступили в {joined or joined_pairs} из {total} целей."
-        if joined_pairs and joined < total:
-            detail = f"Вступление выполнено ({joined_pairs} пар аккаунт×чат, {joined} из {total} целей полностью)."
-        return lab_result(
-            ok=True,
-            detail=detail,
-            **result,
+    full_targets = int(result.get("full_targets") or 0)
+    failed_pairs = int(result.get("failed_pairs") or 0)
+    rate_limited_pairs = int(result.get("rate_limited_pairs") or 0)
+    per_target = list(result.get("per_target") or [])
+
+    def _target_label(item: dict[str, Any]) -> str:
+        for key in ("title", "invite_link"):
+            value = str(item.get(key) or "").strip()
+            if value:
+                return value.replace("https://t.me/", "@")
+        return f"#{item.get('chat_target_id')}"
+
+    parts = [
+        f"{_target_label(item)}: {item.get('joined', 0)}/{item.get('total', 0)} аккаунтов"
+        for item in per_target
+    ]
+    summary = "; ".join(parts) if parts else f"{joined_pairs} вступлений"
+
+    if joined_pairs > 0 or full_targets > 0:
+        all_in = (
+            accounts > 0
+            and full_targets >= total
+            and all(int(item.get("joined") or 0) >= accounts for item in per_target)
         )
+        if all_in:
+            detail = f"Все {accounts} аккаунтов вступили в {total} целей ({summary})."
+            ok = True
+        else:
+            extra = []
+            if rate_limited_pairs:
+                extra.append(f"рейт-лимит Telegram: {rate_limited_pairs}")
+            if failed_pairs:
+                extra.append(f"ошибки: {failed_pairs}")
+            suffix = f" ({'; '.join(extra)})" if extra else ""
+            detail = (
+                f"Частично: {summary}. "
+                f"Полностью готово {full_targets} из {total} целей{suffix}."
+            )
+            ok = full_targets > 0
+        return lab_result(ok=ok, detail=detail, **result)
     if attempts == 0:
         detail = "Нет живых аккаунтов с сессией Telegram в пуле — добавьте и авторизуйте аккаунты."
+    elif rate_limited_pairs:
+        detail = (
+            f"Telegram ограничил вступление (FloodWait) для {rate_limited_pairs} пар. "
+            "Подождите и нажмите «Вступить» снова."
+        )
     else:
-        detail = "Не удалось вступить ни в одну цель. Проверьте аккаунты и ссылки."
+        detail = (
+            f"Не удалось подтвердить вступление ни в одну цель ({summary}). "
+            "Проверьте сессии аккаунтов и @username."
+        )
     return lab_result(
         ok=False,
         detail=detail,
