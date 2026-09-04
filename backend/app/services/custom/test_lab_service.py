@@ -12,8 +12,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .account_roles import effective_roles
-from .chat_join_service import create_chat_from_link, join_loaded_chats_for_accounts, preview_chat_entity
-from .chat_membership_service import ensure_memberships_for_chat
+from .chat_join_service import (
+    create_chat_from_link,
+    join_loaded_chats_for_accounts,
+    preview_chat_entity,
+    sync_memberships_with_telegram,
+)
+from .chat_membership_service import ensure_memberships_for_chat, membership_counts
 from .chat_scope import apply_entity_metadata, is_broadcast_channel, is_lab_chat, unwrap_telegram_chat
 from .chat_target_dedup import find_existing_chat_target
 from .dmp_one_service import process_dmp_lead
@@ -128,6 +133,29 @@ def pick_lab_group(automation: CustomAutomation, chats: list[ChatTarget]) -> Cha
     return next((chat for chat in active if not is_broadcast_channel(chat)), None)
 
 
+async def serialize_lab_async(session: AsyncSession, automation: CustomAutomation) -> dict[str, Any]:
+    chats = await list_lab_chats(session, automation.id)
+    channel = pick_lab_channel(automation, chats)
+    group = pick_lab_group(automation, chats)
+    channel_counts = await membership_counts(session, channel.id) if channel else (None, None)
+    group_counts = await membership_counts(session, group.id) if group else (None, None)
+    return {
+        "channel_username": automation.test_channel_username or "",
+        "chat_username": automation.test_chat_username or "",
+        "channel": _chat_payload(
+            channel,
+            joined=channel_counts[0] if channel else None,
+            total=channel_counts[1] if channel else None,
+        ),
+        "chat": _chat_payload(
+            group,
+            joined=group_counts[0] if group else None,
+            total=group_counts[1] if group else None,
+        ),
+        "watch": current_channel_watch(automation.id),
+    }
+
+
 def serialize_lab(automation: CustomAutomation, chats: list[ChatTarget] | None = None) -> dict[str, Any]:
     chats = chats or []
     channel = pick_lab_channel(automation, chats)
@@ -141,10 +169,10 @@ def serialize_lab(automation: CustomAutomation, chats: list[ChatTarget] | None =
     }
 
 
-def _chat_payload(chat: ChatTarget | None) -> dict[str, Any] | None:
+def _chat_payload(chat: ChatTarget | None, *, joined: int | None = None, total: int | None = None) -> dict[str, Any] | None:
     if not chat:
         return None
-    return {
+    payload = {
         "id": chat.id,
         "title": chat.title,
         "username": chat.invite_link or chat.external_chat_id,
@@ -152,6 +180,30 @@ def _chat_payload(chat: ChatTarget | None) -> dict[str, Any] | None:
         "join_status": chat.join_status,
         "last_join_error": chat.last_join_error,
     }
+    if joined is not None:
+        payload["joined_accounts"] = joined
+    if total is not None:
+        payload["total_accounts"] = total
+    return payload
+
+
+async def _lab_target_ready(session: AsyncSession, automation_id: int, chat: ChatTarget) -> tuple[bool, int, int]:
+    """Lab gate: at least one pool account must actually be in the chat."""
+    await ensure_memberships_for_chat(session, automation_id, chat, include_lab=True)
+    joined, total = await sync_memberships_with_telegram(session, automation_id, chat)
+    if joined <= 0:
+        # Self-heal: join may have succeeded in Telegram but DB stayed pending.
+        await join_loaded_chats_for_accounts(
+            session,
+            automation_id,
+            chat_ids=[chat.id],
+            include_lab=True,
+            rate_limit=False,
+            ignore_retry_delay=True,
+        )
+        joined, total = await sync_memberships_with_telegram(session, automation_id, chat)
+    await session.refresh(chat)
+    return joined > 0, joined, total
 
 
 async def list_lab_chats(session: AsyncSession, automation_id: int) -> list[ChatTarget]:
@@ -279,7 +331,7 @@ async def save_lab_targets(
         except ValueError as exc:
             raise ValueError(f"Чат @{chat_username}: {exc}") from exc
     chats = await list_lab_chats(session, automation.id)
-    return serialize_lab(automation, chats)
+    return await serialize_lab_async(session, automation)
 
 
 async def join_lab_targets(
@@ -404,8 +456,9 @@ async def activate_lab_shilling(session: AsyncSession, automation: CustomAutomat
         return lab_result(ok=False, detail="Нужно минимум 2 живых аккаунта с функцией «Шиллинг».")
     sent = 0
     results = []
-    if chat.join_status != ChatJoinStatus.JOINED.value:
-        results.append({"chat_id": chat.id, "status": "not_joined"})
+    ready, joined, total = await _lab_target_ready(session, automation.id, chat)
+    if not ready:
+        results.append({"chat_id": chat.id, "status": "not_joined", "joined": joined, "total": total})
     else:
         outcome = await process_shilling_chat(
             session,
@@ -422,13 +475,19 @@ async def activate_lab_shilling(session: AsyncSession, automation: CustomAutomat
         return lab_result(ok=True, detail=f"Шиллинг в чате выполнен ({sent} диалогов).", sent=sent, results=results)
     reasons = [item.get("reason") or item.get("status") for item in results]
     detail = "Шиллинг в чате не выполнен."
-    unique = []
-    for reason in reasons:
-        text = str(reason) if reason else ""
-        if text and text not in unique:
-            unique.append(text)
-    if unique:
-        detail = f"{detail} {'; '.join(unique)}"
+    if any(item.get("status") == "not_joined" for item in results):
+        detail = (
+            f"Аккаунты ещё не вступили в чат ({joined}/{total}). "
+            "Сначала нажмите «Вступить»."
+        )
+    else:
+        unique = []
+        for reason in reasons:
+            text = str(reason) if reason else ""
+            if text and text not in unique:
+                unique.append(text)
+        if unique:
+            detail = f"{detail} {'; '.join(unique)}"
     return lab_result(ok=False, detail=detail, sent=0, results=results)
 
 
@@ -621,8 +680,15 @@ async def start_channel_activity(
                 detail=f"Канал @{want.lstrip('@')} не сохранён. Нажмите «Вступить» ещё раз или проверьте @username.",
             )
         return lab_result(ok=False, detail="Нет целевого канала. Укажите канал и нажмите «Вступить».")
-    if channel.join_status != ChatJoinStatus.JOINED.value:
-        return lab_result(ok=False, detail="Аккаунты ещё не вступили в канал. Сначала нажмите «Вступить».")
+    ready, joined, total = await _lab_target_ready(session, automation.id, channel)
+    if not ready:
+        return lab_result(
+            ok=False,
+            detail=(
+                f"Аккаунты ещё не вступили в канал ({joined}/{total}). "
+                "Сначала нажмите «Вступить»."
+            ),
+        )
 
     if activity == CHANNEL_ACTIVITY_NEURO:
         if not await _has_role(session, automation.id, AccountRoleEnum.NEUROCOMMENTING.value):

@@ -854,6 +854,8 @@ class TestLabChatPayload(BaseModel):
     chat_type: Optional[str] = None
     join_status: Optional[str] = None
     last_join_error: Optional[str] = None
+    joined_accounts: Optional[int] = None
+    total_accounts: Optional[int] = None
 
 
 class TestLabWatchPayload(BaseModel):

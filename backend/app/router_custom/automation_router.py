@@ -183,10 +183,9 @@ from ..services.custom.test_lab_service import (
     activate_lab_shilling,
     get_channel_activity_status,
     join_lab_targets,
-    list_lab_chats,
     run_lab_neurocommenting,
     save_lab_targets,
-    serialize_lab,
+    serialize_lab_async,
     simulate_dmp,
     start_channel_activity,
 )
@@ -932,8 +931,8 @@ async def get_test_lab(
 ):
     async with async_session_maker() as session:
         db_automation = await session.get(CustomAutomation, automation_id)
-        chats = await list_lab_chats(session, automation_id)
-        return TestLabResponse.model_validate(serialize_lab(db_automation, chats))
+        data = await serialize_lab_async(session, db_automation)
+        return TestLabResponse.model_validate(data)
 
 
 @router.patch("/automations/{automation_id}/test", response_model=TestLabResponse)

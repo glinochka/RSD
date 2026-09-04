@@ -11,6 +11,16 @@ const targetLabel = (target) => {
     return 'ещё не создан';
   }
   const name = target.title || target.username || `#${target.id}`;
+  const joined = target.joined_accounts;
+  const total = target.total_accounts;
+  if (joined != null && total != null) {
+    const status = joined >= total && total > 0
+      ? 'joined'
+      : joined > 0
+        ? `partial ${joined}/${total}`
+        : 'pending';
+    return `${name} · ${status}`;
+  }
   return `${name} · ${target.join_status || 'pending'}`;
 };
 

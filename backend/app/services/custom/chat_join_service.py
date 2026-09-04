@@ -513,6 +513,75 @@ async def join_next_membership(
     }
 
 
+async def sync_memberships_with_telegram(
+    session: AsyncSession,
+    automation_id: int,
+    chat_target: ChatTarget,
+    *,
+    account_ids: list[int] | None = None,
+) -> tuple[int, int]:
+    """Align membership rows with real Telegram participation. Returns (joined, total)."""
+    filters = [
+        AccountChatMembership.custom_automation_id == automation_id,
+        AccountChatMembership.chat_target_id == chat_target.id,
+    ]
+    if account_ids:
+        filters.append(AccountChatMembership.social_account_id.in_(account_ids))
+    memberships = list(
+        (await session.execute(select(AccountChatMembership).where(*filters))).scalars().all()
+    )
+    if not memberships:
+        await ensure_memberships_for_chat(
+            session,
+            automation_id,
+            chat_target,
+            account_ids=account_ids,
+            include_lab=is_lab_chat(chat_target=chat_target),
+        )
+        memberships = list(
+            (await session.execute(select(AccountChatMembership).where(*filters))).scalars().all()
+        )
+
+    now = _utc_now()
+    for membership in memberships:
+        account = await session.get(SocialAccount, membership.social_account_id)
+        if not account or account.is_banned or not account.is_active:
+            continue
+        if not account.session_file_path and not getattr(account, "encrypted_session", None):
+            continue
+        try:
+            parsed = _parse_chat_ref(chat_target)
+            async with TelegramAccountClient.for_account(account) as client:
+                entity = await _resolve_entity(client, parsed)
+                ok = await _is_participant(client, entity)
+                if ok and entity is not None:
+                    apply_entity_metadata(chat_target, entity)
+        except Exception as exc:
+            logger.info(
+                "Membership sync chat=%s account=%s failed: %s",
+                chat_target.id,
+                membership.social_account_id,
+                exc,
+            )
+            continue
+        if ok:
+            if membership.join_status != ChatJoinStatus.JOINED.value:
+                membership.join_status = ChatJoinStatus.JOINED.value
+                membership.joined_at = membership.joined_at or now
+                membership.last_join_error = None
+                membership.next_join_attempt_at = None
+                membership.updated_at = now
+        elif membership.join_status == ChatJoinStatus.JOINED.value:
+            membership.join_status = ChatJoinStatus.PENDING.value
+            membership.joined_at = None
+            membership.last_join_error = "Не состоит в участниках Telegram"
+            membership.updated_at = now
+
+    await sync_chat_join_status(session, chat_target)
+    await session.commit()
+    return await membership_counts(session, chat_target.id)
+
+
 async def _requeue_unverified_joined_memberships(
     session: AsyncSession,
     automation_id: int,
@@ -523,43 +592,21 @@ async def _requeue_unverified_joined_memberships(
     """Lab only: if DB says joined but Telegram says not — put back to pending."""
     if not chat_target_ids or not account_ids:
         return 0
-    result = await session.execute(
-        select(AccountChatMembership).where(
-            AccountChatMembership.custom_automation_id == automation_id,
-            AccountChatMembership.chat_target_id.in_(chat_target_ids),
-            AccountChatMembership.social_account_id.in_(account_ids),
-            AccountChatMembership.join_status == ChatJoinStatus.JOINED.value,
-        )
-    )
-    memberships = list(result.scalars().all())
     reset = 0
-    for membership in memberships:
-        chat_target = await session.get(ChatTarget, membership.chat_target_id)
-        account = await session.get(SocialAccount, membership.social_account_id)
-        if not chat_target or not account:
+    for chat_id in chat_target_ids:
+        chat_target = await session.get(ChatTarget, chat_id)
+        if not chat_target:
             continue
-        try:
-            parsed = _parse_chat_ref(chat_target)
-            async with TelegramAccountClient.for_account(account) as client:
-                entity = await _resolve_entity(client, parsed)
-                ok = await _is_participant(client, entity)
-        except Exception as exc:
-            logger.info(
-                "Lab re-verify join membership %s failed (%s) — requeue",
-                membership.id,
-                exc,
-            )
-            ok = False
-        if ok:
-            continue
-        membership.join_status = ChatJoinStatus.PENDING.value
-        membership.joined_at = None
-        membership.next_join_attempt_at = None
-        membership.last_join_error = "Повтор: аккаунт не найден среди участников"
-        membership.updated_at = _utc_now()
-        membership.join_attempts = 0
-        reset += 1
-        await sync_chat_join_status(session, chat_target)
+        before_joined, _ = await membership_counts(session, chat_id)
+        await sync_memberships_with_telegram(
+            session,
+            automation_id,
+            chat_target,
+            account_ids=account_ids,
+        )
+        after_joined, _ = await membership_counts(session, chat_id)
+        if after_joined < before_joined:
+            reset += before_joined - after_joined
     return reset
 
 

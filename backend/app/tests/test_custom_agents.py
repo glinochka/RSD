@@ -4215,6 +4215,9 @@ class TestAccountRolesWarmupAndLab:
         with patch(
             "app.services.custom.test_lab_service._list_channel_posts",
             new=AsyncMock(side_effect=fake_list_posts),
+        ), patch(
+            "app.services.custom.test_lab_service._lab_target_ready",
+            new=AsyncMock(return_value=(True, 1, 1)),
         ):
             started = await start_channel_activity(
                 test_session,
@@ -4323,6 +4326,9 @@ class TestAccountRolesWarmupAndLab:
         ), patch(
             "app.alembic.database.async_session_maker",
             SessionMaker(test_session),
+        ), patch(
+            "app.services.custom.test_lab_service._lab_target_ready",
+            new=AsyncMock(return_value=(True, 2, 2)),
         ):
             await start_channel_activity(
                 test_session,
