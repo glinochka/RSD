@@ -269,16 +269,25 @@ async def join_lab_targets(
         rate_limit=False,
     )
     joined = int(result.get("joined_chats") or 0)
+    joined_pairs = int(result.get("joined_pairs") or 0)
+    attempts = int(result.get("attempts") or 0)
     total = int(result.get("chats") or len(chats))
-    if joined:
+    if joined or joined_pairs:
+        detail = f"Вступили в {joined or joined_pairs} из {total} целей."
+        if joined_pairs and joined < total:
+            detail = f"Вступление выполнено ({joined_pairs} пар аккаунт×чат, {joined} из {total} целей полностью)."
         return lab_result(
             ok=True,
-            detail=f"Вступили в {joined} из {total} целей.",
+            detail=detail,
             **result,
         )
+    if attempts == 0:
+        detail = "Нет живых аккаунтов с сессией Telegram в пуле — добавьте и авторизуйте аккаунты."
+    else:
+        detail = "Не удалось вступить ни в одну цель. Проверьте аккаунты и ссылки."
     return lab_result(
         ok=False,
-        detail="Не удалось вступить ни в одну цель. Проверьте аккаунты и ссылки.",
+        detail=detail,
         **result,
     )
 

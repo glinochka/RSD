@@ -3708,6 +3708,7 @@ class TestAccountRolesWarmupAndLab:
                 test_session, custom_automation.id, rate_limit=False, sleeper=sleeper
             )
             assert skipped["chats"] == 1
+            assert skipped["joined_pairs"] >= 1
             assert delays == []
             included = await join_loaded_chats_for_accounts(
                 test_session,
@@ -3717,6 +3718,7 @@ class TestAccountRolesWarmupAndLab:
                 sleeper=sleeper,
             )
         assert included["chats"] == 2
+        assert included["joined_pairs"] >= 1
 
     async def test_warmup_enrolls_only_after_flag(
         self, test_session: AsyncSession, custom_automation: CustomAutomation

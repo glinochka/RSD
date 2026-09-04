@@ -483,13 +483,16 @@ async def join_loaded_chats_for_accounts(
             automation_id,
             chat,
             account_ids=[account.id for account in accounts],
+            include_lab=include_lab,
         )
     await session.commit()
 
     attempts = 0
     joined_pairs = 0
     while True:
-        membership = await pick_next_pending_membership(session, automation_id)
+        membership = await pick_next_pending_membership(
+            session, automation_id, include_lab=include_lab
+        )
         if not membership:
             break
         if account_ids and membership.social_account_id not in set(account_ids):
@@ -517,14 +520,19 @@ async def join_loaded_chats_for_accounts(
         await session.commit()
         if rate_limit:
             break
-        remaining = await pick_next_pending_membership(session, automation_id)
+        remaining = await pick_next_pending_membership(
+            session, automation_id, include_lab=include_lab
+        )
         if remaining:
             await _sleep_between_joins(rate_limit=False, sleeper=sleeper)
 
     joined_chats = 0
     for chat in chats:
         joined, total = await membership_counts(session, chat.id)
-        if total and joined >= total:
+        if include_lab:
+            if joined > 0:
+                joined_chats += 1
+        elif total and joined >= total:
             joined_chats += 1
     return {
         "accounts": len(accounts),

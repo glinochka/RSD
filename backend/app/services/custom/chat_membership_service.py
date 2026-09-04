@@ -37,8 +37,9 @@ async def ensure_memberships_for_chat(
     chat_target: ChatTarget,
     *,
     account_ids: list[int] | None = None,
+    include_lab: bool = False,
 ) -> int:
-    if is_lab_chat(chat_target=chat_target):
+    if is_lab_chat(chat_target=chat_target) and not include_lab:
         return 0
     ids = account_ids or await _pool_account_ids(session, automation_id)
     if not ids:
@@ -188,26 +189,29 @@ async def pick_next_pending_membership(
     automation_id: int,
     *,
     max_attempts: int = 5,
+    include_lab: bool = False,
 ) -> AccountChatMembership | None:
     now = _utc_now()
+    filters = [
+        AccountChatMembership.custom_automation_id == automation_id,
+        AccountChatMembership.join_status.in_(
+            [
+                ChatJoinStatus.PENDING.value,
+                ChatJoinStatus.RATE_LIMITED.value,
+                ChatJoinStatus.ERROR.value,
+            ]
+        ),
+        AccountChatMembership.join_attempts < max_attempts,
+        (AccountChatMembership.next_join_attempt_at.is_(None))
+        | (AccountChatMembership.next_join_attempt_at <= now),
+        ChatTarget.is_active.is_(True),
+    ]
+    if not include_lab:
+        filters.append(ChatTarget.source != ChatSource.TEST.value)
     result = await session.execute(
         select(AccountChatMembership)
         .join(ChatTarget, ChatTarget.id == AccountChatMembership.chat_target_id)
-        .where(
-            AccountChatMembership.custom_automation_id == automation_id,
-            AccountChatMembership.join_status.in_(
-                [
-                    ChatJoinStatus.PENDING.value,
-                    ChatJoinStatus.RATE_LIMITED.value,
-                    ChatJoinStatus.ERROR.value,
-                ]
-            ),
-            AccountChatMembership.join_attempts < max_attempts,
-            (AccountChatMembership.next_join_attempt_at.is_(None))
-            | (AccountChatMembership.next_join_attempt_at <= now),
-            ChatTarget.is_active.is_(True),
-            ChatTarget.source != ChatSource.TEST.value,
-        )
+        .where(*filters)
         .order_by(AccountChatMembership.id.asc())
         .limit(20)
     )
