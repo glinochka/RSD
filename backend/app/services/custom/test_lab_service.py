@@ -688,6 +688,7 @@ async def _react_to_post(
             post_id,
             post_text=post_text,
             delay_seconds=0,
+            lab_mode=True,
         )
         if outcome.get("status") == "ok":
             return lab_result(
@@ -696,6 +697,10 @@ async def _react_to_post(
                 **{**outcome, "post_id": post_id},
             )
         reason = outcome.get("reason") or outcome.get("status") or "неизвестно"
+        if reason == "other_action":
+            claimed = str(outcome.get("claimed") or "")
+            labels = {"skip": "пропуск по каденсу", "neurocommenting": "нейрокомментинг"}
+            reason = f"пост уже помечен как {labels.get(claimed, claimed or 'другое действие')}"
         return lab_result(
             ok=False,
             detail=f"Шиллинг в комментариях не выполнен: {reason}.",

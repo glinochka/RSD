@@ -404,13 +404,15 @@ async def perform_post_shilling(
     chat_target: ChatTarget,
     post_id: int,
     post_text: str = "",
+    *,
+    lab_mode: bool = False,
     **kwargs: Any,
 ) -> dict[str, Any]:
     target_id = post_target_id(chat_target.id, post_id)
     if await _already_succeeded(session, automation.id, POST_SHILL_ACTION, target_id):
         return {"status": "skipped", "reason": "already_sent"}
     claim = await get_post_engagement_claim(session, automation.id, chat_target.id, post_id)
-    if claim and claim.result != POST_SHILLING:
+    if claim and claim.result != POST_SHILLING and not lab_mode:
         return {"status": "skipped", "reason": "other_action", "claimed": claim.result}
     return await perform_shilling_dialogue(
         session,

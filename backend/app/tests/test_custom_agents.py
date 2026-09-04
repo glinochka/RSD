@@ -1509,6 +1509,57 @@ class TestShilling:
         assert claim is not None
         assert claim.result == "neurocommenting"
 
+    async def test_post_shilling_lab_mode_bypasses_skip_claim(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from unittest.mock import AsyncMock, patch
+
+        from app.services.custom.post_engagement import claim_post_engagement
+        from app.services.custom.shilling_service import perform_post_shilling
+
+        account = await self._add_account(
+            test_session,
+            custom_automation,
+            account_class=AccountClass.ONE_DAY.value,
+            username="scanner2",
+            phone="+79990000015",
+        )
+        chat = await self._add_chat(test_session, custom_automation, chat_type="channel")
+        skipped = await claim_post_engagement(
+            test_session,
+            automation_id=custom_automation.id,
+            chat_target_id=chat.id,
+            post_id=42,
+            account_id=account.id,
+            neuro_enabled=True,
+            shilling_enabled=True,
+            pick_gap=lambda: 2,
+        )
+        assert skipped == "skip"
+
+        with patch(
+            "app.services.custom.shilling_service.perform_shilling_dialogue",
+            new=AsyncMock(return_value={"status": "ok"}),
+        ):
+            blocked = await perform_post_shilling(
+                test_session,
+                custom_automation,
+                chat,
+                42,
+                post_text="demo",
+                lab_mode=False,
+            )
+            allowed = await perform_post_shilling(
+                test_session,
+                custom_automation,
+                chat,
+                42,
+                post_text="demo",
+                lab_mode=True,
+            )
+        assert blocked["reason"] == "other_action"
+        assert allowed["status"] == "ok"
+
     async def test_chat_daily_schedule_not_rerolled(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
     ):
