@@ -454,6 +454,7 @@ async def join_loaded_chats_for_accounts(
     chat_ids: list[int] | None = None,
     include_lab: bool = False,
     rate_limit: bool = True,
+    ignore_retry_delay: bool = False,
     sleeper=None,
 ) -> dict[str, Any]:
     """Every alive account joins loaded chats. One pair per step when rate_limit=True."""
@@ -487,19 +488,22 @@ async def join_loaded_chats_for_accounts(
         )
     await session.commit()
 
+    target_ids = [chat.id for chat in chats]
     attempts = 0
     joined_pairs = 0
     while True:
         membership = await pick_next_pending_membership(
-            session, automation_id, include_lab=include_lab
+            session,
+            automation_id,
+            include_lab=include_lab,
+            chat_target_ids=target_ids if chat_ids else None,
+            ignore_retry_delay=ignore_retry_delay,
         )
         if not membership:
             break
         if account_ids and membership.social_account_id not in set(account_ids):
             membership.join_status = ChatJoinStatus.PENDING.value
             await session.commit()
-            continue
-        if chat_ids and membership.chat_target_id not in set(chat_ids):
             continue
         chat_target = await session.get(ChatTarget, membership.chat_target_id)
         account = await session.get(SocialAccount, membership.social_account_id)
@@ -521,25 +525,46 @@ async def join_loaded_chats_for_accounts(
         if rate_limit:
             break
         remaining = await pick_next_pending_membership(
-            session, automation_id, include_lab=include_lab
+            session,
+            automation_id,
+            include_lab=include_lab,
+            chat_target_ids=target_ids if chat_ids else None,
+            ignore_retry_delay=ignore_retry_delay,
         )
         if remaining:
             await _sleep_between_joins(rate_limit=False, sleeper=sleeper)
 
     joined_chats = 0
+    full_targets = 0
+    per_target: list[dict[str, Any]] = []
     for chat in chats:
         joined, total = await membership_counts(session, chat.id)
+        per_target.append(
+            {
+                "chat_target_id": chat.id,
+                "title": chat.title,
+                "invite_link": chat.invite_link,
+                "joined": joined,
+                "total": total,
+                "join_status": chat.join_status,
+            }
+        )
         if include_lab:
             if joined > 0:
                 joined_chats += 1
+            if total and joined >= total:
+                full_targets += 1
         elif total and joined >= total:
             joined_chats += 1
+            full_targets += 1
     return {
         "accounts": len(accounts),
         "chats": len(chats),
         "attempts": attempts,
         "joined_chats": joined_chats,
         "joined_pairs": joined_pairs,
+        "full_targets": full_targets,
+        "per_target": per_target,
     }
 
 

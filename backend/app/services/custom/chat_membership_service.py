@@ -190,6 +190,8 @@ async def pick_next_pending_membership(
     *,
     max_attempts: int = 5,
     include_lab: bool = False,
+    chat_target_ids: list[int] | None = None,
+    ignore_retry_delay: bool = False,
 ) -> AccountChatMembership | None:
     now = _utc_now()
     filters = [
@@ -202,12 +204,17 @@ async def pick_next_pending_membership(
             ]
         ),
         AccountChatMembership.join_attempts < max_attempts,
-        (AccountChatMembership.next_join_attempt_at.is_(None))
-        | (AccountChatMembership.next_join_attempt_at <= now),
         ChatTarget.is_active.is_(True),
     ]
+    if not ignore_retry_delay:
+        filters.append(
+            (AccountChatMembership.next_join_attempt_at.is_(None))
+            | (AccountChatMembership.next_join_attempt_at <= now)
+        )
     if not include_lab:
         filters.append(ChatTarget.source != ChatSource.TEST.value)
+    if chat_target_ids:
+        filters.append(AccountChatMembership.chat_target_id.in_(chat_target_ids))
     result = await session.execute(
         select(AccountChatMembership)
         .join(ChatTarget, ChatTarget.id == AccountChatMembership.chat_target_id)
