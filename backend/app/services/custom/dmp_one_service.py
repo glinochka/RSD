@@ -12,6 +12,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .lead_dedup import find_canonical_lead, find_existing_lead, mark_lead_duplicate
 from .rotation_service import select_account_for_action
 from .telegram_account_client import TelegramAccountClient, normalize_telegram_phone
 from .telegram_error_handler import execute_with_telegram_retry
@@ -250,6 +251,20 @@ async def resolve_telegram_for_lead(
     value = _telegram_value_from_user(user, phone)
     if not value or value == "unknown":
         return None
+
+    duplicate = await find_existing_lead(
+        session,
+        automation.id,
+        contact_type="telegram",
+        contact_value=value,
+        raw={"phone": phone, "resolved_telegram": value, "resolved_telegram_id": getattr(user, "id", None)},
+        exclude_id=lead.id,
+    )
+    if duplicate:
+        await mark_lead_duplicate(session, lead, duplicate, reason="resolved_to_existing_telegram")
+        await session.commit()
+        return None
+
     raw = dict(lead.dmp_raw_data or {})
     raw["resolved_telegram"] = value
     raw["resolved_telegram_id"] = getattr(user, "id", None)
@@ -345,7 +360,8 @@ def _lead_contact(data: dict) -> tuple[str, str]:
     if telegram_id:
         return "telegram", str(telegram_id)
     if phone:
-        return "phone", str(phone)
+        normalized = normalize_telegram_phone(str(phone)) or str(phone).strip()
+        return "phone", normalized
     return "unknown", "unknown"
 
 
@@ -378,6 +394,23 @@ async def _send_outreach(
     if not settings.DMP_ONE_OUTREACH_ENABLED:
         return False
     if lead.contact_type != "telegram" or not lead.contact_value or lead.contact_value == "unknown":
+        return False
+    if lead.status in {LeadStatus.LOST.value, LeadStatus.SPAM.value, LeadStatus.CONVERTED.value}:
+        return False
+
+    canonical = await find_canonical_lead(session, automation.id, lead)
+    if canonical.id != lead.id:
+        await mark_lead_duplicate(session, lead, canonical, reason="duplicate_contact")
+        await session.commit()
+        return False
+
+    existing_outgoing = await session.scalar(
+        select(CustomLeadMessage.id).where(
+            CustomLeadMessage.custom_lead_id == lead.id,
+            CustomLeadMessage.direction == "outgoing",
+        ).limit(1)
+    )
+    if existing_outgoing:
         return False
 
     account = await select_account_for_action(session, automation, "dmp_outreach", thread_id=lead.id)
@@ -441,6 +474,15 @@ async def process_dmp_lead(
 ) -> dict[str, Any]:
     from .solution_templates import is_dmp_notify_pipeline, qualification_enabled
 
+    if lead.status in {LeadStatus.LOST.value, LeadStatus.SPAM.value}:
+        return {"lead_id": lead.id, "status": "skipped", "reason": lead.status}
+
+    canonical = await find_canonical_lead(session, automation.id, lead)
+    if canonical.id != lead.id:
+        await mark_lead_duplicate(session, lead, canonical, reason="duplicate_contact")
+        await session.commit()
+        return {"lead_id": lead.id, "status": "duplicate", "canonical_lead_id": canonical.id}
+
     if is_dmp_notify_pipeline(automation) and not qualification_enabled(automation):
         from .telegram_notify_bot_service import dispatch_dmp_notifications
 
@@ -482,14 +524,14 @@ async def _create_leads_from_data(
         contact_type, contact_value = _lead_contact(data)
         if contact_type == "unknown" or not contact_value or contact_value == "unknown":
             continue
-        exists = await session.scalar(
-            select(CustomLead.id).where(
-                CustomLead.custom_automation_id == automation_id,
-                CustomLead.contact_type == contact_type,
-                CustomLead.contact_value == contact_value,
-            )
+        existing = await find_existing_lead(
+            session,
+            automation_id,
+            contact_type=contact_type,
+            contact_value=contact_value,
+            raw=data,
         )
-        if exists:
+        if existing:
             continue
         lead = CustomLead(
             custom_automation_id=automation_id,

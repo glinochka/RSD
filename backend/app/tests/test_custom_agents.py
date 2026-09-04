@@ -2218,18 +2218,68 @@ class TestAmocrmOAuthAndDmpWebhook:
             select(func.count(CustomLead.id)).where(
                 CustomLead.custom_automation_id == automation_id,
                 CustomLead.source == "dmp_one",
-                CustomLead.contact_value == "79001234567",
+                CustomLead.status.notin_(["lost", "spam"]),
             )
         )
         assert total == 1
-        lead = await test_session.scalar(
-            select(CustomLead).where(
-                CustomLead.custom_automation_id == automation_id,
-                CustomLead.contact_value == "79001234567",
+        lead = (
+            await test_session.execute(
+                select(CustomLead).where(
+                    CustomLead.custom_automation_id == automation_id,
+                    CustomLead.source == "dmp_one",
+                ).order_by(CustomLead.id.asc()).limit(1)
             )
-        )
+        ).scalar_one()
         assert lead.company == "example.com"
         assert (lead.dmp_raw_data or {}).get("website") == "example.com"
+
+    async def test_dmp_dedup_phone_and_telegram_same_person(
+        self,
+        client: AsyncClient,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+        client_token: str,
+    ):
+        from app.config import settings
+
+        automation_id = custom_automation.id
+        headers = {"Authorization": f"Bearer {client_token}"}
+        with patch.object(settings, "BASE_URL", "https://app.example.com"):
+            updated = await client.patch(
+                f"/api/custom/automations/{automation_id}/settings",
+                headers=headers,
+                json={"is_dmp_one_enabled": True},
+            )
+            assert updated.status_code == 200, updated.text
+            secret = updated.json()["dmp_webhook_secret"]
+
+            phone_payload = [{"phone": "+79001234567", "website": "example.com"}]
+            first = await client.post(
+                f"/api/custom/webhooks/dmp/{automation_id}/{secret}",
+                json=phone_payload,
+            )
+            assert first.status_code == 200, first.text
+            assert first.json()["created_leads"] == 1
+
+            telegram_payload = [{"telegram": "fakerebellious", "phone": "79001234567"}]
+            second = await client.post(
+                f"/api/custom/webhooks/dmp/{automation_id}/{secret}",
+                json=telegram_payload,
+            )
+            assert second.status_code == 200, second.text
+            assert second.json()["created_leads"] == 0
+
+        test_session.expire_all()
+        active = (
+            await test_session.execute(
+                select(CustomLead).where(
+                    CustomLead.custom_automation_id == automation_id,
+                    CustomLead.source == "dmp_one",
+                    CustomLead.status.notin_(["lost", "spam"]),
+                )
+            )
+        ).scalars().all()
+        assert len(active) == 1
 
 
 class TestBuiltinSolutions:

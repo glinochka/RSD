@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .amocrm_service import transfer_lead_to_amocrm
 from .dmp_one_service import check_lead_conversion, resolve_telegram_for_lead
+from .lead_dedup import find_canonical_lead, mark_lead_duplicate
 from .lead_delivery_service import deliver_lead_to_manager
 from .prompt_service import render_prompt
 from .solution_templates import uses_sales_handoff
@@ -178,6 +179,15 @@ async def _process_lead(
     automation: CustomAutomation,
     lead: CustomLead,
 ) -> dict[str, Any]:
+    if lead.status in {LeadStatus.LOST.value, LeadStatus.SPAM.value}:
+        return {"lead_id": lead.id, "status": "skipped", "reason": lead.status}
+
+    canonical = await find_canonical_lead(session, automation.id, lead)
+    if canonical.id != lead.id:
+        await mark_lead_duplicate(session, lead, canonical, reason="duplicate_contact")
+        await session.commit()
+        return {"lead_id": lead.id, "status": "duplicate", "canonical_lead_id": canonical.id}
+
     conversion = await check_lead_conversion(automation, lead)
     if conversion.get("subscribed"):
         lead.status = LeadStatus.CONVERTED.value
