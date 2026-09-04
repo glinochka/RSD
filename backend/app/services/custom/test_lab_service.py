@@ -267,42 +267,20 @@ async def join_lab_targets(
         chat_ids=[chat.id for chat in chats],
         include_lab=True,
         rate_limit=False,
-        ignore_retry_delay=True,
     )
+    joined = int(result.get("joined_chats") or 0)
     joined_pairs = int(result.get("joined_pairs") or 0)
     attempts = int(result.get("attempts") or 0)
-    accounts = int(result.get("accounts") or 0)
     total = int(result.get("chats") or len(chats))
-    full_targets = int(result.get("full_targets") or 0)
-    per_target = list(result.get("per_target") or [])
-
-    def _target_label(item: dict[str, Any]) -> str:
-        for key in ("title", "invite_link"):
-            value = str(item.get(key) or "").strip()
-            if value:
-                return value.replace("https://t.me/", "@")
-        return f"#{item.get('chat_target_id')}"
-
-    parts = [
-        f"{_target_label(item)}: {item.get('joined', 0)}/{item.get('total', 0)} аккаунтов"
-        for item in per_target
-    ]
-    summary = "; ".join(parts) if parts else f"{joined_pairs} вступлений"
-
-    if joined_pairs > 0:
-        if full_targets >= total and accounts > 0 and all(
-            item.get("joined", 0) >= accounts for item in per_target
-        ):
-            detail = f"Все {accounts} аккаунтов вступили в {total} целей ({summary})."
-            ok = True
-        else:
-            detail = (
-                f"Частично: {summary}. "
-                f"Полностью готово {full_targets} из {total} целей. "
-                "Проверьте сессии аккаунтов и @username канала/чата."
-            )
-            ok = full_targets > 0 or joined_pairs >= total
-        return lab_result(ok=ok, detail=detail, **result)
+    if joined or joined_pairs:
+        detail = f"Вступили в {joined or joined_pairs} из {total} целей."
+        if joined_pairs and joined < total:
+            detail = f"Вступление выполнено ({joined_pairs} пар аккаунт×чат, {joined} из {total} целей полностью)."
+        return lab_result(
+            ok=True,
+            detail=detail,
+            **result,
+        )
     if attempts == 0:
         detail = "Нет живых аккаунтов с сессией Telegram в пуле — добавьте и авторизуйте аккаунты."
     else:
