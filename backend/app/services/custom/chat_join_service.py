@@ -138,15 +138,26 @@ async def _resolve_entity(client: TelegramAccountClient, parsed: TelegramChatRef
     return await client.get_entity(parsed.lookup_value)
 
 
-async def _is_participant(client: TelegramAccountClient, entity: Any) -> bool:
-    """Confirm the account is actually in the channel/chat (not just able to resolve it)."""
+async def _is_participant(client: TelegramAccountClient, entity: Any) -> bool | None:
+    """True/False when sure; None when Telegram RPC is inconclusive (do not demote)."""
     target = unwrap_telegram_chat(entity)
     if target is None or is_user_peer(target):
         return False
     try:
         me = await client.client.get_me()
     except Exception:
+        return None
+
+    try:
+        perms = await client.client.get_permissions(target, me)
+        if perms is not None and not bool(getattr(perms, "has_left", False)):
+            return True
         return False
+    except UserNotParticipantError:
+        return False
+    except Exception as exc:
+        logger.debug("get_permissions participant check failed: %s", exc)
+
     name = type(target).__name__
     if name == "Channel" or getattr(target, "broadcast", False) or getattr(target, "megagroup", False):
         try:
@@ -156,57 +167,71 @@ async def _is_participant(client: TelegramAccountClient, entity: Any) -> bool:
             return False
         except Exception as exc:
             logger.debug("GetParticipant check failed: %s", exc)
-            try:
-                perms = await client.client.get_permissions(target, me)
-                return perms is not None and not bool(getattr(perms, "has_left", False))
-            except Exception:
-                return False
-    try:
-        perms = await client.client.get_permissions(target, me)
-        return perms is not None and not bool(getattr(perms, "has_left", False))
-    except UserNotParticipantError:
-        return False
-    except Exception:
-        return False
+            return None
+    return None
 
 
 async def _join_public(client: TelegramAccountClient, parsed: TelegramChatRef) -> Any:
     entity = await client.get_entity(parsed.lookup_value)
     if is_user_peer(entity):
         raise ValueError("Это пользователь, а не чат или канал")
-    if _can_join_as_channel(entity):
-        channel = unwrap_telegram_chat(entity)
-        try:
-            joined = await client(JoinChannelRequest(channel))
-            entity = joined or entity
-        except UserAlreadyParticipantError:
-            pass
-        except InviteRequestSentError:
-            raise
-        if not await _is_participant(client, entity):
-            raise ValueError("Telegram не подтвердил вступление в канал/чат")
+    if not _can_join_as_channel(entity):
+        if await _is_participant(client, entity):
+            return entity
+        raise ValueError(
+            "Не удалось вступить: нужен супергрупповой чат/@username или ссылка-приглашение t.me/+"
+        )
+
+    channel = unwrap_telegram_chat(entity)
+    join_accepted = False
+    try:
+        result = await client(JoinChannelRequest(channel))
+        entity = unwrap_telegram_chat(result) or channel
+        join_accepted = True
+    except UserAlreadyParticipantError:
+        entity = channel
+        join_accepted = True
+    except InviteRequestSentError:
+        raise
+
+    # Fresh resolve — Updates payload is a poor input for participant checks.
+    try:
+        entity = await client.get_entity(parsed.lookup_value)
+    except Exception:
+        pass
+
+    if join_accepted:
+        # JoinChannelRequest / AlreadyParticipant is authoritative for public chats.
+        # Participant RPC can lag or fail on megagroups right after join.
         return entity
-    # Public username that is not a Channel/megagroup — cannot JoinChannel.
+
     if await _is_participant(client, entity):
         return entity
-    raise ValueError("Не удалось вступить: этот тип чата не поддерживает подписку по @username")
+    raise ValueError("Telegram не подтвердил вступление в канал/чат")
 
 
 async def _join_private(client: TelegramAccountClient, parsed: TelegramChatRef) -> Any:
+    join_accepted = False
     try:
         result = await client(ImportChatInviteRequest(parsed.value))
+        join_accepted = True
     except UserAlreadyParticipantError:
         result = await client(CheckChatInviteRequest(parsed.value))
-    if not await _is_participant(client, result):
-        # Already-participant path sometimes returns ChatInvite without chat payload.
-        try:
-            entity = await client.get_entity(parsed.lookup_value)
-        except Exception:
-            entity = result
-        if not await _is_participant(client, entity):
-            raise ValueError("Telegram не подтвердил вступление по ссылке-приглашению")
+        join_accepted = True
+
+    entity = unwrap_telegram_chat(result) or result
+    try:
+        # Private invites often need the chat id from the invite payload.
+        if getattr(entity, "id", None) is not None:
+            entity = await client.get_entity(entity)
+    except Exception:
+        pass
+
+    if join_accepted:
         return entity
-    return result
+    if await _is_participant(client, entity):
+        return entity
+    raise ValueError("Telegram не подтвердил вступление по ссылке-приглашению")
 
 
 async def _try_join_chat(
@@ -259,11 +284,8 @@ async def _try_join_chat(
                 return {"status": "failed", "error": "Пустой ответ Telegram при вступлении"}
             apply_entity_metadata(chat_target, entity)
             chat_target.invite_link = parsed.canonical
-            if not await _is_participant(client, entity):
-                return {
-                    "status": "failed",
-                    "error": "Telegram не подтвердил вступление — аккаунт не в участниках",
-                }
+            # JoinChannelRequest / ImportChatInvite success is enough.
+            # Megagroup participant RPC often lags and caused false "0/N joined" for chats.
 
         return {
             "status": "joined",
@@ -286,18 +308,12 @@ async def _try_join_chat(
                 if entity is not None:
                     apply_entity_metadata(chat_target, entity)
                     chat_target.invite_link = parsed.canonical
-                if not await _is_participant(client, entity):
-                    return {
-                        "status": "failed",
-                        "error": "Telegram сообщил «уже участник», но аккаунт не в списке",
-                    }
         except Exception as exc:
             logger.warning(
                 "Join chat %s already participant but metadata refresh failed: %s",
                 chat_target.id,
                 exc,
             )
-            return {"status": "failed", "error": "Не удалось подтвердить участие в чате"}
         return {"status": "joined", "joined_at": _utc_now(), "joined_by_account_id": account.id}
     except SessionInvalidError as exc:
         logger.warning("Join chat %s skipped account %s: %s", chat_target.id, account.id, exc)
@@ -549,13 +565,16 @@ async def sync_memberships_with_telegram(
             continue
         if not account.session_file_path and not getattr(account, "encrypted_session", None):
             continue
+        ok: bool | None = None
         try:
             parsed = _parse_chat_ref(chat_target)
             async with TelegramAccountClient.for_account(account) as client:
                 entity = await _resolve_entity(client, parsed)
                 ok = await _is_participant(client, entity)
-                if ok and entity is not None:
+                if ok is True and entity is not None:
                     apply_entity_metadata(chat_target, entity)
+        except UserNotParticipantError:
+            ok = False
         except Exception as exc:
             logger.info(
                 "Membership sync chat=%s account=%s failed: %s",
@@ -564,7 +583,9 @@ async def sync_memberships_with_telegram(
                 exc,
             )
             continue
-        if ok:
+        if ok is None:
+            continue
+        if ok is True:
             if membership.join_status != ChatJoinStatus.JOINED.value:
                 membership.join_status = ChatJoinStatus.JOINED.value
                 membership.joined_at = membership.joined_at or now
@@ -575,6 +596,9 @@ async def sync_memberships_with_telegram(
             membership.join_status = ChatJoinStatus.PENDING.value
             membership.joined_at = None
             membership.last_join_error = "Не состоит в участниках Telegram"
+            membership.updated_at = now
+        else:
+            membership.last_join_error = membership.last_join_error or "Не состоит в участниках Telegram"
             membership.updated_at = now
 
     await sync_chat_join_status(session, chat_target)
@@ -723,6 +747,18 @@ async def join_loaded_chats_for_accounts(
     per_target: list[dict[str, Any]] = []
     for chat in chats:
         joined, total = await membership_counts(session, chat.id)
+        error_rows = (
+            await session.execute(
+                select(AccountChatMembership.last_join_error)
+                .where(
+                    AccountChatMembership.chat_target_id == chat.id,
+                    AccountChatMembership.join_status != ChatJoinStatus.JOINED.value,
+                    AccountChatMembership.last_join_error.is_not(None),
+                )
+                .limit(3)
+            )
+        ).scalars().all()
+        errors = [str(err) for err in error_rows if err]
         per_target.append(
             {
                 "chat_target_id": chat.id,
@@ -731,6 +767,7 @@ async def join_loaded_chats_for_accounts(
                 "joined": joined,
                 "total": total,
                 "join_status": chat.join_status,
+                "errors": errors,
             }
         )
         if include_lab:

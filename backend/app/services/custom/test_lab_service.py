@@ -385,6 +385,10 @@ async def join_lab_targets(
         f"{_target_label(item)}: {item.get('joined', 0)}/{item.get('total', 0)} аккаунтов"
         for item in per_target
     ]
+    for item in per_target:
+        errs = list(item.get("errors") or [])
+        if errs and int(item.get("joined") or 0) <= 0:
+            parts.append(f"{_target_label(item)} ошибки: {'; '.join(errs[:2])}")
     summary = "; ".join(parts) if parts else f"{joined_pairs} вступлений"
 
     if joined_pairs > 0 or full_targets > 0:
