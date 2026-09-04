@@ -13,7 +13,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .chat_scope import (
     apply_entity_metadata,
     is_group_chat,
-    is_lab_chat,
     is_paused,
     load_own_sender_keys,
     load_shilling_message_ids,
@@ -410,7 +409,12 @@ async def scan_chats_and_process(
             select(ChatTarget).where(
                 ChatTarget.custom_automation_id == automation_id,
                 ChatTarget.is_active.is_(True),
-                ChatTarget.join_status == ChatJoinStatus.JOINED.value,
+                ChatTarget.join_status.in_(
+                    [
+                        ChatJoinStatus.JOINED.value,
+                        ChatJoinStatus.PARTIAL.value,
+                    ]
+                ),
                 ChatTarget.mode != "inactive",
             )
         )
@@ -418,11 +422,12 @@ async def scan_chats_and_process(
         own_keys = await load_own_sender_keys(session, automation_id)
 
         fetched = 0
+        scanned = 0
         for chat_target in chats:
-            if is_lab_chat(chat_target):
-                continue
+            # Lab chats are included — otherwise demo intercept on test targets never fires.
             if is_paused(chat_target) or not is_group_chat(chat_target):
                 continue
+            scanned += 1
             try:
                 shill_ids = await load_shilling_message_ids(session, automation_id, chat_target.id)
                 messages = await fetch_messages_for_chat(session, chat_target, limit=message_limit)
@@ -442,4 +447,4 @@ async def scan_chats_and_process(
                 logger.warning("Scan chat %s failed: %s", chat_target.id, exc)
 
         processing = await process_unprocessed_messages(session, automation_id, confidence_threshold=confidence_threshold)
-        return {"chats_scanned": len(chats), "messages_fetched": fetched, **processing}
+        return {"chats_scanned": scanned, "messages_fetched": fetched, **processing}

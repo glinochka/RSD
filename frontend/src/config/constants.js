@@ -342,6 +342,7 @@ export const API_ROUTES = {
   CUSTOM_AUTOMATION_CHAT_SHILLING_RUN: (id) => `/api/custom/automations/${id}/chats/shilling`,
   CUSTOM_AUTOMATION_TEST: (id) => `/api/custom/automations/${id}/test`,
   CUSTOM_AUTOMATION_TEST_JOIN: (id) => `/api/custom/automations/${id}/test/join`,
+  CUSTOM_AUTOMATION_TEST_RESET: (id) => `/api/custom/automations/${id}/test/reset`,
   CUSTOM_AUTOMATION_TEST_SHILLING: (id) => `/api/custom/automations/${id}/test/shilling`,
   CUSTOM_AUTOMATION_TEST_NEUROCOMMENTING: (id) => `/api/custom/automations/${id}/test/neurocommenting`,
   CUSTOM_AUTOMATION_TEST_CHANNEL_ACTIVITY: (id) => `/api/custom/automations/${id}/test/channel-activity`,

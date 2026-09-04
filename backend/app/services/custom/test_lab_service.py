@@ -15,6 +15,7 @@ from .account_roles import effective_roles
 from .chat_join_service import (
     create_chat_from_link,
     join_loaded_chats_for_accounts,
+    leave_loaded_chats_for_accounts,
     preview_chat_entity,
     sync_memberships_with_telegram,
 )
@@ -22,6 +23,7 @@ from .chat_membership_service import ensure_memberships_for_chat, membership_cou
 from .chat_scope import apply_entity_metadata, is_broadcast_channel, is_lab_chat, unwrap_telegram_chat
 from .chat_target_dedup import find_existing_chat_target
 from .dmp_one_service import process_dmp_lead
+from .lead_dedup import find_existing_lead
 from .neurocommenting_service import _generate_comment, _send_comment, process_chat_target
 from .rotation_service import select_account_for_action
 from .shilling_service import perform_post_shilling, process_shilling_chat
@@ -30,11 +32,13 @@ from .telegram_invite import TelegramChatRefError, parse_telegram_chat_ref
 from ...alembic.models import (
     AccountRole as AccountRoleEnum,
     ChatJoinStatus,
+    ChatMessage,
     ChatMode,
     ChatSource,
     ChatTarget,
     CustomAutomation,
     CustomLead,
+    CustomLeadMessage,
     LeadStatus,
     PoolAccount,
     SocialAccount,
@@ -530,6 +534,91 @@ async def run_lab_neurocommenting(session: AsyncSession, automation_id: int) -> 
     return lab_result(ok=False, detail="Комментарии не отправлены.", sent=0, results=results)
 
 
+async def reset_lab_targets(
+    session: AsyncSession,
+    automation_id: int,
+) -> dict[str, Any]:
+    """Leave lab channel/chat, reset memberships and lab leads — ready to re-record join."""
+    automation = await session.get(CustomAutomation, automation_id)
+    if automation is None:
+        return lab_result(ok=False, detail="Автоматизация не найдена.")
+    chats = await list_lab_chats(session, automation_id)
+    if not chats:
+        return lab_result(ok=False, detail="Нет тестовых канала/чата. Сначала укажите цели и вступите.")
+
+    leave = await leave_loaded_chats_for_accounts(
+        session,
+        automation_id,
+        chat_ids=[chat.id for chat in chats],
+    )
+
+    # Clear processed flags so intercept can be demoed again after rejoin + new posts.
+    chat_ids = [chat.id for chat in chats]
+    msg_result = await session.execute(
+        select(ChatMessage).where(
+            ChatMessage.custom_automation_id == automation_id,
+            ChatMessage.chat_target_id.in_(chat_ids),
+        )
+    )
+    lab_messages = list(msg_result.scalars().all())
+    message_ids = [message.id for message in lab_messages]
+
+    cleared_leads = 0
+    if message_ids:
+        linked_leads = (
+            await session.execute(
+                select(CustomLead).where(CustomLead.chat_message_id.in_(message_ids))
+            )
+        ).scalars().all()
+        for lead in linked_leads:
+            await _delete_lead_cascade(session, lead)
+            cleared_leads += 1
+
+    cleared_messages = 0
+    for message in lab_messages:
+        await session.delete(message)
+        cleared_messages += 1
+
+    leads_result = await session.execute(
+        select(CustomLead).where(CustomLead.custom_automation_id == automation_id)
+    )
+    for lead in leads_result.scalars().all():
+        raw = lead.dmp_raw_data if isinstance(lead.dmp_raw_data, dict) else {}
+        if lead.source == "dmp_one" and raw.get("lab"):
+            await _delete_lead_cascade(session, lead)
+            cleared_leads += 1
+
+    watch = _WATCHES.pop(automation_id, None)
+    if watch and watch.task and not watch.task.done():
+        watch.task.cancel()
+    await session.commit()
+    left = int(leave.get("left_pairs") or 0)
+    failed = int(leave.get("failed_pairs") or 0)
+    detail = (
+        f"Сброс теста: выходов {left}, ошибок выхода {failed}, "
+        f"очищено лидов {cleared_leads}, сообщений {cleared_messages}. "
+        "Можно снова нажать «Вступить» для записи."
+    )
+    return lab_result(
+        ok=True,
+        detail=detail,
+        **leave,
+        cleared_leads=cleared_leads,
+        cleared_messages=cleared_messages,
+    )
+
+
+async def _delete_lead_cascade(session: AsyncSession, lead: CustomLead) -> None:
+    messages = (
+        await session.execute(
+            select(CustomLeadMessage).where(CustomLeadMessage.custom_lead_id == lead.id)
+        )
+    ).scalars().all()
+    for message in messages:
+        await session.delete(message)
+    await session.delete(lead)
+
+
 async def simulate_dmp(
     session: AsyncSession,
     automation: CustomAutomation,
@@ -569,6 +658,18 @@ async def simulate_dmp(
             break
     if not has_dmp_role:
         return lab_result(ok=False, detail="Нет живого аккаунта с функцией «DMP».")
+
+    # Retire prior leads for this contact so the demo can re-send outreach.
+    existing = await find_existing_lead(
+        session,
+        automation.id,
+        contact_type=contact_type,
+        contact_value=contact_value,
+        raw={"phone": phone, "telegram": contact_value if contact_type == "telegram" else None},
+    )
+    if existing:
+        await _delete_lead_cascade(session, existing)
+        await session.flush()
 
     lead = CustomLead(
         custom_automation_id=automation.id,

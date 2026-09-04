@@ -10,8 +10,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from telethon.errors import FloodWaitError, InviteHashExpiredError, UserAlreadyParticipantError
-from telethon.tl.functions.channels import GetParticipantRequest, JoinChannelRequest
-from telethon.tl.functions.messages import CheckChatInviteRequest, ImportChatInviteRequest
+from telethon.tl.functions.channels import GetParticipantRequest, JoinChannelRequest, LeaveChannelRequest
+from telethon.tl.functions.messages import CheckChatInviteRequest, DeleteChatUserRequest, ImportChatInviteRequest
 
 from .chat_membership_service import (
     bulk_membership_counts,
@@ -829,10 +829,128 @@ async def run_join_pending_for_automation(automation_id: int) -> list[dict[str, 
         return await join_pending_chats(session, automation_id, max_pairs=1)
 
 
+async def leave_chat_for_account(
+    session: AsyncSession,
+    chat_target: ChatTarget,
+    account: SocialAccount,
+) -> dict[str, Any]:
+    """Leave a channel/megagroup (or basic chat) with one account."""
+    if not account.session_file_path and not getattr(account, "encrypted_session", None):
+        return {"status": "failed", "error": "no session file"}
+    try:
+        parsed = _parse_chat_ref(chat_target)
+    except TelegramChatRefError:
+        return {"status": "failed", "error": "invalid invite link"}
+    try:
+        async with TelegramAccountClient.for_account(account) as client:
+            entity = await _resolve_entity(client, parsed)
+            target = unwrap_telegram_chat(entity) or entity
+            name = type(target).__name__
+            if name == "Channel" or getattr(target, "broadcast", False) or getattr(target, "megagroup", False):
+                try:
+                    await client(LeaveChannelRequest(target))
+                except UserNotParticipantError:
+                    pass
+            elif name == "Chat" or getattr(target, "id", None):
+                me = await client.client.get_me()
+                try:
+                    await client(DeleteChatUserRequest(int(target.id), me.id))
+                except Exception:
+                    # Already left / not a basic chat — ignore.
+                    if await _is_participant(client, target) is True:
+                        raise
+            else:
+                return {"status": "failed", "error": "unsupported chat type"}
+        return {"status": "left"}
+    except FloodWaitError as exc:
+        return {"status": "rate_limited", "error": f"FloodWait: {exc.seconds or 60}s"}
+    except Exception as exc:
+        logger.warning("Leave chat %s failed for account %s: %s", chat_target.id, account.id, exc)
+        return {"status": "failed", "error": _friendly_telegram_error(exc, "Не удалось выйти")[:255]}
+
+
+async def leave_loaded_chats_for_accounts(
+    session: AsyncSession,
+    automation_id: int,
+    *,
+    chat_ids: list[int],
+) -> dict[str, Any]:
+    """Lab reset helper: every pool account leaves the given chats and memberships go pending."""
+    from .rotation_service import list_alive_session_accounts
+
+    accounts = await list_alive_session_accounts(session, automation_id)
+    if not chat_ids or not accounts:
+        return {"accounts": len(accounts), "chats": 0, "left_pairs": 0, "failed_pairs": 0}
+    chats = (
+        await session.execute(
+            select(ChatTarget).where(
+                ChatTarget.custom_automation_id == automation_id,
+                ChatTarget.id.in_(chat_ids),
+            )
+        )
+    ).scalars().all()
+    left_pairs = 0
+    failed_pairs = 0
+    now = _utc_now()
+    for chat in chats:
+        await ensure_memberships_for_chat(
+            session,
+            automation_id,
+            chat,
+            account_ids=[account.id for account in accounts],
+            include_lab=True,
+        )
+        memberships = (
+            await session.execute(
+                select(AccountChatMembership).where(
+                    AccountChatMembership.chat_target_id == chat.id,
+                    AccountChatMembership.social_account_id.in_([a.id for a in accounts]),
+                )
+            )
+        ).scalars().all()
+        by_account = {m.social_account_id: m for m in memberships}
+        for account in accounts:
+            outcome = await leave_chat_for_account(session, chat, account)
+            membership = by_account.get(account.id)
+            if outcome.get("status") == "left":
+                left_pairs += 1
+                if membership:
+                    membership.join_status = ChatJoinStatus.PENDING.value
+                    membership.joined_at = None
+                    membership.join_attempts = 0
+                    membership.next_join_attempt_at = None
+                    membership.last_join_error = None
+                    membership.updated_at = now
+            else:
+                failed_pairs += 1
+                if membership and membership.join_status == ChatJoinStatus.JOINED.value:
+                    # Still force lab reset so «Вступить» can be recorded again.
+                    membership.join_status = ChatJoinStatus.PENDING.value
+                    membership.joined_at = None
+                    membership.join_attempts = 0
+                    membership.next_join_attempt_at = None
+                    membership.last_join_error = outcome.get("error")
+                    membership.updated_at = now
+        chat.join_status = ChatJoinStatus.PENDING.value
+        chat.joined_at = None
+        chat.joined_by_account_id = None
+        chat.updated_at = now
+        await sync_chat_join_status(session, chat)
+    await session.commit()
+    return {
+        "accounts": len(accounts),
+        "chats": len(chats),
+        "left_pairs": left_pairs,
+        "failed_pairs": failed_pairs,
+    }
+
+
 __all__ = [
     "create_chat_from_link",
     "join_loaded_chats_for_accounts",
     "join_pending_chats",
+    "leave_loaded_chats_for_accounts",
     "preview_chat_entity",
     "run_join_pending_for_automation",
+    "sync_memberships_with_telegram",
 ]

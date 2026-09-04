@@ -243,6 +243,7 @@ const CustomAutomationTestPage = () => {
         <h3 className="settings-section-title">Целевые канал и чат</h3>
         <p className="form-hint">
           Один канал и один чат. «Вступить» сохраняет ссылки и сразу вводит аккаунты.
+          «Сброс теста» выводит аккаунты из целей — чтобы снова записать вход на видео.
         </p>
         <div className="form-group">
           <label htmlFor="test-channel">Канал</label>
@@ -270,8 +271,17 @@ const CustomAutomationTestPage = () => {
           <button type="submit" className="btn btn-black" disabled={Boolean(busy)}>
             {busy === 'join' ? 'Вступаем...' : 'Вступить'}
           </button>
+          <button
+            type="button"
+            className="btn btn-outline"
+            disabled={Boolean(busy)}
+            onClick={() => runAction('reset', () => customService.resetTestLab(id))}
+          >
+            {busy === 'reset' ? 'Сбрасываем...' : 'Сброс теста'}
+          </button>
         </div>
         <TestLabStatus result={actionResults.join} />
+        <TestLabStatus result={actionResults.reset} />
       </form>
 
       <div className="settings-section">

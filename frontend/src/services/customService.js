@@ -533,6 +533,17 @@ const customService = {
     return handleResponse(response);
   },
 
+  async resetTestLab(automationId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_TEST_RESET(automationId)}`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      },
+    );
+    return handleResponse(response);
+  },
+
   async runTestLabShilling(automationId) {
     const response = await fetch(
       `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_TEST_SHILLING(automationId)}`,
@@ -946,6 +957,20 @@ const customService = {
         body: JSON.stringify({ status }),
       },
     );
+    return handleResponse(response);
+  },
+
+  async deleteLead(automationId, leadId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_LEAD(automationId, leadId)}`,
+      {
+        method: 'DELETE',
+        headers: getAuthHeaders(),
+      },
+    );
+    if (response.status === 204) {
+      return true;
+    }
     return handleResponse(response);
   },
 

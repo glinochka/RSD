@@ -90,6 +90,20 @@ const CustomAutomationLeadsPage = () => {
     }
   };
 
+  const handleDelete = async (leadId) => {
+    if (!window.confirm('Удалить лида безвозвратно? Можно снова запустить DMP/перехват для демо.')) {
+      return;
+    }
+    setMessage(null);
+    try {
+      await customService.deleteLead(id, leadId);
+      setMessage('Лид удалён');
+      await loadLeads();
+    } catch (err) {
+      setError(err.message || 'Не удалось удалить лида');
+    }
+  };
+
   const openChat = (leadId) => {
     navigate(NAVIGATION_ROUTES.CUSTOM_AUTOMATION_LEAD_CHAT(id, leadId));
   };
@@ -166,6 +180,9 @@ const CustomAutomationLeadsPage = () => {
                     Передать
                   </button>
                 ) : null}
+                <button type="button" onClick={() => handleDelete(lead.id)} className="btn btn-outline">
+                  Удалить
+                </button>
               </div>
             </div>
           ))}

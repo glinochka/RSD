@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from logging import getLogger
 from typing import Any, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy import func, or_, select
 
@@ -183,6 +183,7 @@ from ..services.custom.test_lab_service import (
     activate_lab_shilling,
     get_channel_activity_status,
     join_lab_targets,
+    reset_lab_targets,
     run_lab_neurocommenting,
     save_lab_targets,
     serialize_lab_async,
@@ -1027,6 +1028,16 @@ async def run_test_lab_dmp(
         return await simulate_dmp(session, db_automation, payload.phone)
 
 
+@router.post("/automations/{automation_id}/test/reset", response_model=TestLabActionResponse)
+async def reset_test_lab(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+    admin=Depends(get_current_custom_admin),
+):
+    async with async_session_maker() as session:
+        return await reset_lab_targets(session, automation_id)
+
+
 @router.post("/automations/{automation_id}/accounts/bulk-upload", response_model=AccountUploadResponse)
 async def bulk_upload_accounts(
     automation_id: int,
@@ -1762,6 +1773,21 @@ async def update_lead_status(
         await session.commit()
         await session.refresh(lead)
         return CustomLeadResponse.model_validate(lead)
+
+
+@router.delete("/automations/{automation_id}/leads/{lead_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_lead_endpoint(
+    automation_id: int,
+    lead_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    from ..services.custom.lead_delete_service import delete_lead
+
+    async with async_session_maker() as session:
+        deleted = await delete_lead(session, automation_id, lead_id)
+        if not deleted:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/automations/{automation_id}/leads/{lead_id}/transfer", response_model=AmocrmTransferResponse)
