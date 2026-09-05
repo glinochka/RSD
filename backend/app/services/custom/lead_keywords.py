@@ -10,6 +10,13 @@ MIN_LEAD_KEYWORD_LEN = 2
 _SHORT_KEYWORD_LEN = 3
 _SPLIT_RE = re.compile(r"[\n,;]+")
 _WORD_CHARS = r"0-9a-zа-яё"
+# Common RU/EN marketing spellings so «сео» matches keyword «seo».
+_KEYWORD_ALIASES = {
+    "seo": ("сео",),
+    "сео": ("seo",),
+    "smm": ("смм",),
+    "смм": ("smm",),
+}
 
 
 def _coerce_keyword_items(raw_value: Any) -> list[Any]:
@@ -49,6 +56,24 @@ def normalize_lead_keywords(raw_value: Any) -> list[str]:
     return normalized
 
 
+def _keyword_needles(keyword: str) -> list[str]:
+    needle = (keyword or "").casefold()
+    if not needle:
+        return []
+    variants = [needle]
+    for alias in _KEYWORD_ALIASES.get(needle, ()):
+        if alias not in variants:
+            variants.append(alias)
+    return variants
+
+
+def _haystack_contains(haystack: str, needle: str) -> bool:
+    if len(needle) < _SHORT_KEYWORD_LEN:
+        pattern = rf"(?<![{_WORD_CHARS}]){re.escape(needle)}(?![{_WORD_CHARS}])"
+        return bool(re.search(pattern, haystack, re.IGNORECASE))
+    return needle in haystack
+
+
 def matched_lead_keyword(text: str, keywords: list[str]) -> str | None:
     """Return the first matching keyword (longer phrases first) or None."""
     haystack = (text or "").casefold()
@@ -56,13 +81,9 @@ def matched_lead_keyword(text: str, keywords: list[str]) -> str | None:
         return None
     ordered = sorted(keywords, key=lambda item: (-len(item), item))
     for keyword in ordered:
-        needle = (keyword or "").casefold()
-        if len(needle) < MIN_LEAD_KEYWORD_LEN:
-            continue
-        if len(needle) < _SHORT_KEYWORD_LEN:
-            pattern = rf"(?<![{_WORD_CHARS}]){re.escape(needle)}(?![{_WORD_CHARS}])"
-            if re.search(pattern, haystack, re.IGNORECASE):
+        for needle in _keyword_needles(keyword):
+            if len(needle) < MIN_LEAD_KEYWORD_LEN:
+                continue
+            if _haystack_contains(haystack, needle):
                 return keyword
-        elif needle in haystack:
-            return keyword
     return None

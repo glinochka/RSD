@@ -1134,6 +1134,8 @@ class TestLeadKeywords:
         assert normalize_lead_keywords("купить, заявка\nсайт") == ["купить", "заявка", "сайт"]
         assert normalize_lead_keywords([]) == []
         assert matched_lead_keyword("Кто делает SEO под ключ?", ["seo"]) == "seo"
+        assert matched_lead_keyword("Кто занимается сео продвижением? Нужно было срочно", ["seo"]) == "seo"
+        assert matched_lead_keyword("нужен сео специалист", ["сео"]) == "сео"
         assert matched_lead_keyword("Ребята, нужен сайт завтра", ["нужен сайт"]) == "нужен сайт"
         assert matched_lead_keyword("привет как дела", ["seo"]) is None
         assert matched_lead_keyword("сколько стоит индонезия", ["ии"]) is None
@@ -1240,6 +1242,157 @@ class TestLeadKeywords:
         await test_session.refresh(message)
         assert message.is_processed is True
         assert message.matched_intent == "not_lead"
+
+    async def test_monitor_sees_lab_group_even_if_status_pending(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from app.alembic.models import AccountChatMembership
+        from app.services.account_pool_service import get_or_create_default_pool
+        from app.services.custom.chat_monitoring_service import list_monitor_chats
+
+        pool = await get_or_create_default_pool(test_session, custom_automation.id)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number="+79991112233",
+            username="reader",
+            account_class=AccountClass.MID.value,
+            encrypted_session="enc",
+            session_file_path="sessions/reader.session",
+            is_active=True,
+            is_banned=False,
+        )
+        test_session.add(account)
+        await test_session.flush()
+        test_session.add(
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account.id,
+                assigned_class=AccountClass.MID.value,
+                custom_automation_id=custom_automation.id,
+                roles=["lead_intercept"],
+            )
+        )
+        lab = ChatTarget(
+            custom_automation_id=custom_automation.id,
+            provider="telegram",
+            invite_link="https://t.me/rsdai",
+            title="Чат Тест",
+            chat_type="chat",
+            mode="shilling",
+            source="test",
+            join_status="pending",
+            is_active=True,
+        )
+        channel = ChatTarget(
+            custom_automation_id=custom_automation.id,
+            provider="telegram",
+            invite_link="https://t.me/rsdaitest",
+            title="Тест",
+            chat_type="channel",
+            mode="neurocommenting",
+            source="test",
+            join_status="joined",
+            is_active=True,
+        )
+        pending_empty = ChatTarget(
+            custom_automation_id=custom_automation.id,
+            provider="telegram",
+            invite_link="https://t.me/emptyjoin",
+            title="Empty",
+            chat_type="chat",
+            mode="monitoring",
+            source="manual",
+            join_status="pending",
+            is_active=True,
+        )
+        test_session.add_all([lab, channel, pending_empty])
+        await test_session.flush()
+        test_session.add(
+            AccountChatMembership(
+                custom_automation_id=custom_automation.id,
+                social_account_id=account.id,
+                chat_target_id=lab.id,
+                join_status="joined",
+            )
+        )
+        await test_session.commit()
+
+        chats = await list_monitor_chats(test_session, custom_automation.id)
+        ids = {chat.id for chat in chats}
+        assert lab.id in ids
+        assert channel.id not in ids
+        assert pending_empty.id not in ids
+
+    async def test_keyword_hit_sends_dm_and_creates_lead(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from app.services.account_pool_service import get_or_create_default_pool
+        from app.services.custom.chat_monitoring_service import process_unprocessed_messages
+
+        custom_automation.lead_keywords = ["seo"]
+        custom_automation.is_chat_monitoring_enabled = True
+        pool = await get_or_create_default_pool(test_session, custom_automation.id)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number="+79991112234",
+            username="interceptor",
+            account_class=AccountClass.TRUSTED.value,
+            encrypted_session="enc",
+            session_file_path="sessions/interceptor.session",
+            is_active=True,
+            is_banned=False,
+        )
+        test_session.add(account)
+        await test_session.flush()
+        test_session.add(
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account.id,
+                assigned_class=AccountClass.TRUSTED.value,
+                custom_automation_id=custom_automation.id,
+                roles=["lead_intercept"],
+            )
+        )
+        await test_session.commit()
+        message = await self._add_message(
+            test_session,
+            custom_automation,
+            "Кто занимается сео продвижением? Нужно было срочно",
+            external_id="77",
+        )
+
+        with patch(
+            "app.services.custom.chat_monitoring_service._classify_message",
+            new=AsyncMock(
+                return_value={
+                    "is_lead": True,
+                    "confidence": 0.9,
+                    "reason": "seo request",
+                    "contact_type": "telegram",
+                    "contact_value": "lead",
+                }
+            ),
+        ), patch(
+            "app.services.custom.chat_monitoring_service._generate_response",
+            new=AsyncMock(return_value="Могу помочь с SEO, напишите детали."),
+        ), patch(
+            "app.services.custom.chat_monitoring_service.TelegramAccountClient.for_account",
+        ) as client_cm:
+            client = AsyncMock()
+            client_cm.return_value.__aenter__.return_value = client
+            result = await process_unprocessed_messages(test_session, custom_automation.id)
+
+        assert result["leads_created"] == 1
+        assert result["errors"] == 0
+        client.send_message.assert_awaited()
+        await test_session.refresh(message)
+        assert message.matched_intent == "lead"
+        lead = await test_session.scalar(
+            select(CustomLead).where(CustomLead.custom_automation_id == custom_automation.id)
+        )
+        assert lead is not None
+        assert lead.source == "chat_monitoring"
+        assert lead.contact_value == "lead"
 
     async def test_settings_roundtrip_and_warning(
         self,
@@ -2224,8 +2377,8 @@ class TestAmocrmOAuthAndDmpWebhook:
         assert total == 1
         lead = (
             await test_session.execute(
-                select(CustomLead).where(
-                    CustomLead.custom_automation_id == automation_id,
+            select(CustomLead).where(
+                CustomLead.custom_automation_id == automation_id,
                     CustomLead.source == "dmp_one",
                 ).order_by(CustomLead.id.asc()).limit(1)
             )

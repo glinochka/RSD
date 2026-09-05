@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,7 +23,19 @@ from .rotation_service import select_account_for_action
 from .telegram_account_client import TelegramAccountClient
 from .telegram_invite import chat_entity_key
 from .telegram_error_handler import execute_with_telegram_retry
-from ...alembic.models import ChatJoinStatus, ChatMessage, ChatTarget, CustomAutomation, CustomLead, CustomLeadMessage, CustomPrompt, LeadStatus, PromptType, SocialAccount
+from ...alembic.models import (
+    AccountChatMembership,
+    ChatJoinStatus,
+    ChatMessage,
+    ChatTarget,
+    CustomAutomation,
+    CustomLead,
+    CustomLeadMessage,
+    CustomPrompt,
+    LeadStatus,
+    PromptType,
+    SocialAccount,
+)
 from ...config import settings
 from ...services.ai_authoring import ai_client
 
@@ -133,13 +145,74 @@ async def _generate_response(
         return "Здравствуйте! Увидел ваш вопрос в чате. Готов помочь — напишите, что именно интересует."
 
 
+def _account_can_open_session(account: SocialAccount | None) -> bool:
+    if account is None or not account.is_active or account.is_banned:
+        return False
+    if getattr(account, "encrypted_session", None):
+        return True
+    path = (account.session_file_path or "").strip()
+    if not path:
+        return False
+    return (_media_root() / path).exists()
+
+
 async def _get_account_for_chat(session: AsyncSession, chat_target: ChatTarget) -> SocialAccount | None:
-    if chat_target.joined_by_account_id:
-        account = await session.get(SocialAccount, chat_target.joined_by_account_id)
-        if account and account.is_active and not account.is_banned and account.session_file_path:
+    """Prefer an account that actually joined this chat, then any reader."""
+    membership_account_id = await session.scalar(
+        select(AccountChatMembership.social_account_id)
+        .where(
+            AccountChatMembership.chat_target_id == chat_target.id,
+            AccountChatMembership.join_status == ChatJoinStatus.JOINED.value,
+        )
+        .order_by(AccountChatMembership.id.asc())
+        .limit(1)
+    )
+    for account_id in (membership_account_id, chat_target.joined_by_account_id):
+        if not account_id:
+            continue
+        account = await session.get(SocialAccount, account_id)
+        if _account_can_open_session(account):
             return account
-    # fallback to any eligible account
-    return await select_account_for_action(session, chat_target.custom_automation_id, "commenting")
+    fallback = await select_account_for_action(
+        session,
+        chat_target.custom_automation_id,
+        "commenting",
+        consume_quota=False,
+    )
+    if _account_can_open_session(fallback):
+        return fallback
+    return None
+
+
+async def list_monitor_chats(session: AsyncSession, automation_id: int) -> list[ChatTarget]:
+    """Groups that have at least one real join — including lab / partial / stale pending."""
+    joined_ids = (
+        select(AccountChatMembership.chat_target_id)
+        .where(
+            AccountChatMembership.custom_automation_id == automation_id,
+            AccountChatMembership.join_status == ChatJoinStatus.JOINED.value,
+        )
+        .distinct()
+    )
+    result = await session.execute(
+        select(ChatTarget).where(
+            ChatTarget.custom_automation_id == automation_id,
+            ChatTarget.is_active.is_(True),
+            ChatTarget.mode != "inactive",
+            or_(
+                ChatTarget.join_status.in_(
+                    [ChatJoinStatus.JOINED.value, ChatJoinStatus.PARTIAL.value]
+                ),
+                ChatTarget.id.in_(joined_ids),
+            ),
+        )
+    )
+    chats = []
+    for chat in result.scalars().all():
+        if is_paused(chat) or not is_group_chat(chat):
+            continue
+        chats.append(chat)
+    return chats
 
 
 async def fetch_messages_for_chat(
@@ -152,8 +225,8 @@ async def fetch_messages_for_chat(
         logger.warning("No account to fetch messages for chat %s", chat_target.id)
         return []
 
-    session_path = _media_root() / account.session_file_path
-    if not session_path.exists():
+    if not _account_can_open_session(account):
+        logger.warning("Reader session missing for chat %s account %s", chat_target.id, account.id)
         return []
 
     messages = []
@@ -253,9 +326,8 @@ async def _send_dm_and_create_lead(
 
     response_text = await _generate_response(session, automation_id, chat_message.text)
 
-    session_path = _media_root() / account.session_file_path
-    if not session_path.exists():
-        logger.warning("DM account session file missing for account %s", account.id)
+    if not _account_can_open_session(account):
+        logger.warning("DM account session missing for account %s", account.id)
         return False
 
     try:
@@ -264,10 +336,14 @@ async def _send_dm_and_create_lead(
             if not recipient:
                 logger.warning("No recipient for message %s", chat_message.id)
                 return False
+
+            async def _send():
+                await client.send_message(recipient, response_text)
+
             await execute_with_telegram_retry(
                 session,
                 account,
-                lambda: client.send_message(recipient, response_text),
+                _send,
                 action_type="dm",
                 target_id=f"chat_message:{chat_message.id}",
                 target_type="chat_message",
@@ -405,28 +481,12 @@ async def scan_chats_and_process(
             logger.info("Chat monitoring disabled or automation not found for %s", automation_id)
             return {"status": "skipped", "reason": "feature_disabled"}
 
-        result = await session.execute(
-            select(ChatTarget).where(
-                ChatTarget.custom_automation_id == automation_id,
-                ChatTarget.is_active.is_(True),
-                ChatTarget.join_status.in_(
-                    [
-                        ChatJoinStatus.JOINED.value,
-                        ChatJoinStatus.PARTIAL.value,
-                    ]
-                ),
-                ChatTarget.mode != "inactive",
-            )
-        )
-        chats = result.scalars().all()
+        chats = await list_monitor_chats(session, automation_id)
         own_keys = await load_own_sender_keys(session, automation_id)
 
         fetched = 0
         scanned = 0
         for chat_target in chats:
-            # Lab chats are included — otherwise demo intercept on test targets never fires.
-            if is_paused(chat_target) or not is_group_chat(chat_target):
-                continue
             scanned += 1
             try:
                 shill_ids = await load_shilling_message_ids(session, automation_id, chat_target.id)

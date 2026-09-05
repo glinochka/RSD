@@ -169,7 +169,7 @@ async def sync_chat_join_status(session: AsyncSession, chat_target: ChatTarget) 
             .limit(1)
         )
         chat_target.joined_at = first
-    if joined == 1 and not chat_target.joined_by_account_id:
+    if joined > 0 and not chat_target.joined_by_account_id:
         account_id = await session.scalar(
             select(AccountChatMembership.social_account_id)
             .where(
