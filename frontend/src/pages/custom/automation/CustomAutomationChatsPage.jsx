@@ -180,10 +180,14 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
     try {
       const result = await customService.bulkImportChats(id, file);
       const duplicates = result.duplicate_rows || 0;
+      const skipped = result.skipped_rows || 0;
       setMessage(
         `Файл обработан: новых ${result.processed_rows} из ${result.total_rows}`
           + (duplicates ? `, дубликатов ${duplicates}` : '')
-          + `, ошибок ${result.error_rows}. Вступление аккаунтов идёт в фоне (2–5 мин между попытками).`,
+          + (skipped ? `, отсеяно фильтром ${skipped}` : '')
+          + `, ошибок ${result.error_rows}. `
+          + 'Фильтр: каналы без постов 2+ мес. или <100 подписчиков, чаты <50 участников. '
+          + 'Вступление аккаунтов идёт в фоне (2–5 мин между попытками).',
       );
       setShowFilters(false);
       setFilters({
@@ -334,6 +338,10 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
               {isJoining ? '...' : 'Вступить сейчас'}
             </button>
           </div>
+          <p className="form-hint">
+            Импорт Excel сразу отсекает каналы без постов 2+ месяца или с менее чем 100 подписчиками
+            и чаты с менее чем 50 участниками.
+          </p>
 
           {message ? <p className="crm-flash">{message}</p> : null}
           {error ? <p className="crm-flash crm-flash--error">{error}</p> : null}
@@ -479,7 +487,7 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
           ) : chats.length === 0 ? (
             <div className="crm-empty-list">
               <p>Нет чатов</p>
-              <span>Добавьте вручную или импортируйте Excel.</span>
+              <span>Добавьте вручную или импортируйте Excel — мелкие и заброшенные отсеются сами.</span>
             </div>
           ) : (
             <div className="crm-list">
@@ -549,6 +557,7 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
                     <p className="crm-item-subtitle">
                       Парсинг: {job.processed_rows} / {job.total_rows}
                       {job.duplicate_rows ? ` · дубликатов ${job.duplicate_rows}` : ''}
+                      {job.skipped_rows ? ` · отсеяно ${job.skipped_rows}` : ''}
                       {` · ошибок ${job.error_rows}`}
                       {' · вступление аккаунтов в фоне'}
                     </p>
