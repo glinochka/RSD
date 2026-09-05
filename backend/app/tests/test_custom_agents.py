@@ -806,6 +806,75 @@ class TestChatImportAndDedup:
         )
         assert total == 2
 
+    async def test_import_quality_filter_drops_dead_and_tiny(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from datetime import datetime
+
+        from app.services.custom.chat_import_service import (
+            import_chats_from_file,
+            import_quality_skip_reason,
+            parse_import_row,
+        )
+
+        now = datetime(2026, 9, 5, 12, 0, 0)
+        stale = parse_import_row(
+            {"invite_link": "https://t.me/deadchan", "тип": "канал", "участники": 500, "активность": "3 месяца"},
+            now=now,
+        )
+        tiny_channel = parse_import_row(
+            {"invite_link": "https://t.me/tinychan", "тип": "канал", "участники": 80, "активность": "1 день"},
+            now=now,
+        )
+        ok_channel = parse_import_row(
+            {"invite_link": "https://t.me/okchan", "тип": "канал", "участники": 250, "активность": "5 часов"},
+            now=now,
+        )
+        tiny_chat = parse_import_row(
+            {"invite_link": "https://t.me/tinychat", "тип": "чат", "участники": 20, "активность": "1 час"},
+            now=now,
+        )
+        ok_chat = parse_import_row(
+            {"invite_link": "https://t.me/okchat", "тип": "чат", "участники": 80, "активность": "10 дней"},
+            now=now,
+        )
+        assert import_quality_skip_reason(stale, now=now)
+        assert import_quality_skip_reason(tiny_channel, now=now)
+        assert import_quality_skip_reason(ok_channel, now=now) is None
+        assert import_quality_skip_reason(tiny_chat, now=now)
+        assert import_quality_skip_reason(ok_chat, now=now) is None
+
+        csv_content = (
+            "invite_link,type,members,activity\n"
+            "https://t.me/deadchan,channel,500,3 месяца\n"
+            "https://t.me/tinychan,channel,80,1 день\n"
+            "https://t.me/okchan,channel,250,5 часов\n"
+            "https://t.me/tinychat,chat,20,1 час\n"
+            "https://t.me/okchat,chat,80,10 дней\n"
+            "https://t.me/unknownsmall,,20,1 час\n"
+        ).encode("utf-8")
+        job = await import_chats_from_file(
+            test_session,
+            automation_id=custom_automation.id,
+            filename="pool.csv",
+            content=csv_content,
+        )
+        assert job.processed_rows == 2
+        links = {
+            chat.invite_link
+            for chat in (
+                await test_session.execute(
+                    select(ChatTarget).where(ChatTarget.custom_automation_id == custom_automation.id)
+                )
+            ).scalars().all()
+        }
+        assert links == {"https://t.me/okchan", "https://t.me/okchat"}
+        skipped = next(
+            (item.get("skipped_rows") for item in (job.error_log or []) if isinstance(item, dict) and item.get("skipped_rows")),
+            0,
+        )
+        assert skipped == 4
+
     async def test_seo_saas_prompt_catalog_has_marker_and_inbound_dm(self):
         from app.alembic.prompt_data.seo_saas_prompts import PROMPT_MARKER, SEO_SAAS_PROMPTS
         from app.alembic.models import PromptType

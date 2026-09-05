@@ -21,8 +21,11 @@ from .telegram_invite import TelegramChatRefError, parse_telegram_chat_ref
 logger = logging.getLogger(__name__)
 
 _PROVIDER = "telegram"
-MAX_IMPORT_BYTES = 20 * 1024 * 1024
-MAX_IMPORT_ROWS = 5000
+MAX_IMPORT_BYTES = 40 * 1024 * 1024
+MAX_IMPORT_ROWS = 40_000
+CHANNEL_MIN_SUBSCRIBERS = 100
+CHAT_MIN_MEMBERS = 50
+CHANNEL_MAX_IDLE = timedelta(days=60)
 MAX_CELL_CHARS = 2048
 MAX_TITLE_CHARS = 255
 MAX_LINK_CHARS = 512
@@ -274,6 +277,42 @@ def parse_import_row(row: dict[str, Any], *, now: datetime | None = None) -> dic
     }
 
 
+def import_quality_skip_reason(
+    parsed: dict[str, Any],
+    *,
+    now: datetime | None = None,
+) -> str | None:
+    """Drop dead/tiny targets before they enter the join queue.
+
+    Channels: last post older than 2 months, or fewer than 100 subscribers.
+    Chats: fewer than 50 members.
+    Missing Excel fields are not a fail — only known-bad rows are skipped.
+    """
+    current = now or _utc_now()
+    chat_type = (parsed.get("chat_type") or "").strip().lower()
+    members = parsed.get("members_count")
+    activity = parsed.get("last_activity_at")
+    stale = activity is not None and activity < (current - CHANNEL_MAX_IDLE)
+
+    if chat_type == "channel":
+        if members is not None and members < CHANNEL_MIN_SUBSCRIBERS:
+            return f"канал: меньше {CHANNEL_MIN_SUBSCRIBERS} подписчиков ({members})"
+        if stale:
+            return "канал: последняя активность старше 2 месяцев"
+        return None
+
+    if chat_type == "chat":
+        if members is not None and members < CHAT_MIN_MEMBERS:
+            return f"чат: меньше {CHAT_MIN_MEMBERS} участников ({members})"
+        return None
+
+    if members is not None and members < CHAT_MIN_MEMBERS:
+        return f"чат: меньше {CHAT_MIN_MEMBERS} участников ({members})"
+    if stale and members is not None and members < CHANNEL_MIN_SUBSCRIBERS:
+        return "канал: мало подписчиков и нет активности 2 месяца"
+    return None
+
+
 async def _existing_keys(session: AsyncSession, automation_id: int) -> set[str]:
     return await load_existing_dedup_keys(session, automation_id)
 
@@ -305,7 +344,7 @@ async def import_chats_from_file(
     if content is None:
         raise ValueError("empty file")
     if len(content) > MAX_IMPORT_BYTES:
-        raise ValueError("Файл слишком большой (больше 20 МБ)")
+        raise ValueError("Файл слишком большой (больше 40 МБ)")
 
     rows = _parse_rows(content, filename)
     job = ChatImportJob(
@@ -333,7 +372,9 @@ async def import_chats_from_file(
     seen: set[str] = set()
     created = 0
     duplicates = 0
+    skipped = 0
     errors: list[dict[str, Any]] = []
+    filter_log: list[dict[str, Any]] = []
     now = _utc_now()
 
     for idx, row in enumerate(rows, start=1):
@@ -344,6 +385,12 @@ async def import_chats_from_file(
                 raise ValueError("укажите ссылку или id чата/канала")
             if row_keys & existing or row_keys & seen:
                 duplicates += 1
+                continue
+            skip_reason = import_quality_skip_reason(parsed, now=now)
+            if skip_reason:
+                skipped += 1
+                seen.update(row_keys)
+                _append_error(filter_log, idx, f"фильтр: {skip_reason}")
                 continue
             seen.update(row_keys)
             target = ChatTarget(
@@ -375,8 +422,17 @@ async def import_chats_from_file(
     job.processed_rows = created
     job.duplicate_rows = duplicates
     job.error_rows = len(errors)
-    job.error_log = errors
-    if created == 0 and duplicates and not errors:
+    summary: list[dict[str, Any]] = []
+    if skipped:
+        summary.append(
+            {
+                "row": 0,
+                "error": f"Отсеяно фильтром: {skipped}",
+                "skipped_rows": skipped,
+            }
+        )
+    job.error_log = summary + errors + filter_log
+    if created == 0 and duplicates and not errors and not skipped:
         job.status = "completed"
     else:
         job.status = "completed" if not errors else "completed_with_errors"
@@ -404,8 +460,22 @@ async def retry_import_errors(
     created = 0
     now = _utc_now()
     remaining = []
+    preserved = [
+        item
+        for item in (job.error_log or [])
+        if isinstance(item, dict)
+        and (
+            item.get("skipped_rows") is not None
+            or str(item.get("error") or "").startswith("фильтр:")
+        )
+    ]
     for idx, row in enumerate(rows, start=1):
-        if not any(err.get("row") == idx for err in (job.error_log or [])):
+        if not any(
+            err.get("row") == idx
+            and not str(err.get("error") or "").startswith("фильтр:")
+            and err.get("skipped_rows") is None
+            for err in (job.error_log or [])
+        ):
             continue
         try:
             parsed = parse_import_row(row, now=now)
@@ -413,6 +483,9 @@ async def retry_import_errors(
             if not row_keys:
                 continue
             if row_keys & existing or row_keys & seen:
+                continue
+            skip_reason = import_quality_skip_reason(parsed, now=now)
+            if skip_reason:
                 continue
             seen.update(row_keys)
             session.add(
@@ -443,7 +516,7 @@ async def retry_import_errors(
 
     job.processed_rows += created
     job.error_rows = len(remaining)
-    job.error_log = remaining
+    job.error_log = preserved + remaining
     job.updated_at = _utc_now()
     from .chat_membership_service import ensure_memberships_for_automation
 

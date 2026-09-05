@@ -1,7 +1,7 @@
 """Pydantic schemas for /custom API."""
 from datetime import datetime
 from typing import Any, Optional
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 
 
 class CustomAdminLoginRequest(BaseModel):
@@ -691,9 +691,23 @@ class ChatImportJobResponse(BaseModel):
     processed_rows: int
     error_rows: int
     duplicate_rows: int = 0
+    skipped_rows: int = 0
     error_log: list = []
     created_at: datetime
     updated_at: datetime
+
+    @model_validator(mode="after")
+    def _skipped_from_error_log(self):
+        if self.skipped_rows:
+            return self
+        for item in self.error_log or []:
+            if isinstance(item, dict) and item.get("skipped_rows") is not None:
+                try:
+                    self.skipped_rows = int(item["skipped_rows"])
+                except (TypeError, ValueError):
+                    continue
+                break
+        return self
 
 
 class ChatImportJobListResponse(BaseModel):
