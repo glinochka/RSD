@@ -19,6 +19,7 @@ from .chat_scope import (
     message_is_own_activity,
 )
 from .lead_keywords import matched_lead_keyword, normalize_lead_keywords
+from .prompt_service import render_prompt
 from .rotation_service import select_account_for_action
 from .telegram_account_client import TelegramAccountClient
 from .telegram_invite import chat_entity_key
@@ -114,8 +115,11 @@ async def _classify_message(
     automation_id: int,
     text: str,
 ) -> dict[str, Any]:
-    prompt = (await _load_prompt(session, automation_id, PromptType.CHAT_MONITORING_TRIGGER.value)).format(text=text or "")
     try:
+        prompt = render_prompt(
+            await _load_prompt(session, automation_id, PromptType.CHAT_MONITORING_TRIGGER.value),
+            {"text": text or ""},
+        )
         response = await ai_client.chat.completions.create(
             model="deepseek-chat",
             messages=[{"role": "user", "content": prompt}],
@@ -135,20 +139,35 @@ async def _classify_message(
         return {"is_lead": False, "confidence": 0.0, "reason": "llm_error", "contact_type": "telegram", "contact_value": ""}
 
 
+def _response_text_from_llm(raw: str) -> str:
+    text = (raw or "").strip()
+    try:
+        data = _extract_json(text)
+        message = str(data.get("message") or "").strip()
+        if message:
+            return message[:1000]
+    except Exception:
+        pass
+    return text[:1000]
+
+
 async def _generate_response(
     session: AsyncSession,
     automation_id: int,
     text: str,
 ) -> str:
-    prompt = (await _load_prompt(session, automation_id, PromptType.CHAT_MONITORING_RESPONSE.value)).format(text=text or "")
     try:
+        prompt = render_prompt(
+            await _load_prompt(session, automation_id, PromptType.CHAT_MONITORING_RESPONSE.value),
+            {"text": text or ""},
+        )
         response = await ai_client.chat.completions.create(
             model="deepseek-chat",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=300,
             temperature=0.7,
         )
-        return (response.choices[0].message.content or "").strip()[:1000]
+        return _response_text_from_llm(response.choices[0].message.content or "")
     except Exception as exc:
         logger.warning("Response generation failed: %s", exc)
         return "Здравствуйте! Увидел ваш вопрос в чате. Готов помочь — напишите, что именно интересует."
@@ -434,6 +453,7 @@ async def process_unprocessed_messages(
     leads_created = 0
     errors = 0
     for chat_message in messages:
+        message_id = chat_message.id
         try:
             chat_id = chat_message.chat_target_id
             if chat_id not in shill_ids_by_chat:
@@ -471,7 +491,7 @@ async def process_unprocessed_messages(
                 await session.commit()
         except Exception as exc:
             await session.rollback()
-            logger.exception("Processing chat message %s failed: %s", chat_message.id, exc)
+            logger.exception("Processing chat message %s failed: %s", message_id, exc)
             errors += 1
 
     return {"processed": len(messages), "leads_created": leads_created, "errors": errors}

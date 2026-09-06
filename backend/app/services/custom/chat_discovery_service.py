@@ -18,7 +18,7 @@ from telethon.tl.functions.contacts import SearchRequest
 from telethon.tl.functions.messages import SearchGlobalRequest
 from telethon.tl.types import InputMessagesFilterEmpty, InputPeerEmpty
 
-from .prompt_service import DEFAULT_PROMPTS
+from .prompt_service import DEFAULT_PROMPTS, render_prompt
 from .chat_target_dedup import find_existing_chat_target
 from .rotation_service import select_account_for_action
 from .telegram_account_client import TelegramAccountClient
@@ -111,12 +111,15 @@ async def _score_candidate(
     candidate: dict[str, Any],
 ) -> dict[str, Any]:
     prompt_template = await _load_relevance_prompt(session, automation_id)
-    prompt = prompt_template.format(
-        query=query,
-        title=candidate.get("title") or "",
-        description=candidate.get("description") or "",
-        chat_type=candidate.get("chat_type") or "",
-        participants_count=candidate.get("participants_count") or 0,
+    prompt = render_prompt(
+        prompt_template,
+        {
+            "query": query,
+            "title": candidate.get("title") or "",
+            "description": candidate.get("description") or "",
+            "chat_type": candidate.get("chat_type") or "",
+            "participants_count": candidate.get("participants_count") or 0,
+        },
     )
     try:
         response = await ai_client.chat.completions.create(

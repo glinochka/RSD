@@ -1354,6 +1354,65 @@ class TestLeadKeywords:
         assert message.is_processed is True
         assert message.matched_intent == "not_lead"
 
+    async def test_classify_renders_seo_json_prompt_without_keyerror(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from sqlalchemy import select
+
+        from app.alembic.models import CustomPrompt, PromptType
+        from app.alembic.prompt_data.seo_saas_prompts import SEO_SAAS_PROMPTS
+        from app.services.custom.chat_monitoring_service import _classify_message
+
+        custom_automation.solution_kind = "seo_saas"
+        prompt = await test_session.scalar(
+            select(CustomPrompt).where(
+                CustomPrompt.custom_automation_id == custom_automation.id,
+                CustomPrompt.prompt_type == PromptType.CHAT_MONITORING_TRIGGER.value,
+            )
+        )
+        assert prompt is not None
+        prompt.content = SEO_SAAS_PROMPTS["chat_monitoring_trigger"]["content"]
+        await test_session.commit()
+
+        fake = MagicMock()
+        fake.choices = [MagicMock(message=MagicMock(content='{"is_lead": true, "confidence": 0.9, "reason": "seo", "contact_type": "telegram", "contact_value": ""}'))]
+        with patch(
+            "app.services.custom.chat_monitoring_service.ai_client.chat.completions.create",
+            new=AsyncMock(return_value=fake),
+        ) as create:
+            result = await _classify_message(
+                test_session,
+                custom_automation.id,
+                "Нужно настроить сео и продвижения в поисковой выдаче, кто может?",
+            )
+        create.assert_awaited_once()
+        prompt = create.await_args.kwargs["messages"][0]["content"]
+        assert "Нужно настроить сео" in prompt
+        assert '"is_lead"' in prompt
+        assert result["is_lead"] is True
+        assert result["confidence"] == 0.9
+
+    async def test_process_survives_classify_exception_without_greenlet_crash(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from app.services.custom.chat_monitoring_service import process_unprocessed_messages
+
+        custom_automation.lead_keywords = ["seo"]
+        await test_session.commit()
+        message = await self._add_message(test_session, custom_automation, "Кто делает SEO?")
+        with patch(
+            "app.services.custom.chat_monitoring_service._classify_message",
+            new=AsyncMock(side_effect=RuntimeError("boom")),
+        ):
+            result = await process_unprocessed_messages(test_session, custom_automation.id)
+        assert result["errors"] == 1
+        await test_session.refresh(message)
+        assert message.is_processed is False
+
     async def test_monitor_sees_lab_group_even_if_status_pending(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
     ):
@@ -4630,6 +4689,20 @@ class TestAccountRolesWarmupAndLab:
         assert "Тестовый пост" in rendered
         assert "Канал" in rendered
         assert '"comment"' in rendered
+
+    async def test_seo_trigger_prompt_render_keeps_json_schema(self):
+        from app.alembic.prompt_data.seo_saas_prompts import SEO_SAAS_PROMPTS
+        from app.services.custom.chat_monitoring_service import _response_text_from_llm
+        from app.services.custom.prompt_service import render_prompt
+
+        rendered = render_prompt(
+            SEO_SAAS_PROMPTS["chat_monitoring_trigger"]["content"],
+            {"text": "Нужно сео продвижение, кто может помочь?"},
+        )
+        assert "Нужно сео продвижение" in rendered
+        assert '"is_lead"' in rendered
+        assert _response_text_from_llm('{"message": "Могу подсказать по SEO"}') == "Могу подсказать по SEO"
+        assert _response_text_from_llm("Просто текст") == "Просто текст"
 
     async def test_serialize_lab_finds_channel_by_mode_not_only_broadcast_type(
         self,
