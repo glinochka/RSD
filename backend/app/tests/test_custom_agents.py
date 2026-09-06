@@ -758,6 +758,48 @@ class TestChatImportAndDedup:
         )
         assert count == 1
 
+    async def test_save_chat_message_strips_aware_sent_at(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from datetime import datetime, timezone
+
+        from app.services.custom.chat_monitoring_service import save_chat_message
+
+        chat = ChatTarget(
+            custom_automation_id=custom_automation.id,
+            provider="telegram",
+            external_chat_id="4455194609",
+            title="SEO test",
+            mode="monitoring",
+            source="manual",
+            join_status="joined",
+            is_active=True,
+        )
+        test_session.add(chat)
+        await test_session.commit()
+        await test_session.refresh(chat)
+
+        aware = datetime(2026, 9, 5, 18, 3, 48, tzinfo=timezone.utc)
+        saved = await save_chat_message(
+            test_session,
+            chat,
+            {
+                "external_message_id": "40",
+                "external_chat_id": "4455194609",
+                "sender_id": "1495914201",
+                "sender_username": "fakerebellious",
+                "sender_name": "Contact",
+                "text": "Нужно настроить сео и продвижения в поисковой выдаче, кто может?",
+                "sent_at": aware,
+            },
+        )
+        assert saved is not None
+        assert saved.sent_at is not None
+        assert saved.sent_at.tzinfo is None
+        assert saved.sent_at == datetime(2026, 9, 5, 18, 3, 48)
+
     async def test_dedup_keys_match_username_variants(self):
         from app.services.custom.chat_target_dedup import dedup_keys
 

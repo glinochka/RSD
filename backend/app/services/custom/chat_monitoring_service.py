@@ -71,6 +71,15 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def _naive_utc(value: datetime | None) -> datetime | None:
+    """Strip tzinfo for TIMESTAMP WITHOUT TIME ZONE + asyncpg."""
+    if value is None:
+        return None
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
 def _media_root() -> Path:
     return Path(settings.MEDIA_ROOT).resolve()
 
@@ -253,7 +262,7 @@ async def fetch_messages_for_chat(
                     "sender_username": sender_username,
                     "sender_name": sender_name or sender_username,
                     "text": msg.text,
-                    "sent_at": msg.date,
+                    "sent_at": _naive_utc(msg.date) or _utc_now(),
                 })
     except Exception as exc:
         logger.warning("Fetch messages for chat %s failed: %s", chat_target.id, exc)
@@ -288,7 +297,7 @@ async def save_chat_message(
         sender_username=data.get("sender_username"),
         sender_name=data.get("sender_name"),
         text=data["text"],
-        sent_at=data["sent_at"],
+        sent_at=_naive_utc(data.get("sent_at")) or _utc_now(),
         dedup_key=dedup_key,
         is_processed=bool(ignore_as),
         is_duplicate=False,
@@ -374,7 +383,7 @@ async def _send_dm_and_create_lead(
         direction="incoming",
         text=chat_message.text,
         external_message_id=str(chat_message.external_message_id),
-        sent_at=chat_message.sent_at,
+        sent_at=_naive_utc(chat_message.sent_at) or _utc_now(),
         created_at=_utc_now(),
     )
     outgoing = CustomLeadMessage(
@@ -461,6 +470,7 @@ async def process_unprocessed_messages(
                 chat_message.trigger_confidence = classification["confidence"]
                 await session.commit()
         except Exception as exc:
+            await session.rollback()
             logger.exception("Processing chat message %s failed: %s", chat_message.id, exc)
             errors += 1
 
@@ -488,8 +498,9 @@ async def scan_chats_and_process(
         scanned = 0
         for chat_target in chats:
             scanned += 1
+            chat_id = chat_target.id
             try:
-                shill_ids = await load_shilling_message_ids(session, automation_id, chat_target.id)
+                shill_ids = await load_shilling_message_ids(session, automation_id, chat_id)
                 messages = await fetch_messages_for_chat(session, chat_target, limit=message_limit)
                 if not is_group_chat(chat_target):
                     chat_target.last_scanned_at = _utc_now()
@@ -504,7 +515,8 @@ async def scan_chats_and_process(
                 await session.commit()
                 fetched += len(messages)
             except Exception as exc:
-                logger.warning("Scan chat %s failed: %s", chat_target.id, exc)
+                await session.rollback()
+                logger.warning("Scan chat %s failed: %s", chat_id, exc)
 
         processing = await process_unprocessed_messages(session, automation_id, confidence_threshold=confidence_threshold)
         return {"chats_scanned": scanned, "messages_fetched": fetched, **processing}
