@@ -23,6 +23,19 @@ from ...config import settings
 
 logger = logging.getLogger(__name__)
 
+DMP_AMO_TAG = "DMP"
+HANDOFF_DMP_WARMED = "dmp_warmed"
+HANDOFF_DMP_NO_REPLY = "dmp_no_reply"
+DMP_HANDOFF_COMMENTS = {
+    HANDOFF_DMP_WARMED: (
+        "DMP. Уже вышли на контакт в Telegram, лид чуть прогрет. "
+        "Передан старшему менеджеру."
+    ),
+    HANDOFF_DMP_NO_REPLY: (
+        "DMP. Сырой лид: не ответил в чате в течение 2 дней, нужен дозвон."
+    ),
+}
+
 _EMAIL_RE = re.compile(r"^[\w.\-+]+@[\w.\-]+\.[a-zA-Z]{2,}$")
 _TELEGRAM_RE = re.compile(r"^(?:https?://t\.me/|@)?([a-zA-Z0-9_]{5,32})$|^(-?\d+)$")
 _URL_RE = re.compile(r"^https?://")
@@ -47,12 +60,39 @@ def _parse_contact(contact: str) -> tuple[str, str]:
     return ("unknown", contact)
 
 
-def _render_lead_message(lead: CustomLead, automation: CustomAutomation, conversation: str = "") -> str:
-    parts = [
+def dmp_handoff_comment(reason: str | None) -> str | None:
+    if not reason:
+        return None
+    return DMP_HANDOFF_COMMENTS.get(reason)
+
+
+def amocrm_tags_for_lead(lead: CustomLead, handoff_reason: str | None = None) -> list[str]:
+    if (lead.source or "") == "dmp_one" or (handoff_reason or "").startswith("dmp_"):
+        return [DMP_AMO_TAG]
+    return []
+
+
+def infer_dmp_handoff_reason(*, has_incoming: bool) -> str:
+    return HANDOFF_DMP_WARMED if has_incoming else HANDOFF_DMP_NO_REPLY
+
+
+def _render_lead_message(
+    lead: CustomLead,
+    automation: CustomAutomation,
+    conversation: str = "",
+    *,
+    handoff_reason: str | None = None,
+) -> str:
+    parts = []
+    comment = dmp_handoff_comment(handoff_reason)
+    if comment:
+        parts.append(comment)
+        parts.append("")
+    parts.extend([
         f"Новый лид из автоматизации «{automation.name}»",
         f"Источник: {lead.source}",
         f"Контакт: {lead.contact_value} ({lead.contact_type})",
-    ]
+    ])
     if lead.full_name:
         parts.append(f"Имя: {lead.full_name}")
     if lead.company:
@@ -95,8 +135,15 @@ async def build_lead_handoff_text(
     session: AsyncSession,
     lead: CustomLead,
     automation: CustomAutomation,
+    *,
+    handoff_reason: str | None = None,
 ) -> str:
-    return _render_lead_message(lead, automation, await lead_conversation_text(session, lead.id))
+    return _render_lead_message(
+        lead,
+        automation,
+        await lead_conversation_text(session, lead.id),
+        handoff_reason=handoff_reason,
+    )
 
 
 async def _send_telegram(
@@ -104,6 +151,8 @@ async def _send_telegram(
     automation_id: int,
     lead: CustomLead,
     recipient: str,
+    *,
+    handoff_reason: str | None = None,
 ) -> bool:
     account = await select_account_for_action(session, automation_id, "dm")
     if not account or not account.session_file_path:
@@ -114,7 +163,12 @@ async def _send_telegram(
         logger.warning("Session file missing for delivery account %s", account.id)
         return False
 
-    text = await build_lead_handoff_text(session, lead, await session.get(CustomAutomation, automation_id))
+    text = await build_lead_handoff_text(
+        session,
+        lead,
+        await session.get(CustomAutomation, automation_id),
+        handoff_reason=handoff_reason,
+    )
     try:
         async with TelegramAccountClient.for_account(account) as client:
             await execute_with_telegram_retry(
@@ -195,6 +249,8 @@ async def deliver_lead_to_manager(
     session: AsyncSession,
     automation_id: int,
     lead: CustomLead,
+    *,
+    handoff_reason: str | None = None,
 ) -> dict[str, Any]:
     """Deliver the lead to the automation's lead_manager_contact if configured."""
     automation = await session.get(CustomAutomation, automation_id)
@@ -209,10 +265,12 @@ async def deliver_lead_to_manager(
     if not contact_type or not value:
         return {"delivered": False, "reason": "invalid_contact", "contact": contact}
 
-    handoff = await build_lead_handoff_text(session, lead, automation)
+    handoff = await build_lead_handoff_text(session, lead, automation, handoff_reason=handoff_reason)
     delivered = False
     if contact_type == "telegram":
-        delivered = await _send_telegram(session, automation_id, lead, value)
+        delivered = await _send_telegram(
+            session, automation_id, lead, value, handoff_reason=handoff_reason,
+        )
     elif contact_type == "email":
         delivered = await _send_email(lead, automation, value, extra_body=handoff)
     elif contact_type == "url":
@@ -224,9 +282,14 @@ async def deliver_lead_to_manager(
         now = _utc_now()
         lead.status = LeadStatus.TRANSFERRED.value
         lead.transferred_at = lead.transferred_at or now
-        lead.status_history = (lead.status_history or []) + [
-            {"status": LeadStatus.TRANSFERRED.value, "changed_at": now.isoformat(), "channel": contact_type}
-        ]
+        history_item: dict[str, Any] = {
+            "status": LeadStatus.TRANSFERRED.value,
+            "changed_at": now.isoformat(),
+            "channel": contact_type,
+        }
+        if handoff_reason:
+            history_item["handoff_reason"] = handoff_reason
+        lead.status_history = (lead.status_history or []) + [history_item]
         lead.updated_at = now
         await session.commit()
 

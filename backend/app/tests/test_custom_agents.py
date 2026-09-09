@@ -1664,6 +1664,37 @@ class TestLeadDeliveryParsing:
         assert _parse_contact("@manager")[0] == "telegram"
         assert _parse_contact("https://hooks.example.com/lead")[0] == "url"
 
+    async def test_dmp_handoff_comment_and_amocrm_tag(self):
+        from app.alembic.models import AmocrmConnection, CustomLead
+        from app.services.custom.amocrm_service import build_amocrm_lead_payload
+        from app.services.custom.lead_delivery_service import (
+            DMP_AMO_TAG,
+            HANDOFF_DMP_NO_REPLY,
+            HANDOFF_DMP_WARMED,
+            amocrm_tags_for_lead,
+            dmp_handoff_comment,
+        )
+
+        warmed = dmp_handoff_comment(HANDOFF_DMP_WARMED)
+        stale = dmp_handoff_comment(HANDOFF_DMP_NO_REPLY)
+        assert warmed and "чуть прогрет" in warmed
+        assert stale and "не ответил" in stale and "дозвон" in stale
+
+        lead = CustomLead(
+            custom_automation_id=1,
+            source="dmp_one",
+            contact_type="telegram",
+            contact_value="leaduser",
+        )
+        assert amocrm_tags_for_lead(lead) == [DMP_AMO_TAG]
+        connection = AmocrmConnection(
+            custom_automation_id=1,
+            subdomain="company",
+            is_active=True,
+        )
+        payload = build_amocrm_lead_payload(connection, lead, "99", tags=amocrm_tags_for_lead(lead))
+        assert payload["_embedded"]["tags"] == [{"name": "DMP"}]
+
 
 class TestShilling:
     async def _add_account(
@@ -2861,6 +2892,178 @@ class FakeTelegramClient:
 
 def _bot_message(chat_id: int, text: str) -> dict:
     return {"message": {"chat": {"id": chat_id}, "from": {"username": "ops"}, "text": text}}
+
+
+class TestDmpFulfillmentHandoff:
+    async def _dmp_lead(
+        self,
+        session: AsyncSession,
+        automation: CustomAutomation,
+        *,
+        outgoing_hours_ago: int | None = 72,
+        incoming: bool = False,
+        lab: bool = False,
+        source: str = "dmp_one",
+    ) -> CustomLead:
+        from datetime import datetime, timedelta, timezone
+
+        from app.alembic.models import CustomLeadMessage
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        automation.solution_kind = "fulfillment"
+        automation.is_amocrm_enabled = True
+        automation.is_dmp_one_enabled = True
+        automation.lead_warmup_enabled = True
+        lead = CustomLead(
+            custom_automation_id=automation.id,
+            source=source,
+            contact_type="telegram",
+            contact_value="dmp_lead_user",
+            full_name="Иван",
+            status="warming",
+            dmp_raw_data={"lab": True} if lab else {},
+            created_at=now - timedelta(hours=outgoing_hours_ago or 1),
+            updated_at=now,
+        )
+        session.add(lead)
+        await session.flush()
+        if outgoing_hours_ago is not None:
+            session.add(
+                CustomLeadMessage(
+                    custom_lead_id=lead.id,
+                    direction="outgoing",
+                    text="Привет, это по фулфилменту",
+                    sent_at=now - timedelta(hours=outgoing_hours_ago),
+                    created_at=now - timedelta(hours=outgoing_hours_ago),
+                )
+            )
+        if incoming:
+            session.add(
+                CustomLeadMessage(
+                    custom_lead_id=lead.id,
+                    direction="incoming",
+                    text="Да, интересно",
+                    sent_at=now - timedelta(hours=1),
+                    created_at=now - timedelta(hours=1),
+                )
+            )
+        await session.commit()
+        await session.refresh(lead)
+        return lead
+
+    async def test_no_reply_after_two_days_hands_off_to_amocrm(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from unittest.mock import AsyncMock, patch
+
+        from app.services.custom.lead_delivery_service import HANDOFF_DMP_NO_REPLY
+        from app.services.custom.lead_warmup_service import _process_lead
+
+        lead = await self._dmp_lead(test_session, custom_automation, outgoing_hours_ago=72)
+        with patch(
+            "app.services.custom.lead_warmup_service.auto_transfer_lead",
+            new_callable=AsyncMock,
+            return_value={"transferred": True},
+        ) as xfer:
+            outcome = await _process_lead(test_session, custom_automation, lead)
+        assert outcome["handoff_reason"] == HANDOFF_DMP_NO_REPLY
+        assert outcome.get("transferred") is True
+        xfer.assert_awaited()
+        assert xfer.await_args.kwargs.get("handoff_reason") == HANDOFF_DMP_NO_REPLY
+
+    async def test_replied_dmp_lead_hands_off_as_warmed(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from unittest.mock import AsyncMock, patch
+
+        from app.services.custom.lead_delivery_service import HANDOFF_DMP_WARMED
+        from app.services.custom.lead_warmup_service import _process_lead
+
+        lead = await self._dmp_lead(
+            test_session, custom_automation, outgoing_hours_ago=6, incoming=True,
+        )
+        with patch(
+            "app.services.custom.lead_warmup_service.auto_transfer_lead",
+            new_callable=AsyncMock,
+            return_value={"transferred": True},
+        ) as xfer:
+            outcome = await _process_lead(test_session, custom_automation, lead)
+        assert outcome["handoff_reason"] == HANDOFF_DMP_WARMED
+        xfer.assert_awaited()
+        assert xfer.await_args.kwargs.get("handoff_reason") == HANDOFF_DMP_WARMED
+
+    async def test_no_reply_under_two_days_stays_in_chat(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from unittest.mock import AsyncMock, patch
+
+        from app.services.custom.lead_warmup_service import _process_lead
+
+        lead = await self._dmp_lead(test_session, custom_automation, outgoing_hours_ago=12)
+        with patch(
+            "app.services.custom.lead_warmup_service.auto_transfer_lead",
+            new_callable=AsyncMock,
+            return_value={"transferred": True},
+        ) as xfer:
+            outcome = await _process_lead(test_session, custom_automation, lead)
+        xfer.assert_not_awaited()
+        assert outcome.get("transferred") is not True
+        assert outcome["status"] in {"skipped", "idle"}
+
+    async def test_chat_intercept_does_not_use_dmp_timeout(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from unittest.mock import AsyncMock, patch
+
+        from app.services.custom.lead_warmup_service import _process_lead
+
+        lead = await self._dmp_lead(
+            test_session,
+            custom_automation,
+            outgoing_hours_ago=72,
+            source="chat_monitoring",
+        )
+        with patch(
+            "app.services.custom.lead_warmup_service.auto_transfer_lead",
+            new_callable=AsyncMock,
+            return_value={"transferred": True},
+        ) as xfer:
+            outcome = await _process_lead(test_session, custom_automation, lead)
+        xfer.assert_not_awaited()
+        assert outcome.get("handoff_reason") is None
+
+    async def test_handoff_text_includes_dmp_comment(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from app.services.custom.lead_delivery_service import (
+            HANDOFF_DMP_NO_REPLY,
+            HANDOFF_DMP_WARMED,
+            build_lead_handoff_text,
+        )
+
+        lead = await self._dmp_lead(
+            test_session, custom_automation, outgoing_hours_ago=6, incoming=True,
+        )
+        warmed = await build_lead_handoff_text(
+            test_session, lead, custom_automation, handoff_reason=HANDOFF_DMP_WARMED,
+        )
+        stale = await build_lead_handoff_text(
+            test_session, lead, custom_automation, handoff_reason=HANDOFF_DMP_NO_REPLY,
+        )
+        assert "чуть прогрет" in warmed
+        assert "Передан старшему менеджеру" in warmed
+        assert "не ответил в чате" in stale
+        assert "дозвон" in stale
 
 
 class TestDmpBotPipeline:

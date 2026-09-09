@@ -425,12 +425,12 @@ async def _create_amocrm_contact(
     return None
 
 
-async def _create_amocrm_lead(
-    session: AsyncSession,
+def build_amocrm_lead_payload(
     connection: AmocrmConnection,
     lead: CustomLead,
     contact_id: str,
-) -> str | None:
+    tags: list[str] | None = None,
+) -> dict[str, Any]:
     payload_item: dict[str, Any] = {
         "name": f"Lead {lead.id} — {lead.contact_value}",
         "contacts_id": [{"id": int(contact_id)}],
@@ -441,6 +441,20 @@ async def _create_amocrm_lead(
         payload_item["pipeline_id"] = int(connection.pipeline_id)
     if connection.lead_status_id:
         payload_item["status_id"] = int(connection.lead_status_id)
+    clean_tags = [tag.strip() for tag in (tags or []) if tag and str(tag).strip()]
+    if clean_tags:
+        payload_item["_embedded"] = {"tags": [{"name": tag} for tag in clean_tags]}
+    return payload_item
+
+
+async def _create_amocrm_lead(
+    session: AsyncSession,
+    connection: AmocrmConnection,
+    lead: CustomLead,
+    contact_id: str,
+    tags: list[str] | None = None,
+) -> str | None:
+    payload_item = build_amocrm_lead_payload(connection, lead, contact_id, tags=tags)
 
     try:
         response = await _amocrm_request(
@@ -492,44 +506,62 @@ async def transfer_lead_to_amocrm(
     session: AsyncSession,
     automation_id: int,
     lead: CustomLead,
+    *,
+    handoff_reason: str | None = None,
 ) -> dict[str, Any]:
     automation = await session.get(CustomAutomation, automation_id)
     if not automation or not automation.is_amocrm_enabled:
         return {"transferred": False, "reason": "amocrm_disabled"}
+    if lead.amocrm_lead_id:
+        return {
+            "transferred": True,
+            "reason": "already_transferred",
+            "amocrm_lead_id": lead.amocrm_lead_id,
+            "amocrm_contact_id": lead.amocrm_contact_id,
+        }
 
     connection = await get_active_connection(session, automation_id)
     if not connection:
         return {"transferred": False, "reason": "no_connection"}
 
+    from .lead_delivery_service import amocrm_tags_for_lead, build_lead_handoff_text
+
     contact_id = await _create_amocrm_contact(session, connection, lead)
     if not contact_id:
         return {"transferred": False, "reason": "contact_failed"}
 
-    lead_id = await _create_amocrm_lead(session, connection, lead, contact_id)
+    tags = amocrm_tags_for_lead(lead, handoff_reason)
+    lead_id = await _create_amocrm_lead(session, connection, lead, contact_id, tags=tags)
     if not lead_id:
         return {"transferred": False, "reason": "lead_failed"}
 
     try:
-        from .lead_delivery_service import build_lead_handoff_text
-
-        note = await build_lead_handoff_text(session, lead, automation)
+        note = await build_lead_handoff_text(
+            session, lead, automation, handoff_reason=handoff_reason,
+        )
         if note:
             await _add_amocrm_note(session, connection, lead_id, note)
     except Exception as exc:
         logger.warning("AmoCRM comment skipped for lead %s: %s", lead.id, exc)
 
+    now = _utc_now()
     lead.amocrm_contact_id = contact_id
     lead.amocrm_lead_id = lead_id
     lead.amocrm_pipeline_id = connection.pipeline_id
     lead.amocrm_status_id = connection.lead_status_id
     lead.status = "transferred"
-    lead.transferred_at = _utc_now()
-    lead.status_history = (lead.status_history or []) + [{"status": "transferred", "changed_at": lead.transferred_at.isoformat()}]
-    lead.updated_at = lead.transferred_at
-    connection.last_sync_at = _utc_now()
+    lead.transferred_at = now
+    history_item: dict[str, Any] = {"status": "transferred", "changed_at": now.isoformat()}
+    if handoff_reason:
+        history_item["handoff_reason"] = handoff_reason
+    if tags:
+        history_item["amocrm_tags"] = tags
+    lead.status_history = (lead.status_history or []) + [history_item]
+    lead.updated_at = now
+    connection.last_sync_at = now
     await session.commit()
 
-    return {"transferred": True, "amocrm_lead_id": lead_id, "amocrm_contact_id": contact_id}
+    return {"transferred": True, "amocrm_lead_id": lead_id, "amocrm_contact_id": contact_id, "tags": tags}
 
 
 def _status_from_amocrm(amocrm_status_id: str | None, amocrm_lead: dict[str, Any] | None = None) -> str | None:
