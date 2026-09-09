@@ -1712,6 +1712,34 @@ class TestShilling:
         await session.refresh(chat)
         return chat
 
+    async def _mark_joined(
+        self,
+        session: AsyncSession,
+        automation: CustomAutomation,
+        chat: ChatTarget,
+        accounts: list[SocialAccount],
+    ) -> None:
+        from datetime import datetime, timezone
+
+        from app.alembic.models import AccountChatMembership, ChatJoinStatus, MembershipPurpose
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        for account in accounts:
+            session.add(
+                AccountChatMembership(
+                    custom_automation_id=automation.id,
+                    social_account_id=account.id,
+                    chat_target_id=chat.id,
+                    join_status=ChatJoinStatus.JOINED.value,
+                    purpose=MembershipPurpose.ACTOR.value,
+                    priority=100,
+                    joined_at=now,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        await session.commit()
+
     async def test_commenting_does_not_pick_shilling_class(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
     ):
@@ -1756,6 +1784,7 @@ class TestShilling:
         pair = await select_distinct_accounts_for_action(test_session, custom_automation.id, "shilling", count=2)
         assert pair == []
         chat = await self._add_chat(test_session, custom_automation)
+        await self._mark_joined(test_session, custom_automation, chat, [account])
         custom_automation.is_shilling_enabled = True
         await test_session.commit()
         result = await process_shilling_chat(test_session, custom_automation, chat)
@@ -1941,6 +1970,7 @@ class TestShilling:
             test_session, custom_automation, account_class=AccountClass.SHILLING.value, username="pair_b", phone="+79990000008"
         )
         chat = await self._add_chat(test_session, custom_automation)
+        await self._mark_joined(test_session, custom_automation, chat, [a, b])
 
         async def fake_sleep(_seconds):
             return None
@@ -1978,15 +2008,16 @@ class TestShilling:
 
         from app.services.custom.shilling_service import perform_shilling_dialogue
 
-        await self._add_account(
+        post_a = await self._add_account(
             test_session, custom_automation, account_class=AccountClass.SHILLING.value, username="post_a", phone="+79990000043"
         )
-        await self._add_account(
+        post_b = await self._add_account(
             test_session, custom_automation, account_class=AccountClass.SHILLING.value, username="post_b", phone="+79990000044"
         )
         chat = await self._add_chat(test_session, custom_automation, mode="monitoring", chat_type="channel")
         chat.comments_open = True
         await test_session.commit()
+        await self._mark_joined(test_session, custom_automation, chat, [post_a, post_b])
 
         async def fake_sleep(_seconds):
             return None
@@ -2027,16 +2058,20 @@ class TestShilling:
     async def test_shilling_runs_without_per_chat_mode(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
     ):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
         from app.services.custom.rotation_service import select_distinct_accounts_for_action
         from app.services.custom.shilling_service import process_shilling_chat
 
-        await self._add_account(
+        first = await self._add_account(
             test_session, custom_automation, account_class=AccountClass.SHILLING.value, username="mode_a", phone="+79990000021"
         )
-        await self._add_account(
+        second = await self._add_account(
             test_session, custom_automation, account_class=AccountClass.SHILLING.value, username="mode_b", phone="+79990000022"
         )
         chat = await self._add_chat(test_session, custom_automation, mode="monitoring")
+        await self._mark_joined(test_session, custom_automation, chat, [first, second])
         custom_automation.is_shilling_enabled = True
         await test_session.commit()
         pair = await select_distinct_accounts_for_action(test_session, custom_automation.id, "shilling", count=2)
@@ -2045,9 +2080,9 @@ class TestShilling:
             test_session,
             custom_automation,
             chat,
-            now=None,
-            roll=lambda: 0.9,
+            now=datetime(2026, 9, 9, 7, 0, tzinfo=ZoneInfo("Europe/Moscow")),
         )
+        assert result["status"] == "skipped"
         assert result["reason"] in {"skip", "wait"}
 
     async def test_chat_shilling_skips_channels(
@@ -2214,6 +2249,7 @@ class TestShilling:
         account = await self._add_account(
             test_session, custom_automation, account_class=AccountClass.ONE_DAY.value, username="disc", phone="+79990000028"
         )
+        await self._mark_joined(test_session, custom_automation, chat, [account])
         test_session.add(
             AutomationActionLog(
                 custom_automation_id=custom_automation.id,
@@ -4460,7 +4496,9 @@ class TestAccountRolesWarmupAndLab:
             await session.refresh(chat)
             return chat
 
-        with patch("app.services.custom.test_lab_service.create_chat_from_link", new=AsyncMock(side_effect=fake_create)):
+        with patch("app.services.custom.test_lab_service.preview_chat_entity", new=AsyncMock(return_value=object())), patch(
+            "app.services.custom.test_lab_service.create_chat_from_link", new=AsyncMock(side_effect=fake_create)
+        ):
             response = await client.post(
                 f"/api/custom/automations/{custom_automation.id}/test/join",
                 headers={"Authorization": f"Bearer {admin_token}"},
@@ -5088,7 +5126,7 @@ class TestProductionFieldLogic:
         chat = await self._add_chat(test_session, custom_automation)
         created = await ensure_memberships_for_chat(test_session, custom_automation.id, chat)
         await test_session.commit()
-        assert created == 2
+        assert created == 1
         total = (
             await test_session.execute(
                 select(func.count()).select_from(AccountChatMembership).where(
@@ -5096,22 +5134,33 @@ class TestProductionFieldLogic:
                 )
             )
         ).scalar_one()
-        assert total == 2
+        assert total == 1
 
     async def test_sync_chat_join_status_partial(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
     ):
-        from app.alembic.models import AccountChatMembership, ChatJoinStatus
-        from app.services.custom.chat_membership_service import ensure_memberships_for_chat, sync_chat_join_status
+        from app.alembic.models import AccountChatMembership, ChatJoinStatus, MembershipPurpose
+        from app.services.custom.chat_membership_service import (
+            ensure_memberships_for_chat,
+            queue_actor_for_chat,
+            sync_chat_join_status,
+        )
 
         a = await self._add_account(
             test_session, custom_automation, account_class=AccountClass.TRUSTED.value, username="partial_a", phone="+79991110003"
         )
-        await self._add_account(
+        b = await self._add_account(
             test_session, custom_automation, account_class=AccountClass.MID.value, username="partial_b", phone="+79991110004"
         )
         chat = await self._add_chat(test_session, custom_automation)
-        await ensure_memberships_for_chat(test_session, custom_automation.id, chat)
+        await ensure_memberships_for_chat(
+            test_session,
+            custom_automation.id,
+            chat,
+            account_ids=[a.id],
+            purpose=MembershipPurpose.WATCHER.value,
+        )
+        await queue_actor_for_chat(test_session, custom_automation.id, chat, b)
         membership = await test_session.scalar(
             select(AccountChatMembership).where(
                 AccountChatMembership.chat_target_id == chat.id,

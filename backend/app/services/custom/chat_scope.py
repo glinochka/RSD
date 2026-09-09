@@ -1,6 +1,7 @@
 """How modules apply to a chat target: groups vs channels, pause, own posts."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Iterable
 
 from sqlalchemy import select
@@ -15,6 +16,7 @@ from ...alembic.models import (
     PoolAccount,
     SocialAccount,
 )
+from .telegram_invite import TelegramChatRefError, parse_telegram_chat_ref
 
 CHANNEL_TYPES = {"channel", "broadcast"}
 SHILLING_ACTIONS = ("shilling_chat", "shilling_post")
@@ -30,6 +32,18 @@ def is_paused(chat_target: ChatTarget) -> bool:
     return (chat_target.mode or "").strip().lower() == ChatMode.INACTIVE.value
 
 
+def mark_chat_scanned(chat_target: ChatTarget) -> None:
+    """Advance scan cursor so skip/closed chats do not monopolize the batch."""
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    chat_target.last_scanned_at = now
+    chat_target.updated_at = now
+
+
+async def commit_chat_scan(session: AsyncSession, chat_target: ChatTarget) -> None:
+    mark_chat_scanned(chat_target)
+    await session.commit()
+
+
 def is_broadcast_channel(chat_target: ChatTarget) -> bool:
     return (chat_target.chat_type or "").strip().lower() in CHANNEL_TYPES
 
@@ -37,6 +51,36 @@ def is_broadcast_channel(chat_target: ChatTarget) -> bool:
 def is_group_chat(chat_target: ChatTarget) -> bool:
     """Lead intercept, chat shilling and discussion run in groups, not channels."""
     return not is_broadcast_channel(chat_target)
+
+
+def is_public_readable(chat_target: ChatTarget) -> bool:
+    """Public broadcast channels can be read by @username without joining."""
+    if not is_broadcast_channel(chat_target):
+        return False
+    for raw in (chat_target.invite_link, chat_target.external_chat_id):
+        if not raw:
+            continue
+        try:
+            parsed = parse_telegram_chat_ref(str(raw))
+        except TelegramChatRefError:
+            continue
+        return parsed.kind == "username" and not parsed.is_private
+    title = (chat_target.title or "").strip()
+    if not title:
+        return False
+    lowered = title.lower()
+    if not (
+        title.startswith("@")
+        or "t.me/" in lowered
+        or "telegram.me/" in lowered
+        or "telegram.dog/" in lowered
+    ):
+        return False
+    try:
+        parsed = parse_telegram_chat_ref(title)
+    except TelegramChatRefError:
+        return False
+    return parsed.kind == "username" and not parsed.is_private
 
 
 def unwrap_telegram_chat(entity: Any) -> Any:

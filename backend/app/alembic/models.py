@@ -2026,6 +2026,18 @@ class ChatJoinStatus(str, Enum):
     BANNED = "banned"
 
 
+class MembershipPurpose(str, Enum):
+    WATCHER = "watcher"
+    ACTOR = "actor"
+
+
+class PendingChatActionStatus(str, Enum):
+    PENDING = "pending"
+    DONE = "done"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
 class PromptType(str, Enum):
     CHAT_MONITORING_TRIGGER = "chat_monitoring_trigger"
     CHAT_MONITORING_RESPONSE = "chat_monitoring_response"
@@ -2183,6 +2195,10 @@ class CustomAutomation(Base):
         cascade="all, delete-orphan",
     )
     action_logs: Mapped[list["AutomationActionLog"]] = relationship(
+        back_populates="automation",
+        cascade="all, delete-orphan",
+    )
+    pending_chat_actions: Mapped[list["PendingChatAction"]] = relationship(
         back_populates="automation",
         cascade="all, delete-orphan",
     )
@@ -2592,6 +2608,10 @@ class AccountChatMembership(Base):
     join_status: Mapped[str] = mapped_column(
         String(32), default=ChatJoinStatus.PENDING.value, server_default="pending", nullable=False, index=True
     )
+    purpose: Mapped[str] = mapped_column(
+        String(32), default=MembershipPurpose.WATCHER.value, server_default="watcher", nullable=False, index=True
+    )
+    priority: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False, index=True)
     join_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     last_join_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_join_error: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -2601,6 +2621,48 @@ class AccountChatMembership(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
 
     chat_target: Mapped["ChatTarget"] = relationship(back_populates="memberships")
+    social_account: Mapped["SocialAccount"] = relationship()
+
+
+class PendingChatAction(Base):
+    __tablename__ = "pending_chat_actions"
+    __table_args__ = (
+        UniqueConstraint(
+            "custom_automation_id",
+            "action_type",
+            "target_id",
+            name="uq_pending_chat_action",
+        ),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    custom_automation_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_automations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    chat_target_id: Mapped[int] = mapped_column(
+        ForeignKey("chat_targets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    social_account_id: Mapped[int] = mapped_column(
+        ForeignKey("social_accounts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    action_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    target_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32),
+        default=PendingChatActionStatus.PENDING.value,
+        server_default="pending",
+        nullable=False,
+        index=True,
+    )
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    automation: Mapped["CustomAutomation"] = relationship(back_populates="pending_chat_actions")
+    chat_target: Mapped["ChatTarget"] = relationship()
     social_account: Mapped["SocialAccount"] = relationship()
 
 

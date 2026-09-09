@@ -6,10 +6,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .chat_membership_service import get_reader_account, live_joined_chat_ids, recover_reader_after_error
 from .chat_scope import (
     apply_entity_metadata,
     is_group_chat,
@@ -25,8 +26,6 @@ from .telegram_account_client import TelegramAccountClient
 from .telegram_invite import chat_entity_key
 from .telegram_error_handler import execute_with_telegram_retry
 from ...alembic.models import (
-    AccountChatMembership,
-    ChatJoinStatus,
     ChatMessage,
     ChatTarget,
     CustomAutomation,
@@ -186,53 +185,21 @@ def _account_can_open_session(account: SocialAccount | None) -> bool:
 
 async def _get_account_for_chat(session: AsyncSession, chat_target: ChatTarget) -> SocialAccount | None:
     """Prefer an account that actually joined this chat, then any reader."""
-    membership_account_id = await session.scalar(
-        select(AccountChatMembership.social_account_id)
-        .where(
-            AccountChatMembership.chat_target_id == chat_target.id,
-            AccountChatMembership.join_status == ChatJoinStatus.JOINED.value,
-        )
-        .order_by(AccountChatMembership.id.asc())
-        .limit(1)
-    )
-    for account_id in (membership_account_id, chat_target.joined_by_account_id):
-        if not account_id:
-            continue
-        account = await session.get(SocialAccount, account_id)
-        if _account_can_open_session(account):
-            return account
-    fallback = await select_account_for_action(
-        session,
-        chat_target.custom_automation_id,
-        "commenting",
-        consume_quota=False,
-    )
-    if _account_can_open_session(fallback):
-        return fallback
+    account = await get_reader_account(session, chat_target)
+    if _account_can_open_session(account):
+        return account
     return None
 
 
 async def list_monitor_chats(session: AsyncSession, automation_id: int) -> list[ChatTarget]:
-    """Groups that have at least one real join — including lab / partial / stale pending."""
-    joined_ids = (
-        select(AccountChatMembership.chat_target_id)
-        .where(
-            AccountChatMembership.custom_automation_id == automation_id,
-            AccountChatMembership.join_status == ChatJoinStatus.JOINED.value,
-        )
-        .distinct()
-    )
+    """Groups with a live JOINED member. Lab chats are included only if someone is actually in."""
+    joined_ids = live_joined_chat_ids(automation_id)
     result = await session.execute(
         select(ChatTarget).where(
             ChatTarget.custom_automation_id == automation_id,
             ChatTarget.is_active.is_(True),
             ChatTarget.mode != "inactive",
-            or_(
-                ChatTarget.join_status.in_(
-                    [ChatJoinStatus.JOINED.value, ChatJoinStatus.PARTIAL.value]
-                ),
-                ChatTarget.id.in_(joined_ids),
-            ),
+            ChatTarget.id.in_(joined_ids),
         )
     )
     chats = []
@@ -248,45 +215,45 @@ async def fetch_messages_for_chat(
     chat_target: ChatTarget,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
-    account = await _get_account_for_chat(session, chat_target)
-    if not account:
-        logger.warning("No account to fetch messages for chat %s", chat_target.id)
-        return []
-
-    if not _account_can_open_session(account):
-        logger.warning("Reader session missing for chat %s account %s", chat_target.id, account.id)
-        return []
-
-    messages = []
-    try:
-        async with TelegramAccountClient.for_account(account) as client:
-            entity = await client.get_entity(chat_entity_key(chat_target))
-            apply_entity_metadata(chat_target, entity)
-            if not is_group_chat(chat_target):
-                return []
-            history = await client.get_messages(entity, limit=limit)
-            for msg in history:
-                if not msg or not msg.text:
-                    continue
-                if getattr(msg, "out", False):
-                    continue
-                sender = msg.sender
-                sender_id = getattr(sender, "id", None)
-                sender_username = getattr(sender, "username", None)
-                sender_name = " ".join(filter(None, [getattr(sender, "first_name", None), getattr(sender, "last_name", None)])).strip()
-                messages.append({
-                    "external_message_id": str(msg.id),
-                    "external_chat_id": str(getattr(entity, "id", chat_target.external_chat_id) or ""),
-                    "sender_id": str(sender_id) if sender_id else None,
-                    "sender_username": sender_username,
-                    "sender_name": sender_name or sender_username,
-                    "text": msg.text,
-                    "sent_at": _naive_utc(msg.date) or _utc_now(),
-                })
-    except Exception as exc:
-        logger.warning("Fetch messages for chat %s failed: %s", chat_target.id, exc)
-
-    return messages
+    tried: set[int] = set()
+    while True:
+        account = await get_reader_account(session, chat_target, exclude_account_ids=tried)
+        if not account or not _account_can_open_session(account):
+            logger.warning("No account to fetch messages for chat %s", chat_target.id)
+            return []
+        tried.add(account.id)
+        messages = []
+        try:
+            async with TelegramAccountClient.for_account(account) as client:
+                entity = await client.get_entity(chat_entity_key(chat_target))
+                apply_entity_metadata(chat_target, entity)
+                if not is_group_chat(chat_target):
+                    return []
+                history = await client.get_messages(entity, limit=limit)
+                for msg in history:
+                    if not msg or not msg.text:
+                        continue
+                    if getattr(msg, "out", False):
+                        continue
+                    sender = msg.sender
+                    sender_id = getattr(sender, "id", None)
+                    sender_username = getattr(sender, "username", None)
+                    sender_name = " ".join(filter(None, [getattr(sender, "first_name", None), getattr(sender, "last_name", None)])).strip()
+                    messages.append({
+                        "external_message_id": str(msg.id),
+                        "external_chat_id": str(getattr(entity, "id", chat_target.external_chat_id) or ""),
+                        "sender_id": str(sender_id) if sender_id else None,
+                        "sender_username": sender_username,
+                        "sender_name": sender_name or sender_username,
+                        "text": msg.text,
+                        "sent_at": _naive_utc(msg.date) or _utc_now(),
+                    })
+            return messages
+        except Exception as exc:
+            logger.warning("Fetch messages for chat %s failed: %s", chat_target.id, exc)
+            if await recover_reader_after_error(session, chat_target, account, exc):
+                continue
+            return []
 
 
 async def save_chat_message(
@@ -479,6 +446,11 @@ async def process_unprocessed_messages(
                 continue
             classification = await _classify_message(session, automation_id, chat_message.text)
             if classification["is_lead"] and classification["confidence"] >= confidence_threshold:
+                dm_account = await select_account_for_action(session, automation_id, "dm", consume_quota=False)
+                if not dm_account:
+                    logger.warning("No trusted account to send DM for message %s", chat_message.id)
+                    errors += 1
+                    continue
                 success = await _send_dm_and_create_lead(session, automation_id, chat_message, classification)
                 if success:
                     leads_created += 1
@@ -512,6 +484,8 @@ async def scan_chats_and_process(
             return {"status": "skipped", "reason": "feature_disabled"}
 
         chats = await list_monitor_chats(session, automation_id)
+        chats.sort(key=lambda item: (item.last_scanned_at is not None, item.last_scanned_at or _utc_now(), item.id))
+        chats = chats[: settings.CUSTOM_MONITOR_SCAN_BATCH]
         own_keys = await load_own_sender_keys(session, automation_id)
 
         fetched = 0

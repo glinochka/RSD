@@ -13,7 +13,13 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .chat_scope import is_paused, is_group_chat, is_lab_chat
+from .chat_scope import commit_chat_scan, is_paused, is_group_chat, is_lab_chat
+from .chat_membership_service import (
+    ensure_watcher_membership,
+    is_chat_watchable,
+    list_watchable_chats,
+)
+from .pending_action_service import ensure_accounts_ready
 from .post_engagement import SHILLING as POST_SHILLING, get_post_engagement_claim, post_target_id
 from .rotation_service import accounts_are_distinct, select_distinct_accounts_for_action
 from .telegram_account_client import TelegramAccountClient
@@ -21,7 +27,6 @@ from .telegram_invite import chat_entity_key
 from .telegram_error_handler import execute_with_telegram_retry
 from ...alembic.models import (
     AutomationActionLog,
-    ChatJoinStatus,
     ChatTarget,
     CustomAutomation,
     CustomPrompt,
@@ -321,8 +326,25 @@ async def perform_shilling_dialogue(
             probe = await ensure_comment_access(session, chat_target, speaker)
             if probe.account_blocked:
                 return {"status": "skipped", "reason": "account_blocked"}
+            if getattr(probe, "chat_read_lost", False):
+                from .chat_membership_service import retire_reader_and_replace
+
+                await retire_reader_and_replace(session, chat_target, speaker.id, error=probe.error)
+                return {"status": "skipped", "reason": "reader_lost"}
             if probe.comments_open is False:
                 return {"status": "skipped", "reason": "comments_closed"}
+
+    ready = await ensure_accounts_ready(
+        session,
+        automation.id,
+        chat_target,
+        [account_a, account_b],
+        action_type=action_type,
+        target_id=target_id,
+        payload={"post_text": post_text, "comment_to": comment_to},
+    )
+    if not ready:
+        return {"status": "skipped", "reason": "waiting_join"}
 
     setup, reply = await generate_shilling_dialogue(
         session,
@@ -581,18 +603,24 @@ async def process_shilling_chat(
     include_lab = bool(kwargs.pop("include_lab", False))
     skip_schedule = bool(kwargs.pop("skip_schedule", False))
     if is_lab_chat(chat_target) and not include_lab:
+        await commit_chat_scan(session, chat_target)
         return {"status": "skipped", "reason": "lab"}
     if is_paused(chat_target):
+        await commit_chat_scan(session, chat_target)
         return {"status": "skipped", "reason": "paused"}
     if not is_group_chat(chat_target):
+        await commit_chat_scan(session, chat_target)
         return {"status": "skipped", "reason": "channel"}
-    if chat_target.join_status != ChatJoinStatus.JOINED.value:
-        return {"status": "skipped", "reason": "not_joined"}
+    if not await is_chat_watchable(session, chat_target):
+        await ensure_watcher_membership(session, automation.id, chat_target, include_lab=include_lab)
+        await commit_chat_scan(session, chat_target)
+        return {"status": "skipped", "reason": "not_watchable"}
 
     available = await select_distinct_accounts_for_action(
         session, automation, "shilling", count=2, consume_quota=False
     )
     if len(available) < 2:
+        await commit_chat_scan(session, chat_target)
         return {"status": "skipped", "reason": "need_two_accounts"}
     placeholder_account_id = available[0].id
 
@@ -607,6 +635,7 @@ async def process_shilling_chat(
             scheduled_at=kwargs.pop("scheduled_at", None),
         )
         if decision != "due":
+            await commit_chat_scan(session, chat_target)
             return {"status": "skipped", "reason": decision}
     else:
         kwargs.setdefault("delay_seconds", 0)
@@ -620,6 +649,7 @@ async def process_shilling_chat(
         target_type="chat",
         **kwargs,
     )
+    await commit_chat_scan(session, chat_target)
     return result
 
 
@@ -634,15 +664,15 @@ async def run_shilling_pass(automation_id: int) -> dict[str, Any]:
             logger.info("Shilling disabled or automation not found for %s", automation_id)
             return {"status": "skipped", "reason": "feature_disabled", "chats_processed": 0, "dialogues_sent": 0}
 
-        result = await session.execute(
-            select(ChatTarget).where(
-                ChatTarget.custom_automation_id == automation_id,
-                ChatTarget.is_active.is_(True),
-                ChatTarget.join_status == ChatJoinStatus.JOINED.value,
-                ChatTarget.mode != "inactive",
+        chats = [
+            chat
+            for chat in await list_watchable_chats(
+                session,
+                automation_id,
+                limit=settings.CUSTOM_ACTION_SCAN_BATCH,
             )
-        )
-        chats = [chat for chat in result.scalars().all() if not is_lab_chat(chat)]
+            if is_group_chat(chat)
+        ]
         for chat_target in chats:
             try:
                 res = await process_shilling_chat(session, automation, chat_target)

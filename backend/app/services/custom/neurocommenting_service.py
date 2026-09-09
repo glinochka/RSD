@@ -10,14 +10,23 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .chat_inspect_service import probe_comments_readonly
-from .chat_scope import apply_entity_metadata, is_broadcast_channel, is_lab_chat, is_paused
-from .post_engagement import NEUROCOMMENTING, SHILLING, SKIP, claim_post_engagement
+from .chat_membership_service import (
+    ensure_watcher_membership,
+    get_reader_account,
+    is_chat_watchable,
+    list_watchable_chats,
+    recover_reader_after_error,
+    retire_reader_and_replace,
+)
+from .chat_scope import apply_entity_metadata, is_broadcast_channel, is_lab_chat, is_paused, commit_chat_scan
+from .pending_action_service import ensure_accounts_ready, has_pending_action
+from .post_engagement import NEUROCOMMENTING, SHILLING, SKIP, claim_post_engagement, post_target_id
 from .rotation_service import select_account_for_action
 from .shilling_service import perform_post_shilling
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import execute_with_telegram_retry
 from .telegram_invite import chat_entity_key
-from ...alembic.models import AutomationActionLog, ChatJoinStatus, ChatTarget, CustomAutomation, CustomPrompt, PromptType, SocialAccount
+from ...alembic.models import AutomationActionLog, ChatTarget, CustomAutomation, CustomPrompt, PromptType, SocialAccount
 from ...config import settings
 from ...services.ai_authoring import ai_client
 from .prompt_service import render_prompt
@@ -43,6 +52,11 @@ DEFAULT_NEUROCOMMENTING_PROMPT = """Ты — участник Telegram-чата/
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+async def _skip_chat(session: AsyncSession, chat_target: ChatTarget, reason: str) -> dict[str, Any]:
+    await commit_chat_scan(session, chat_target)
+    return {"status": "skipped", "reason": reason}
 
 
 def _media_root() -> Path:
@@ -181,76 +195,88 @@ async def process_chat_target(
     lab_mode: bool = False,
 ) -> dict[str, Any]:
     if is_lab_chat(chat_target) and not (include_lab or lab_mode):
-        return {"status": "skipped", "reason": "lab"}
+        return await _skip_chat(session, chat_target, "lab")
     if is_paused(chat_target):
-        return {"status": "skipped", "reason": "paused"}
-    if chat_target.join_status != ChatJoinStatus.JOINED.value:
-        return {"status": "skipped", "reason": "not_joined"}
+        return await _skip_chat(session, chat_target, "paused")
     if chat_target.chat_type and not is_broadcast_channel(chat_target):
-        return {"status": "skipped", "reason": "not_channel"}
+        return await _skip_chat(session, chat_target, "not_channel")
     if chat_target.comments_open is False:
-        return {"status": "skipped", "reason": "comments_closed"}
+        return await _skip_chat(session, chat_target, "comments_closed")
+    if not await is_chat_watchable(session, chat_target):
+        await ensure_watcher_membership(session, automation_id, chat_target, include_lab=include_lab or lab_mode)
+        return await _skip_chat(session, chat_target, "not_watchable")
 
     automation = await session.get(CustomAutomation, automation_id)
     if not automation:
-        return {"status": "skipped", "reason": "automation_missing"}
+        return await _skip_chat(session, chat_target, "automation_missing")
     neuro_enabled = bool(automation.is_neurocommenting_enabled) or lab_mode
     shilling_enabled = bool(automation.is_shilling_enabled) and not lab_mode
     if not neuro_enabled and not shilling_enabled:
-        return {"status": "skipped", "reason": "feature_disabled"}
+        return await _skip_chat(session, chat_target, "feature_disabled")
 
     config = chat_target.neurocommenting_config or {}
     max_per_day = 10 ** 9 if lab_mode else int(config.get("max_per_day") or 10)
-
-    scanner_action = "commenting" if neuro_enabled else "shilling"
-    account = await select_account_for_action(session, automation_id, scanner_action, consume_quota=False)
-    if not account:
-        return {"status": "skipped", "reason": "no_account"}
-
-    if not account.session_file_path:
-        return {"status": "skipped", "reason": "no_session"}
-
-    session_path = _media_root() / account.session_file_path
-    if not session_path.exists():
-        return {"status": "skipped", "reason": "session_missing"}
-
+    tried: set[int] = set()
+    account = None
     posts = []
-    try:
-        async with TelegramAccountClient.for_account(account) as client:
-            probe = await probe_comments_readonly(client, chat_target)
-            if probe.members_count:
-                chat_target.members_count = probe.members_count
-            if probe.last_activity_at:
-                chat_target.last_activity_at = probe.last_activity_at
-            if probe.comments_open is not None:
-                chat_target.comments_open = probe.comments_open
-            chat_target.comments_checked_at = _utc_now()
-            chat_target.comments_check_error = probe.error
-            if probe.account_blocked:
-                await session.commit()
-                return {"status": "skipped", "reason": "account_blocked"}
-            if probe.comments_open is False:
-                await session.commit()
-                return {"status": "skipped", "reason": "comments_closed"}
-            entity = await client.get_entity(
-                chat_entity_key(chat_target)
-            )
-            apply_entity_metadata(chat_target, entity)
-            if not is_broadcast_channel(chat_target):
-                await session.commit()
-                return {"status": "skipped", "reason": "not_channel"}
-            history = await client.client.get_messages(entity, limit=30)
-            for msg in history:
-                if not msg or not msg.text or msg.id is None:
+    while True:
+        account = await get_reader_account(session, chat_target, exclude_account_ids=tried)
+        if not account:
+            return await _skip_chat(session, chat_target, "no_account")
+        if not account.session_file_path:
+            tried.add(account.id)
+            continue
+        session_path = _media_root() / account.session_file_path
+        if not session_path.exists():
+            tried.add(account.id)
+            continue
+        tried.add(account.id)
+        posts = []
+        try:
+            async with TelegramAccountClient.for_account(account) as client:
+                probe = await probe_comments_readonly(client, chat_target)
+                if probe.members_count:
+                    chat_target.members_count = probe.members_count
+                if probe.last_activity_at:
+                    chat_target.last_activity_at = probe.last_activity_at
+                if probe.comments_open is not None:
+                    chat_target.comments_open = probe.comments_open
+                chat_target.comments_checked_at = _utc_now()
+                chat_target.comments_check_error = probe.error
+                if probe.chat_read_lost:
+                    await retire_reader_and_replace(
+                        session, chat_target, account.id, error=probe.error
+                    )
                     continue
-                sender = getattr(msg, "sender", None)
-                sender_id = getattr(sender, "id", None)
-                if sender_id == account.id or (sender_id and str(sender_id) in (account.username or "")):
-                    continue
-                posts.append(msg)
-    except Exception as exc:
-        logger.warning("Fetch posts for chat %s failed: %s", chat_target.id, exc)
-        return {"status": "error", "error": str(exc)}
+                if probe.account_blocked:
+                    return await _skip_chat(session, chat_target, "account_blocked")
+                if probe.comments_open is False:
+                    return await _skip_chat(session, chat_target, "comments_closed")
+                entity = await client.get_entity(
+                    chat_entity_key(chat_target)
+                )
+                apply_entity_metadata(chat_target, entity)
+                if not is_broadcast_channel(chat_target):
+                    return await _skip_chat(session, chat_target, "not_channel")
+                history = await client.client.get_messages(entity, limit=30)
+                for msg in history:
+                    if not msg or not msg.text or msg.id is None:
+                        continue
+                    sender = getattr(msg, "sender", None)
+                    sender_id = getattr(sender, "id", None)
+                    if sender_id == account.id or (sender_id and str(sender_id) in (account.username or "")):
+                        continue
+                    posts.append(msg)
+            break
+        except Exception as exc:
+            logger.warning("Fetch posts for chat %s failed: %s", chat_target.id, exc)
+            if await recover_reader_after_error(session, chat_target, account, exc):
+                continue
+            await commit_chat_scan(session, chat_target)
+            return {"status": "error", "error": str(exc)}
+
+    if not account:
+        return await _skip_chat(session, chat_target, "no_account")
 
     posts.sort(key=lambda msg: int(msg.id))
     sent = 0
@@ -285,7 +311,39 @@ async def process_chat_target(
             continue
         if claimed != NEUROCOMMENTING or not neuro_enabled:
             continue
-        if account.daily_messages_sent >= max_per_day:
+        tried_actors: set[int] = set()
+        actor = None
+        ready = False
+        while True:
+            actor = await select_account_for_action(
+                session,
+                automation_id,
+                "commenting",
+                consume_quota=False,
+                exclude_account_ids=tried_actors or None,
+            )
+            if not actor or actor.daily_messages_sent >= max_per_day:
+                actor = None
+                break
+            tried_actors.add(actor.id)
+            ready = await ensure_accounts_ready(
+                session,
+                automation_id,
+                chat_target,
+                [actor],
+                action_type="neurocommenting",
+                target_id=post_target_id(chat_target.id, post.id),
+                payload={"post_id": post.id, "post_text": (post.text or "")[:500]},
+            )
+            if ready:
+                break
+            if await has_pending_action(
+                session, automation_id, "neurocommenting", post_target_id(chat_target.id, post.id)
+            ):
+                break
+        if not ready:
+            continue
+        if not actor:
             continue
 
         comment = await _generate_comment(session, automation_id, post_text=post.text, chat_title=chat_target.title or "")
@@ -293,12 +351,12 @@ async def process_chat_target(
             continue
 
         success = await _send_comment(
-            session, automation_id, chat_target, account, post.id, comment, post_text=post.text or ""
+            session, automation_id, chat_target, actor, post.id, comment, post_text=post.text or ""
         )
         if success:
             sent += 1
-            account.daily_messages_sent += 1
-            account.last_used_at = _utc_now()
+            actor.daily_messages_sent += 1
+            actor.last_used_at = _utc_now()
 
     chat_target.last_scanned_at = _utc_now()
     chat_target.updated_at = _utc_now()
@@ -319,15 +377,15 @@ async def run_neurocommenting_pass(automation_id: int) -> dict[str, Any]:
             logger.info("Post engagement disabled or automation not found for %s", automation_id)
             return {"status": "skipped", "reason": "feature_disabled", "chats_processed": 0, "comments_sent": 0}
 
-        result = await session.execute(
-            select(ChatTarget).where(
-                ChatTarget.custom_automation_id == automation_id,
-                ChatTarget.is_active.is_(True),
-                ChatTarget.join_status == ChatJoinStatus.JOINED.value,
-                ChatTarget.mode != "inactive",
+        chats = [
+            chat
+            for chat in await list_watchable_chats(
+                session,
+                automation_id,
+                limit=settings.CUSTOM_ACTION_SCAN_BATCH,
             )
-        )
-        chats = [chat for chat in result.scalars().all() if not is_lab_chat(chat)]
+            if is_broadcast_channel(chat) or not chat.chat_type
+        ]
         for chat_target in chats:
             try:
                 res = await process_chat_target(session, automation_id, chat_target)
@@ -350,14 +408,11 @@ async def run_lab_neurocommenting_pass(automation_id: int) -> dict[str, Any]:
         if not automation or not (automation.test_channel_username or "").strip():
             return {"status": "skipped", "reason": "no_lab_channel", "chats_processed": 0, "comments_sent": 0}
 
-        result = await session.execute(
-            select(ChatTarget).where(
-                ChatTarget.custom_automation_id == automation_id,
-                ChatTarget.is_active.is_(True),
-                ChatTarget.join_status == ChatJoinStatus.JOINED.value,
-            )
-        )
-        chats = [chat for chat in result.scalars().all() if is_lab_chat(chat) and is_broadcast_channel(chat)]
+        chats = [
+            chat
+            for chat in await list_watchable_chats(session, automation_id, include_lab=True)
+            if is_lab_chat(chat) and is_broadcast_channel(chat)
+        ]
         for chat_target in chats:
             try:
                 res = await process_chat_target(

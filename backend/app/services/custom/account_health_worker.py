@@ -121,6 +121,10 @@ class AccountHealthWorker:
             social_account.is_active = False
 
         if error_kind in {"session_invalid", "banned", "spamblock"}:
+            if error_kind in {"session_invalid", "banned"}:
+                from .chat_membership_service import replace_watchers_for_dead_account
+
+                await replace_watchers_for_dead_account(session, account_id)
             social_account.last_health_check_at = _utc_now()
             social_account.updated_at = _utc_now()
             await session.commit()

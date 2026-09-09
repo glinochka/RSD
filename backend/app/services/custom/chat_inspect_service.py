@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .chat_scope import apply_entity_metadata, entity_chat_type, unwrap_telegram_chat
 from .rotation_service import list_alive_session_accounts
 from .telegram_account_client import TelegramAccountClient
+from .telegram_error_handler import is_chat_read_lost
 from .telegram_invite import chat_entity_key
 from ...alembic.database import async_session_maker
 from ...alembic.models import ChatTarget, SocialAccount
@@ -25,9 +26,7 @@ logger = logging.getLogger(__name__)
 
 MAX_PARALLEL_INSPECT = 8
 _ACCOUNT_RESTRICTED = {
-    "UserBannedInChannelError",
     "UserBlockedError",
-    "ChatWriteForbiddenError",
     "UserDeactivatedBanError",
 }
 
@@ -42,6 +41,7 @@ class CommentProbe:
     error: str | None = None
     retry_account: bool = False
     account_blocked: bool = False
+    chat_read_lost: bool = False
 
 
 def _utc_now() -> datetime:
@@ -128,18 +128,34 @@ def _send_banned(rights: Any) -> bool | None:
     return bool(getattr(rights, "send_messages", False))
 
 
+def _restricted_probe(exc: BaseException, **kwargs: Any) -> CommentProbe | None:
+    if is_chat_read_lost(exc):
+        return CommentProbe(
+            comments_open=None,
+            error=str(exc)[:255],
+            retry_account=True,
+            chat_read_lost=True,
+            **kwargs,
+        )
+    if is_account_restricted_error(exc):
+        return CommentProbe(
+            comments_open=None,
+            error=str(exc)[:255],
+            retry_account=True,
+            account_blocked=True,
+            **kwargs,
+        )
+    return None
+
+
 async def probe_comments_readonly(client: TelegramAccountClient, chat_target: ChatTarget) -> CommentProbe:
     """Inspect a chat/channel via Telegram API without writing."""
     try:
         entity = await client.get_entity(chat_entity_key(chat_target))
     except Exception as exc:
-        if is_account_restricted_error(exc):
-            return CommentProbe(
-                comments_open=None,
-                error=str(exc)[:255],
-                retry_account=True,
-                account_blocked=True,
-            )
+        probe = _restricted_probe(exc)
+        if probe:
+            return probe
         name = type(exc).__name__
         if name in {"ChannelPrivateError", "ChatAdminRequiredError"}:
             return CommentProbe(comments_open=False, error=str(exc)[:255])
@@ -172,14 +188,9 @@ async def probe_comments_readonly(client: TelegramAccountClient, chat_target: Ch
                             discussion_send_banned = nested_banned
                         break
     except Exception as exc:
-        if is_account_restricted_error(exc):
-            return CommentProbe(
-                comments_open=None,
-                members_count=int(members) if members else None,
-                error=str(exc)[:255],
-                retry_account=True,
-                account_blocked=True,
-            )
+        probe = _restricted_probe(exc, members_count=int(members) if members else None)
+        if probe:
+            return probe
         logger.info("GetFullChannel failed for chat %s: %s", chat_target.id, exc)
 
     try:
@@ -191,15 +202,13 @@ async def probe_comments_readonly(client: TelegramAccountClient, chat_target: Ch
                 last_activity = date.replace(tzinfo=None) if getattr(date, "tzinfo", None) else date
             message_replies = _message_has_comment_replies(msg)
     except Exception as exc:
-        if is_account_restricted_error(exc):
-            return CommentProbe(
-                comments_open=None,
-                members_count=int(members) if members else None,
-                last_activity_at=last_activity,
-                error=str(exc)[:255],
-                retry_account=True,
-                account_blocked=True,
-            )
+        probe = _restricted_probe(
+            exc,
+            members_count=int(members) if members else None,
+            last_activity_at=last_activity,
+        )
+        if probe:
+            return probe
         logger.info("get_messages failed for chat %s: %s", chat_target.id, exc)
 
     comments_open = derive_comments_open(
@@ -229,8 +238,9 @@ async def ensure_comment_access(
         async with TelegramAccountClient.for_account(account) as client:
             probe = await probe_comments_readonly(client, chat_target)
     except Exception as exc:
-        if is_account_restricted_error(exc):
-            return CommentProbe(comments_open=None, error=str(exc)[:255], retry_account=True, account_blocked=True)
+        probe = _restricted_probe(exc)
+        if probe:
+            return probe
         return CommentProbe(comments_open=None, error=str(exc)[:255], retry_account=True)
 
     chat_target.comments_open = probe.comments_open
@@ -279,12 +289,23 @@ async def _inspect_worker(
                     try:
                         probe = await probe_comments_readonly(client, chat)
                     except Exception as exc:
-                        probe = CommentProbe(
+                        probe = _restricted_probe(exc) or CommentProbe(
                             comments_open=None,
                             error=str(exc)[:255],
                             retry_account=is_account_restricted_error(exc),
                             account_blocked=is_account_restricted_error(exc),
                         )
+                    if probe.chat_read_lost:
+                        from .chat_membership_service import retire_reader_and_replace
+
+                        _apply_probe(chat, probe)
+                        await retire_reader_and_replace(session, chat, account.id, error=probe.error)
+                        await session.commit()
+                        state = _job(automation_id)
+                        state["checked"] = int(state.get("checked") or 0) + 1
+                        state["errors"] = int(state.get("errors") or 0) + 1
+                        queue.task_done()
+                        continue
                     if probe.retry_account:
                         await queue.put(chat_id)
                         queue.task_done()

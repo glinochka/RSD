@@ -132,6 +132,8 @@ class Settings(BaseSettings):
     CUSTOM_TEST_WATCH_INTERVAL_SECONDS: int = 15
     CUSTOM_AMOCRM_SYNC_INTERVAL_SECONDS: int = 600
     CUSTOM_BAN_ALERT_THRESHOLD: float = 0.3
+    CUSTOM_MONITOR_SCAN_BATCH: int = 40
+    CUSTOM_ACTION_SCAN_BATCH: int = 20
 
     @field_validator("ADMIN_WEB_PASSWORD_HASH", "CUSTOM_ADMIN_PASSWORD_HASH", mode="before")
     @classmethod

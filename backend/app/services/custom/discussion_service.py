@@ -10,14 +10,31 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .chat_scope import apply_entity_metadata, is_group_chat, is_lab_chat, is_paused, load_own_sender_keys, load_shilling_message_ids, message_is_own_activity
+from .chat_scope import (
+    apply_entity_metadata,
+    commit_chat_scan,
+    is_group_chat,
+    is_paused,
+    load_own_sender_keys,
+    load_shilling_message_ids,
+    message_is_own_activity,
+)
+from .chat_membership_service import (
+    account_is_joined,
+    ensure_watcher_membership,
+    get_reader_account,
+    is_chat_watchable,
+    list_watchable_chats,
+    queue_actor_for_chat,
+    recover_reader_after_error,
+)
 from .prompt_service import render_prompt
 from .rotation_service import select_account_for_action
 from .shilling_service import _moscow_day_utc_range
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import execute_with_telegram_retry
 from .telegram_invite import chat_entity_key
-from ...alembic.models import AutomationActionLog, ChatJoinStatus, ChatTarget, CustomPrompt, PromptType, SocialAccount
+from ...alembic.models import AutomationActionLog, ChatTarget, CustomPrompt, PromptType, SocialAccount
 from ...config import settings
 from ...services.ai_authoring import ai_client
 
@@ -41,6 +58,11 @@ DEFAULT_DISCUSSION_PROMPT = """Ты — обычный участник Telegram
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+async def _skip_chat(session: AsyncSession, chat_target: ChatTarget, reason: str) -> dict[str, Any]:
+    await commit_chat_scan(session, chat_target)
+    return {"status": "skipped", "reason": reason}
 
 
 def _media_root() -> Path:
@@ -256,54 +278,81 @@ async def process_chat_target(
     max_replies_per_run: int = 1,
 ) -> dict[str, Any]:
     if is_paused(chat_target):
-        return {"status": "skipped", "reason": "paused"}
+        return await _skip_chat(session, chat_target, "paused")
     if not is_group_chat(chat_target):
-        return {"status": "skipped", "reason": "channel"}
-    if chat_target.join_status != ChatJoinStatus.JOINED.value:
-        return {"status": "skipped", "reason": "not_joined"}
+        return await _skip_chat(session, chat_target, "channel")
+    if not await is_chat_watchable(session, chat_target):
+        await ensure_watcher_membership(session, automation_id, chat_target)
+        return await _skip_chat(session, chat_target, "not_watchable")
 
     if await _already_replied_today(session, automation_id, chat_target.id):
-        return {"status": "skipped", "reason": "daily_limit"}
+        return await _skip_chat(session, chat_target, "daily_limit")
 
     config = chat_target.discussion_config or {}
     if not _is_active_hour(config):
-        return {"status": "skipped", "reason": "activity_hours"}
+        return await _skip_chat(session, chat_target, "activity_hours")
 
     probability = float(config.get("reply_probability") or 0.3)
     if probability <= 0:
-        return {"status": "skipped", "reason": "probability_zero"}
+        return await _skip_chat(session, chat_target, "probability_zero")
 
-    account = await select_account_for_action(session, automation_id, "discussion")
-    if not account or not account.session_file_path:
-        return {"status": "skipped", "reason": "no_account"}
-
-    session_path = _media_root() / account.session_file_path
-    if not session_path.exists():
-        return {"status": "skipped", "reason": "session_missing"}
-
+    tried: set[int] = set()
     messages = []
-    try:
-        async with TelegramAccountClient.for_account(account) as client:
-            entity = await client.get_entity(
-                chat_entity_key(chat_target)
-            )
-            apply_entity_metadata(chat_target, entity)
-            if not is_group_chat(chat_target):
-                await session.commit()
-                return {"status": "skipped", "reason": "channel"}
-            history = await client.client.get_messages(entity, limit=50)
-            for msg in history:
-                if not msg or not msg.text or msg.id is None:
-                    continue
-                if getattr(msg, "out", False):
-                    continue
-                msg_age_hours = (datetime.now(timezone.utc) - msg.date).total_seconds() / 3600
-                if msg_age_hours > 24:
-                    continue
-                messages.append(msg)
-    except Exception as exc:
-        logger.warning("Fetch discussion messages for chat %s failed: %s", chat_target.id, exc)
-        return {"status": "error", "error": str(exc)}
+    while True:
+        reader = await get_reader_account(session, chat_target, exclude_account_ids=tried)
+        if not reader or not reader.session_file_path:
+            await ensure_watcher_membership(session, automation_id, chat_target)
+            return await _skip_chat(session, chat_target, "no_reader")
+        tried.add(reader.id)
+        session_path = _media_root() / reader.session_file_path
+        if not session_path.exists():
+            continue
+        messages = []
+        try:
+            async with TelegramAccountClient.for_account(reader) as client:
+                entity = await client.get_entity(
+                    chat_entity_key(chat_target)
+                )
+                apply_entity_metadata(chat_target, entity)
+                if not is_group_chat(chat_target):
+                    return await _skip_chat(session, chat_target, "channel")
+                history = await client.client.get_messages(entity, limit=50)
+                for msg in history:
+                    if not msg or not msg.text or msg.id is None:
+                        continue
+                    if getattr(msg, "out", False):
+                        continue
+                    msg_age_hours = (datetime.now(timezone.utc) - msg.date).total_seconds() / 3600
+                    if msg_age_hours > 24:
+                        continue
+                    messages.append(msg)
+            break
+        except Exception as exc:
+            logger.warning("Fetch discussion messages for chat %s failed: %s", chat_target.id, exc)
+            if await recover_reader_after_error(session, chat_target, reader, exc):
+                continue
+            await commit_chat_scan(session, chat_target)
+            return {"status": "error", "error": str(exc)}
+
+    skipped_speakers: set[int] = set()
+    account = None
+    while True:
+        account = await select_account_for_action(
+            session,
+            automation_id,
+            "discussion",
+            consume_quota=False,
+            exclude_account_ids=skipped_speakers or None,
+        )
+        if not account or not account.session_file_path:
+            return await _skip_chat(session, chat_target, "no_account")
+        if await account_is_joined(session, chat_target.id, account.id):
+            break
+        queued = await queue_actor_for_chat(session, automation_id, chat_target, account)
+        if queued is None:
+            skipped_speakers.add(account.id)
+            continue
+        return await _skip_chat(session, chat_target, "waiting_join")
 
     messages.sort(key=lambda m: m.id)
     own_keys = await load_own_sender_keys(session, automation_id)
@@ -342,6 +391,11 @@ async def process_chat_target(
         chosen = assigned or account
         if not chosen or chosen.daily_messages_sent >= max_daily or not chosen.session_file_path:
             continue
+        if not await account_is_joined(session, chat_target.id, chosen.id):
+            queued = await queue_actor_for_chat(session, automation_id, chat_target, chosen)
+            if queued is None:
+                skipped_speakers.add(chosen.id)
+            continue
 
         reply = await _generate_reply(session, automation_id, message_text=msg.text, chat_title=chat_target.title or "")
         if not reply:
@@ -373,15 +427,15 @@ async def run_discussion_pass(automation_id: int) -> dict[str, Any]:
             logger.info("Digital footprint / discussion disabled or automation not found for %s", automation_id)
             return {"status": "skipped", "reason": "feature_disabled", "chats_processed": 0, "replies_sent": 0}
         max_daily = automation.max_daily_messages_per_account
-        result = await session.execute(
-            select(ChatTarget).where(
-                ChatTarget.custom_automation_id == automation_id,
-                ChatTarget.is_active.is_(True),
-                ChatTarget.join_status == ChatJoinStatus.JOINED.value,
-                ChatTarget.mode != "inactive",
+        chats = [
+            chat
+            for chat in await list_watchable_chats(
+                session,
+                automation_id,
+                limit=settings.CUSTOM_ACTION_SCAN_BATCH,
             )
-        )
-        chats = [chat for chat in result.scalars().all() if not is_lab_chat(chat)]
+            if is_group_chat(chat)
+        ]
         for chat_target in chats:
             try:
                 res = await process_chat_target(session, automation_id, chat_target, max_daily)

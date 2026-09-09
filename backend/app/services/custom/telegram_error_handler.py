@@ -102,6 +102,7 @@ for cls_name in (
     "UserNotParticipantError",
     "ChannelPrivateError",
     "ChatForbiddenError",
+    "UserKickedError",
 ):
     try:
         cls = getattr(__import__("telethon.errors", fromlist=[cls_name]), cls_name, None)
@@ -170,9 +171,57 @@ def _classify_telegram_error(exc: Exception) -> dict[str, Any]:
         return {"kind": "deactivated"}
     if "bannedinchannel" in compact or "chatwriteforbidden" in compact:
         return {"kind": "chat_restricted"}
+    if any(
+        token in compact
+        for token in (
+            "usernotparticipant",
+            "channelprivate",
+            "chatforbidden",
+            "userkicked",
+            "youwerekicked",
+        )
+    ):
+        return {"kind": "chat_restricted"}
     if "auth" in lowered or "unregistered" in lowered or "revoked" in lowered:
         return {"kind": "session"}
     return {"kind": "other", "name": name}
+
+
+_READ_LOST_NAMES = {
+    "UserBannedInChannelError",
+    "UserNotParticipantError",
+    "ChannelPrivateError",
+    "ChatForbiddenError",
+    "UserKickedError",
+}
+_READ_LOST_TOKENS = (
+    "bannedinchannel",
+    "usernotparticipant",
+    "channelprivate",
+    "chatforbidden",
+    "userkicked",
+    "youwerekicked",
+)
+_WRITE_ONLY_TOKENS = (
+    "chatwriteforbidden",
+    "chatadminrequired",
+)
+
+
+def is_chat_read_lost(exc: Exception) -> bool:
+    """True when this account can no longer see this chat (kick/ban/private), not a global account ban."""
+    name = type(exc).__name__
+    if name in _READ_LOST_NAMES:
+        return True
+    compact = f"{name} {exc}".lower().replace("_", "").replace(" ", "")
+    if any(token in compact for token in _WRITE_ONLY_TOKENS):
+        return False
+    return any(token in compact for token in _READ_LOST_TOKENS)
+
+
+def is_account_dead(exc: Exception) -> bool:
+    kind = _classify_telegram_error(exc).get("kind")
+    return kind in {"session", "deactivated"}
 
 
 def mark_session_invalid(account: SocialAccount) -> None:
