@@ -125,6 +125,25 @@ class TestCustomClient:
         data = response.json()
         assert data["automation_id"] == custom_automation.id
 
+    async def test_client_cannot_open_errors_feed(
+        self,
+        client: AsyncClient,
+        custom_automation: CustomAutomation,
+        client_token: str,
+        admin_token: str,
+    ):
+        denied = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/errors",
+            headers={"Authorization": f"Bearer {client_token}"},
+        )
+        assert denied.status_code == 401
+        opened = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/errors",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        assert opened.status_code == 200
+        assert "items" in opened.json()
+
 
 class TestDashboardActivity:
     async def test_last_24h_keeps_product_actions_only(

@@ -353,6 +353,7 @@ async def automation_errors(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     automation: CustomAutomation = Depends(get_current_custom_automation),
+    admin=Depends(get_current_custom_admin),
 ):
     async with async_session_maker() as session:
         data = await list_error_feed(

@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { Navigate, useParams } from 'react-router-dom';
 import CustomSelect from '../../../components/CustomSelect';
 import customService from '../../../services/customService';
+import { useCustomAuth } from '../../../components/custom/useCustomAuth';
+import { NAVIGATION_ROUTES } from '../../../config/constants';
 import '../../../styles/projectCRMPage.css';
 import '../../../styles/projectSettingsPage.css';
 
@@ -29,6 +31,7 @@ function formatDate(value) {
 
 const CustomAutomationErrorsPage = () => {
   const { id } = useParams();
+  const { isAdmin } = useCustomAuth();
   const [items, setItems] = useState([]);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
@@ -56,8 +59,15 @@ const CustomAutomationErrorsPage = () => {
   }, [id, actionType, offset]);
 
   useEffect(() => {
+    if (!isAdmin) {
+      return;
+    }
     loadErrors();
-  }, [loadErrors]);
+  }, [isAdmin, loadErrors]);
+
+  if (!isAdmin) {
+    return <Navigate to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_DASHBOARD(id)} replace />;
+  }
 
   return (
     <div className="settings-page">
