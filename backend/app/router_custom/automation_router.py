@@ -490,6 +490,7 @@ def _account_response(
         is_active=social_account.is_active,
         is_banned=social_account.is_banned,
         is_spamblocked=bool(getattr(social_account, "is_spamblocked", False)),
+        is_frozen=bool(getattr(social_account, "is_frozen", False)),
         auto_classified=social_account.auto_classified,
         risk_score=social_account.risk_score,
         trust_score=social_account.trust_score,
@@ -501,6 +502,7 @@ def _account_response(
         added_at=pool_account.added_at,
         last_health_check_at=social_account.last_health_check_at,
         spamblock_checked_at=getattr(social_account, "spamblock_checked_at", None),
+        frozen_at=getattr(social_account, "frozen_at", None),
         updated_at=social_account.updated_at,
         proxy_label=proxy_label(getattr(social_account, "telegram_proxy", None)),
     )
@@ -570,6 +572,7 @@ async def list_accounts(
             stmt = stmt.where(
                 SocialAccount.session_file_path.isnot(None),
                 SocialAccount.is_active.is_(True),
+                SocialAccount.is_frozen.is_(False),
             )
         elif status == "revoked":
             stmt = stmt.where(
@@ -578,6 +581,8 @@ async def list_accounts(
             )
         elif status == "spamblock":
             stmt = stmt.where(SocialAccount.is_spamblocked.is_(True))
+        elif status == "frozen":
+            stmt = stmt.where(SocialAccount.is_frozen.is_(True))
         elif status == "banned":
             stmt = stmt.where(SocialAccount.is_banned.is_(True))
         elif status == "empty":
@@ -618,7 +623,7 @@ async def account_ban_stats(
         )
         if not pool:
             return AccountBanStatsResponse(
-                total=0, active=0, banned=0, revoked=0, spamblocked=0, banned_percent=0.0, alert=False
+                total=0, active=0, banned=0, revoked=0, spamblocked=0, frozen=0, banned_percent=0.0, alert=False
             )
         total = await session.scalar(
             select(func.count(PoolAccount.id)).where(PoolAccount.account_pool_id == pool.id)
@@ -638,6 +643,7 @@ async def account_ban_stats(
                 PoolAccount.account_pool_id == pool.id,
                 SocialAccount.is_active.is_(True),
                 SocialAccount.is_banned.is_(False),
+                SocialAccount.is_frozen.is_(False),
             )
         )
         revoked = await session.scalar(
@@ -658,6 +664,14 @@ async def account_ban_stats(
                 SocialAccount.is_spamblocked.is_(True),
             )
         )
+        frozen = await session.scalar(
+            select(func.count(PoolAccount.id))
+            .join(SocialAccount, PoolAccount.social_account_id == SocialAccount.id)
+            .where(
+                PoolAccount.account_pool_id == pool.id,
+                SocialAccount.is_frozen.is_(True),
+            )
+        )
         banned_percent = round((banned or 0) / total, 2) if total else 0.0
         alert_threshold = float(settings.CUSTOM_BAN_ALERT_THRESHOLD or 0.3)
         is_alert = banned_percent >= alert_threshold
@@ -672,6 +686,7 @@ async def account_ban_stats(
             banned=banned or 0,
             revoked=revoked or 0,
             spamblocked=spamblocked or 0,
+            frozen=frozen or 0,
             banned_percent=banned_percent,
             alert_threshold=alert_threshold,
             alert=is_alert,
@@ -691,7 +706,7 @@ async def run_account_health_check(
     error = sum(
         1
         for r in results
-        if r.get("status") in {"error", "not_found", "session_invalid", "banned", "spamblock"}
+        if r.get("status") in {"error", "not_found", "session_invalid", "banned", "spamblock", "frozen"}
     )
     return AccountHealthCheckResponse(
         results=[AccountHealthCheckResult(**r) for r in results],

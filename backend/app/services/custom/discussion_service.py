@@ -29,7 +29,7 @@ from .chat_membership_service import (
     recover_reader_after_error,
 )
 from .prompt_service import render_prompt
-from .rotation_service import select_account_for_action
+from .rotation_service import record_successful_send, select_account_for_action
 from .shilling_service import _moscow_day_utc_range
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import execute_with_telegram_retry
@@ -198,7 +198,7 @@ async def _assigned_account_for_thread(
     if not log or not log.social_account_id:
         return None
     account = await session.get(SocialAccount, log.social_account_id)
-    if not account or not account.is_active or account.is_banned:
+    if not account or not account.is_active or account.is_banned or getattr(account, "is_frozen", False):
         return None
     if account.daily_messages_sent >= max_daily:
         return None
@@ -240,6 +240,8 @@ async def _send_reply(
     except Exception as exc:
         logger.warning("Send discussion reply failed for chat %s message %s: %s", chat_target.id, message.id, exc)
         return False
+
+    record_successful_send(account)
 
     sender = getattr(message, "sender", None)
     source_author = " ".join(
@@ -404,8 +406,6 @@ async def process_chat_target(
         success = await _send_reply(session, automation_id, chat_target, chosen, msg, reply)
         if success:
             sent += 1
-            chosen.daily_messages_sent += 1
-            chosen.last_used_at = _utc_now()
             if chosen is not account:
                 await session.commit()
 

@@ -2335,10 +2335,14 @@ class SocialAccount(Base):
     is_spamblocked: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", nullable=False, index=True
     )
+    is_frozen: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False, index=True
+    )
     banned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     ban_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
     spamblocked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     spamblock_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    frozen_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     telegram_proxy: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     last_health_check_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

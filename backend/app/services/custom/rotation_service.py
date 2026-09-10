@@ -94,6 +94,8 @@ def _filter_eligible(
             continue
         if exclude_banned and social_account.is_banned:
             continue
+        if getattr(social_account, "is_frozen", False):
+            continue
         if exclude_spamblocked and social_account.is_spamblocked:
             continue
         if not account_matches_action(pool_account, social_account, action_type):
@@ -162,6 +164,8 @@ async def list_alive_session_accounts(
             continue
         if exclude_banned and social.is_banned:
             continue
+        if getattr(social, "is_frozen", False):
+            continue
         if not social.session_file_path and not getattr(social, "encrypted_session", None):
             continue
         if assigned_class and (
@@ -172,6 +176,13 @@ async def list_alive_session_accounts(
     return alive
 
 
+def record_successful_send(account: SocialAccount) -> None:
+    """Count a message only after Telegram actually accepted it."""
+    _reset_counters_if_needed([account])
+    account.daily_messages_sent = (account.daily_messages_sent or 0) + 1
+    account.last_used_at = _utc_now()
+
+
 async def select_account_for_action(
     session: AsyncSession,
     automation: CustomAutomation | int,
@@ -179,7 +190,7 @@ async def select_account_for_action(
     thread_id: int | None = None,
     exclude_banned: bool = True,
     exclude_account_ids: set[int] | None = None,
-    consume_quota: bool = True,
+    consume_quota: bool = False,
 ) -> SocialAccount | None:
     """Pick an account from the default pool respecting class, rotation strategy and daily limits.
 
@@ -191,7 +202,7 @@ async def select_account_for_action(
             account is returned if it is still eligible.
         exclude_banned: skip banned accounts.
         exclude_account_ids: never return these account ids (used to pick a second shilling speaker).
-        consume_quota: increment daily_messages_sent / last_used_at. False for read-only scans.
+        consume_quota: leftover flag; daily_messages_sent grows only via record_successful_send.
 
     Returns:
         A SocialAccount instance or None if no eligible account exists.
@@ -240,6 +251,7 @@ async def select_account_for_action(
                 assigned
                 and assigned.is_active
                 and not (exclude_banned and assigned.is_banned)
+                and not getattr(assigned, "is_frozen", False)
                 and not (exclude_spamblocked and assigned.is_spamblocked)
             )
             assigned_row = next((row for row in rows if assigned and row[1].id == assigned.id), None)
@@ -254,9 +266,6 @@ async def select_account_for_action(
                         or assigned.daily_messages_sent < automation_obj.max_daily_messages_per_account
                     )
                 ):
-                    if consume_quota and action_type not in _UNLIMITED_QUOTA_ACTIONS:
-                        assigned.daily_messages_sent += 1
-                        assigned.last_used_at = _utc_now()
                     return assigned
                 logger.info(
                     "Assigned account %s for thread %s is not eligible (class=%s, sent=%s)",
@@ -274,9 +283,8 @@ async def select_account_for_action(
     else:
         selected = _select_round_robin(eligible)
 
-    if consume_quota and action_type not in _UNLIMITED_QUOTA_ACTIONS:
-        selected.daily_messages_sent += 1
-        selected.last_used_at = _utc_now()
+    selected.last_used_at = _utc_now()
+    _ = consume_quota
 
     if thread_id and lead:
         lead.assigned_account_id = selected.id
@@ -308,7 +316,7 @@ async def select_distinct_accounts_for_action(
     count: int = 2,
     exclude_banned: bool = True,
     exclude_account_ids: set[int] | None = None,
-    consume_quota: bool = True,
+    consume_quota: bool = False,
 ) -> list[SocialAccount]:
     """Pick ``count`` distinct accounts. Returns [] if a full distinct set cannot be formed."""
     selected: list[SocialAccount] = []

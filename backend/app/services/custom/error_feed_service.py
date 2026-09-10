@@ -22,6 +22,7 @@ ACTION_LABELS = {
     "inbound_dm": "Входящее ЛС",
     "post_engagement": "Пост в канале",
     "chat_import": "Импорт чатов",
+    "profile_update": "Обновление профиля",
 }
 
 

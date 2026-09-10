@@ -60,6 +60,8 @@ def _utc_now() -> datetime:
 def _account_can_open_session(account: SocialAccount | None) -> bool:
     if not account or not account.is_active or account.is_banned:
         return False
+    if getattr(account, "is_frozen", False):
+        return False
     if getattr(account, "encrypted_session", None):
         return True
     return bool((account.session_file_path or "").strip())
@@ -107,6 +109,7 @@ async def has_live_joined_member(session: AsyncSession, chat_target_id: int) -> 
             AccountChatMembership.join_status == ChatJoinStatus.JOINED.value,
             SocialAccount.is_active.is_(True),
             SocialAccount.is_banned.is_(False),
+            SocialAccount.is_frozen.is_(False),
         )
         .limit(1)
     )
@@ -192,6 +195,7 @@ async def _chat_has_active_watcher(session: AsyncSession, chat_target_id: int) -
             AccountChatMembership.join_status.in_(list(_ACTIVE_WATCHER_STATUSES)),
             SocialAccount.is_active.is_(True),
             SocialAccount.is_banned.is_(False),
+            SocialAccount.is_frozen.is_(False),
         )
         .limit(1)
     )
@@ -207,6 +211,7 @@ def live_joined_chat_ids(automation_id: int):
             AccountChatMembership.join_status == ChatJoinStatus.JOINED.value,
             SocialAccount.is_active.is_(True),
             SocialAccount.is_banned.is_(False),
+            SocialAccount.is_frozen.is_(False),
         )
         .distinct()
     )
@@ -260,6 +265,7 @@ async def _promote_live_member_to_watcher(
         AccountChatMembership.join_status == ChatJoinStatus.JOINED.value,
         SocialAccount.is_active.is_(True),
         SocialAccount.is_banned.is_(False),
+            SocialAccount.is_frozen.is_(False),
     ]
     if exclude_account_ids:
         filters.append(AccountChatMembership.social_account_id.notin_(exclude_account_ids))
@@ -766,6 +772,7 @@ async def get_reader_account(
         AccountChatMembership.join_status == ChatJoinStatus.JOINED.value,
         SocialAccount.is_active.is_(True),
         SocialAccount.is_banned.is_(False),
+            SocialAccount.is_frozen.is_(False),
     ]
     if excluded:
         filters.append(AccountChatMembership.social_account_id.notin_(excluded))

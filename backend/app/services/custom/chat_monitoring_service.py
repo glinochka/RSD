@@ -173,7 +173,7 @@ async def _generate_response(
 
 
 def _account_can_open_session(account: SocialAccount | None) -> bool:
-    if account is None or not account.is_active or account.is_banned:
+    if account is None or not account.is_active or account.is_banned or getattr(account, "is_frozen", False):
         return False
     if getattr(account, "encrypted_session", None):
         return True

@@ -134,6 +134,8 @@ class BulkProfileUpdateWorker:
         social_account = await session.get(SocialAccount, account_id)
         if not social_account:
             return {"account_id": account_id, "status": "skipped", "reason": "not_found"}
+        if getattr(social_account, "is_frozen", False):
+            return {"account_id": account_id, "status": "skipped", "reason": "frozen"}
         if not social_account.session_file_path:
             return {"account_id": account_id, "status": "skipped", "reason": "no_session"}
 

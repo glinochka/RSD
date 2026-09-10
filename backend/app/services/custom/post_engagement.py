@@ -1,4 +1,4 @@
-"""One claim per post: skip most of them, and never mix neurocommenting with shilling."""
+"""One claim per post: 30% chance to act, never twice in a row in the same channel."""
 from __future__ import annotations
 
 import random
@@ -13,8 +13,7 @@ from ...alembic.models import AutomationActionLog
 
 
 POST_ENGAGEMENT_ACTION = "post_engagement"
-MIN_POST_GAP = 2
-MAX_POST_GAP = 2
+POST_ACTION_CHANCE = 0.30
 POST_SHILL_CHANCE = 0.25
 
 NEUROCOMMENTING = "neurocommenting"
@@ -103,40 +102,27 @@ def _pick_action(
     return SHILLING if roll() < POST_SHILL_CHANCE else NEUROCOMMENTING
 
 
-def _cadence_required_skips(
+def _previous_was_action(older: list[tuple[int, AutomationActionLog]]) -> bool:
+    if not older:
+        return False
+    return older[-1][1].result in {NEUROCOMMENTING, SHILLING}
+
+
+def _decide_result(
+    *,
+    neuro_enabled: bool,
+    shilling_enabled: bool,
     older: list[tuple[int, AutomationActionLog]],
-    pick_gap: Callable[[], int],
-) -> tuple[int, int, bool]:
-    consecutive_skips = 0
-    last_action: AutomationActionLog | None = None
-    for _post_id, log in reversed(older):
-        if log.result == SKIP:
-            consecutive_skips += 1
-            continue
-        last_action = log
-        break
-    if last_action:
-        payload = last_action.payload or {}
-        try:
-            required = int(payload.get("next_skip"))
-        except (TypeError, ValueError):
-            required = pick_gap()
-        required = max(MIN_POST_GAP, min(MAX_POST_GAP, required))
-        return consecutive_skips, required, False
-    required = None
-    for _post_id, log in older:
-        payload = log.payload or {}
-        if payload.get("next_skip") is None:
-            continue
-        try:
-            required = int(payload.get("next_skip"))
-            break
-        except (TypeError, ValueError):
-            continue
-    if required is None:
-        required = pick_gap()
-        return consecutive_skips, max(MIN_POST_GAP, min(MAX_POST_GAP, required)), True
-    return consecutive_skips, max(MIN_POST_GAP, min(MAX_POST_GAP, required)), False
+    lab_mode: bool,
+    activate_roll: Callable[[], float],
+    pick: Callable[[list[str]], str] | None,
+    type_roll: Callable[[], float],
+) -> str:
+    if not lab_mode and _previous_was_action(older):
+        return SKIP
+    if not lab_mode and activate_roll() >= POST_ACTION_CHANCE:
+        return SKIP
+    return _pick_action(neuro_enabled, shilling_enabled, pick, type_roll)
 
 
 async def claim_post_engagement(
@@ -151,40 +137,44 @@ async def claim_post_engagement(
     roll: Callable[[], float] | None = None,
     pick: Callable[[list[str]], str] | None = None,
     pick_gap: Callable[[], int] | None = None,
+    activate_roll: Callable[[], float] | None = None,
+    lab_mode: bool = False,
 ) -> ClaimResult:
     """Decide once per post: skip / neurocommenting / shilling.
 
-    Cadence is 1 action per 3 posts on a channel (skip 2 after each action).
+    Production: 30% chance to act, and never two actions in a row in the same channel.
     If both modules are on, shilling wins 25% of the time and a regular comment 75%.
-    Later callers reuse the first claim.
+    Lab mode always acts. Later callers reuse the first claim.
     """
     existing = await get_post_engagement_claim(session, automation_id, chat_target_id, post_id)
     if existing:
         return existing.result
 
-    roller = roll or random.random
-    gap = pick_gap or (lambda: random.randint(MIN_POST_GAP, MAX_POST_GAP))
+    type_roller = roll or random.random
+    chance_roller = activate_roll or random.random
+    _ = pick_gap
     older = [
         item
         for item in await list_channel_post_claims(session, automation_id, chat_target_id)
         if item[0] < int(post_id)
     ]
-    consecutive_skips, required, persist_initial_gap = _cadence_required_skips(older, gap)
-    if consecutive_skips < required:
-        result = SKIP
-        next_skip = required if persist_initial_gap else None
-    else:
-        result = _pick_action(neuro_enabled, shilling_enabled, pick, roller)
-        next_skip = gap() if result != SKIP else None
+    result = _decide_result(
+        neuro_enabled=neuro_enabled,
+        shilling_enabled=shilling_enabled,
+        older=older,
+        lab_mode=lab_mode,
+        activate_roll=chance_roller,
+        pick=pick,
+        type_roll=type_roller,
+    )
 
     payload: dict[str, Any] = {
         "chat_target_id": chat_target_id,
         "post_id": post_id,
         "neuro_enabled": neuro_enabled,
         "shilling_enabled": shilling_enabled,
+        "lab_mode": lab_mode,
     }
-    if next_skip is not None:
-        payload["next_skip"] = next_skip
     session.add(
         AutomationActionLog(
             custom_automation_id=automation_id,

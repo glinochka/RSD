@@ -46,6 +46,17 @@ class AccountHealthWorker:
             select(PoolAccount).where(PoolAccount.social_account_id == account_id)
         )
 
+        if getattr(social_account, "is_frozen", False):
+            social_account.last_health_check_at = _utc_now()
+            social_account.updated_at = _utc_now()
+            await session.commit()
+            return {
+                "account_id": account_id,
+                "status": "frozen",
+                "classification": None,
+                "error": "frozen",
+            }
+
         info = None
         avatar_bytes = None
         error_kind = None
@@ -67,6 +78,7 @@ class AccountHealthWorker:
                             need_spam_check = (_utc_now() - then) >= _SPAMBLOCK_RECHECK
                         async with TelegramAccountClient.for_account(social_account) as client:
                             info = await client.get_info()
+                            await client.probe_writable()
                             if need_spam_check:
                                 spam_state = await client.check_spamblock()
                             if info.get("has_avatar"):
@@ -120,8 +132,8 @@ class AccountHealthWorker:
         else:
             social_account.is_active = False
 
-        if error_kind in {"session_invalid", "banned", "spamblock"}:
-            if error_kind in {"session_invalid", "banned"}:
+        if error_kind in {"session_invalid", "banned", "spamblock", "frozen"}:
+            if error_kind in {"session_invalid", "banned", "frozen"}:
                 from .chat_membership_service import replace_watchers_for_dead_account
 
                 await replace_watchers_for_dead_account(session, account_id)

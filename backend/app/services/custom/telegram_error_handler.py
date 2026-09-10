@@ -45,6 +45,7 @@ FLOOD_ERRORS = set()
 DEACTIVATED_ERRORS = set()
 SESSION_ERRORS = set()
 SPAMBLOCK_ERRORS = set()
+FROZEN_ERRORS = set()
 CHAT_RESTRICTED_ERRORS = set()
 
 
@@ -95,6 +96,15 @@ for cls_name in ("PeerFloodError",):
         pass
 
 
+for cls_name in ("FrozenMethodInvalidError", "FrozenParticipantMissingError"):
+    try:
+        cls = getattr(__import__("telethon.errors", fromlist=[cls_name]), cls_name, None)
+        if cls:
+            FROZEN_ERRORS.add(cls)
+    except Exception:
+        pass
+
+
 for cls_name in (
     "UserBannedInChannelError",
     "ChatWriteForbiddenError",
@@ -124,6 +134,21 @@ def parse_spambot_reply(text: str | None) -> bool | None:
     return None
 
 
+def _looks_like_frozen_error(exc: Exception) -> bool:
+    lowered = f"{type(exc).__name__} {exc}".lower().replace("_", " ")
+    compact = lowered.replace(" ", "")
+    needles = (
+        "frozenmethodinvalid",
+        "frozenparticipantmissing",
+        "frozenaccounts",
+        "frozen account",
+        "account is frozen",
+        "not available for frozen",
+        "method that is not available for frozen",
+    )
+    return any(needle in compact or needle in lowered for needle in needles)
+
+
 def _looks_like_session_error(exc: Exception) -> bool:
     lowered = f"{type(exc).__name__} {exc}".lower()
     needles = (
@@ -149,6 +174,10 @@ def _classify_telegram_error(exc: Exception) -> dict[str, Any]:
     """Return dict with keys: kind, seconds (for flood)."""
     if isinstance(exc, SessionInvalidError) or _looks_like_session_error(exc):
         return {"kind": "session"}
+    if FROZEN_ERRORS and isinstance(exc, tuple(FROZEN_ERRORS)):
+        return {"kind": "frozen"}
+    if _looks_like_frozen_error(exc):
+        return {"kind": "frozen"}
     if FLOOD_ERRORS and isinstance(exc, tuple(FLOOD_ERRORS)):
         seconds = getattr(exc, "seconds", 60)
         return {"kind": "flood", "seconds": seconds}
@@ -221,7 +250,16 @@ def is_chat_read_lost(exc: Exception) -> bool:
 
 def is_account_dead(exc: Exception) -> bool:
     kind = _classify_telegram_error(exc).get("kind")
-    return kind in {"session", "deactivated"}
+    return kind in {"session", "deactivated", "frozen"}
+
+
+def account_is_usable(account: SocialAccount | None) -> bool:
+    """Session is authorized and the account can still perform Telegram actions."""
+    if not account or not account.is_active or account.is_banned:
+        return False
+    if getattr(account, "is_frozen", False):
+        return False
+    return True
 
 
 def mark_session_invalid(account: SocialAccount) -> None:
@@ -241,6 +279,13 @@ def mark_spamblocked(account: SocialAccount, *, blocked: bool) -> None:
     account.is_spamblocked = blocked
     account.spamblocked_at = _utc_now() if blocked else None
     account.spamblock_checked_at = _utc_now()
+    account.updated_at = _utc_now()
+
+
+def mark_frozen(account: SocialAccount) -> None:
+    """Session stays valid; Telegram rejects writes until the freeze is lifted."""
+    account.is_frozen = True
+    account.frozen_at = account.frozen_at or _utc_now()
     account.updated_at = _utc_now()
 
 
@@ -307,6 +352,26 @@ async def execute_with_telegram_retry(
                     error_message=str(exc),
                     automation_id=automation_id,
                 )
+                raise
+            if kind == "frozen":
+                mark_frozen(account)
+                await session.commit()
+                await log_action_error(
+                    session, account,
+                    action_type=action_type,
+                    target_id=target_id,
+                    target_type=target_type,
+                    payload=payload,
+                    error_message=str(exc),
+                    automation_id=automation_id,
+                )
+                try:
+                    from .chat_membership_service import replace_watchers_for_dead_account
+
+                    await replace_watchers_for_dead_account(session, account.id)
+                    await session.commit()
+                except Exception as replace_exc:
+                    logger.warning("Could not replace watchers for frozen account %s: %s", account.id, replace_exc)
                 raise
             if kind == "spamblock":
                 mark_spamblocked(account, blocked=True)
@@ -383,6 +448,10 @@ async def update_account_after_telegram_error(
         mark_account_deactivated(account, exc)
         await session.commit()
         return "banned"
+    if kind == "frozen":
+        mark_frozen(account)
+        await session.commit()
+        return "frozen"
     if kind == "spamblock":
         mark_spamblocked(account, blocked=True)
         await session.commit()

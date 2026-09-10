@@ -495,6 +495,50 @@ class TestAccountPoolAndRotation:
         selected = await select_account_for_action(test_session, custom_automation.id, "dm")
         assert selected is not None
         assert selected.id == account.id
+        assert selected.daily_messages_sent == 0
+
+    async def test_quota_counts_only_successful_sends(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from app.services.account_pool_service import get_or_create_default_pool
+        from app.services.custom.account_roles import default_roles_for_class
+        from app.services.custom.rotation_service import record_successful_send, select_account_for_action
+
+        pool = await get_or_create_default_pool(test_session, custom_automation.id)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number="+79990000099",
+            username="quota_account",
+            display_name="Quota Account",
+            account_class=AccountClass.ONE_DAY.value,
+            risk_score=0.1,
+            trust_score=0.9,
+            activity_score=50.0,
+            encrypted_session="mock_encrypted_session",
+            session_file_path="sessions/quota_account.session",
+            is_active=True,
+            is_banned=False,
+        )
+        test_session.add(account)
+        await test_session.flush()
+        test_session.add(
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account.id,
+                assigned_class=AccountClass.ONE_DAY.value,
+                custom_automation_id=custom_automation.id,
+                roles=default_roles_for_class(AccountClass.ONE_DAY.value),
+            )
+        )
+        await test_session.commit()
+
+        selected = await select_account_for_action(test_session, custom_automation.id, "commenting")
+        assert selected is not None
+        assert selected.daily_messages_sent == 0
+        record_successful_send(selected)
+        await test_session.commit()
+        await test_session.refresh(selected)
+        assert selected.daily_messages_sent == 1
 
 
 class TestLeadLifecycle:
@@ -1923,7 +1967,7 @@ class TestShilling:
             account_id=account.id,
             neuro_enabled=True,
             shilling_enabled=True,
-            pick_gap=lambda: 2,
+            activate_roll=lambda: 1.0,
         )
         assert skipped == SKIP
         skipped_again = await claim_post_engagement(
@@ -1934,7 +1978,7 @@ class TestShilling:
             account_id=account.id,
             neuro_enabled=True,
             shilling_enabled=True,
-            pick_gap=lambda: 2,
+            activate_roll=lambda: 1.0,
         )
         assert skipped_again == SKIP
         again = await claim_post_engagement(
@@ -1945,7 +1989,7 @@ class TestShilling:
             account_id=account.id,
             neuro_enabled=True,
             shilling_enabled=True,
-            pick_gap=lambda: 2,
+            activate_roll=lambda: 0.0,
             pick=lambda options: "shilling",
         )
         assert again == SKIP
@@ -1958,7 +2002,7 @@ class TestShilling:
             account_id=account.id,
             neuro_enabled=True,
             shilling_enabled=True,
-            pick_gap=lambda: 2,
+            activate_roll=lambda: 0.0,
             pick=lambda options: "neurocommenting",
         )
         second = await claim_post_engagement(
@@ -1969,7 +2013,7 @@ class TestShilling:
             account_id=account.id,
             neuro_enabled=True,
             shilling_enabled=True,
-            pick_gap=lambda: 2,
+            activate_roll=lambda: 0.0,
             pick=lambda options: "shilling",
         )
         assert first == "neurocommenting"
@@ -2002,7 +2046,7 @@ class TestShilling:
             account_id=account.id,
             neuro_enabled=True,
             shilling_enabled=True,
-            pick_gap=lambda: 2,
+            activate_roll=lambda: 1.0,
         )
         assert skipped == "skip"
 
@@ -2300,16 +2344,53 @@ class TestShilling:
                     account_id=account.id,
                     neuro_enabled=True,
                     shilling_enabled=False,
-                    pick_gap=lambda: 2,
+                    activate_roll=lambda: 0.0,
                     pick=lambda options: "neurocommenting",
                 )
             )
-        assert results[0] == SKIP
-        assert results[1] == SKIP
-        assert results[2] == "neurocommenting"
-        assert results[3] == SKIP
-        assert results[4] == SKIP
-        assert results[5] == "neurocommenting"
+        assert results == [
+            "neurocommenting",
+            SKIP,
+            "neurocommenting",
+            SKIP,
+            "neurocommenting",
+            SKIP,
+        ]
+
+    async def test_lab_mode_post_engagement_always_acts(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from app.services.custom.post_engagement import claim_post_engagement
+
+        account = await self._add_account(
+            test_session, custom_automation, account_class=AccountClass.ONE_DAY.value, username="lab_cadence", phone="+79990000028"
+        )
+        first = await claim_post_engagement(
+            test_session,
+            automation_id=custom_automation.id,
+            chat_target_id=9,
+            post_id=1,
+            account_id=account.id,
+            neuro_enabled=True,
+            shilling_enabled=True,
+            lab_mode=True,
+            activate_roll=lambda: 1.0,
+            pick=lambda options: "neurocommenting",
+        )
+        second = await claim_post_engagement(
+            test_session,
+            automation_id=custom_automation.id,
+            chat_target_id=9,
+            post_id=2,
+            account_id=account.id,
+            neuro_enabled=True,
+            shilling_enabled=True,
+            lab_mode=True,
+            activate_roll=lambda: 1.0,
+            pick=lambda options: "neurocommenting",
+        )
+        assert first == "neurocommenting"
+        assert second == "neurocommenting"
 
     async def test_post_shilling_is_quarter_when_both_enabled(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
@@ -2329,19 +2410,16 @@ class TestShilling:
                 account_id=account.id,
                 neuro_enabled=True,
                 shilling_enabled=True,
-                pick_gap=lambda: 2,
+                activate_roll=lambda: 0.0,
                 roll=lambda: roll,
             )
 
-        assert await _claim(30, 0.0) == "skip"
+        assert await _claim(30, 0.0) == "shilling"
         assert await _claim(31, 0.0) == "skip"
-        assert await _claim(32, 0.0) == "shilling"
+        assert await _claim(32, 0.24) == "shilling"
         assert await _claim(33, 0.24) == "skip"
-        assert await _claim(34, 0.24) == "skip"
-        assert await _claim(35, 0.24) == "shilling"
-        assert await _claim(36, 0.25) == "skip"
-        assert await _claim(37, 0.25) == "skip"
-        assert await _claim(38, 0.25) == "neurocommenting"
+        assert await _claim(34, 0.25) == "neurocommenting"
+        assert await _claim(35, 0.25) == "skip"
 
     async def test_chat_shill_activity_gate_100_or_7_days(self):
         from datetime import datetime, timedelta
@@ -2632,6 +2710,40 @@ class TestShilling:
                 comment_to=10,
             )
         assert result["reason"] == "comments_closed"
+        generate.assert_not_called()
+
+    async def test_pending_neurocomment_skips_llm_when_comments_closed(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from unittest.mock import patch
+
+        from app.alembic.models import PendingChatAction, PendingChatActionStatus
+        from app.services.custom.pending_action_service import _run_action
+
+        account = await self._add_account(
+            test_session,
+            custom_automation,
+            account_class=AccountClass.ONE_DAY.value,
+            username="pending_closed",
+            phone="+79990000045",
+        )
+        chat = await self._add_chat(test_session, custom_automation, mode="monitoring", chat_type="channel")
+        chat.comments_open = False
+        action = PendingChatAction(
+            custom_automation_id=custom_automation.id,
+            chat_target_id=chat.id,
+            social_account_id=account.id,
+            action_type="neurocommenting",
+            target_id=f"{chat.id}:99",
+            payload={"post_id": 99, "post_text": "hello"},
+            status=PendingChatActionStatus.PENDING.value,
+        )
+        test_session.add(action)
+        await test_session.commit()
+        with patch("app.services.custom.neurocommenting_service._generate_comment") as generate:
+            ok = await _run_action(test_session, action)
+        assert ok is False
+        assert action.last_error == "comments_closed"
         generate.assert_not_called()
 
     async def test_settings_require_two_shilling_accounts(
@@ -3966,6 +4078,53 @@ class TestAccountHealthSpamblockAndDelete:
         await test_session.refresh(account)
         assert account.is_banned is False
         assert account.is_active is True
+
+    async def test_frozen_account_is_not_spamblock_or_session(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from app.services.account_pool_service import get_or_create_default_pool
+        from app.services.custom.account_roles import default_roles_for_class
+        from app.services.custom.rotation_service import select_account_for_action
+        from app.services.custom.telegram_error_handler import update_account_after_telegram_error
+
+        pool = await get_or_create_default_pool(test_session, custom_automation.id)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number="+79990000061",
+            username="frozenuser",
+            encrypted_session="x",
+            session_file_path="sessions/frozenuser.session",
+            is_active=True,
+            is_banned=False,
+            account_class=AccountClass.ONE_DAY.value,
+        )
+        test_session.add(account)
+        await test_session.flush()
+        test_session.add(
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account.id,
+                assigned_class=AccountClass.ONE_DAY.value,
+                custom_automation_id=custom_automation.id,
+            )
+        )
+        await test_session.commit()
+        kind = await update_account_after_telegram_error(
+            test_session,
+            account,
+            Exception(
+                "You tried to use a method that is not available for frozen accounts "
+                "(caused by UpdateProfileRequest)"
+            ),
+        )
+        assert kind == "frozen"
+        await test_session.refresh(account)
+        assert account.is_frozen is True
+        assert account.is_active is True
+        assert account.is_banned is False
+        assert account.is_spamblocked is False
+        selected = await select_account_for_action(test_session, custom_automation.id, "commenting")
+        assert selected is None
 
     async def test_revoked_session_marked_inactive(
         self,
@@ -5678,7 +5837,7 @@ class TestProductionFieldLogic:
         account = await self._add_account(
             test_session, custom_automation, account_class=AccountClass.TRUSTED.value, username="gap_acc", phone="+79991110006"
         )
-        first = await claim_post_engagement(
+        missed = await claim_post_engagement(
             test_session,
             automation_id=custom_automation.id,
             chat_target_id=1,
@@ -5686,10 +5845,10 @@ class TestProductionFieldLogic:
             account_id=account.id,
             neuro_enabled=True,
             shilling_enabled=False,
-            pick_gap=lambda: 2,
+            activate_roll=lambda: 0.30,
         )
-        assert first == SKIP
-        second = await claim_post_engagement(
+        assert missed == SKIP
+        acted = await claim_post_engagement(
             test_session,
             automation_id=custom_automation.id,
             chat_target_id=1,
@@ -5697,10 +5856,11 @@ class TestProductionFieldLogic:
             account_id=account.id,
             neuro_enabled=True,
             shilling_enabled=False,
-            pick_gap=lambda: 2,
+            activate_roll=lambda: 0.0,
+            pick=lambda options: options[0],
         )
-        assert second == SKIP
-        third = await claim_post_engagement(
+        assert acted == "neurocommenting"
+        blocked_repeat = await claim_post_engagement(
             test_session,
             automation_id=custom_automation.id,
             chat_target_id=1,
@@ -5708,10 +5868,22 @@ class TestProductionFieldLogic:
             account_id=account.id,
             neuro_enabled=True,
             shilling_enabled=False,
-            pick_gap=lambda: 2,
+            activate_roll=lambda: 0.0,
             pick=lambda options: options[0],
         )
-        assert third == "neurocommenting"
+        assert blocked_repeat == SKIP
+        other_channel = await claim_post_engagement(
+            test_session,
+            automation_id=custom_automation.id,
+            chat_target_id=2,
+            post_id=12,
+            account_id=account.id,
+            neuro_enabled=True,
+            shilling_enabled=False,
+            activate_roll=lambda: 0.0,
+            pick=lambda options: options[0],
+        )
+        assert other_channel == "neurocommenting"
 
     async def test_error_feed_lists_failures(
         self, test_session: AsyncSession, custom_automation: CustomAutomation

@@ -21,7 +21,7 @@ from .chat_membership_service import (
 from .chat_scope import apply_entity_metadata, is_broadcast_channel, is_lab_chat, is_paused, commit_chat_scan
 from .pending_action_service import ensure_accounts_ready, has_pending_action
 from .post_engagement import NEUROCOMMENTING, SHILLING, SKIP, claim_post_engagement, post_target_id
-from .rotation_service import select_account_for_action
+from .rotation_service import record_successful_send, select_account_for_action
 from .shilling_service import perform_post_shilling
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import execute_with_telegram_retry
@@ -173,6 +173,7 @@ async def _send_comment(
         logger.warning("Send comment failed for chat %s post %s: %s", chat_target.id, post_id, exc)
         return False
 
+    record_successful_send(account)
     log = AutomationActionLog(
         custom_automation_id=automation_id,
         social_account_id=account.id,
@@ -296,6 +297,7 @@ async def process_chat_target(
             account_id=account.id,
             neuro_enabled=neuro_enabled,
             shilling_enabled=shilling_enabled,
+            lab_mode=lab_mode,
         )
         if claimed == SKIP:
             continue
@@ -358,8 +360,6 @@ async def process_chat_target(
         )
         if success:
             sent += 1
-            actor.daily_messages_sent += 1
-            actor.last_used_at = _utc_now()
 
     chat_target.last_scanned_at = _utc_now()
     chat_target.updated_at = _utc_now()

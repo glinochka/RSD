@@ -27,6 +27,7 @@ class CustomAutomationDashboardAccountStats(BaseModel):
     banned: int
     revoked: int = 0
     spamblocked: int = 0
+    frozen: int = 0
     by_class: dict[str, int]
 
 
@@ -380,6 +381,7 @@ class AccountResponse(BaseModel):
     is_active: bool
     is_banned: bool
     is_spamblocked: bool = False
+    is_frozen: bool = False
     auto_classified: bool = False
     risk_score: Optional[float] = None
     trust_score: Optional[float] = None
@@ -391,6 +393,7 @@ class AccountResponse(BaseModel):
     added_at: datetime
     last_health_check_at: Optional[datetime] = None
     spamblock_checked_at: Optional[datetime] = None
+    frozen_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     proxy_label: Optional[str] = None
 
@@ -464,6 +467,7 @@ class AccountBanStatsResponse(BaseModel):
     banned: int
     revoked: int = 0
     spamblocked: int = 0
+    frozen: int = 0
     banned_percent: float
     alert_threshold: float = 0.3
     alert: bool

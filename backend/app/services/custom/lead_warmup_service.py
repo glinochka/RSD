@@ -309,6 +309,7 @@ async def _process_lead(
         and account.session_file_path
         and account.is_active
         and not account.is_banned
+        and not getattr(account, "is_frozen", False)
         and peer
         and (_media_root() / account.session_file_path).exists()
     )

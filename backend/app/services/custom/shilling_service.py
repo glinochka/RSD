@@ -22,7 +22,7 @@ from .chat_membership_service import (
 )
 from .pending_action_service import ensure_accounts_ready
 from .post_engagement import SHILLING as POST_SHILLING, get_post_engagement_claim, post_target_id
-from .rotation_service import accounts_are_distinct, select_distinct_accounts_for_action
+from .rotation_service import accounts_are_distinct, record_successful_send, select_distinct_accounts_for_action
 from .telegram_account_client import TelegramAccountClient
 from .telegram_invite import chat_entity_key
 from .telegram_error_handler import execute_with_telegram_retry
@@ -302,7 +302,11 @@ async def _send_message(
     except Exception as exc:
         logger.warning("Shilling send failed for chat %s account %s: %s", chat_target.id, account.id, exc)
         return None
-    return getattr(message, "id", None)
+    message_id = getattr(message, "id", None)
+    if message_id:
+        record_successful_send(account)
+        await session.commit()
+    return message_id
 
 
 async def _log(

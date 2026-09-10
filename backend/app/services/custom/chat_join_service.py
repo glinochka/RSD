@@ -702,7 +702,7 @@ async def sync_memberships_with_telegram(
     now = _utc_now()
     for membership in memberships:
         account = await session.get(SocialAccount, membership.social_account_id)
-        if not account or account.is_banned or not account.is_active:
+        if not account or account.is_banned or not account.is_active or getattr(account, "is_frozen", False):
             continue
         if not account.session_file_path and not getattr(account, "encrypted_session", None):
             continue

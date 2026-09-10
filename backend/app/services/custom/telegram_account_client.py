@@ -352,6 +352,14 @@ class TelegramAccountClient:
             "is_premium": getattr(me, "premium", False),
         }
 
+    async def probe_writable(self) -> None:
+        """Touch a write RPC that frozen accounts reject. Login-only methods still work."""
+        try:
+            from telethon.tl.functions.account import UpdateStatusRequest
+        except ImportError:
+            return
+        await self.client(UpdateStatusRequest(offline=False))
+
     async def download_avatar(self, me=None) -> bytes | None:
         """Download the current profile photo as JPEG bytes."""
         target = me or await self.client.get_me()

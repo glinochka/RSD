@@ -17,6 +17,7 @@ async def count_accounts_by_class(session: AsyncSession, automation_id: int) -> 
             PoolAccount.custom_automation_id == automation_id,
             SocialAccount.is_active.is_(True),
             SocialAccount.is_banned.is_(False),
+            SocialAccount.is_frozen.is_(False),
         )
         .group_by(SocialAccount.account_class)
     )
@@ -34,6 +35,7 @@ async def count_accounts_by_role(session: AsyncSession, automation_id: int) -> d
             PoolAccount.custom_automation_id == automation_id,
             SocialAccount.is_active.is_(True),
             SocialAccount.is_banned.is_(False),
+            SocialAccount.is_frozen.is_(False),
         )
     )
     counts = {role: 0 for role in ACCOUNT_ROLES}
@@ -51,6 +53,7 @@ async def count_active_accounts(session: AsyncSession, automation_id: int) -> in
             PoolAccount.custom_automation_id == automation_id,
             SocialAccount.is_active.is_(True),
             SocialAccount.is_banned.is_(False),
+            SocialAccount.is_frozen.is_(False),
         )
     ) or 0
 

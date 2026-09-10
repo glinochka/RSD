@@ -156,7 +156,7 @@ async def _process_account(
     automation: CustomAutomation,
     account: SocialAccount,
 ) -> dict[str, Any]:
-    if not account.session_file_path or not account.is_active or account.is_banned:
+    if not account.session_file_path or not account.is_active or account.is_banned or getattr(account, "is_frozen", False):
         return {"status": "skipped", "reason": "inactive"}
     if await _hourly_reply_count(session, automation.id, account.id) >= MAX_REPLIES_PER_HOUR:
         return {"status": "skipped", "reason": "hourly_limit"}

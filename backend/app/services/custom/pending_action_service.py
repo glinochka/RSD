@@ -268,10 +268,19 @@ async def _run_action(session: AsyncSession, action: PendingChatAction) -> bool:
         return False
     payload = action.payload or {}
     if action.action_type == "neurocommenting":
+        from .chat_inspect_service import ensure_comment_access
         from .neurocommenting_service import _generate_comment, _send_comment
 
         account = await session.get(SocialAccount, action.social_account_id)
         if not account:
+            return False
+        probe = await ensure_comment_access(session, chat, account)
+        if probe.comments_open is False:
+            action.last_error = "comments_closed"
+            action.status = FAILED
+            return False
+        if probe.account_blocked:
+            action.last_error = "account_blocked"
             return False
         post_id = int(payload.get("post_id") or str(action.target_id).rsplit(":", 1)[-1])
         post_text = str(payload.get("post_text") or "")

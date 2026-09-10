@@ -298,6 +298,12 @@
   letter-spacing: 0.04em;
 }
 
+.crm-status--frozen {
+  background: #e0e7ff;
+  color: #3730a3;
+  font-weight: 700;
+}
+
 .crm-status--completed {
   background: #f3f4f6;
   color: #4b5563;

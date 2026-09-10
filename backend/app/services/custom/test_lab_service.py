@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .account_roles import effective_roles
+from .chat_inspect_service import ensure_comment_access
 from .chat_join_service import (
     create_chat_from_link,
     join_loaded_chats_for_accounts,
@@ -454,6 +455,7 @@ async def _has_role(session: AsyncSession, automation_id: int, role: str, *, min
             PoolAccount.custom_automation_id == automation_id,
             SocialAccount.is_active.is_(True),
             SocialAccount.is_banned.is_(False),
+            SocialAccount.is_frozen.is_(False),
         )
     )
     count = 0
@@ -964,7 +966,7 @@ async def _react_to_post(
         reason = outcome.get("reason") or outcome.get("status") or "неизвестно"
         if reason == "other_action":
             claimed = str(outcome.get("claimed") or "")
-            labels = {"skip": "пропуск по каденсу", "neurocommenting": "нейрокомментинг"}
+            labels = {"skip": "пропуск (вероятность / не подряд)", "neurocommenting": "нейрокомментинг"}
             reason = f"пост уже помечен как {labels.get(claimed, claimed or 'другое действие')}"
         return lab_result(
             ok=False,
@@ -972,9 +974,16 @@ async def _react_to_post(
             **{**outcome, "post_id": post_id},
         )
 
+    if channel.comments_open is False:
+        return lab_result(ok=False, detail="Комментарии в канале закрыты.", post_id=post_id)
     account = await select_account_for_action(session, automation.id, "commenting", consume_quota=False)
     if account is None:
         return lab_result(ok=False, detail="Нет живых аккаунтов с функцией «Нейрокомментинг».", post_id=post_id)
+    probe = await ensure_comment_access(session, channel, account)
+    if probe.comments_open is False:
+        return lab_result(ok=False, detail="Комментарии в канале закрыты.", post_id=post_id)
+    if probe.account_blocked:
+        return lab_result(ok=False, detail="Аккаунт заблокирован в канале.", post_id=post_id)
     comment = await _generate_comment(
         session,
         automation.id,

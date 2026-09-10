@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .rotation_service import record_successful_send
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import execute_with_telegram_retry
 from ...alembic.models import CustomAutomation, PoolAccount, SocialAccount
@@ -124,8 +125,8 @@ async def _send_dialog(
                     automation_id=automation.id,
                 )
                 sent += 1
-                account.daily_messages_sent = (account.daily_messages_sent or 0) + 1
-                account.last_used_at = _utc_now()
+                record_successful_send(account)
+                await session.commit()
                 if delay and index < len(messages) - 1:
                     fn = sleeper or __import__("asyncio").sleep
                     await fn(random.uniform(3, 8))
@@ -157,7 +158,7 @@ async def run_account_warmup_pass(automation_id: int) -> dict[str, Any]:
         )
         rows = list(result.all())
         for pool_account, social in rows:
-            if not social.is_active or social.is_banned or not social.session_file_path:
+            if not social.is_active or social.is_banned or getattr(social, "is_frozen", False) or not social.session_file_path:
                 continue
             if not _due_for_dialog(pool_account):
                 continue

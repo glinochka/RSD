@@ -32,6 +32,7 @@ const STATUSES = [
   { value: 'active', label: 'Активен' },
   { value: 'revoked', label: 'Сессия отозвана' },
   { value: 'spamblock', label: 'СПАМБЛОК' },
+  { value: 'frozen', label: 'Заморожен' },
   { value: 'banned', label: 'Бан' },
   { value: 'empty', label: 'Пусто' },
 ];
@@ -363,6 +364,9 @@ const CustomAutomationAccountsPage = () => {
     if (account.is_banned) {
       return { label: 'Бан', className: 'crm-status--cancelled' };
     }
+    if (account.is_frozen) {
+      return { label: 'Заморожен', className: 'crm-status--frozen' };
+    }
     if (account.status === 'revoked' || account.is_active === false) {
       return { label: 'Сессия отозвана', className: 'crm-status--revoked' };
     }
@@ -492,6 +496,7 @@ const CustomAutomationAccountsPage = () => {
           Активны {banStats.active}
           {banStats.revoked ? ` · отозваны ${banStats.revoked}` : ''}
           {banStats.spamblocked ? ` · СПАМБЛОК ${banStats.spamblocked}` : ''}
+          {banStats.frozen ? ` · заморожены ${banStats.frozen}` : ''}
           {banStats.banned ? ` · бан ${banStats.banned}` : ''}
         </p>
       ) : null}
@@ -598,6 +603,8 @@ const CustomAutomationAccountsPage = () => {
               <p className="crm-item-subtitle">
                 {account.is_spamblocked ? <span className="crm-status crm-status--spamblock">СПАМБЛОК</span> : null}
                 {account.is_spamblocked ? ' · ' : ''}
+                {account.is_frozen ? <span className="crm-status crm-status--frozen">Заморожен</span> : null}
+                {account.is_frozen ? ' · ' : ''}
                 {account.is_banned ? 'Бан · ' : ''}
                 {WARMUP_STATUS_LABELS[account.warmup_status] || ''}
                 {account.warmup_status && account.warmup_status !== 'idle' ? ' · ' : ''}
