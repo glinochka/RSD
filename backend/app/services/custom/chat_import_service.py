@@ -368,6 +368,10 @@ async def import_chats_from_file(
     file_path = await _save_import_file(automation_id, job.id, filename, content)
     job.file_path = file_path
 
+    from .chat_folder_service import folder_name_from_filename, get_or_create_folder
+
+    folder = await get_or_create_folder(session, automation_id, folder_name_from_filename(filename))
+
     existing = await _existing_keys(session, automation_id)
     seen: set[str] = set()
     created = 0
@@ -406,6 +410,7 @@ async def import_chats_from_file(
                 mode=ChatMode.MONITORING.value,
                 source=ChatSource.BULK_IMPORT.value,
                 import_job_id=job.id,
+                folder_id=folder.id,
                 join_status=ChatJoinStatus.PENDING.value,
                 join_attempts=0,
                 is_active=True,
@@ -455,6 +460,11 @@ async def retry_import_errors(
         return None
     content = (_media_root() / job.file_path).read_bytes()
     rows = _parse_rows(content, job.file_name)
+    from .chat_folder_service import folder_name_from_filename, get_or_create_folder
+
+    folder = await get_or_create_folder(
+        session, job.custom_automation_id, folder_name_from_filename(job.file_name)
+    )
     existing = await _existing_keys(session, job.custom_automation_id)
     seen: set[str] = set()
     created = 0
@@ -502,6 +512,7 @@ async def retry_import_errors(
                     mode=ChatMode.MONITORING.value,
                     source=ChatSource.BULK_IMPORT.value,
                     import_job_id=job.id,
+                    folder_id=folder.id,
                     join_status=ChatJoinStatus.PENDING.value,
                     join_attempts=0,
                     is_active=True,

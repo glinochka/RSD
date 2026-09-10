@@ -668,6 +668,7 @@ class ChatTargetResponse(BaseModel):
     comments_check_error: Optional[str] = None
     memberships_joined: int = 0
     memberships_total: int = 0
+    folder_id: Optional[int] = None
     neurocommenting_config: Optional[dict] = None
     discussion_config: Optional[dict] = None
     shilling_config: Optional[dict] = None
@@ -677,6 +678,18 @@ class ChatTargetResponse(BaseModel):
 
 class ChatTargetListResponse(BaseModel):
     items: list[ChatTargetResponse]
+    total: int
+
+
+class ChatFolderResponse(BaseModel):
+    id: int
+    name: str
+    chats_count: int
+    created_at: datetime
+
+
+class ChatFolderListResponse(BaseModel):
+    items: list[ChatFolderResponse]
     total: int
 
 

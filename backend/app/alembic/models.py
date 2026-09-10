@@ -2178,6 +2178,10 @@ class CustomAutomation(Base):
         back_populates="automation",
         cascade="all, delete-orphan",
     )
+    chat_folders: Mapped[list["ChatFolder"]] = relationship(
+        back_populates="automation",
+        cascade="all, delete-orphan",
+    )
     chat_discovery_tasks: Mapped[list["ChatDiscoveryTask"]] = relationship(
         back_populates="automation",
         cascade="all, delete-orphan",
@@ -2434,6 +2438,25 @@ class PoolAccount(Base):
     )
 
 
+class ChatFolder(Base):
+    __tablename__ = "chat_folders"
+    __table_args__ = (
+        UniqueConstraint("custom_automation_id", "name", name="uq_chat_folder_automation_name"),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    custom_automation_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_automations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    automation: Mapped["CustomAutomation"] = relationship(back_populates="chat_folders")
+    chats: Mapped[list["ChatTarget"]] = relationship(back_populates="folder")
+
+
 class ChatImportJob(Base):
     __tablename__ = "chat_import_jobs"
     __table_args__ = ({"extend_existing": True},)
@@ -2544,6 +2567,9 @@ class ChatTarget(Base):
     import_job_id: Mapped[int | None] = mapped_column(
         ForeignKey("chat_import_jobs.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    folder_id: Mapped[int | None] = mapped_column(
+        ForeignKey("chat_folders.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     discovery_task_id: Mapped[int | None] = mapped_column(
         ForeignKey("chat_discovery_tasks.id", ondelete="SET NULL"), nullable=True, index=True
     )
@@ -2582,6 +2608,7 @@ class ChatTarget(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
 
     automation: Mapped["CustomAutomation"] = relationship(back_populates="chat_targets")
+    folder: Mapped["ChatFolder | None"] = relationship(back_populates="chats")
     memberships: Mapped[list["AccountChatMembership"]] = relationship(
         back_populates="chat_target",
         cascade="all, delete-orphan",

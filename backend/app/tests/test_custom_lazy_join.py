@@ -155,7 +155,7 @@ class TestLazyJoinCoverage:
         await test_session.commit()
         assert created == 0
         await test_session.refresh(chat)
-        assert chat.join_status == ChatJoinStatus.JOINED.value
+        assert chat.join_status == ChatJoinStatus.PENDING.value
         assert await is_chat_watchable(test_session, chat) is True
 
     async def test_group_gets_single_watcher(
@@ -238,9 +238,9 @@ class TestLazyJoinCoverage:
         chat = await _add_chat(
             test_session,
             custom_automation,
-            title="Channel",
-            chat_type="channel",
-            invite_link="https://t.me/neurochan",
+            title="Private group",
+            chat_type="chat",
+            invite_link="https://t.me/+neurojoin12",
             join_status=ChatJoinStatus.JOINED.value,
         )
         ready = await ensure_accounts_ready(
@@ -267,6 +267,28 @@ class TestLazyJoinCoverage:
         pending = await test_session.scalar(select(PendingChatAction))
         assert pending is not None
         assert pending.status == PendingChatActionStatus.PENDING.value
+
+    async def test_public_channel_comment_does_not_queue_channel_join(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        actor = await _add_account(test_session, custom_automation, username="pubact", phone="+79991001024")
+        chat = await _add_chat(
+            test_session,
+            custom_automation,
+            title="News",
+            chat_type="channel",
+            invite_link="https://t.me/pubcommentchan",
+        )
+        ready = await ensure_accounts_ready(
+            test_session,
+            custom_automation.id,
+            chat,
+            [actor],
+            action_type="neurocommenting",
+            target_id=f"{chat.id}:1",
+        )
+        assert ready is True
+        assert await has_pending_action(test_session, custom_automation.id, "neurocommenting", f"{chat.id}:1") is False
 
     async def test_enqueue_pending_is_idempotent(
         self, test_session: AsyncSession, custom_automation: CustomAutomation

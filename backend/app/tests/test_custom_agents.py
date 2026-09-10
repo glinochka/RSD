@@ -643,6 +643,24 @@ class TestChatImportAndDedup:
             )
         ).scalars().all()
         assert len(chats) == 2
+        from app.services.custom.chat_folder_service import delete_folder, list_folders
+
+        folders = await list_folders(test_session, custom_automation.id)
+        assert len(folders) == 1
+        folder, count = folders[0]
+        assert folder.name == "chats"
+        assert count == 2
+        assert all(chat.folder_id == folder.id for chat in chats)
+        assert all(chat.join_status == "pending" for chat in chats)
+
+        deleted = await delete_folder(test_session, custom_automation.id, folder.id)
+        assert deleted is True
+        left = (
+            await test_session.execute(
+                select(func.count(ChatTarget.id)).where(ChatTarget.custom_automation_id == custom_automation.id)
+            )
+        ).scalar_one()
+        assert left == 0
 
     async def test_import_dedup_and_russian_excel(self, test_session: AsyncSession, custom_automation: CustomAutomation):
         import io
@@ -703,6 +721,11 @@ class TestChatImportAndDedup:
             )
         ).scalar_one()
         assert again == 3
+        from app.services.custom.chat_folder_service import list_folders
+
+        folders = await list_folders(test_session, custom_automation.id)
+        assert folders[0][0].name == "Инстаграм"
+        assert folders[0][1] == 3
         jobs = (
             await test_session.execute(
                 select(ChatImportJob).where(ChatImportJob.custom_automation_id == custom_automation.id)
@@ -1250,6 +1273,50 @@ class TestChatCreateAndJoin:
         assert group.invite_link == "https://t.me/+AbCdEfGhIjKl"
         assert "ImportChatInviteRequest" in private_client.calls
         assert "CheckChatInviteRequest" in private_client.calls
+
+    async def test_join_linked_discussion_before_comment(self):
+        from unittest.mock import patch
+
+        from app.services.custom.chat_join_service import join_linked_discussion
+
+        class Discussion:
+            id = 99
+            title = "Comments"
+
+        class Channel:
+            id = 10
+            title = "News"
+            broadcast = True
+            megagroup = False
+
+        class FullChat:
+            linked_chat_id = 99
+
+        class Full:
+            full_chat = FullChat()
+            chats = [Channel(), Discussion()]
+
+        class FakeClient:
+            def __init__(self):
+                self.calls = []
+
+            async def __call__(self, request):
+                self.calls.append(request)
+                if request == "full_req":
+                    return Full()
+                return Discussion()
+
+            async def get_entity(self, identifier):
+                return Discussion()
+
+        client = FakeClient()
+        with patch("app.services.custom.chat_join_service.GetFullChannelRequest", return_value="full_req"), patch(
+            "app.services.custom.chat_join_service.JoinChannelRequest", return_value="join_req"
+        ):
+            result = await join_linked_discussion(client, Channel())
+        assert result is not None
+        assert "full_req" in client.calls
+        assert "join_req" in client.calls
 
 
 class TestLeadKeywords:
@@ -2243,6 +2310,199 @@ class TestShilling:
         assert results[3] == SKIP
         assert results[4] == SKIP
         assert results[5] == "neurocommenting"
+
+    async def test_post_shilling_is_quarter_when_both_enabled(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from app.services.custom.post_engagement import claim_post_engagement
+
+        account = await self._add_account(
+            test_session, custom_automation, account_class=AccountClass.ONE_DAY.value, username="mix", phone="+79990000027"
+        )
+
+        async def _claim(post_id: int, roll: float) -> str:
+            return await claim_post_engagement(
+                test_session,
+                automation_id=custom_automation.id,
+                chat_target_id=8,
+                post_id=post_id,
+                account_id=account.id,
+                neuro_enabled=True,
+                shilling_enabled=True,
+                pick_gap=lambda: 2,
+                roll=lambda: roll,
+            )
+
+        assert await _claim(30, 0.0) == "skip"
+        assert await _claim(31, 0.0) == "skip"
+        assert await _claim(32, 0.0) == "shilling"
+        assert await _claim(33, 0.24) == "skip"
+        assert await _claim(34, 0.24) == "skip"
+        assert await _claim(35, 0.24) == "shilling"
+        assert await _claim(36, 0.25) == "skip"
+        assert await _claim(37, 0.25) == "skip"
+        assert await _claim(38, 0.25) == "neurocommenting"
+
+    async def test_chat_shill_activity_gate_100_or_7_days(self):
+        from datetime import datetime, timedelta
+
+        from app.services.custom.shilling_service import chat_shill_activity_allows
+
+        now = datetime(2026, 9, 9, 12, 0)
+        assert chat_shill_activity_allows(last_at=None, messages_since=0, now=now) is True
+        assert chat_shill_activity_allows(
+            last_at=now - timedelta(days=3), messages_since=50, now=now,
+        ) is False
+        assert chat_shill_activity_allows(
+            last_at=now - timedelta(days=3), messages_since=100, now=now,
+        ) is True
+        assert chat_shill_activity_allows(
+            last_at=now - timedelta(days=7), messages_since=5, now=now,
+        ) is True
+        assert chat_shill_activity_allows(
+            last_at=now - timedelta(days=2), messages_since=None, now=now,
+        ) is False
+
+    async def test_chat_shilling_waits_for_100_messages(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from datetime import datetime, timedelta, timezone
+        from unittest.mock import AsyncMock, patch
+        from zoneinfo import ZoneInfo
+
+        from app.alembic.models import AutomationActionLog
+        from app.services.custom.shilling_service import process_shilling_chat
+
+        try:
+            moscow = ZoneInfo("Europe/Moscow")
+        except Exception:
+            moscow = timezone(timedelta(hours=3))
+        now = datetime(2026, 8, 26, 12, 0, tzinfo=moscow)
+        first = await self._add_account(
+            test_session, custom_automation, account_class=AccountClass.SHILLING.value, username="gap_a", phone="+79990000028"
+        )
+        second = await self._add_account(
+            test_session, custom_automation, account_class=AccountClass.SHILLING.value, username="gap_b", phone="+79990000029"
+        )
+        chat = await self._add_chat(test_session, custom_automation, mode="monitoring")
+        await self._mark_joined(test_session, custom_automation, chat, [first, second])
+        custom_automation.is_shilling_enabled = True
+        test_session.add(
+            AutomationActionLog(
+                custom_automation_id=custom_automation.id,
+                social_account_id=first.id,
+                action_type="shilling_chat",
+                target_id=str(chat.id),
+                target_type="chat",
+                result="success",
+                payload={"setup_message_id": 10, "reply_message_id": 11},
+                created_at=(now - timedelta(days=2)).astimezone(timezone.utc).replace(tzinfo=None),
+            )
+        )
+        await test_session.commit()
+        with patch(
+            "app.services.custom.shilling_service.perform_shilling_dialogue",
+            new=AsyncMock(return_value={"status": "ok"}),
+        ) as send:
+            blocked = await process_shilling_chat(
+                test_session,
+                custom_automation,
+                chat,
+                now=now,
+                scheduled_at=now,
+                messages_since=40,
+            )
+            allowed = await process_shilling_chat(
+                test_session,
+                custom_automation,
+                chat,
+                now=now,
+                scheduled_at=now,
+                messages_since=120,
+            )
+        assert blocked["reason"] == "wait_messages"
+        assert allowed["status"] == "ok"
+        send.assert_awaited_once()
+
+    async def test_chat_shilling_sends_after_7_quiet_days(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from datetime import datetime, timedelta, timezone
+        from unittest.mock import AsyncMock, patch
+        from zoneinfo import ZoneInfo
+
+        from app.alembic.models import AutomationActionLog
+        from app.services.custom.shilling_service import process_shilling_chat
+
+        try:
+            moscow = ZoneInfo("Europe/Moscow")
+        except Exception:
+            moscow = timezone(timedelta(hours=3))
+        now = datetime(2026, 8, 26, 12, 0, tzinfo=moscow)
+        first = await self._add_account(
+            test_session, custom_automation, account_class=AccountClass.SHILLING.value, username="idle_a", phone="+79990000030"
+        )
+        second = await self._add_account(
+            test_session, custom_automation, account_class=AccountClass.SHILLING.value, username="idle_b", phone="+79990000031"
+        )
+        chat = await self._add_chat(test_session, custom_automation, mode="monitoring")
+        await self._mark_joined(test_session, custom_automation, chat, [first, second])
+        custom_automation.is_shilling_enabled = True
+        test_session.add(
+            AutomationActionLog(
+                custom_automation_id=custom_automation.id,
+                social_account_id=first.id,
+                action_type="shilling_chat",
+                target_id=str(chat.id),
+                target_type="chat",
+                result="success",
+                payload={"setup_message_id": 10, "reply_message_id": 11},
+                created_at=(now - timedelta(days=7)).astimezone(timezone.utc).replace(tzinfo=None),
+            )
+        )
+        await test_session.commit()
+        with patch(
+            "app.services.custom.shilling_service.perform_shilling_dialogue",
+            new=AsyncMock(return_value={"status": "ok"}),
+        ) as send:
+            result = await process_shilling_chat(
+                test_session,
+                custom_automation,
+                chat,
+                now=now,
+                scheduled_at=now,
+                messages_since=12,
+            )
+        assert result["status"] == "ok"
+        send.assert_awaited()
+
+    async def test_light_vary_keeps_fallback_on_llm_error(self):
+        from unittest.mock import AsyncMock, patch
+
+        from app.services.custom.shilling_service import light_vary_shilling_lines
+
+        with patch(
+            "app.services.custom.shilling_service.ai_client.chat.completions.create",
+            new=AsyncMock(side_effect=RuntimeError("llm down")),
+        ):
+            setup, reply = await light_vary_shilling_lines("Вопрос как есть", "Ответ как есть")
+        assert setup == "Вопрос как есть"
+        assert reply == "Ответ как есть"
+
+    async def test_light_vary_applies_small_llm_tweak(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from app.services.custom.shilling_service import light_vary_shilling_lines
+
+        response = MagicMock()
+        response.choices = [MagicMock(message=MagicMock(content='{"setup": "Вопрос чуть иначе", "reply": "Ответ чуть иначе"}'))]
+        with patch(
+            "app.services.custom.shilling_service.ai_client.chat.completions.create",
+            new=AsyncMock(return_value=response),
+        ):
+            setup, reply = await light_vary_shilling_lines("Вопрос как есть", "Ответ как есть")
+        assert setup == "Вопрос чуть иначе"
+        assert reply == "Ответ чуть иначе"
 
     async def test_monitoring_ignores_shilling_messages(
         self, test_session: AsyncSession, custom_automation: CustomAutomation

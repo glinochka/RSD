@@ -156,6 +156,9 @@ async def _send_comment(
             entity = await client.get_entity(
                 chat_entity_key(chat_target)
             )
+            from .chat_join_service import join_linked_discussion
+
+            await join_linked_discussion(client, entity)
             await execute_with_telegram_retry(
                 session,
                 account,

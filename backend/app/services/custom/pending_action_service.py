@@ -137,6 +137,10 @@ async def ensure_accounts_ready(
     """True when every account is already in the chat. Otherwise queue joins + pending action."""
     if not accounts:
         return False
+    from .chat_scope import is_public_readable
+
+    if is_public_readable(chat_target):
+        return True
     missing: list[SocialAccount] = []
     for account in accounts:
         if await account_is_joined(session, chat_target.id, account.id):

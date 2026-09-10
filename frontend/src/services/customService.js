@@ -631,6 +631,7 @@ const customService = {
     minMembers,
     maxMembers,
     activityWithinHours,
+    folderId,
     limit,
     offset,
   } = {}) {
@@ -652,6 +653,9 @@ const customService = {
     }
     if (activityWithinHours) {
       params.set('activity_within_hours', String(activityWithinHours));
+    }
+    if (folderId) {
+      params.set('folder_id', String(folderId));
     }
     if (limit !== undefined) {
       params.set('limit', String(limit));
@@ -679,6 +683,22 @@ const customService = {
 
   async deleteChat(automationId, chatId) {
     const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CHAT(automationId, chatId)}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    });
+    return handleResponse(response);
+  },
+
+  async getChatFolders(automationId) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CHAT_FOLDERS(automationId)}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+    return handleResponse(response);
+  },
+
+  async deleteChatFolder(automationId, folderId) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CHAT_FOLDER(automationId, folderId)}`, {
       method: 'DELETE',
       headers: getAuthHeaders(),
     });

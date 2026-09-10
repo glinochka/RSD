@@ -44,6 +44,8 @@ from .schemas import (
     ChatDiscoveryCreate,
     ChatDiscoveryTaskListResponse,
     ChatDiscoveryTaskResponse,
+    ChatFolderListResponse,
+    ChatFolderResponse,
     ChatImportJobListResponse,
     ChatImportJobResponse,
     ChatInspectStatusResponse,
@@ -1284,6 +1286,7 @@ async def list_chats(
     min_members: Optional[int] = Query(None, ge=0),
     max_members: Optional[int] = Query(None, ge=0),
     activity_within_hours: Optional[int] = Query(None, ge=1, le=24 * 90),
+    folder_id: Optional[int] = Query(None, ge=1),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     automation: CustomAutomation = Depends(get_current_custom_automation),
@@ -1295,6 +1298,8 @@ async def list_chats(
         ]
         if join_status:
             filters.append(ChatTarget.join_status == join_status)
+        if folder_id:
+            filters.append(ChatTarget.folder_id == folder_id)
         if comments_unchecked:
             filters.append(ChatTarget.comments_open.is_(None))
         elif comments_open is not None:
@@ -1347,6 +1352,42 @@ async def create_chat(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     background_tasks.add_task(_join_chats_background, automation_id)
     return response
+
+
+@router.get("/automations/{automation_id}/chats/folders", response_model=ChatFolderListResponse)
+async def list_chat_folders(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    from ..services.custom.chat_folder_service import list_folders
+
+    async with async_session_maker() as session:
+        rows = await list_folders(session, automation_id)
+        items = [
+            ChatFolderResponse(
+                id=folder.id,
+                name=folder.name,
+                chats_count=count,
+                created_at=folder.created_at,
+            )
+            for folder, count in rows
+        ]
+        return ChatFolderListResponse(items=items, total=len(items))
+
+
+@router.delete("/automations/{automation_id}/chats/folders/{folder_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_chat_folder(
+    automation_id: int,
+    folder_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    from ..services.custom.chat_folder_service import delete_folder
+
+    async with async_session_maker() as session:
+        deleted = await delete_folder(session, automation_id, folder_id)
+        if not deleted:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Folder not found")
+        return None
 
 
 @router.patch("/automations/{automation_id}/chats/{chat_id}/neurocommenting-config", response_model=ChatTargetResponse)

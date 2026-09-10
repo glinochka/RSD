@@ -15,6 +15,7 @@ from ...alembic.models import AutomationActionLog
 POST_ENGAGEMENT_ACTION = "post_engagement"
 MIN_POST_GAP = 2
 MAX_POST_GAP = 2
+POST_SHILL_CHANCE = 0.25
 
 NEUROCOMMENTING = "neurocommenting"
 SHILLING = "shilling"
@@ -82,7 +83,12 @@ async def list_channel_post_claims(
     return rows
 
 
-def _pick_action(neuro_enabled: bool, shilling_enabled: bool, pick: Callable[[list[str]], str]) -> str:
+def _pick_action(
+    neuro_enabled: bool,
+    shilling_enabled: bool,
+    pick: Callable[[list[str]], str] | None,
+    roll: Callable[[], float],
+) -> str:
     options: list[str] = []
     if neuro_enabled:
         options.append(NEUROCOMMENTING)
@@ -90,7 +96,11 @@ def _pick_action(neuro_enabled: bool, shilling_enabled: bool, pick: Callable[[li
         options.append(SHILLING)
     if not options:
         return SKIP
-    return pick(options)
+    if len(options) == 1:
+        return options[0]
+    if pick is not None:
+        return pick(options)
+    return SHILLING if roll() < POST_SHILL_CHANCE else NEUROCOMMENTING
 
 
 def _cadence_required_skips(
@@ -145,15 +155,14 @@ async def claim_post_engagement(
     """Decide once per post: skip / neurocommenting / shilling.
 
     Cadence is 1 action per 3 posts on a channel (skip 2 after each action).
-    If both modules are on, exactly one of them wins. Later callers reuse the first claim.
-    `roll` is ignored; kept so older tests can still pass it.
+    If both modules are on, shilling wins 25% of the time and a regular comment 75%.
+    Later callers reuse the first claim.
     """
-    del roll
     existing = await get_post_engagement_claim(session, automation_id, chat_target_id, post_id)
     if existing:
         return existing.result
 
-    chooser = pick or random.choice
+    roller = roll or random.random
     gap = pick_gap or (lambda: random.randint(MIN_POST_GAP, MAX_POST_GAP))
     older = [
         item
@@ -165,7 +174,7 @@ async def claim_post_engagement(
         result = SKIP
         next_skip = required if persist_initial_gap else None
     else:
-        result = _pick_action(neuro_enabled, shilling_enabled, chooser)
+        result = _pick_action(neuro_enabled, shilling_enabled, pick, roller)
         next_skip = gap() if result != SKIP else None
 
     payload: dict[str, Any] = {

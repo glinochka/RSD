@@ -15,7 +15,7 @@ const JOIN_STATUSES = [
   { value: 'pending', label: 'В очереди' },
   { value: 'joining', label: 'Вступаем' },
   { value: 'partial', label: 'Частично вступили' },
-  { value: 'joined', label: 'Все вступили' },
+  { value: 'joined', label: 'Вступили' },
   { value: 'rate_limited', label: 'Rate limit' },
   { value: 'error', label: 'Ошибка' },
   { value: 'banned', label: 'Бан' },
@@ -98,7 +98,9 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
     activityHours: '',
     minMembers: '',
     maxMembers: '',
+    folderId: '',
   });
+  const [folders, setFolders] = useState([]);
 
   const parsedLink = useMemo(() => parseTelegramChatRef(inviteLink), [inviteLink]);
 
@@ -112,6 +114,7 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
         minMembers: filters.minMembers === '' ? undefined : Number(filters.minMembers),
         maxMembers: filters.maxMembers === '' ? undefined : Number(filters.maxMembers),
         activityWithinHours: filters.activityHours || undefined,
+        folderId: filters.folderId || undefined,
         limit: PAGE_SIZE,
         offset,
       });
@@ -134,10 +137,20 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
     }
   }, [id]);
 
+  const loadFolders = useCallback(async () => {
+    try {
+      const data = await customService.getChatFolders(id);
+      setFolders(data.items || []);
+    } catch {
+      setFolders([]);
+    }
+  }, [id]);
+
   useEffect(() => {
     loadChats();
     loadJobs();
-  }, [loadChats, loadJobs]);
+    loadFolders();
+  }, [loadChats, loadJobs, loadFolders]);
 
   useEffect(() => {
     if (!inspectOn || !id) {
@@ -181,13 +194,13 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
       const result = await customService.bulkImportChats(id, file);
       const duplicates = result.duplicate_rows || 0;
       const skipped = result.skipped_rows || 0;
+      const folderName = (file.name || '').replace(/\.[^.]+$/, '') || 'Импорт';
       setMessage(
-        `Файл обработан: новых ${result.processed_rows} из ${result.total_rows}`
+        `Папка «${folderName}»: новых ${result.processed_rows} из ${result.total_rows}`
           + (duplicates ? `, дубликатов ${duplicates}` : '')
           + (skipped ? `, отсеяно фильтром ${skipped}` : '')
           + `, ошибок ${result.error_rows}. `
-          + 'Фильтр: каналы без постов 2+ мес. или <100 подписчиков, чаты <50 участников. '
-          + 'Вступление аккаунтов идёт в фоне (2–5 мин между попытками).',
+          + 'Публичные каналы читаются без вступления. Комментарии — после вступления в группу обсуждения.',
       );
       setShowFilters(false);
       setFilters({
@@ -196,8 +209,15 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
         activityHours: '',
         minMembers: '',
         maxMembers: '',
+        folderId: '',
       });
       setOffset(0);
+      await loadFolders();
+      const folderData = await customService.getChatFolders(id);
+      const createdFolder = (folderData.items || []).find((item) => item.name === folderName);
+      if (createdFolder) {
+        setFilters((current) => ({ ...current, folderId: String(createdFolder.id) }));
+      }
       await loadChats();
       await loadJobs();
     } catch (err) {
@@ -254,8 +274,27 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
     try {
       await customService.deleteChat(id, chatId);
       await loadChats();
+      await loadFolders();
     } catch (err) {
       setError(err.message || 'Failed to delete chat');
+    }
+  };
+
+  const handleDeleteFolder = async (folder) => {
+    if (!window.confirm(`Удалить папку «${folder.name}» и все чаты в ней?`)) {
+      return;
+    }
+    try {
+      await customService.deleteChatFolder(id, folder.id);
+      setFilters((current) => (
+        String(current.folderId) === String(folder.id) ? { ...current, folderId: '' } : current
+      ));
+      setOffset(0);
+      await loadFolders();
+      await loadChats();
+      setMessage(`Папка «${folder.name}» удалена`);
+    } catch (err) {
+      setError(err.message || 'Не удалось удалить папку');
     }
   };
 
@@ -298,7 +337,7 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
         <div>
           <h1 className="crm-title">Чаты</h1>
           <p className="crm-subtitle">
-            Модули из Настроек работают сразу во всех вступивших чатах и каналах. Здесь можно только поставить чат на паузу.
+            Публичные каналы читаются без вступления. Чтобы комментировать, аккаунт вступает в группу обсуждения.
           </p>
         </div>
         <div className="crm-stats">
@@ -345,6 +384,52 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
 
           {message ? <p className="crm-flash">{message}</p> : null}
           {error ? <p className="crm-flash crm-flash--error">{error}</p> : null}
+
+          {folders.length > 0 ? (
+            <div className="settings-section">
+              <h3 className="settings-section-title">Папки</h3>
+              <div className="crm-list">
+                <div className="crm-item">
+                  <div className="crm-item-header">
+                    <h5 className="crm-item-title">Все чаты</h5>
+                    <button
+                      type="button"
+                      className={`btn ${filters.folderId === '' ? 'btn-black' : 'btn-outline'}`}
+                      onClick={() => {
+                        setOffset(0);
+                        setFilters((current) => ({ ...current, folderId: '' }));
+                      }}
+                    >
+                      Показать
+                    </button>
+                  </div>
+                </div>
+                {folders.map((folder) => (
+                  <div key={folder.id} className="crm-item">
+                    <div className="crm-item-header">
+                      <h5 className="crm-item-title">{folder.name}</h5>
+                      <span className="crm-status">{folder.chats_count}</span>
+                    </div>
+                    <div className="crm-item-actions">
+                      <button
+                        type="button"
+                        className={`btn ${String(filters.folderId) === String(folder.id) ? 'btn-black' : 'btn-outline'}`}
+                        onClick={() => {
+                          setOffset(0);
+                          setFilters((current) => ({ ...current, folderId: String(folder.id) }));
+                        }}
+                      >
+                        Открыть
+                      </button>
+                      <button type="button" className="btn btn-outline" onClick={() => handleDeleteFolder(folder)}>
+                        Удалить
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
           {showForm ? (
             <form onSubmit={handleCreate} className="settings-section">
@@ -559,7 +644,6 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
                       {job.duplicate_rows ? ` · дубликатов ${job.duplicate_rows}` : ''}
                       {job.skipped_rows ? ` · отсеяно ${job.skipped_rows}` : ''}
                       {` · ошибок ${job.error_rows}`}
-                      {' · вступление аккаунтов в фоне'}
                     </p>
                   </div>
                 ))}

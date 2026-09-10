@@ -10,7 +10,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from telethon.errors import FloodWaitError, InviteHashExpiredError, UserAlreadyParticipantError
-from telethon.tl.functions.channels import GetParticipantRequest, JoinChannelRequest, LeaveChannelRequest
+from telethon.tl.functions.channels import GetFullChannelRequest, GetParticipantRequest, JoinChannelRequest, LeaveChannelRequest
 from telethon.tl.functions.messages import CheckChatInviteRequest, DeleteChatUserRequest, ImportChatInviteRequest
 
 from .chat_membership_service import (
@@ -216,6 +216,39 @@ async def _join_public(client: TelegramAccountClient, parsed: TelegramChatRef) -
     if await _is_participant(client, entity):
         return entity
     raise ValueError("Telegram не подтвердил вступление в канал/чат")
+
+
+async def join_linked_discussion(client: TelegramAccountClient, channel_entity: Any) -> Any | None:
+    """Join the comments megagroup. Telegram rejects comment_to until the account is in it."""
+    target = unwrap_telegram_chat(channel_entity)
+    if target is None:
+        return None
+    try:
+        full = await client(GetFullChannelRequest(target))
+    except Exception as exc:
+        logger.info("GetFullChannel for discussion join failed: %s", exc)
+        return None
+    linked_id = getattr(getattr(full, "full_chat", None), "linked_chat_id", None)
+    if not linked_id:
+        return None
+    discussion = None
+    for nested in getattr(full, "chats", None) or []:
+        if getattr(nested, "id", None) == linked_id:
+            discussion = nested
+            break
+    if discussion is None:
+        try:
+            discussion = await client.get_entity(linked_id)
+        except Exception as exc:
+            logger.info("Could not resolve discussion group %s: %s", linked_id, exc)
+            return None
+    try:
+        await client(JoinChannelRequest(discussion))
+    except UserAlreadyParticipantError:
+        pass
+    except InviteRequestSentError:
+        raise
+    return discussion
 
 
 async def _join_private(client: TelegramAccountClient, parsed: TelegramChatRef) -> Any:

@@ -4,13 +4,14 @@ from __future__ import annotations
 import json
 import logging
 import random
+import re
 from collections.abc import Callable
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .chat_scope import commit_chat_scan, is_paused, is_group_chat, is_lab_chat
@@ -27,6 +28,7 @@ from .telegram_invite import chat_entity_key
 from .telegram_error_handler import execute_with_telegram_retry
 from ...alembic.models import (
     AutomationActionLog,
+    ChatMessage,
     ChatTarget,
     CustomAutomation,
     CustomPrompt,
@@ -34,6 +36,7 @@ from ...alembic.models import (
     SocialAccount,
 )
 from ...config import settings
+from ...services.ai_authoring import ai_client
 
 logger = logging.getLogger(__name__)
 
@@ -44,9 +47,25 @@ POST_SHILL_ACTION = "shilling_post"
 REPLY_DELAY_MIN_SECONDS = 8.0
 REPLY_DELAY_MAX_SECONDS = 25.0
 COMMENT_REPLY_DELAY_MIN_SECONDS = 5.0
+CHAT_SHILL_MIN_MESSAGES = 100
+CHAT_SHILL_MAX_IDLE = timedelta(days=7)
 
 DEFAULT_SHILLING_SETUP = "Кто-нибудь уже пробовал сервис, о котором тут пишут? Не хочу влететь."
 DEFAULT_SHILLING_REPLY = "Пользуюсь сам уже какое-то время, по работе зашёл. Если надо — могу в личке набросать, как подключался."
+
+LIGHT_VARY_PROMPT = """Слегка измени формулировку двух реплик. Сохрани смысл, тон, длину и все названия/факты.
+Это не сильный пересказ: те же мысли чуть другими словами, как будто человек написал заново.
+Не усиливай рекламу, не добавляй ссылки, хештеги и новые обещания.
+
+Вопрос:
+{setup}
+
+Ответ:
+{reply}
+
+Верни ТОЛЬКО JSON:
+{{"setup": "...", "reply": "..."}}
+"""
 
 
 def _moscow_tz():
@@ -125,12 +144,47 @@ def encode_shilling_lines(setup: str, reply: str) -> str:
     )
 
 
+def _extract_json(text: str) -> dict[str, Any]:
+    raw = (text or "").strip()
+    if raw.startswith("```"):
+        raw = re.sub(r"^```(?:json)?\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw)
+    return json.loads(raw)
+
+
+async def light_vary_shilling_lines(setup: str, reply: str) -> tuple[str, str]:
+    """Tiny wording drift so canned shill lines are not byte-identical."""
+    source_setup = (setup or "").strip()
+    source_reply = (reply or "").strip()
+    if not source_setup or not source_reply:
+        return source_setup, source_reply
+    try:
+        response = await ai_client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[{
+                "role": "user",
+                "content": LIGHT_VARY_PROMPT.format(setup=source_setup, reply=source_reply),
+            }],
+            max_tokens=250,
+            temperature=0.45,
+        )
+        data = _extract_json(response.choices[0].message.content or "")
+        varied_setup = str(data.get("setup") or "").strip()[:500]
+        varied_reply = str(data.get("reply") or "").strip()[:500]
+        if varied_setup and varied_reply:
+            return varied_setup, varied_reply
+    except Exception as exc:
+        logger.warning("Shilling light-vary failed: %s", exc)
+    return source_setup, source_reply
+
+
 async def generate_shilling_dialogue(
     session: AsyncSession,
     automation: CustomAutomation,
     *,
     chat_title: str,
     post_text: str = "",
+    vary: bool = True,
 ) -> tuple[str, str]:
     prompt = await session.scalar(
         select(CustomPrompt).where(
@@ -140,9 +194,11 @@ async def generate_shilling_dialogue(
         ).order_by(CustomPrompt.created_at.desc())
     )
     setup, reply = parse_shilling_lines(prompt.content if prompt else "")
-    if setup and reply:
-        return setup, reply
-    return DEFAULT_SHILLING_SETUP, DEFAULT_SHILLING_REPLY
+    if not setup or not reply:
+        setup, reply = DEFAULT_SHILLING_SETUP, DEFAULT_SHILLING_REPLY
+    if vary:
+        setup, reply = await light_vary_shilling_lines(setup, reply)
+    return setup, reply
 
 
 async def _pick_speaker_pair(
@@ -213,6 +269,10 @@ async def _send_message(
             channel_entity = await client.get_entity(
                 chat_entity_key(chat_target)
             )
+            if comment_to is not None or discussion_post_id is not None:
+                from .chat_join_service import join_linked_discussion
+
+                await join_linked_discussion(client, channel_entity)
 
             async def _send():
                 if discussion_post_id is not None and reply_to is not None:
@@ -506,6 +566,118 @@ async def last_successful_chat_shill(
     return result.scalar_one_or_none()
 
 
+async def last_successful_chat_shill_ever(
+    session: AsyncSession,
+    automation_id: int,
+    chat_target_id: int,
+) -> AutomationActionLog | None:
+    result = await session.execute(
+        select(AutomationActionLog)
+        .where(
+            AutomationActionLog.custom_automation_id == automation_id,
+            AutomationActionLog.action_type == CHAT_SHILL_ACTION,
+            AutomationActionLog.target_id == str(chat_target_id),
+            AutomationActionLog.result == "success",
+        )
+        .order_by(AutomationActionLog.created_at.desc(), AutomationActionLog.id.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+def _naive_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _message_id_from_shill_log(log: AutomationActionLog | None) -> int | None:
+    if not log:
+        return None
+    payload = log.payload or {}
+    for key in ("reply_message_id", "setup_message_id"):
+        raw = payload.get(key)
+        try:
+            message_id = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if message_id > 0:
+            return message_id
+    return None
+
+
+def chat_shill_activity_allows(
+    *,
+    last_at: datetime | None,
+    messages_since: int | None,
+    now: datetime,
+    min_messages: int = CHAT_SHILL_MIN_MESSAGES,
+    max_idle: timedelta = CHAT_SHILL_MAX_IDLE,
+) -> bool:
+    """Allow the next chat shill after 100 messages, or after 7 quiet days."""
+    if last_at is None:
+        return True
+    elapsed = _naive_utc(now) - _naive_utc(last_at)
+    if elapsed >= max_idle:
+        return True
+    if messages_since is None:
+        return False
+    return messages_since >= min_messages
+
+
+async def _stored_messages_since(
+    session: AsyncSession,
+    chat_target_id: int,
+    since: datetime,
+) -> int:
+    count = await session.scalar(
+        select(func.count(ChatMessage.id)).where(
+            ChatMessage.chat_target_id == chat_target_id,
+            ChatMessage.sent_at > since,
+        )
+    )
+    return int(count or 0)
+
+
+async def _telegram_messages_since(
+    account: SocialAccount | None,
+    chat_target: ChatTarget,
+    after_message_id: int,
+    limit: int = CHAT_SHILL_MIN_MESSAGES,
+) -> int | None:
+    if not account or not after_message_id:
+        return None
+    path = _session_path(account)
+    if not path:
+        return None
+    try:
+        async with TelegramAccountClient.for_account(account) as client:
+            entity = await client.get_entity(chat_entity_key(chat_target))
+            history = await client.get_messages(entity, min_id=after_message_id, limit=limit)
+    except Exception as exc:
+        logger.warning("Chat shill activity fetch failed for chat %s: %s", chat_target.id, exc)
+        return None
+    return sum(1 for msg in (history or []) if msg and getattr(msg, "id", 0) > after_message_id)
+
+
+async def resolve_chat_shill_messages_since(
+    session: AsyncSession,
+    chat_target: ChatTarget,
+    last_log: AutomationActionLog,
+    reader: SocialAccount | None,
+    *,
+    messages_since: int | None = None,
+) -> int | None:
+    if messages_since is not None:
+        return messages_since
+    last_id = _message_id_from_shill_log(last_log)
+    if last_id:
+        fetched = await _telegram_messages_since(reader, chat_target, last_id)
+        if fetched is not None:
+            return fetched
+    return await _stored_messages_since(session, chat_target.id, last_log.created_at)
+
+
 async def get_today_chat_decision(
     session: AsyncSession,
     automation_id: int,
@@ -625,19 +797,45 @@ async def process_shilling_chat(
     placeholder_account_id = available[0].id
 
     if not skip_schedule:
+        now = kwargs.pop("now", None)
         decision = await decide_chat_shilling_today(
             session,
             automation,
             chat_target,
             placeholder_account_id,
-            now=kwargs.pop("now", None),
+            now=now,
             roll=kwargs.pop("roll", None),
             scheduled_at=kwargs.pop("scheduled_at", None),
         )
         if decision != "due":
             await commit_chat_scan(session, chat_target)
             return {"status": "skipped", "reason": decision}
+        last_shill = await last_successful_chat_shill_ever(
+            session, automation.id, chat_target.id,
+        )
+        if last_shill:
+            messages_since = await resolve_chat_shill_messages_since(
+                session,
+                chat_target,
+                last_shill,
+                available[0],
+                messages_since=kwargs.pop("messages_since", None),
+            )
+            if not chat_shill_activity_allows(
+                last_at=last_shill.created_at,
+                messages_since=messages_since,
+                now=now or _utc_now(),
+            ):
+                await commit_chat_scan(session, chat_target)
+                return {
+                    "status": "skipped",
+                    "reason": "wait_messages",
+                    "messages_since": messages_since,
+                }
+        else:
+            kwargs.pop("messages_since", None)
     else:
+        kwargs.pop("messages_since", None)
         kwargs.setdefault("delay_seconds", 0)
 
     result = await perform_shilling_dialogue(

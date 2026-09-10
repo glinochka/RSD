@@ -292,9 +292,6 @@ async def ensure_watcher_membership(
     if is_lab_chat(chat_target=chat_target) and not include_lab:
         return 0
     if is_public_readable(chat_target):
-        if chat_target.join_status == ChatJoinStatus.PENDING.value:
-            chat_target.join_status = ChatJoinStatus.JOINED.value
-            chat_target.updated_at = _utc_now()
         return 0
     excluded = await _lost_reader_ids(session, chat_target.id)
     if await _chat_has_active_watcher(session, chat_target.id):
@@ -465,9 +462,6 @@ async def ensure_memberships_for_account(
     created = 0
     for chat in chats:
         if is_public_readable(chat):
-            if chat.join_status == ChatJoinStatus.PENDING.value:
-                chat.join_status = ChatJoinStatus.JOINED.value
-                chat.updated_at = _utc_now()
             continue
         if await _chat_has_active_watcher(session, chat.id):
             continue
@@ -522,10 +516,6 @@ async def membership_counts(
 async def sync_chat_join_status(session: AsyncSession, chat_target: ChatTarget) -> str:
     joined, total = await membership_counts(session, chat_target.id)
     now = _utc_now()
-    if is_public_readable(chat_target) and joined == 0:
-        chat_target.join_status = ChatJoinStatus.JOINED.value
-        chat_target.updated_at = now
-        return chat_target.join_status
     if total == 0:
         return chat_target.join_status
     if joined >= total:
