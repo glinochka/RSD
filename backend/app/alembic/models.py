@@ -2013,6 +2013,8 @@ class AccountRole(str, Enum):
     NEUROCOMMENTING = "neurocommenting"
     LEAD_INTERCEPT = "lead_intercept"
     SHILLING = "shilling"
+    SHILLING_QUESTION = "shilling_question"
+    SHILLING_ANSWER = "shilling_answer"
     DMP = "dmp"
 
 

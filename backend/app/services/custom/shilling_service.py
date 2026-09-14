@@ -22,7 +22,7 @@ from .chat_membership_service import (
 )
 from .pending_action_service import ensure_accounts_ready
 from .post_engagement import SHILLING as POST_SHILLING, get_post_engagement_claim, post_target_id
-from .rotation_service import accounts_are_distinct, record_successful_send, select_distinct_accounts_for_action
+from .rotation_service import accounts_are_distinct, record_successful_send, select_account_for_action
 from .telegram_account_client import TelegramAccountClient
 from .telegram_invite import chat_entity_key
 from .telegram_error_handler import execute_with_telegram_retry
@@ -206,16 +206,25 @@ async def _pick_speaker_pair(
     automation: CustomAutomation,
     exclude_account_ids: set[int] | None = None,
 ) -> tuple[SocialAccount, SocialAccount] | None:
-    pair = await select_distinct_accounts_for_action(
+    excluded = set(exclude_account_ids or set())
+    account_a = await select_account_for_action(
         session,
         automation,
-        "shilling",
-        count=2,
-        exclude_account_ids=exclude_account_ids,
+        "shilling_question",
+        exclude_account_ids=excluded,
     )
-    if len(pair) != 2 or not accounts_are_distinct(*pair):
+    if account_a is None:
         return None
-    return pair[0], pair[1]
+    excluded.add(account_a.id)
+    account_b = await select_account_for_action(
+        session,
+        automation,
+        "shilling_answer",
+        exclude_account_ids=excluded,
+    )
+    if account_b is None or not accounts_are_distinct(account_a, account_b):
+        return None
+    return account_a, account_b
 
 
 async def _telegram_ids_distinct(account_a: SocialAccount, account_b: SocialAccount) -> bool:
@@ -792,13 +801,11 @@ async def process_shilling_chat(
         await commit_chat_scan(session, chat_target)
         return {"status": "skipped", "reason": "not_watchable"}
 
-    available = await select_distinct_accounts_for_action(
-        session, automation, "shilling", count=2, consume_quota=False
-    )
-    if len(available) < 2:
+    pair = await _pick_speaker_pair(session, automation)
+    if not pair:
         await commit_chat_scan(session, chat_target)
         return {"status": "skipped", "reason": "need_two_accounts"}
-    placeholder_account_id = available[0].id
+    placeholder_account_id = pair[0].id
 
     if not skip_schedule:
         now = kwargs.pop("now", None)
@@ -822,7 +829,7 @@ async def process_shilling_chat(
                 session,
                 chat_target,
                 last_shill,
-                available[0],
+                pair[0],
                 messages_since=kwargs.pop("messages_since", None),
             )
             if not chat_shill_activity_allows(

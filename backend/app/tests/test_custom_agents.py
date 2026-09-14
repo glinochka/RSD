@@ -1818,6 +1818,7 @@ class TestShilling:
         account_class: str,
         username: str,
         phone: str,
+        roles=None,
     ) -> SocialAccount:
         from app.services.account_pool_service import get_or_create_default_pool
         from app.services.custom.account_roles import default_roles_for_class
@@ -1842,7 +1843,7 @@ class TestShilling:
                 social_account_id=account.id,
                 assigned_class=account_class,
                 custom_automation_id=automation.id,
-                roles=default_roles_for_class(account_class),
+                roles=list(roles) if roles is not None else default_roles_for_class(account_class),
             )
         )
         await session.commit()
@@ -2163,6 +2164,63 @@ class TestShilling:
         assert {result["setup_account_id"], result["reply_account_id"]} == {a.id, b.id}
         used = {call.args[3].id for call in send.await_args_list}
         assert used == {a.id, b.id}
+
+    async def test_question_role_asks_and_answer_role_replies(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from unittest.mock import AsyncMock, patch
+
+        from app.services.custom.shilling_service import perform_shilling_dialogue
+
+        asker = await self._add_account(
+            test_session,
+            custom_automation,
+            account_class=AccountClass.SHILLING.value,
+            username="asks",
+            phone="+79990000071",
+            roles=["shilling_question"],
+        )
+        answerer = await self._add_account(
+            test_session,
+            custom_automation,
+            account_class=AccountClass.SHILLING.value,
+            username="replies",
+            phone="+79990000072",
+            roles=["shilling_answer"],
+        )
+        chat = await self._add_chat(test_session, custom_automation)
+        await self._mark_joined(test_session, custom_automation, chat, [asker, answerer])
+
+        async def fake_sleep(_seconds):
+            return None
+
+        with patch(
+            "app.services.custom.shilling_service.generate_shilling_dialogue",
+            new=AsyncMock(return_value=("Это вопрос?", "Это ответ.")),
+        ), patch(
+            "app.services.custom.shilling_service._telegram_ids_distinct",
+            new=AsyncMock(return_value=True),
+        ), patch(
+            "app.services.custom.shilling_service._send_message",
+            new=AsyncMock(side_effect=[201, 202]),
+        ) as send:
+            result = await perform_shilling_dialogue(
+                test_session,
+                custom_automation,
+                chat,
+                action_type="shilling_chat",
+                target_id=str(chat.id),
+                target_type="chat",
+                delay_seconds=0,
+                sleep=fake_sleep,
+            )
+        assert result["status"] == "ok"
+        assert result["setup_account_id"] == asker.id
+        assert result["reply_account_id"] == answerer.id
+        assert send.await_args_list[0].args[3].id == asker.id
+        assert send.await_args_list[0].args[4] == "Это вопрос?"
+        assert send.await_args_list[1].args[3].id == answerer.id
+        assert send.await_args_list[1].args[4] == "Это ответ."
 
     async def test_post_shilling_reply_targets_discussion_thread(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
@@ -4810,7 +4868,7 @@ class TestAccountRolesWarmupAndLab:
             json={"roles": ["neurocommenting", "dmp", "shilling"]},
         )
         assert response.status_code == 200, response.text
-        assert response.json()["roles"] == ["neurocommenting", "dmp", "shilling"]
+        assert response.json()["roles"] == ["neurocommenting", "dmp", "shilling_question", "shilling_answer"]
 
     async def test_fixed_shilling_phrases_from_prompt(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
@@ -6232,6 +6290,43 @@ class TestAccountPacingAndSessions:
         assert account.next_action_at is not None
         wait = (account.next_action_at - datetime.now(timezone.utc).replace(tzinfo=None)).total_seconds()
         assert 170 <= wait <= 310
+
+    async def test_join_does_not_start_ten_minute_write_rest(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from datetime import datetime, timezone
+
+        from app.services.custom.telegram_error_handler import execute_with_telegram_retry
+
+        account = await self._add_account(
+            test_session, custom_automation, username="join_rest_acc", phone="+79991112203"
+        )
+
+        async def ok():
+            return "joined"
+
+        await execute_with_telegram_retry(
+            test_session,
+            account,
+            ok,
+            action_type="join_chat",
+            automation_id=custom_automation.id,
+        )
+        assert account.next_action_at is None
+
+        async def send_ok():
+            return "sent"
+
+        await execute_with_telegram_retry(
+            test_session,
+            account,
+            send_ok,
+            action_type="neurocommenting",
+            automation_id=custom_automation.id,
+        )
+        assert account.next_action_at is not None
+        wait = (account.next_action_at - datetime.now(timezone.utc).replace(tzinfo=None)).total_seconds()
+        assert 560 <= wait <= 620
 
     async def test_prune_keeps_current_and_spare(self):
         from types import SimpleNamespace

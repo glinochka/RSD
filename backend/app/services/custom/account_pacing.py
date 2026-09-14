@@ -1,4 +1,4 @@
-"""Per-account rest after activity and delayed retries after failures."""
+"""Per-account rest after writes and delayed retries after failed writes."""
 from __future__ import annotations
 
 import random
@@ -9,6 +9,27 @@ from ...alembic.models import SocialAccount
 ACCOUNT_REST_SECONDS = 10 * 60
 ACCOUNT_RETRY_MIN_SECONDS = 3 * 60
 ACCOUNT_RETRY_MAX_SECONDS = 5 * 60
+_WRITE_REST_ACTIONS = frozenset(
+    {
+        "commenting",
+        "neurocommenting",
+        "discussion",
+        "dm",
+        "inbound_dm",
+        "lead_warmup",
+        "lead_delivery",
+        "dmp_outreach",
+        "account_warmup",
+    }
+)
+
+
+def action_uses_write_rest(action_type: str | None) -> bool:
+    """10-minute rest applies to sending in chats, comments, DMs — not joins or profile edits."""
+    kind = (action_type or "").strip()
+    if kind in _WRITE_REST_ACTIONS:
+        return True
+    return kind.startswith("shilling")
 
 
 def _utc_now() -> datetime:
@@ -35,7 +56,7 @@ def _push_next_action(account: SocialAccount, seconds: float) -> None:
 
 
 def schedule_account_rest(account: SocialAccount, *, seconds: float = ACCOUNT_REST_SECONDS) -> None:
-    """Block this account from further actions after a real Telegram write."""
+    """Block this account from further writes after a real Telegram send."""
     _push_next_action(account, seconds)
 
 

@@ -5,7 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.models import AccountClass, AccountRole, CustomAutomation, CustomAutomationCredential, PoolAccount, SocialAccount
-from .account_roles import ACCOUNT_ROLES, effective_roles
+from .account_roles import ACCOUNT_ROLES, effective_roles, has_shilling_role, shilling_pair_ready
 from .lead_keywords import normalize_lead_keywords
 
 
@@ -27,7 +27,7 @@ async def count_accounts_by_class(session: AsyncSession, automation_id: int) -> 
     return counts
 
 
-async def count_accounts_by_role(session: AsyncSession, automation_id: int) -> dict[str, int]:
+async def _live_pool_accounts(session: AsyncSession, automation_id: int) -> list[tuple[PoolAccount, SocialAccount]]:
     result = await session.execute(
         select(PoolAccount, SocialAccount)
         .join(SocialAccount, PoolAccount.social_account_id == SocialAccount.id)
@@ -38,8 +38,12 @@ async def count_accounts_by_role(session: AsyncSession, automation_id: int) -> d
             SocialAccount.is_frozen.is_(False),
         )
     )
+    return list(result.all())
+
+
+async def count_accounts_by_role(session: AsyncSession, automation_id: int) -> dict[str, int]:
     counts = {role: 0 for role in ACCOUNT_ROLES}
-    for pool_account, social in result.all():
+    for pool_account, social in await _live_pool_accounts(session, automation_id):
         for role in effective_roles(pool_account, social):
             counts[role] = counts.get(role, 0) + 1
     return counts
@@ -66,10 +70,15 @@ async def validate_settings(
     can_enable: dict[str, bool] = {}
 
     counts = await count_accounts_by_class(session, automation.id)
-    role_counts = await count_accounts_by_role(session, automation.id)
+    live_accounts = await _live_pool_accounts(session, automation.id)
+    role_sets = [effective_roles(pool_account, social) for pool_account, social in live_accounts]
+    role_counts = {role: 0 for role in ACCOUNT_ROLES}
+    for roles in role_sets:
+        for role in roles:
+            role_counts[role] = role_counts.get(role, 0) + 1
     total_active = sum(counts.values())
     trusted = counts.get(AccountClass.TRUSTED.value, 0)
-    shilling = role_counts.get(AccountRole.SHILLING.value, 0)
+    shilling = sum(1 for roles in role_sets if has_shilling_role(roles))
     intercept = role_counts.get(AccountRole.LEAD_INTERCEPT.value, 0)
     neuro = role_counts.get(AccountRole.NEUROCOMMENTING.value, 0)
     dmp = role_counts.get(AccountRole.DMP.value, 0)
@@ -81,7 +90,7 @@ async def validate_settings(
     can_enable["discussion"] = (neuro + intercept + dmp + shilling) >= 1
     can_enable["dmp_one"] = dmp >= 1
     can_enable["amocrm"] = True
-    can_enable["shilling"] = shilling >= 2
+    can_enable["shilling"] = shilling_pair_ready(role_sets)
 
     if is_dmp_notify_pipeline(automation):
         qualify = qualification_enabled(automation)
@@ -135,8 +144,8 @@ async def validate_settings(
         )
     if automation.is_shilling_enabled and not can_enable["shilling"]:
         warnings.append(
-            "Шиллинг включён, но меньше двух аккаунтов с функцией «шиллинг». "
-            "Назначьте минимум два аккаунта или отключите модуль."
+            "Шиллинг включён, но нет пары: назначьте «Шиллинг 1 (вопрос)» и «Шиллинг 2 (ответ)» "
+            "двум разным аккаунтам или отключите модуль."
         )
     if automation.max_daily_messages_per_account <= 0:
         warnings.append("Дневной лимит сообщений на аккаунт равен 0 — сообщения не будут отправляться.")

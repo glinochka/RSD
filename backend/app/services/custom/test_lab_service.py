@@ -11,7 +11,7 @@ from typing import Any, Awaitable, Callable
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .account_roles import effective_roles
+from .account_roles import effective_roles, shilling_pair_ready
 from .chat_inspect_service import ensure_comment_access
 from .chat_join_service import (
     create_chat_from_link,
@@ -467,13 +467,27 @@ async def _has_role(session: AsyncSession, automation_id: int, role: str, *, min
     return False
 
 
+async def _has_shilling_pair(session: AsyncSession, automation_id: int) -> bool:
+    result = await session.execute(
+        select(SocialAccount, PoolAccount)
+        .join(PoolAccount, PoolAccount.social_account_id == SocialAccount.id)
+        .where(
+            PoolAccount.custom_automation_id == automation_id,
+            SocialAccount.is_active.is_(True),
+            SocialAccount.is_banned.is_(False),
+            SocialAccount.is_frozen.is_(False),
+        )
+    )
+    return shilling_pair_ready([effective_roles(pool, social) for social, pool in result.all()])
+
+
 async def activate_lab_shilling(session: AsyncSession, automation: CustomAutomation) -> dict[str, Any]:
     chats = await list_lab_chats(session, automation.id)
     chat = pick_lab_group(automation, chats)
     if chat is None:
         return lab_result(ok=False, detail="Нет целевого чата. Укажите чат и нажмите «Вступить».")
-    if not await _has_role(session, automation.id, AccountRoleEnum.SHILLING.value, min_count=2):
-        return lab_result(ok=False, detail="Нужно минимум 2 живых аккаунта с функцией «Шиллинг».")
+    if not await _has_shilling_pair(session, automation.id):
+        return lab_result(ok=False, detail="Нужно два аккаунта: «Шиллинг 1 (вопрос)» и «Шиллинг 2 (ответ)».")
     sent = 0
     results = []
     ready, joined, total = await _lab_target_ready(session, automation.id, chat)
@@ -814,8 +828,8 @@ async def start_channel_activity(
     if activity == CHANNEL_ACTIVITY_NEURO:
         if not await _has_role(session, automation.id, AccountRoleEnum.NEUROCOMMENTING.value):
             return lab_result(ok=False, detail="Нет живых аккаунтов с функцией «Нейрокомментинг».")
-    elif not await _has_role(session, automation.id, AccountRoleEnum.SHILLING.value, min_count=2):
-        return lab_result(ok=False, detail="Для шиллинга в комментариях нужно минимум 2 живых аккаунта с функцией «Шиллинг».")
+    elif not await _has_shilling_pair(session, automation.id):
+        return lab_result(ok=False, detail="Для шиллинга в комментариях нужны «Шиллинг 1 (вопрос)» и «Шиллинг 2 (ответ)».")
 
     list_posts_fn = list_posts or (
         lambda s, _automation, chat, limit=20: _list_channel_posts(s, automation.id, chat, limit=limit)

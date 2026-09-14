@@ -231,6 +231,26 @@ class TestLazyJoinCoverage:
         picked = await pick_next_pending_membership(test_session, custom_automation.id)
         assert picked is None
 
+    async def test_write_rest_does_not_block_join_queue(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from datetime import timedelta
+
+        from app.services.custom.account_pacing import schedule_account_rest
+
+        account = await _add_account(test_session, custom_automation, username="writer", phone="+79991001015")
+        chat = await _add_chat(test_session, custom_automation, title="Join anyway", invite_link="https://t.me/+joinanyway12")
+        await ensure_memberships_for_chat(
+            test_session, custom_automation.id, chat, account_ids=[account.id]
+        )
+        schedule_account_rest(account)
+        account.next_action_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=10)
+        await test_session.commit()
+
+        picked = await pick_next_pending_membership(test_session, custom_automation.id)
+        assert picked is not None
+        assert picked.social_account_id == account.id
+
     async def test_ensure_accounts_ready_queues_pending_action(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
     ):

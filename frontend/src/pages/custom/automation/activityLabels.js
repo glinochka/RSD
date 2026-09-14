@@ -102,7 +102,8 @@ export const VARIABLE_HINTS = {
 export const ACCOUNT_ROLE_OPTIONS = [
   { value: 'neurocommenting', label: 'Нейрокомментинг' },
   { value: 'lead_intercept', label: 'Перехват заявок' },
-  { value: 'shilling', label: 'Шиллинг' },
+  { value: 'shilling_question', label: 'Шиллинг 1 (вопрос)' },
+  { value: 'shilling_answer', label: 'Шиллинг 2 (ответ)' },
   { value: 'dmp', label: 'DMP' },
 ];
 
@@ -110,7 +111,28 @@ export const ACCOUNT_ROLE_LABELS = {
   neurocommenting: 'Нейрокомментинг',
   lead_intercept: 'Перехват заявок',
   shilling: 'Шиллинг',
+  shilling_question: 'Шиллинг 1 (вопрос)',
+  shilling_answer: 'Шиллинг 2 (ответ)',
   dmp: 'DMP',
+};
+
+export const exclusiveShillingRoles = (nextRoles, previousRoles = []) => {
+  const next = Array.isArray(nextRoles) ? [...nextRoles] : [];
+  const prev = Array.isArray(previousRoles) ? previousRoles : [];
+  const question = 'shilling_question';
+  const answer = 'shilling_answer';
+  const hasQuestion = next.includes(question);
+  const hasAnswer = next.includes(answer);
+  if (hasQuestion && hasAnswer) {
+    if (!prev.includes(question) && hasQuestion) {
+      return next.filter((role) => role !== answer && role !== 'shilling');
+    }
+    if (!prev.includes(answer) && hasAnswer) {
+      return next.filter((role) => role !== question && role !== 'shilling');
+    }
+    return next.filter((role) => role !== answer && role !== 'shilling');
+  }
+  return next.filter((role) => role !== 'shilling');
 };
 
 export const WARMUP_STATUS_LABELS = {

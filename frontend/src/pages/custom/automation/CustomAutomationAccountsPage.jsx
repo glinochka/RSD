@@ -6,7 +6,7 @@ import customService, { mediaUrl } from '../../../services/customService';
 import { useCustomAuth } from '../../../components/custom/useCustomAuth';
 import CustomBulkProfileForm from './CustomBulkProfileForm';
 import CustomAccountConnectForm from './CustomAccountConnectForm';
-import { ACCOUNT_ROLE_LABELS, ACCOUNT_ROLE_OPTIONS, WARMUP_STATUS_LABELS } from './activityLabels';
+import { ACCOUNT_ROLE_LABELS, ACCOUNT_ROLE_OPTIONS, WARMUP_STATUS_LABELS, exclusiveShillingRoles } from './activityLabels';
 import '../../../styles/projectCRMPage.css';
 import '../../../styles/projectSettingsPage.css';
 
@@ -275,8 +275,10 @@ const CustomAutomationAccountsPage = () => {
   };
 
   const handleRolesChange = async (accountId, roles) => {
+    const account = accounts.find((item) => item.id === accountId);
+    const nextRoles = exclusiveShillingRoles(roles, account?.roles || []);
     try {
-      await customService.updateAccount(id, accountId, { roles });
+      await customService.updateAccount(id, accountId, { roles: nextRoles });
       await loadAccounts();
     } catch (err) {
       setError(err.message || 'Не удалось сохранить функции');
@@ -663,7 +665,7 @@ const CustomAutomationAccountsPage = () => {
                   placeholder="Молчит"
                   onChange={(e) => handleRolesChange(account.id, e.target.value)}
                 />
-                <span className="form-hint">Пустой список — аккаунт ничего не делает.</span>
+                <span className="form-hint">Шиллинг 1 задаёт вопрос, шиллинг 2 отвечает. Пустой список — аккаунт ничего не делает.</span>
               </div>
               <div className="form-group">
                 <label htmlFor={`class-${account.id}`}>Класс</label>

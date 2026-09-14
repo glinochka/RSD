@@ -7,7 +7,7 @@ from typing import Any, Awaitable, Callable
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.models import AutomationActionLog, SocialAccount
-from .account_pacing import schedule_account_rest, schedule_account_retry
+from .account_pacing import action_uses_write_rest, schedule_account_rest, schedule_account_retry
 
 logger = logging.getLogger(__name__)
 
@@ -336,14 +336,16 @@ async def execute_with_telegram_retry(
     """Run a Telegram coroutine once. Failed writes wait 3–5 minutes before the next job tick.
 
     FloodWait under 20 seconds is the only in-process wait; longer floods are deferred.
+    Successful/failed writes rest the account; joins keep their own 3–5 minute cooldown.
     """
     del base_delay
     last_exc: Exception | None = None
     attempts = max(1, int(max_retries))
+    apply_write_rest = pace and action_uses_write_rest(action_type)
     for attempt in range(attempts):
         try:
             result = await coro_fn()
-            if pace:
+            if apply_write_rest:
                 schedule_account_rest(account)
             return result
         except Exception as exc:
@@ -416,7 +418,7 @@ async def execute_with_telegram_retry(
                 )
                 raise
             if kind == "chat_restricted":
-                if pace:
+                if apply_write_rest:
                     schedule_account_retry(account)
                 await log_action_error(
                     session, account,
@@ -434,11 +436,11 @@ async def execute_with_telegram_retry(
                     logger.info("FloodWait for account %s: sleeping %s seconds", account.id, wait_seconds)
                     await asyncio.sleep(wait_seconds)
                     continue
-                if pace:
+                if apply_write_rest:
                     extra = max(0, wait_seconds - 20)
                     schedule_account_retry(account, extra_seconds=extra)
                 break
-            if pace:
+            if apply_write_rest:
                 schedule_account_retry(account)
             break
 

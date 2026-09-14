@@ -21,6 +21,8 @@ ACTION_ALLOWED_CLASSES = {
     "dmp_outreach": {AccountClass.TRUSTED.value},
     "discussion": {AccountClass.ONE_DAY.value, AccountClass.MID.value, AccountClass.TRUSTED.value},
     "shilling": {AccountClass.SHILLING.value},
+    "shilling_question": {AccountClass.SHILLING.value},
+    "shilling_answer": {AccountClass.SHILLING.value},
     "inspect": set(_ALL_CLASSES),
     "prepare_join": set(_ALL_CLASSES),
 }
@@ -236,13 +238,14 @@ async def select_account_for_action(
     _reset_counters_if_needed(accounts)
 
     exclude_spamblocked = action_type in _DM_ACTIONS
+    skip_write_rest = ignore_rest or action_type in {"inspect", "prepare_join"}
     eligible = _filter_eligible(
         rows,
         action_type,
         automation_obj.max_daily_messages_per_account,
         exclude_banned,
         exclude_spamblocked=exclude_spamblocked,
-        ignore_rest=ignore_rest,
+        ignore_rest=skip_write_rest,
     )
     if exclude_account_ids:
         eligible = [row for row in eligible if row[1].id not in exclude_account_ids]

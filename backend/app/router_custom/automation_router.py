@@ -571,9 +571,15 @@ async def list_accounts(
         if account_class:
             stmt = stmt.where(PoolAccount.assigned_class == account_class)
         if role:
-            from sqlalchemy import cast, String
+            from sqlalchemy import String, cast
 
-            stmt = stmt.where(cast(PoolAccount.roles, String).like(f'%"{role}"%'))
+            from ..services.custom.account_roles import ALL_SHILLING_ROLES, LEGACY_SHILLING_ROLE
+
+            blob = cast(PoolAccount.roles, String)
+            if role in ALL_SHILLING_ROLES:
+                stmt = stmt.where(or_(blob.like(f'%"{role}"%'), blob.like(f'%"{LEGACY_SHILLING_ROLE}"%')))
+            else:
+                stmt = stmt.where(blob.like(f'%"{role}"%'))
         if status == "loaded" or status == "active":
             stmt = stmt.where(
                 SocialAccount.session_file_path.isnot(None),
