@@ -151,11 +151,14 @@ async def validate_settings(
         )
     kind = (automation.solution_kind or "generic").strip()
     manager_set = bool((automation.lead_manager_contact or "").strip())
-    if kind == "fulfillment" and not manager_set:
-        warnings.append("Укажите Telegram МОПа — на него уйдёт уведомление после прогрева.")
-    elif kind != "seo_saas" and not automation.is_amocrm_enabled and not manager_set:
+    bot_set = bool((automation.telegram_bot_token_enc or "").strip())
+    if bot_set and not is_dmp_notify_pipeline(automation) and not (getattr(automation, "telegram_bot_password_hash", None) or "").strip():
+        warnings.append("Укажите пароль Telegram-бота — его спрашивают перед отправкой лидов.")
+    if kind == "fulfillment" and not manager_set and not bot_set:
+        warnings.append("Укажите Telegram МОПа или подключите Telegram-бота — на него уйдёт лид после прогрева.")
+    elif kind != "seo_saas" and not automation.is_amocrm_enabled and not manager_set and not bot_set:
         warnings.append(
-            "Не указан контакт менеджера. Без AmoCRM передать лид заказчику будет нельзя."
+            "Не указан контакт менеджера. Без AmoCRM и Telegram-бота передать лид заказчику будет нельзя."
         )
 
     return {

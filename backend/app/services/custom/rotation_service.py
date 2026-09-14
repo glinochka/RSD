@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.models import AccountClass, AccountPool, CustomAutomation, CustomLead, PoolAccount, SocialAccount
+from .account_pacing import account_is_resting
 from .account_roles import account_matches_action
 
 logger = getLogger(__name__)
@@ -87,6 +88,7 @@ def _filter_eligible(
     exclude_banned: bool,
     *,
     exclude_spamblocked: bool = False,
+    ignore_rest: bool = False,
 ) -> list[tuple[PoolAccount, SocialAccount]]:
     eligible = []
     for pool_account, social_account in rows:
@@ -95,6 +97,8 @@ def _filter_eligible(
         if exclude_banned and social_account.is_banned:
             continue
         if getattr(social_account, "is_frozen", False):
+            continue
+        if not ignore_rest and account_is_resting(social_account):
             continue
         if exclude_spamblocked and social_account.is_spamblocked:
             continue
@@ -191,6 +195,7 @@ async def select_account_for_action(
     exclude_banned: bool = True,
     exclude_account_ids: set[int] | None = None,
     consume_quota: bool = False,
+    ignore_rest: bool = False,
 ) -> SocialAccount | None:
     """Pick an account from the default pool respecting class, rotation strategy and daily limits.
 
@@ -203,6 +208,7 @@ async def select_account_for_action(
         exclude_banned: skip banned accounts.
         exclude_account_ids: never return these account ids (used to pick a second shilling speaker).
         consume_quota: leftover flag; daily_messages_sent grows only via record_successful_send.
+        ignore_rest: lab/manual paths may pick an account that is cooling down.
 
     Returns:
         A SocialAccount instance or None if no eligible account exists.
@@ -236,6 +242,7 @@ async def select_account_for_action(
         automation_obj.max_daily_messages_per_account,
         exclude_banned,
         exclude_spamblocked=exclude_spamblocked,
+        ignore_rest=ignore_rest,
     )
     if exclude_account_ids:
         eligible = [row for row in eligible if row[1].id not in exclude_account_ids]
@@ -253,6 +260,7 @@ async def select_account_for_action(
                 and not (exclude_banned and assigned.is_banned)
                 and not getattr(assigned, "is_frozen", False)
                 and not (exclude_spamblocked and assigned.is_spamblocked)
+                and (ignore_rest or not account_is_resting(assigned))
             )
             assigned_row = next((row for row in rows if assigned and row[1].id == assigned.id), None)
             assigned_pool = assigned_row[0] if assigned_row else None
@@ -283,7 +291,6 @@ async def select_account_for_action(
     else:
         selected = _select_round_robin(eligible)
 
-    selected.last_used_at = _utc_now()
     _ = consume_quota
 
     if thread_id and lead:
@@ -317,6 +324,7 @@ async def select_distinct_accounts_for_action(
     exclude_banned: bool = True,
     exclude_account_ids: set[int] | None = None,
     consume_quota: bool = False,
+    ignore_rest: bool = False,
 ) -> list[SocialAccount]:
     """Pick ``count`` distinct accounts. Returns [] if a full distinct set cannot be formed."""
     selected: list[SocialAccount] = []
@@ -329,6 +337,7 @@ async def select_distinct_accounts_for_action(
             exclude_banned=exclude_banned,
             exclude_account_ids=excluded,
             consume_quota=consume_quota,
+            ignore_rest=ignore_rest,
         )
         if account is None:
             return []

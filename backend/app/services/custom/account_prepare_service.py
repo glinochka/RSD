@@ -84,6 +84,18 @@ async def prepare_accounts(automation_id: int) -> dict[str, Any]:
             templates = dict(automation.account_setup_templates or {})
             alive = await list_alive_session_accounts(session, automation_id)
             state["alive"] = len(alive)
+            from .session_hygiene_service import hygienize_account
+
+            for account in alive:
+                try:
+                    await hygienize_account(session, account, automation_id, force=True)
+                except Exception as exc:
+                    logger.warning(
+                        "Session hygiene during prepare failed for account %s: %s",
+                        account.id,
+                        exc,
+                    )
+            await session.commit()
             default_tmpl = dict(templates.get("*") or {})
             class_ids: dict[str, list[int]] = {item.value: [] for item in AccountClass}
             for account in alive:

@@ -7,6 +7,7 @@ from typing import Any, Awaitable, Callable
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.models import AutomationActionLog, SocialAccount
+from .account_pacing import schedule_account_rest, schedule_account_retry
 
 logger = logging.getLogger(__name__)
 
@@ -328,14 +329,23 @@ async def execute_with_telegram_retry(
     target_type: str = "account",
     payload: dict[str, Any] | None = None,
     automation_id: int | None = None,
-    max_retries: int = 3,
+    max_retries: int = 1,
     base_delay: float = 1.0,
+    pace: bool = True,
 ) -> Any:
-    """Run a Telegram coroutine, handle flood/ban/session errors, log failures."""
+    """Run a Telegram coroutine once. Failed writes wait 3–5 minutes before the next job tick.
+
+    FloodWait under 20 seconds is the only in-process wait; longer floods are deferred.
+    """
+    del base_delay
     last_exc: Exception | None = None
-    for attempt in range(max_retries):
+    attempts = max(1, int(max_retries))
+    for attempt in range(attempts):
         try:
-            return await coro_fn()
+            result = await coro_fn()
+            if pace:
+                schedule_account_rest(account)
+            return result
         except Exception as exc:
             last_exc = exc
             classification = _classify_telegram_error(exc)
@@ -387,8 +397,14 @@ async def execute_with_telegram_retry(
                 )
                 raise
             if kind == "session":
-                mark_session_invalid(account)
-                await session.commit()
+                from .session_hygiene_service import promote_spare_session
+
+                if promote_spare_session(account):
+                    logger.warning("Promoted spare Telegram session for account %s", account.id)
+                    await session.commit()
+                else:
+                    mark_session_invalid(account)
+                    await session.commit()
                 await log_action_error(
                     session, account,
                     action_type=action_type,
@@ -400,6 +416,8 @@ async def execute_with_telegram_retry(
                 )
                 raise
             if kind == "chat_restricted":
+                if pace:
+                    schedule_account_retry(account)
                 await log_action_error(
                     session, account,
                     action_type=action_type,
@@ -412,15 +430,17 @@ async def execute_with_telegram_retry(
                 raise
             if kind == "flood":
                 wait_seconds = int(classification.get("seconds") or 60)
-                if attempt >= max_retries - 1:
-                    break
-                logger.info("FloodWait for account %s: sleeping %s seconds", account.id, wait_seconds)
-                await asyncio.sleep(wait_seconds)
-                continue
-            if attempt >= max_retries - 1:
+                if wait_seconds <= 20 and attempt < attempts - 1:
+                    logger.info("FloodWait for account %s: sleeping %s seconds", account.id, wait_seconds)
+                    await asyncio.sleep(wait_seconds)
+                    continue
+                if pace:
+                    extra = max(0, wait_seconds - 20)
+                    schedule_account_retry(account, extra_seconds=extra)
                 break
-            await asyncio.sleep(base_delay * (2 ** attempt))
-            continue
+            if pace:
+                schedule_account_retry(account)
+            break
 
     await log_action_error(
         session, account,
@@ -457,6 +477,11 @@ async def update_account_after_telegram_error(
         await session.commit()
         return "spamblock"
     if kind == "session":
+        from .session_hygiene_service import promote_spare_session
+
+        if promote_spare_session(account):
+            await session.commit()
+            return "session_retry"
         mark_session_invalid(account)
         await session.commit()
         return "session_invalid"

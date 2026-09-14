@@ -27,6 +27,7 @@ from .chat_discovery_service import run_pending_discovery_for_automation
 from .inbound_dm_service import run_inbound_dm_pass
 from .lead_warmup_service import run_lead_warmup_pass
 from .account_warmup_service import run_account_warmup_pass
+from .session_hygiene_service import run_session_hygiene_for_automation
 from .shilling_service import run_shilling_pass
 from .telegram_notify_bot_service import restore_all_telegram_webhooks, retry_pending_dmp_notifications
 
@@ -71,6 +72,7 @@ class CustomAutomationScheduler:
             "lead_warmup": settings.CUSTOM_LEAD_WARMUP_INTERVAL_SECONDS,
             "inbound_dm": settings.CUSTOM_INBOUND_DM_INTERVAL_SECONDS,
             "account_warmup": settings.CUSTOM_ACCOUNT_WARMUP_INTERVAL_SECONDS,
+            "session_hygiene": settings.CUSTOM_SESSION_HYGIENE_INTERVAL_SECONDS,
             "test_watch": settings.CUSTOM_TEST_WATCH_INTERVAL_SECONDS,
             "dmp_poll": settings.DMP_ONE_POLL_INTERVAL_SECONDS,
             "dmp_notify": 60,
@@ -89,6 +91,7 @@ class CustomAutomationScheduler:
             "lead_warmup": run_lead_warmup_pass,
             "inbound_dm": run_inbound_dm_pass,
             "account_warmup": run_account_warmup_pass,
+            "session_hygiene": run_session_hygiene_for_automation,
             "test_watch": run_lab_neurocommenting_pass,
             "dmp_poll": poll_pending_imports,
             "dmp_notify": retry_pending_dmp_notifications,
@@ -120,7 +123,7 @@ class CustomAutomationScheduler:
                 jobs.add("lead_warmup")
             return jobs
 
-        jobs = {"join", "discovery", "account_warmup", "inbound_dm"}
+        jobs = {"join", "discovery", "account_warmup", "inbound_dm", "session_hygiene"}
         if (getattr(automation, "test_channel_username", None) or "").strip():
             jobs.add("test_watch")
         if automation.is_chat_monitoring_enabled:
@@ -137,6 +140,8 @@ class CustomAutomationScheduler:
             jobs.add("dmp_poll")
         if automation.is_amocrm_enabled:
             jobs.add("amocrm_sync")
+        if (getattr(automation, "telegram_bot_token_enc", None) or "").strip():
+            jobs.add("dmp_notify")
         return jobs
 
     async def _fetch_active_automations(self, session: AsyncSession) -> list[CustomAutomation]:

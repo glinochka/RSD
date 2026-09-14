@@ -133,6 +133,16 @@ async def auto_transfer_lead(
             result["reason"] = delivery.get("reason") or delivery.get("channel")
     elif result.get("transferred"):
         result["reason"] = result.get("reason") or "amocrm"
+    from .telegram_notify_bot_service import decrypt_bot_token, dispatch_sales_bot_notification
+
+    if decrypt_bot_token(automation):
+        bot = await dispatch_sales_bot_notification(
+            session, automation, lead, handoff_reason=handoff_reason,
+        )
+        result["bot"] = bot
+        if bot.get("bot_sent"):
+            result["transferred"] = True
+            result["reason"] = result.get("reason") or "telegram_bot"
     return result
 
 

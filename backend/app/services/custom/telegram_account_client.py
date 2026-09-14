@@ -149,6 +149,7 @@ def _make_client(
     api_id: int | None = None,
     api_hash: str | None = None,
     proxy: dict | None = None,
+    device_model: str | None = None,
 ):
     client, resolved_id, resolved_hash = create_telegram_client(
         api_id=api_id,
@@ -156,6 +157,7 @@ def _make_client(
         session_path=session_path,
         prefer_desktop=True,
         proxy=proxy,
+        device_model=device_model,
     )
     return client, resolved_id, resolved_hash
 
@@ -189,12 +191,14 @@ class TelegramAccountClient:
         api_hash: str | None = None,
         encrypted_session: str | None = None,
         proxy: dict | None = None,
+        device_model: str | None = None,
     ):
         self.session_path = session_path
         self._encrypted_session = encrypted_session
         self._api_id = api_id
         self._api_hash = api_hash
         self._proxy = proxy
+        self._device_model = device_model
         self.client = None
         self.api_id = 0
         self.api_hash = ""
@@ -270,6 +274,7 @@ class TelegramAccountClient:
             api_id=self._api_id,
             api_hash=self._api_hash,
             proxy=self._proxy,
+            device_model=self._device_model,
         )
         try:
             await self.client.connect()

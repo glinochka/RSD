@@ -233,6 +233,7 @@ class CustomAutomationSettingsResponse(BaseModel):
     telegram_bot_username: str | None = None
     telegram_bot_webhook_url: str | None = None
     telegram_bot_subscribers: int = 0
+    telegram_bot_password_set: bool = False
     google_sheets_spreadsheet_id: str | None = None
     google_sheets_worksheet: str | None = None
     google_sheets_credentials_set: bool = False
@@ -543,6 +544,7 @@ class DmpOneWebhookResponse(BaseModel):
 
 class TelegramBotSettingsUpdate(BaseModel):
     bot_token: Optional[str] = None
+    password: Optional[str] = None
     disconnect: bool = False
 
 

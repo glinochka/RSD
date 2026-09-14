@@ -753,9 +753,13 @@ async def _list_channel_posts(
     *,
     limit: int = 20,
 ) -> list[Any]:
-    account = await select_account_for_action(session, automation_id, "commenting", consume_quota=False)
+    account = await select_account_for_action(
+        session, automation_id, "commenting", consume_quota=False, ignore_rest=True
+    )
     if account is None:
-        account = await select_account_for_action(session, automation_id, "shilling", consume_quota=False)
+        account = await select_account_for_action(
+            session, automation_id, "shilling", consume_quota=False, ignore_rest=True
+        )
     if account is None:
         raise RuntimeError("Нет живых аккаунтов для чтения канала.")
     from .chat_inspect_service import probe_comments_readonly
@@ -976,7 +980,9 @@ async def _react_to_post(
 
     if channel.comments_open is False:
         return lab_result(ok=False, detail="Комментарии в канале закрыты.", post_id=post_id)
-    account = await select_account_for_action(session, automation.id, "commenting", consume_quota=False)
+    account = await select_account_for_action(
+        session, automation.id, "commenting", consume_quota=False, ignore_rest=True
+    )
     if account is None:
         return lab_result(ok=False, detail="Нет живых аккаунтов с функцией «Нейрокомментинг».", post_id=post_id)
     probe = await ensure_comment_access(session, channel, account)

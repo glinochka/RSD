@@ -326,6 +326,7 @@ async def process_chat_target(
                 "commenting",
                 consume_quota=False,
                 exclude_account_ids=tried_actors or None,
+                ignore_rest=lab_mode,
             )
             if not actor or actor.daily_messages_sent >= max_per_day:
                 actor = None

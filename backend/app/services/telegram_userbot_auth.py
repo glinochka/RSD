@@ -26,6 +26,8 @@ _TELEGRAM_ANDROID_API_HASH = "eb06d4abfb49dc3eeb1aeb98ae0f581e"
 
 QR_WAIT_TIMEOUT_SECONDS = 180
 _QR_TTL_SECONDS = 600
+DEVICE_MODEL_MAIN = "RSD Platform"
+DEVICE_MODEL_SPARE = "RSD Spare"
 
 _qr_lock = asyncio.Lock()
 _qr_states: dict[str, "_QrAuthState"] = {}
@@ -107,13 +109,13 @@ def resolve_api_credentials(
     return creds
 
 
-def _build_api_data(api_id: int, api_hash: str):
+def _build_api_data(api_id: int, api_hash: str, *, device_model: str | None = None):
     from opentele.api import APIData
 
     return APIData(
         api_id=int(api_id),
         api_hash=str(api_hash).strip(),
-        device_model="RSD Platform",
+        device_model=device_model or DEVICE_MODEL_MAIN,
         system_version="Windows 10",
         app_version="4.16.30 x64",
         lang_code="ru",
@@ -129,29 +131,31 @@ def create_telegram_client(
     session_path: str | None = None,
     prefer_desktop: bool = True,
     proxy: dict | None = None,
+    device_model: str | None = None,
 ):
     """TelegramClient with opentele when installed, otherwise Telethon."""
     resolved_id, resolved_hash = resolve_api_credentials(
         api_id, api_hash, prefer_desktop=prefer_desktop
     )
+    model = device_model or DEVICE_MODEL_MAIN
     if session_path:
         session = session_path
     else:
         from telethon.sessions import StringSession
 
         session = StringSession((session_string or "").strip())
-    client_kwargs = {}
+    client_kwargs: dict[str, Any] = {}
     if proxy:
         client_kwargs["proxy"] = proxy
     if opentele_available():
         from opentele.tl import TelegramClient
 
-        api = _build_api_data(resolved_id, resolved_hash)
+        api = _build_api_data(resolved_id, resolved_hash, device_model=model)
         return TelegramClient(session, api=api, **client_kwargs), resolved_id, resolved_hash
     from telethon import TelegramClient
 
     return (
-        TelegramClient(session, resolved_id, resolved_hash, **client_kwargs),
+        TelegramClient(session, resolved_id, resolved_hash, device_model=model, **client_kwargs),
         resolved_id,
         resolved_hash,
     )

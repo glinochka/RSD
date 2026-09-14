@@ -46,6 +46,8 @@ const CustomAutomationIntegrationsBlock = ({
   onMessage,
 }) => {
   const isDmpBot = settings?.solution_kind === 'dmp_bot';
+  const showLeadBot = isDmpBot || settings?.solution_kind !== 'seo_saas';
+  const [botPassword, setBotPassword] = useState('');
   const [connection, setConnection] = useState(null);
   const [amoForm, setAmoForm] = useState({
     subdomain: '',
@@ -206,9 +208,13 @@ const CustomAutomationIntegrationsBlock = ({
     e.preventDefault();
     setIsSavingBot(true);
     try {
-      await customService.saveTelegramBot(automationId, { bot_token: botToken || undefined });
+      await customService.saveTelegramBot(automationId, {
+        bot_token: botToken || undefined,
+        password: botPassword || undefined,
+      });
       setBotToken('');
-      onMessage('Бот подключён, webhook установлен');
+      setBotPassword('');
+      onMessage(botToken ? 'Бот подключён, webhook установлен' : 'Настройки бота сохранены');
       await onReloadSettings();
     } catch (err) {
       onError(err.message || 'Не удалось подключить бота');
@@ -225,6 +231,7 @@ const CustomAutomationIntegrationsBlock = ({
     try {
       await customService.saveTelegramBot(automationId, { disconnect: true });
       setBotToken('');
+      setBotPassword('');
       onMessage('Бот отключён');
       await onReloadSettings();
     } catch (err) {
@@ -255,7 +262,7 @@ const CustomAutomationIntegrationsBlock = ({
 
   const showAmocrm = Boolean(settings?.is_amocrm_enabled) && !isDmpBot;
   const showDmp = Boolean(settings?.is_dmp_one_enabled) || isDmpBot;
-  const showBot = isDmpBot;
+  const showBot = showLeadBot;
   const showSheets = isDmpBot;
   if (!showAmocrm && !showDmp && !showBot && !showSheets) {
     return null;
@@ -270,6 +277,9 @@ const CustomAutomationIntegrationsBlock = ({
             {settings?.telegram_bot_token_set
               ? `@${settings.telegram_bot_username || 'бот'} · подписано: ${settings.telegram_bot_subscribers || 0}`
               : 'Вставьте API-ключ бота — webhook поставится сам.'}
+            {isDmpBot
+              ? ' Логин и пароль клиент берёт из блока «Доступ клиента».'
+              : ' Клиент пишет боту и вводит пароль. Если договорились — в чат уходят телефон, username и контекст, если нет — только телефон.'}
           </p>
           <form onSubmit={handleSaveBot}>
             <div className="form-group">
@@ -282,6 +292,18 @@ const CustomAutomationIntegrationsBlock = ({
                 placeholder={settings?.telegram_bot_token_set ? 'Оставьте пустым, чтобы не менять' : '123456:AA...'}
               />
             </div>
+            {isDmpBot ? null : (
+              <div className="form-group">
+                <label htmlFor="telegram-bot-password">Пароль бота</label>
+                <input
+                  id="telegram-bot-password"
+                  type="password"
+                  value={botPassword}
+                  onChange={(e) => setBotPassword(e.target.value)}
+                  placeholder={settings?.telegram_bot_password_set ? 'Оставьте пустым, чтобы не менять' : 'Пароль, который вводит клиент'}
+                />
+              </div>
+            )}
             {settings?.telegram_bot_webhook_url ? (
               <CopyField
                 id="telegram-bot-webhook"
@@ -290,7 +312,7 @@ const CustomAutomationIntegrationsBlock = ({
               />
             ) : null}
             <div className="settings-actions">
-              <button type="submit" className="btn btn-black" disabled={isSavingBot || (!botToken && !settings?.telegram_bot_token_set)}>
+              <button type="submit" className="btn btn-black" disabled={isSavingBot || (!botToken && !botPassword && !settings?.telegram_bot_token_set)}>
                 {isSavingBot ? 'Сохранение...' : 'Сохранить'}
               </button>
               {settings?.telegram_bot_token_set ? (

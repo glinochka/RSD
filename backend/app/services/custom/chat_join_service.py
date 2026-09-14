@@ -306,7 +306,6 @@ async def _try_join_chat(
                     target_id=str(chat_target.id),
                     target_type="chat",
                     automation_id=automation_id,
-                    max_retries=3,
                 )
             except InviteRequestSentError:
                 try:
@@ -921,8 +920,11 @@ async def join_pending_chats(
 ) -> list[dict[str, Any]]:
     """Join pending account×chat pairs. Scheduler: one pair per account per tick."""
     del sleeper
+    from .pending_action_service import process_due_pending_actions
+
     await ensure_memberships_for_automation(session, automation_id)
     await recover_stale_joining_memberships(session, automation_id)
+    await process_due_pending_actions(session, automation_id)
     pairs = max_pairs if max_pairs is not None else (MAX_JOINS_PER_TICK if rate_limit else 10_000)
     results: list[dict[str, Any]] = []
     used_accounts: set[int] = set()

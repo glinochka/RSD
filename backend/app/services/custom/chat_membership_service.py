@@ -21,7 +21,7 @@ from ...alembic.models import (
 
 logger = logging.getLogger(__name__)
 
-JOIN_DELAY_MIN_SECONDS = 120
+JOIN_DELAY_MIN_SECONDS = 180
 JOIN_DELAY_MAX_SECONDS = 300
 MAX_CHATS_PER_ACCOUNT = 450
 MAX_JOINS_PER_TICK = 8
@@ -640,6 +640,12 @@ async def pick_next_pending_membership(
             (AccountChatMembership.next_join_attempt_at.is_(None))
             | (AccountChatMembership.next_join_attempt_at <= now)
         )
+        filters.append(
+            or_(
+                SocialAccount.next_action_at.is_(None),
+                SocialAccount.next_action_at <= now,
+            )
+        )
     if not include_lab:
         filters.append(ChatTarget.source != ChatSource.TEST.value)
     if chat_target_ids:
@@ -652,6 +658,7 @@ async def pick_next_pending_membership(
     result = await session.execute(
         select(AccountChatMembership)
         .join(ChatTarget, ChatTarget.id == AccountChatMembership.chat_target_id)
+        .join(SocialAccount, SocialAccount.id == AccountChatMembership.social_account_id)
         .where(*filters)
         .order_by(AccountChatMembership.priority.desc(), AccountChatMembership.id.asc())
         .limit(20)

@@ -69,7 +69,9 @@ class AccountHealthWorker:
                 restore_encrypted_session_file(social_account.encrypted_session, session_path)
             if session_path.exists():
                 last_exc: Exception | None = None
-                for attempt in range(2):
+                restored_backup = False
+                promoted_spare = False
+                for _attempt in range(3):
                     try:
                         need_spam_check = True
                         checked_at = social_account.spamblock_checked_at
@@ -90,35 +92,37 @@ class AccountHealthWorker:
                         break
                     except Exception as exc:
                         last_exc = exc
-                        if attempt == 0 and isinstance(exc, SessionInvalidError):
-                            logger.warning(
-                                "Health check session error for account %s, retrying: %s",
-                                account_id,
-                                exc,
-                            )
-                            await asyncio.sleep(2)
-                            continue
                         if isinstance(exc, SessionInvalidError):
-                            from .telegram_account_client import restore_encrypted_session_file
+                            if not restored_backup:
+                                from .telegram_account_client import restore_encrypted_session_file
 
-                            session_path = _media_root() / (social_account.session_file_path or "")
-                            restored = restore_encrypted_session_file(
-                                social_account.encrypted_session, session_path
+                                session_path = _media_root() / (social_account.session_file_path or "")
+                                restored_backup = restore_encrypted_session_file(
+                                    social_account.encrypted_session, session_path
+                                )
+                                if restored_backup:
+                                    logger.warning(
+                                        "Health check restored session backup for account %s, retrying",
+                                        account_id,
+                                    )
+                                    continue
+                            error_kind = await update_account_after_telegram_error(
+                                session, social_account, exc
                             )
-                            if restored:
+                            if error_kind == "session_retry" and not promoted_spare:
+                                promoted_spare = True
                                 logger.warning(
-                                    "Health check login failed for account %s; restored backup, account stays active",
+                                    "Health check promoted spare session for account %s, retrying",
                                     account_id,
                                 )
-                                social_account.last_health_check_at = _utc_now()
-                                social_account.updated_at = _utc_now()
-                                await session.commit()
-                                return {
-                                    "account_id": account_id,
-                                    "status": "session_retry",
-                                    "classification": None,
-                                    "error": "session_retry",
-                                }
+                                continue
+                            logger.warning(
+                                "Health check failed for account %s: %s (%s)",
+                                account_id,
+                                exc,
+                                error_kind,
+                            )
+                            break
                         error_kind = await update_account_after_telegram_error(session, social_account, exc)
                         logger.warning("Health check failed for account %s: %s (%s)", account_id, exc, error_kind)
                         break

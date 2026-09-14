@@ -29,6 +29,7 @@ from .chat_membership_service import (
     recover_reader_after_error,
 )
 from .prompt_service import render_prompt
+from .account_pacing import account_is_resting
 from .rotation_service import record_successful_send, select_account_for_action
 from .shilling_service import _moscow_day_utc_range
 from .telegram_account_client import TelegramAccountClient
@@ -199,6 +200,8 @@ async def _assigned_account_for_thread(
         return None
     account = await session.get(SocialAccount, log.social_account_id)
     if not account or not account.is_active or account.is_banned or getattr(account, "is_frozen", False):
+        return None
+    if account_is_resting(account):
         return None
     if account.daily_messages_sent >= max_daily:
         return None

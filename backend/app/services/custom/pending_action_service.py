@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .account_pacing import account_is_resting, retry_delay_seconds
 from .chat_membership_service import account_is_joined, get_membership, queue_actor_for_chat
 from ...alembic.models import (
     AccountChatMembership,
@@ -197,12 +198,48 @@ async def fail_pending_requiring_account(
     return failed
 
 
+def _defer_pending(action: PendingChatAction, *, until: datetime | None = None) -> None:
+    delay_until = until or (_utc_now() + timedelta(seconds=retry_delay_seconds()))
+    current = getattr(action, "next_attempt_at", None)
+    if current is None or current < delay_until:
+        action.next_attempt_at = delay_until
+    action.updated_at = _utc_now()
+
+
+async def _accounts_blocking_pending(
+    session: AsyncSession,
+    action: PendingChatAction,
+    membership: AccountChatMembership,
+) -> tuple[bool, bool, datetime | None]:
+    """Return (ready, lost, rest_until)."""
+    needed = _account_ids_from_payload(action)
+    if membership.social_account_id not in needed:
+        return False, False, None
+    rest_until: datetime | None = None
+    for account_id in needed:
+        row = await get_membership(session, membership.chat_target_id, account_id)
+        if row is not None and row.join_status == ChatJoinStatus.BANNED.value:
+            action.status = FAILED
+            action.last_error = (row.last_join_error or "chat_banned")[:500]
+            action.updated_at = _utc_now()
+            return False, True, None
+        if not await account_is_joined(session, membership.chat_target_id, account_id):
+            return False, False, None
+        account = await session.get(SocialAccount, account_id)
+        if account_is_resting(account):
+            nxt = getattr(account, "next_action_at", None)
+            if nxt is not None and (rest_until is None or nxt > rest_until):
+                rest_until = nxt
+    return True, False, rest_until
+
+
 async def process_pending_for_membership(
     session: AsyncSession,
     membership: AccountChatMembership,
 ) -> int:
     if membership.join_status != ChatJoinStatus.JOINED.value:
         return 0
+    now = _utc_now()
     result = await session.execute(
         select(PendingChatAction).where(
             PendingChatAction.custom_automation_id == membership.custom_automation_id,
@@ -212,23 +249,49 @@ async def process_pending_for_membership(
     )
     done = 0
     for action in result.scalars().all():
-        needed = _account_ids_from_payload(action)
-        if membership.social_account_id not in needed:
+        nxt = getattr(action, "next_attempt_at", None)
+        if nxt is not None and nxt > now:
             continue
-        ready = True
-        lost = False
-        for account_id in needed:
-            row = await get_membership(session, membership.chat_target_id, account_id)
-            if row is not None and row.join_status == ChatJoinStatus.BANNED.value:
-                action.status = FAILED
-                action.last_error = (row.last_join_error or "chat_banned")[:500]
-                action.updated_at = _utc_now()
-                lost = True
-                break
-            if not await account_is_joined(session, membership.chat_target_id, account_id):
-                ready = False
-                break
+        ready, lost, rest_until = await _accounts_blocking_pending(session, action, membership)
         if lost:
+            await session.commit()
+            continue
+        if rest_until is not None:
+            _defer_pending(action, until=rest_until)
+            continue
+        if not ready:
+            continue
+        if await _execute_pending(session, action):
+            done += 1
+    return done
+
+
+async def process_due_pending_actions(session: AsyncSession, automation_id: int, *, limit: int = 10) -> int:
+    now = _utc_now()
+    result = await session.execute(
+        select(PendingChatAction)
+        .where(
+            PendingChatAction.custom_automation_id == automation_id,
+            PendingChatAction.status == PENDING,
+            or_(
+                PendingChatAction.next_attempt_at.is_(None),
+                PendingChatAction.next_attempt_at <= now,
+            ),
+        )
+        .order_by(PendingChatAction.id.asc())
+        .limit(limit)
+    )
+    done = 0
+    for action in result.scalars().all():
+        membership = await get_membership(session, action.chat_target_id, action.social_account_id)
+        if membership is None or membership.join_status != ChatJoinStatus.JOINED.value:
+            continue
+        ready, lost, rest_until = await _accounts_blocking_pending(session, action, membership)
+        if lost:
+            await session.commit()
+            continue
+        if rest_until is not None:
+            _defer_pending(action, until=rest_until)
             await session.commit()
             continue
         if not ready:
@@ -248,16 +311,21 @@ async def _execute_pending(session: AsyncSession, action: PendingChatAction) -> 
         action.last_error = str(exc)[:500]
         if action.attempts >= 5:
             action.status = FAILED
+        else:
+            _defer_pending(action)
         await session.commit()
         return False
     if ok:
         action.status = DONE
         action.last_error = None
+        action.next_attempt_at = None
         await session.commit()
         return True
     action.last_error = action.last_error or "not_ready"
     if action.attempts >= 5:
         action.status = FAILED
+    else:
+        _defer_pending(action)
     await session.commit()
     return False
 

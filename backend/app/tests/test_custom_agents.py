@@ -1726,6 +1726,7 @@ class TestSchedulerContracts:
         factories = CustomAutomationScheduler._job_factories()
         assert "discovery" in factories
         assert "join" in factories
+        assert "session_hygiene" in factories
         assert "lead_warmup" in factories
         assert "account_warmup" in factories
         assert "test_watch" in factories
@@ -1761,6 +1762,7 @@ class TestSchedulerContracts:
         assert CustomAutomationScheduler._has_modules_on(draft_off) is False
         jobs = CustomAutomationScheduler._enabled_jobs(draft_on)
         assert "join" in jobs
+        assert "session_hygiene" in jobs
         assert "monitor" in jobs
         assert "lead_warmup" in jobs
         assert "account_warmup" in jobs
@@ -3538,6 +3540,7 @@ class TestDmpBotPipeline:
         await test_session.commit()
         automation_id = custom_automation.id
         FakeTelegramClient.sent = []
+        FakeTelegramClient.fail_send = False
 
         with patch("app.services.custom.telegram_notify_bot_service.httpx.AsyncClient", FakeTelegramClient), patch.object(
             settings, "BASE_URL", "https://app.example.com"
@@ -3817,6 +3820,138 @@ class TestDmpBotPipeline:
             select(CustomBotSubscriber).where(CustomBotSubscriber.telegram_chat_id == 999003)
         )
         assert subscriber.status == "subscribed"
+
+
+class TestLeadTelegramBotHandoff:
+    async def test_handoff_message_phone_only_or_full_context(self):
+        from types import SimpleNamespace
+
+        from app.services.custom.telegram_notify_bot_service import format_handoff_lead_message
+
+        raw = SimpleNamespace(
+            contact_type="phone",
+            contact_value="79001112233",
+            dmp_raw_data={"phone": "79001112233"},
+        )
+        assert format_handoff_lead_message(raw, agreed=False) == "Телефон: +79001112233"
+
+        agreed = SimpleNamespace(
+            contact_type="telegram",
+            contact_value="buyer_one",
+            dmp_raw_data={"phone": "79001112233"},
+        )
+        text = format_handoff_lead_message(
+            agreed,
+            agreed=True,
+            conversation="Лид: давайте\nМы: ок, наберу",
+        )
+        assert "Телефон: +79001112233" in text
+        assert "Username: @buyer_one" in text
+        assert "Контекст:" in text
+        assert "наберу" in text
+
+    async def test_password_gate_then_sends_agreed_lead(
+        self,
+        client: AsyncClient,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from datetime import datetime, timezone
+
+        from app.alembic.models import CustomBotSubscriber, CustomLeadMessage
+        from app.services.custom.lead_delivery_service import HANDOFF_DMP_NO_REPLY, HANDOFF_DMP_WARMED
+        from app.services.custom.telegram_notify_bot_service import dispatch_sales_bot_notification
+        from app.utils.crypto import encrypt_token
+        from app.utils.security import get_password_hash
+
+        custom_automation.telegram_bot_token_enc = encrypt_token("123456:test-token")
+        custom_automation.telegram_bot_webhook_secret = "botsecret"
+        custom_automation.telegram_bot_password_hash = get_password_hash("gate-pass")
+        await test_session.commit()
+        automation_id = custom_automation.id
+        FakeTelegramClient.sent = []
+        FakeTelegramClient.fail_send = False
+
+        with patch("app.services.custom.telegram_notify_bot_service.httpx.AsyncClient", FakeTelegramClient):
+            start = await client.post(
+                f"/api/custom/webhooks/telegram/{automation_id}/botsecret",
+                json=_bot_message(4242, "/start"),
+            )
+            assert start.status_code == 200
+            wrong = await client.post(
+                f"/api/custom/webhooks/telegram/{automation_id}/botsecret",
+                json=_bot_message(4242, "nope"),
+            )
+            assert wrong.status_code == 200
+            password = await client.post(
+                f"/api/custom/webhooks/telegram/{automation_id}/botsecret",
+                json=_bot_message(4242, "gate-pass"),
+            )
+            assert password.status_code == 200
+
+            subscriber = await test_session.scalar(
+                select(CustomBotSubscriber).where(
+                    CustomBotSubscriber.custom_automation_id == automation_id,
+                    CustomBotSubscriber.telegram_chat_id == 4242,
+                )
+            )
+            assert subscriber is not None
+            assert subscriber.status == "subscribed"
+
+            replies = [item.get("text") or "" for item in FakeTelegramClient.sent]
+            assert any("Введите пароль" in text for text in replies)
+            assert any("Неверный пароль" in text for text in replies)
+            assert any(text.startswith("Готово") for text in replies)
+
+            lead = CustomLead(
+                custom_automation_id=automation_id,
+                source="chat_monitoring",
+                contact_type="telegram",
+                contact_value="buyer_one",
+                dmp_raw_data={"phone": "79001112233"},
+                status="qualified",
+            )
+            test_session.add(lead)
+            await test_session.flush()
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            test_session.add(
+                CustomLeadMessage(
+                    custom_lead_id=lead.id,
+                    direction="incoming",
+                    text="давайте созвонимся",
+                    sent_at=now,
+                    created_at=now,
+                )
+            )
+            await test_session.commit()
+
+            FakeTelegramClient.sent = []
+            warmed = await dispatch_sales_bot_notification(
+                test_session, custom_automation, lead, handoff_reason=HANDOFF_DMP_WARMED
+            )
+            assert warmed["bot_sent"] == 1
+            assert any("Username: @buyer_one" in (item.get("text") or "") for item in FakeTelegramClient.sent)
+            assert any("давайте созвонимся" in (item.get("text") or "") for item in FakeTelegramClient.sent)
+
+            raw = CustomLead(
+                custom_automation_id=automation_id,
+                source="dmp_one",
+                contact_type="phone",
+                contact_value="79005554433",
+                dmp_raw_data={"phone": "79005554433"},
+                status="new",
+            )
+            test_session.add(raw)
+            await test_session.commit()
+            FakeTelegramClient.sent = []
+            cold = await dispatch_sales_bot_notification(
+                test_session, custom_automation, raw, handoff_reason=HANDOFF_DMP_NO_REPLY
+            )
+            assert cold["bot_sent"] == 1
+            text = FakeTelegramClient.sent[-1].get("text") or ""
+            assert text == "Телефон: +79005554433"
+            assert "Username" not in text
+            assert "Контекст" not in text
 
 
 _FAKE_SESSION_BYTES = b"SQLite format 3\x00" + b"\x00" * 48
@@ -4738,7 +4873,7 @@ class TestAccountRolesWarmupAndLab:
         assert result["status"] == "skipped"
         assert result["reason"] == "lab"
 
-    async def test_join_rate_limit_is_one_to_three_minutes(self):
+    async def test_join_rate_limit_is_three_to_five_minutes(self):
         from app.services.custom.chat_join_service import (
             JOIN_DELAY_MAX_SECONDS,
             JOIN_DELAY_MIN_SECONDS,
@@ -4754,7 +4889,7 @@ class TestAccountRolesWarmupAndLab:
             await _sleep_between_joins(rate_limit=True, sleeper=sleeper)
             await _sleep_between_joins(rate_limit=False, sleeper=sleeper)
         assert delays == [97]
-        assert JOIN_DELAY_MIN_SECONDS == 120
+        assert JOIN_DELAY_MIN_SECONDS == 180
         assert JOIN_DELAY_MAX_SECONDS == 300
 
     async def test_join_loaded_skips_lab_and_can_disable_delay(
@@ -6002,6 +6137,155 @@ class TestProductionFieldLogic:
         assert chat.id == existing.id
         assert chat.source == "test"
         assert chat.mode == "neurocommenting"
+
+
+class TestAccountPacingAndSessions:
+    async def _add_account(
+        self,
+        session: AsyncSession,
+        automation: CustomAutomation,
+        *,
+        username: str,
+        phone: str,
+    ) -> SocialAccount:
+        from app.services.account_pool_service import get_or_create_default_pool
+        from app.services.custom.account_roles import default_roles_for_class
+
+        pool = await get_or_create_default_pool(session, automation.id)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number=phone,
+            username=username,
+            display_name=username,
+            account_class=AccountClass.TRUSTED.value,
+            encrypted_session="mock_encrypted_session",
+            session_file_path=f"sessions/{username}.session",
+            is_active=True,
+            is_banned=False,
+        )
+        session.add(account)
+        await session.flush()
+        session.add(
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account.id,
+                assigned_class=AccountClass.TRUSTED.value,
+                custom_automation_id=automation.id,
+                roles=default_roles_for_class(AccountClass.TRUSTED.value),
+            )
+        )
+        await session.commit()
+        await session.refresh(account)
+        return account
+
+    async def test_resting_account_is_skipped(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from datetime import timedelta
+
+        from app.services.custom.account_pacing import schedule_account_rest
+        from app.services.custom.rotation_service import select_account_for_action
+
+        account = await self._add_account(
+            test_session, custom_automation, username="rest_acc", phone="+79991112201"
+        )
+        schedule_account_rest(account)
+        await test_session.commit()
+        assert await select_account_for_action(test_session, custom_automation.id, "commenting") is None
+        selected = await select_account_for_action(
+            test_session, custom_automation.id, "commenting", ignore_rest=True
+        )
+        assert selected is not None and selected.id == account.id
+        account.next_action_at = account.next_action_at - timedelta(minutes=11)
+        await test_session.commit()
+        selected = await select_account_for_action(test_session, custom_automation.id, "commenting")
+        assert selected is not None and selected.id == account.id
+
+    async def test_failed_action_retries_after_three_to_five_minutes(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from datetime import datetime, timezone
+
+        from app.services.custom.telegram_error_handler import execute_with_telegram_retry
+
+        account = await self._add_account(
+            test_session, custom_automation, username="retry_acc", phone="+79991112202"
+        )
+        sleeps: list[float] = []
+
+        async def fake_sleep(seconds):
+            sleeps.append(seconds)
+
+        async def fail():
+            raise RuntimeError("temporary telegram rpc failure")
+
+        with patch("app.services.custom.telegram_error_handler.asyncio.sleep", fake_sleep):
+            with pytest.raises(RuntimeError, match="temporary telegram rpc failure"):
+                await execute_with_telegram_retry(
+                    test_session,
+                    account,
+                    fail,
+                    action_type="commenting",
+                    automation_id=custom_automation.id,
+                )
+        assert sleeps == []
+        assert account.next_action_at is not None
+        wait = (account.next_action_at - datetime.now(timezone.utc).replace(tzinfo=None)).total_seconds()
+        assert 170 <= wait <= 310
+
+    async def test_prune_keeps_current_and_spare(self):
+        from types import SimpleNamespace
+
+        from app.services.custom.session_hygiene_service import extra_authorization_hashes
+        from app.services.telegram_userbot_auth import DEVICE_MODEL_SPARE
+
+        auths = [
+            SimpleNamespace(hash=0, device_model="RSD Platform"),
+            SimpleNamespace(hash=111, device_model=DEVICE_MODEL_SPARE),
+            SimpleNamespace(hash=222, device_model="iPhone 15"),
+            SimpleNamespace(hash=333, device_model="Telegram Desktop"),
+        ]
+        assert extra_authorization_hashes(auths, spare_hash=111) == [222, 333]
+        assert extra_authorization_hashes(auths, spare_hash=None) == [222, 333]
+
+    async def test_promote_spare_swaps_session(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+        tmp_path,
+        monkeypatch,
+    ):
+        from app.config import settings
+        from app.services.account_pool_service import encrypt_session_bytes
+        from app.services.custom.session_hygiene_service import promote_spare_session
+
+        monkeypatch.setattr(settings, "MEDIA_ROOT", str(tmp_path))
+        main_rel = f"sessions/{custom_automation.id}/main.session"
+        spare_rel = f"sessions/{custom_automation.id}/9_spare.session"
+        main_path = tmp_path / main_rel
+        spare_path = tmp_path / spare_rel
+        main_path.parent.mkdir(parents=True, exist_ok=True)
+        main_path.write_bytes(b"SQLite format 3\x00" + b"\x00" * 64)
+        spare_bytes = b"SQLite format 3\x00" + b"\x01" * 64
+        spare_path.write_bytes(spare_bytes)
+        account = await self._add_account(
+            test_session, custom_automation, username="spare_acc", phone="+79991112203"
+        )
+        account.session_file_path = main_rel
+        account.encrypted_session = encrypt_session_bytes(main_path.read_bytes())
+        account.encrypted_spare_session = encrypt_session_bytes(spare_bytes)
+        account.spare_session_file_path = spare_rel
+        account.spare_authorization_hash = 111
+        await test_session.commit()
+        assert promote_spare_session(account) is True
+        await test_session.commit()
+        await test_session.refresh(account)
+        assert account.is_active is True
+        assert account.encrypted_spare_session is None
+        assert account.spare_session_file_path is None
+        assert account.spare_authorization_hash is None
+        assert main_path.read_bytes() == spare_bytes
+
 
 
 

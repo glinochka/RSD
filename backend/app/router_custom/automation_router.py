@@ -167,6 +167,7 @@ from ..services.custom.telegram_notify_bot_service import (
     disconnect_telegram_bot,
     handle_bot_update,
     public_bot_webhook_url,
+    set_bot_password,
 )
 from ..services.custom.neurocommenting_service import run_neurocommenting_pass
 from ..services.custom.prompt_service import (
@@ -236,6 +237,7 @@ async def _settings_payload(session, db_automation, *, is_admin: bool = True) ->
         response["dmp_webhook_secret"] = None
         response["dmp_webhook_url"] = None
     response["telegram_bot_token_set"] = bool((db_automation.telegram_bot_token_enc or "").strip())
+    response["telegram_bot_password_set"] = bool((getattr(db_automation, "telegram_bot_password_hash", None) or "").strip())
     response["telegram_bot_username"] = db_automation.telegram_bot_username
     response["telegram_bot_webhook_url"] = public_bot_webhook_url(
         db_automation.id, db_automation.telegram_bot_webhook_secret
@@ -257,6 +259,7 @@ async def _settings_payload(session, db_automation, *, is_admin: bool = True) ->
         response.pop("account_warmup_messages", None)
         response.pop("account_warmup_enabled", None)
     response.pop("telegram_bot_token_enc", None)
+    response.pop("telegram_bot_password_hash", None)
     response.pop("google_sheets_credentials_enc", None)
     return response
 
@@ -533,6 +536,9 @@ def _userbot_auth_http_error(exc: TelegramUserbotAuthError) -> HTTPException:
 
 
 def _queue_account_health_check(background_tasks: BackgroundTasks, automation_id: int) -> None:
+    from ..services.custom.session_hygiene_service import run_session_hygiene_for_automation
+
+    background_tasks.add_task(run_session_hygiene_for_automation, automation_id)
     background_tasks.add_task(AccountHealthWorker().check_all_accounts_for_automation, automation_id)
 
 
@@ -1066,7 +1072,7 @@ async def bulk_upload_accounts(
 ):
     async with async_session_maker() as session:
         result = await bulk_upload_sessions(session, automation_id, archive, assign_class)
-    background_tasks.add_task(AccountHealthWorker().check_all_accounts_for_automation, automation_id)
+    _queue_account_health_check(background_tasks, automation_id)
     return AccountUploadResponse(**result)
 
 
@@ -2017,6 +2023,8 @@ async def save_telegram_bot(
                 await disconnect_telegram_bot(db_automation)
             elif (payload.bot_token or "").strip():
                 await connect_telegram_bot(db_automation, payload.bot_token or "")
+            if (payload.password or "").strip() and not payload.disconnect:
+                set_bot_password(db_automation, payload.password or "")
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         await session.commit()

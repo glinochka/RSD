@@ -15,8 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...alembic.database import async_session_maker
 from ...alembic.models import CustomAutomation, CustomAutomationCredential, CustomBotSubscriber, CustomLead, LeadStatus
 from ...config import settings
-from ...utils.crypto import decrypt_token, encrypt_token
-from ...utils.security import verify_password
+from ...utils import crypto as crypto_utils
+from ...utils.security import get_password_hash, verify_password
 from .google_sheets_service import decrypt_service_account, ensure_header_and_append, parse_spreadsheet_id
 
 logger = logging.getLogger(__name__)
@@ -47,12 +47,71 @@ def public_bot_webhook_url(automation_id: int, secret: str | None) -> str:
     return f"{base}/api/custom/webhooks/telegram/{automation_id}/{secret}"
 
 
+def set_bot_password(automation: CustomAutomation, password: str) -> None:
+    value = (password or "").strip()
+    if not value:
+        raise ValueError("Укажите пароль бота")
+    automation.telegram_bot_password_hash = get_password_hash(value)
+    automation.updated_at = _utc_now()
+
+
+def uses_password_gate(automation: CustomAutomation) -> bool:
+    """Lead-handoff bots ask only for the settings password. DMP-bot still uses login+password."""
+    from .solution_templates import is_dmp_notify_pipeline
+
+    if is_dmp_notify_pipeline(automation):
+        return False
+    return bool((getattr(automation, "telegram_bot_password_hash", None) or "").strip())
+
+
+def lead_telegram_username(lead: CustomLead) -> str | None:
+    raw = lead.dmp_raw_data if isinstance(lead.dmp_raw_data, dict) else {}
+    if (lead.contact_type or "") == "telegram":
+        value = str(lead.contact_value or "").strip().lstrip("@")
+        if value and value != "unknown" and not value.lstrip("-").isdigit():
+            return value
+    for key in ("telegram", "username", "tg"):
+        value = str(raw.get(key) or "").strip().lstrip("@")
+        if value and value != "unknown":
+            return value
+    return None
+
+
+def format_handoff_lead_message(
+    lead: CustomLead,
+    *,
+    agreed: bool,
+    conversation: str = "",
+) -> str:
+    """Amo-style handoff into a chat: agreed → phone/username/context, otherwise phone only."""
+    from .dmp_one_service import lead_phone
+
+    phone = lead_phone(lead)
+    if not phone and (lead.contact_type or "") == "phone":
+        phone = str(lead.contact_value or "").strip() or None
+    if not agreed:
+        return f"Телефон: {phone}" if phone else str(lead.contact_value or "").strip()
+    lines: list[str] = []
+    if phone:
+        lines.append(f"Телефон: {phone}")
+    username = lead_telegram_username(lead)
+    if username:
+        lines.append(f"Username: @{username}")
+    context = (conversation or "").strip()
+    if context:
+        lines.append("Контекст:")
+        lines.append(context)
+    if not lines:
+        return str(lead.contact_value or "").strip() or "Новый лид"
+    return "\n".join(lines)
+
+
 def decrypt_bot_token(automation: CustomAutomation) -> str | None:
     blob = (automation.telegram_bot_token_enc or "").strip()
     if not blob:
         return None
     try:
-        token = decrypt_token(blob).strip()
+        token = crypto_utils.decrypt_token(blob).strip()
     except Exception:
         return None
     return token or None
@@ -123,7 +182,7 @@ async def connect_telegram_bot(automation: CustomAutomation, token: str) -> dict
     )
     if not hooked.get("ok"):
         raise ValueError(hooked.get("description") or "Не удалось установить webhook")
-    automation.telegram_bot_token_enc = encrypt_token(token)
+    automation.telegram_bot_token_enc = crypto_utils.encrypt_token(token)
     automation.telegram_bot_username = username or None
     automation.updated_at = _utc_now()
     return {"username": username, "webhook_url": webhook_url}
@@ -247,6 +306,8 @@ async def _deliver_bot(
     session: AsyncSession,
     automation: CustomAutomation,
     lead: CustomLead,
+    *,
+    text: str | None = None,
 ) -> dict[str, Any]:
     token = decrypt_bot_token(automation)
     if not token:
@@ -262,14 +323,14 @@ async def _deliver_bot(
     if not subscribers:
         return {"sent": 0, "pending": True, "reason": "no_subscribers"}
 
-    text = format_dmp_lead_message(lead)
+    body = text or format_dmp_lead_message(lead)
     sent = 0
     now = _utc_now()
     for subscriber in subscribers:
         chat_id = int(subscriber.telegram_chat_id)
         if chat_id in already:
             continue
-        response = await send_bot_message(token, chat_id, text)
+        response = await send_bot_message(token, chat_id, body)
         if response.get("ok"):
             already.add(chat_id)
             sent += 1
@@ -340,7 +401,7 @@ async def _get_or_create_subscriber(
     return row
 
 
-async def _mark_failure(subscriber: CustomBotSubscriber) -> str:
+async def _mark_failure(subscriber: CustomBotSubscriber, *, password_only: bool = False) -> str:
     subscriber.failed_attempts = (subscriber.failed_attempts or 0) + 1
     subscriber.pending_username = None
     subscriber.pending_started_at = None
@@ -351,6 +412,8 @@ async def _mark_failure(subscriber: CustomBotSubscriber) -> str:
         subscriber.status = "locked"
         return f"Слишком много попыток. Подождите {LOCK_MINUTES} минут."
     left = MAX_FAILED_ATTEMPTS - subscriber.failed_attempts
+    if password_only:
+        return f"Неверный пароль. Осталось попыток: {left}."
     return f"Неверный логин или пароль. Осталось попыток: {left}."
 
 
@@ -415,6 +478,9 @@ async def _next_auth_reply(
         subscriber.failed_attempts = 0
         subscriber.status = "idle"
 
+    if uses_password_gate(automation):
+        return await _next_password_reply(automation, subscriber, text)
+
     if lowered in {"/stop", "стоп"}:
         subscriber.status = "idle"
         subscriber.pending_username = None
@@ -465,6 +531,61 @@ async def _next_auth_reply(
     return "Готово. Буду присылать новых лидов."
 
 
+async def _next_password_reply(
+    automation: CustomAutomation,
+    subscriber: CustomBotSubscriber,
+    text: str,
+) -> str:
+    lowered = text.lower()
+    if lowered in {"/stop", "стоп"}:
+        subscriber.status = "idle"
+        subscriber.pending_username = None
+        subscriber.pending_started_at = None
+        subscriber.authenticated_at = None
+        subscriber.updated_at = _utc_now()
+        return "Уведомления выключены. Чтобы включить снова — отправьте пароль."
+
+    if subscriber.status == "subscribed":
+        if lowered in {"/start", "старт"}:
+            return "Уведомления уже включены."
+        return ""
+
+    if lowered in {"/start", "старт"} or not text:
+        subscriber.status = "awaiting_password"
+        subscriber.pending_started_at = _utc_now()
+        subscriber.updated_at = _utc_now()
+        return "Введите пароль"
+
+    if subscriber.status != "awaiting_password":
+        subscriber.status = "awaiting_password"
+        subscriber.pending_started_at = _utc_now()
+        subscriber.updated_at = _utc_now()
+
+    started = subscriber.pending_started_at
+    if started and (_utc_now() - started).total_seconds() > PASSWORD_WAIT_SECONDS:
+        subscriber.status = "awaiting_password"
+        subscriber.pending_started_at = _utc_now()
+        subscriber.updated_at = _utc_now()
+        return "Время вышло. Введите пароль ещё раз."
+
+    hashed = (getattr(automation, "telegram_bot_password_hash", None) or "").strip()
+    try:
+        ok = bool(hashed) and verify_password(text, hashed)
+    except Exception:
+        ok = False
+    if not ok:
+        return await _mark_failure(subscriber, password_only=True)
+
+    subscriber.status = "subscribed"
+    subscriber.pending_username = None
+    subscriber.pending_started_at = None
+    subscriber.failed_attempts = 0
+    subscriber.locked_until = None
+    subscriber.authenticated_at = _utc_now()
+    subscriber.updated_at = _utc_now()
+    return "Готово. Буду присылать новых лидов."
+
+
 async def count_subscribers(session: AsyncSession, automation_id: int) -> int:
     return await session.scalar(
         select(func.count(CustomBotSubscriber.id)).where(
@@ -498,6 +619,51 @@ async def dispatch_dmp_notifications(
     return {"transferred": True, "bot_sent": bot.get("sent") or 0, "bot_pending": bool(bot.get("pending")), "sheets": sheets}
 
 
+def _lead_agreed(*, handoff_reason: str | None, has_conversation: bool) -> bool:
+    from .lead_delivery_service import HANDOFF_DMP_NO_REPLY, HANDOFF_DMP_WARMED
+
+    if handoff_reason == HANDOFF_DMP_NO_REPLY:
+        return False
+    if handoff_reason == HANDOFF_DMP_WARMED:
+        return True
+    return has_conversation
+
+
+async def dispatch_sales_bot_notification(
+    session: AsyncSession,
+    automation: CustomAutomation,
+    lead: CustomLead,
+    *,
+    handoff_reason: str | None = None,
+) -> dict[str, Any]:
+    from .lead_delivery_service import lead_conversation_text
+
+    conversation = await lead_conversation_text(session, lead.id)
+    agreed = _lead_agreed(handoff_reason=handoff_reason, has_conversation=bool(conversation.strip()))
+    text = format_handoff_lead_message(
+        lead,
+        agreed=agreed,
+        conversation=conversation if agreed else "",
+    )
+    bot = await _deliver_bot(session, automation, lead, text=text)
+    now = _utc_now()
+    if bot.get("sent") and not lead.transferred_at:
+        lead.status = LeadStatus.TRANSFERRED.value
+        lead.transferred_at = now
+        lead.status_history = (lead.status_history or []) + [
+            {
+                "status": LeadStatus.TRANSFERRED.value,
+                "changed_at": now.isoformat(),
+                "channel": "telegram_bot",
+                "handoff_reason": handoff_reason,
+                "bot_sent": bot.get("sent") or 0,
+            }
+        ]
+        lead.updated_at = now
+    await session.commit()
+    return {"transferred": bool(lead.transferred_at), "bot_sent": bot.get("sent") or 0, "bot_pending": bool(bot.get("pending"))}
+
+
 def _lead_needs_notify(automation: CustomAutomation, lead: CustomLead) -> bool:
     if not lead.bot_notified_at:
         return True
@@ -508,6 +674,8 @@ def _lead_needs_notify(automation: CustomAutomation, lead: CustomLead) -> bool:
 
 async def retry_pending_dmp_notifications(automation_id: int) -> dict[str, Any]:
     """Push missed bot/sheet deliveries after downtime. Does not require /start."""
+    from .solution_templates import is_dmp_notify_pipeline
+
     retried = 0
     async with async_session_maker() as session:
         automation = await session.get(CustomAutomation, automation_id)
@@ -519,16 +687,31 @@ async def retry_pending_dmp_notifications(automation_id: int) -> dict[str, Any]:
             logger.exception("Webhook restore failed for automation %s", automation_id)
         await session.commit()
 
-        result = await session.execute(
-            select(CustomLead.id)
-            .where(
+        dmp_bot = is_dmp_notify_pipeline(automation)
+        if dmp_bot:
+            filters = [
                 CustomLead.custom_automation_id == automation_id,
                 CustomLead.source == "dmp_one",
                 or_(
                     CustomLead.bot_notified_at.is_(None),
                     CustomLead.sheets_synced_at.is_(None),
                 ),
-            )
+            ]
+        else:
+            filters = [
+                CustomLead.custom_automation_id == automation_id,
+                CustomLead.bot_notified_at.is_(None),
+                CustomLead.status.in_(
+                    (
+                        LeadStatus.QUALIFIED.value,
+                        LeadStatus.TRANSFERRED.value,
+                        LeadStatus.PROCESSING.value,
+                    )
+                ),
+            ]
+        result = await session.execute(
+            select(CustomLead.id)
+            .where(*filters)
             .order_by(CustomLead.created_at.asc())
             .limit(RETRY_BATCH)
         )
@@ -536,8 +719,20 @@ async def retry_pending_dmp_notifications(automation_id: int) -> dict[str, Any]:
         for lead_id in lead_ids:
             automation = await session.get(CustomAutomation, automation_id)
             lead = await session.get(CustomLead, lead_id)
-            if not automation or not lead or not _lead_needs_notify(automation, lead):
+            if not automation or not lead:
                 continue
-            await dispatch_dmp_notifications(session, automation, lead)
+            if dmp_bot:
+                if not _lead_needs_notify(automation, lead):
+                    continue
+                await dispatch_dmp_notifications(session, automation, lead)
+            else:
+                if lead.bot_notified_at:
+                    continue
+                reason = None
+                for item in reversed(lead.status_history or []):
+                    if isinstance(item, dict) and item.get("handoff_reason"):
+                        reason = item.get("handoff_reason")
+                        break
+                await dispatch_sales_bot_notification(session, automation, lead, handoff_reason=reason)
             retried += 1
     return {"retried": retried}

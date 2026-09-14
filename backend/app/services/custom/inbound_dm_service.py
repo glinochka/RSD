@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .account_pacing import account_is_resting
 from .human_dm import is_ready_to_reply
 from .prompt_service import render_prompt
 from .rotation_service import list_alive_session_accounts
@@ -158,6 +159,8 @@ async def _process_account(
 ) -> dict[str, Any]:
     if not account.session_file_path or not account.is_active or account.is_banned or getattr(account, "is_frozen", False):
         return {"status": "skipped", "reason": "inactive"}
+    if account_is_resting(account):
+        return {"status": "skipped", "reason": "resting"}
     if await _hourly_reply_count(session, automation.id, account.id) >= MAX_REPLIES_PER_HOUR:
         return {"status": "skipped", "reason": "hourly_limit"}
 
@@ -251,7 +254,7 @@ async def _process_account(
                     )
                     await session.commit()
                     handled += 1
-                    if await _hourly_reply_count(session, automation.id, account.id) >= MAX_REPLIES_PER_HOUR:
+                    if account_is_resting(account) or await _hourly_reply_count(session, automation.id, account.id) >= MAX_REPLIES_PER_HOUR:
                         return {"status": "ok", "handled": handled}
     except Exception as exc:
         logger.warning("Inbound DM pass failed for account %s: %s", account.id, exc)
