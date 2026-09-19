@@ -109,6 +109,49 @@ def resolve_api_credentials(
     return creds
 
 
+def official_api_hash_for_id(api_id: int | None) -> str | None:
+    """Return the public hash for a known official Telegram client id."""
+    try:
+        value = int(api_id or 0)
+    except (TypeError, ValueError):
+        return None
+    if value == _TELEGRAM_DESKTOP_API_ID:
+        return _TELEGRAM_DESKTOP_API_HASH
+    if value == _TELEGRAM_ANDROID_API_ID:
+        return _TELEGRAM_ANDROID_API_HASH
+    return None
+
+
+def iter_api_credential_candidates(
+    api_id: int | None = None,
+    api_hash: str | None = None,
+    *,
+    extra_api_id: int | None = None,
+    prefer_desktop: bool = True,
+) -> list[tuple[int, str]]:
+    """Ordered unique (api_id, api_hash) pairs to try for a purchased session."""
+    seen: set[int] = set()
+    pairs: list[tuple[int, str]] = []
+
+    def add(candidate_id: int | None, candidate_hash: str | None) -> None:
+        try:
+            resolved_id = int(candidate_id or 0)
+        except (TypeError, ValueError):
+            return
+        resolved_hash = str(candidate_hash or "").strip() or (official_api_hash_for_id(resolved_id) or "")
+        if resolved_id <= 0 or not resolved_hash or resolved_id in seen:
+            return
+        seen.add(resolved_id)
+        pairs.append((resolved_id, resolved_hash))
+
+    add(api_id, api_hash)
+    add(extra_api_id, official_api_hash_for_id(extra_api_id))
+    add(*resolve_api_credentials(prefer_desktop=prefer_desktop))
+    add(_TELEGRAM_DESKTOP_API_ID, _TELEGRAM_DESKTOP_API_HASH)
+    add(_TELEGRAM_ANDROID_API_ID, _TELEGRAM_ANDROID_API_HASH)
+    return pairs
+
+
 def _build_api_data(api_id: int, api_hash: str, *, device_model: str | None = None):
     from opentele.api import APIData
 

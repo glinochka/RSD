@@ -20,6 +20,7 @@ from .schemas import (
     AccountSpamblockCheckResponse,
     AccountListResponse,
     AccountPrepareStatusResponse,
+    AccountProxyListResponse,
     AccountQrStartRequest,
     AccountQrStartResponse,
     AccountQrStatusRequest,
@@ -89,7 +90,16 @@ from .schemas import (
 from .dependencies import get_current_custom_admin, get_current_custom_automation, optional_is_custom_admin
 from ..services.account_pool_service import bulk_upload_sessions, delete_pool_account
 from ..services.custom.lead_keywords import normalize_lead_keywords
-from ..services.custom.proxy_service import ProxyParseError, proxy_label, proxy_settings_payload, replace_proxy_list
+from ..services.custom.proxy_service import (
+    ProxyChoiceError,
+    ProxyParseError,
+    account_proxy_picker_payload,
+    proxy_label,
+    proxy_settings_payload,
+    replace_proxy_list,
+    resolve_account_proxy_choice,
+)
+from ..services.custom.rotation_service import _reset_counters_if_needed, current_daily_messages_sent
 from ..services.custom.account_connect_service import (
     poll_account_qr,
     request_account_sms,
@@ -498,7 +508,7 @@ def _account_response(
         risk_score=social_account.risk_score,
         trust_score=social_account.trust_score,
         session_file_path=social_account.session_file_path,
-        daily_messages_sent=social_account.daily_messages_sent,
+        daily_messages_sent=current_daily_messages_sent(social_account),
         daily_messages_reset_at=social_account.daily_messages_reset_at,
         last_used_at=social_account.last_used_at,
         max_daily_messages_per_account=max_daily,
@@ -536,9 +546,6 @@ def _userbot_auth_http_error(exc: TelegramUserbotAuthError) -> HTTPException:
 
 
 def _queue_account_health_check(background_tasks: BackgroundTasks, automation_id: int) -> None:
-    from ..services.custom.session_hygiene_service import run_session_hygiene_for_automation
-
-    background_tasks.add_task(run_session_hygiene_for_automation, automation_id)
     background_tasks.add_task(AccountHealthWorker().check_all_accounts_for_automation, automation_id)
 
 
@@ -617,6 +624,8 @@ async def list_accounts(
         )
 
         max_daily = automation.max_daily_messages_per_account
+        _reset_counters_if_needed([social_account for _, social_account in rows])
+        await session.commit()
         items = [_account_response(pool_account, social_account, max_daily) for pool_account, social_account in rows]
         return AccountListResponse(items=items, total=total or 0)
 
@@ -705,6 +714,15 @@ async def account_ban_stats(
         )
 
 
+@router.get("/automations/{automation_id}/accounts/proxies", response_model=AccountProxyListResponse)
+async def list_account_proxies(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        return AccountProxyListResponse(**await account_proxy_picker_payload(session, automation_id))
+
+
 @router.post("/automations/{automation_id}/accounts/health-check", response_model=AccountHealthCheckResponse)
 async def run_account_health_check(
     automation_id: int,
@@ -739,7 +757,15 @@ async def start_qr_account(
     body = payload or AccountQrStartRequest()
     async with async_session_maker() as session:
         try:
-            result = await start_account_qr(session, automation_id, assign_class=body.assign_class)
+            result = await start_account_qr(
+                session,
+                automation_id,
+                assign_class=body.assign_class,
+                proxy_id=body.proxy_id,
+                proxy_line=body.proxy_line,
+            )
+        except ProxyChoiceError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
         except TelegramUserbotAuthError as exc:
             raise _userbot_auth_http_error(exc) from exc
     account = None
@@ -818,12 +844,17 @@ async def sms_account_request(
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
     async with async_session_maker() as session:
-        result = await request_account_sms(
-            session,
-            automation_id,
-            phone_number=payload.phone_number,
-            assign_class=payload.assign_class,
-        )
+        try:
+            result = await request_account_sms(
+                session,
+                automation_id,
+                phone_number=payload.phone_number,
+                assign_class=payload.assign_class,
+                proxy_id=payload.proxy_id,
+                proxy_line=payload.proxy_line,
+            )
+        except ProxyChoiceError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     return AccountSmsStartResponse(auth_token=result["auth_token"])
 
 
@@ -1074,10 +1105,30 @@ async def bulk_upload_accounts(
     background_tasks: BackgroundTasks,
     archive: UploadFile = File(...),
     assign_class: str = Form(AccountClass.ONE_DAY.value),
+    proxy_id: int | None = Form(default=None),
+    proxy_line: str | None = Form(default=None),
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
     async with async_session_maker() as session:
-        result = await bulk_upload_sessions(session, automation_id, archive, assign_class)
+        preferred_proxy_id = None
+        if (proxy_line or "").strip() or proxy_id:
+            try:
+                chosen = await resolve_account_proxy_choice(
+                    session,
+                    automation_id,
+                    proxy_id=proxy_id,
+                    proxy_line=proxy_line,
+                )
+            except (ProxyChoiceError, ValueError) as exc:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+            preferred_proxy_id = chosen.id if chosen else None
+        result = await bulk_upload_sessions(
+            session,
+            automation_id,
+            archive,
+            assign_class,
+            preferred_proxy_id=preferred_proxy_id,
+        )
     _queue_account_health_check(background_tasks, automation_id)
     return AccountUploadResponse(**result)
 

@@ -187,11 +187,16 @@ async def start_account_qr(
     automation_id: int,
     *,
     assign_class: str | None = None,
+    proxy_id: int | None = None,
+    proxy_line: str | None = None,
 ) -> dict[str, Any]:
     from .proxy_service import resolve_connect_proxy
 
     chosen_class = normalize_assign_class(assign_class)
-    proxy_id, proxy = await resolve_connect_proxy(session, automation_id)
+    proxy_id, proxy = await resolve_connect_proxy(
+        session, automation_id, proxy_id=proxy_id, proxy_line=proxy_line
+    )
+    await session.commit()
     try:
         result = await start_qr_login(proxy=proxy)
     except TelegramUserbotAuthError:
@@ -336,6 +341,8 @@ async def request_account_sms(
     *,
     phone_number: str,
     assign_class: str | None = None,
+    proxy_id: int | None = None,
+    proxy_line: str | None = None,
 ) -> dict[str, Any]:
     from .proxy_service import resolve_connect_proxy
 
@@ -352,7 +359,10 @@ async def request_account_sms(
             detail=f"Telethon не установлен на сервере: {exc}",
         ) from exc
 
-    proxy_id, proxy = await resolve_connect_proxy(session, automation_id)
+    proxy_id, proxy = await resolve_connect_proxy(
+        session, automation_id, proxy_id=proxy_id, proxy_line=proxy_line
+    )
+    await session.commit()
     client, api_id, api_hash = create_telegram_client(prefer_desktop=True, proxy=proxy)
     phone_code_hash = None
     pending_session_string = ""

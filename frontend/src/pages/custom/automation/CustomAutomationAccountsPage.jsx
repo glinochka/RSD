@@ -6,6 +6,7 @@ import customService, { mediaUrl } from '../../../services/customService';
 import { useCustomAuth } from '../../../components/custom/useCustomAuth';
 import CustomBulkProfileForm from './CustomBulkProfileForm';
 import CustomAccountConnectForm from './CustomAccountConnectForm';
+import CustomAccountProxyFields from './CustomAccountProxyFields';
 import { ACCOUNT_ROLE_LABELS, ACCOUNT_ROLE_OPTIONS, WARMUP_STATUS_LABELS, exclusiveShillingRoles } from './activityLabels';
 import '../../../styles/projectCRMPage.css';
 import '../../../styles/projectSettingsPage.css';
@@ -69,6 +70,9 @@ const CustomAutomationAccountsPage = () => {
     role: '',
     search: '',
   });
+  const [poolProxies, setPoolProxies] = useState([]);
+  const [uploadProxyId, setUploadProxyId] = useState('');
+  const [uploadProxyLine, setUploadProxyLine] = useState('');
 
   const loadAccounts = useCallback(async () => {
     try {
@@ -107,6 +111,19 @@ const CustomAutomationAccountsPage = () => {
   useEffect(() => {
     loadBanStats();
   }, [loadBanStats]);
+
+  const loadPoolProxies = useCallback(async () => {
+    try {
+      const data = await customService.listAccountProxies(id);
+      setPoolProxies(data.items || []);
+    } catch {
+      setPoolProxies([]);
+    }
+  }, [id]);
+
+  useEffect(() => {
+    loadPoolProxies();
+  }, [loadPoolProxies]);
 
   useEffect(() => {
     if (!isAdmin) {
@@ -233,7 +250,10 @@ const CustomAutomationAccountsPage = () => {
     setUploadSuccess(null);
     setIsUploading(true);
     try {
-      const result = await customService.bulkUploadAccounts(id, file, filters.accountClass || 'one_day');
+      const result = await customService.bulkUploadAccounts(id, file, filters.accountClass || 'one_day', {
+        proxyId: uploadProxyId,
+        proxyLine: uploadProxyLine,
+      });
       setUploadSummary({
         created: result.created,
         skipped: result.skipped,
@@ -417,6 +437,19 @@ const CustomAutomationAccountsPage = () => {
       {uploadSuccess ? <p className="crm-flash">{uploadSuccess}</p> : null}
       {uploadError ? <p className="crm-flash crm-flash--error">{uploadError}</p> : null}
       {error ? <p className="crm-flash crm-flash--error">{error}</p> : null}
+
+      <section className="settings-section">
+        <h3 className="settings-section-title">Прокси при заливе файла</h3>
+        <CustomAccountProxyFields
+          proxies={poolProxies}
+          proxyId={uploadProxyId}
+          proxyLine={uploadProxyLine}
+          onProxyIdChange={setUploadProxyId}
+          onProxyLineChange={setUploadProxyLine}
+          disabled={isUploading}
+          hint="Выбранный или новый прокси применится ко всем сессиям в этой загрузке. Свой прокси не попадёт в общий пул и не будет переназначен другим аккаунтам."
+        />
+      </section>
 
       {isAdmin ? (
         <div className="settings-section">

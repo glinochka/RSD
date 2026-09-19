@@ -321,6 +321,20 @@ class AccountClassUpdate(BaseModel):
 
 class AccountQrStartRequest(BaseModel):
     assign_class: str = Field(default="one_day", min_length=1, max_length=32)
+    proxy_id: int | None = None
+    proxy_line: str | None = Field(default=None, max_length=512)
+
+
+class AccountProxyOption(BaseModel):
+    id: int
+    label: str
+    scheme: str
+    host: str
+    port: int
+
+
+class AccountProxyListResponse(BaseModel):
+    items: list[AccountProxyOption] = Field(default_factory=list)
 
 
 class AccountQrStatusRequest(BaseModel):
@@ -335,6 +349,8 @@ class AccountQrVerify2faRequest(BaseModel):
 class AccountSmsRequest(BaseModel):
     phone_number: str = Field(..., min_length=5, max_length=32)
     assign_class: str = Field(default="one_day", min_length=1, max_length=32)
+    proxy_id: int | None = None
+    proxy_line: str | None = Field(default=None, max_length=512)
 
 
 class AccountSmsVerifyRequest(BaseModel):

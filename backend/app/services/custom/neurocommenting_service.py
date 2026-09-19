@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .chat_inspect_service import probe_comments_readonly
@@ -21,7 +21,12 @@ from .chat_membership_service import (
 from .chat_scope import apply_entity_metadata, is_broadcast_channel, is_lab_chat, is_paused, commit_chat_scan
 from .pending_action_service import ensure_accounts_ready, has_pending_action
 from .post_engagement import NEUROCOMMENTING, SHILLING, SKIP, claim_post_engagement, post_target_id
-from .rotation_service import record_successful_send, select_account_for_action
+from .rotation_service import (
+    current_daily_messages_sent,
+    moscow_day_start_utc_naive,
+    record_successful_send,
+    select_account_for_action,
+)
 from .shilling_service import perform_post_shilling
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import execute_with_telegram_retry
@@ -108,6 +113,46 @@ async def _generate_comment(
     except Exception as exc:
         logger.warning("Comment generation failed: %s", exc)
         return ""
+
+
+def account_comment_daily_limit(automation: CustomAutomation | None, *, lab_mode: bool = False) -> int:
+    if lab_mode:
+        return 10**9
+    return max(1, int(getattr(automation, "max_daily_messages_per_account", None) or 50))
+
+
+def chat_comment_daily_limit(config: dict | None, *, lab_mode: bool = False) -> int:
+    if lab_mode:
+        return 10**9
+    raw = (config or {}).get("max_per_day")
+    if raw is None or raw == "":
+        return 10
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return 10
+
+
+def account_reached_daily_cap(account: SocialAccount | None, limit: int) -> bool:
+    return current_daily_messages_sent(account) >= limit
+
+
+async def _count_chat_comments_today(
+    session: AsyncSession,
+    automation_id: int,
+    chat_target_id: int,
+) -> int:
+    started = moscow_day_start_utc_naive()
+    count = await session.scalar(
+        select(func.count(AutomationActionLog.id)).where(
+            AutomationActionLog.custom_automation_id == automation_id,
+            AutomationActionLog.action_type == "neurocommenting",
+            AutomationActionLog.result == "success",
+            AutomationActionLog.target_id.like(f"{chat_target_id}:%"),
+            AutomationActionLog.created_at >= started,
+        )
+    )
+    return int(count or 0)
 
 
 async def _already_commented(
@@ -219,7 +264,9 @@ async def process_chat_target(
         return await _skip_chat(session, chat_target, "feature_disabled")
 
     config = chat_target.neurocommenting_config or {}
-    max_per_day = 10 ** 9 if lab_mode else int(config.get("max_per_day") or 10)
+    chat_limit = chat_comment_daily_limit(config, lab_mode=lab_mode)
+    account_limit = account_comment_daily_limit(automation, lab_mode=lab_mode)
+    chat_sent_today = 0 if lab_mode else await _count_chat_comments_today(session, automation_id, chat_target.id)
     tried: set[int] = set()
     account = None
     posts = []
@@ -285,9 +332,18 @@ async def process_chat_target(
     posts.sort(key=lambda msg: int(msg.id))
     sent = 0
     shilled = 0
+    if not lab_mode and chat_sent_today >= chat_limit:
+        chat_target.last_scanned_at = _utc_now()
+        chat_target.updated_at = _utc_now()
+        await session.commit()
+        return {"status": "ok", "sent": 0, "shilled": 0, "reason": "chat_daily_limit"}
     for post in posts:
         if await _already_commented(session, automation_id, chat_target.id, post.id):
             continue
+        if sent + shilled >= max_comments_per_run:
+            break
+        if not lab_mode and chat_sent_today + sent >= chat_limit:
+            break
 
         claimed = await claim_post_engagement(
             session,
@@ -301,8 +357,6 @@ async def process_chat_target(
         )
         if claimed == SKIP:
             continue
-        if sent + shilled >= max_comments_per_run:
-            break
         if claimed == SHILLING:
             result = await perform_post_shilling(
                 session,
@@ -328,7 +382,7 @@ async def process_chat_target(
                 exclude_account_ids=tried_actors or None,
                 ignore_rest=lab_mode,
             )
-            if not actor or actor.daily_messages_sent >= max_per_day:
+            if not actor or account_reached_daily_cap(actor, account_limit):
                 actor = None
                 break
             tried_actors.add(actor.id)

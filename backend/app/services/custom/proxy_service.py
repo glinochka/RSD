@@ -29,6 +29,10 @@ class ProxyParseError(ValueError):
     """Raised when a pasted proxy list cannot be applied."""
 
 
+class ProxyChoiceError(ValueError):
+    """Raised when a connect/upload proxy pick is invalid."""
+
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
@@ -220,6 +224,10 @@ def _encrypt_password(password: str | None) -> str | None:
     return encrypt_token(raw)
 
 
+def _is_dedicated(proxy: CustomProxy | None) -> bool:
+    return bool(proxy is not None and getattr(proxy, "is_dedicated", False))
+
+
 async def list_active_proxies(session: AsyncSession, automation_id: int) -> list[CustomProxy]:
     result = await session.execute(
         select(CustomProxy)
@@ -232,8 +240,79 @@ async def list_active_proxies(session: AsyncSession, automation_id: int) -> list
     return list(result.scalars().all())
 
 
+async def list_pool_proxies(session: AsyncSession, automation_id: int) -> list[CustomProxy]:
+    return [row for row in await list_active_proxies(session, automation_id) if not _is_dedicated(row)]
+
+
 async def count_active_proxies(session: AsyncSession, automation_id: int) -> int:
-    return len(await list_active_proxies(session, automation_id))
+    return len(await list_pool_proxies(session, automation_id))
+
+
+async def upsert_dedicated_proxy(
+    session: AsyncSession,
+    automation_id: int,
+    raw_line: str,
+) -> CustomProxy:
+    try:
+        parsed = parse_proxy_line(raw_line)
+    except ValueError as exc:
+        raise ProxyChoiceError(f"Не удалось разобрать прокси: {exc}") from exc
+    existing = await session.scalar(
+        select(CustomProxy).where(
+            CustomProxy.custom_automation_id == automation_id,
+            CustomProxy.fingerprint == parsed["fingerprint"],
+        )
+    )
+    now = _utc_now()
+    password_enc = _encrypt_password(parsed.get("password"))
+    if existing:
+        existing.scheme = parsed["scheme"]
+        existing.host = parsed["host"]
+        existing.port = parsed["port"]
+        existing.username = parsed["username"]
+        existing.password_enc = password_enc
+        existing.is_active = True
+        existing.updated_at = now
+        await session.flush()
+        return existing
+    row = CustomProxy(
+        custom_automation_id=automation_id,
+        scheme=parsed["scheme"],
+        host=parsed["host"],
+        port=parsed["port"],
+        username=parsed["username"],
+        password_enc=password_enc,
+        fingerprint=parsed["fingerprint"],
+        is_dedicated=True,
+        is_active=True,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(row)
+    await session.flush()
+    return row
+
+
+async def resolve_account_proxy_choice(
+    session: AsyncSession,
+    automation_id: int,
+    *,
+    proxy_id: int | None = None,
+    proxy_line: str | None = None,
+) -> CustomProxy | None:
+    line = (proxy_line or "").strip()
+    if line:
+        return await upsert_dedicated_proxy(session, automation_id, line)
+    if proxy_id:
+        try:
+            chosen_id = int(proxy_id)
+        except (TypeError, ValueError) as exc:
+            raise ProxyChoiceError("Некорректный идентификатор прокси") from exc
+        proxy = await session.get(CustomProxy, chosen_id)
+        if proxy is None or not proxy.is_active or int(proxy.custom_automation_id) != int(automation_id):
+            raise ProxyChoiceError("Прокси не найден в пуле этой автоматизации")
+        return proxy
+    return await pick_least_loaded_proxy(session, automation_id)
 
 
 def bind_account_proxy(
@@ -267,15 +346,31 @@ async def rebalance_proxies(
     *,
     proxies: list[CustomProxy] | None = None,
 ) -> dict[str, Any]:
-    rows = proxies if proxies is not None else await list_active_proxies(session, automation_id)
+    all_active = await list_active_proxies(session, automation_id)
+    by_id = {row.id: row for row in all_active}
+    shared_source = proxies if proxies is not None else all_active
+    shared = [row for row in shared_source if not _is_dedicated(row)]
     accounts = await _pool_accounts_for_rebalance(session, automation_id)
-    if not rows:
+    if not shared:
+        assigned = 0
         for pool_account, social in accounts:
+            current = by_id.get(pool_account.proxy_id)
+            if _is_dedicated(current):
+                assigned += 1
+                continue
             bind_account_proxy(pool_account, social, None)
-        return {"proxy_count": 0, "assigned": 0}
-    for index, (pool_account, social) in enumerate(accounts):
-        bind_account_proxy(pool_account, social, rows[index % len(rows)])
-    return {"proxy_count": len(rows), "assigned": len(accounts)}
+        return {"proxy_count": 0, "assigned": assigned}
+    assigned = 0
+    cursor = 0
+    for pool_account, social in accounts:
+        current = by_id.get(pool_account.proxy_id)
+        if _is_dedicated(current):
+            assigned += 1
+            continue
+        bind_account_proxy(pool_account, social, shared[cursor % len(shared)])
+        assigned += 1
+        cursor += 1
+    return {"proxy_count": len(shared), "assigned": assigned}
 
 
 async def pick_least_loaded_proxy(
@@ -284,7 +379,8 @@ async def pick_least_loaded_proxy(
     *,
     proxies: list[CustomProxy] | None = None,
 ) -> CustomProxy | None:
-    rows = proxies if proxies is not None else await list_active_proxies(session, automation_id)
+    source = proxies if proxies is not None else await list_active_proxies(session, automation_id)
+    rows = [row for row in source if not _is_dedicated(row)]
     if not rows:
         return None
     counts = {row.id: 0 for row in rows}
@@ -341,8 +437,16 @@ async def load_telethon_proxy(
 async def resolve_connect_proxy(
     session: AsyncSession,
     automation_id: int,
+    *,
+    proxy_id: int | None = None,
+    proxy_line: str | None = None,
 ) -> tuple[int | None, dict[str, Any] | None]:
-    proxy = await pick_least_loaded_proxy(session, automation_id)
+    proxy = await resolve_account_proxy_choice(
+        session,
+        automation_id,
+        proxy_id=proxy_id,
+        proxy_line=proxy_line,
+    )
     if proxy is None:
         return None, None
     return proxy.id, telethon_proxy_dict(connection_payload(proxy))
@@ -391,6 +495,7 @@ async def replace_proxy_list(
                 username=item["username"],
                 password_enc=password_enc,
                 fingerprint=item["fingerprint"],
+                is_dedicated=False,
                 is_active=True,
                 created_at=now,
                 updated_at=now,
@@ -399,7 +504,7 @@ async def replace_proxy_list(
             kept.append(row)
     await session.flush()
     for row in existing_rows:
-        if row.fingerprint not in keep_fps:
+        if row.fingerprint not in keep_fps and not _is_dedicated(row):
             await session.delete(row)
     await session.flush()
     stats = await rebalance_proxies(session, automation.id, proxies=kept)
@@ -410,6 +515,7 @@ async def replace_proxy_list(
 
 async def proxy_settings_payload(session: AsyncSession, automation: CustomAutomation) -> dict[str, Any]:
     proxies = await list_active_proxies(session, automation.id)
+    pool = [row for row in proxies if not _is_dedicated(row)]
     accounts = await _pool_accounts_for_rebalance(session, automation.id)
     counts: dict[int, int] = {row.id: 0 for row in proxies}
     assigned = 0
@@ -425,11 +531,26 @@ async def proxy_settings_payload(session: AsyncSession, automation: CustomAutoma
             "port": row.port,
             "account_count": counts.get(row.id, 0),
         }
-        for row in proxies
+        for row in pool
     ]
     return {
         "proxy_list_text": automation.proxy_list_text or "",
-        "proxy_count": len(proxies),
+        "proxy_count": len(pool),
         "accounts_with_proxy": assigned,
         "proxy_distribution": distribution,
+    }
+
+
+async def account_proxy_picker_payload(session: AsyncSession, automation_id: int) -> dict[str, Any]:
+    return {
+        "items": [
+            {
+                "id": row.id,
+                "label": proxy_row_label(row),
+                "scheme": row.scheme,
+                "host": row.host,
+                "port": row.port,
+            }
+            for row in await list_pool_proxies(session, automation_id)
+        ]
     }

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -14,7 +15,7 @@ from ...alembic.database import async_session_maker
 from ...alembic.models import SocialAccount
 from ...config import settings
 from ..account_pool_service import encrypt_session_bytes
-from ..telegram_userbot_auth import DEVICE_MODEL_SPARE, create_telegram_client
+from ..telegram_userbot_auth import DEVICE_MODEL_MAIN, DEVICE_MODEL_SPARE, create_telegram_client
 from .rotation_service import list_alive_session_accounts
 from .telegram_account_client import (
     TelegramAccountClient,
@@ -26,6 +27,8 @@ from .telegram_account_client import (
 logger = logging.getLogger(__name__)
 
 _QR_ACCEPT_TIMEOUT = 45
+_HYGIENE_MIN_AGE_SECONDS = 3600
+_OUR_DEVICE_MODELS = frozenset({DEVICE_MODEL_MAIN, DEVICE_MODEL_SPARE})
 
 
 def _utc_now() -> datetime:
@@ -51,14 +54,18 @@ def already_pruned_today(account: SocialAccount, *, now: datetime | None = None)
 
 
 def authorization_should_keep(auth: Any, *, spare_hash: int | None) -> bool:
-    """Current session (hash 0) and the RSD spare stay; everything else is extra."""
+    """Keep the login we are on, the RSD spare, and any other RSD device.
+
+    Telegram hash 0 is always the currently connected session — it cannot be
+    reset. Extra hashes are seller/third-party devices.
+    """
     hash_value = int(getattr(auth, "hash", 0) or 0)
     if hash_value == 0:
         return True
     if spare_hash is not None and hash_value == int(spare_hash):
         return True
-    model = str(getattr(auth, "device_model", "") or "")
-    return model == DEVICE_MODEL_SPARE
+    model = str(getattr(auth, "device_model", "") or "").strip()
+    return model in _OUR_DEVICE_MODELS
 
 
 def extra_authorization_hashes(authorizations: Iterable[Any], *, spare_hash: int | None) -> list[int]:
@@ -89,6 +96,19 @@ def account_has_spare(account: SocialAccount) -> bool:
     if not rel:
         return False
     return session_file_has_auth_key(_media_root() / rel)
+
+
+def _session_file_age_seconds(account: SocialAccount) -> float | None:
+    rel = (account.session_file_path or "").strip()
+    if not rel:
+        return None
+    path = _media_root() / rel
+    try:
+        if not path.is_file():
+            return None
+        return max(0.0, time.time() - path.stat().st_mtime)
+    except OSError:
+        return None
 
 
 def promote_spare_session(account: SocialAccount) -> bool:
@@ -234,13 +254,21 @@ async def hygienize_account(
     *,
     force: bool = False,
 ) -> dict[str, Any]:
-    """Ensure a spare login exists and drop every other Telegram session."""
-    if not force and already_pruned_today(account):
-        return {"status": "skipped", "reason": "already_today"}
+    """Mint a spare login if missing, then drop third-party Telegram sessions.
+
+    Mint is independent of the daily prune: after a spare is promoted to main
+    we immediately issue a new spare. Prune never runs unless that spare is
+    visible in GetAuthorizations, so we cannot ResetAuthorization our own logins.
+    """
     if not account.session_file_path and not getattr(account, "encrypted_session", None):
         return {"status": "skipped", "reason": "no_session"}
     minted = False
     pruned = 0
+    skip_prune = (not force) and already_pruned_today(account)
+    too_fresh = False
+    if not force:
+        age = _session_file_age_seconds(account)
+        too_fresh = age is not None and age < _HYGIENE_MIN_AGE_SECONDS
     async with TelegramAccountClient.for_account(account) as client:
         spare_hash = getattr(account, "spare_authorization_hash", None)
         if not account_has_spare(account):
@@ -261,11 +289,39 @@ async def hygienize_account(
             else:
                 spare_hash = live_hash
                 account.spare_authorization_hash = live_hash
-        pruned = await _reset_extra_sessions(client.client, spare_hash=spare_hash)
-    account.sessions_pruned_at = _utc_now()
-    account.updated_at = _utc_now()
+        authorizations = await _list_authorizations(client.client)
+        live_spare = _spare_hash_from_authorizations(authorizations, known=spare_hash)
+        can_prune = (
+            account_has_spare(account)
+            and live_spare is not None
+            and not skip_prune
+            and not too_fresh
+        )
+        if can_prune:
+            pruned = await _reset_extra_sessions(client.client, spare_hash=live_spare)
+        elif minted and (too_fresh or skip_prune or live_spare is None):
+            logger.info(
+                "Spare session ready for account %s; third-party prune deferred (fresh=%s today=%s live=%s)",
+                account.id,
+                too_fresh,
+                skip_prune,
+                live_spare,
+            )
+    if minted or pruned:
+        if pruned:
+            account.sessions_pruned_at = _utc_now()
+        account.updated_at = _utc_now()
     await session.flush()
-    return {"status": "ok", "minted": minted, "pruned": pruned}
+    reason = None
+    if not minted and not pruned:
+        if skip_prune and account_has_spare(account):
+            reason = "already_today"
+        elif too_fresh:
+            reason = "too_fresh"
+        elif not account_has_spare(account):
+            reason = "no_spare"
+    status = "ok" if (minted or pruned) else "skipped"
+    return {"status": status, "minted": minted, "pruned": pruned, "reason": reason}
 
 
 async def run_session_hygiene_for_automation(automation_id: int) -> dict[str, Any]:
@@ -277,9 +333,6 @@ async def run_session_hygiene_for_automation(automation_id: int) -> dict[str, An
     async with async_session_maker() as session:
         accounts = await list_alive_session_accounts(session, automation_id)
         for account in accounts:
-            if already_pruned_today(account):
-                skipped += 1
-                continue
             try:
                 result = await hygienize_account(session, account, automation_id)
             except Exception as exc:

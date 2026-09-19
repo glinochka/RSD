@@ -355,6 +355,8 @@ async def bulk_upload_sessions(
     automation_id: int,
     upload_file: UploadFile,
     assign_class: str = AccountClass.ONE_DAY.value,
+    *,
+    preferred_proxy_id: int | None = None,
 ) -> dict[str, Any]:
     """Accept .zip, .csv or a single .session file and create SocialAccount/PoolAccount records."""
     pool = await get_or_create_default_pool(session, automation_id)
@@ -378,7 +380,15 @@ async def bulk_upload_sessions(
                     errors.append(f"{name}: not a valid SQLite session file")
                     continue
                 try:
-                    await _save_session_file(session, automation_id, pool.id, name, data, assign_class)
+                    await _save_session_file(
+                        session,
+                        automation_id,
+                        pool.id,
+                        name,
+                        data,
+                        assign_class,
+                        preferred_proxy_id=preferred_proxy_id,
+                    )
                     created += 1
                 except Exception as exc:
                     errors.append(f"{name}: {exc}")
@@ -401,6 +411,7 @@ async def bulk_upload_sessions(
                     account_class=account_class,
                     encrypted_session="",
                     session_file_path=None,
+                    preferred_proxy_id=preferred_proxy_id,
                 )
                 created += 1
             except Exception as exc:
@@ -411,7 +422,15 @@ async def bulk_upload_sessions(
             errors.append(f"{filename}: not a valid SQLite session file")
         else:
             try:
-                await _save_session_file(session, automation_id, pool.id, filename, content, assign_class)
+                await _save_session_file(
+                    session,
+                    automation_id,
+                    pool.id,
+                    filename,
+                    content,
+                    assign_class,
+                    preferred_proxy_id=preferred_proxy_id,
+                )
                 created += 1
             except Exception as exc:
                 errors.append(f"{filename}: {exc}")

@@ -5884,6 +5884,147 @@ class TestAccountProxies:
             counts[row.proxy_id] = counts.get(row.proxy_id, 0) + 1
         assert sorted(counts.values()) == [1, 2]
 
+    async def test_dedicated_proxy_survives_pool_replace(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from app.alembic.models import CustomProxy
+        from app.services.custom.proxy_service import (
+            bind_account_proxy,
+            proxy_settings_payload,
+            replace_proxy_list,
+            resolve_account_proxy_choice,
+        )
+
+        account = await self._add_account(
+            test_session,
+            custom_automation,
+            username="dedicated_acc",
+            phone="+79994000001",
+        )
+        dedicated = await resolve_account_proxy_choice(
+            test_session,
+            custom_automation.id,
+            proxy_line="10.9.9.9:1080:user:secret",
+        )
+        assert dedicated.is_dedicated is True
+        pool_account = await test_session.scalar(
+            select(PoolAccount).where(PoolAccount.social_account_id == account.id)
+        )
+        bind_account_proxy(pool_account, account, dedicated)
+        await test_session.commit()
+
+        await replace_proxy_list(test_session, custom_automation, "10.1.1.1:1080")
+        await test_session.commit()
+
+        kept = await test_session.get(CustomProxy, dedicated.id)
+        assert kept is not None
+        assert kept.is_dedicated is True
+        await test_session.refresh(pool_account)
+        assert pool_account.proxy_id == dedicated.id
+
+        payload = await proxy_settings_payload(test_session, custom_automation)
+        assert payload["proxy_count"] == 1
+        assert payload["accounts_with_proxy"] == 1
+        assert payload["proxy_distribution"][0]["host"] == "10.1.1.1"
+
+
+class TestNeurocommentingDailyLimits:
+    async def test_chat_cap_is_not_account_cap(self):
+        from datetime import datetime, timezone
+        from types import SimpleNamespace
+
+        from app.services.custom.neurocommenting_service import (
+            account_comment_daily_limit,
+            account_reached_daily_cap,
+            chat_comment_daily_limit,
+        )
+
+        automation = SimpleNamespace(max_daily_messages_per_account=50)
+        assert chat_comment_daily_limit({}) == 10
+        assert chat_comment_daily_limit({"max_per_day": 3}) == 3
+        assert account_comment_daily_limit(automation) == 50
+        account = SimpleNamespace(
+            daily_messages_sent=10,
+            daily_messages_reset_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        )
+        assert account_reached_daily_cap(account, 10) is True
+        assert account_reached_daily_cap(account, 50) is False
+
+    async def test_stale_daily_counter_reads_as_zero(self):
+        from datetime import datetime
+        from types import SimpleNamespace
+
+        from app.services.custom.rotation_service import current_daily_messages_sent
+
+        account = SimpleNamespace(
+            daily_messages_sent=10,
+            daily_messages_reset_at=datetime(2026, 9, 18, 20, 43),
+        )
+        assert current_daily_messages_sent(account) == 0
+
+    async def test_chat_comments_counted_per_channel(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from datetime import timedelta
+
+        from app.alembic.models import AutomationActionLog
+        from app.services.custom.neurocommenting_service import _count_chat_comments_today
+        from app.services.custom.rotation_service import moscow_day_start_utc_naive
+
+        account = SocialAccount(
+            provider="telegram",
+            phone_number="+79995000001",
+            username="count_acc",
+            display_name="count_acc",
+            account_class=AccountClass.ONE_DAY.value,
+            encrypted_session="mock_encrypted_session",
+            session_file_path="sessions/count_acc.session",
+            is_active=True,
+        )
+        test_session.add(account)
+        await test_session.flush()
+        started = moscow_day_start_utc_naive()
+        test_session.add(
+            AutomationActionLog(
+                custom_automation_id=custom_automation.id,
+                social_account_id=account.id,
+                action_type="neurocommenting",
+                target_id="11:100",
+                target_type="chat_post",
+                result="success",
+                created_at=started,
+            )
+        )
+        test_session.add(
+            AutomationActionLog(
+                custom_automation_id=custom_automation.id,
+                social_account_id=account.id,
+                action_type="neurocommenting",
+                target_id="12:100",
+                target_type="chat_post",
+                result="success",
+                created_at=started,
+            )
+        )
+        test_session.add(
+            AutomationActionLog(
+                custom_automation_id=custom_automation.id,
+                social_account_id=account.id,
+                action_type="neurocommenting",
+                target_id="11:99",
+                target_type="chat_post",
+                result="success",
+                created_at=started - timedelta(days=1),
+            )
+        )
+        await test_session.commit()
+        assert await _count_chat_comments_today(test_session, custom_automation.id, 11) == 1
+        assert await _count_chat_comments_today(test_session, custom_automation.id, 12) == 1
+
 
 class TestProductionFieldLogic:
     async def _add_account(
@@ -6342,6 +6483,12 @@ class TestAccountPacingAndSessions:
         ]
         assert extra_authorization_hashes(auths, spare_hash=111) == [222, 333]
         assert extra_authorization_hashes(auths, spare_hash=None) == [222, 333]
+        auths_after_promote = [
+            SimpleNamespace(hash=0, device_model=DEVICE_MODEL_SPARE),
+            SimpleNamespace(hash=50, device_model="RSD Platform"),
+            SimpleNamespace(hash=222, device_model="iPhone 15"),
+        ]
+        assert extra_authorization_hashes(auths_after_promote, spare_hash=None) == [222]
 
     async def test_promote_spare_swaps_session(
         self,
@@ -6380,6 +6527,96 @@ class TestAccountPacingAndSessions:
         assert account.spare_session_file_path is None
         assert account.spare_authorization_hash is None
         assert main_path.read_bytes() == spare_bytes
+
+    async def test_duplicated_auth_key_does_not_revoke_account(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from app.services.custom.telegram_error_handler import execute_with_telegram_retry
+
+        account = await self._add_account(
+            test_session, custom_automation, username="dup_session", phone="+79991112209"
+        )
+
+        async def duplicated():
+            raise type("AuthKeyDuplicatedError", (Exception,), {})(
+                "The authorization key (session file) was used under two different IP addresses simultaneously"
+            )
+
+        with pytest.raises(Exception, match="authorization key"):
+            await execute_with_telegram_retry(
+                test_session,
+                account,
+                duplicated,
+                action_type="neurocommenting",
+                automation_id=custom_automation.id,
+            )
+        await test_session.refresh(account)
+        assert account.is_active is True
+        assert account.is_banned is False
+
+    async def test_health_check_busy_session_stays_active(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+        tmp_path,
+        monkeypatch,
+    ):
+        from app.config import settings
+        from app.services.account_pool_service import get_or_create_default_pool
+        from app.services.custom.account_health_worker import AccountHealthWorker
+
+        monkeypatch.setattr(settings, "MEDIA_ROOT", str(tmp_path))
+        pool = await get_or_create_default_pool(test_session, custom_automation.id)
+        session_rel = Path("sessions") / str(custom_automation.id) / "busy.session"
+        session_file = tmp_path / session_rel
+        session_file.parent.mkdir(parents=True, exist_ok=True)
+        session_file.write_bytes(b"SQLite format 3\x00" + b"\x00" * 32)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number="+79990000077",
+            username="busyuser",
+            encrypted_session="x",
+            session_file_path=str(session_rel).replace("\\", "/"),
+            is_active=True,
+            is_banned=False,
+        )
+        test_session.add(account)
+        await test_session.flush()
+        test_session.add(
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account.id,
+                assigned_class=AccountClass.ONE_DAY.value,
+                custom_automation_id=custom_automation.id,
+            )
+        )
+        await test_session.commit()
+        account_id = account.id
+
+        class _FakeClient:
+            async def __aenter__(self):
+                raise type("AuthKeyDuplicatedError", (Exception,), {})(
+                    "The authorization key (session file) was used under two different IP addresses simultaneously"
+                )
+
+            async def __aexit__(self, *args):
+                return False
+
+        fake = _FakeClient()
+        mock_cls = MagicMock()
+        mock_cls.return_value = fake
+        mock_cls.for_account.return_value = fake
+        with patch(
+            "app.services.custom.account_health_worker.TelegramAccountClient",
+            mock_cls,
+        ):
+            result = await AccountHealthWorker().process_account(
+                test_session, custom_automation.id, account_id
+            )
+        assert result["status"] == "retry"
+        saved = await test_session.get(SocialAccount, account_id)
+        assert saved.is_active is True
+        assert saved.is_banned is False
 
 
 

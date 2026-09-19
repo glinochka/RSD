@@ -56,6 +56,11 @@ def _needs_reset(reset_at: datetime | None, tz_name: str = "Europe/Moscow") -> b
     return reset_date != _local_today(tz_name)
 
 
+def moscow_day_start_utc_naive(tz_name: str = "Europe/Moscow") -> datetime:
+    local_midnight = datetime.now(_tz(tz_name)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return local_midnight.astimezone(timezone.utc).replace(tzinfo=None)
+
+
 async def _default_pool(session: AsyncSession, automation_id: int) -> AccountPool | None:
     return await session.scalar(
         select(AccountPool).where(
@@ -73,6 +78,15 @@ async def _load_pool_accounts(session: AsyncSession, pool_id: int) -> list[tuple
         .order_by(PoolAccount.added_at.asc())
     )
     return list(result.all())
+
+
+def current_daily_messages_sent(account: SocialAccount | None) -> int:
+    """Messages sent today in Moscow time. Yesterday's leftover is shown as 0."""
+    if account is None:
+        return 0
+    if _needs_reset(account.daily_messages_reset_at):
+        return 0
+    return int(account.daily_messages_sent or 0)
 
 
 def _reset_counters_if_needed(accounts: list[SocialAccount]) -> None:

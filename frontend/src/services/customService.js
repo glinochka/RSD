@@ -318,10 +318,27 @@ const customService = {
     return handleResponse(response);
   },
 
-  async bulkUploadAccounts(automationId, file, assignClass = 'one_day') {
+  async listAccountProxies(automationId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ACCOUNTS(automationId)}/proxies`,
+      {
+        method: 'GET',
+        headers: getAuthHeaders(),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async bulkUploadAccounts(automationId, file, assignClass = 'one_day', { proxyId, proxyLine } = {}) {
     const formData = new FormData();
     formData.append('archive', file);
     formData.append('assign_class', assignClass);
+    const line = (proxyLine || '').trim();
+    if (line) {
+      formData.append('proxy_line', line);
+    } else if (proxyId) {
+      formData.append('proxy_id', String(proxyId));
+    }
     const token = getCustomToken();
     const headers = {};
     if (token) {
@@ -371,13 +388,20 @@ const customService = {
     return handleResponse(response);
   },
 
-  async startAccountQr(automationId, assignClass = 'one_day') {
+  async startAccountQr(automationId, assignClass = 'one_day', { proxyId, proxyLine } = {}) {
+    const body = { assign_class: assignClass };
+    const line = (proxyLine || '').trim();
+    if (line) {
+      body.proxy_line = line;
+    } else if (proxyId) {
+      body.proxy_id = Number(proxyId);
+    }
     const response = await fetch(
       `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ACCOUNTS_QR_START(automationId)}`,
       {
         method: 'POST',
         headers: getAuthHeaders(),
-        body: JSON.stringify({ assign_class: assignClass }),
+        body: JSON.stringify(body),
       },
     );
     return handleResponse(response);
@@ -407,13 +431,20 @@ const customService = {
     return handleResponse(response);
   },
 
-  async requestAccountSms(automationId, phoneNumber, assignClass = 'one_day') {
+  async requestAccountSms(automationId, phoneNumber, assignClass = 'one_day', { proxyId, proxyLine } = {}) {
+    const body = { phone_number: phoneNumber, assign_class: assignClass };
+    const line = (proxyLine || '').trim();
+    if (line) {
+      body.proxy_line = line;
+    } else if (proxyId) {
+      body.proxy_id = Number(proxyId);
+    }
     const response = await fetch(
       `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ACCOUNTS_SMS_REQUEST(automationId)}`,
       {
         method: 'POST',
         headers: getAuthHeaders(),
-        body: JSON.stringify({ phone_number: phoneNumber, assign_class: assignClass }),
+        body: JSON.stringify(body),
       },
     );
     return handleResponse(response);

@@ -17,9 +17,14 @@ from telethon.tl.functions.photos import UploadProfilePhotoRequest
 from telethon.tl.functions.users import GetFullUserRequest
 from telethon.tl.types import InputPhoneContact
 
-from .telegram_error_handler import SessionInvalidError, parse_spambot_reply
+from .telegram_error_handler import (
+    SessionInvalidError,
+    _looks_like_session_busy_error,
+    _looks_like_session_error,
+    parse_spambot_reply,
+)
 from .telegram_invite import TelegramChatRefError, parse_telegram_chat_ref
-from ..telegram_userbot_auth import create_telegram_client
+from ..telegram_userbot_auth import create_telegram_client, iter_api_credential_candidates
 
 logger = getLogger(__name__)
 
@@ -31,6 +36,13 @@ SESSION_RECONNECT_HINT = "Нет входа в Telegram. Подключите а
 _session_locks: dict[str, asyncio.Lock] = {}
 _session_locks_guard = asyncio.Lock()
 _SESSION_SIDECARS = ("-journal", "-wal", "-shm")
+_PRODUCTION_DCS = {
+    1: ("149.154.175.53", 443),
+    2: ("149.154.167.51", 443),
+    3: ("149.154.175.100", 443),
+    4: ("149.154.167.91", 443),
+    5: ("91.108.56.130", 443),
+}
 
 
 async def _lock_for_session(session_path: str) -> asyncio.Lock:
@@ -49,19 +61,111 @@ def _clear_session_sidecars(path: Path) -> None:
         extra.unlink(missing_ok=True)
 
 
-def session_file_has_auth_key(path: Path) -> bool:
-    """Read auth_key without opening a Telethon SQLiteSession (that can rewrite the file)."""
+def inspect_session_file(path: Path) -> dict[str, Any]:
+    """Detect Telethon vs Pyrogram sqlite without letting Telethon rewrite the file."""
     if not path.is_file() or path.stat().st_size < 16:
-        return False
+        return {"kind": "missing", "has_key": False, "api_id": None, "dc_id": None}
     try:
         conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
         try:
+            tables = {
+                row[0]
+                for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            }
+            if "sessions" not in tables:
+                return {"kind": "unknown", "has_key": False, "api_id": None, "dc_id": None}
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
+            if "server_address" in cols:
+                row = conn.execute("SELECT dc_id, auth_key FROM sessions").fetchone()
+                return {
+                    "kind": "telethon",
+                    "has_key": bool(row and row[1]),
+                    "api_id": None,
+                    "dc_id": int(row[0]) if row and row[0] is not None else None,
+                    "auth_key": bytes(row[1]) if row and row[1] else None,
+                }
+            if "api_id" in cols:
+                row = conn.execute("SELECT dc_id, api_id, auth_key FROM sessions").fetchone()
+                api_id = None
+                if row and row[1] is not None:
+                    try:
+                        api_id = int(row[1])
+                    except (TypeError, ValueError):
+                        api_id = None
+                return {
+                    "kind": "pyrogram",
+                    "has_key": bool(row and row[2]),
+                    "api_id": api_id,
+                    "dc_id": int(row[0]) if row and row[0] is not None else None,
+                    "auth_key": bytes(row[2]) if row and row[2] else None,
+                }
             row = conn.execute("SELECT auth_key FROM sessions").fetchone()
-            return bool(row and row[0])
+            return {
+                "kind": "unknown",
+                "has_key": bool(row and row[0]),
+                "api_id": None,
+                "dc_id": None,
+                "auth_key": bytes(row[0]) if row and row[0] else None,
+            }
         finally:
             conn.close()
     except Exception:
-        return False
+        return {"kind": "unknown", "has_key": False, "api_id": None, "dc_id": None}
+
+
+def session_file_has_auth_key(path: Path) -> bool:
+    """Read auth_key without opening a Telethon SQLiteSession (that can rewrite the file)."""
+    return bool(inspect_session_file(path).get("has_key"))
+
+
+def write_telethon_session_file(dest: Path, *, dc_id: int, auth_key: bytes) -> None:
+    """Write a Telethon sqlite session from a raw auth key (Pyrogram conversion)."""
+    from telethon.crypto import AuthKey
+    from telethon.sessions import SQLiteSession
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists():
+        dest.unlink()
+    _clear_session_sidecars(dest)
+    host, port = _PRODUCTION_DCS.get(int(dc_id), _PRODUCTION_DCS[2])
+    stem = str(dest.with_suffix(""))
+    session = SQLiteSession(stem)
+    try:
+        session.set_dc(int(dc_id), host, port)
+        session.auth_key = AuthKey(auth_key)
+        session.save()
+    finally:
+        session.close()
+    _clear_session_sidecars(dest)
+
+
+def convert_pyrogram_session_file(src: Path, dest: Path) -> dict[str, Any]:
+    """Convert a Pyrogram sqlite session into Telethon format. Does not touch src if dest differs."""
+    info = inspect_session_file(src)
+    if info.get("kind") != "pyrogram" or not info.get("has_key") or not info.get("auth_key"):
+        raise ValueError("Not a Pyrogram session with an auth key")
+    write_telethon_session_file(
+        dest,
+        dc_id=int(info.get("dc_id") or 2),
+        auth_key=info["auth_key"],
+    )
+    converted = inspect_session_file(dest)
+    if converted.get("kind") != "telethon" or not converted.get("has_key"):
+        raise ValueError("Pyrogram session conversion produced an empty Telethon file")
+    converted["api_id"] = info.get("api_id")
+    return converted
+
+
+def ensure_telethon_session_file(path: Path) -> dict[str, Any]:
+    """If `path` is Pyrogram sqlite, rewrite it in-place as Telethon sqlite."""
+    info = inspect_session_file(path)
+    if info.get("kind") == "pyrogram" and info.get("has_key"):
+        convert_pyrogram_session_file(path, path)
+        converted = inspect_session_file(path)
+        converted["api_id"] = info.get("api_id")
+        converted["converted_from"] = "pyrogram"
+        return converted
+    return info
 
 
 def copy_session_bundle(src: Path, dest: Path) -> None:
@@ -206,6 +310,8 @@ class TelegramAccountClient:
         self._file_lock: IO[bytes] | None = None
         self._work_dir: Path | None = None
         self._work_path: Path | None = None
+        self._detected_api_id: int | None = None
+        self._converted_pyrogram = False
 
     @classmethod
     def for_account(
@@ -263,11 +369,23 @@ class TelegramAccountClient:
         self._work_dir = Path(tempfile.mkdtemp(prefix="rsd_tg_"))
         self._work_path = self._work_dir / "account.session"
         copy_session_bundle(original, self._work_path)
+        info = inspect_session_file(self._work_path)
+        self._detected_api_id = info.get("api_id")
+        self._converted_pyrogram = False
+        if info.get("kind") == "pyrogram" and info.get("has_key"):
+            convert_pyrogram_session_file(self._work_path, self._work_path)
+            self._converted_pyrogram = True
+            logger.info("Converted Pyrogram session to Telethon for %s", original)
         return self._work_path
 
-    async def _connect_work_copy(self) -> bool:
-        from .telegram_error_handler import _looks_like_session_error
+    def _raise_connect_error(self, exc: Exception) -> None:
+        if _looks_like_session_busy_error(exc):
+            raise exc
+        if isinstance(exc, AuthKeyError) or _looks_like_session_error(exc):
+            raise SessionInvalidError(str(exc) or SESSION_RECONNECT_HINT) from exc
+        raise exc
 
+    async def _connect_work_copy(self) -> bool:
         await self._close_client()
         self.client, self.api_id, self.api_hash = _make_client(
             str(self._work_path),
@@ -279,21 +397,52 @@ class TelegramAccountClient:
         try:
             await self.client.connect()
         except Exception as exc:
-            if isinstance(exc, AuthKeyError) or _looks_like_session_error(exc):
-                await self._close_client()
-                raise SessionInvalidError(str(exc) or SESSION_RECONNECT_HINT) from exc
-            raise
+            await self._close_client()
+            self._raise_connect_error(exc)
         try:
             authorized = await self.client.is_user_authorized()
         except Exception as exc:
-            if isinstance(exc, AuthKeyError) or _looks_like_session_error(exc):
-                await self._close_client()
-                raise SessionInvalidError(str(exc) or SESSION_RECONNECT_HINT) from exc
-            raise
+            await self._close_client()
+            self._raise_connect_error(exc)
         if authorized:
             return True
         await self._close_client()
         return False
+
+    async def _connect_with_api_fallbacks(self) -> bool:
+        last_exc: Exception | None = None
+        original = Path(self.session_path)
+        if original.is_file():
+            self._detected_api_id = inspect_session_file(original).get("api_id")
+        candidates = iter_api_credential_candidates(
+            self._api_id,
+            self._api_hash,
+            extra_api_id=self._detected_api_id,
+        )
+        for api_id, api_hash in candidates or [(self._api_id, self._api_hash)]:
+            self._prepare_work_copy()
+            self._api_id = api_id
+            self._api_hash = api_hash
+            try:
+                if await self._connect_work_copy():
+                    return True
+                last_exc = SessionInvalidError(SESSION_RECONNECT_HINT)
+            except Exception as exc:
+                if _looks_like_session_busy_error(exc):
+                    raise
+                last_exc = exc
+                logger.info(
+                    "Telegram login failed with api_id=%s for %s: %s",
+                    api_id,
+                    self.session_path,
+                    exc,
+                )
+                continue
+        if last_exc:
+            if isinstance(last_exc, SessionInvalidError):
+                raise last_exc
+            self._raise_connect_error(last_exc)
+        raise SessionInvalidError(SESSION_RECONNECT_HINT)
 
     def _release_locks(self) -> None:
         _release_session_file_lock(self._file_lock)
@@ -307,16 +456,16 @@ class TelegramAccountClient:
         await self._session_lock.acquire()
         try:
             self._file_lock = await asyncio.to_thread(_acquire_session_file_lock, self.session_path)
-            self._prepare_work_copy()
-            authorized = await self._connect_work_copy()
+            authorized = await self._connect_with_api_fallbacks()
             if not authorized and self._encrypted_session:
                 original = Path(self.session_path)
                 if restore_encrypted_session_file(self._encrypted_session, original):
                     logger.warning("Retrying Telegram login after restoring session %s", original)
-                    self._prepare_work_copy()
-                    authorized = await self._connect_work_copy()
+                    authorized = await self._connect_with_api_fallbacks()
             if not authorized:
                 raise SessionInvalidError(SESSION_RECONNECT_HINT)
+            if self._converted_pyrogram and self._work_path:
+                copy_session_bundle(self._work_path, Path(self.session_path))
             return self
         except Exception:
             await self._close_client()

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import CustomSelect from '../../../components/CustomSelect';
 import customService from '../../../services/customService';
+import CustomAccountProxyFields from './CustomAccountProxyFields';
 
 const CONNECT_CLASSES = [
   { value: 'one_day', label: 'Однодневный' },
@@ -33,6 +34,31 @@ const CustomAccountConnectForm = ({ automationId, onConnected }) => {
   const [smsNeeds2fa, setSmsNeeds2fa] = useState(false);
   const [isRequestingSms, setIsRequestingSms] = useState(false);
   const [isVerifyingSms, setIsVerifyingSms] = useState(false);
+  const [poolProxies, setPoolProxies] = useState([]);
+  const [proxyId, setProxyId] = useState('');
+  const [proxyLine, setProxyLine] = useState('');
+
+  useEffect(() => {
+    if (!automationId) {
+      return undefined;
+    }
+    let cancelled = false;
+    customService
+      .listAccountProxies(automationId)
+      .then((data) => {
+        if (!cancelled) {
+          setPoolProxies(data.items || []);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPoolProxies([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [automationId]);
 
   const resetMessages = () => {
     setMessage(null);
@@ -55,7 +81,10 @@ const CustomAccountConnectForm = ({ automationId, onConnected }) => {
     setQrConnected(false);
     lastQrStatusRef.current = '';
     try {
-      const response = await customService.startAccountQr(automationId, assignClass);
+      const response = await customService.startAccountQr(automationId, assignClass, {
+        proxyId,
+        proxyLine,
+      });
       setQrAuthToken(response.auth_token || '');
       setQrDataUrl(response.qr_data_url || '');
       if (response.already_authorized && response.account) {
@@ -149,7 +178,10 @@ const CustomAccountConnectForm = ({ automationId, onConnected }) => {
     setIsRequestingSms(true);
     setSmsNeeds2fa(false);
     try {
-      const response = await customService.requestAccountSms(automationId, phone.trim(), assignClass);
+      const response = await customService.requestAccountSms(automationId, phone.trim(), assignClass, {
+        proxyId,
+        proxyLine,
+      });
       setSmsAuthToken(response.auth_token || '');
       setMessage('Код отправлен в Telegram. Введите его ниже.');
     } catch (err) {
@@ -208,6 +240,15 @@ const CustomAccountConnectForm = ({ automationId, onConnected }) => {
           onChange={(e) => setAssignClass(e.target.value)}
         />
       </div>
+
+      <CustomAccountProxyFields
+        proxies={poolProxies}
+        proxyId={proxyId}
+        proxyLine={proxyLine}
+        onProxyIdChange={setProxyId}
+        onProxyLineChange={setProxyLine}
+        disabled={isStartingQr || isRequestingSms}
+      />
 
       <div className="account-connect-modes">
         <button

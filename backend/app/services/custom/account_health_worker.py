@@ -136,6 +136,17 @@ class AccountHealthWorker:
         else:
             social_account.is_active = False
 
+        if error_kind == "session_busy":
+            social_account.last_health_check_at = _utc_now()
+            social_account.updated_at = _utc_now()
+            await session.commit()
+            return {
+                "account_id": account_id,
+                "status": "retry",
+                "classification": None,
+                "error": error_kind,
+            }
+
         if error_kind in {"session_invalid", "banned", "spamblock", "frozen"}:
             if error_kind in {"session_invalid", "banned", "frozen"}:
                 from .chat_membership_service import replace_watchers_for_dead_account
@@ -187,6 +198,14 @@ class AccountHealthWorker:
         social_account.last_health_check_at = _utc_now()
 
         social_account.updated_at = _utc_now()
+        if info:
+            try:
+                from .session_hygiene_service import account_has_spare, hygienize_account
+
+                if not account_has_spare(social_account):
+                    await hygienize_account(session, social_account, automation_id)
+            except Exception as exc:
+                logger.warning("Could not mint spare session after health check for %s: %s", account_id, exc)
         await session.commit()
 
         return {

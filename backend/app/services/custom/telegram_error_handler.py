@@ -45,6 +45,7 @@ class SessionInvalidError(RuntimeError):
 FLOOD_ERRORS = set()
 DEACTIVATED_ERRORS = set()
 SESSION_ERRORS = set()
+SESSION_BUSY_ERRORS = set()
 SPAMBLOCK_ERRORS = set()
 FROZEN_ERRORS = set()
 CHAT_RESTRICTED_ERRORS = set()
@@ -75,7 +76,6 @@ for cls_name in (
     "AuthKeyUnregisteredError",
     "AuthKeyInvalidError",
     "AuthKeyPermEmptyError",
-    "AuthKeyDuplicatedError",
     "SessionExpiredError",
     "SessionRevokedError",
     "UnauthorizedError",
@@ -84,6 +84,15 @@ for cls_name in (
         cls = getattr(__import__("telethon.errors", fromlist=[cls_name]), cls_name, None)
         if cls:
             SESSION_ERRORS.add(cls)
+    except Exception:
+        pass
+
+
+for cls_name in ("AuthKeyDuplicatedError", "AuthRestartError"):
+    try:
+        cls = getattr(__import__("telethon.errors", fromlist=[cls_name]), cls_name, None)
+        if cls:
+            SESSION_BUSY_ERRORS.add(cls)
     except Exception:
         pass
 
@@ -150,8 +159,38 @@ def _looks_like_frozen_error(exc: Exception) -> bool:
     return any(needle in compact or needle in lowered for needle in needles)
 
 
+def _error_blob(exc: Exception) -> tuple[str, str]:
+    name = type(exc).__name__.lower()
+    text = str(exc).lower()
+    compact = f"{name} {text}".replace("_", "").replace(" ", "")
+    return text, compact
+
+
+def _looks_like_session_busy_error(exc: Exception) -> bool:
+    """Same auth key used twice, or Telegram asked to restart the handshake.
+
+    The .session file is still valid. Marking the account revoked here is how
+    a live purchased account disappears right after upload.
+    """
+    if SESSION_BUSY_ERRORS and isinstance(exc, tuple(SESSION_BUSY_ERRORS)):
+        return True
+    _text, compact = _error_blob(exc)
+    needles = (
+        "authkeyduplicated",
+        "auth key duplicated",
+        "authorization key is already in use",
+        "used under two different ip",
+        "authrestart",
+        "auth restart",
+        "restart the authorization",
+    )
+    return any(needle.replace(" ", "") in compact for needle in needles)
+
+
 def _looks_like_session_error(exc: Exception) -> bool:
-    lowered = f"{type(exc).__name__} {exc}".lower()
+    if _looks_like_session_busy_error(exc):
+        return False
+    lowered, compact = _error_blob(exc)
     needles = (
         "authkeyunregistered",
         "auth_key_unregistered",
@@ -159,20 +198,22 @@ def _looks_like_session_error(exc: Exception) -> bool:
         "sessionrevoked",
         "session revoked",
         "session expired",
-        "not authorized",
+        "session is not authorized",
+        "the user has not authorized",
         "authorization has been invalidated",
         "terminated all sessions",
         "key is not registered",
-        "unregistered",
         "authkeyinvalid",
         "auth_key_invalid",
-        "authkeyduplicated",
+        "authkeypermempty",
     )
-    return any(needle in lowered for needle in needles)
+    return any(needle.replace("_", "").replace(" ", "") in compact or needle in lowered for needle in needles)
 
 
 def _classify_telegram_error(exc: Exception) -> dict[str, Any]:
     """Return dict with keys: kind, seconds (for flood)."""
+    if _looks_like_session_busy_error(exc):
+        return {"kind": "session_busy"}
     if isinstance(exc, SessionInvalidError) or _looks_like_session_error(exc):
         return {"kind": "session"}
     if FROZEN_ERRORS and isinstance(exc, tuple(FROZEN_ERRORS)):
@@ -186,6 +227,8 @@ def _classify_telegram_error(exc: Exception) -> dict[str, Any]:
         return {"kind": "spamblock"}
     if DEACTIVATED_ERRORS and isinstance(exc, tuple(DEACTIVATED_ERRORS)):
         return {"kind": "deactivated"}
+    if SESSION_BUSY_ERRORS and isinstance(exc, tuple(SESSION_BUSY_ERRORS)):
+        return {"kind": "session_busy"}
     if SESSION_ERRORS and isinstance(exc, tuple(SESSION_ERRORS)):
         return {"kind": "session"}
     if CHAT_RESTRICTED_ERRORS and isinstance(exc, tuple(CHAT_RESTRICTED_ERRORS)):
@@ -212,7 +255,15 @@ def _classify_telegram_error(exc: Exception) -> dict[str, Any]:
         )
     ):
         return {"kind": "chat_restricted"}
-    if "auth" in lowered or "unregistered" in lowered or "revoked" in lowered:
+    if any(
+        token in compact
+        for token in (
+            "authkeyunregistered",
+            "sessionrevoked",
+            "sessionexpired",
+            "authkeyinvalid",
+        )
+    ):
         return {"kind": "session"}
     return {"kind": "other", "name": name}
 
@@ -417,6 +468,19 @@ async def execute_with_telegram_retry(
                     automation_id=automation_id,
                 )
                 raise
+            if kind == "session_busy":
+                if apply_write_rest:
+                    schedule_account_retry(account)
+                await log_action_error(
+                    session, account,
+                    action_type=action_type,
+                    target_id=target_id,
+                    target_type=target_type,
+                    payload=payload,
+                    error_message=str(exc),
+                    automation_id=automation_id,
+                )
+                raise
             if kind == "chat_restricted":
                 if apply_write_rest:
                     schedule_account_retry(account)
@@ -487,6 +551,8 @@ async def update_account_after_telegram_error(
         mark_session_invalid(account)
         await session.commit()
         return "session_invalid"
+    if kind == "session_busy":
+        return "session_busy"
     if kind == "chat_restricted":
         return "chat_restricted"
     if kind == "flood":
