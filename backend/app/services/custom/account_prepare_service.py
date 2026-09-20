@@ -88,7 +88,8 @@ async def prepare_accounts(automation_id: int) -> dict[str, Any]:
 
             for account in alive:
                 try:
-                    await hygienize_account(session, account, automation_id, force=True)
+                    # Never force mint on prepare — force only allows prune when spare exists.
+                    await hygienize_account(session, account, automation_id, force=False)
                 except Exception as exc:
                     logger.warning(
                         "Session hygiene during prepare failed for account %s: %s",

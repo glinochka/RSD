@@ -28,6 +28,10 @@ logger = logging.getLogger(__name__)
 
 _QR_ACCEPT_TIMEOUT = 45
 _HYGIENE_MIN_AGE_SECONDS = 3600
+# Minting a spare opens a second Telegram login. Doing that on a brand-new
+# session (right after SMS/QR/upload) races with health/profile workers and
+# frequently kills the main auth key — especially with 2FA accounts.
+_HYGIENE_MINT_MIN_AGE_SECONDS = 6 * 3600
 _LEGACY_DEVICE_MODELS = frozenset({DEVICE_MODEL_MAIN, DEVICE_MODEL_SPARE})
 
 
@@ -249,9 +253,32 @@ async def _close_client(client) -> None:
             pass
 
 
+async def _account_requires_2fa(client) -> bool:
+    """Spare QR mint cannot finish without the cloud password — do not even try."""
+    try:
+        from telethon.tl.functions.account import GetPasswordRequest
+
+        password = await client(GetPasswordRequest())
+        return bool(getattr(password, "has_password", False))
+    except Exception as exc:
+        logger.info("Could not check 2FA before spare mint: %s", exc)
+        return False
+
+
 async def _mint_spare_session(main_client, account: SocialAccount, automation_id: int) -> int | None:
     """Issue a second independent auth key by accepting QR login from the main client."""
     from telethon.tl.functions.auth import AcceptLoginTokenRequest
+
+    try:
+        from telethon.errors import SessionPasswordNeededError
+    except Exception:  # pragma: no cover
+        SessionPasswordNeededError = type("SessionPasswordNeededError", (Exception,), {})
+
+    if await _account_requires_2fa(main_client.client):
+        raise RuntimeError(
+            "2FA cloud password is enabled; spare session mint is skipped "
+            "(QR spare login cannot complete without the password)"
+        )
 
     work = Path(tempfile.mkdtemp(prefix="rsd_spare_"))
     spare_path = work / "spare.session"
@@ -263,6 +290,7 @@ async def _mint_spare_session(main_client, account: SocialAccount, automation_id
         api_id=getattr(main_client, "api_id", None) or None,
         api_hash=getattr(main_client, "api_hash", None) or None,
     )
+    accepted = False
     try:
         await spare_client.connect()
         qr_login = await spare_client.qr_login()
@@ -270,7 +298,14 @@ async def _mint_spare_session(main_client, account: SocialAccount, automation_id
         if not token:
             raise RuntimeError("Telegram QR login returned an empty token")
         await main_client.client(AcceptLoginTokenRequest(token=token))
-        await qr_login.wait(timeout=_QR_ACCEPT_TIMEOUT)
+        accepted = True
+        try:
+            await qr_login.wait(timeout=_QR_ACCEPT_TIMEOUT)
+        except SessionPasswordNeededError as exc:
+            raise RuntimeError(
+                "Spare mint hit 2FA password after AcceptLoginToken; "
+                "aborting so we do not leave a half-open device"
+            ) from exc
         await _close_client(spare_client)
         spare_client = None
         if not session_file_has_auth_key(spare_path):
@@ -283,6 +318,33 @@ async def _mint_spare_session(main_client, account: SocialAccount, automation_id
         )
         account.spare_authorization_hash = spare_hash
         return spare_hash
+    except Exception:
+        if accepted:
+            # Best-effort: drop any incomplete device created by AcceptLoginToken.
+            try:
+                authorizations = await _list_authorizations(main_client.client)
+                known = _device_models_for_account(account)
+                for auth in authorizations:
+                    hash_value = int(getattr(auth, "hash", 0) or 0)
+                    if not hash_value:
+                        continue
+                    model = str(getattr(auth, "device_model", "") or "").strip()
+                    if model and model == str((profile or {}).get("device_model") or ""):
+                        from telethon.tl.functions.account import ResetAuthorizationRequest
+
+                        await main_client.client(ResetAuthorizationRequest(hash=hash_value))
+                        logger.warning(
+                            "Reset incomplete spare authorization %s for account %s",
+                            hash_value,
+                            account.id,
+                        )
+            except Exception as cleanup_exc:
+                logger.warning(
+                    "Could not clean incomplete spare for account %s: %s",
+                    account.id,
+                    cleanup_exc,
+                )
+        raise
     finally:
         if spare_client is not None:
             await _close_client(spare_client)
@@ -303,27 +365,37 @@ async def hygienize_account(
 ) -> dict[str, Any]:
     """Mint a spare login if missing, then drop third-party Telegram sessions.
 
-    Mint is independent of the daily prune: after a spare is promoted to main
-    we immediately issue a new spare. Prune never runs unless that spare is
-    visible in GetAuthorizations, so we cannot ResetAuthorization our own logins.
+    Mint never runs on a fresh session file — concurrent health/profile traffic
+    plus a second QR login is what was revoking accounts right after SMS/upload.
+    `force` may prune when a live spare exists; it does not bypass mint freshness.
     """
     if not account.session_file_path and not getattr(account, "encrypted_session", None):
         return {"status": "skipped", "reason": "no_session"}
     minted = False
     pruned = 0
     skip_prune = (not force) and already_pruned_today(account)
-    too_fresh = False
-    if not force:
-        age = _session_file_age_seconds(account)
-        too_fresh = age is not None and age < _HYGIENE_MIN_AGE_SECONDS
+    age = _session_file_age_seconds(account)
+    too_fresh_mint = age is not None and age < _HYGIENE_MINT_MIN_AGE_SECONDS
+    too_fresh_prune = (not force) and age is not None and age < _HYGIENE_MIN_AGE_SECONDS
+    mint_skip_reason: str | None = None
     async with TelegramAccountClient.for_account(account) as client:
         spare_hash = getattr(account, "spare_authorization_hash", None)
         if not account_has_spare(account):
-            try:
-                spare_hash = await _mint_spare_session(client, account, automation_id)
-                minted = spare_hash is not None or account_has_spare(account)
-            except Exception as exc:
-                logger.warning("Could not mint spare session for account %s: %s", account.id, exc)
+            if too_fresh_mint:
+                mint_skip_reason = "too_fresh"
+                logger.info(
+                    "Deferring spare mint for account %s (session age %.0fs < %ss)",
+                    account.id,
+                    age or 0,
+                    _HYGIENE_MINT_MIN_AGE_SECONDS,
+                )
+            else:
+                try:
+                    spare_hash = await _mint_spare_session(client, account, automation_id)
+                    minted = spare_hash is not None or account_has_spare(account)
+                except Exception as exc:
+                    mint_skip_reason = "mint_failed"
+                    logger.warning("Could not mint spare session for account %s: %s", account.id, exc)
         else:
             authorizations = await _list_authorizations(client.client)
             live_hash = _spare_hash_from_authorizations(
@@ -334,11 +406,15 @@ async def hygienize_account(
                 else None,
             )
             if live_hash is None:
-                try:
-                    spare_hash = await _mint_spare_session(client, account, automation_id)
-                    minted = True
-                except Exception as exc:
-                    logger.warning("Could not re-mint spare session for account %s: %s", account.id, exc)
+                if too_fresh_mint:
+                    mint_skip_reason = "too_fresh"
+                else:
+                    try:
+                        spare_hash = await _mint_spare_session(client, account, automation_id)
+                        minted = True
+                    except Exception as exc:
+                        mint_skip_reason = "mint_failed"
+                        logger.warning("Could not re-mint spare session for account %s: %s", account.id, exc)
             else:
                 spare_hash = live_hash
                 account.spare_authorization_hash = live_hash
@@ -348,7 +424,7 @@ async def hygienize_account(
             account_has_spare(account)
             and live_spare is not None
             and not skip_prune
-            and not too_fresh
+            and not too_fresh_prune
         )
         if can_prune:
             pruned = await _reset_extra_sessions(
@@ -356,11 +432,11 @@ async def hygienize_account(
                 spare_hash=live_spare,
                 known_models=_device_models_for_account(account),
             )
-        elif minted and (too_fresh or skip_prune or live_spare is None):
+        elif minted and (too_fresh_prune or skip_prune or live_spare is None):
             logger.info(
                 "Spare session ready for account %s; third-party prune deferred (fresh=%s today=%s live=%s)",
                 account.id,
-                too_fresh,
+                too_fresh_prune,
                 skip_prune,
                 live_spare,
             )
@@ -371,9 +447,11 @@ async def hygienize_account(
     await session.flush()
     reason = None
     if not minted and not pruned:
-        if skip_prune and account_has_spare(account):
+        if mint_skip_reason:
+            reason = mint_skip_reason
+        elif skip_prune and account_has_spare(account):
             reason = "already_today"
-        elif too_fresh:
+        elif too_fresh_prune:
             reason = "too_fresh"
         elif not account_has_spare(account):
             reason = "no_spare"

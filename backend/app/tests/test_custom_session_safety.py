@@ -155,10 +155,84 @@ async def test_hygiene_mints_on_fresh_file_but_does_not_prune(tmp_path: Path, mo
     session.flush = AsyncMock()
 
     result = await session_hygiene_service.hygienize_account(session, account, 1)
+    assert minted["called"] is False
+    assert result["minted"] is False
+    assert result["pruned"] == 0
+    assert result["reason"] == "too_fresh"
+    assert pruned["called"] is False
+
+
+@pytest.mark.asyncio
+async def test_hygiene_mints_only_after_session_ages(tmp_path: Path, monkeypatch):
+    from app.config import settings
+    from app.services.custom import session_hygiene_service
+    from app.services.telegram_userbot_auth import DEVICE_MODEL_SPARE
+
+    monkeypatch.setattr(settings, "MEDIA_ROOT", str(tmp_path))
+    rel = "sessions/1/aged.session"
+    path = tmp_path / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"SQLite format 3\x00" + b"\x00" * 32)
+    old = datetime.now(timezone.utc).timestamp() - (7 * 3600)
+    os.utime(path, (old, old))
+    account = SimpleNamespace(
+        id=9,
+        session_file_path=rel,
+        encrypted_session="fernet1:x",
+        sessions_pruned_at=None,
+        encrypted_spare_session=None,
+        spare_session_file_path=None,
+        spare_authorization_hash=None,
+        telegram_device=None,
+        spare_telegram_device=None,
+        updated_at=None,
+    )
+    minted = {"called": False}
+    pruned = {"called": False}
+
+    class _Client:
+        client = object()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    async def fake_mint(client, account, automation_id):
+        minted["called"] = True
+        account.encrypted_spare_session = "fernet1:spare"
+        account.spare_session_file_path = "sessions/1/9_spare.session"
+        account.spare_authorization_hash = 111
+        return 111
+
+    async def fake_list(*args, **kwargs):
+        return [
+            SimpleNamespace(hash=0, device_model="PC 64bit"),
+            SimpleNamespace(hash=111, device_model=DEVICE_MODEL_SPARE),
+            SimpleNamespace(hash=222, device_model="iPhone 15"),
+        ]
+
+    async def mark_prune(*args, **kwargs):
+        pruned["called"] = True
+        return 1
+
+    monkeypatch.setattr(
+        session_hygiene_service.TelegramAccountClient,
+        "for_account",
+        classmethod(lambda cls, account, **kwargs: _Client()),
+    )
+    monkeypatch.setattr(session_hygiene_service, "_mint_spare_session", fake_mint)
+    monkeypatch.setattr(session_hygiene_service, "_list_authorizations", fake_list)
+    monkeypatch.setattr(session_hygiene_service, "_reset_extra_sessions", mark_prune)
+    session = MagicMock()
+    session.flush = AsyncMock()
+
+    result = await session_hygiene_service.hygienize_account(session, account, 1)
     assert minted["called"] is True
     assert result["minted"] is True
-    assert result["pruned"] == 0
-    assert pruned["called"] is False
+    assert result["pruned"] == 1
+    assert pruned["called"] is True
 
 
 @pytest.mark.asyncio
