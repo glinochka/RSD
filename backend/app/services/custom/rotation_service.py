@@ -114,6 +114,8 @@ def _filter_eligible(
             continue
         if getattr(social_account, "is_frozen", False):
             continue
+        if action_type not in _DM_ACTIONS | {"lead_warmup"} and getattr(social_account, "is_channel_banned", False):
+            continue
         if not ignore_rest and account_is_resting(social_account):
             continue
         if exclude_spamblocked and social_account.is_spamblocked:

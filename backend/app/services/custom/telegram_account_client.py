@@ -254,6 +254,7 @@ def _make_client(
     api_hash: str | None = None,
     proxy: dict | None = None,
     device_model: str | None = None,
+    device_profile: dict | None = None,
 ):
     client, resolved_id, resolved_hash = create_telegram_client(
         api_id=api_id,
@@ -262,6 +263,7 @@ def _make_client(
         prefer_desktop=True,
         proxy=proxy,
         device_model=device_model,
+        device_profile=device_profile,
     )
     return client, resolved_id, resolved_hash
 
@@ -296,6 +298,7 @@ class TelegramAccountClient:
         encrypted_session: str | None = None,
         proxy: dict | None = None,
         device_model: str | None = None,
+        device_profile: dict | None = None,
     ):
         self.session_path = session_path
         self._encrypted_session = encrypted_session
@@ -303,6 +306,7 @@ class TelegramAccountClient:
         self._api_hash = api_hash
         self._proxy = proxy
         self._device_model = device_model
+        self._device_profile = device_profile
         self.client = None
         self.api_id = 0
         self.api_hash = ""
@@ -324,15 +328,18 @@ class TelegramAccountClient:
     ) -> "TelegramAccountClient":
         from ...config import settings
         from .proxy_service import telethon_proxy_from_account
+        from ..telegram_userbot_auth import ensure_account_device
 
         rel = (getattr(account, "session_file_path", None) or "").strip()
         path = Path(settings.MEDIA_ROOT).resolve() / rel
+        profile = ensure_account_device(account)
         return cls(
             str(path),
             api_id=api_id,
             api_hash=api_hash,
             encrypted_session=getattr(account, "encrypted_session", None),
             proxy=proxy if proxy is not None else telethon_proxy_from_account(account),
+            device_profile=profile,
         )
 
     async def _close_client(self) -> None:
@@ -393,6 +400,7 @@ class TelegramAccountClient:
             api_hash=self._api_hash,
             proxy=self._proxy,
             device_model=self._device_model,
+            device_profile=self._device_profile,
         )
         try:
             await self.client.connect()
@@ -570,6 +578,7 @@ class TelegramAccountClient:
         incoming_message: Any | None = None,
         max_id: int | None = None,
         lab_mode: bool = False,
+        skip_read: bool = False,
     ) -> None:
         """Mark read, show typing, then send — human-like private reply."""
         from .human_dm import human_send_reply
@@ -581,6 +590,7 @@ class TelegramAccountClient:
             text,
             incoming_message=incoming_message,
             max_id=max_id,
+            skip_read=skip_read,
             lab_mode=lab_mode,
         )
 

@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_WARMUP_MESSAGES = ["Привет", "Как дела?", "Что нового?"]
 WARMUP_STATUSES = {"idle", "rest", "warming", "complete"}
+WARMUP_GAP_MIN_SECONDS = 60 * 60
+WARMUP_GAP_MAX_SECONDS = 2 * 60 * 60
 
 
 def _utc_now() -> datetime:
@@ -79,14 +81,32 @@ def enroll_pool_account(automation: CustomAutomation | None, pool_account: PoolA
     pool_account.warmup_started_at = _utc_now()
     pool_account.warmup_dialog_count = 0
     pool_account.warmup_last_dialog_at = None
+    pool_account.warmup_message_index = 0
+    pool_account.warmup_next_at = None
     return True
 
 
+def warmup_gap_seconds() -> int:
+    return random.randint(WARMUP_GAP_MIN_SECONDS, WARMUP_GAP_MAX_SECONDS)
+
+
 def _due_for_dialog(pool_account: PoolAccount) -> bool:
+    """Backward-compatible alias used by tests: first/next warmup send is due."""
+    return _due_for_next_message(pool_account)
+
+
+def _due_for_next_message(pool_account: PoolAccount, *, now: datetime | None = None) -> bool:
     status = (pool_account.warmup_status or "idle").strip().lower()
     if status not in {"rest", "warming"}:
         return False
-    today = _moscow_date()
+    current = now or _utc_now()
+    next_at = getattr(pool_account, "warmup_next_at", None)
+    if next_at and next_at > current:
+        return False
+    today = _moscow_date(current)
+    index = int(getattr(pool_account, "warmup_message_index", 0) or 0)
+    if index > 0:
+        return True
     if status == "rest":
         started = pool_account.warmup_started_at
         if not started:
@@ -98,6 +118,38 @@ def _due_for_dialog(pool_account: PoolAccount) -> bool:
     return _moscow_date(last) < today
 
 
+async def _send_one_message(
+    session: AsyncSession,
+    automation: CustomAutomation,
+    account: SocialAccount,
+    usernames: list[str],
+    text: str,
+    *,
+    first: bool,
+) -> dict[str, Any]:
+    if not usernames:
+        return {"status": "skipped", "reason": "no_usernames"}
+    peer = random.choice(usernames)
+    try:
+        async with TelegramAccountClient.for_account(account) as client:
+            await execute_with_telegram_retry(
+                session,
+                account,
+                lambda: client.human_reply(peer, text, skip_read=first),
+                action_type="account_warmup",
+                target_id=peer,
+                target_type="warmup",
+                payload={"text": text, "username": peer},
+                automation_id=automation.id,
+            )
+        record_successful_send(account)
+        await session.commit()
+    except Exception as exc:
+        logger.warning("Account warmup message failed for %s: %s", account.id, exc)
+        return {"status": "error", "reason": str(exc)[:200], "sent": 0, "peer": peer}
+    return {"status": "ok", "sent": 1, "peer": peer}
+
+
 async def _send_dialog(
     session: AsyncSession,
     automation: CustomAutomation,
@@ -107,34 +159,20 @@ async def _send_dialog(
     *,
     sleeper=None,
     delay: bool = True,
+    message_index: int = 0,
 ) -> dict[str, Any]:
-    if not usernames:
-        return {"status": "skipped", "reason": "no_usernames"}
-    peer = random.choice(usernames)
-    sent = 0
-    try:
-        async with TelegramAccountClient.for_account(account) as client:
-            for index, text in enumerate(messages):
-                await execute_with_telegram_retry(
-                    session,
-                    account,
-                    lambda t=text: client.send_message(peer, t),
-                    action_type="account_warmup",
-                    target_id=peer,
-                    target_type="warmup",
-                    payload={"text": text, "username": peer},
-                    automation_id=automation.id,
-                )
-                sent += 1
-                record_successful_send(account)
-                await session.commit()
-                if delay and index < len(messages) - 1:
-                    fn = sleeper or __import__("asyncio").sleep
-                    await fn(random.uniform(3, 8))
-    except Exception as exc:
-        logger.warning("Account warmup dialog failed for %s: %s", account.id, exc)
-        return {"status": "error", "reason": str(exc)[:200], "sent": sent, "peer": peer}
-    return {"status": "ok", "sent": sent, "peer": peer}
+    """Send the next warmup line only. `delay` is kept for old tests and ignored."""
+    if not messages:
+        return {"status": "skipped", "reason": "no_messages"}
+    index = max(0, min(int(message_index), len(messages) - 1))
+    return await _send_one_message(
+        session,
+        automation,
+        account,
+        usernames,
+        messages[index],
+        first=index == 0,
+    )
 
 
 async def run_account_warmup_pass(automation_id: int) -> dict[str, Any]:
@@ -163,22 +201,36 @@ async def run_account_warmup_pass(automation_id: int) -> dict[str, Any]:
                 continue
             if account_is_resting(social):
                 continue
-            if not _due_for_dialog(pool_account):
+            if not _due_for_next_message(pool_account):
                 continue
             processed += 1
-            outcome = await _send_dialog(session, automation, social, usernames, messages)
+            index = int(getattr(pool_account, "warmup_message_index", 0) or 0)
+            outcome = await _send_dialog(
+                session,
+                automation,
+                social,
+                usernames,
+                messages,
+                message_index=index,
+            )
             if outcome.get("status") != "ok":
                 continue
             dialogs += 1
-            pool_account.warmup_dialog_count = (pool_account.warmup_dialog_count or 0) + 1
-            pool_account.warmup_last_dialog_at = _utc_now()
-            if pool_account.warmup_dialog_count >= 2:
-                pool_account.warmup_status = "complete"
-                completed += 1
-                from .chat_membership_service import ensure_memberships_for_account
-
-                await ensure_memberships_for_account(session, automation.id, social.id)
+            index += 1
+            pool_account.warmup_status = "warming"
+            if index < len(messages):
+                pool_account.warmup_message_index = index
+                pool_account.warmup_next_at = _utc_now() + timedelta(seconds=warmup_gap_seconds())
             else:
-                pool_account.warmup_status = "warming"
+                pool_account.warmup_message_index = 0
+                pool_account.warmup_next_at = None
+                pool_account.warmup_dialog_count = (pool_account.warmup_dialog_count or 0) + 1
+                pool_account.warmup_last_dialog_at = _utc_now()
+                if pool_account.warmup_dialog_count >= 2:
+                    pool_account.warmup_status = "complete"
+                    completed += 1
+                    from .chat_membership_service import ensure_memberships_for_account
+
+                    await ensure_memberships_for_account(session, automation.id, social.id)
             await session.commit()
     return {"processed": processed, "dialogs": dialogs, "completed": completed}

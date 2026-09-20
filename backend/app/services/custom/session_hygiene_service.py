@@ -15,7 +15,7 @@ from ...alembic.database import async_session_maker
 from ...alembic.models import SocialAccount
 from ...config import settings
 from ..account_pool_service import encrypt_session_bytes
-from ..telegram_userbot_auth import DEVICE_MODEL_MAIN, DEVICE_MODEL_SPARE, create_telegram_client
+from ..telegram_userbot_auth import DEVICE_MODEL_MAIN, DEVICE_MODEL_SPARE, create_telegram_client, ensure_account_device
 from .rotation_service import list_alive_session_accounts
 from .telegram_account_client import (
     TelegramAccountClient,
@@ -28,7 +28,57 @@ logger = logging.getLogger(__name__)
 
 _QR_ACCEPT_TIMEOUT = 45
 _HYGIENE_MIN_AGE_SECONDS = 3600
-_OUR_DEVICE_MODELS = frozenset({DEVICE_MODEL_MAIN, DEVICE_MODEL_SPARE})
+_LEGACY_DEVICE_MODELS = frozenset({DEVICE_MODEL_MAIN, DEVICE_MODEL_SPARE})
+
+
+def _device_models_for_account(account: SocialAccount | None) -> set[str]:
+    models = set(_LEGACY_DEVICE_MODELS)
+    if account is None:
+        return models
+    for field in ("telegram_device", "spare_telegram_device"):
+        payload = getattr(account, field, None)
+        if isinstance(payload, dict):
+            model = str(payload.get("device_model") or "").strip()
+            if model:
+                models.add(model)
+    return models
+
+
+def authorization_should_keep(
+    auth: Any,
+    *,
+    spare_hash: int | None,
+    known_models: Iterable[str] | None = None,
+) -> bool:
+    """Keep the login we are on, the spare, and our own device fingerprints.
+
+    Telegram hash 0 is always the currently connected session — it cannot be
+    reset. Extra hashes are seller/third-party devices.
+    """
+    hash_value = int(getattr(auth, "hash", 0) or 0)
+    if hash_value == 0:
+        return True
+    if spare_hash is not None and hash_value == int(spare_hash):
+        return True
+    model = str(getattr(auth, "device_model", "") or "").strip()
+    allowed = set(_LEGACY_DEVICE_MODELS)
+    if known_models:
+        allowed.update(str(item).strip() for item in known_models if str(item or "").strip())
+    return model in allowed
+
+
+def extra_authorization_hashes(
+    authorizations: Iterable[Any],
+    *,
+    spare_hash: int | None,
+    known_models: Iterable[str] | None = None,
+) -> list[int]:
+    hashes: list[int] = []
+    for auth in authorizations:
+        if authorization_should_keep(auth, spare_hash=spare_hash, known_models=known_models):
+            continue
+        hashes.append(int(getattr(auth, "hash", 0) or 0))
+    return hashes
 
 
 def _utc_now() -> datetime:
@@ -51,30 +101,6 @@ def already_pruned_today(account: SocialAccount, *, now: datetime | None = None)
     if stamped is None:
         return False
     return _moscow_date(stamped) == _moscow_date(now)
-
-
-def authorization_should_keep(auth: Any, *, spare_hash: int | None) -> bool:
-    """Keep the login we are on, the RSD spare, and any other RSD device.
-
-    Telegram hash 0 is always the currently connected session — it cannot be
-    reset. Extra hashes are seller/third-party devices.
-    """
-    hash_value = int(getattr(auth, "hash", 0) or 0)
-    if hash_value == 0:
-        return True
-    if spare_hash is not None and hash_value == int(spare_hash):
-        return True
-    model = str(getattr(auth, "device_model", "") or "").strip()
-    return model in _OUR_DEVICE_MODELS
-
-
-def extra_authorization_hashes(authorizations: Iterable[Any], *, spare_hash: int | None) -> list[int]:
-    hashes: list[int] = []
-    for auth in authorizations:
-        if authorization_should_keep(auth, spare_hash=spare_hash):
-            continue
-        hashes.append(int(getattr(auth, "hash", 0) or 0))
-    return hashes
 
 
 def _media_root() -> Path:
@@ -163,25 +189,42 @@ async def _list_authorizations(client) -> list[Any]:
     return list(getattr(result, "authorizations", None) or [])
 
 
-def _spare_hash_from_authorizations(authorizations: Iterable[Any], known: int | None = None) -> int | None:
+def _spare_hash_from_authorizations(
+    authorizations: Iterable[Any],
+    known: int | None = None,
+    *,
+    spare_model: str | None = None,
+) -> int | None:
     if known is not None:
         for auth in authorizations:
             if int(getattr(auth, "hash", 0) or 0) == int(known):
                 return int(known)
+    wanted = {DEVICE_MODEL_SPARE}
+    if spare_model:
+        wanted.add(str(spare_model).strip())
     for auth in authorizations:
         if int(getattr(auth, "hash", 0) or 0) == 0:
             continue
-        if str(getattr(auth, "device_model", "") or "") == DEVICE_MODEL_SPARE:
+        if str(getattr(auth, "device_model", "") or "") in wanted:
             return int(getattr(auth, "hash", 0) or 0)
     return None
 
 
-async def _reset_extra_sessions(client, *, spare_hash: int | None) -> int:
+async def _reset_extra_sessions(
+    client,
+    *,
+    spare_hash: int | None,
+    known_models: Iterable[str] | None = None,
+) -> int:
     from telethon.tl.functions.account import ResetAuthorizationRequest
 
     authorizations = await _list_authorizations(client)
     reset = 0
-    for hash_value in extra_authorization_hashes(authorizations, spare_hash=spare_hash):
+    for hash_value in extra_authorization_hashes(
+        authorizations,
+        spare_hash=spare_hash,
+        known_models=known_models,
+    ):
         if not hash_value:
             continue
         try:
@@ -212,9 +255,10 @@ async def _mint_spare_session(main_client, account: SocialAccount, automation_id
 
     work = Path(tempfile.mkdtemp(prefix="rsd_spare_"))
     spare_path = work / "spare.session"
+    profile = ensure_account_device(account, spare=True)
     spare_client, _, _ = create_telegram_client(
         session_path=str(spare_path),
-        device_model=DEVICE_MODEL_SPARE,
+        device_profile=profile,
         proxy=getattr(main_client, "_proxy", None),
         api_id=getattr(main_client, "api_id", None) or None,
         api_hash=getattr(main_client, "api_hash", None) or None,
@@ -233,7 +277,10 @@ async def _mint_spare_session(main_client, account: SocialAccount, automation_id
             raise RuntimeError("Spare session file has no auth key")
         _persist_spare_bytes(account, automation_id, spare_path)
         authorizations = await _list_authorizations(main_client.client)
-        spare_hash = _spare_hash_from_authorizations(authorizations)
+        spare_hash = _spare_hash_from_authorizations(
+            authorizations,
+            spare_model=(profile or {}).get("device_model"),
+        )
         account.spare_authorization_hash = spare_hash
         return spare_hash
     finally:
@@ -279,7 +326,13 @@ async def hygienize_account(
                 logger.warning("Could not mint spare session for account %s: %s", account.id, exc)
         else:
             authorizations = await _list_authorizations(client.client)
-            live_hash = _spare_hash_from_authorizations(authorizations, known=spare_hash)
+            live_hash = _spare_hash_from_authorizations(
+                authorizations,
+                known=spare_hash,
+                spare_model=(getattr(account, "spare_telegram_device", None) or {}).get("device_model")
+                if isinstance(getattr(account, "spare_telegram_device", None), dict)
+                else None,
+            )
             if live_hash is None:
                 try:
                     spare_hash = await _mint_spare_session(client, account, automation_id)
@@ -298,7 +351,11 @@ async def hygienize_account(
             and not too_fresh
         )
         if can_prune:
-            pruned = await _reset_extra_sessions(client.client, spare_hash=live_spare)
+            pruned = await _reset_extra_sessions(
+                client.client,
+                spare_hash=live_spare,
+                known_models=_device_models_for_account(account),
+            )
         elif minted and (too_fresh or skip_prune or live_spare is None):
             logger.info(
                 "Spare session ready for account %s; third-party prune deferred (fresh=%s today=%s live=%s)",

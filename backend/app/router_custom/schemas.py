@@ -399,6 +399,7 @@ class AccountResponse(BaseModel):
     is_banned: bool
     is_spamblocked: bool = False
     is_frozen: bool = False
+    is_channel_banned: bool = False
     auto_classified: bool = False
     risk_score: Optional[float] = None
     trust_score: Optional[float] = None

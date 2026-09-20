@@ -2209,6 +2209,10 @@ class CustomAutomation(Base):
         back_populates="automation",
         cascade="all, delete-orphan",
     )
+    peer_dialogs: Mapped[list["CustomAccountPeerDialog"]] = relationship(
+        back_populates="automation",
+        cascade="all, delete-orphan",
+    )
     dmp_one_imports: Mapped[list["DmpOneImport"]] = relationship(
         back_populates="automation",
         cascade="all, delete-orphan",
@@ -2344,6 +2348,9 @@ class SocialAccount(Base):
     is_frozen: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", nullable=False, index=True
     )
+    is_channel_banned: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False, index=True
+    )
     banned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     ban_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
     spamblocked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -2356,6 +2363,8 @@ class SocialAccount(Base):
     spare_authorization_hash: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     sessions_pruned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     telegram_proxy: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    telegram_device: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    spare_telegram_device: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     last_health_check_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     daily_messages_sent: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     daily_messages_reset_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -2438,6 +2447,8 @@ class PoolAccount(Base):
     warmup_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     warmup_last_dialog_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     warmup_dialog_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    warmup_message_index: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    warmup_next_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     proxy_id: Mapped[int | None] = mapped_column(
         ForeignKey("custom_proxies.id", ondelete="SET NULL"), nullable=True, index=True
     )
@@ -2451,6 +2462,44 @@ class PoolAccount(Base):
         back_populates="pool_accounts",
         foreign_keys=[proxy_id],
     )
+
+
+class CustomAccountPeerDialog(Base):
+    __tablename__ = "custom_account_peer_dialogs"
+    __table_args__ = (
+        UniqueConstraint(
+            "custom_automation_id",
+            "account_low_id",
+            "account_high_id",
+            name="uq_peer_dialog_pair",
+        ),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    custom_automation_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_automations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    account_low_id: Mapped[int] = mapped_column(
+        ForeignKey("social_accounts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    account_high_id: Mapped[int] = mapped_column(
+        ForeignKey("social_accounts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(String(16), default="idle", server_default="idle", nullable=False, index=True)
+    day_key: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
+    daily_target: Mapped[int] = mapped_column(Integer, default=6, server_default="6", nullable=False)
+    messages_today: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    next_sender_id: Mapped[int | None] = mapped_column(
+        ForeignKey("social_accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    next_send_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    last_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    history: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    automation: Mapped["CustomAutomation"] = relationship(back_populates="peer_dialogs")
 
 
 class ChatFolder(Base):

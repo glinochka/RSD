@@ -386,6 +386,9 @@ const CustomAutomationAccountsPage = () => {
     if (account.is_banned) {
       return { label: 'Бан', className: 'crm-status--cancelled' };
     }
+    if (account.is_channel_banned) {
+      return { label: 'Бан в каналах', className: 'crm-status--cancelled' };
+    }
     if (account.is_frozen) {
       return { label: 'Заморожен', className: 'crm-status--frozen' };
     }
@@ -638,6 +641,8 @@ const CustomAutomationAccountsPage = () => {
               <p className="crm-item-subtitle">
                 {account.is_spamblocked ? <span className="crm-status crm-status--spamblock">СПАМБЛОК</span> : null}
                 {account.is_spamblocked ? ' · ' : ''}
+                {account.is_channel_banned ? <span className="crm-status crm-status--cancelled">Бан в каналах</span> : null}
+                {account.is_channel_banned ? ' · ' : ''}
                 {account.is_frozen ? <span className="crm-status crm-status--frozen">Заморожен</span> : null}
                 {account.is_frozen ? ' · ' : ''}
                 {account.is_banned ? 'Бан · ' : ''}

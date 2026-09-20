@@ -49,6 +49,7 @@ SESSION_BUSY_ERRORS = set()
 SPAMBLOCK_ERRORS = set()
 FROZEN_ERRORS = set()
 CHAT_RESTRICTED_ERRORS = set()
+CHANNEL_BAN_ERRORS = set()
 
 
 try:
@@ -115,8 +116,16 @@ for cls_name in ("FrozenMethodInvalidError", "FrozenParticipantMissingError"):
         pass
 
 
+for cls_name in ("UserBannedInChannelError",):
+    try:
+        cls = getattr(__import__("telethon.errors", fromlist=[cls_name]), cls_name, None)
+        if cls:
+            CHANNEL_BAN_ERRORS.add(cls)
+    except Exception:
+        pass
+
+
 for cls_name in (
-    "UserBannedInChannelError",
     "ChatWriteForbiddenError",
     "ChatAdminRequiredError",
     "UserNotParticipantError",
@@ -231,6 +240,8 @@ def _classify_telegram_error(exc: Exception) -> dict[str, Any]:
         return {"kind": "session_busy"}
     if SESSION_ERRORS and isinstance(exc, tuple(SESSION_ERRORS)):
         return {"kind": "session"}
+    if CHANNEL_BAN_ERRORS and isinstance(exc, tuple(CHANNEL_BAN_ERRORS)):
+        return {"kind": "channel_banned"}
     if CHAT_RESTRICTED_ERRORS and isinstance(exc, tuple(CHAT_RESTRICTED_ERRORS)):
         return {"kind": "chat_restricted"}
     name = type(exc).__name__
@@ -242,7 +253,9 @@ def _classify_telegram_error(exc: Exception) -> dict[str, Any]:
         return {"kind": "spamblock"}
     if "deactivated" in lowered or "phonenumberbanned" in compact:
         return {"kind": "deactivated"}
-    if "bannedinchannel" in compact or "chatwriteforbidden" in compact:
+    if "bannedinchannel" in compact or "banned from sending messages in supergroups" in lowered:
+        return {"kind": "channel_banned"}
+    if "chatwriteforbidden" in compact:
         return {"kind": "chat_restricted"}
     if any(
         token in compact
@@ -269,14 +282,12 @@ def _classify_telegram_error(exc: Exception) -> dict[str, Any]:
 
 
 _READ_LOST_NAMES = {
-    "UserBannedInChannelError",
     "UserNotParticipantError",
     "ChannelPrivateError",
     "ChatForbiddenError",
     "UserKickedError",
 }
 _READ_LOST_TOKENS = (
-    "bannedinchannel",
     "usernotparticipant",
     "channelprivate",
     "chatforbidden",
@@ -286,6 +297,8 @@ _READ_LOST_TOKENS = (
 _WRITE_ONLY_TOKENS = (
     "chatwriteforbidden",
     "chatadminrequired",
+    "bannedinchannel",
+    "bannedfromsendingmessagesinsupergroups",
 )
 
 
@@ -331,6 +344,12 @@ def mark_spamblocked(account: SocialAccount, *, blocked: bool) -> None:
     account.is_spamblocked = blocked
     account.spamblocked_at = _utc_now() if blocked else None
     account.spamblock_checked_at = _utc_now()
+    account.updated_at = _utc_now()
+
+
+def mark_channel_banned(account: SocialAccount) -> None:
+    """Cannot write to any group/channel. Session and DMs may still work."""
+    account.is_channel_banned = True
     account.updated_at = _utc_now()
 
 
@@ -449,6 +468,19 @@ async def execute_with_telegram_retry(
                     automation_id=automation_id,
                 )
                 raise
+            if kind == "channel_banned":
+                mark_channel_banned(account)
+                await session.commit()
+                await log_action_error(
+                    session, account,
+                    action_type=action_type,
+                    target_id=target_id,
+                    target_type=target_type,
+                    payload=payload,
+                    error_message=str(exc),
+                    automation_id=automation_id,
+                )
+                raise
             if kind == "session":
                 from .session_hygiene_service import promote_spare_session
 
@@ -542,6 +574,10 @@ async def update_account_after_telegram_error(
         mark_spamblocked(account, blocked=True)
         await session.commit()
         return "spamblock"
+    if kind == "channel_banned":
+        mark_channel_banned(account)
+        await session.commit()
+        return "channel_banned"
     if kind == "session":
         from .session_hygiene_service import promote_spare_session
 

@@ -504,6 +504,7 @@ def _account_response(
         is_banned=social_account.is_banned,
         is_spamblocked=bool(getattr(social_account, "is_spamblocked", False)),
         is_frozen=bool(getattr(social_account, "is_frozen", False)),
+        is_channel_banned=bool(getattr(social_account, "is_channel_banned", False)),
         auto_classified=social_account.auto_classified,
         risk_score=social_account.risk_score,
         trust_score=social_account.trust_score,

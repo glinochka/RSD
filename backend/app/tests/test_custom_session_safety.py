@@ -232,6 +232,12 @@ def test_prune_never_resets_current_spare_or_our_devices():
     ]
     assert extra_authorization_hashes(auths, spare_hash=111) == [222, 333]
     assert extra_authorization_hashes(auths, spare_hash=None) == [222, 333]
+    # Realistic fingerprints for this account must also be kept.
+    assert extra_authorization_hashes(
+        auths,
+        spare_hash=111,
+        known_models={"PC 64bit", "iPhone 15"},
+    ) == [333]
 
 
 def test_prune_after_promote_keeps_old_main_and_new_current():

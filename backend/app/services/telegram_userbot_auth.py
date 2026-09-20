@@ -5,6 +5,7 @@ import asyncio
 import base64
 import io
 import logging
+import random
 import shutil
 import tempfile
 import time
@@ -28,6 +29,54 @@ QR_WAIT_TIMEOUT_SECONDS = 180
 _QR_TTL_SECONDS = 600
 DEVICE_MODEL_MAIN = "RSD Platform"
 DEVICE_MODEL_SPARE = "RSD Spare"
+
+# Realistic Telegram Desktop fingerprints. "RSD Platform" is a farm tell.
+_DEVICE_PROFILES: tuple[dict[str, str], ...] = (
+    {"device_model": "PC 64bit", "system_version": "Windows 10", "app_version": "4.16.8 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
+    {"device_model": "Desktop", "system_version": "Windows 10", "app_version": "4.16.30 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
+    {"device_model": "PC 64bit", "system_version": "Windows 11", "app_version": "5.4.1 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
+    {"device_model": "Desktop", "system_version": "Windows 11", "app_version": "5.7.3 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
+    {"device_model": "PC 64bit", "system_version": "Windows 10", "app_version": "5.3.0 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
+    {"device_model": "Laptop", "system_version": "Windows 11", "app_version": "5.6.1 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
+    {"device_model": "Desktop", "system_version": "Windows 10", "app_version": "5.8.2 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
+    {"device_model": "PC 64bit", "system_version": "Windows 11", "app_version": "4.14.13 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
+    {"device_model": "Laptop", "system_version": "Windows 10", "app_version": "5.5.5 x64", "lang_code": "ru", "system_lang_code": "ru"},
+    {"device_model": "Desktop", "system_version": "Windows 11", "app_version": "5.9.0 x64", "lang_code": "en", "system_lang_code": "en-US"},
+    {"device_model": "PC 64bit", "system_version": "macOS 14.5", "app_version": "5.6.3 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
+    {"device_model": "MacBook Pro", "system_version": "macOS 15.0", "app_version": "5.8.1 x64", "lang_code": "ru", "system_lang_code": "ru-RU"},
+)
+
+
+def pick_device_profile(*, seed: str, exclude: dict[str, str] | None = None) -> dict[str, str]:
+    rng = random.Random(str(seed))
+    pool = list(_DEVICE_PROFILES)
+    excluded = (exclude or {}).get("device_model"), (exclude or {}).get("app_version")
+    filtered = [item for item in pool if (item["device_model"], item["app_version"]) != excluded]
+    chosen = dict(rng.choice(filtered or pool))
+    return chosen
+
+
+def ensure_account_device(account: Any, *, spare: bool = False) -> dict[str, str]:
+    field = "spare_telegram_device" if spare else "telegram_device"
+    existing = getattr(account, field, None)
+    if isinstance(existing, dict) and str(existing.get("device_model") or "").strip():
+        return {
+            "device_model": str(existing.get("device_model") or "PC 64bit"),
+            "system_version": str(existing.get("system_version") or "Windows 10"),
+            "app_version": str(existing.get("app_version") or "4.16.8 x64"),
+            "lang_code": str(existing.get("lang_code") or "ru"),
+            "system_lang_code": str(existing.get("system_lang_code") or "ru-RU"),
+        }
+    main = getattr(account, "telegram_device", None) if spare else None
+    profile = pick_device_profile(
+        seed=f"{'spare' if spare else 'main'}:{getattr(account, 'id', 0)}:{getattr(account, 'phone_number', '')}",
+        exclude=main if isinstance(main, dict) else None,
+    )
+    try:
+        setattr(account, field, profile)
+    except Exception:
+        pass
+    return profile
 
 _qr_lock = asyncio.Lock()
 _qr_states: dict[str, "_QrAuthState"] = {}
@@ -152,17 +201,18 @@ def iter_api_credential_candidates(
     return pairs
 
 
-def _build_api_data(api_id: int, api_hash: str, *, device_model: str | None = None):
+def _build_api_data(api_id: int, api_hash: str, *, profile: dict[str, str] | None = None, device_model: str | None = None):
     from opentele.api import APIData
 
+    data = profile or {}
     return APIData(
         api_id=int(api_id),
         api_hash=str(api_hash).strip(),
-        device_model=device_model or DEVICE_MODEL_MAIN,
-        system_version="Windows 10",
-        app_version="4.16.30 x64",
-        lang_code="ru",
-        system_lang_code="ru-RU",
+        device_model=device_model or data.get("device_model") or pick_device_profile(seed=str(uuid.uuid4()))["device_model"],
+        system_version=str(data.get("system_version") or "Windows 10"),
+        app_version=str(data.get("app_version") or "4.16.8 x64"),
+        lang_code=str(data.get("lang_code") or "ru"),
+        system_lang_code=str(data.get("system_lang_code") or "ru-RU"),
     )
 
 
@@ -175,26 +225,38 @@ def create_telegram_client(
     prefer_desktop: bool = True,
     proxy: dict | None = None,
     device_model: str | None = None,
+    device_profile: dict[str, str] | None = None,
 ):
     """TelegramClient with opentele when installed, otherwise Telethon."""
     resolved_id, resolved_hash = resolve_api_credentials(
         api_id, api_hash, prefer_desktop=prefer_desktop
     )
-    model = device_model or DEVICE_MODEL_MAIN
+    profile = dict(device_profile or {})
+    if device_model:
+        profile["device_model"] = device_model
+    if not str(profile.get("device_model") or "").strip():
+        profile = pick_device_profile(seed=session_path or session_string or str(uuid.uuid4()))
+    model = str(profile["device_model"])
     if session_path:
         session = session_path
     else:
         from telethon.sessions import StringSession
 
         session = StringSession((session_string or "").strip())
-    client_kwargs: dict[str, Any] = {}
+    client_kwargs: dict[str, Any] = {
+        "system_version": str(profile.get("system_version") or "Windows 10"),
+        "app_version": str(profile.get("app_version") or "4.16.8 x64"),
+        "lang_code": str(profile.get("lang_code") or "ru"),
+        "system_lang_code": str(profile.get("system_lang_code") or "ru-RU"),
+    }
     if proxy:
         client_kwargs["proxy"] = proxy
     if opentele_available():
         from opentele.tl import TelegramClient
 
-        api = _build_api_data(resolved_id, resolved_hash, device_model=model)
-        return TelegramClient(session, api=api, **client_kwargs), resolved_id, resolved_hash
+        api = _build_api_data(resolved_id, resolved_hash, profile=profile, device_model=model)
+        extra = {key: value for key, value in client_kwargs.items() if key == "proxy"}
+        return TelegramClient(session, api=api, **extra), resolved_id, resolved_hash
     from telethon import TelegramClient
 
     return (

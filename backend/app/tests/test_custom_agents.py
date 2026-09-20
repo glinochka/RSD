@@ -6619,7 +6619,105 @@ class TestAccountPacingAndSessions:
         assert saved.is_banned is False
 
 
+class TestPeerDialogAndWarmupPacing:
+    async def test_warmup_and_peer_gaps_are_human(self):
+        from app.services.custom.account_peer_dialog_service import (
+            DAILY_MAX_MESSAGES,
+            DAILY_MIN_MESSAGES,
+            PEER_GAP_MAX_SECONDS,
+            PEER_GAP_MIN_SECONDS,
+            daily_message_target,
+            peer_gap_seconds,
+            peer_start_delay_seconds,
+        )
+        from app.services.custom.account_warmup_service import (
+            WARMUP_GAP_MAX_SECONDS,
+            WARMUP_GAP_MIN_SECONDS,
+            warmup_gap_seconds,
+        )
 
+        for _ in range(20):
+            gap = warmup_gap_seconds()
+            assert WARMUP_GAP_MIN_SECONDS <= gap <= WARMUP_GAP_MAX_SECONDS
+            peer = peer_gap_seconds()
+            assert PEER_GAP_MIN_SECONDS <= peer <= PEER_GAP_MAX_SECONDS
+            start = peer_start_delay_seconds()
+            assert 10 * 60 <= start <= PEER_GAP_MAX_SECONDS
+            target = daily_message_target()
+            assert DAILY_MIN_MESSAGES <= target <= DAILY_MAX_MESSAGES
 
+    async def test_warmup_sends_one_line_not_burst(self):
+        from types import SimpleNamespace
+        from datetime import datetime, timedelta, timezone
+
+        from app.services.custom.account_warmup_service import _due_for_next_message
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        pool = SimpleNamespace(
+            warmup_status="warming",
+            warmup_message_index=1,
+            warmup_next_at=now + timedelta(hours=1),
+            warmup_started_at=now - timedelta(days=1),
+            warmup_last_dialog_at=None,
+        )
+        assert _due_for_next_message(pool, now=now) is False
+        pool.warmup_next_at = now - timedelta(minutes=1)
+        assert _due_for_next_message(pool, now=now) is True
+
+    async def test_banned_in_supergroups_is_channel_ban_not_spamblock(self):
+        from app.services.custom.telegram_error_handler import _classify_telegram_error
+
+        exc = Exception("You're banned from sending messages in supergroups/channels (caused by SendMessageRequest)")
+        assert _classify_telegram_error(exc)["kind"] == "channel_banned"
+
+    async def test_channel_banned_skips_commenting_but_allows_dm(
+        self,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from app.services.account_pool_service import get_or_create_default_pool
+        from app.services.custom.account_roles import default_roles_for_class
+        from app.services.custom.rotation_service import select_account_for_action
+
+        pool = await get_or_create_default_pool(test_session, custom_automation.id)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number="+79991119901",
+            username="chan_ban",
+            display_name="chan_ban",
+            account_class=AccountClass.TRUSTED.value,
+            encrypted_session="mock",
+            session_file_path="sessions/chan_ban.session",
+            is_active=True,
+            is_banned=False,
+            is_channel_banned=True,
+        )
+        test_session.add(account)
+        await test_session.flush()
+        test_session.add(
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account.id,
+                assigned_class=AccountClass.TRUSTED.value,
+                custom_automation_id=custom_automation.id,
+                roles=default_roles_for_class(AccountClass.TRUSTED.value),
+            )
+        )
+        await test_session.commit()
+        assert await select_account_for_action(test_session, custom_automation.id, "commenting") is None
+        selected = await select_account_for_action(test_session, custom_automation.id, "dm", consume_quota=False)
+        assert selected is not None
+        assert selected.id == account.id
+
+    async def test_pair_accounts_no_self_chat(self):
+        from types import SimpleNamespace
+
+        from app.services.custom.account_peer_dialog_service import pair_accounts
+
+        accounts = [SimpleNamespace(id=i) for i in range(5)]
+        pairs = pair_accounts(accounts, rng=__import__("random").Random(1))
+        assert len(pairs) == 2
+        for left, right in pairs:
+            assert left.id != right.id
 
 

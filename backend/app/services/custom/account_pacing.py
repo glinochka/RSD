@@ -20,6 +20,7 @@ _WRITE_REST_ACTIONS = frozenset(
         "lead_delivery",
         "dmp_outreach",
         "account_warmup",
+        "peer_dialog",
     }
 )
 
