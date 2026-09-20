@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .account_pacing import account_is_resting
@@ -110,13 +110,29 @@ def pair_accounts(accounts: list[SocialAccount], *, rng: random.Random | None = 
 
 
 def _account_peer_key(account: SocialAccount | None) -> str | None:
+    """Prefer @username. Phone is a weak fallback (often blocked by privacy)."""
     if account is None:
         return None
     username = (account.username or "").strip().lstrip("@")
     if username:
         return username
-    phone = (account.phone_number or "").strip()
-    return phone or None
+    from .telegram_account_client import normalize_telegram_phone
+
+    phone = normalize_telegram_phone(account.phone_number)
+    if phone:
+        return phone
+    raw = (account.phone_number or "").strip()
+    if not raw:
+        return None
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if len(digits) >= 10:
+        return f"+{digits}" if not raw.startswith("+") else raw
+    return None
+
+
+def _account_can_peer(account: SocialAccount) -> bool:
+    """Peer DMs between pool accounts need a public username — phone lookup is unreliable."""
+    return bool((account.username or "").strip().lstrip("@"))
 
 
 def _looks_like_repeat(text: str, history: list[dict[str, Any]]) -> bool:
@@ -202,13 +218,13 @@ async def _load_alive_accounts(session: AsyncSession, automation_id: int) -> lis
             SocialAccount.is_frozen.is_(False),
             SocialAccount.is_spamblocked.is_(False),
             SocialAccount.session_file_path.isnot(None),
-            or_(SocialAccount.username.isnot(None), SocialAccount.phone_number.isnot(None)),
+            SocialAccount.username.isnot(None),
         )
     )
     accounts = []
     seen: set[int] = set()
     for account in result.scalars().all():
-        if account.id in seen or not _account_peer_key(account):
+        if account.id in seen or not _account_can_peer(account):
             continue
         seen.add(account.id)
         accounts.append(account)

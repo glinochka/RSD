@@ -638,11 +638,17 @@ class TelegramAccountClient:
 
     async def resolve_phone(self, phone: str) -> Any:
         """Find a Telegram user by phone, same approach as ИИ МОП outreach (entity + ImportContacts)."""
-        formatted = normalize_telegram_phone(phone) or phone
+        formatted = normalize_telegram_phone(phone)
+        if not formatted:
+            raw_digits = _PHONE_DIGITS_RE.sub("", phone or "")
+            formatted = f"+{raw_digits}" if raw_digits else (phone or "").strip()
+        if not formatted:
+            raise ValueError("empty phone")
         try:
             return await self.client.get_entity(formatted)
-        except Exception:
-            logger.debug("Direct phone resolve failed for %s, trying ImportContacts", formatted)
+        except Exception as exc:
+            # Telethon may raise IndexError when the local entity cache has no phone match.
+            logger.debug("Direct phone resolve failed for %s: %s", formatted, exc)
         result = await self.client(
             ImportContactsRequest(
                 [
@@ -656,9 +662,19 @@ class TelegramAccountClient:
             )
         )
         users = list(getattr(result, "users", None) or [])
-        if not users:
-            raise ValueError(f"Telegram user not found for {formatted}")
-        return users[0]
+        if users:
+            return users[0]
+        for imported in list(getattr(result, "imported", None) or []):
+            user_id = getattr(imported, "user_id", None)
+            if user_id:
+                try:
+                    return await self.client.get_entity(int(user_id))
+                except Exception:
+                    continue
+        raise ValueError(
+            f"Telegram user not found for {formatted} "
+            "(номер скрыт настройками приватности или неверный)"
+        )
 
     @staticmethod
     def _display_name(me: Any) -> str:
