@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .account_pacing import account_is_resting
+from .account_pacing import account_should_idle
 from .rotation_service import record_successful_send
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import execute_with_telegram_retry
@@ -199,7 +199,7 @@ async def run_account_warmup_pass(automation_id: int) -> dict[str, Any]:
         for pool_account, social in rows:
             if not social.is_active or social.is_banned or getattr(social, "is_frozen", False) or not social.session_file_path:
                 continue
-            if account_is_resting(social):
+            if account_should_idle(social):
                 continue
             if not _due_for_next_message(pool_account):
                 continue

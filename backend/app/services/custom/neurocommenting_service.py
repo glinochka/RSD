@@ -1,14 +1,16 @@
 """Neurocommenting: pool accounts leave relevant comments on posts."""
 import json
 import logging
+import random
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .account_pacing import in_account_active_hours
 from .chat_inspect_service import probe_comments_readonly
 from .chat_membership_service import (
     ensure_watcher_membership,
@@ -55,8 +57,74 @@ DEFAULT_NEUROCOMMENTING_PROMPT = """Ты — участник Telegram-чата/
 }"""
 
 
+# Channel history is the last ~30 posts. Without a recency cut we slowly
+# comment/shill under weeks-old posts when a channel is first scanned.
+POST_MAX_AGE = timedelta(hours=2)
+
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _message_posted_at(msg) -> datetime | None:
+    raw = getattr(msg, "date", None)
+    if not isinstance(raw, datetime):
+        return None
+    if raw.tzinfo is not None:
+        return raw.astimezone(timezone.utc).replace(tzinfo=None)
+    return raw
+
+
+def is_fresh_channel_post(msg, *, now: datetime | None = None, lab_mode: bool = False) -> bool:
+    """Lab may use any post. Production also accepts posts newer than the listen cursor."""
+    if lab_mode:
+        return True
+    posted = _message_posted_at(msg)
+    if posted is None:
+        return False
+    current = now or _utc_now()
+    return posted >= current - POST_MAX_AGE
+
+
+def post_cursor_id(chat_target) -> int:
+    raw = str(getattr(chat_target, "last_message_id", None) or "").strip()
+    if not raw:
+        return 0
+    try:
+        return int(raw)
+    except ValueError:
+        return 0
+
+
+def set_post_cursor(chat_target, message_id: int) -> None:
+    latest = int(message_id)
+    if latest <= 0:
+        return
+    if latest > post_cursor_id(chat_target):
+        chat_target.last_message_id = str(latest)
+
+
+def collect_new_channel_posts(history, chat_target, *, lab_mode: bool = False, now: datetime | None = None):
+    """Keep only posts the watcher has not seen yet. First scan arms the cursor."""
+    messages = []
+    for msg in history or []:
+        if not msg or not getattr(msg, "text", None) or getattr(msg, "id", None) is None:
+            continue
+        messages.append(msg)
+    messages.sort(key=lambda item: int(item.id))
+    latest = int(messages[-1].id) if messages else 0
+    if lab_mode:
+        fresh = [item for item in messages if is_fresh_channel_post(item, now=now, lab_mode=True)]
+        return fresh, latest, None
+    cursor = post_cursor_id(chat_target)
+    if latest and cursor <= 0:
+        return [], latest, "armed_cursor"
+    new_posts = [
+        item
+        for item in messages
+        if int(item.id) > cursor and is_fresh_channel_post(item, now=now, lab_mode=False)
+    ]
+    return new_posts, latest, None
 
 
 async def _skip_chat(session: AsyncSession, chat_target: ChatTarget, reason: str) -> dict[str, Any]:
@@ -239,7 +307,7 @@ async def process_chat_target(
     automation_id: int,
     chat_target: ChatTarget,
     *,
-    max_comments_per_run: int = 5,
+    max_comments_per_run: int = 1,
     include_lab: bool = False,
     lab_mode: bool = False,
 ) -> dict[str, Any]:
@@ -309,15 +377,24 @@ async def process_chat_target(
                 apply_entity_metadata(chat_target, entity)
                 if not is_broadcast_channel(chat_target):
                     return await _skip_chat(session, chat_target, "not_channel")
-                history = await client.client.get_messages(entity, limit=30)
-                for msg in history:
-                    if not msg or not msg.text or msg.id is None:
-                        continue
+                history = await client.client.get_messages(entity, limit=20)
+                posts, latest_id, cursor_reason = collect_new_channel_posts(
+                    history, chat_target, lab_mode=lab_mode
+                )
+                filtered = []
+                for msg in posts:
                     sender = getattr(msg, "sender", None)
                     sender_id = getattr(sender, "id", None)
                     if sender_id == account.id or (sender_id and str(sender_id) in (account.username or "")):
                         continue
-                    posts.append(msg)
+                    filtered.append(msg)
+                posts = filtered
+                if latest_id:
+                    set_post_cursor(chat_target, latest_id)
+                if cursor_reason == "armed_cursor":
+                    return await _skip_chat(session, chat_target, "armed_cursor")
+                if not lab_mode and not in_account_active_hours():
+                    return await _skip_chat(session, chat_target, "night")
             break
         except Exception as exc:
             logger.warning("Fetch posts for chat %s failed: %s", chat_target.id, exc)
@@ -446,7 +523,9 @@ async def run_neurocommenting_pass(automation_id: int) -> dict[str, Any]:
         ]
         for chat_target in chats:
             try:
-                res = await process_chat_target(session, automation_id, chat_target)
+                res = await process_chat_target(
+                    session, automation_id, chat_target, max_comments_per_run=random.randint(1, 2)
+                )
                 chat_count += 1
                 if res.get("sent"):
                     total_sent += int(res["sent"])

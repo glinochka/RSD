@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.models import AccountClass, AccountPool, CustomAutomation, CustomLead, PoolAccount, SocialAccount
-from .account_pacing import account_is_resting
+from .account_pacing import account_should_idle
 from .account_roles import account_matches_action
 
 logger = getLogger(__name__)
@@ -116,7 +116,7 @@ def _filter_eligible(
             continue
         if action_type not in _DM_ACTIONS | {"lead_warmup"} and getattr(social_account, "is_channel_banned", False):
             continue
-        if not ignore_rest and account_is_resting(social_account):
+        if not ignore_rest and account_should_idle(social_account):
             continue
         if exclude_spamblocked and social_account.is_spamblocked:
             continue
@@ -135,7 +135,8 @@ def _select_round_robin(eligible: list[tuple[PoolAccount, SocialAccount]]) -> So
         return item[1].last_used_at or datetime.min
 
     eligible.sort(key=sort_key)
-    return eligible[0][1]
+    pool = eligible[: min(3, len(eligible))]
+    return random.choice(pool)[1]
 
 
 def _select_least_used(eligible: list[tuple[PoolAccount, SocialAccount]]) -> SocialAccount:
@@ -254,7 +255,7 @@ async def select_account_for_action(
     _reset_counters_if_needed(accounts)
 
     exclude_spamblocked = action_type in _DM_ACTIONS
-    skip_write_rest = ignore_rest or action_type in {"inspect", "prepare_join"}
+    skip_write_rest = ignore_rest or action_type == "inspect"
     eligible = _filter_eligible(
         rows,
         action_type,
@@ -279,7 +280,7 @@ async def select_account_for_action(
                 and not (exclude_banned and assigned.is_banned)
                 and not getattr(assigned, "is_frozen", False)
                 and not (exclude_spamblocked and assigned.is_spamblocked)
-                and (ignore_rest or not account_is_resting(assigned))
+                and (ignore_rest or not account_should_idle(assigned))
             )
             assigned_row = next((row for row in rows if assigned and row[1].id == assigned.id), None)
             assigned_pool = assigned_row[0] if assigned_row else None

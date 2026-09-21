@@ -158,12 +158,12 @@ async def test_hygiene_mints_on_fresh_file_but_does_not_prune(tmp_path: Path, mo
     assert minted["called"] is False
     assert result["minted"] is False
     assert result["pruned"] == 0
-    assert result["reason"] == "too_fresh"
+    assert result["reason"] == "mint_disabled"
     assert pruned["called"] is False
 
 
 @pytest.mark.asyncio
-async def test_hygiene_mints_only_after_session_ages(tmp_path: Path, monkeypatch):
+async def test_hygiene_does_not_mint_even_when_session_ages(tmp_path: Path, monkeypatch):
     from app.config import settings
     from app.services.custom import session_hygiene_service
     from app.services.telegram_userbot_auth import DEVICE_MODEL_SPARE
@@ -229,10 +229,11 @@ async def test_hygiene_mints_only_after_session_ages(tmp_path: Path, monkeypatch
     session.flush = AsyncMock()
 
     result = await session_hygiene_service.hygienize_account(session, account, 1)
-    assert minted["called"] is True
-    assert result["minted"] is True
-    assert result["pruned"] == 1
-    assert pruned["called"] is True
+    assert minted["called"] is False
+    assert result["minted"] is False
+    assert result["pruned"] == 0
+    assert result["reason"] == "mint_disabled"
+    assert pruned["called"] is False
 
 
 @pytest.mark.asyncio
@@ -326,6 +327,82 @@ def test_prune_after_promote_keeps_old_main_and_new_current():
         SimpleNamespace(hash=222, device_model="iPhone 15"),
     ]
     assert extra_authorization_hashes(auths, spare_hash=None) == [222]
+
+
+def test_channel_posts_ignore_old_history():
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+
+    from app.services.custom.neurocommenting_service import (
+        collect_new_channel_posts,
+        is_fresh_channel_post,
+    )
+
+    now = datetime(2026, 9, 21, 18, 0, 0)
+    fresh = SimpleNamespace(id=20, text="new", date=now.replace(tzinfo=timezone.utc) - timedelta(minutes=20))
+    old = SimpleNamespace(id=10, text="old", date=now.replace(tzinfo=timezone.utc) - timedelta(days=5))
+    missing = SimpleNamespace(date=None)
+    assert is_fresh_channel_post(fresh, now=now) is True
+    assert is_fresh_channel_post(old, now=now) is False
+    assert is_fresh_channel_post(missing, now=now) is False
+    assert is_fresh_channel_post(old, now=now, lab_mode=True) is True
+
+    chat = SimpleNamespace(last_message_id=None)
+    posts, latest, reason = collect_new_channel_posts([old, fresh], chat, now=now)
+    assert posts == []
+    assert latest == 20
+    assert reason == "armed_cursor"
+
+    chat.last_message_id = "20"
+    newer = SimpleNamespace(id=21, text="just now", date=now.replace(tzinfo=timezone.utc) - timedelta(minutes=2))
+    posts, latest, reason = collect_new_channel_posts([old, fresh, newer], chat, now=now)
+    assert [item.id for item in posts] == [21]
+    assert latest == 21
+    assert reason is None
+
+
+def test_accounts_sleep_at_night_and_rest_longer_first_week():
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+    from zoneinfo import ZoneInfo
+
+    from app.services.custom.account_pacing import (
+        account_in_first_week,
+        in_account_active_hours,
+        rest_seconds_for_account,
+    )
+
+    moscow = ZoneInfo("Europe/Moscow")
+    day = datetime(2026, 9, 21, 12, 0, tzinfo=moscow)
+    night = datetime(2026, 9, 21, 21, 30, tzinfo=moscow)
+    assert in_account_active_hours(day) is True
+    assert in_account_active_hours(night) is False
+
+    now = datetime(2026, 9, 21, 12, 0, 0)
+    fresh = SimpleNamespace(created_at=now - timedelta(days=2))
+    aged = SimpleNamespace(created_at=now - timedelta(days=10))
+    assert account_in_first_week(fresh, now=now) is True
+    assert account_in_first_week(aged, now=now) is False
+    first_week = rest_seconds_for_account(fresh, now=now)
+    later = rest_seconds_for_account(aged, now=now)
+    assert 3600 <= first_week <= 7200
+    assert 8 * 60 <= later <= 22 * 60
+
+
+def test_upload_health_queue_does_not_start_hygiene():
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+
+    from app.services.custom.neurocommenting_service import is_fresh_channel_post
+
+    now = datetime(2026, 9, 21, 18, 0, 0)
+    fresh = SimpleNamespace(date=now.replace(tzinfo=timezone.utc) - timedelta(minutes=20))
+    old = SimpleNamespace(date=now.replace(tzinfo=timezone.utc) - timedelta(days=5))
+    missing = SimpleNamespace(date=None)
+    assert is_fresh_channel_post(fresh, now=now) is True
+    assert is_fresh_channel_post(old, now=now) is False
+    assert is_fresh_channel_post(missing, now=now) is False
+    assert is_fresh_channel_post(old, now=now, lab_mode=True) is True
 
 
 def test_upload_health_queue_does_not_start_hygiene():

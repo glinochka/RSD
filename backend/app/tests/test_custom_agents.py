@@ -6219,6 +6219,64 @@ class TestProductionFieldLogic:
         )
         assert other_channel == "neurocommenting"
 
+    async def test_post_engagement_skips_two_posts_after_action(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from app.services.custom.post_engagement import SKIP, claim_post_engagement
+
+        account = await self._add_account(
+            test_session, custom_automation, account_class=AccountClass.TRUSTED.value, username="gap2_acc", phone="+79991110016"
+        )
+        acted = await claim_post_engagement(
+            test_session,
+            automation_id=custom_automation.id,
+            chat_target_id=3,
+            post_id=20,
+            account_id=account.id,
+            neuro_enabled=True,
+            shilling_enabled=True,
+            activate_roll=lambda: 0.0,
+            pick=lambda options: "neurocommenting",
+            pick_gap=lambda: 2,
+            switch_roll=lambda: 1.0,
+        )
+        assert acted == "neurocommenting"
+        assert await claim_post_engagement(
+            test_session,
+            automation_id=custom_automation.id,
+            chat_target_id=3,
+            post_id=21,
+            account_id=account.id,
+            neuro_enabled=True,
+            shilling_enabled=True,
+            activate_roll=lambda: 0.0,
+            pick=lambda options: "neurocommenting",
+        ) == SKIP
+        assert await claim_post_engagement(
+            test_session,
+            automation_id=custom_automation.id,
+            chat_target_id=3,
+            post_id=22,
+            account_id=account.id,
+            neuro_enabled=True,
+            shilling_enabled=True,
+            activate_roll=lambda: 0.0,
+            pick=lambda options: "shilling",
+        ) == SKIP
+        switched = await claim_post_engagement(
+            test_session,
+            automation_id=custom_automation.id,
+            chat_target_id=3,
+            post_id=23,
+            account_id=account.id,
+            neuro_enabled=True,
+            shilling_enabled=True,
+            activate_roll=lambda: 0.0,
+            pick=lambda options: "neurocommenting",
+            switch_roll=lambda: 1.0,
+        )
+        assert switched == SKIP
+
     async def test_error_feed_lists_failures(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
     ):
@@ -6388,7 +6446,7 @@ class TestAccountPacingAndSessions:
         account = await self._add_account(
             test_session, custom_automation, username="rest_acc", phone="+79991112201"
         )
-        schedule_account_rest(account)
+        schedule_account_rest(account, seconds=600)
         await test_session.commit()
         assert await select_account_for_action(test_session, custom_automation.id, "commenting") is None
         selected = await select_account_for_action(
@@ -6467,7 +6525,7 @@ class TestAccountPacingAndSessions:
         )
         assert account.next_action_at is not None
         wait = (account.next_action_at - datetime.now(timezone.utc).replace(tzinfo=None)).total_seconds()
-        assert 560 <= wait <= 620
+        assert 3600 <= wait <= 7200
 
     async def test_prune_keeps_current_and_spare(self):
         from types import SimpleNamespace

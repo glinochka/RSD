@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .account_pacing import account_is_resting
+from .account_pacing import account_should_idle
 from .rotation_service import record_successful_send
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import execute_with_telegram_retry
@@ -310,7 +310,7 @@ async def _advance_dialog(
     *,
     opener: bool,
 ) -> bool:
-    if account_is_resting(sender):
+    if account_should_idle(sender):
         dialog.next_send_at = _utc_now() + timedelta(minutes=12)
         dialog.updated_at = _utc_now()
         return False

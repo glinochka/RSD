@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .account_pacing import in_account_active_hours
 from .amocrm_service import transfer_lead_to_amocrm
 from .dmp_one_service import check_lead_conversion, resolve_telegram_for_lead
 from .human_dm import is_ready_to_reply
@@ -506,6 +507,8 @@ async def run_lead_warmup_pass(automation_id: int) -> dict[str, Any]:
         automation = await session.get(CustomAutomation, automation_id)
         if not automation:
             return {"status": "skipped", "reason": "not_found"}
+        if not in_account_active_hours():
+            return {"status": "skipped", "reason": "night"}
         if not (automation.is_chat_monitoring_enabled or automation.is_dmp_one_enabled):
             return {"status": "skipped", "reason": "feature_disabled"}
 

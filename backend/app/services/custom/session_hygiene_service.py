@@ -32,6 +32,9 @@ _HYGIENE_MIN_AGE_SECONDS = 3600
 # session (right after SMS/QR/upload) races with health/profile workers and
 # frequently kills the main auth key — especially with 2FA accounts.
 _HYGIENE_MINT_MIN_AGE_SECONDS = 6 * 3600
+# Spare QR login was killing live keys (2FA / seller sessions). Keep prune of
+# already-minted spares, but do not authorize a second device until this is on.
+_SPARE_MINT_ENABLED = False
 _LEGACY_DEVICE_MODELS = frozenset({DEVICE_MODEL_MAIN, DEVICE_MODEL_SPARE})
 
 
@@ -368,9 +371,13 @@ async def hygienize_account(
     Mint never runs on a fresh session file — concurrent health/profile traffic
     plus a second QR login is what was revoking accounts right after SMS/upload.
     `force` may prune when a live spare exists; it does not bypass mint freshness.
+    Spare mint is currently disabled (`_SPARE_MINT_ENABLED`) so we do not open
+    a second Telegram login at all.
     """
     if not account.session_file_path and not getattr(account, "encrypted_session", None):
         return {"status": "skipped", "reason": "no_session"}
+    if not _SPARE_MINT_ENABLED and not account_has_spare(account):
+        return {"status": "skipped", "minted": False, "pruned": 0, "reason": "mint_disabled"}
     minted = False
     pruned = 0
     skip_prune = (not force) and already_pruned_today(account)
@@ -381,7 +388,9 @@ async def hygienize_account(
     async with TelegramAccountClient.for_account(account) as client:
         spare_hash = getattr(account, "spare_authorization_hash", None)
         if not account_has_spare(account):
-            if too_fresh_mint:
+            if not _SPARE_MINT_ENABLED:
+                mint_skip_reason = "mint_disabled"
+            elif too_fresh_mint:
                 mint_skip_reason = "too_fresh"
                 logger.info(
                     "Deferring spare mint for account %s (session age %.0fs < %ss)",
@@ -406,7 +415,10 @@ async def hygienize_account(
                 else None,
             )
             if live_hash is None:
-                if too_fresh_mint:
+                if not _SPARE_MINT_ENABLED:
+                    mint_skip_reason = "mint_disabled"
+                    logger.info("Spare remint disabled; leaving account %s on the main session", account.id)
+                elif too_fresh_mint:
                     mint_skip_reason = "too_fresh"
                 else:
                     try:

@@ -9,7 +9,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .account_pacing import account_is_resting, retry_delay_seconds
+from .account_pacing import account_should_idle, in_account_active_hours, next_wake_at, retry_delay_seconds
 from .chat_membership_service import account_is_joined, get_membership, queue_actor_for_chat
 from ...alembic.models import (
     AccountChatMembership,
@@ -226,9 +226,13 @@ async def _accounts_blocking_pending(
         if not await account_is_joined(session, membership.chat_target_id, account_id):
             return False, False, None
         account = await session.get(SocialAccount, account_id)
-        if account_is_resting(account):
+        if account_should_idle(account):
             nxt = getattr(account, "next_action_at", None)
-            if nxt is not None and (rest_until is None or nxt > rest_until):
+            if not in_account_active_hours():
+                wake = next_wake_at()
+                if rest_until is None or wake > rest_until:
+                    rest_until = wake
+            elif nxt is not None and (rest_until is None or nxt > rest_until):
                 rest_until = nxt
     return True, False, rest_until
 
