@@ -158,7 +158,7 @@ async def test_hygiene_mints_on_fresh_file_but_does_not_prune(tmp_path: Path, mo
     assert minted["called"] is False
     assert result["minted"] is False
     assert result["pruned"] == 0
-    assert result["reason"] == "mint_disabled"
+    assert result["reason"] == "hygiene_disabled"
     assert pruned["called"] is False
 
 
@@ -232,7 +232,7 @@ async def test_hygiene_does_not_mint_even_when_session_ages(tmp_path: Path, monk
     assert minted["called"] is False
     assert result["minted"] is False
     assert result["pruned"] == 0
-    assert result["reason"] == "mint_disabled"
+    assert result["reason"] == "hygiene_disabled"
     assert pruned["called"] is False
 
 
@@ -290,6 +290,64 @@ async def test_hygiene_does_not_prune_when_spare_mint_fails(tmp_path: Path, monk
     result = await session_hygiene_service.hygienize_account(session, account, 1, force=True)
     assert result["pruned"] == 0
     assert pruned["called"] is False
+    assert result["reason"] == "hygiene_disabled"
+
+
+@pytest.mark.asyncio
+async def test_hygiene_does_not_reset_other_sessions_even_with_spare(tmp_path: Path, monkeypatch):
+    from app.config import settings
+    from app.services.custom import session_hygiene_service
+
+    monkeypatch.setattr(settings, "MEDIA_ROOT", str(tmp_path))
+    rel = "sessions/1/main.session"
+    path = tmp_path / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"SQLite format 3\x00" + b"\x00" * 32)
+    account = SimpleNamespace(
+        id=9,
+        session_file_path=rel,
+        encrypted_session="fernet1:x",
+        sessions_pruned_at=None,
+        encrypted_spare_session="fernet1:spare",
+        spare_session_file_path="sessions/1/9_spare.session",
+        spare_authorization_hash=111,
+        updated_at=None,
+    )
+    pruned = {"called": False}
+    listed = {"called": False}
+
+    class _Client:
+        client = object()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    async def mark_list(*args, **kwargs):
+        listed["called"] = True
+        return []
+
+    async def mark_prune(*args, **kwargs):
+        pruned["called"] = True
+        return 2
+
+    monkeypatch.setattr(
+        session_hygiene_service.TelegramAccountClient,
+        "for_account",
+        classmethod(lambda cls, account, **kwargs: _Client()),
+    )
+    monkeypatch.setattr(session_hygiene_service, "_list_authorizations", mark_list)
+    monkeypatch.setattr(session_hygiene_service, "_reset_extra_sessions", mark_prune)
+    session = MagicMock()
+    session.flush = AsyncMock()
+
+    result = await session_hygiene_service.hygienize_account(session, account, 1, force=True)
+    assert result["reason"] == "hygiene_disabled"
+    assert result["pruned"] == 0
+    assert listed["called"] is False
+    assert pruned["called"] is False
 
 
 def test_prune_never_resets_current_spare_or_our_devices():
@@ -339,19 +397,27 @@ def test_channel_posts_ignore_old_history():
     )
 
     now = datetime(2026, 9, 21, 18, 0, 0)
-    fresh = SimpleNamespace(id=20, text="new", date=now.replace(tzinfo=timezone.utc) - timedelta(minutes=20))
+    fresh = SimpleNamespace(id=20, text="new", date=now.replace(tzinfo=timezone.utc) - timedelta(minutes=5))
+    stale = SimpleNamespace(id=19, text="stale", date=now.replace(tzinfo=timezone.utc) - timedelta(minutes=25))
     old = SimpleNamespace(id=10, text="old", date=now.replace(tzinfo=timezone.utc) - timedelta(days=5))
     missing = SimpleNamespace(date=None)
     assert is_fresh_channel_post(fresh, now=now) is True
+    assert is_fresh_channel_post(stale, now=now) is False
     assert is_fresh_channel_post(old, now=now) is False
     assert is_fresh_channel_post(missing, now=now) is False
     assert is_fresh_channel_post(old, now=now, lab_mode=True) is True
 
     chat = SimpleNamespace(last_message_id=None)
-    posts, latest, reason = collect_new_channel_posts([old, fresh], chat, now=now)
+    posts, latest, reason = collect_new_channel_posts([old, stale, fresh], chat, now=now)
     assert posts == []
     assert latest == 20
     assert reason == "armed_cursor"
+
+    chat.last_message_id = "18"
+    posts, latest, reason = collect_new_channel_posts([old, stale, fresh], chat, now=now)
+    assert [item.id for item in posts] == [20]
+    assert latest == 20
+    assert reason is None
 
     chat.last_message_id = "20"
     newer = SimpleNamespace(id=21, text="just now", date=now.replace(tzinfo=timezone.utc) - timedelta(minutes=2))
@@ -389,6 +455,40 @@ def test_accounts_sleep_at_night_and_rest_longer_first_week():
     assert 8 * 60 <= later <= 22 * 60
 
 
+def test_active_hours_are_jittered_per_account():
+    from datetime import datetime, timedelta
+    from types import SimpleNamespace
+    from zoneinfo import ZoneInfo
+
+    from app.services.custom.account_pacing import (
+        account_active_window,
+        farm_overlap_active_hours,
+        in_account_active_hours,
+        profile_edit_allowed,
+    )
+
+    moscow = ZoneInfo("Europe/Moscow")
+    early = datetime(2026, 9, 21, 7, 20, tzinfo=moscow)
+    noon = datetime(2026, 9, 21, 12, 0, tzinfo=moscow)
+    night = datetime(2026, 9, 21, 22, 0, tzinfo=moscow)
+    left = SimpleNamespace(id=1)
+    right = SimpleNamespace(id=99)
+    assert account_active_window(left) != account_active_window(right)
+    assert in_account_active_hours(noon, left) is True
+    assert in_account_active_hours(night, left) is False
+    start, _end = account_active_window(left)
+    before_personal = datetime(2026, 9, 21, int(start), 0, tzinfo=moscow) - timedelta(minutes=20)
+    if before_personal.hour >= 7:
+        assert in_account_active_hours(before_personal, left) is False
+        assert farm_overlap_active_hours(early) is True
+
+    uploaded = SimpleNamespace(id=5, created_at=datetime(2026, 9, 21, 10, 0, 0))
+    assert profile_edit_allowed(uploaded, now=datetime(2026, 9, 21, 18, 0, 0)) is False
+    assert profile_edit_allowed(uploaded, now=datetime(2026, 9, 21, 18, 0, 0), force=True) is True
+    later = datetime(2026, 9, 23, 12, 0, 0)
+    assert profile_edit_allowed(uploaded, now=later) is True
+
+
 def test_upload_health_queue_does_not_start_hygiene():
     from datetime import datetime, timedelta, timezone
     from types import SimpleNamespace
@@ -396,7 +496,7 @@ def test_upload_health_queue_does_not_start_hygiene():
     from app.services.custom.neurocommenting_service import is_fresh_channel_post
 
     now = datetime(2026, 9, 21, 18, 0, 0)
-    fresh = SimpleNamespace(date=now.replace(tzinfo=timezone.utc) - timedelta(minutes=20))
+    fresh = SimpleNamespace(date=now.replace(tzinfo=timezone.utc) - timedelta(minutes=5))
     old = SimpleNamespace(date=now.replace(tzinfo=timezone.utc) - timedelta(days=5))
     missing = SimpleNamespace(date=None)
     assert is_fresh_channel_post(fresh, now=now) is True

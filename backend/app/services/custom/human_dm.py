@@ -121,3 +121,102 @@ async def human_send_reply(
         await show_typing(client, entity, typing_duration_seconds(text, lab_mode=False))
     telethon = getattr(client, "client", client)
     await telethon.send_message(entity, text)
+
+
+_PUBLIC_REACTION_CHANCE = 0.14
+_PUBLIC_REACTIONS = ("👍", "🔥", "❤", "👏", "🥰")
+
+
+async def glance_neighbor_posts(
+    client: Any,
+    entity: Any,
+    around_id: int | None,
+    *,
+    lab_mode: bool = False,
+) -> None:
+    """Open 2–3 nearby messages without commenting — people rarely land on one post."""
+    if lab_mode:
+        return
+    telethon = getattr(client, "client", client)
+    try:
+        want = random.randint(2, 3)
+        messages = await telethon.get_messages(entity, limit=want + 1)
+        viewed = 0
+        for msg in messages or []:
+            mid = getattr(msg, "id", None)
+            if mid is None or (around_id is not None and int(mid) == int(around_id)):
+                continue
+            await asyncio.sleep(random.uniform(0.7, 3.2))
+            viewed += 1
+            if viewed >= want:
+                break
+    except Exception:
+        pass
+
+
+async def maybe_react_to_post(
+    client: Any,
+    entity: Any,
+    message_id: int | None,
+    *,
+    lab_mode: bool = False,
+) -> None:
+    """Occasionally react to the post before leaving a comment."""
+    if lab_mode or not message_id or random.random() > _PUBLIC_REACTION_CHANCE:
+        return
+    telethon = getattr(client, "client", client)
+    emoji = random.choice(_PUBLIC_REACTIONS)
+    await asyncio.sleep(random.uniform(0.4, 2.2))
+    try:
+        send_reaction = getattr(telethon, "send_reaction", None)
+        if callable(send_reaction):
+            await send_reaction(entity, int(message_id), emoji)
+            return
+        from telethon.tl.functions.messages import SendReactionRequest
+        from telethon.tl.types import ReactionEmoji
+
+        await telethon(
+            SendReactionRequest(
+                peer=entity,
+                msg_id=int(message_id),
+                reaction=[ReactionEmoji(emoticon=emoji)],
+            )
+        )
+    except Exception:
+        pass
+
+
+async def human_send_public(
+    client: Any,
+    entity: Any,
+    text: str,
+    *,
+    comment_to: int | None = None,
+    reply_to: int | None = None,
+    discussion_entity: Any | None = None,
+    lab_mode: bool = False,
+) -> Any:
+    """Glance → read → typing → send for comments and group replies."""
+    telethon = getattr(client, "client", client)
+    typing_peer = discussion_entity or entity
+    if not lab_mode:
+        await asyncio.sleep(random.uniform(1.5, 9.0))
+        await glance_neighbor_posts(client, entity, comment_to or reply_to, lab_mode=False)
+        if comment_to is not None:
+            await maybe_react_to_post(client, entity, comment_to, lab_mode=False)
+        if random.random() < 0.75:
+            try:
+                await mark_dialog_read(client, typing_peer, max_id=comment_to or reply_to)
+            except Exception:
+                try:
+                    await mark_dialog_read(client, entity)
+                except Exception:
+                    pass
+            await asyncio.sleep(random.uniform(0.6, 2.4))
+        await show_typing(client, typing_peer, typing_duration_seconds(text, lab_mode=False))
+    kwargs: dict[str, Any] = {}
+    if comment_to is not None:
+        kwargs["comment_to"] = comment_to
+    if reply_to is not None:
+        kwargs["reply_to"] = reply_to
+    return await telethon.send_message(entity, text, **kwargs)

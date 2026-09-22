@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import random
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -167,7 +168,7 @@ async def _process_account(
     handled = 0
     try:
         async with TelegramAccountClient.for_account(account) as client:
-            dialogs = await client.get_dialogs(limit=25)
+            dialogs = await client.get_dialogs(limit=random.randint(8, 16))
             for dialog in dialogs or []:
                 if not getattr(dialog, "is_user", False):
                     continue

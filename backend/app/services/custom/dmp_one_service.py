@@ -9,14 +9,24 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .lead_dedup import find_canonical_lead, find_existing_lead, mark_lead_duplicate
-from .rotation_service import select_account_for_action
+from .rotation_service import moscow_day_start_utc_naive, select_account_for_action
 from .telegram_account_client import TelegramAccountClient, normalize_telegram_phone
 from .telegram_error_handler import execute_with_telegram_retry
-from ...alembic.models import CustomAutomation, CustomLead, CustomLeadMessage, CustomPrompt, DmpOneImport, LeadStatus, PromptType, SocialAccount
+from ...alembic.models import (
+    AutomationActionLog,
+    CustomAutomation,
+    CustomLead,
+    CustomLeadMessage,
+    CustomPrompt,
+    DmpOneImport,
+    LeadStatus,
+    PromptType,
+    SocialAccount,
+)
 from ...config import settings
 from ...services.ai_authoring import ai_client
 from .prompt_service import render_prompt
@@ -208,6 +218,21 @@ async def check_lead_conversion(
     }
 
 
+MAX_PHONE_IMPORTS_PER_DAY = 5
+
+
+async def _phone_imports_today(session: AsyncSession, account_id: int) -> int:
+    started = moscow_day_start_utc_naive()
+    count = await session.scalar(
+        select(func.count(AutomationActionLog.id)).where(
+            AutomationActionLog.social_account_id == account_id,
+            AutomationActionLog.action_type == "contact_import",
+            AutomationActionLog.created_at >= started,
+        )
+    )
+    return int(count or 0)
+
+
 def _telegram_value_from_user(user: Any, fallback_phone: str | None) -> str:
     username = (getattr(user, "username", None) or "").strip()
     if username:
@@ -239,6 +264,9 @@ async def resolve_telegram_for_lead(
     )
     if not account or not account.session_file_path:
         return None
+    if await _phone_imports_today(session, account.id) >= MAX_PHONE_IMPORTS_PER_DAY:
+        logger.info("Skipping phone resolve for lead %s: daily ImportContacts cap", lead.id)
+        return None
     session_path = _media_root() / account.session_file_path
     if not session_path.exists():
         return None
@@ -248,6 +276,18 @@ async def resolve_telegram_for_lead(
     except Exception as exc:
         logger.info("Telegram resolve failed for lead %s phone %s: %s", lead.id, phone, exc)
         return None
+    session.add(
+        AutomationActionLog(
+            custom_automation_id=automation.id,
+            social_account_id=account.id,
+            action_type="contact_import",
+            target_id=str(lead.id),
+            target_type="lead",
+            result="success",
+            payload={"phone": phone},
+            created_at=_utc_now(),
+        )
+    )
     value = _telegram_value_from_user(user, phone)
     if not value or value == "unknown":
         return None

@@ -10,6 +10,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .account_pacing import profile_edit_allowed
 from .telegram_account_client import SESSION_RECONNECT_HINT, TelegramAccountClient
 from .telegram_error_handler import SessionInvalidError, execute_with_telegram_retry
 from ...alembic.models import AutomationActionLog, CustomPrompt, PromptType, SocialAccount
@@ -130,12 +131,15 @@ class BulkProfileUpdateWorker:
         avatar_relative_path: str | None,
         bio_template: str,
         generate_unique: bool,
+        force: bool = False,
     ) -> dict[str, Any]:
         social_account = await session.get(SocialAccount, account_id)
         if not social_account:
             return {"account_id": account_id, "status": "skipped", "reason": "not_found"}
         if getattr(social_account, "is_frozen", False):
             return {"account_id": account_id, "status": "skipped", "reason": "frozen"}
+        if not force and not profile_edit_allowed(social_account):
+            return {"account_id": account_id, "status": "skipped", "reason": "too_fresh"}
         if not social_account.session_file_path:
             return {"account_id": account_id, "status": "skipped", "reason": "no_session"}
 
@@ -261,6 +265,7 @@ class BulkProfileUpdateWorker:
         avatar_relative_path: str | None,
         bio_template: str,
         generate_unique: bool,
+        force: bool = False,
     ) -> list[dict[str, Any]]:
         from ...alembic.database import async_session_maker
 
@@ -275,6 +280,7 @@ class BulkProfileUpdateWorker:
                         avatar_relative_path=avatar_relative_path,
                         bio_template=bio_template,
                         generate_unique=generate_unique,
+                        force=force,
                     )
                     results.append(result)
                 except Exception as exc:

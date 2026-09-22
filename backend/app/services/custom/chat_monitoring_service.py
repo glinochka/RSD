@@ -333,7 +333,7 @@ async def _send_dm_and_create_lead(
                 return False
 
             async def _send():
-                await client.send_message(recipient, response_text)
+                await client.human_reply(recipient, response_text)
 
             await execute_with_telegram_retry(
                 session,

@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 class NeurocommentingWorker:
     """Runs neurocommenting pass for a given automation periodically."""
 
-    def __init__(self, automation_id: int, interval_seconds: int = 300):
+    def __init__(self, automation_id: int, interval_seconds: int = 150):
         self.automation_id = automation_id
         self.interval_seconds = interval_seconds
         self._task = None

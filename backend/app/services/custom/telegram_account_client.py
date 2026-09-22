@@ -491,13 +491,13 @@ class TelegramAccountClient:
             self._cleanup_work_dir()
             self._release_locks()
 
-    async def get_info(self) -> dict[str, Any]:
+    async def get_info(self, *, include_dialogs: bool = False) -> dict[str, Any]:
         """Return public profile metadata without modifying the account."""
         me = await self.client.get_me()
         if not me:
             raise RuntimeError("Could not get own user")
 
-        dialogs = await self._get_dialogs_count()
+        dialogs = await self._get_dialogs_count(limit=40) if include_dialogs else 0
         bio = await self._get_bio(me)
         has_avatar = await self._has_avatar(me)
 
@@ -515,12 +515,8 @@ class TelegramAccountClient:
         }
 
     async def probe_writable(self) -> None:
-        """Touch a write RPC that frozen accounts reject. Login-only methods still work."""
-        try:
-            from telethon.tl.functions.account import UpdateStatusRequest
-        except ImportError:
-            return
-        await self.client(UpdateStatusRequest(offline=False))
+        """Frozen accounts fail later writes. Do not flash UpdateStatus(online)."""
+        return
 
     async def download_avatar(self, me=None) -> bytes | None:
         """Download the current profile photo as JPEG bytes."""
@@ -647,8 +643,8 @@ class TelegramAccountClient:
         try:
             return await self.client.get_entity(formatted)
         except Exception as exc:
-            # Telethon may raise IndexError when the local entity cache has no phone match.
             logger.debug("Direct phone resolve failed for %s: %s", formatted, exc)
+        await asyncio.sleep(random.uniform(4.0, 18.0))
         result = await self.client(
             ImportContactsRequest(
                 [
@@ -662,15 +658,26 @@ class TelegramAccountClient:
             )
         )
         users = list(getattr(result, "users", None) or [])
+        resolved = None
         if users:
-            return users[0]
-        for imported in list(getattr(result, "imported", None) or []):
-            user_id = getattr(imported, "user_id", None)
-            if user_id:
-                try:
-                    return await self.client.get_entity(int(user_id))
-                except Exception:
-                    continue
+            resolved = users[0]
+        if resolved is None:
+            for imported in list(getattr(result, "imported", None) or []):
+                user_id = getattr(imported, "user_id", None)
+                if user_id:
+                    try:
+                        resolved = await self.client.get_entity(int(user_id))
+                        break
+                    except Exception:
+                        continue
+        if resolved is not None:
+            try:
+                from telethon.tl.functions.contacts import DeleteContactsRequest
+
+                await self.client(DeleteContactsRequest(id=[resolved]))
+            except Exception as cleanup_exc:
+                logger.debug("Could not drop imported contact %s: %s", formatted, cleanup_exc)
+            return resolved
         raise ValueError(
             f"Telegram user not found for {formatted} "
             "(номер скрыт настройками приватности или неверный)"
@@ -683,14 +690,41 @@ class TelegramAccountClient:
         name = f"{first} {last}".strip()
         return name or (me.username or "").strip() or f"user_{me.id}"
 
-    async def check_spamblock(self) -> dict[str, Any]:
+    async def check_spamblock(self, *, force: bool = False) -> dict[str, Any]:
         """Ask @SpamBot whether the account has a global DM spamblock.
 
-        A ban in one chat is not a spamblock and is ignored here.
+        Prefer reading an existing dialog. `/start` only on a forced check or
+        when the history is empty — never as a 6-hour heartbeat.
         """
         from telethon.errors import PeerFloodError
 
+        async def _read_history() -> dict[str, Any] | None:
+            try:
+                messages = await self.client.get_messages(_SPAMBOT, limit=5)
+            except Exception as exc:
+                logger.warning("SpamBot history failed: %s", exc)
+                return None
+            texts: list[str] = []
+            for message in messages or []:
+                text = str(getattr(message, "message", None) or getattr(message, "text", None) or "").strip()
+                if text:
+                    texts.append(text)
+            if not texts:
+                return None
+            blob = "\n".join(texts)
+            return {
+                "spamblocked": parse_spambot_reply(blob),
+                "source": "spambot",
+                "raw": texts[0] if texts else "",
+            }
+
+        existing = await _read_history()
+        if existing is not None and not force:
+            return existing
+        if not force and existing is None:
+            return {"spamblocked": None, "source": "skipped"}
         try:
+            await asyncio.sleep(random.uniform(1.5, 6.0))
             await self.client.send_message(_SPAMBOT, "/start")
         except PeerFloodError:
             return {"spamblocked": True, "source": "peer_flood"}
@@ -698,24 +732,9 @@ class TelegramAccountClient:
             logger.warning("SpamBot /start failed: %s", exc)
             return {"spamblocked": None, "source": "error"}
 
-        await asyncio.sleep(_SPAMBOT_WAIT_SECONDS)
-        try:
-            messages = await self.client.get_messages(_SPAMBOT, limit=5)
-        except Exception as exc:
-            logger.warning("SpamBot history failed: %s", exc)
-            return {"spamblocked": None, "source": "error"}
-
-        texts: list[str] = []
-        for message in messages or []:
-            text = str(getattr(message, "message", None) or getattr(message, "text", None) or "").strip()
-            if text:
-                texts.append(text)
-        blob = "\n".join(texts)
-        return {
-            "spamblocked": parse_spambot_reply(blob),
-            "source": "spambot",
-            "raw": texts[0] if texts else "",
-        }
+        await asyncio.sleep(_SPAMBOT_WAIT_SECONDS + random.uniform(0.5, 2.5))
+        parsed = await _read_history()
+        return parsed or {"spamblocked": None, "source": "error"}
 
     async def _get_dialogs_count(self, limit: int = 100) -> int:
         try:

@@ -18,6 +18,9 @@ ACCOUNT_RETRY_MIN_SECONDS = 3 * 60
 ACCOUNT_RETRY_MAX_SECONDS = 5 * 60
 ACTIVE_START_HOUR = 8
 ACTIVE_END_HOUR = 20
+# Outer envelope of per-account jitter so workers still run while some accounts sleep.
+FARM_EARLIEST_START = 7.0
+FARM_LATEST_END = 21.5
 _WRITE_REST_ACTIONS = frozenset(
     {
         "commenting",
@@ -69,25 +72,91 @@ def moscow_now(now: datetime | None = None) -> datetime:
     return current.astimezone(tz)
 
 
-def in_account_active_hours(now: datetime | None = None) -> bool:
-    """Public writes run 08:00–20:00 Moscow; accounts sleep the rest of the day."""
+def _stable_frac(account_id: int, salt: int) -> float:
+    return ((int(account_id) * 1_103_515_245 + salt) & 0x7FFFFFFF) % 10_000 / 10_000.0
+
+
+def _moscow_hour_float(local: datetime) -> float:
+    return local.hour + local.minute / 60.0 + local.second / 3600.0
+
+
+def _float_hour_parts(value: float) -> tuple[int, int]:
+    hours = int(value)
+    minutes = int(round((value - hours) * 60))
+    if minutes >= 60:
+        hours += 1
+        minutes = 0
+    hours = min(23, max(0, hours))
+    return hours, min(59, max(0, minutes))
+
+
+def account_active_window(
+    account: SocialAccount | None = None,
+    *,
+    account_id: int | None = None,
+) -> tuple[float, float]:
+    """Stable per-account Moscow window around 08–20 so the farm does not wake together."""
+    aid = account_id if account_id is not None else getattr(account, "id", None)
+    if not aid:
+        return float(ACTIVE_START_HOUR), float(ACTIVE_END_HOUR)
+    start = 7.5 + _stable_frac(int(aid), 17) * 1.75  # 07:30–09:15
+    end = 18.75 + _stable_frac(int(aid), 41) * 2.0  # 18:45–20:45
+    return start, end
+
+
+def in_account_active_hours(
+    now: datetime | None = None,
+    account: SocialAccount | None = None,
+    *,
+    account_id: int | None = None,
+) -> bool:
+    """Public writes run in a jittered window around 08:00–20:00 Moscow."""
     if now is None and os.environ.get("PYTEST_CURRENT_TEST"):
         return True
-    hour = moscow_now(now).hour
-    return ACTIVE_START_HOUR <= hour < ACTIVE_END_HOUR
+    start, end = account_active_window(account, account_id=account_id)
+    return start <= _moscow_hour_float(moscow_now(now)) < end
 
 
-def next_wake_at(now: datetime | None = None) -> datetime:
-    """Next 08:00–08:40 Moscow as naive UTC, with a small random stagger."""
+def farm_overlap_active_hours(now: datetime | None = None) -> bool:
+    """True when at least some accounts may be awake (outer 07:00–21:30 MSK)."""
+    if now is None and os.environ.get("PYTEST_CURRENT_TEST"):
+        return True
+    hour = _moscow_hour_float(moscow_now(now))
+    return FARM_EARLIEST_START <= hour < FARM_LATEST_END
+
+
+def next_wake_at(now: datetime | None = None, account: SocialAccount | None = None) -> datetime:
+    """Next personal wake time as naive UTC, with a small random stagger."""
     local = moscow_now(now)
-    wake = local.replace(hour=ACTIVE_START_HOUR, minute=random.randint(0, 40), second=0, microsecond=0)
-    if local.hour >= ACTIVE_END_HOUR:
+    start, end = account_active_window(account)
+    hour, minute = _float_hour_parts(start)
+    minute = min(59, minute + random.randint(0, 25))
+    wake = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    current = _moscow_hour_float(local)
+    if current >= end:
         wake = wake + timedelta(days=1)
-    elif local.hour < ACTIVE_START_HOUR:
-        pass
-    else:
+    elif current >= start:
         wake = wake + timedelta(days=1)
     return wake.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def profile_edit_allowed(
+    account: SocialAccount | None,
+    *,
+    now: datetime | None = None,
+    force: bool = False,
+) -> bool:
+    """Skip bio/avatar edits on upload day; wait until the next Moscow day plus 16–27h."""
+    if force or account is None:
+        return True
+    created = account_created_at(account)
+    if created is None:
+        return True
+    current = now or _utc_now()
+    if moscow_now(current).date() <= moscow_now(created).date():
+        return False
+    extra_hours = 16 + (int(getattr(account, "id", 0) or 0) % 12)
+    return (current - created) >= timedelta(hours=extra_hours)
 
 
 def account_created_at(account: SocialAccount | None) -> datetime | None:
@@ -130,7 +199,7 @@ def account_should_idle(
         return True
     if ignore_hours:
         return False
-    return not in_account_active_hours(now)
+    return not in_account_active_hours(now, account)
 
 
 def _push_next_action(account: SocialAccount, seconds: float) -> None:

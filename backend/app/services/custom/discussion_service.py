@@ -29,7 +29,7 @@ from .chat_membership_service import (
     recover_reader_after_error,
 )
 from .prompt_service import render_prompt
-from .account_pacing import account_should_idle, in_account_active_hours
+from .account_pacing import account_should_idle, farm_overlap_active_hours
 from .rotation_service import record_successful_send, select_account_for_action
 from .shilling_service import _moscow_day_utc_range
 from .telegram_account_client import TelegramAccountClient
@@ -129,7 +129,7 @@ def _thread_id(message) -> int:
 
 
 def _is_active_hour(config: dict) -> bool:
-    if not in_account_active_hours():
+    if not farm_overlap_active_hours():
         return False
     activity_hours = config.get("activity_hours") or []
     if not activity_hours:
@@ -231,10 +231,18 @@ async def _send_reply(
             entity = await client.get_entity(
                 chat_entity_key(chat_target)
             )
+            from .human_dm import human_send_public
+
             sent = await execute_with_telegram_retry(
                 session,
                 account,
-                lambda: client.client.send_message(entity, text, reply_to=message.id),
+                lambda: human_send_public(
+                    client,
+                    entity,
+                    text,
+                    reply_to=message.id,
+                    lab_mode=False,
+                ),
                 action_type="discussion",
                 target_id=f"{chat_target.id}:{_thread_id(message)}",
                 target_type="chat_message",

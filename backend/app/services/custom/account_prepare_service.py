@@ -7,6 +7,7 @@ from typing import Any
 
 from ...alembic.database import async_session_maker
 from ...alembic.models import AccountClass, CustomAutomation
+from .account_pacing import profile_edit_allowed
 from .bulk_profile_service import BulkProfileUpdateWorker
 from .chat_join_service import join_loaded_chats_for_accounts
 from .rotation_service import list_alive_session_accounts
@@ -101,6 +102,8 @@ async def prepare_accounts(automation_id: int) -> dict[str, Any]:
             class_ids: dict[str, list[int]] = {item.value: [] for item in AccountClass}
             for account in alive:
                 key = account.account_class or AccountClass.ONE_DAY.value
+                if not profile_edit_allowed(account):
+                    continue
                 class_ids.setdefault(key, []).append(account.id)
 
         for class_name, account_ids in class_ids.items():

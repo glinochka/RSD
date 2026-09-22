@@ -27,7 +27,7 @@ from .chat_membership_service import (
     retire_reader_and_replace,
     sync_chat_join_status,
 )
-from .account_pacing import in_account_active_hours
+from .account_pacing import farm_overlap_active_hours
 from .chat_scope import apply_entity_metadata, is_lab_chat, is_user_peer, unwrap_telegram_chat
 from .chat_target_dedup import find_existing_chat_target
 from .rotation_service import select_account_for_action
@@ -244,6 +244,9 @@ async def join_linked_discussion(client: TelegramAccountClient, channel_entity: 
             logger.info("Could not resolve discussion group %s: %s", linked_id, exc)
             return None
     try:
+        if await _is_participant(client, discussion) is True:
+            return discussion
+        await asyncio.sleep(random.uniform(2.0, 12.0))
         await client(JoinChannelRequest(discussion))
     except UserAlreadyParticipantError:
         pass
@@ -926,7 +929,7 @@ async def join_pending_chats(
     await ensure_memberships_for_automation(session, automation_id)
     await recover_stale_joining_memberships(session, automation_id)
     await process_due_pending_actions(session, automation_id)
-    if rate_limit and not in_account_active_hours():
+    if rate_limit and not farm_overlap_active_hours():
         return []
     pairs = max_pairs if max_pairs is not None else (MAX_JOINS_PER_TICK if rate_limit else 10_000)
     results: list[dict[str, Any]] = []

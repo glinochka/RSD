@@ -7,6 +7,7 @@ interval so newly created or deleted automations are picked up without a
 restart.
 """
 import asyncio
+import random
 from collections.abc import Awaitable, Callable
 from logging import getLogger
 from typing import Any
@@ -49,7 +50,10 @@ async def _run_job_loop(automation_id: int, job_name: str, job: JobFactory, inte
         except Exception as exc:
             logger.exception("%s job for automation %s failed: %s", job_name, automation_id, exc)
         elapsed = asyncio.get_event_loop().time() - start
-        sleep_for = max(1.0, interval_seconds - elapsed)
+        pause = interval_seconds
+        if job_name == "neurocommenting":
+            pause = random.randint(120, 180)
+        sleep_for = max(1.0, pause - elapsed)
         await asyncio.sleep(sleep_for)
 
 

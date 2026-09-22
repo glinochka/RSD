@@ -1,5 +1,6 @@
 """Background worker that checks Telegram accounts and updates their profiles."""
 import asyncio
+import random
 from datetime import datetime, timedelta, timezone
 from logging import getLogger
 from pathlib import Path
@@ -8,6 +9,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .account_pacing import account_is_resting
 from .account_classification_service import classify_account
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import SessionInvalidError, update_account_after_telegram_error
@@ -17,7 +19,9 @@ from ...config import settings
 
 logger = getLogger(__name__)
 
-_SPAMBLOCK_RECHECK = timedelta(hours=6)
+_SPAMBLOCK_RECHECK = timedelta(days=7)
+_HEALTH_MIN_GAP = timedelta(hours=10)
+_RECENT_USE_GAP = timedelta(minutes=15)
 
 
 def _utc_now() -> datetime:
@@ -37,7 +41,14 @@ def _avatar_path(automation_id: int, account_id: int) -> Path:
 class AccountHealthWorker:
     """Check one or many accounts via Telegram and persist classification results."""
 
-    async def process_account(self, session: AsyncSession, automation_id: int, account_id: int) -> dict[str, Any]:
+    async def process_account(
+        self,
+        session: AsyncSession,
+        automation_id: int,
+        account_id: int,
+        *,
+        force: bool = False,
+    ) -> dict[str, Any]:
         social_account = await session.get(SocialAccount, account_id)
         if not social_account:
             return {"account_id": account_id, "status": "not_found"}
@@ -57,6 +68,20 @@ class AccountHealthWorker:
                 "error": "frozen",
             }
 
+        if not force:
+            if account_is_resting(social_account):
+                return {"account_id": account_id, "status": "skipped", "reason": "resting"}
+            used = social_account.last_used_at
+            if used is not None:
+                then = used.replace(tzinfo=None) if getattr(used, "tzinfo", None) else used
+                if (_utc_now() - then) < _RECENT_USE_GAP:
+                    return {"account_id": account_id, "status": "skipped", "reason": "in_use"}
+            checked = social_account.last_health_check_at
+            if checked is not None:
+                then = checked.replace(tzinfo=None) if getattr(checked, "tzinfo", None) else checked
+                if (_utc_now() - then) < _HEALTH_MIN_GAP:
+                    return {"account_id": account_id, "status": "skipped", "reason": "fresh"}
+
         info = None
         avatar_bytes = None
         error_kind = None
@@ -73,17 +98,23 @@ class AccountHealthWorker:
                 promoted_spare = False
                 for _attempt in range(3):
                     try:
-                        need_spam_check = True
+                        need_spam_check = False
                         checked_at = social_account.spamblock_checked_at
-                        if checked_at is not None:
+                        if checked_at is None:
+                            need_spam_check = False
+                        else:
                             then = checked_at.replace(tzinfo=None) if getattr(checked_at, "tzinfo", None) else checked_at
-                            need_spam_check = (_utc_now() - then) >= _SPAMBLOCK_RECHECK
-                        async with TelegramAccountClient.for_account(social_account) as client:
-                            info = await client.get_info()
-                            await client.probe_writable()
+                            jitter_days = random.uniform(0, 4)
+                            need_spam_check = (_utc_now() - then) >= (_SPAMBLOCK_RECHECK + timedelta(days=jitter_days))
                             if need_spam_check:
-                                spam_state = await client.check_spamblock()
-                            if info.get("has_avatar"):
+                                need_spam_check = random.random() < 0.35
+                        include_dialogs = (not bool(social_account.auto_classified)) or random.random() < 0.12
+                        async with TelegramAccountClient.for_account(social_account) as client:
+                            info = await client.get_info(include_dialogs=include_dialogs)
+                            if need_spam_check:
+                                spam_state = await client.check_spamblock(force=False)
+                            avatar_path = _avatar_path(automation_id, account_id)
+                            if info.get("has_avatar") and (force or not avatar_path.exists()):
                                 try:
                                     avatar_bytes = await client.download_avatar()
                                 except Exception as exc:
@@ -261,7 +292,7 @@ class AccountHealthWorker:
         spam_state: dict[str, Any] | None = None
         try:
             async with TelegramAccountClient.for_account(social_account) as client:
-                spam_state = await client.check_spamblock()
+                spam_state = await client.check_spamblock(force=True)
         except Exception as exc:
             error_kind = await update_account_after_telegram_error(session, social_account, exc)
             social_account.last_health_check_at = _utc_now()
@@ -292,19 +323,25 @@ class AccountHealthWorker:
             "social_account": social_account,
         }
 
-    async def process_accounts(self, automation_id: int, account_ids: list[int]) -> list[dict[str, Any]]:
+    async def process_accounts(
+        self, automation_id: int, account_ids: list[int], *, force: bool = False
+    ) -> list[dict[str, Any]]:
         results = []
         async with async_session_maker() as session:
             for account_id in account_ids:
                 try:
-                    result = await self.process_account(session, automation_id, account_id)
+                    result = await self.process_account(
+                        session, automation_id, account_id, force=force
+                    )
                     results.append(result)
                 except Exception as exc:
                     logger.exception("Account health check failed for %s: %s", account_id, exc)
                     results.append({"account_id": account_id, "status": "error", "error": str(exc)})
         return results
 
-    async def check_all_accounts_for_automation(self, automation_id: int) -> list[dict[str, Any]]:
+    async def check_all_accounts_for_automation(
+        self, automation_id: int, *, force: bool = False
+    ) -> list[dict[str, Any]]:
         async with async_session_maker() as session:
             result = await session.execute(
                 select(SocialAccount.id)
@@ -315,7 +352,7 @@ class AccountHealthWorker:
                 )
             )
             account_ids = [row[0] for row in result.all()]
-        return await self.process_accounts(automation_id, account_ids)
+        return await self.process_accounts(automation_id, account_ids, force=force)
 
     async def check_all_accounts_for_all_automations(self) -> list[dict[str, Any]]:
         all_results: list[dict[str, Any]] = []
@@ -333,15 +370,15 @@ class AccountHealthWorker:
         return all_results
 
 
-async def run_health_checks_forever(interval_seconds: int = 300) -> None:
-    """Run health checks for all automations on a loop."""
+async def run_health_checks_forever(interval_seconds: int = 6 * 3600) -> None:
+    """Run light health checks for all automations on a slow loop."""
     worker = AccountHealthWorker()
     while True:
         try:
             await worker.check_all_accounts_for_all_automations()
         except Exception as exc:
             logger.exception("Health checks pass failed: %s", exc)
-        await asyncio.sleep(interval_seconds)
+        await asyncio.sleep(interval_seconds + random.uniform(0, 1800))
 
 
 class AccountHealthScheduler:

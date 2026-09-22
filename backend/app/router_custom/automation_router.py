@@ -731,7 +731,7 @@ async def run_account_health_check(
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
     worker = AccountHealthWorker()
-    results = await worker.check_all_accounts_for_automation(automation_id)
+    results = await worker.check_all_accounts_for_automation(automation_id, force=True)
     ok = sum(1 for r in results if r.get("status") == "ok")
     fallback = sum(1 for r in results if r.get("status") == "fallback")
     error = sum(
@@ -1207,7 +1207,7 @@ async def bulk_classify(
             )
 
     worker = AccountHealthWorker()
-    background_tasks.add_task(worker.process_accounts, automation_id, account_ids)
+    background_tasks.add_task(worker.process_accounts, automation_id, account_ids, force=True)
     return AccountBulkClassifyResponse(queued=len(account_ids))
 
 
@@ -1283,6 +1283,7 @@ async def bulk_update_profiles(
         "avatar_relative_path": avatar_relative_path,
         "bio_template": data.bio_template,
         "generate_unique": data.generate_unique,
+        "force": True,
     }
     if len(account_ids) <= 5:
         results = await worker.process_accounts(automation_id, account_ids, **job_kwargs)

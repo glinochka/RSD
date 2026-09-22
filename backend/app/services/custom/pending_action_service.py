@@ -228,8 +228,8 @@ async def _accounts_blocking_pending(
         account = await session.get(SocialAccount, account_id)
         if account_should_idle(account):
             nxt = getattr(account, "next_action_at", None)
-            if not in_account_active_hours():
-                wake = next_wake_at()
+            if not in_account_active_hours(account=account):
+                wake = next_wake_at(account=account)
                 if rest_until is None or wake > rest_until:
                     rest_until = wake
             elif nxt is not None and (rest_until is None or nxt > rest_until):

@@ -25,6 +25,7 @@ ACTION_ALLOWED_CLASSES = {
     "shilling_answer": {AccountClass.SHILLING.value},
     "inspect": set(_ALL_CLASSES),
     "prepare_join": set(_ALL_CLASSES),
+    "discovery": set(_ALL_CLASSES),
 }
 _DM_ACTIONS = {"dm", "dmp_outreach"}
 _UNLIMITED_QUOTA_ACTIONS = _DM_ACTIONS | {"lead_warmup"}

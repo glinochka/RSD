@@ -39,7 +39,7 @@ CLASS_DEFAULT_ROLES = {
 }
 
 WARMUP_BLOCKED_STATUSES = {"rest", "warming"}
-WARMUP_OPEN_ACTIONS = {"inspect", "prepare_join"}
+WARMUP_OPEN_ACTIONS = {"inspect", "prepare_join", "discovery"}
 
 
 def _expand_shilling_roles(roles: list[str]) -> list[str]:

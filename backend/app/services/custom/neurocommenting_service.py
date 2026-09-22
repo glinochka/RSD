@@ -10,7 +10,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .account_pacing import in_account_active_hours
+from .account_pacing import farm_overlap_active_hours
 from .chat_inspect_service import probe_comments_readonly
 from .chat_membership_service import (
     ensure_watcher_membership,
@@ -57,9 +57,9 @@ DEFAULT_NEUROCOMMENTING_PROMPT = """Ты — участник Telegram-чата/
 }"""
 
 
-# Channel history is the last ~30 posts. Without a recency cut we slowly
-# comment/shill under weeks-old posts when a channel is first scanned.
-POST_MAX_AGE = timedelta(hours=2)
+# Cursor is the real filter (only unseen posts). Age is a backup if the
+# worker stalled: 2–3 min poll × a slow batch ≈ a few missed ticks, then skip.
+POST_MAX_AGE = timedelta(minutes=8)
 
 
 def _utc_now() -> datetime:
@@ -76,7 +76,7 @@ def _message_posted_at(msg) -> datetime | None:
 
 
 def is_fresh_channel_post(msg, *, now: datetime | None = None, lab_mode: bool = False) -> bool:
-    """Lab may use any post. Production also accepts posts newer than the listen cursor."""
+    """True only while a comment can still land among the first replies."""
     if lab_mode:
         return True
     posted = _message_posted_at(msg)
@@ -250,6 +250,7 @@ async def _send_comment(
     text: str,
     *,
     post_text: str = "",
+    lab_mode: bool = False,
 ) -> bool:
     if not account.session_file_path:
         return False
@@ -270,12 +271,24 @@ async def _send_comment(
                 chat_entity_key(chat_target)
             )
             from .chat_join_service import join_linked_discussion
+            from .human_dm import human_send_public
 
-            await join_linked_discussion(client, entity)
+            discussion = await join_linked_discussion(client, entity)
+
+            async def _send():
+                return await human_send_public(
+                    client,
+                    entity,
+                    text,
+                    comment_to=post_id,
+                    discussion_entity=discussion,
+                    lab_mode=lab_mode,
+                )
+
             await execute_with_telegram_retry(
                 session,
                 account,
-                lambda: client.client.send_message(entity, text, comment_to=post_id),
+                _send,
                 action_type="neurocommenting",
                 target_id=f"{chat_target.id}:{post_id}",
                 target_type="chat_post",
@@ -377,7 +390,7 @@ async def process_chat_target(
                 apply_entity_metadata(chat_target, entity)
                 if not is_broadcast_channel(chat_target):
                     return await _skip_chat(session, chat_target, "not_channel")
-                history = await client.client.get_messages(entity, limit=20)
+                history = await client.client.get_messages(entity, limit=8)
                 posts, latest_id, cursor_reason = collect_new_channel_posts(
                     history, chat_target, lab_mode=lab_mode
                 )
@@ -393,7 +406,7 @@ async def process_chat_target(
                     set_post_cursor(chat_target, latest_id)
                 if cursor_reason == "armed_cursor":
                     return await _skip_chat(session, chat_target, "armed_cursor")
-                if not lab_mode and not in_account_active_hours():
+                if not lab_mode and not farm_overlap_active_hours():
                     return await _skip_chat(session, chat_target, "night")
             break
         except Exception as exc:
@@ -406,7 +419,7 @@ async def process_chat_target(
     if not account:
         return await _skip_chat(session, chat_target, "no_account")
 
-    posts.sort(key=lambda msg: int(msg.id))
+    posts.sort(key=lambda msg: int(msg.id), reverse=True)
     sent = 0
     shilled = 0
     if not lab_mode and chat_sent_today >= chat_limit:
@@ -488,7 +501,7 @@ async def process_chat_target(
             continue
 
         success = await _send_comment(
-            session, automation_id, chat_target, actor, post.id, comment, post_text=post.text or ""
+            session, automation_id, chat_target, actor, post.id, comment, post_text=post.text or "", lab_mode=lab_mode
         )
         if success:
             sent += 1

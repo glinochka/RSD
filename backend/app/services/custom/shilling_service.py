@@ -20,7 +20,7 @@ from .chat_membership_service import (
     is_chat_watchable,
     list_watchable_chats,
 )
-from .pending_action_service import ensure_accounts_ready
+from .account_pacing import account_active_window, in_account_active_hours
 from .post_engagement import SHILLING as POST_SHILLING, get_post_engagement_claim, post_target_id
 from .rotation_service import accounts_are_distinct, record_successful_send, select_account_for_action
 from .telegram_account_client import TelegramAccountClient
@@ -99,14 +99,25 @@ def _moscow_day_utc_range(day=None, now: datetime | None = None) -> tuple[dateti
     )
 
 
-def _in_chat_window(now: datetime | None = None) -> bool:
-    moscow = _moscow_now(now)
-    return CHAT_WINDOW_START_HOUR <= moscow.hour < CHAT_WINDOW_END_HOUR
+def _in_chat_window(
+    now: datetime | None = None,
+    account: SocialAccount | None = None,
+    *,
+    account_id: int | None = None,
+) -> bool:
+    return in_account_active_hours(now, account, account_id=account_id)
 
 
-def _random_time_today(now_moscow: datetime) -> datetime:
-    start = now_moscow.replace(hour=CHAT_WINDOW_START_HOUR, minute=0, second=0, microsecond=0)
-    end = now_moscow.replace(hour=CHAT_WINDOW_END_HOUR, minute=0, second=0, microsecond=0)
+def _random_time_today(
+    now_moscow: datetime,
+    account: SocialAccount | None = None,
+    *,
+    account_id: int | None = None,
+) -> datetime:
+    start_h, end_h = account_active_window(account, account_id=account_id)
+    midnight = now_moscow.replace(hour=0, minute=0, second=0, microsecond=0)
+    start = midnight + timedelta(seconds=int(start_h * 3600))
+    end = midnight + timedelta(seconds=int(end_h * 3600))
     span = max(int((end - start).total_seconds()) - 1, 0)
     return start + timedelta(seconds=random.randint(0, span))
 
@@ -284,19 +295,28 @@ async def _send_message(
                 await join_linked_discussion(client, channel_entity)
 
             async def _send():
+                from .human_dm import human_send_public
+
                 if discussion_post_id is not None and reply_to is not None:
                     discussion_entity = await _discussion_entity_for_post(
                         client,
                         channel_entity,
                         discussion_post_id,
                     )
-                    return await client.client.send_message(discussion_entity, text, reply_to=reply_to)
-                kwargs: dict[str, Any] = {}
-                if comment_to is not None:
-                    kwargs["comment_to"] = comment_to
-                if reply_to is not None:
-                    kwargs["reply_to"] = reply_to
-                return await client.client.send_message(channel_entity, text, **kwargs)
+                    return await human_send_public(
+                        client,
+                        discussion_entity,
+                        text,
+                        reply_to=reply_to,
+                        discussion_entity=discussion_entity,
+                    )
+                return await human_send_public(
+                    client,
+                    channel_entity,
+                    text,
+                    comment_to=comment_to,
+                    reply_to=reply_to,
+                )
 
             message = await execute_with_telegram_retry(
                 session,
@@ -745,10 +765,10 @@ async def decide_chat_shilling_today(
             return "wait"
         return existing.result
 
-    if not _in_chat_window(now):
+    if not _in_chat_window(now, account_id=account_id):
         return "wait"
 
-    when = scheduled_at or _random_time_today(moscow)
+    when = scheduled_at or _random_time_today(moscow, account_id=account_id)
     if when.tzinfo is None:
         when = when.replace(tzinfo=_moscow_tz())
     if when <= moscow:

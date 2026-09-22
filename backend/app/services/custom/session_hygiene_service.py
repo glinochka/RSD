@@ -35,6 +35,9 @@ _HYGIENE_MINT_MIN_AGE_SECONDS = 6 * 3600
 # Spare QR login was killing live keys (2FA / seller sessions). Keep prune of
 # already-minted spares, but do not authorize a second device until this is on.
 _SPARE_MINT_ENABLED = False
+# ResetAuthorization of seller/phone sessions is a farm tell and can kill the
+# key we are on. Leave extra devices alone until mint is proven safe.
+_SESSION_PRUNE_ENABLED = False
 _LEGACY_DEVICE_MODELS = frozenset({DEVICE_MODEL_MAIN, DEVICE_MODEL_SPARE})
 
 
@@ -372,10 +375,13 @@ async def hygienize_account(
     plus a second QR login is what was revoking accounts right after SMS/upload.
     `force` may prune when a live spare exists; it does not bypass mint freshness.
     Spare mint is currently disabled (`_SPARE_MINT_ENABLED`) so we do not open
-    a second Telegram login at all.
+    a second Telegram login at all. Session prune (`ResetAuthorization`) is also
+    off (`_SESSION_PRUNE_ENABLED`) so we do not kick other devices.
     """
     if not account.session_file_path and not getattr(account, "encrypted_session", None):
         return {"status": "skipped", "reason": "no_session"}
+    if not _SPARE_MINT_ENABLED and not _SESSION_PRUNE_ENABLED:
+        return {"status": "skipped", "minted": False, "pruned": 0, "reason": "hygiene_disabled"}
     if not _SPARE_MINT_ENABLED and not account_has_spare(account):
         return {"status": "skipped", "minted": False, "pruned": 0, "reason": "mint_disabled"}
     minted = False
@@ -433,7 +439,8 @@ async def hygienize_account(
         authorizations = await _list_authorizations(client.client)
         live_spare = _spare_hash_from_authorizations(authorizations, known=spare_hash)
         can_prune = (
-            account_has_spare(account)
+            _SESSION_PRUNE_ENABLED
+            and account_has_spare(account)
             and live_spare is not None
             and not skip_prune
             and not too_fresh_prune
