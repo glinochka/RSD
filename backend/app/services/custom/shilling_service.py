@@ -21,6 +21,7 @@ from .chat_membership_service import (
     list_watchable_chats,
 )
 from .account_pacing import account_active_window, in_account_active_hours
+from .pending_action_service import ensure_accounts_ready
 from .post_engagement import SHILLING as POST_SHILLING, get_post_engagement_claim, post_target_id
 from .rotation_service import accounts_are_distinct, record_successful_send, select_account_for_action
 from .telegram_account_client import TelegramAccountClient
