@@ -12,8 +12,8 @@ ACCOUNT_REST_SECONDS = 10 * 60
 ACCOUNT_REST_MIN_SECONDS = 8 * 60
 ACCOUNT_REST_MAX_SECONDS = 22 * 60
 FIRST_WEEK_DAYS = 7
-FIRST_WEEK_REST_MIN_SECONDS = 60 * 60
-FIRST_WEEK_REST_MAX_SECONDS = 2 * 60 * 60
+FIRST_WEEK_REST_MIN_SECONDS = 10 * 60
+FIRST_WEEK_REST_MAX_SECONDS = 15 * 60
 ACCOUNT_RETRY_MIN_SECONDS = 3 * 60
 ACCOUNT_RETRY_MAX_SECONDS = 5 * 60
 ACTIVE_START_HOUR = 8
@@ -172,7 +172,7 @@ def account_in_first_week(account: SocialAccount | None, *, now: datetime | None
 
 
 def rest_seconds_for_account(account: SocialAccount | None, *, now: datetime | None = None) -> float:
-    """First week: 1–2 hour pause after a write. Later: jittered ~8–22 minutes."""
+    """First week: 10–15 minute pause after a write. Later: jittered ~8–22 minutes."""
     if account_in_first_week(account, now=now):
         return random.uniform(FIRST_WEEK_REST_MIN_SECONDS, FIRST_WEEK_REST_MAX_SECONDS)
     return random.uniform(ACCOUNT_REST_MIN_SECONDS, ACCOUNT_REST_MAX_SECONDS)

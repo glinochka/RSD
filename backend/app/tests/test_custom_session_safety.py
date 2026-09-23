@@ -451,7 +451,7 @@ def test_accounts_sleep_at_night_and_rest_longer_first_week():
     assert account_in_first_week(aged, now=now) is False
     first_week = rest_seconds_for_account(fresh, now=now)
     later = rest_seconds_for_account(aged, now=now)
-    assert 3600 <= first_week <= 7200
+    assert 10 * 60 <= first_week <= 15 * 60
     assert 8 * 60 <= later <= 22 * 60
 
 

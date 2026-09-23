@@ -6525,7 +6525,7 @@ class TestAccountPacingAndSessions:
         )
         assert account.next_action_at is not None
         wait = (account.next_action_at - datetime.now(timezone.utc).replace(tzinfo=None)).total_seconds()
-        assert 3600 <= wait <= 7200
+        assert 10 * 60 <= wait <= 15 * 60
 
     async def test_prune_keeps_current_and_spare(self):
         from types import SimpleNamespace
