@@ -13,7 +13,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .account_pacing import account_should_idle
-from .rotation_service import record_successful_send
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import execute_with_telegram_retry
 from ...alembic.models import CustomAccountPeerDialog, CustomAutomation, PoolAccount, SocialAccount
@@ -289,7 +288,6 @@ async def _send_peer_message(
                 payload={"text": text, "to_account_id": recipient.id, "to": peer},
                 automation_id=automation.id,
             )
-        record_successful_send(sender)
         return True
     except Exception as exc:
         logger.warning("Peer dialog send failed %s -> %s: %s", sender.id, recipient.id, exc)
