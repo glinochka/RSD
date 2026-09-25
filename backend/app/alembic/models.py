@@ -2026,6 +2026,7 @@ class ChatJoinStatus(str, Enum):
     RATE_LIMITED = "rate_limited"
     ERROR = "error"
     BANNED = "banned"
+    LEFT = "left"
 
 
 class MembershipPurpose(str, Enum):
@@ -2358,6 +2359,10 @@ class SocialAccount(Base):
     frozen_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     next_action_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    # Separate cooldown for humanization (warmup DMs, idle browse, reactions).
+    # Target actions (neurocommenting, shilling, dm) use next_action_at (40-70 min).
+    # Humanization uses next_humanization_at (15-30 min) and NEVER blocks target activity.
+    next_humanization_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     encrypted_spare_session: Mapped[str | None] = mapped_column(Text, nullable=True)
     spare_session_file_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     spare_authorization_hash: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
@@ -2668,6 +2673,24 @@ class ChatTarget(Base):
     comments_open: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     comments_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     comments_check_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Moderation probe / black-box fields
+    mod_status: Mapped[str] = mapped_column(
+        String(32), default="untested", server_default="untested", nullable=False, index=True
+    )
+    mod_consecutive_removed: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    mod_consecutive_kept: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    mod_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    black_boxed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    # Hard cap on target actions (neuro/shill) per chat per Moscow day.
+    max_daily_target_actions: Mapped[int] = mapped_column(
+        Integer, default=3, server_default="3", nullable=False
+    )
+
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
 

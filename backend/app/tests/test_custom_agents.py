@@ -4947,8 +4947,8 @@ class TestAccountRolesWarmupAndLab:
             await _sleep_between_joins(rate_limit=True, sleeper=sleeper)
             await _sleep_between_joins(rate_limit=False, sleeper=sleeper)
         assert delays == [97]
-        assert JOIN_DELAY_MIN_SECONDS == 720
-        assert JOIN_DELAY_MAX_SECONDS == 1680
+        assert JOIN_DELAY_MIN_SECONDS == 3600
+        assert JOIN_DELAY_MAX_SECONDS == 18000
 
     async def test_join_loaded_skips_lab_and_can_disable_delay(
         self, test_session: AsyncSession, custom_automation: CustomAutomation

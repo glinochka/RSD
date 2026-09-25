@@ -1,4 +1,10 @@
-"""Account selection (rotation) and daily limits for /custom automations."""
+"""Account selection (rotation) and daily limits for /custom automations.
+
+Account classes are no longer used for feature gating — roles are.  Every
+action checks the PoolAccount.roles set directly.
+"""
+from __future__ import annotations
+
 import random
 from datetime import datetime, timedelta, timezone
 from logging import getLogger
@@ -8,28 +14,26 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...alembic.models import AccountClass, AccountPool, CustomAutomation, CustomLead, PoolAccount, SocialAccount
-from .account_pacing import account_should_idle
+from ...alembic.models import AccountPool, CustomAutomation, CustomLead, PoolAccount, SocialAccount
+from .account_pacing import account_should_idle, effective_daily_target_max
 from .account_roles import account_matches_action
 
 logger = getLogger(__name__)
 
-_ALL_CLASSES = {item.value for item in AccountClass}
-ACTION_ALLOWED_CLASSES = {
-    "commenting": {AccountClass.ONE_DAY.value, AccountClass.MID.value, AccountClass.TRUSTED.value},
-    "dm": {AccountClass.TRUSTED.value, AccountClass.MID.value},
-    "dmp_outreach": {AccountClass.TRUSTED.value},
-    "discussion": {AccountClass.ONE_DAY.value, AccountClass.MID.value, AccountClass.TRUSTED.value},
-    "shilling": {AccountClass.SHILLING.value},
-    "shilling_question": {AccountClass.SHILLING.value},
-    "shilling_answer": {AccountClass.SHILLING.value},
-    "inspect": set(_ALL_CLASSES),
-    "prepare_join": set(_ALL_CLASSES),
-    "discovery": set(_ALL_CLASSES),
-}
 _DM_ACTIONS = {"dm", "dmp_outreach"}
 _UNLIMITED_QUOTA_ACTIONS = _DM_ACTIONS | {"lead_warmup"}
-_KNOWN_ACTIONS = set(ACTION_ALLOWED_CLASSES)
+_KNOWN_ACTIONS = {
+    "commenting",
+    "dm",
+    "dmp_outreach",
+    "discussion",
+    "shilling",
+    "shilling_question",
+    "shilling_answer",
+    "inspect",
+    "prepare_join",
+    "discovery",
+}
 
 
 def _utc_now() -> datetime:
@@ -174,10 +178,9 @@ async def list_alive_session_accounts(
     session: AsyncSession,
     automation_id: int,
     *,
-    assigned_class: str | None = None,
     exclude_banned: bool = True,
 ) -> list[SocialAccount]:
-    """All connected pool accounts, any class. Used for comment inspect and preparation joins."""
+    """All connected pool accounts, any role. Used for inspect and preparation joins."""
     pool = await _default_pool(session, automation_id)
     if not pool:
         return []
@@ -192,19 +195,25 @@ async def list_alive_session_accounts(
             continue
         if not social.session_file_path and not getattr(social, "encrypted_session", None):
             continue
-        if assigned_class and (
-            pool_account.assigned_class != assigned_class and social.account_class != assigned_class
-        ):
-            continue
         alive.append(social)
     return alive
 
 
 def record_successful_send(account: SocialAccount) -> None:
-    """Count a message only after Telegram actually accepted it."""
+    """Count a TARGET message only after Telegram actually accepted it."""
     _reset_counters_if_needed([account])
     account.daily_messages_sent = (account.daily_messages_sent or 0) + 1
     account.last_used_at = _utc_now()
+
+
+def record_successful_humanization(account: SocialAccount) -> None:
+    """Mark a humanization action (warmup, discussion, peer_dialog) as done.
+
+    Does NOT increment daily_messages_sent so humanization never consumes the
+    target-action daily budget.
+    """
+    account.last_used_at = _utc_now()
+    account.updated_at = _utc_now()
 
 
 async def select_account_for_action(
@@ -217,21 +226,18 @@ async def select_account_for_action(
     consume_quota: bool = False,
     ignore_rest: bool = False,
 ) -> SocialAccount | None:
-    """Pick an account from the default pool respecting class, rotation strategy and daily limits.
+    """Pick an account from the default pool respecting roles, rotation strategy and daily limits.
 
     Args:
         session: active async SQLAlchemy session.
         automation: CustomAutomation instance or its id.
-        action_type: one of "commenting", "dm", "discussion", "shilling".
+        action_type: one of "commenting", "dm", "discussion", "shilling", etc.
         thread_id: optional lead/thread id. For ``dm`` and ``discussion`` an already assigned
             account is returned if it is still eligible.
         exclude_banned: skip banned accounts.
-        exclude_account_ids: never return these account ids (used to pick a second shilling speaker).
-        consume_quota: leftover flag; daily_messages_sent grows only via record_successful_send.
+        exclude_account_ids: never return these account ids.
+        consume_quota: legacy flag; daily_messages_sent grows only via record_successful_send.
         ignore_rest: lab/manual paths may pick an account that is cooling down.
-
-    Returns:
-        A SocialAccount instance or None if no eligible account exists.
     """
     automation_id = automation.id if isinstance(automation, CustomAutomation) else int(automation)
     automation_obj = automation if isinstance(automation, CustomAutomation) else None
@@ -257,14 +263,29 @@ async def select_account_for_action(
 
     exclude_spamblocked = action_type in _DM_ACTIONS
     skip_write_rest = ignore_rest or action_type == "inspect"
+
+    # Per-account per-day randomized target max
+    daily_maxes: dict[int, int] = {}
+    for _, social in rows:
+        daily_maxes[social.id] = effective_daily_target_max(social, automation_obj)
+
     eligible = _filter_eligible(
         rows,
         action_type,
-        automation_obj.max_daily_messages_per_account,
+        # Use the highest current max as the conservative filter; real check below.
+        max(daily_maxes.values()) if daily_maxes else 0,
         exclude_banned,
         exclude_spamblocked=exclude_spamblocked,
         ignore_rest=skip_write_rest,
     )
+
+    # Re-apply per-account randomized daily cap
+    eligible = [
+        row
+        for row in eligible
+        if action_type in _UNLIMITED_QUOTA_ACTIONS or row[1].daily_messages_sent < daily_maxes.get(row[1].id, 0)
+    ]
+
     if exclude_account_ids:
         eligible = [row for row in eligible if row[1].id not in exclude_account_ids]
     if not eligible:
@@ -275,6 +296,8 @@ async def select_account_for_action(
         lead = await session.get(CustomLead, thread_id)
         if lead and lead.assigned_account_id:
             assigned = await session.get(SocialAccount, lead.assigned_account_id)
+            assigned_row = next((row for row in rows if assigned and row[1].id == assigned.id), None)
+            assigned_pool = assigned_row[0] if assigned_row else None
             assigned_ok = bool(
                 assigned
                 and assigned.is_active
@@ -282,27 +305,24 @@ async def select_account_for_action(
                 and not getattr(assigned, "is_frozen", False)
                 and not (exclude_spamblocked and assigned.is_spamblocked)
                 and (ignore_rest or not account_should_idle(assigned))
+                and account_matches_action(assigned_pool, assigned, action_type)
+                and (
+                    action_type in _UNLIMITED_QUOTA_ACTIONS
+                    or assigned.daily_messages_sent < daily_maxes.get(assigned.id, 0)
+                )
             )
-            assigned_row = next((row for row in rows if assigned and row[1].id == assigned.id), None)
-            assigned_pool = assigned_row[0] if assigned_row else None
             if assigned_ok:
                 if exclude_account_ids and assigned.id in exclude_account_ids:
                     pass
-                elif (
-                    account_matches_action(assigned_pool, assigned, action_type)
-                    and (
-                        action_type in _UNLIMITED_QUOTA_ACTIONS
-                        or assigned.daily_messages_sent < automation_obj.max_daily_messages_per_account
-                    )
-                ):
+                else:
                     return assigned
-                logger.info(
-                    "Assigned account %s for thread %s is not eligible (class=%s, sent=%s)",
-                    assigned.id,
-                    thread_id,
-                    assigned.account_class,
-                    assigned.daily_messages_sent,
-                )
+            logger.info(
+                "Assigned account %s for thread %s is not eligible (roles=%s, sent=%s)",
+                assigned.id,
+                thread_id,
+                getattr(assigned_pool, "roles", None),
+                assigned.daily_messages_sent,
+            )
 
     strategy = (automation_obj.rotation_strategy or "round_robin").strip().lower()
     if strategy == "least_used":

@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .chat_scope import commit_chat_scan, is_paused, is_group_chat, is_lab_chat
+from .chat_scope import commit_chat_scan, count_target_actions_today, is_paused, is_group_chat, is_lab_chat
 from .chat_membership_service import (
     ensure_watcher_membership,
     is_chat_watchable,
@@ -458,7 +458,13 @@ async def perform_shilling_dialogue(
         action_type=action_type,
         target_id=target_id,
         comment_to=comment_to,
-        payload={"role": "setup", "text": setup, "peer_account_id": account_b.id},
+        payload={
+            "role": "setup",
+            "text": setup,
+            "peer_account_id": account_b.id,
+            "chat_target_id": chat_target.id,
+            "_mod_probed": False,
+        },
     )
     if not first_id:
         return {"status": "error", "reason": "setup_failed"}
@@ -481,7 +487,14 @@ async def perform_shilling_dialogue(
         target_id=target_id,
         reply_to=first_id,
         discussion_post_id=comment_to,
-        payload={"role": "reply", "text": reply, "peer_account_id": account_a.id, "reply_to": first_id},
+        payload={
+            "role": "reply",
+            "text": reply,
+            "peer_account_id": account_a.id,
+            "reply_to": first_id,
+            "chat_target_id": chat_target.id,
+            "_mod_probed": False,
+        },
     )
     if not second_id:
         return {"status": "error", "reason": "reply_failed", "setup_message_id": first_id}
@@ -503,6 +516,7 @@ async def perform_shilling_dialogue(
             "reply_message_id": second_id,
             "comment_to": comment_to,
             "chat_target_id": chat_target.id,
+            "_mod_probed": False,
         },
     )
     return {
@@ -527,6 +541,9 @@ async def perform_post_shilling(
     target_id = post_target_id(chat_target.id, post_id)
     if await _already_succeeded(session, automation.id, POST_SHILL_ACTION, target_id):
         return {"status": "skipped", "reason": "already_sent"}
+    target_actions_today = await count_target_actions_today(session, automation.id, chat_target.id)
+    if target_actions_today >= chat_target.max_daily_target_actions:
+        return {"status": "skipped", "reason": "chat_daily_target_limit"}
     claim = await get_post_engagement_claim(session, automation.id, chat_target.id, post_id)
     if claim and claim.result != POST_SHILLING and not lab_mode:
         return {"status": "skipped", "reason": "other_action", "claimed": claim.result}
@@ -821,6 +838,11 @@ async def process_shilling_chat(
         await ensure_watcher_membership(session, automation.id, chat_target, include_lab=include_lab)
         await commit_chat_scan(session, chat_target)
         return {"status": "skipped", "reason": "not_watchable"}
+
+    target_actions_today = await count_target_actions_today(session, automation.id, chat_target.id)
+    if target_actions_today >= chat_target.max_daily_target_actions:
+        await commit_chat_scan(session, chat_target)
+        return {"status": "skipped", "reason": "chat_daily_target_limit"}
 
     pair = await _pick_speaker_pair(session, automation)
     if not pair:

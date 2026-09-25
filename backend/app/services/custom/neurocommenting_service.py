@@ -20,7 +20,7 @@ from .chat_membership_service import (
     recover_reader_after_error,
     retire_reader_and_replace,
 )
-from .chat_scope import apply_entity_metadata, is_broadcast_channel, is_lab_chat, is_paused, commit_chat_scan
+from .chat_scope import apply_entity_metadata, commit_chat_scan, count_target_actions_today, is_broadcast_channel, is_lab_chat, is_paused
 from .pending_action_service import ensure_accounts_ready, has_pending_action
 from .post_engagement import NEUROCOMMENTING, SHILLING, SKIP, claim_post_engagement, post_target_id
 from .rotation_service import (
@@ -57,9 +57,18 @@ DEFAULT_NEUROCOMMENTING_PROMPT = """Ты — участник Telegram-чата/
 }"""
 
 
-# Cursor is the real filter (only unseen posts). Age is a backup if the
-# worker stalled: 2–3 min poll × a slow batch ≈ a few missed ticks, then skip.
-POST_MAX_AGE = timedelta(minutes=8)
+# Cursor is the real filter (only unseen posts).  Age is a safety backstop.
+# Window must be wide enough to cover:
+#   detection latency  (up to 3 min)
+#   + mandatory anti-spam delay (3-4 min, see POST_COMMENT_DELAY_* below)
+#   + processing / queue time   (~3 min)
+# → 20 min total gives comfortable headroom.
+POST_MAX_AGE = timedelta(minutes=20)
+
+# Anti-spam-bot delay: some channels have bots that auto-delete comments posted
+# within the first few minutes of a post.  We always wait at least this long.
+POST_COMMENT_DELAY_MIN_SECONDS = 3 * 60   # 3 min
+POST_COMMENT_DELAY_MAX_SECONDS = 4 * 60   # 4 min
 
 
 def _utc_now() -> datetime:
@@ -183,10 +192,16 @@ async def _generate_comment(
         return ""
 
 
-def account_comment_daily_limit(automation: CustomAutomation | None, *, lab_mode: bool = False) -> int:
+def account_comment_daily_limit(
+    account: SocialAccount | None,
+    automation: CustomAutomation | None,
+    *,
+    lab_mode: bool = False,
+) -> int:
     if lab_mode:
         return 10**9
-    return max(1, int(getattr(automation, "max_daily_messages_per_account", None) or 50))
+    from .account_pacing import effective_daily_target_max
+    return effective_daily_target_max(account, automation)
 
 
 def chat_comment_daily_limit(config: dict | None, *, lab_mode: bool = False) -> int:
@@ -264,6 +279,7 @@ async def _send_comment(
         "post_id": post_id,
         "post_text": (post_text or "")[:500],
         "text": text,
+        "_mod_probed": False,
     }
     try:
         async with TelegramAccountClient.for_account(account) as client:
@@ -346,7 +362,11 @@ async def process_chat_target(
 
     config = chat_target.neurocommenting_config or {}
     chat_limit = chat_comment_daily_limit(config, lab_mode=lab_mode)
-    account_limit = account_comment_daily_limit(automation, lab_mode=lab_mode)
+    # Hard cap: max 3 target actions per chat per day to avoid annoying admins.
+    target_actions_today = 0 if lab_mode else await count_target_actions_today(session, automation_id, chat_target.id)
+    if not lab_mode and target_actions_today >= chat_target.max_daily_target_actions:
+        return await _skip_chat(session, chat_target, "chat_daily_target_limit")
+    # Per-actor randomized daily cap is checked inside the actor-selection loop.
     chat_sent_today = 0 if lab_mode else await _count_chat_comments_today(session, automation_id, chat_target.id)
     tried: set[int] = set()
     account = None
@@ -472,7 +492,7 @@ async def process_chat_target(
                 exclude_account_ids=tried_actors or None,
                 ignore_rest=lab_mode,
             )
-            if not actor or account_reached_daily_cap(actor, account_limit):
+            if not actor or account_reached_daily_cap(actor, account_comment_daily_limit(actor, automation, lab_mode=lab_mode)):
                 actor = None
                 break
             tried_actors.add(actor.id)
@@ -495,6 +515,38 @@ async def process_chat_target(
             continue
         if not actor:
             continue
+
+        # ── Anti-spam-bot delay ──────────────────────────────────────────────
+        # Some channels have bots that auto-delete comments posted within the
+        # first 3-4 min after a post.  If the post is still too fresh, defer
+        # the send by creating a pending action with a future next_attempt_at.
+        # The pending action worker will pick it up once the delay has elapsed.
+        if not lab_mode:
+            posted_at = _message_posted_at(post)
+            if posted_at is not None:
+                post_age = (_utc_now() - posted_at).total_seconds()
+                min_delay = random.uniform(POST_COMMENT_DELAY_MIN_SECONDS, POST_COMMENT_DELAY_MAX_SECONDS)
+                if post_age < min_delay:
+                    delay_until = posted_at + timedelta(seconds=min_delay)
+                    from .pending_action_service import enqueue_pending_action
+                    pending = await enqueue_pending_action(
+                        session,
+                        automation_id=automation_id,
+                        chat_target=chat_target,
+                        account=actor,
+                        action_type="neurocommenting",
+                        target_id=post_target_id(chat_target.id, post.id),
+                        payload={"post_id": post.id, "post_text": (post.text or "")[:500]},
+                    )
+                    if pending:
+                        pending.next_attempt_at = delay_until
+                        await session.commit()
+                        logger.debug(
+                            "Neurocomment deferred for post %s in chat %s (post age %.0fs < %.0fs delay)",
+                            post.id, chat_target.id, post_age, min_delay,
+                        )
+                    continue
+        # ────────────────────────────────────────────────────────────────────
 
         comment = await _generate_comment(session, automation_id, post_text=post.text, chat_title=chat_target.title or "")
         if not comment:

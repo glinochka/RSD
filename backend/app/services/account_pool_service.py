@@ -14,7 +14,7 @@ from fastapi import UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..alembic.models import AccountClass, AccountPool, CustomAutomation, PoolAccount, SocialAccount
+from ..alembic.models import AccountPool, CustomAutomation, PoolAccount, SocialAccount
 from ..config import settings
 
 
@@ -121,7 +121,6 @@ async def _create_social_account(
     phone_number: str | None,
     username: str | None,
     display_name: str | None,
-    account_class: str,
     encrypted_session: str,
     session_file_path: str | None,
     preferred_proxy_id: int | None = None,
@@ -133,7 +132,6 @@ async def _create_social_account(
         display_name=display_name,
         encrypted_session=encrypted_session,
         session_file_path=session_file_path,
-        account_class=account_class,
         created_at=_utc_now(),
         updated_at=_utc_now(),
     )
@@ -145,7 +143,6 @@ async def _create_social_account(
         custom_automation_id=automation_id,
         account_pool_id=pool_id,
         social_account_id=social_account.id,
-        assigned_class=account_class,
         added_at=_utc_now(),
     )
     session.add(pool_account)
@@ -173,7 +170,6 @@ async def _save_session_file(
     pool_id: int,
     archive_name: str,
     data: bytes,
-    assign_class: str,
     *,
     phone_number: str | None = None,
     username: str | None = None,
@@ -195,7 +191,6 @@ async def _save_session_file(
         phone_number=phone_number,
         username=username,
         display_name=display_name,
-        account_class=assign_class,
         encrypted_session=encrypted,
         session_file_path=relative_path,
         preferred_proxy_id=preferred_proxy_id,
@@ -269,7 +264,6 @@ async def add_account_from_session_string(
     automation_id: int,
     *,
     session_string: str,
-    assign_class: str,
     phone_number: str | None = None,
     username: str | None = None,
     display_name: str | None = None,
@@ -323,7 +317,6 @@ async def add_account_from_session_string(
         pool.id,
         filename,
         data,
-        assign_class,
         phone_number=phone_number,
         username=username,
         display_name=display_name,
@@ -354,7 +347,6 @@ async def bulk_upload_sessions(
     session: AsyncSession,
     automation_id: int,
     upload_file: UploadFile,
-    assign_class: str = AccountClass.ONE_DAY.value,
     *,
     preferred_proxy_id: int | None = None,
 ) -> dict[str, Any]:
@@ -386,7 +378,6 @@ async def bulk_upload_sessions(
                         pool.id,
                         name,
                         data,
-                        assign_class,
                         preferred_proxy_id=preferred_proxy_id,
                     )
                     created += 1
@@ -398,7 +389,6 @@ async def bulk_upload_sessions(
             phone_number = row.get("phone_number") or row.get("phone") or None
             username = row.get("username") or None
             display_name = row.get("display_name") or row.get("name") or None
-            account_class = row.get("account_class") or assign_class
             try:
                 await _create_social_account(
                     session,
@@ -408,7 +398,6 @@ async def bulk_upload_sessions(
                     phone_number=phone_number,
                     username=username,
                     display_name=display_name,
-                    account_class=account_class,
                     encrypted_session="",
                     session_file_path=None,
                     preferred_proxy_id=preferred_proxy_id,
@@ -428,7 +417,6 @@ async def bulk_upload_sessions(
                     pool.id,
                     filename,
                     content,
-                    assign_class,
                     preferred_proxy_id=preferred_proxy_id,
                 )
                 created += 1

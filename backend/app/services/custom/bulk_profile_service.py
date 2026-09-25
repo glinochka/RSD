@@ -163,7 +163,6 @@ class BulkProfileUpdateWorker:
             "username": social_account.username or "",
             "phone_number": social_account.phone_number or "",
             "display_name": social_account.display_name or "",
-            "account_class": social_account.account_class or "",
             "account_id": str(account_id),
             "seed": f"{account_id}-{int(time.time())}",
         }

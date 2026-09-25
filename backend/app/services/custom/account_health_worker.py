@@ -14,7 +14,7 @@ from .account_classification_service import classify_account
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import SessionInvalidError, update_account_after_telegram_error
 from ...alembic.database import async_session_maker
-from ...alembic.models import AccountClass, AccountPool, CustomAutomation, PoolAccount, SocialAccount
+from ...alembic.models import AccountPool, CustomAutomation, PoolAccount, SocialAccount
 from ...config import settings
 
 logger = getLogger(__name__)
@@ -219,13 +219,9 @@ class AccountHealthWorker:
 
         social_account.risk_score = classification["risk_score"]
         social_account.trust_score = classification["trust_score"]
-        if social_account.account_class != AccountClass.SHILLING.value:
-            social_account.account_class = classification["account_class"]
-            social_account.auto_classified = True
-            if pool_account:
-                pool_account.assigned_class = classification["account_class"]
-        elif pool_account:
-            pool_account.assigned_class = AccountClass.SHILLING.value
+        # Account class is no longer used for feature gating; roles are.
+        # Risk/trust scores are kept for rotation weighting and analytics.
+        social_account.auto_classified = True
         social_account.last_health_check_at = _utc_now()
 
         social_account.updated_at = _utc_now()

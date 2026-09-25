@@ -1,13 +1,16 @@
-"""Single Telegram account connect for /custom: QR (+ 2FA) and SMS (+ 2FA)."""
+"""Single Telegram account connect for /custom: QR (+ 2FA) and SMS (+ 2FA).
+
+Account classes have been removed — every new account gets the same default
+role set and the UI toggles roles directly per account.
+"""
 from __future__ import annotations
 
 import asyncio
 from typing import Any
 
-from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...alembic.models import AccountClass, PoolAccount, SocialAccount
+from ...alembic.models import PoolAccount, SocialAccount
 from ...utils.crypto import decrypt_token, encrypt_token
 from ...utils.scoped_auth_token import custom_account_qr_auth_token, custom_account_sms_auth_token
 from ..account_pool_service import add_account_from_session_string
@@ -19,16 +22,8 @@ from ..telegram_userbot_auth import (
     start_qr_login,
 )
 
-_ALLOWED_CLASSES = {item.value for item in AccountClass}
 _persist_lock = asyncio.Lock()
 _persisted_by_auth_id: dict[str, tuple[int, int]] = {}
-
-
-def normalize_assign_class(value: str | None) -> str:
-    raw = (value or "").strip() or AccountClass.ONE_DAY.value
-    if raw not in _ALLOWED_CLASSES:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Неизвестный класс аккаунта")
-    return raw
 
 
 def _display_name(me: dict[str, Any] | None) -> str | None:
@@ -71,7 +66,6 @@ def _create_qr_token(
     api_hash: str,
     auth_id: str,
     pending_session: str,
-    assign_class: str,
     proxy_id: int | None = None,
 ) -> str:
     return custom_account_qr_auth_token.create(
@@ -80,7 +74,6 @@ def _create_qr_token(
         encrypted_api_hash=encrypt_token(api_hash),
         auth_id=str(auth_id),
         encrypted_pending_session=encrypt_token(pending_session or ""),
-        assign_class=assign_class,
         proxy_id=int(proxy_id) if proxy_id else 0,
     )
 
@@ -89,7 +82,7 @@ def decode_qr_token(auth_token: str, automation_id: int) -> dict:
     data = custom_account_qr_auth_token.decode(auth_token, required_keys=["auth_id"])
     token_automation_id = int(data.get("automation_id") or 0)
     if token_automation_id != int(automation_id):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Токен QR-входа от другой автоматизации")
+        raise TelegramUserbotAuthError("Токен QR-входа от другой автоматизации")
     return data
 
 
@@ -101,7 +94,6 @@ def _create_sms_token(
     phone_number: str,
     phone_code_hash: str,
     pending_session: str,
-    assign_class: str,
     proxy_id: int | None = None,
 ) -> str:
     return custom_account_sms_auth_token.create(
@@ -111,7 +103,6 @@ def _create_sms_token(
         phone_number=phone_number,
         phone_code_hash=phone_code_hash,
         encrypted_pending_session=encrypt_token(pending_session or ""),
-        assign_class=assign_class,
         proxy_id=int(proxy_id) if proxy_id else 0,
     )
 
@@ -120,7 +111,7 @@ def decode_sms_token(auth_token: str, automation_id: int) -> dict:
     data = custom_account_sms_auth_token.decode(auth_token, required_keys=["phone_number", "phone_code_hash"])
     token_automation_id = int(data.get("automation_id") or 0)
     if token_automation_id != int(automation_id):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Токен SMS-входа от другой автоматизации")
+        raise TelegramUserbotAuthError("Токен SMS-входа от другой автоматизации")
     return data
 
 
@@ -147,7 +138,6 @@ async def persist_authorized_session(
     *,
     auth_id: str,
     session_string: str,
-    assign_class: str,
     me: dict[str, Any] | None = None,
     preferred_proxy_id: int | None = None,
 ) -> tuple[PoolAccount, SocialAccount, bool]:
@@ -160,7 +150,6 @@ async def persist_authorized_session(
                 session,
                 automation_id,
                 session_string=session_string,
-                assign_class=assign_class,
                 phone_number=_profile_phone(me),
                 username=_profile_username(me),
                 display_name=_display_name(me),
@@ -168,7 +157,7 @@ async def persist_authorized_session(
                 preferred_proxy_id=preferred_proxy_id,
             )
         except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+            raise TelegramUserbotAuthError(str(exc)) from exc
         _persisted_by_auth_id[auth_id] = (pair[0].id, pair[1].id)
         return pair[0], pair[1], True
 
@@ -186,13 +175,11 @@ async def start_account_qr(
     session: AsyncSession,
     automation_id: int,
     *,
-    assign_class: str | None = None,
     proxy_id: int | None = None,
     proxy_line: str | None = None,
 ) -> dict[str, Any]:
     from .proxy_service import resolve_connect_proxy
 
-    chosen_class = normalize_assign_class(assign_class)
     proxy_id, proxy = await resolve_connect_proxy(
         session, automation_id, proxy_id=proxy_id, proxy_line=proxy_line
     )
@@ -214,7 +201,6 @@ async def start_account_qr(
         api_hash=api_hash,
         auth_id=auth_id,
         pending_session=pending,
-        assign_class=chosen_class,
         proxy_id=proxy_id,
     )
     payload: dict[str, Any] = {
@@ -234,7 +220,6 @@ async def start_account_qr(
             automation_id,
             auth_id=auth_id,
             session_string=pending,
-            assign_class=chosen_class,
             me=me,
             preferred_proxy_id=proxy_id,
         )
@@ -252,7 +237,6 @@ async def poll_account_qr(
 ) -> dict[str, Any]:
     token_data = decode_qr_token(auth_token.strip(), automation_id)
     auth_id = str(token_data["auth_id"])
-    assign_class = normalize_assign_class(str(token_data.get("assign_class") or ""))
     qr_state = await get_qr_status(auth_id=auth_id)
     status_value = str(qr_state.get("status") or "pending")
     payload: dict[str, Any] = {
@@ -278,7 +262,6 @@ async def poll_account_qr(
             automation_id,
             auth_id=auth_id,
             session_string=session_string,
-            assign_class=assign_class,
             me=me,
             preferred_proxy_id=_token_proxy_id(token_data),
         )
@@ -297,7 +280,6 @@ async def verify_account_qr_2fa(
 ) -> tuple[PoolAccount, SocialAccount]:
     token_data = decode_qr_token(auth_token.strip(), automation_id)
     auth_id = str(token_data["auth_id"])
-    assign_class = normalize_assign_class(str(token_data.get("assign_class") or ""))
     api_id = int(token_data["api_id"])
     api_hash = decrypt_token(token_data["encrypted_api_hash"])
     pending_enc = token_data.get("encrypted_pending_session")
@@ -328,7 +310,6 @@ async def verify_account_qr_2fa(
         automation_id,
         auth_id=auth_id,
         session_string=session_string,
-        assign_class=assign_class,
         me=me,
         preferred_proxy_id=proxy_id,
     )
@@ -340,24 +321,18 @@ async def request_account_sms(
     automation_id: int,
     *,
     phone_number: str,
-    assign_class: str | None = None,
     proxy_id: int | None = None,
     proxy_line: str | None = None,
 ) -> dict[str, Any]:
     from .proxy_service import resolve_connect_proxy
 
-    chosen_class = normalize_assign_class(assign_class)
-    phone = (phone_number or "").strip()
-    if len(phone) < 5:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Укажите номер телефона")
+    if not (phone_number or "").strip():
+        raise TelegramUserbotAuthError("Укажите номер телефона")
 
     try:
         from telethon.errors import FloodWaitError
     except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Telethon не установлен на сервере: {exc}",
-        ) from exc
+        raise TelegramUserbotAuthError(f"Telethon не установлен на сервере: {exc}") from exc
 
     proxy_id, proxy = await resolve_connect_proxy(
         session, automation_id, proxy_id=proxy_id, proxy_line=proxy_line
@@ -368,26 +343,20 @@ async def request_account_sms(
     pending_session_string = ""
     try:
         await client.connect()
-        sent = await client.send_code_request(phone=phone)
+        sent = await client.send_code_request(phone=phone_number.strip())
         phone_code_hash = getattr(sent, "phone_code_hash", None)
         if not phone_code_hash:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Telegram не вернул phone_code_hash",
-            )
+            raise TelegramUserbotAuthError("Telegram не вернул phone_code_hash")
         pending_session_string = client.session.save()
     except FloodWaitError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"Слишком много попыток. Подождите {exc.seconds} сек",
-        ) from exc
-    except HTTPException:
+        raise TelegramUserbotAuthError(f"Слишком много попыток. Подождите {exc.seconds} сек") from exc
+    except TelegramUserbotAuthError:
         raise
     except Exception as exc:
         detail = f"Не удалось отправить код подтверждения Telegram: {exc}"
         if "api_id/api_hash combination is invalid" in str(exc).lower():
             detail = "Telegram отклонил API-ключи. Попробуйте вход по QR."
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=detail) from exc
+        raise TelegramUserbotAuthError(detail) from exc
     finally:
         await client.disconnect()
 
@@ -395,10 +364,9 @@ async def request_account_sms(
         automation_id=automation_id,
         api_id=api_id,
         api_hash=api_hash,
-        phone_number=phone,
+        phone_number=phone_number.strip(),
         phone_code_hash=str(phone_code_hash),
         pending_session=pending_session_string,
-        assign_class=chosen_class,
         proxy_id=proxy_id,
     )
     return {"auth_token": auth_token}
@@ -417,15 +385,11 @@ async def verify_account_sms(
     api_hash = decrypt_token(token_data["encrypted_api_hash"])
     phone_number = str(token_data["phone_number"])
     phone_code_hash = str(token_data["phone_code_hash"])
-    assign_class = normalize_assign_class(str(token_data.get("assign_class") or ""))
     pending_enc = token_data.get("encrypted_pending_session")
     pending_session = decrypt_token(pending_enc) if pending_enc else ""
     digits = "".join(ch for ch in (code or "") if ch.isdigit())
     if not digits:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Введите код подтверждения (цифры из Telegram)",
-        )
+        raise TelegramUserbotAuthError("Введите код подтверждения (цифры из Telegram)")
 
     try:
         from telethon.errors import (
@@ -434,10 +398,7 @@ async def verify_account_sms(
             SessionPasswordNeededError,
         )
     except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Telethon не установлен на сервере: {exc}",
-        ) from exc
+        raise TelegramUserbotAuthError(f"Telethon не установлен на сервере: {exc}") from exc
 
     from .proxy_service import load_telethon_proxy
 
@@ -460,35 +421,20 @@ async def verify_account_sms(
         except SessionPasswordNeededError:
             pwd = (password or "").strip()
             if not pwd:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Для этого аккаунта включен пароль 2FA. Передайте поле password.",
-                )
+                raise TelegramUserbotAuthError("Для этого аккаунта включен пароль 2FA. Передайте поле password.")
             await client.sign_in(password=pwd)
         except PhoneCodeInvalidError:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Неверный код подтверждения Telegram",
-            ) from None
+            raise TelegramUserbotAuthError("Неверный код подтверждения Telegram") from None
         except PhoneCodeExpiredError:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Код подтверждения Telegram истек. Запросите новый код.",
-            ) from None
+            raise TelegramUserbotAuthError("Код подтверждения Telegram истек. Запросите новый код.") from None
         me = await client.get_me()
         if not me:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Не удалось получить профиль после входа",
-            )
+            raise TelegramUserbotAuthError("Не удалось получить профиль после входа")
         session_string = client.session.save()
-    except HTTPException:
+    except TelegramUserbotAuthError:
         raise
     except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Не удалось подтвердить код Telegram: {exc}",
-        ) from exc
+        raise TelegramUserbotAuthError(f"Не удалось подтвердить код Telegram: {exc}") from exc
     finally:
         await client.disconnect()
 
@@ -505,7 +451,6 @@ async def verify_account_sms(
         automation_id,
         auth_id=auth_id,
         session_string=session_string,
-        assign_class=assign_class,
         me=profile,
         preferred_proxy_id=proxy_id,
     )

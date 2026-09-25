@@ -134,7 +134,9 @@ def _is_active_hour(config: dict) -> bool:
     activity_hours = config.get("activity_hours") or []
     if not activity_hours:
         return True
-    hour = datetime.now(timezone.utc).hour
+    # BUG FIX: was using UTC hour – all other scheduling uses Moscow time.
+    from .account_pacing import moscow_now
+    hour = moscow_now().hour
     for window in activity_hours:
         if not isinstance(window, (list, tuple)) or len(window) != 2:
             continue
@@ -410,6 +412,23 @@ async def process_chat_target(
             queued = await queue_actor_for_chat(session, automation_id, chat_target, chosen)
             if queued is None:
                 skipped_speakers.add(chosen.id)
+            else:
+                # Enqueue the discussion reply so it fires once the account joins
+                from .pending_action_service import enqueue_pending_action
+                await enqueue_pending_action(
+                    session,
+                    automation_id=automation_id,
+                    chat_target=chat_target,
+                    account=chosen,
+                    action_type="discussion",
+                    target_id=f"{chat_target.id}:{_thread_id(msg)}",
+                    payload={
+                        "message_id": msg.id,
+                        "message_text": (msg.text or "")[:500],
+                        "chat_title": chat_target.title or "",
+                        "thread_id": _thread_id(msg),
+                    },
+                )
             continue
 
         reply = await _generate_reply(session, automation_id, message_text=msg.text, chat_title=chat_target.title or "")

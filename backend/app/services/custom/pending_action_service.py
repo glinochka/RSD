@@ -9,7 +9,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .account_pacing import account_should_idle, in_account_active_hours, next_wake_at, retry_delay_seconds
+from .account_pacing import account_should_idle, next_target_wake_at, retry_delay_seconds
 from .chat_membership_service import account_is_joined, get_membership, queue_actor_for_chat
 from ...alembic.models import (
     AccountChatMembership,
@@ -227,13 +227,13 @@ async def _accounts_blocking_pending(
             return False, False, None
         account = await session.get(SocialAccount, account_id)
         if account_should_idle(account):
+            wake = next_target_wake_at(account=account)
             nxt = getattr(account, "next_action_at", None)
-            if not in_account_active_hours(account=account):
-                wake = next_wake_at(account=account)
-                if rest_until is None or wake > rest_until:
-                    rest_until = wake
-            elif nxt is not None and (rest_until is None or nxt > rest_until):
-                rest_until = nxt
+            if nxt is not None and nxt > wake:
+                wake = nxt
+            if rest_until is None or wake > rest_until:
+                rest_until = wake
+            return False, False, rest_until
     return True, False, rest_until
 
 
@@ -341,10 +341,17 @@ async def _run_action(session: AsyncSession, action: PendingChatAction) -> bool:
     payload = action.payload or {}
     if action.action_type == "neurocommenting":
         from .chat_inspect_service import ensure_comment_access
+        from .chat_scope import count_target_actions_today
         from .neurocommenting_service import _generate_comment, _send_comment
 
         account = await session.get(SocialAccount, action.social_account_id)
         if not account:
+            return False
+        daily_cap = int(getattr(chat, "max_daily_target_actions", 3) or 3)
+        if await count_target_actions_today(session, action.custom_automation_id, chat.id) >= daily_cap:
+            action.last_error = "chat_daily_target_limit"
+            from .account_pacing import next_target_wake_at
+            _defer_pending(action, until=next_target_wake_at(account=account))
             return False
         probe = await ensure_comment_access(session, chat, account)
         if probe.comments_open is False:
@@ -374,11 +381,17 @@ async def _run_action(session: AsyncSession, action: PendingChatAction) -> bool:
             post_text=post_text,
         )
     if action.action_type == "shilling_post":
+        from .chat_scope import count_target_actions_today
         from .shilling_service import perform_post_shilling
         from ...alembic.models import CustomAutomation
 
         automation = await session.get(CustomAutomation, action.custom_automation_id)
         if not automation:
+            return False
+        daily_cap = int(getattr(chat, "max_daily_target_actions", 3) or 3)
+        if await count_target_actions_today(session, action.custom_automation_id, chat.id) >= daily_cap:
+            action.last_error = "chat_daily_target_limit"
+            _defer_pending(action, until=next_target_wake_at())
             return False
         post_id = int(payload.get("post_id") or str(action.target_id).rsplit(":", 1)[-1])
         result = await perform_post_shilling(
@@ -419,6 +432,61 @@ async def _run_action(session: AsyncSession, action: PendingChatAction) -> bool:
             session, action.custom_automation_id, message, classification
         )
     if action.action_type == "discussion":
-        return True
+        # Previously a silent no-op.  Now we actually send the queued reply.
+        from pathlib import Path
+        from .discussion_service import _generate_reply, _send_reply
+        from .telegram_account_client import TelegramAccountClient
+        from .telegram_invite import chat_entity_key
+        from .account_pacing import account_humanization_should_idle  # discussion is a target action
+        from .account_pacing import account_should_idle
+        from ...config import settings
+
+        account = await session.get(SocialAccount, action.social_account_id)
+        if not account or not account.is_active or account.is_banned:
+            return False
+        if account_should_idle(account):
+            return False
+
+        message_id = int(payload.get("message_id") or 0)
+        message_text = str(payload.get("message_text") or "")
+        chat_title = str(payload.get("chat_title") or "")
+        if not message_id:
+            logger.warning("Discussion pending action %s missing message_id", action.id)
+            return False
+
+        session_path = Path(settings.MEDIA_ROOT).resolve() / (account.session_file_path or "")
+        if not session_path.exists():
+            return False
+
+        reply_text = await _generate_reply(
+            session,
+            action.custom_automation_id,
+            message_text=message_text,
+            chat_title=chat_title,
+        )
+        if not reply_text:
+            return False
+
+        # Build a minimal message-like object so _send_reply can .id it
+        class _MinimalMsg:
+            id = message_id
+            text = message_text
+            sender = None
+            reply_to_msg_id = None
+            reply_to = None
+
+        try:
+            return await _send_reply(
+                session,
+                action.custom_automation_id,
+                chat,
+                account,
+                _MinimalMsg(),
+                reply_text,
+            )
+        except Exception as exc:
+            logger.warning("Discussion pending _run_action failed: %s", exc)
+            return False
+
     logger.warning("Unknown pending action type %s", action.action_type)
     return False

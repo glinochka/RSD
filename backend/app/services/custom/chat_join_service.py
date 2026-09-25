@@ -27,7 +27,7 @@ from .chat_membership_service import (
     retire_reader_and_replace,
     sync_chat_join_status,
 )
-from .account_pacing import farm_overlap_active_hours
+from .account_pacing import account_membership_should_idle, farm_overlap_active_hours
 from .chat_scope import apply_entity_metadata, is_lab_chat, is_user_peer, unwrap_telegram_chat
 from .chat_target_dedup import find_existing_chat_target
 from .rotation_service import select_account_for_action
@@ -613,6 +613,8 @@ async def join_next_membership(
     account = await session.get(SocialAccount, membership.social_account_id)
     if not chat_target or not account:
         return {"status": "skipped", "reason": "missing_entities"}
+    if account_membership_should_idle(account):
+        return {"status": "skipped", "reason": "account_idle"}
 
     membership.join_status = ChatJoinStatus.JOINING.value
     membership.updated_at = _utc_now()
@@ -933,7 +935,13 @@ async def join_pending_chats(
         return []
     pairs = max_pairs if max_pairs is not None else (MAX_JOINS_PER_TICK if rate_limit else 10_000)
     results: list[dict[str, Any]] = []
-    used_accounts: set[int] = set()
+    from .rotation_service import list_alive_session_accounts
+
+    used_accounts: set[int] = {
+        account.id
+        for account in await list_alive_session_accounts(session, automation_id)
+        if account_membership_should_idle(account)
+    }
     for _ in range(pairs):
         outcome = await join_next_membership(
             session,

@@ -6,7 +6,6 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.models import (
-    AccountClass,
     AutomationActionLog,
     ChatTarget,
     CustomAutomation,
@@ -134,18 +133,6 @@ async def _account_stats(session: AsyncSession, automation_id: int) -> dict[str,
         )
     )
 
-    class_counts = {}
-    for cls in AccountClass:
-        count = await session.scalar(
-            select(func.count(SocialAccount.id)).join(
-                PoolAccount, PoolAccount.social_account_id == SocialAccount.id
-            ).where(
-                PoolAccount.custom_automation_id == automation_id,
-                SocialAccount.account_class == cls.value,
-            )
-        )
-        class_counts[cls.value] = count or 0
-
     return {
         "total": total or 0,
         "active": active or 0,
@@ -153,7 +140,7 @@ async def _account_stats(session: AsyncSession, automation_id: int) -> dict[str,
         "revoked": revoked or 0,
         "spamblocked": spamblocked or 0,
         "frozen": frozen or 0,
-        "by_class": class_counts,
+        "by_class": {},
     }
 
 

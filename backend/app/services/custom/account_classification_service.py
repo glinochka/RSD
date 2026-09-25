@@ -1,19 +1,21 @@
-"""Heuristic classification for Telegram accounts."""
-from ...alembic.models import AccountClass
+"""Heuristic classification for Telegram accounts.
+
+Account classes are no longer used for gating.  This module only computes
+risk / trust / activity scores that influence rotation weighting.
+"""
 
 
 def classify_account(info: dict | None) -> dict:
-    """Return risk/trust scores and recommended account class.
+    """Return risk/trust/activity scores.
 
-    If ``info`` is None (Telegram check failed), the account gets the safest
-    low-trust class and can be manually reviewed later.
+    If ``info`` is None (Telegram check failed), the account gets low trust
+    and can be manually reviewed later.
     """
     if not info:
         return {
             "risk_score": 80.0,
             "trust_score": 20.0,
-            "account_class": AccountClass.ONE_DAY.value,
-            "recommended_class": AccountClass.ONE_DAY.value,
+            "activity_score": 0.0,
             "reason": "no_telegram_data",
         }
 
@@ -35,18 +37,11 @@ def classify_account(info: dict | None) -> dict:
         risk += 5.0
 
     trust = max(0.0, 100.0 - risk)
-
-    if dialogs >= 50 and has_avatar and has_bio:
-        cls = AccountClass.TRUSTED.value
-    elif dialogs >= 20 and has_avatar:
-        cls = AccountClass.MID.value
-    else:
-        cls = AccountClass.ONE_DAY.value
+    activity = min(100.0, dialogs * 0.5 + (10 if has_avatar else 0) + (5 if has_bio else 0) + (10 if premium else 0))
 
     return {
         "risk_score": round(risk, 2),
         "trust_score": round(trust, 2),
-        "account_class": cls,
-        "recommended_class": cls,
+        "activity_score": round(activity, 2),
         "reason": "telegram_data",
     }

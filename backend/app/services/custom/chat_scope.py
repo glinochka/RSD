@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.models import (
@@ -20,6 +20,7 @@ from .telegram_invite import TelegramChatRefError, parse_telegram_chat_ref
 
 CHANNEL_TYPES = {"channel", "broadcast"}
 SHILLING_ACTIONS = ("shilling_chat", "shilling_post")
+TARGET_ACTIONS = ("neurocommenting", "shilling_chat", "shilling_post")
 
 
 def is_lab_chat(chat_target: ChatTarget) -> bool:
@@ -176,6 +177,35 @@ async def load_own_sender_keys(session: AsyncSession, automation_id: int) -> set
         if account.phone_number:
             keys.add(account.phone_number.strip())
     return keys
+
+
+async def count_target_actions_today(
+    session: AsyncSession,
+    automation_id: int,
+    chat_target_id: int,
+    *,
+    now: datetime | None = None,
+) -> int:
+    """How many neuro/shill actions succeeded in this chat today (Moscow)."""
+    from datetime import timedelta
+
+    from .rotation_service import moscow_day_start_utc_naive
+
+    start = moscow_day_start_utc_naive()
+    chat_id = str(chat_target_id)
+    count = await session.scalar(
+        select(func.count(AutomationActionLog.id)).where(
+            AutomationActionLog.custom_automation_id == automation_id,
+            AutomationActionLog.action_type.in_(TARGET_ACTIONS),
+            AutomationActionLog.result == "success",
+            or_(
+                AutomationActionLog.target_id == chat_id,
+                AutomationActionLog.target_id.like(f"{chat_target_id}:%"),
+            ),
+            AutomationActionLog.created_at >= start,
+        )
+    )
+    return int(count or 0)
 
 
 async def load_shilling_message_ids(

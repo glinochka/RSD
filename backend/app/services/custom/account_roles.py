@@ -1,4 +1,9 @@
-"""Account function (role) assignment for /custom pool accounts."""
+"""Account function (role) assignment for /custom pool accounts.
+
+Roles are the ONLY gate now — AccountClass has been removed from action
+gating.  Each PoolAccount has a ``roles`` list; the automation UI toggles
+those roles directly.  No class upgrade/downgrade logic is required.
+"""
 from __future__ import annotations
 
 from ...alembic.models import AccountClass, AccountRole, PoolAccount, SocialAccount
@@ -70,7 +75,16 @@ def default_roles_for_class(account_class: str | None) -> list[str]:
 
 
 def effective_roles(pool_account: PoolAccount | None, social: SocialAccount | None = None) -> set[str]:
-    return set(normalize_roles(getattr(pool_account, "roles", None) if pool_account is not None else None))
+    """Roles from the pool row, with a class fallback so empty lists stay usable."""
+    roles = normalize_roles(getattr(pool_account, "roles", None) if pool_account is not None else None)
+    if roles:
+        return set(roles)
+    assigned = None
+    if pool_account is not None:
+        assigned = getattr(pool_account, "assigned_class", None)
+    if not assigned and social is not None:
+        assigned = getattr(social, "account_class", None)
+    return set(normalize_roles(default_roles_for_class(assigned)))
 
 
 def can_ask_shilling(roles: set[str] | list[str] | None) -> bool:
@@ -94,6 +108,7 @@ def shilling_pair_ready(role_sets: list[set[str]] | list[list[str]]) -> bool:
 
 
 def is_warmup_blocked(pool_account: PoolAccount | None, action_type: str) -> bool:
+    """Warmup still blocks target actions.  Inspect/prepare_join/discovery stay open."""
     if action_type in WARMUP_OPEN_ACTIONS:
         return False
     status = (getattr(pool_account, "warmup_status", None) or "idle").strip().lower()
@@ -113,6 +128,11 @@ def account_matches_action(
     social: SocialAccount | None,
     action_type: str,
 ) -> bool:
+    """Return True if the pool account is allowed to perform ``action_type``.
+
+    Gating is role-only now.  Warmup status is still checked because accounts
+    in warmup must not do target actions.
+    """
     if is_warmup_blocked(pool_account, action_type):
         return False
     if action_type in WARMUP_OPEN_ACTIONS:

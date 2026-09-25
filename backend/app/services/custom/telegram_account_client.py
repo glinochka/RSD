@@ -1,4 +1,25 @@
-"""Telegram client wrapper for checking a single .session account."""
+"""Telegram client wrapper for checking a single .session account.
+
+⚠️  CRITICAL – IP / session binding rule (READ BEFORE TOUCHING THIS FILE):
+    A Telethon .session file contains an auth_key that was negotiated with
+    Telegram's MTProto servers from a specific IP address.
+
+    If the SAME session file is later connected from a DIFFERENT IP address
+    (e.g. you swap the proxy, change the VPN exit node, or log in from
+    another server), Telegram will immediately revoke the key and raise
+    AuthKeyDuplicatedError / "used under two different IPs".  The account is
+    NOT banned – but the session is dead and you will have re-login via QR/SMS.
+
+    Rules to follow:
+      1. Never change the proxy assigned to an account after first login.
+      2. Never copy a .session file to a different machine / container that
+         uses a different outbound IP without also migrating the proxy config.
+      3. Never run the same .session from two workers simultaneously
+         (the per-session asyncio.Lock in _lock_for_session prevents this
+          within one process, but not across separate containers/servers).
+      4. If you must change a proxy, log the account out first (revoke the
+         session via Telegram settings), then re-login from the new IP.
+"""
 import asyncio
 import io
 import random
@@ -693,8 +714,16 @@ class TelegramAccountClient:
     async def check_spamblock(self, *, force: bool = False) -> dict[str, Any]:
         """Ask @SpamBot whether the account has a global DM spamblock.
 
-        Prefer reading an existing dialog. `/start` only on a forced check or
-        when the history is empty — never as a 6-hour heartbeat.
+        Strategy (most human-like, least detectable):
+          1. Always try to read the existing SpamBot dialog history first.
+          2. If history exists → return result WITHOUT sending /start.
+          3. Only send /start when force=True (explicit admin request) or the
+             history is genuinely empty (first-ever check on a fresh account).
+
+        DO NOT call this with force=True on a schedule/heartbeat.  Automated
+        /start commands are a known detection signal for Telegram anti-bot.
+        The account_health_worker already gates /start behind a 35 % random
+        roll + 7-day minimum interval.
         """
         from telethon.errors import PeerFloodError
 

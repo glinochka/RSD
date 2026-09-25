@@ -313,14 +313,12 @@ class AccountBulkClassifyResponse(BaseModel):
 
 
 class AccountClassUpdate(BaseModel):
-    assigned_class: Optional[str] = Field(default=None, min_length=1, max_length=32)
     roles: Optional[list[str]] = None
     display_name: Optional[str] = Field(default=None, min_length=1, max_length=128)
     bio: Optional[str] = Field(default=None, max_length=140)
 
 
 class AccountQrStartRequest(BaseModel):
-    assign_class: str = Field(default="one_day", min_length=1, max_length=32)
     proxy_id: int | None = None
     proxy_line: str | None = Field(default=None, max_length=512)
 
@@ -348,7 +346,6 @@ class AccountQrVerify2faRequest(BaseModel):
 
 class AccountSmsRequest(BaseModel):
     phone_number: str = Field(..., min_length=5, max_length=32)
-    assign_class: str = Field(default="one_day", min_length=1, max_length=32)
     proxy_id: int | None = None
     proxy_line: str | None = Field(default=None, max_length=512)
 
@@ -365,7 +362,6 @@ class AccountSmsStartResponse(BaseModel):
 
 class AccountBulkUpdateProfilesRequest(BaseModel):
     account_ids: list[int] = []
-    account_class: str | None = None
     status: str | None = None
     bio_template: str = ""
     generate_unique: bool = False
@@ -388,8 +384,6 @@ class AccountResponse(BaseModel):
     bio: Optional[str] = None
     avatar_url: Optional[str] = None
     avatar_file_path: Optional[str] = None
-    account_class: str
-    assigned_class: str
     roles: list[str] = Field(default_factory=list)
     warmup_status: str = "idle"
     warmup_started_at: Optional[datetime] = None
@@ -474,7 +468,7 @@ class AccountSetupTemplatesResponse(BaseModel):
 
 
 class AccountSetupTemplateUpdate(BaseModel):
-    account_class: str = Field(..., min_length=1, max_length=32)
+    account_class: str = Field(default="*", min_length=1, max_length=32)
     bio_template: str = ""
     generate_unique: bool = False
 

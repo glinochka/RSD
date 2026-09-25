@@ -446,6 +446,23 @@ async def process_unprocessed_messages(
                 continue
             classification = await _classify_message(session, automation_id, chat_message.text)
             if classification["is_lead"] and classification["confidence"] >= confidence_threshold:
+                # Human-behaviour guard: wait 1-4 min after the message was sent before DMing.
+                # An immediate DM looks robotic and is easily detected by anti-spam systems.
+                from .human_dm import stable_reply_delay_seconds
+                sent_at = chat_message.sent_at
+                if sent_at is not None:
+                    if sent_at.tzinfo is not None:
+                        import datetime as _dt
+                        sent_at = sent_at.astimezone(_dt.timezone.utc).replace(tzinfo=None)
+                    age_secs = (_utc_now() - sent_at).total_seconds()
+                    required_delay = stable_reply_delay_seconds(str(chat_message.id))
+                    if age_secs < required_delay:
+                        # Not ready yet – skip this tick, will be picked up next pass
+                        logger.debug(
+                            "Chat monitoring DM for message %s not ready yet (age %.0fs < required %.0fs)",
+                            chat_message.id, age_secs, required_delay,
+                        )
+                        continue
                 dm_account = await select_account_for_action(session, automation_id, "dm", consume_quota=False)
                 if not dm_account:
                     logger.warning("No trusted account to send DM for message %s", chat_message.id)

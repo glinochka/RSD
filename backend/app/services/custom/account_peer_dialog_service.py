@@ -12,7 +12,8 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .account_pacing import account_should_idle
+from .account_pacing import account_humanization_should_idle as account_should_idle
+from .rotation_service import record_successful_humanization
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import execute_with_telegram_retry
 from ...alembic.models import CustomAccountPeerDialog, CustomAutomation, PoolAccount, SocialAccount
@@ -325,6 +326,7 @@ async def _advance_dialog(
     dialog.last_text = text
     dialog.messages_today = int(dialog.messages_today or 0) + 1
     dialog.status = "active"
+    record_successful_humanization(sender)
     dialog.day_key = moscow_day_key()
     if dialog.messages_today >= int(dialog.daily_target or DAILY_MIN_MESSAGES):
         dialog.status = "idle"

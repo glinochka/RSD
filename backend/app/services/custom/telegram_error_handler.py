@@ -7,7 +7,24 @@ from typing import Any, Awaitable, Callable
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.models import AutomationActionLog, SocialAccount
-from .account_pacing import action_uses_write_rest, schedule_account_rest, schedule_account_retry
+from .account_pacing import (
+    action_uses_target_rest,
+    action_uses_humanization_rest,
+    schedule_account_target_rest,
+    schedule_account_humanization_rest,
+    schedule_account_retry,
+    # Legacy alias kept for external callers
+    action_uses_write_rest,
+)
+
+
+def _schedule_rest_for_action(account: "SocialAccount", action_type: str) -> None:
+    """Route to target (40-70 min) or humanization (15-30 min) rest queue."""
+    if action_uses_humanization_rest(action_type) or action_type == "account_warmup":
+        schedule_account_humanization_rest(account)
+    else:
+        # Target actions (neurocommenting, shilling, discussion, dm …)
+        schedule_account_target_rest(account)
 
 logger = logging.getLogger(__name__)
 
@@ -416,7 +433,7 @@ async def execute_with_telegram_retry(
         try:
             result = await coro_fn()
             if apply_write_rest:
-                schedule_account_rest(account)
+                _schedule_rest_for_action(account, action_type)
             return result
         except Exception as exc:
             last_exc = exc

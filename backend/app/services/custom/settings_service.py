@@ -1,30 +1,15 @@
-"""Settings validation and feature-flag helpers for /custom automations."""
+"""Settings validation and feature-flag helpers for /custom automations.
+
+Gating is role-based now.  Account classes are no longer used.
+"""
 from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...alembic.models import AccountClass, AccountRole, CustomAutomation, CustomAutomationCredential, PoolAccount, SocialAccount
+from ...alembic.models import AccountRole, CustomAutomation, CustomAutomationCredential, PoolAccount, SocialAccount
 from .account_roles import ACCOUNT_ROLES, effective_roles, has_shilling_role, shilling_pair_ready
 from .lead_keywords import normalize_lead_keywords
-
-
-async def count_accounts_by_class(session: AsyncSession, automation_id: int) -> dict[str, int]:
-    result = await session.execute(
-        select(SocialAccount.account_class, func.count(SocialAccount.id))
-        .join(PoolAccount, PoolAccount.social_account_id == SocialAccount.id)
-        .where(
-            PoolAccount.custom_automation_id == automation_id,
-            SocialAccount.is_active.is_(True),
-            SocialAccount.is_banned.is_(False),
-            SocialAccount.is_frozen.is_(False),
-        )
-        .group_by(SocialAccount.account_class)
-    )
-    counts = {cls.value: 0 for cls in AccountClass}
-    for account_class, count in result.all():
-        counts[account_class] = count
-    return counts
 
 
 async def _live_pool_accounts(session: AsyncSession, automation_id: int) -> list[tuple[PoolAccount, SocialAccount]]:
@@ -69,15 +54,13 @@ async def validate_settings(
     warnings: list[str] = []
     can_enable: dict[str, bool] = {}
 
-    counts = await count_accounts_by_class(session, automation.id)
     live_accounts = await _live_pool_accounts(session, automation.id)
     role_sets = [effective_roles(pool_account, social) for pool_account, social in live_accounts]
     role_counts = {role: 0 for role in ACCOUNT_ROLES}
     for roles in role_sets:
         for role in roles:
             role_counts[role] = role_counts.get(role, 0) + 1
-    total_active = sum(counts.values())
-    trusted = counts.get(AccountClass.TRUSTED.value, 0)
+    total_active = len(live_accounts)
     shilling = sum(1 for roles in role_sets if has_shilling_role(roles))
     intercept = role_counts.get(AccountRole.LEAD_INTERCEPT.value, 0)
     neuro = role_counts.get(AccountRole.NEUROCOMMENTING.value, 0)
@@ -94,7 +77,7 @@ async def validate_settings(
 
     if is_dmp_notify_pipeline(automation):
         qualify = qualification_enabled(automation)
-        can_enable["dmp_one"] = True if not qualify else trusted >= 1
+        can_enable["dmp_one"] = True if not qualify else dmp >= 1
         if not (automation.telegram_bot_token_enc or "").strip():
             warnings.append("Укажите API-ключ Telegram-бота.")
         if not (automation.google_sheets_spreadsheet_id or "").strip():
@@ -109,12 +92,12 @@ async def validate_settings(
         ) or 0
         if credential_count == 0:
             warnings.append("Создайте логин и пароль клиента — бот спрашивает их перед уведомлениями.")
-        if qualify and trusted < 1:
-            warnings.append("Квалификация включена, но нет активного trusted-аккаунта.")
+        if qualify and dmp < 1:
+            warnings.append("Квалификация включена, но нет активного DMP-аккаунта.")
         return {
             "warnings": warnings,
             "can_enable": can_enable,
-            "counts": counts,
+            "counts": role_counts,
         }
 
     if automation.is_chat_monitoring_enabled and not can_enable["chat_monitoring"]:
@@ -140,7 +123,7 @@ async def validate_settings(
     if automation.is_dmp_one_enabled and not can_enable["dmp_one"]:
         warnings.append(
             "DMP.one включён, но нет аккаунта с функцией DMP для исходящих ЛС. "
-            "Назначьте функцию DMP или отключите модуль."
+            "Назначите функцию DMP или отключите модуль."
         )
     if automation.is_shilling_enabled and not can_enable["shilling"]:
         warnings.append(
@@ -173,7 +156,7 @@ async def validate_settings(
     return {
         "warnings": warnings,
         "can_enable": can_enable,
-        "counts": counts,
+        "counts": role_counts,
     }
 
 

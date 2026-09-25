@@ -209,7 +209,6 @@ from ..utils.security import verify_password
 from ..alembic.database import async_session_maker
 from ..config import settings
 from ..alembic.models import (
-    AccountClass,
     AccountPool,
     ChatDiscoveryTask,
     ChatImportJob,
@@ -493,8 +492,6 @@ def _account_response(
         avatar_url=social_account.avatar_url
         or (f"/media/{social_account.avatar_file_path}" if social_account.avatar_file_path else None),
         avatar_file_path=social_account.avatar_file_path,
-        account_class=social_account.account_class,
-        assigned_class=pool_account.assigned_class,
         roles=normalize_roles(pool_account.roles),
         warmup_status=pool_account.warmup_status or "idle",
         warmup_started_at=pool_account.warmup_started_at,
@@ -554,7 +551,6 @@ def _queue_account_health_check(background_tasks: BackgroundTasks, automation_id
 async def list_accounts(
     automation_id: int,
     status: Optional[str] = None,
-    account_class: Optional[str] = None,
     role: Optional[str] = None,
     search: Optional[str] = None,
     limit: int = 50,
@@ -576,8 +572,6 @@ async def list_accounts(
             .join(SocialAccount, PoolAccount.social_account_id == SocialAccount.id)
             .where(PoolAccount.account_pool_id == pool.id)
         )
-        if account_class:
-            stmt = stmt.where(PoolAccount.assigned_class == account_class)
         if role:
             from sqlalchemy import String, cast
 
@@ -761,7 +755,6 @@ async def start_qr_account(
             result = await start_account_qr(
                 session,
                 automation_id,
-                assign_class=body.assign_class,
                 proxy_id=body.proxy_id,
                 proxy_line=body.proxy_line,
             )
@@ -850,7 +843,6 @@ async def sms_account_request(
                 session,
                 automation_id,
                 phone_number=payload.phone_number,
-                assign_class=payload.assign_class,
                 proxy_id=payload.proxy_id,
                 proxy_line=payload.proxy_line,
             )
@@ -1105,7 +1097,6 @@ async def bulk_upload_accounts(
     automation_id: int,
     background_tasks: BackgroundTasks,
     archive: UploadFile = File(...),
-    assign_class: str = Form(AccountClass.ONE_DAY.value),
     proxy_id: int | None = Form(default=None),
     proxy_line: str | None = Form(default=None),
     automation: CustomAutomation = Depends(get_current_custom_automation),
@@ -1127,7 +1118,6 @@ async def bulk_upload_accounts(
             session,
             automation_id,
             archive,
-            assign_class,
             preferred_proxy_id=preferred_proxy_id,
         )
     _queue_account_health_check(background_tasks, automation_id)
@@ -1249,8 +1239,6 @@ async def bulk_update_profiles(
         )
         if data.account_ids:
             stmt = stmt.where(SocialAccount.id.in_(data.account_ids))
-        if data.account_class:
-            stmt = stmt.where(PoolAccount.assigned_class == data.account_class)
         if data.status == "loaded":
             stmt = stmt.where(SocialAccount.session_file_path.isnot(None))
         elif data.status == "empty":
@@ -1270,7 +1258,6 @@ async def bulk_update_profiles(
             if auto_row is not None:
                 auto_row.account_setup_templates = merge_setup_template(
                     auto_row.account_setup_templates,
-                    data.account_class,
                     bio_template=data.bio_template,
                     generate_unique=data.generate_unique,
                     avatar_relative_path=avatar_relative_path,
@@ -1299,7 +1286,7 @@ async def update_account(
     payload: AccountClassUpdate,
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
-    if payload.assigned_class is None and payload.roles is None and payload.display_name is None and payload.bio is None:
+    if payload.roles is None and payload.display_name is None and payload.bio is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nothing to update")
     async with async_session_maker() as session:
         row = await session.execute(
@@ -1316,10 +1303,6 @@ async def update_account(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
 
         pool_account, social_account = result
-        if payload.assigned_class is not None:
-            pool_account.assigned_class = payload.assigned_class
-            social_account.account_class = payload.assigned_class
-            social_account.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         if payload.roles is not None:
             pool_account.roles = normalize_roles(payload.roles)
         if payload.display_name is not None:

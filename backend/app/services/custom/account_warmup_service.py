@@ -1,8 +1,17 @@
-"""Warm up newly uploaded Telegram accounts against trusted usernames."""
+"""Warm up newly uploaded Telegram accounts against trusted usernames.
+
+Uses the HUMANIZATION rest queue (next_humanization_at, 8-15 min) so warmup DMs
+never block target actions (neurocommenting, shilling, dm).
+
+Warmup messages are AI-varied via LLM so each send slightly differs from the
+template — avoids identical fingerprints across the account pool.
+"""
 from __future__ import annotations
 
+import json
 import logging
 import random
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -10,18 +19,25 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .account_pacing import account_should_idle
-from .rotation_service import record_successful_send
+from .account_pacing import account_humanization_should_idle, schedule_account_humanization_rest
+from .rotation_service import record_successful_humanization
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import execute_with_telegram_retry
 from ...alembic.models import CustomAutomation, PoolAccount, SocialAccount
+from ...services.ai_authoring import ai_client
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_WARMUP_MESSAGES = ["Привет", "Как дела?", "Что нового?"]
 WARMUP_STATUSES = {"idle", "rest", "warming", "complete"}
-WARMUP_GAP_MIN_SECONDS = 60 * 60
-WARMUP_GAP_MAX_SECONDS = 2 * 60 * 60
+WARMUP_GAP_MIN_SECONDS = 60 * 60      # 1 h
+WARMUP_GAP_MAX_SECONDS = 2 * 60 * 60  # 2 h
+
+# AI variation prompt – keeps meaning but changes wording slightly
+_VARY_PROMPT = """Перефразируй следующее сообщение чата. Сохрани смысл, но измени формулировку немного.
+Используй разговорный стиль, без эмодзи, без лишних слов. Ответь ТОЛЬКО перефразированным текстом.
+
+Сообщение: {text}"""
 
 
 def _utc_now() -> datetime:
@@ -71,6 +87,29 @@ def normalize_warmup_messages(raw) -> list[str]:
     return messages[:3]
 
 
+async def _vary_message(text: str) -> str:
+    """Ask the LLM to rephrase the warmup message slightly.
+
+    Falls back to the original if the call fails so warmup is never blocked.
+    """
+    try:
+        prompt = _VARY_PROMPT.replace("{text}", text)
+        response = await ai_client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=150,
+            temperature=0.85,
+        )
+        varied = (response.choices[0].message.content or "").strip()
+        # Safety: if LLM returned JSON or empty, fall back
+        if not varied or len(varied) > 500 or varied.startswith("{"):
+            return text
+        return varied[:400]
+    except Exception as exc:
+        logger.debug("Warmup message variation failed: %s", exc)
+        return text
+
+
 def enroll_pool_account(automation: CustomAutomation | None, pool_account: PoolAccount) -> bool:
     if not automation or not automation.account_warmup_enabled:
         return False
@@ -91,7 +130,7 @@ def warmup_gap_seconds() -> int:
 
 
 def _due_for_dialog(pool_account: PoolAccount) -> bool:
-    """Backward-compatible alias used by tests: first/next warmup send is due."""
+    """Backward-compatible alias used by tests."""
     return _due_for_next_message(pool_account)
 
 
@@ -130,19 +169,25 @@ async def _send_one_message(
     if not usernames:
         return {"status": "skipped", "reason": "no_usernames"}
     peer = random.choice(usernames)
+
+    # AI-vary the warmup text so each send looks slightly different
+    varied_text = await _vary_message(text)
+
     try:
         async with TelegramAccountClient.for_account(account) as client:
             await execute_with_telegram_retry(
                 session,
                 account,
-                lambda: client.human_reply(peer, text, skip_read=first),
-                action_type="account_warmup",
+                lambda: client.human_reply(peer, varied_text, skip_read=first),
+                action_type="account_warmup",  # → humanization rest queue
                 target_id=peer,
                 target_type="warmup",
-                payload={"text": text, "username": peer},
+                payload={"text": varied_text, "original_text": text, "username": peer},
                 automation_id=automation.id,
             )
-        record_successful_send(account)
+        record_successful_humanization(account)
+        # Warmup uses the humanization rest (15-30 min), independent of target actions
+        schedule_account_humanization_rest(account)
         await session.commit()
     except Exception as exc:
         logger.warning("Account warmup message failed for %s: %s", account.id, exc)
@@ -161,7 +206,7 @@ async def _send_dialog(
     delay: bool = True,
     message_index: int = 0,
 ) -> dict[str, Any]:
-    """Send the next warmup line only. `delay` is kept for old tests and ignored."""
+    """Send the next warmup line only."""
     if not messages:
         return {"status": "skipped", "reason": "no_messages"}
     index = max(0, min(int(message_index), len(messages) - 1))
@@ -199,7 +244,8 @@ async def run_account_warmup_pass(automation_id: int) -> dict[str, Any]:
         for pool_account, social in rows:
             if not social.is_active or social.is_banned or getattr(social, "is_frozen", False) or not social.session_file_path:
                 continue
-            if account_should_idle(social):
+            # Use HUMANIZATION idle check – target-action cooldown must NOT block warmup
+            if account_humanization_should_idle(social):
                 continue
             if not _due_for_next_message(pool_account):
                 continue

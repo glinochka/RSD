@@ -1,4 +1,8 @@
-"""After mass session upload: style accounts by class templates and join loaded chats."""
+"""After mass session upload: style accounts by setup templates and join loaded chats.
+
+Account-class keys are no longer used; the default "*" template applies to all
+uploaded accounts.
+"""
 from __future__ import annotations
 
 import logging
@@ -6,7 +10,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ...alembic.database import async_session_maker
-from ...alembic.models import AccountClass, CustomAutomation
+from ...alembic.models import CustomAutomation
 from .account_pacing import profile_edit_allowed
 from .bulk_profile_service import BulkProfileUpdateWorker
 from .chat_join_service import join_loaded_chats_for_accounts
@@ -48,20 +52,19 @@ def mark_prepare_running(automation_id: int) -> dict[str, Any]:
 
 def merge_setup_template(
     templates: dict[str, Any] | None,
-    account_class: str | None,
     *,
     bio_template: str = "",
     generate_unique: bool = False,
     avatar_relative_path: str | None = None,
 ) -> dict[str, Any]:
+    """Store the default template under the universal "*" key."""
     data = dict(templates or {})
-    key = (account_class or "*").strip() or "*"
-    prev = dict(data.get(key) or {})
+    prev = dict(data.get("*") or {})
     prev["bio_template"] = bio_template
     prev["generate_unique"] = bool(generate_unique)
     if avatar_relative_path:
         prev["avatar_relative_path"] = avatar_relative_path
-    data[key] = prev
+    data["*"] = prev
     return data
 
 
@@ -99,34 +102,25 @@ async def prepare_accounts(automation_id: int) -> dict[str, Any]:
                     )
             await session.commit()
             default_tmpl = dict(templates.get("*") or {})
-            class_ids: dict[str, list[int]] = {item.value: [] for item in AccountClass}
-            for account in alive:
-                key = account.account_class or AccountClass.ONE_DAY.value
-                if not profile_edit_allowed(account):
-                    continue
-                class_ids.setdefault(key, []).append(account.id)
+            account_ids = [
+                account.id for account in alive if profile_edit_allowed(account)
+            ]
 
-        for class_name, account_ids in class_ids.items():
-            if not account_ids:
-                continue
-            tmpl = dict(templates.get(class_name) or default_tmpl or {})
-            if not tmpl:
-                continue
-            bio = str(tmpl.get("bio_template") or "")
-            generate_unique = bool(tmpl.get("generate_unique"))
-            avatar = tmpl.get("avatar_relative_path")
-            if not bio and not generate_unique and not avatar:
-                continue
-            results = await worker.process_accounts(
-                automation_id,
-                account_ids,
-                avatar_relative_path=avatar,
-                bio_template=bio,
-                generate_unique=generate_unique,
-            )
-            state["profiles_done"] = int(state.get("profiles_done") or 0) + sum(
-                1 for row in results if row.get("status") == "success"
-            )
+        if account_ids:
+            bio = str(default_tmpl.get("bio_template") or "")
+            generate_unique = bool(default_tmpl.get("generate_unique"))
+            avatar = default_tmpl.get("avatar_relative_path")
+            if bio or generate_unique or avatar:
+                results = await worker.process_accounts(
+                    automation_id,
+                    account_ids,
+                    avatar_relative_path=avatar,
+                    bio_template=bio,
+                    generate_unique=generate_unique,
+                )
+                state["profiles_done"] = int(state.get("profiles_done") or 0) + sum(
+                    1 for row in results if row.get("status") == "success"
+                )
 
         async with async_session_maker() as session:
             join_result = await join_loaded_chats_for_accounts(session, automation_id)

@@ -29,6 +29,9 @@ from .inbound_dm_service import run_inbound_dm_pass
 from .lead_warmup_service import run_lead_warmup_pass
 from .account_warmup_service import run_account_warmup_pass
 from .account_peer_dialog_service import run_peer_dialog_pass
+from .account_idle_browse_service import run_idle_browse_pass
+from .chat_moderation_service import run_moderation_probe_pass
+from .chat_rotation_service import run_chat_rotation_pass
 from .session_hygiene_service import run_session_hygiene_for_automation
 from .shilling_service import run_shilling_pass
 from .telegram_notify_bot_service import restore_all_telegram_webhooks, retry_pending_dmp_notifications
@@ -78,6 +81,9 @@ class CustomAutomationScheduler:
             "inbound_dm": settings.CUSTOM_INBOUND_DM_INTERVAL_SECONDS,
             "account_warmup": settings.CUSTOM_ACCOUNT_WARMUP_INTERVAL_SECONDS,
             "peer_dialog": settings.CUSTOM_PEER_DIALOG_INTERVAL_SECONDS,
+            "idle_browse": settings.CUSTOM_IDLE_BROWSE_INTERVAL_SECONDS,
+            "mod_probe": settings.CUSTOM_MOD_PROBE_INTERVAL_SECONDS,
+            "chat_rotation": settings.CUSTOM_CHAT_ROTATION_INTERVAL_SECONDS,
             "session_hygiene": settings.CUSTOM_SESSION_HYGIENE_INTERVAL_SECONDS,
             "test_watch": settings.CUSTOM_TEST_WATCH_INTERVAL_SECONDS,
             "dmp_poll": settings.DMP_ONE_POLL_INTERVAL_SECONDS,
@@ -98,6 +104,9 @@ class CustomAutomationScheduler:
             "inbound_dm": run_inbound_dm_pass,
             "account_warmup": run_account_warmup_pass,
             "peer_dialog": run_peer_dialog_pass,
+            "idle_browse": run_idle_browse_pass,
+            "mod_probe": run_moderation_probe_pass,
+            "chat_rotation": run_chat_rotation_pass,
             "session_hygiene": run_session_hygiene_for_automation,
             "test_watch": run_lab_neurocommenting_pass,
             "dmp_poll": poll_pending_imports,
@@ -130,7 +139,7 @@ class CustomAutomationScheduler:
                 jobs.add("lead_warmup")
             return jobs
 
-        jobs = {"join", "discovery", "account_warmup", "peer_dialog", "inbound_dm", "session_hygiene"}
+        jobs = {"join", "discovery", "account_warmup", "peer_dialog", "idle_browse", "mod_probe", "chat_rotation", "inbound_dm", "session_hygiene"}
         if (getattr(automation, "test_channel_username", None) or "").strip():
             jobs.add("test_watch")
         if automation.is_chat_monitoring_enabled:
