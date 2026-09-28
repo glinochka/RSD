@@ -329,10 +329,9 @@ const customService = {
     return handleResponse(response);
   },
 
-  async bulkUploadAccounts(automationId, file, assignClass = 'one_day', { proxyId, proxyLine } = {}) {
+  async bulkUploadAccounts(automationId, file, { proxyId, proxyLine } = {}) {
     const formData = new FormData();
     formData.append('archive', file);
-    formData.append('assign_class', assignClass);
     const line = (proxyLine || '').trim();
     if (line) {
       formData.append('proxy_line', line);
@@ -466,6 +465,17 @@ const customService = {
     return handleResponse(response);
   },
 
+  async getAccountTelegramCode(automationId, accountId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ACCOUNT_TELEGRAM_CODE(automationId, accountId)}`,
+      {
+        method: 'GET',
+        headers: getAuthHeaders(),
+      },
+    );
+    return handleResponse(response);
+  },
+
   async bulkClassifyAccounts(automationId, accountIds = []) {
     const response = await fetch(
       `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_ACCOUNTS(automationId)}/bulk-classify`,
@@ -478,15 +488,8 @@ const customService = {
     return handleResponse(response);
   },
 
-    async updateAccountClass(automationId, accountId, assignedClass) {
-      return this.updateAccount(automationId, accountId, { assignedClass });
-    },
-
-    async updateAccount(automationId, accountId, { assignedClass, displayName, bio, roles } = {}) {
+    async updateAccount(automationId, accountId, { displayName, bio, roles } = {}) {
       const body = {};
-      if (assignedClass !== undefined) {
-        body.assigned_class = assignedClass;
-      }
       if (displayName !== undefined) {
         body.display_name = displayName;
       }
@@ -1237,14 +1240,13 @@ const customService = {
     return handleResponse(response);
   },
 
-  async bulkUpdateProfiles(automationId, { avatar, accountIds, accountClass, status, bioTemplate, generateUnique, saveAsTemplate }) {
+  async bulkUpdateProfiles(automationId, { avatar, accountIds, status, bioTemplate, generateUnique, saveAsTemplate }) {
     const formData = new FormData();
     if (avatar) {
       formData.append('avatar', avatar);
     }
     const payload = {
       account_ids: accountIds || [],
-      account_class: accountClass || undefined,
       status: status || undefined,
       bio_template: bioTemplate || '',
       generate_unique: Boolean(generateUnique),

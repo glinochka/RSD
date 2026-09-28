@@ -372,6 +372,45 @@
   margin-top: var(--spacing-sm);
 }
 
+.crm-account-footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-xs);
+}
+
+.crm-account-mail {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.crm-account-mail:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.crm-account-mail svg {
+  width: 18px;
+  height: 18px;
+}
+
+.crm-account-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
 .crm-chat {
   display: flex;
   flex-direction: column;

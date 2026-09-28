@@ -25,9 +25,11 @@ ROLE_LABELS = {
 
 ACTION_ROLE = {
     "commenting": AccountRole.NEUROCOMMENTING.value,
+    "neurocommenting": AccountRole.NEUROCOMMENTING.value,
     "dm": AccountRole.LEAD_INTERCEPT.value,
     "dmp_outreach": AccountRole.DMP.value,
     "shilling": AccountRole.SHILLING.value,
+    "shilling_post": AccountRole.SHILLING.value,
     "shilling_question": SHILLING_QUESTION_ROLE,
     "shilling_answer": SHILLING_ANSWER_ROLE,
 }
@@ -75,16 +77,9 @@ def default_roles_for_class(account_class: str | None) -> list[str]:
 
 
 def effective_roles(pool_account: PoolAccount | None, social: SocialAccount | None = None) -> set[str]:
-    """Roles from the pool row, with a class fallback so empty lists stay usable."""
-    roles = normalize_roles(getattr(pool_account, "roles", None) if pool_account is not None else None)
-    if roles:
-        return set(roles)
-    assigned = None
-    if pool_account is not None:
-        assigned = getattr(pool_account, "assigned_class", None)
-    if not assigned and social is not None:
-        assigned = getattr(social, "account_class", None)
-    return set(normalize_roles(default_roles_for_class(assigned)))
+    """Roles from the pool row only. An empty list means the account is silent."""
+    del social
+    return set(normalize_roles(getattr(pool_account, "roles", None) if pool_account is not None else None))
 
 
 def can_ask_shilling(roles: set[str] | list[str] | None) -> bool:
@@ -142,5 +137,7 @@ def account_matches_action(
         return _matches_shilling(roles, action_type)
     required = ACTION_ROLE.get(action_type)
     if required is None:
+        # Unknown / optional actions (discussion) need at least one explicit role.
+        # Empty roles = silent account, do nothing.
         return bool(roles)
     return required in roles

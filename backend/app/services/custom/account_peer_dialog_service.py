@@ -26,6 +26,8 @@ PEER_GAP_MAX_SECONDS = 2 * 60 * 60
 DAILY_MIN_MESSAGES = 5
 DAILY_MAX_MESSAGES = 10
 HISTORY_KEEP = 12
+MAX_PEER_SENDS_PER_PASS = 1
+MAX_PEER_STARTS_PER_PASS = 1
 
 _OPENERS = (
     "Привет, как день?",
@@ -367,6 +369,8 @@ async def run_peer_dialog_pass(automation_id: int) -> dict[str, Any]:
 
         now = _utc_now()
         for dialog in rows:
+            if sent >= MAX_PEER_SENDS_PER_PASS:
+                break
             if dialog.status != "active" or not dialog.next_send_at or dialog.next_send_at > now:
                 continue
             if int(dialog.messages_today or 0) >= int(dialog.daily_target or DAILY_MIN_MESSAGES):
@@ -389,18 +393,25 @@ async def run_peer_dialog_pass(automation_id: int) -> dict[str, Any]:
 
         busy = _busy_account_ids(rows, today)
         free = [account for account in accounts if account.id not in busy]
+        started_this_pass = 0
         for left, right in pair_accounts(free):
+            if started_this_pass >= MAX_PEER_STARTS_PER_PASS:
+                break
+            if left.id in busy or right.id in busy:
+                continue
             dialog = await _get_or_create_dialog(session, automation_id, left, right)
             _reset_dialog_if_new_day(dialog, today)
             if dialog.status == "active":
                 continue
             if int(dialog.messages_today or 0) >= int(dialog.daily_target or DAILY_MIN_MESSAGES):
                 continue
-            # Schedule opener later instead of firing every free pair at once.
             dialog.status = "active"
             dialog.next_sender_id = left.id
             dialog.next_send_at = now + timedelta(seconds=peer_start_delay_seconds())
             dialog.updated_at = _utc_now()
             started += 1
+            started_this_pass += 1
+            busy.add(left.id)
+            busy.add(right.id)
             await session.commit()
     return {"status": "ok", "sent": sent, "started": started}

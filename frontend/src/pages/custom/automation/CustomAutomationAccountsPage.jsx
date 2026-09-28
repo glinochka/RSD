@@ -11,22 +11,7 @@ import { ACCOUNT_ROLE_LABELS, ACCOUNT_ROLE_OPTIONS, WARMUP_STATUS_LABELS, exclus
 import '../../../styles/projectCRMPage.css';
 import '../../../styles/projectSettingsPage.css';
 
-const ACCOUNT_CLASSES = [
-  { value: '', label: 'Все классы' },
-  { value: 'one_day', label: 'Однодневный' },
-  { value: 'mid', label: 'Средний' },
-  { value: 'trusted', label: 'Доверенный' },
-  { value: 'shilling', label: 'Шиллинг' },
-];
-
 const ROLE_FILTERS = [{ value: '', label: 'Все функции' }, ...ACCOUNT_ROLE_OPTIONS];
-
-const CLASS_STATUS = {
-  one_day: 'crm-status--pending',
-  mid: 'crm-status--completed',
-  trusted: 'crm-status--confirmed',
-  shilling: 'crm-status--cancelled',
-};
 
 const STATUSES = [
   { value: '', label: 'Все статусы' },
@@ -51,8 +36,6 @@ const CustomAutomationAccountsPage = () => {
   const [uploadSummary, setUploadSummary] = useState(null);
   const [prepareStatus, setPrepareStatus] = useState(null);
   const [isPreparing, setIsPreparing] = useState(false);
-  const [classifyMessage, setClassifyMessage] = useState(null);
-  const [isClassifying, setIsClassifying] = useState(false);
   const [banStats, setBanStats] = useState(null);
   const [healthCheckMessage, setHealthCheckMessage] = useState(null);
   const [isHealthChecking, setIsHealthChecking] = useState(false);
@@ -66,20 +49,19 @@ const CustomAutomationAccountsPage = () => {
   const [bioDrafts, setBioDrafts] = useState({});
   const [filters, setFilters] = useState({
     status: '',
-    accountClass: '',
     role: '',
     search: '',
   });
   const [poolProxies, setPoolProxies] = useState([]);
   const [uploadProxyId, setUploadProxyId] = useState('');
   const [uploadProxyLine, setUploadProxyLine] = useState('');
+  const [loginCodes, setLoginCodes] = useState({});
 
   const loadAccounts = useCallback(async () => {
     try {
       setIsLoading(true);
       const data = await customService.getAutomationAccounts(id, {
         status: filters.status || undefined,
-        accountClass: filters.accountClass || undefined,
         role: filters.role || undefined,
         search: filters.search || undefined,
         limit: 50,
@@ -93,7 +75,7 @@ const CustomAutomationAccountsPage = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [id, filters.status, filters.accountClass, filters.role, filters.search]);
+  }, [id, filters.status, filters.role, filters.search]);
 
   useEffect(() => {
     loadAccounts();
@@ -250,7 +232,7 @@ const CustomAutomationAccountsPage = () => {
     setUploadSuccess(null);
     setIsUploading(true);
     try {
-      const result = await customService.bulkUploadAccounts(id, file, filters.accountClass || 'one_day', {
+      const result = await customService.bulkUploadAccounts(id, file, {
         proxyId: uploadProxyId,
         proxyLine: uploadProxyLine,
       });
@@ -269,28 +251,6 @@ const CustomAutomationAccountsPage = () => {
       setUploadError(err.message || 'Upload failed');
     } finally {
       setIsUploading(false);
-    }
-  };
-
-  const handleBulkClassify = async () => {
-    setClassifyMessage(null);
-    setIsClassifying(true);
-    try {
-      const result = await customService.bulkClassifyAccounts(id, []);
-      setClassifyMessage(`В очереди на проверку: ${result.queued}. Результат обновится после фоновой проверки.`);
-    } catch (err) {
-      setClassifyMessage(err.message || 'Classification failed');
-    } finally {
-      setIsClassifying(false);
-    }
-  };
-
-  const handleClassChange = async (accountId, assignedClass) => {
-    try {
-      await customService.updateAccountClass(id, accountId, assignedClass);
-      await loadAccounts();
-    } catch (err) {
-      setError(err.message || 'Failed to update class');
     }
   };
 
@@ -382,6 +342,27 @@ const CustomAutomationAccountsPage = () => {
     }
   };
 
+  const handleTelegramCode = async (account) => {
+    setLoginCodes((prev) => ({ ...prev, [account.id]: { loading: true } }));
+    try {
+      const data = await customService.getAccountTelegramCode(id, account.id);
+      setLoginCodes((prev) => ({
+        ...prev,
+        [account.id]: {
+          loading: false,
+          code: data.code || null,
+          sentAt: data.sent_at || null,
+          detail: data.detail || '',
+        },
+      }));
+    } catch (err) {
+      setLoginCodes((prev) => ({
+        ...prev,
+        [account.id]: { loading: false, error: err.message || 'Не удалось прочитать код' },
+      }));
+    }
+  };
+
   const accountStatusMeta = (account) => {
     if (account.is_banned) {
       return { label: 'Бан', className: 'crm-status--cancelled' };
@@ -419,9 +400,6 @@ const CustomAutomationAccountsPage = () => {
           <button type="button" onClick={handleHealthCheck} disabled={isHealthChecking} className="btn btn-outline">
             {isHealthChecking ? 'Проверка...' : 'Проверить'}
           </button>
-          <button type="button" onClick={handleBulkClassify} disabled={isClassifying} className="btn btn-outline">
-            {isClassifying ? 'Проверка...' : 'Переклассифировать'}
-          </button>
           <CustomFileButton
             accept=".zip,.csv,.session"
             variant="black"
@@ -434,7 +412,6 @@ const CustomAutomationAccountsPage = () => {
       </div>
 
       {warmupMessage ? <p className="crm-flash">{warmupMessage}</p> : null}
-      {classifyMessage ? <p className="crm-flash">{classifyMessage}</p> : null}
       {healthCheckMessage ? <p className="crm-flash">{healthCheckMessage}</p> : null}
       {spamblockMessage ? <p className="crm-flash">{spamblockMessage}</p> : null}
       {uploadSuccess ? <p className="crm-flash">{uploadSuccess}</p> : null}
@@ -579,15 +556,6 @@ const CustomAutomationAccountsPage = () => {
           />
         </div>
         <div className="form-group">
-          <label htmlFor="acc-class">Класс</label>
-          <CustomSelect
-            id="acc-class"
-            value={filters.accountClass}
-            options={ACCOUNT_CLASSES}
-            onChange={(e) => setFilters((f) => ({ ...f, accountClass: e.target.value }))}
-          />
-        </div>
-        <div className="form-group">
           <label htmlFor="acc-search">Поиск</label>
           <input
             id="acc-search"
@@ -705,16 +673,7 @@ const CustomAutomationAccountsPage = () => {
                 />
                 <span className="form-hint">Шиллинг 1 задаёт вопрос, шиллинг 2 отвечает. Пустой список — аккаунт ничего не делает.</span>
               </div>
-              <div className="form-group">
-                <label htmlFor={`class-${account.id}`}>Класс</label>
-                <CustomSelect
-                  id={`class-${account.id}`}
-                  value={account.assigned_class}
-                  options={ACCOUNT_CLASSES.filter((c) => c.value)}
-                  onChange={(e) => handleClassChange(account.id, e.target.value)}
-                />
-              </div>
-              <span className={`crm-status ${CLASS_STATUS[account.assigned_class] || ''}`}>
+              <span className="crm-status crm-status--pending">
                 {(account.roles || []).map((role) => ACCOUNT_ROLE_LABELS[role] || role).join(' · ')
                   || 'Молчит'}
               </span>
@@ -742,6 +701,37 @@ const CustomAutomationAccountsPage = () => {
                 >
                   Удалить
                 </button>
+              </div>
+              <div className="crm-account-footer">
+                <button
+                  type="button"
+                  className="crm-account-mail"
+                  title="Последний код Telegram"
+                  disabled={loginCodes[account.id]?.loading}
+                  onClick={() => handleTelegramCode(account)}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      fill="currentColor"
+                      d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2Zm0 4-8 5L4 8V6l8 5 8-5v2Z"
+                    />
+                  </svg>
+                  <span>Код Telegram</span>
+                </button>
+                {loginCodes[account.id]?.loading ? (
+                  <span className="form-hint">Читаем служебный чат...</span>
+                ) : loginCodes[account.id]?.error ? (
+                  <span className="form-hint crm-flash--error">{loginCodes[account.id].error}</span>
+                ) : loginCodes[account.id]?.code ? (
+                  <span className="crm-account-code">
+                    {loginCodes[account.id].code}
+                    {loginCodes[account.id].sentAt
+                      ? ` · ${new Date(loginCodes[account.id].sentAt).toLocaleString()}`
+                      : ''}
+                  </span>
+                ) : loginCodes[account.id]?.detail ? (
+                  <span className="form-hint">{loginCodes[account.id].detail}</span>
+                ) : null}
               </div>
             </div>
             );

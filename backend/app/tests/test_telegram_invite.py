@@ -32,7 +32,13 @@ def test_parse_public_usernames_and_urls():
         assert parsed.is_private is False
 
 
-def test_parse_private_invites():
+def test_parse_bare_invite_hash_not_username():
+    parsed = parse_telegram_chat_ref("kghd11ypouqymziy")
+    assert parsed.kind == "invite"
+    assert parsed.value == "kghd11ypouqymziy"
+    assert parsed.canonical == "https://t.me/+kghd11ypouqymziy"
+    url = parse_telegram_chat_ref("https://t.me/kghd11ypouqymziy")
+    assert url.kind == "invite"
     expected = "https://t.me/+AbCdEfGhIjKl"
     samples = [
         "https://t.me/+AbCdEfGhIjKl",
@@ -104,7 +110,17 @@ def test_invite_preview_without_id_is_group():
     assert is_user_peer(invite) is False
 
 
-def test_user_peer_rejected():
+def test_extract_login_code_from_telegram_notice():
+    from app.services.custom.account_login_code_service import extract_login_code
+    from app.services.custom.inbound_dm_service import is_official_telegram_peer
+    from types import SimpleNamespace
+
+    assert extract_login_code("Login code: 48291. Do not give this code to anyone.") == "48291"
+    assert extract_login_code("Код для входа в Telegram: 193847") == "193847"
+    assert extract_login_code("Привет, как дела?") is None
+    assert is_official_telegram_peer(SimpleNamespace(id=777000, username=None)) is True
+    assert is_official_telegram_peer(SimpleNamespace(id=1, username="telegram")) is True
+    assert is_official_telegram_peer(SimpleNamespace(id=42, username="ivan")) is False
     user = _Chat(id=1, first_name="Ivan")
     assert is_user_peer(user) is True
     assert entity_chat_type(user) is None

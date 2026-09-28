@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 
 INBOUND_DM_ACTION = "inbound_dm"
 MAX_REPLIES_PER_HOUR = 10
+TELEGRAM_SERVICE_USER_IDS = {777000, 42777, 333000}
+TELEGRAM_SERVICE_USERNAMES = {"telegram", "telegramnotifications"}
 
 DEFAULT_INBOUND_DM_PROMPT = """Ты отвечаешь в личных сообщениях Telegram от имени живого человека.
 
@@ -42,6 +44,14 @@ DEFAULT_INBOUND_DM_PROMPT = """Ты отвечаешь в личных сооб�
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def is_official_telegram_peer(entity: Any) -> bool:
+    peer_id = int(getattr(entity, "id", 0) or 0)
+    if peer_id in TELEGRAM_SERVICE_USER_IDS:
+        return True
+    username = (getattr(entity, "username", None) or "").strip().lstrip("@").lower()
+    return username in TELEGRAM_SERVICE_USERNAMES
 
 
 def _product_context(automation: CustomAutomation) -> str:
@@ -175,6 +185,8 @@ async def _process_account(
                 entity = dialog.entity
                 if entity is None or getattr(entity, "bot", False):
                     continue
+                if is_official_telegram_peer(entity):
+                    continue
                 peer_id = int(getattr(entity, "id", 0) or 0)
                 username = getattr(entity, "username", None)
                 if await _lead_exists_for_peer(session, automation.id, account.id, peer_id, username):
@@ -183,11 +195,11 @@ async def _process_account(
                 for msg in reversed(list(messages or [])):
                     if not msg or not getattr(msg, "text", None) or getattr(msg, "out", False):
                         continue
-                    external_id = f"{peer_id}:{msg.id}"
-                    if await _already_handled(session, automation.id, account.id, external_id):
-                        continue
                     incoming = str(msg.text).strip()
                     if not incoming:
+                        continue
+                    external_id = f"{peer_id}:{msg.id}"
+                    if await _already_handled(session, automation.id, account.id, external_id):
                         continue
                     # Field only: 1–4 min before opening the chat. Test lab never calls this path.
                     if not is_ready_to_reply(msg, external_id, lab_mode=False):

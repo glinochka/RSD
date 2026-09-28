@@ -455,6 +455,12 @@ class AccountSpamblockCheckResponse(BaseModel):
     detail: str
 
 
+class AccountTelegramCodeResponse(BaseModel):
+    code: str | None = None
+    sent_at: Optional[datetime] = None
+    detail: str
+
+
 class AccountPrepareStatusResponse(BaseModel):
     status: str
     alive: int = 0

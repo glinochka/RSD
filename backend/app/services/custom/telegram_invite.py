@@ -96,6 +96,8 @@ def parse_telegram_chat_ref(raw: str | None) -> TelegramChatRef:
         return _invite_ref(text.split("/", 1)[1])
     if _CHANNEL_ID_RE.fullmatch(text) or _DIGITS_RE.fullmatch(text):
         return _channel_id_ref(text)
+    if _looks_like_invite_hash(text):
+        return _invite_ref(text)
     if _USERNAME_RE.fullmatch(text):
         return _username_ref(text)
     raise TelegramChatRefError(
@@ -132,6 +134,16 @@ def chat_entity_key(chat_target: Any) -> str | int:
     if title and str(title).strip():
         return str(title).strip()
     raise TelegramChatRefError("Нет идентификатора чата")
+
+
+def _looks_like_invite_hash(value: str) -> bool:
+    """Private invite hashes are long mixed tokens, not human @usernames."""
+    text = (value or "").strip().lstrip("+")
+    if not _INVITE_HASH_RE.fullmatch(text):
+        return False
+    if len(text) >= 16:
+        return True
+    return bool(re.search(r"\d", text) and re.search(r"[A-Za-z]", text) and len(text) >= 12)
 
 
 def _username_ref(username: str) -> TelegramChatRef:
@@ -223,4 +235,7 @@ def _from_url(text: str) -> TelegramChatRef:
         return _channel_id_ref(parts[1].split("?")[0])
     if first_lower in _RESERVED_PATHS:
         raise TelegramChatRefError("Это не ссылка на чат или канал")
-    return _username_ref(first.split("?")[0])
+    slug = first.split("?")[0]
+    if _looks_like_invite_hash(slug):
+        return _invite_ref(slug)
+    return _username_ref(slug)

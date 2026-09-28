@@ -9,7 +9,11 @@ from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from telethon.errors import FloodWaitError, InviteHashExpiredError, UserAlreadyParticipantError
+try:
+    from telethon.errors import UsernameNotOccupiedError
+except Exception:  # pragma: no cover
+    class UsernameNotOccupiedError(Exception):
+        pass
 from telethon.tl.functions.channels import GetFullChannelRequest, GetParticipantRequest, JoinChannelRequest, LeaveChannelRequest
 from telethon.tl.functions.messages import CheckChatInviteRequest, DeleteChatUserRequest, ImportChatInviteRequest
 
@@ -18,6 +22,7 @@ from .chat_membership_service import (
     JOIN_DELAY_MIN_SECONDS,
     MAX_JOINS_PER_TICK,
     apply_account_join_cooldown,
+    blackbox_unusable_chat,
     bulk_membership_counts,
     ensure_memberships_for_automation,
     ensure_memberships_for_chat,
@@ -27,16 +32,34 @@ from .chat_membership_service import (
     retire_reader_and_replace,
     sync_chat_join_status,
 )
-from .account_pacing import account_membership_should_idle, farm_overlap_active_hours
-from .chat_scope import apply_entity_metadata, is_lab_chat, is_user_peer, unwrap_telegram_chat
+from .account_pacing import (
+    ACCOUNT_RETRY_MAX_SECONDS,
+    ACCOUNT_RETRY_MIN_SECONDS,
+    account_membership_should_idle,
+    farm_overlap_active_hours,
+    schedule_account_retry,
+)
+from .chat_scope import apply_entity_metadata, is_broadcast_channel, is_lab_chat, is_user_peer, unwrap_telegram_chat
 from .chat_target_dedup import find_existing_chat_target
 from .rotation_service import select_account_for_action
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import SessionInvalidError, execute_with_telegram_retry, is_chat_read_lost, log_action_error
-from .telegram_invite import TelegramChatRef, TelegramChatRefError, parse_telegram_chat_ref
+from .telegram_invite import TelegramChatRef, TelegramChatRefError, parse_telegram_chat_ref, _looks_like_invite_hash, _invite_ref
 from ...alembic.models import AccountChatMembership, ChatJoinStatus, ChatMode, ChatSource, ChatTarget, SocialAccount
 
-logger = logging.getLogger(__name__)
+_PERMANENT_JOIN_ERRORS = (
+    "no user has",
+    "username is not in use",
+    "username not occupied",
+    "invite hash expired",
+    "invite hash invalid",
+    "comments_closed",
+    "invalid invite link",
+)
+
+JOIN_FAIL_RETRY_MIN_SECONDS = ACCOUNT_RETRY_MIN_SECONDS
+JOIN_FAIL_RETRY_MAX_SECONDS = ACCOUNT_RETRY_MAX_SECONDS
+MAX_JOIN_ATTEMPTS = 2
 
 try:
     from telethon.errors import InviteRequestSentError
@@ -116,6 +139,15 @@ def _friendly_telegram_error(exc: Exception, fallback: str) -> str:
     return f"{fallback}: {text[:180]}"
 
 
+def _join_error_is_permanent(error: str | None) -> bool:
+    text = (error or "").strip().lower()
+    return any(token in text for token in _PERMANENT_JOIN_ERRORS)
+
+
+def _join_retry_delay() -> timedelta:
+    return timedelta(seconds=random.randint(JOIN_FAIL_RETRY_MIN_SECONDS, JOIN_FAIL_RETRY_MAX_SECONDS))
+
+
 def _parse_chat_ref(chat_target: ChatTarget) -> TelegramChatRef:
     for raw in (chat_target.invite_link, chat_target.external_chat_id, chat_target.title):
         if not raw:
@@ -181,7 +213,12 @@ async def _is_participant(client: TelegramAccountClient, entity: Any) -> bool | 
 
 
 async def _join_public(client: TelegramAccountClient, parsed: TelegramChatRef) -> Any:
-    entity = await client.get_entity(parsed.lookup_value)
+    try:
+        entity = await client.get_entity(parsed.lookup_value)
+    except UsernameNotOccupiedError:
+        if parsed.kind == "username" and _looks_like_invite_hash(str(parsed.value)):
+            return await _join_private(client, _invite_ref(str(parsed.value)))
+        raise
     if is_user_peer(entity):
         raise ValueError("Это пользователь, а не чат или канал")
     if not _can_join_as_channel(entity):
@@ -286,6 +323,10 @@ async def _try_join_chat(
 ) -> dict[str, Any]:
     if not account.session_file_path and not getattr(account, "encrypted_session", None):
         return {"status": "failed", "error": "no session file"}
+    if (getattr(chat_target, "mod_status", None) or "") == "moderated":
+        return {"status": "blackbox", "error": "already_moderated", "reason": "already_moderated"}
+    if chat_target.comments_open is False:
+        return {"status": "blackbox", "error": "comments_closed", "reason": "comments_closed"}
 
     try:
         parsed = _parse_chat_ref(chat_target)
@@ -295,6 +336,34 @@ async def _try_join_chat(
     try:
         async with TelegramAccountClient.for_account(account) as client:
             automation_id = int(chat_target.custom_automation_id)
+            if parsed.kind == "username" and (
+                is_broadcast_channel(chat_target) or not (chat_target.chat_type or "").strip()
+            ):
+                from .chat_inspect_service import probe_public_posts_for_comments
+
+                probe = await probe_public_posts_for_comments(client, chat_target)
+                if getattr(probe, "retry_account", False):
+                    return {
+                        "status": "failed",
+                        "error": probe.error or "probe_failed",
+                        "retry_account": True,
+                    }
+                if probe.comments_open is True:
+                    chat_target.comments_open = True
+                    chat_target.comments_checked_at = _utc_now()
+                    chat_target.comments_check_error = None
+                if probe.comments_open is False:
+                    err = (probe.error or "").lower()
+                    reason = (
+                        "invalid_ref"
+                        if any(token in err for token in ("no user has", "username", "invite hash"))
+                        else "comments_closed"
+                    )
+                    return {
+                        "status": "blackbox",
+                        "error": probe.error or reason,
+                        "reason": reason,
+                    }
 
             async def _perform_join() -> Any:
                 if parsed.kind == "invite":
@@ -310,6 +379,7 @@ async def _try_join_chat(
                     target_id=str(chat_target.id),
                     target_type="chat",
                     automation_id=automation_id,
+                    log_errors=False,
                 )
             except InviteRequestSentError:
                 try:
@@ -374,7 +444,10 @@ async def _try_join_chat(
                 "error": _friendly_telegram_error(exc, "Аккаунт заблокирован в чате")[:255],
             }
         logger.warning("Join chat %s failed for account %s: %s", chat_target.id, account.id, exc)
-        return {"status": "failed", "error": _friendly_telegram_error(exc, "Не удалось вступить")[:255]}
+        friendly = _friendly_telegram_error(exc, "Не удалось вступить")[:255]
+        if _join_error_is_permanent(str(exc)) or _join_error_is_permanent(friendly) or type(exc).__name__ in _LOOKUP_ERRORS:
+            return {"status": "blackbox", "error": friendly, "reason": "invalid_ref"}
+        return {"status": "failed", "error": friendly}
 
 
 async def _apply_membership_result(
@@ -396,9 +469,34 @@ async def _apply_membership_result(
         membership.join_status = ChatJoinStatus.PENDING.value
         membership.last_join_error = join_result.get("error")
         membership.join_attempts = max(0, membership.join_attempts - 1)
+        membership.next_join_attempt_at = now + _join_retry_delay()
+        schedule_account_retry(account)
         await sync_chat_join_status(session, chat_target)
-        if apply_cooldown:
-            await apply_account_join_cooldown(session, automation_id, account.id)
+        return
+
+    if join_result["status"] == "blackbox":
+        reason = str(join_result.get("reason") or join_result.get("error") or "unusable")[:64]
+        if reason != "already_moderated":
+            await blackbox_unusable_chat(session, chat_target, reason=reason)
+            await log_action_error(
+                session,
+                account,
+                action_type="join_chat",
+                target_id=str(chat_target.id),
+                target_type="chat",
+                error_message=str(join_result.get("error") or reason)[:2000],
+                payload={
+                    "chat_target_id": chat_target.id,
+                    "membership_id": membership.id,
+                    "account_id": account.id,
+                    "blackbox": True,
+                },
+                automation_id=automation_id,
+            )
+        membership.last_join_error = join_result.get("error")
+        membership.next_join_attempt_at = None
+        schedule_account_retry(account)
+        await sync_chat_join_status(session, chat_target)
         return
 
     if join_result["status"] == "joined":
@@ -442,9 +540,39 @@ async def _apply_membership_result(
             error = "Не удалось войти в Telegram. Если вы не выходили из аккаунта — подождите и попробуйте снова."
         if error == "account_channels_full":
             error = "У аккаунта закончились слоты Telegram (около 500 чатов)."
+        if _join_error_is_permanent(str(error or join_result.get("error") or "")):
+            await blackbox_unusable_chat(
+                session,
+                chat_target,
+                reason="invalid_ref" if "no user has" in str(error or "").lower() else "unusable",
+            )
+            membership.last_join_error = error
+            membership.next_join_attempt_at = None
+            membership.join_status = ChatJoinStatus.ERROR.value
+            await log_action_error(
+                session,
+                account,
+                action_type="join_chat",
+                target_id=str(chat_target.id),
+                target_type="chat",
+                error_message=str(error or "join_failed")[:2000],
+                payload={
+                    "chat_target_id": chat_target.id,
+                    "membership_id": membership.id,
+                    "account_id": account.id,
+                    "blackbox": True,
+                },
+                automation_id=automation_id,
+            )
+            schedule_account_retry(account)
+            await sync_chat_join_status(session, chat_target)
+            return
         membership.join_status = ChatJoinStatus.ERROR.value
         membership.last_join_error = error
-        membership.next_join_attempt_at = now + timedelta(minutes=random.randint(2, 5))
+        membership.next_join_attempt_at = now + _join_retry_delay()
+        if membership.join_attempts >= MAX_JOIN_ATTEMPTS:
+            membership.next_join_attempt_at = None
+        schedule_account_retry(account)
         await log_action_error(
             session,
             account,
@@ -461,7 +589,7 @@ async def _apply_membership_result(
         )
 
     await sync_chat_join_status(session, chat_target)
-    if apply_cooldown:
+    if apply_cooldown and join_result["status"] in {"joined", "rate_limited"}:
         wait = None
         if join_result["status"] == "rate_limited":
             nxt = join_result.get("next_join_attempt_at")
@@ -590,7 +718,7 @@ async def join_next_membership(
     session: AsyncSession,
     automation_id: int,
     *,
-    max_attempts: int = 5,
+    max_attempts: int = MAX_JOIN_ATTEMPTS,
     exclude_account_ids: set[int] | None = None,
     apply_cooldown: bool = True,
     skip_ensure: bool = False,
@@ -809,7 +937,7 @@ async def join_loaded_chats_for_accounts(
     failed_pairs = 0
     rate_limited_pairs = 0
     attempted_ids: set[int] = set()
-    pick_max_attempts = 10_000 if include_lab else 5
+    pick_max_attempts = 10_000 if include_lab else MAX_JOIN_ATTEMPTS
     while True:
         membership = await pick_next_pending_membership(
             session,
@@ -919,7 +1047,7 @@ async def join_pending_chats(
     session: AsyncSession,
     automation_id: int,
     *,
-    max_attempts: int = 3,
+    max_attempts: int = MAX_JOIN_ATTEMPTS,
     rate_limit: bool = True,
     sleeper=None,
     max_pairs: int | None = None,

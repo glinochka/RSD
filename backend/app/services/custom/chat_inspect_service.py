@@ -224,6 +224,63 @@ async def probe_comments_readonly(client: TelegramAccountClient, chat_target: Ch
     )
 
 
+async def probe_public_posts_for_comments(
+    client: TelegramAccountClient,
+    chat_target: ChatTarget,
+    *,
+    sample: int | None = None,
+) -> CommentProbe:
+    """Read 5–10 latest posts from outside and see if any has open comments."""
+    import random
+
+    limit = sample if sample is not None else random.randint(5, 10)
+    try:
+        entity = await client.get_entity(chat_entity_key(chat_target))
+    except Exception as exc:
+        name = type(exc).__name__
+        if name in {"UsernameNotOccupiedError", "UsernameInvalidError", "InviteHashExpiredError", "InviteHashInvalidError"}:
+            return CommentProbe(comments_open=False, error=str(exc)[:255])
+        probe = _restricted_probe(exc)
+        if probe:
+            return probe
+        return CommentProbe(comments_open=None, error=str(exc)[:255], retry_account=True)
+
+    apply_entity_metadata(chat_target, entity)
+    target = unwrap_telegram_chat(entity)
+    is_broadcast = (entity_chat_type(entity) == "channel") or bool(getattr(target, "broadcast", False))
+    if not is_broadcast:
+        return CommentProbe(comments_open=True)
+
+    linked_id = None
+    try:
+        from telethon.tl.functions.channels import GetFullChannelRequest
+
+        full = await client(GetFullChannelRequest(target))
+        full_chat = getattr(full, "full_chat", None)
+        linked_id = getattr(full_chat, "linked_chat_id", None) if full_chat is not None else None
+    except Exception as exc:
+        logger.info("GetFullChannel pre-join probe failed for chat %s: %s", chat_target.id, exc)
+
+    if linked_id:
+        return CommentProbe(comments_open=True, members_count=None)
+
+    try:
+        history = await client.client.get_messages(entity, limit=max(5, min(10, limit)))
+    except Exception as exc:
+        probe = _restricted_probe(exc)
+        if probe:
+            return probe
+        return CommentProbe(comments_open=None, error=str(exc)[:255], retry_account=True)
+
+    posts = [msg for msg in (history or []) if msg and not getattr(msg, "action", None)]
+    if not posts:
+        return CommentProbe(comments_open=False, error="no_posts")
+    for msg in posts:
+        if _message_has_comment_replies(msg) is True:
+            return CommentProbe(comments_open=True)
+    return CommentProbe(comments_open=False, error="comments_closed")
+
+
 async def ensure_comment_access(
     session: AsyncSession,
     chat_target: ChatTarget,

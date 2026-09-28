@@ -419,16 +419,31 @@ async def execute_with_telegram_retry(
     max_retries: int = 1,
     base_delay: float = 1.0,
     pace: bool = True,
+    log_errors: bool = True,
 ) -> Any:
-    """Run a Telegram coroutine once. Failed writes wait 3–5 minutes before the next job tick.
+    """Run a Telegram coroutine. Failed requests park 3–5 minutes before the next attempt.
 
     FloodWait under 20 seconds is the only in-process wait; longer floods are deferred.
-    Successful/failed writes rest the account; joins keep their own 3–5 minute cooldown.
+    Successful writes rest the account; joins keep their own cooldown.
     """
     del base_delay
     last_exc: Exception | None = None
     attempts = max(1, int(max_retries))
     apply_write_rest = pace and action_uses_write_rest(action_type)
+
+    async def _log_error(error_message: str) -> None:
+        if not log_errors:
+            return
+        await log_action_error(
+            session, account,
+            action_type=action_type,
+            target_id=target_id,
+            target_type=target_type,
+            payload=payload,
+            error_message=error_message,
+            automation_id=automation_id,
+        )
+
     for attempt in range(attempts):
         try:
             result = await coro_fn()
@@ -518,30 +533,12 @@ async def execute_with_telegram_retry(
                 )
                 raise
             if kind == "session_busy":
-                if apply_write_rest:
-                    schedule_account_retry(account)
-                await log_action_error(
-                    session, account,
-                    action_type=action_type,
-                    target_id=target_id,
-                    target_type=target_type,
-                    payload=payload,
-                    error_message=str(exc),
-                    automation_id=automation_id,
-                )
+                schedule_account_retry(account)
+                await _log_error(str(exc))
                 raise
             if kind == "chat_restricted":
-                if apply_write_rest:
-                    schedule_account_retry(account)
-                await log_action_error(
-                    session, account,
-                    action_type=action_type,
-                    target_id=target_id,
-                    target_type=target_type,
-                    payload=payload,
-                    error_message=str(exc),
-                    automation_id=automation_id,
-                )
+                schedule_account_retry(account)
+                await _log_error(str(exc))
                 raise
             if kind == "flood":
                 wait_seconds = int(classification.get("seconds") or 60)
@@ -549,23 +546,13 @@ async def execute_with_telegram_retry(
                     logger.info("FloodWait for account %s: sleeping %s seconds", account.id, wait_seconds)
                     await asyncio.sleep(wait_seconds)
                     continue
-                if apply_write_rest:
-                    extra = max(0, wait_seconds - 20)
-                    schedule_account_retry(account, extra_seconds=extra)
+                extra = max(0, wait_seconds - 20)
+                schedule_account_retry(account, extra_seconds=extra)
                 break
-            if apply_write_rest:
-                schedule_account_retry(account)
+            schedule_account_retry(account)
             break
 
-    await log_action_error(
-        session, account,
-        action_type=action_type,
-        target_id=target_id,
-        target_type=target_type,
-        payload=payload,
-        error_message=str(last_exc) if last_exc else "unknown error",
-        automation_id=automation_id,
-    )
+    await _log_error(str(last_exc) if last_exc else "unknown error")
     if last_exc:
         raise last_exc
     raise RuntimeError("execute_with_telegram_retry exhausted")

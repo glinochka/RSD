@@ -4821,6 +4821,7 @@ class TestAccountRolesWarmupAndLab:
             roles=[],
         )
         assert await select_account_for_action(test_session, custom_automation.id, "commenting") is None
+        assert await select_account_for_action(test_session, custom_automation.id, "neurocommenting") is None
         assert await select_account_for_action(test_session, custom_automation.id, "shilling") is None
         assert await select_account_for_action(test_session, custom_automation.id, "dm") is None
         joined = await select_account_for_action(
@@ -6682,6 +6683,8 @@ class TestPeerDialogAndWarmupPacing:
         from app.services.custom.account_peer_dialog_service import (
             DAILY_MAX_MESSAGES,
             DAILY_MIN_MESSAGES,
+            MAX_PEER_SENDS_PER_PASS,
+            MAX_PEER_STARTS_PER_PASS,
             PEER_GAP_MAX_SECONDS,
             PEER_GAP_MIN_SECONDS,
             daily_message_target,
@@ -6703,6 +6706,8 @@ class TestPeerDialogAndWarmupPacing:
             assert 10 * 60 <= start <= PEER_GAP_MAX_SECONDS
             target = daily_message_target()
             assert DAILY_MIN_MESSAGES <= target <= DAILY_MAX_MESSAGES
+        assert MAX_PEER_SENDS_PER_PASS == 1
+        assert MAX_PEER_STARTS_PER_PASS == 1
 
     async def test_warmup_sends_one_line_not_burst(self):
         from types import SimpleNamespace

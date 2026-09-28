@@ -18,6 +18,7 @@ from .schemas import (
     AccountHealthCheckResponse,
     AccountHealthCheckResult,
     AccountSpamblockCheckResponse,
+    AccountTelegramCodeResponse,
     AccountListResponse,
     AccountPrepareStatusResponse,
     AccountProxyListResponse,
@@ -108,6 +109,7 @@ from ..services.custom.account_connect_service import (
     verify_account_sms,
 )
 from ..services.custom.account_health_worker import AccountHealthWorker
+from ..services.custom.account_login_code_service import read_last_telegram_login_code
 from ..services.telegram_userbot_auth import TelegramUserbotAuthError
 from ..services.custom.bulk_profile_service import (
     BulkProfileUpdateWorker,
@@ -958,6 +960,40 @@ async def check_account_spamblock(
         )
 
 
+@router.get(
+    "/automations/{automation_id}/accounts/{account_id}/telegram-code",
+    response_model=AccountTelegramCodeResponse,
+)
+async def get_account_telegram_code(
+    automation_id: int,
+    account_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    del automation
+    async with async_session_maker() as session:
+        result = await read_last_telegram_login_code(session, automation_id, account_id)
+        status_value = str(result.get("status") or "")
+        if status_value == "not_found":
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+        if status_value == "no_session":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Нет сессии Telegram. Подключите аккаунт заново по QR или SMS.",
+            )
+        if status_value == "error":
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=str(result.get("error") or "Не удалось прочитать чат Telegram"),
+            )
+        if status_value == "empty":
+            return AccountTelegramCodeResponse(detail="В служебном чате Telegram кода пока нет")
+        return AccountTelegramCodeResponse(
+            code=result.get("code"),
+            sent_at=result.get("sent_at"),
+            detail="Последний код из чата Telegram",
+        )
+
+
 @router.post("/automations/{automation_id}/accounts/warmup/start", response_model=AccountWarmupStartResponse)
 async def start_account_warmup(
     automation_id: int,
@@ -1136,7 +1172,6 @@ async def update_account_setup_template(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Automation not found")
         auto_row.account_setup_templates = merge_setup_template(
             auto_row.account_setup_templates,
-            payload.account_class,
             bio_template=payload.bio_template,
             generate_unique=payload.generate_unique,
         )

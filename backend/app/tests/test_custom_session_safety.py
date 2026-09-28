@@ -456,12 +456,13 @@ def test_accounts_sleep_at_night_and_rest_longer_first_week():
 
 
 def test_peer_dialog_does_not_park_public_writes():
-    from app.services.custom.account_pacing import action_uses_write_rest
+    from app.services.custom.account_pacing import action_uses_humanization_rest, action_uses_target_rest
 
-    assert action_uses_write_rest("peer_dialog") is False
-    assert action_uses_write_rest("account_warmup") is False
-    assert action_uses_write_rest("neurocommenting") is True
-    assert action_uses_write_rest("shilling_chat") is True
+    assert action_uses_target_rest("peer_dialog") is False
+    assert action_uses_humanization_rest("peer_dialog") is True
+    assert action_uses_target_rest("account_warmup") is False
+    assert action_uses_target_rest("neurocommenting") is True
+    assert action_uses_target_rest("shilling_chat") is True
 
 
 def test_active_hours_are_jittered_per_account():

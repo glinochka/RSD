@@ -325,6 +325,29 @@ async def release_memberships_for_chat(
     return released
 
 
+async def blackbox_unusable_chat(
+    session: AsyncSession,
+    chat_target: ChatTarget,
+    *,
+    reason: str,
+) -> int:
+    """Stop spending join/comment slots on a dead or closed-comment channel."""
+    now = _utc_now()
+    chat_target.mod_status = "moderated"
+    chat_target.black_boxed_at = now
+    chat_target.mode = "inactive"
+    chat_target.updated_at = now
+    if reason == "comments_closed":
+        chat_target.comments_open = False
+        chat_target.comments_checked_at = now
+        chat_target.comments_check_error = "comments_closed"
+    else:
+        chat_target.comments_check_error = reason[:255]
+    released = await release_memberships_for_chat(session, chat_target, reason=reason)
+    logger.info("Black-boxed chat %s (%s), freed %s slots", chat_target.id, reason, released)
+    return released
+
+
 async def _assign_chats_to_account(
     session: AsyncSession,
     automation_id: int,
@@ -339,6 +362,8 @@ async def _assign_chats_to_account(
     added = 0
     for chat in scored:
         if chat.id in blocked_ids:
+            continue
+        if chat.comments_open is False:
             continue
         occupied = await account_occupied_count(session, account.id)
         if occupied >= min(MAX_CHATS_PER_ACCOUNT, target_count):

@@ -18,6 +18,7 @@ from ...alembic.models import (
     ChatTarget,
     PendingChatAction,
     PendingChatActionStatus,
+    PoolAccount,
     SocialAccount,
 )
 
@@ -339,6 +340,21 @@ async def _run_action(session: AsyncSession, action: PendingChatAction) -> bool:
     if not chat:
         return False
     payload = action.payload or {}
+    account = await session.get(SocialAccount, action.social_account_id)
+    if account is not None:
+        from .account_roles import account_matches_action
+
+        pool = await session.scalar(
+            select(PoolAccount).where(
+                PoolAccount.social_account_id == account.id,
+                PoolAccount.custom_automation_id == action.custom_automation_id,
+            )
+        )
+        action_key = "commenting" if action.action_type == "neurocommenting" else action.action_type
+        if not account_matches_action(pool, account, action_key):
+            action.last_error = "silent_account"
+            action.status = FAILED
+            return False
     if action.action_type == "neurocommenting":
         from .chat_inspect_service import ensure_comment_access
         from .chat_scope import count_target_actions_today

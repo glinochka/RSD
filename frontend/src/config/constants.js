@@ -290,6 +290,8 @@ export const API_ROUTES = {
   CUSTOM_AUTOMATION_ACCOUNTS_HEALTH_CHECK: (id) => `/api/custom/automations/${id}/accounts/health-check`,
   CUSTOM_AUTOMATION_ACCOUNT_SPAMBLOCK_CHECK: (id, accountId) =>
     `/api/custom/automations/${id}/accounts/${accountId}/spamblock-check`,
+  CUSTOM_AUTOMATION_ACCOUNT_TELEGRAM_CODE: (id, accountId) =>
+    `/api/custom/automations/${id}/accounts/${accountId}/telegram-code`,
   CUSTOM_AUTOMATION_ACCOUNTS_SETUP_TEMPLATES: (id) => `/api/custom/automations/${id}/accounts/setup-templates`,
   CUSTOM_AUTOMATION_ACCOUNTS_PREPARE: (id) => `/api/custom/automations/${id}/accounts/prepare`,
   CUSTOM_AUTOMATION_ACCOUNTS_PREPARE_STATUS: (id) => `/api/custom/automations/${id}/accounts/prepare-status`,

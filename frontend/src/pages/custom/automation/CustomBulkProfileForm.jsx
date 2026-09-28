@@ -4,14 +4,6 @@ import CustomFileButton from '../../../components/custom/CustomFileButton';
 import FeatureToggle from '../../../components/FeatureToggle';
 import customService from '../../../services/customService';
 
-const ACCOUNT_CLASSES = [
-  { value: '', label: 'Все классы' },
-  { value: 'one_day', label: 'Однодневный' },
-  { value: 'mid', label: 'Средний' },
-  { value: 'trusted', label: 'Доверенный' },
-  { value: 'shilling', label: 'Шиллинг' },
-];
-
 const STATUSES = [
   { value: '', label: 'Любой статус' },
   { value: 'loaded', label: 'Загружено' },
@@ -21,7 +13,6 @@ const STATUSES = [
 const CustomBulkProfileForm = ({ automationId, onSuccess }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [form, setForm] = useState({
-    accountClass: '',
     status: 'loaded',
     bioTemplate: '',
     generateUnique: false,
@@ -39,7 +30,6 @@ const CustomBulkProfileForm = ({ automationId, onSuccess }) => {
     try {
       const result = await customService.bulkUpdateProfiles(automationId, {
         avatar,
-        accountClass: form.accountClass || undefined,
         status: form.status || undefined,
         bioTemplate: form.bioTemplate,
         generateUnique: form.generateUnique,
@@ -84,15 +74,6 @@ const CustomBulkProfileForm = ({ automationId, onSuccess }) => {
 
       <form onSubmit={handleSubmit}>
         <div className="form-group">
-          <label htmlFor="bulk-class">Класс</label>
-          <CustomSelect
-            id="bulk-class"
-            value={form.accountClass}
-            options={ACCOUNT_CLASSES}
-            onChange={(e) => setForm((f) => ({ ...f, accountClass: e.target.value }))}
-          />
-        </div>
-        <div className="form-group">
           <label htmlFor="bulk-status">Статус</label>
           <CustomSelect
             id="bulk-status"
@@ -103,7 +84,7 @@ const CustomBulkProfileForm = ({ automationId, onSuccess }) => {
         </div>
         <div className="form-group">
           <label htmlFor="bulk-bio">
-            Шаблон bio (переменные: {'{username}'}, {'{phone_number}'}, {'{display_name}'}, {'{account_class}'})
+            Шаблон bio (переменные: {'{username}'}, {'{phone_number}'}, {'{display_name}'})
           </label>
           <textarea
             id="bulk-bio"
@@ -130,7 +111,7 @@ const CustomBulkProfileForm = ({ automationId, onSuccess }) => {
           >
             Выбрать фото
           </CustomFileButton>
-          <span className="form-hint">Шаблон сохранится для «Начать подготовку» по выбранному классу</span>
+          <span className="form-hint">Шаблон сохранится для «Начать подготовку»</span>
         </div>
         <div className="settings-actions">
           <button type="submit" disabled={isSubmitting} className="btn btn-black">
