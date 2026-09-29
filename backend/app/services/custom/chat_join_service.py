@@ -47,6 +47,8 @@ from .telegram_error_handler import SessionInvalidError, execute_with_telegram_r
 from .telegram_invite import TelegramChatRef, TelegramChatRefError, parse_telegram_chat_ref, _looks_like_invite_hash, _invite_ref
 from ...alembic.models import AccountChatMembership, ChatJoinStatus, ChatMode, ChatSource, ChatTarget, SocialAccount
 
+logger = logging.getLogger(__name__)
+
 _PERMANENT_JOIN_ERRORS = (
     "no user has",
     "username is not in use",
@@ -77,6 +79,18 @@ try:
     from telethon.errors import ChannelsTooMuchError
 except Exception:  # pragma: no cover - older Telethon
     class ChannelsTooMuchError(Exception):
+        pass
+
+try:
+    from telethon.errors import FloodWaitError
+except Exception:  # pragma: no cover - older Telethon
+    class FloodWaitError(Exception):
+        seconds = 60
+
+try:
+    from telethon.errors import UserAlreadyParticipantError
+except Exception:  # pragma: no cover - older Telethon
+    class UserAlreadyParticipantError(Exception):
         pass
 
 
