@@ -15,6 +15,7 @@ from .chat_scope import (
     commit_chat_scan,
     is_group_chat,
     is_paused,
+    is_public_readable,
     load_own_sender_keys,
     load_shilling_message_ids,
     message_is_own_activity,
@@ -25,12 +26,11 @@ from .chat_membership_service import (
     get_reader_account,
     is_chat_watchable,
     list_watchable_chats,
-    queue_actor_for_chat,
     recover_reader_after_error,
 )
 from .prompt_service import render_prompt
 from .account_pacing import account_should_idle, farm_overlap_active_hours
-from .rotation_service import record_successful_send, select_account_for_action
+from .rotation_service import record_successful_send
 from .shilling_service import _moscow_day_utc_range
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import execute_with_telegram_retry
@@ -351,24 +351,10 @@ async def process_chat_target(
             await commit_chat_scan(session, chat_target)
             return {"status": "error", "error": str(exc)}
 
-    skipped_speakers: set[int] = set()
-    account = None
-    while True:
-        account = await select_account_for_action(
-            session,
-            automation_id,
-            "discussion",
-            consume_quota=False,
-            exclude_account_ids=skipped_speakers or None,
-        )
-        if not account or not account.session_file_path:
-            return await _skip_chat(session, chat_target, "no_account")
-        if await account_is_joined(session, chat_target.id, account.id):
-            break
-        queued = await queue_actor_for_chat(session, automation_id, chat_target, account)
-        if queued is None:
-            skipped_speakers.add(account.id)
-            continue
+    account = reader
+    if not account or not account.session_file_path:
+        return await _skip_chat(session, chat_target, "no_account")
+    if not await account_is_joined(session, chat_target.id, account.id) and not is_public_readable(chat_target):
         return await _skip_chat(session, chat_target, "waiting_join")
 
     messages.sort(key=lambda m: m.id)
@@ -403,32 +389,10 @@ async def process_chat_target(
         if random.random() > probability:
             continue
 
-        thread_id = _thread_id(msg)
-        assigned = await _assigned_account_for_thread(session, automation_id, chat_target.id, thread_id, max_daily)
-        chosen = assigned or account
+        chosen = account
         if not chosen or chosen.daily_messages_sent >= max_daily or not chosen.session_file_path:
             continue
-        if not await account_is_joined(session, chat_target.id, chosen.id):
-            queued = await queue_actor_for_chat(session, automation_id, chat_target, chosen)
-            if queued is None:
-                skipped_speakers.add(chosen.id)
-            else:
-                # Enqueue the discussion reply so it fires once the account joins
-                from .pending_action_service import enqueue_pending_action
-                await enqueue_pending_action(
-                    session,
-                    automation_id=automation_id,
-                    chat_target=chat_target,
-                    account=chosen,
-                    action_type="discussion",
-                    target_id=f"{chat_target.id}:{_thread_id(msg)}",
-                    payload={
-                        "message_id": msg.id,
-                        "message_text": (msg.text or "")[:500],
-                        "chat_title": chat_target.title or "",
-                        "thread_id": _thread_id(msg),
-                    },
-                )
+        if not await account_is_joined(session, chat_target.id, chosen.id) and not is_public_readable(chat_target):
             continue
 
         reply = await _generate_reply(session, automation_id, message_text=msg.text, chat_title=chat_target.title or "")

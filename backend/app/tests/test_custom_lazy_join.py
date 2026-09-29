@@ -180,6 +180,40 @@ class TestLazyJoinCoverage:
         )
         assert purpose == MembershipPurpose.WATCHER.value
 
+    async def test_watchers_do_not_share_chats(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        await _add_account(test_session, custom_automation, username="ex1", phone="+79991001081")
+        await _add_account(test_session, custom_automation, username="ex2", phone="+79991001082")
+        for index in range(4):
+            await _add_chat(
+                test_session,
+                custom_automation,
+                title=f"Pool {index}",
+                invite_link=f"https://t.me/poolchan{index:02d}",
+            )
+        await ensure_memberships_for_automation(test_session, custom_automation.id)
+        await test_session.commit()
+        chat_ids = list(
+            (
+                await test_session.execute(
+                    select(AccountChatMembership.chat_target_id).where(
+                        AccountChatMembership.custom_automation_id == custom_automation.id,
+                        AccountChatMembership.purpose == MembershipPurpose.WATCHER.value,
+                        AccountChatMembership.join_status.in_(
+                            [
+                                ChatJoinStatus.PENDING.value,
+                                ChatJoinStatus.JOINING.value,
+                                ChatJoinStatus.JOINED.value,
+                            ]
+                        ),
+                    )
+                )
+            ).scalars().all()
+        )
+        assert chat_ids
+        assert len(chat_ids) == len(set(chat_ids))
+
     async def test_actor_join_is_prioritized(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
     ):

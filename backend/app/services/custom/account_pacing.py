@@ -1,14 +1,12 @@
-"""Per-account rest after writes, night sleep, offline-break windows, and delayed retries.
+"""Per-account rest after writes, night sleep, and delayed retries.
 
-Three independent timers:
-  • OFFLINE windows  – 3 stable 50-60 min breaks during the day when the account
-                         is completely inactive (no target, no humanization).
+Two independent timers:
   • TARGET rest      – next_action_at: 40-70 min after neurocommenting,
                        shilling, discussion, DM.
   • HUMANIZATION rest – next_humanization_at: 15-30 min after warmup,
                         peer_dialog, idle-browse, reactions.
 
-TARGET and HUMANIZATION never block each other.  OFFLINE windows block both.
+TARGET and HUMANIZATION never block each other. Night hours block both.
 
 Daily max for target actions is also randomized per account per Moscow day
 (50-100 % of the automation setting) so the same account does not send the
@@ -59,13 +57,6 @@ ACTIVE_START_HOUR = 8
 ACTIVE_END_HOUR = 20
 FARM_EARLIEST_START = 7.0
 FARM_LATEST_END = 21.5
-
-# ---------------------------------------------------------------------------
-# Offline-break windows: three 50-60 min breaks during the active day.
-# ---------------------------------------------------------------------------
-OFFLINE_BREAK_BASE_HOURS = (10.0, 13.0, 16.0)  # morning, lunch, afternoon
-OFFLINE_BREAK_MIN_MINUTES = 50
-OFFLINE_BREAK_MAX_MINUTES = 60
 
 # Target-action rest days (Monday=0): Saturday and Sunday, Moscow.
 TARGET_REST_WEEKDAYS = {5, 6}
@@ -195,47 +186,6 @@ def account_active_window(
     start = 7.5 + _stable_frac(int(aid), 17) * 1.75   # 07:30–09:15
     end = 18.75 + _stable_frac(int(aid), 41) * 2.0    # 18:45–20:45
     return start, end
-
-
-# ---------------------------------------------------------------------------
-# Offline-break windows: 3 per day, 50-60 min each, stable per account.
-# ---------------------------------------------------------------------------
-
-def account_offline_breaks(
-    account: SocialAccount | None = None,
-    *,
-    account_id: int | None = None,
-    now: datetime | None = None,
-) -> list[tuple[float, float]]:
-    """Return three (start_hour, end_hour) breaks for today."""
-    aid = account_id if account_id is not None else getattr(account, "id", None)
-    if not aid:
-        return []
-    breaks = []
-    for idx, base in enumerate(OFFLINE_BREAK_BASE_HOURS):
-        # start within ±60 min around the base hour
-        start_offset = _daily_stable_frac(int(aid), 100 + idx, now) * 60.0  # 0-60 min
-        start = base + (start_offset / 60.0) - 0.5  # ±30 min around base
-        duration = OFFLINE_BREAK_MIN_MINUTES + _daily_stable_frac(int(aid), 200 + idx, now) * (
-            OFFLINE_BREAK_MAX_MINUTES - OFFLINE_BREAK_MIN_MINUTES
-        )
-        end = start + duration / 60.0
-        breaks.append((start, end))
-    return breaks
-
-
-def account_in_offline_break(
-    account: SocialAccount | None = None,
-    *,
-    account_id: int | None = None,
-    now: datetime | None = None,
-) -> bool:
-    """True during one of the three daily offline-break windows."""
-    hour = _moscow_hour_float(moscow_now(now))
-    for start, end in account_offline_breaks(account, account_id=account_id, now=now):
-        if start <= hour < end:
-            return True
-    return False
 
 
 def in_account_active_hours(
@@ -395,8 +345,6 @@ def account_should_idle(
     """True when the account must not send a TARGET action."""
     if account_in_target_rest_day(account, now=now):
         return True
-    if account_in_offline_break(account, now=now):
-        return True
     if account_is_resting(account, now=now):
         return True
     if ignore_hours:
@@ -409,9 +357,7 @@ def account_membership_should_idle(
     *,
     now: datetime | None = None,
 ) -> bool:
-    """Join/leave hygiene: respect night and offline windows, not weekend or write rest."""
-    if account_in_offline_break(account, now=now):
-        return True
+    """Join/leave hygiene: respect night hours, not weekend or write rest."""
     return not in_account_active_hours(now, account)
 
 
@@ -456,8 +402,6 @@ def account_humanization_should_idle(
     ignore_hours: bool = False,
 ) -> bool:
     """True when the account should not send a HUMANIZATION action."""
-    if account_in_offline_break(account, now=now):
-        return True
     if account_humanization_is_resting(account, now=now):
         return True
     if ignore_hours:

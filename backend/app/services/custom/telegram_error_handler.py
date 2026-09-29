@@ -319,6 +319,19 @@ _WRITE_ONLY_TOKENS = (
 )
 
 
+def is_chat_write_forbidden(exc: Exception) -> bool:
+    """True when comments/posts are closed for this chat, not a global account ban."""
+    name = type(exc).__name__
+    blob = f"{name} {exc}".lower()
+    compact = blob.replace("_", "").replace(" ", "")
+    return (
+        name == "ChatWriteForbiddenError"
+        or "chatwriteforbidden" in compact
+        or "can't write in this chat" in blob
+        or "cannot write in this chat" in blob
+    )
+
+
 def is_chat_read_lost(exc: Exception) -> bool:
     """True when this account can no longer see this chat (kick/ban/private), not a global account ban."""
     name = type(exc).__name__
@@ -377,6 +390,24 @@ def mark_frozen(account: SocialAccount) -> None:
     account.updated_at = _utc_now()
 
 
+_OPERATIONAL_SKIP_MARKERS = (
+    "comments_closed",
+    "can't write in this chat",
+    "cannot write in this chat",
+    "chatwriteforbidden",
+    "settypingrequest",
+)
+
+
+def is_operational_skip_error(message: str | None, payload: dict[str, Any] | None = None) -> bool:
+    """Closed comments / write-forbidden: expected blackbox, not an error-feed event."""
+    payload = payload if isinstance(payload, dict) else {}
+    blob = f"{message or ''} {payload.get('error') or ''}".lower()
+    if any(marker in blob for marker in _OPERATIONAL_SKIP_MARKERS):
+        return True
+    return False
+
+
 async def log_action_error(
     session: AsyncSession,
     account: SocialAccount,
@@ -388,6 +419,8 @@ async def log_action_error(
     error_message: str,
     automation_id: int | None = None,
 ) -> None:
+    if is_operational_skip_error(error_message, payload):
+        return
     try:
         log = AutomationActionLog(
             custom_automation_id=automation_id,
@@ -537,6 +570,8 @@ async def execute_with_telegram_retry(
                 await _log_error(str(exc))
                 raise
             if kind == "chat_restricted":
+                if is_chat_write_forbidden(exc):
+                    raise
                 schedule_account_retry(account)
                 await _log_error(str(exc))
                 raise

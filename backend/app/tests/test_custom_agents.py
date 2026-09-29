@@ -6305,6 +6305,55 @@ class TestProductionFieldLogic:
         assert data["items"][0]["action_type"] == "join_chat"
         assert data["items"][0]["error_message"] == "FloodWait"
 
+    async def test_error_feed_hides_closed_comment_noise(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        from app.alembic.models import AutomationActionLog
+        from app.services.custom.error_feed_service import list_error_feed
+        from app.services.custom.telegram_error_handler import log_action_error
+
+        account = await self._add_account(
+            test_session, custom_automation, account_class=AccountClass.TRUSTED.value, username="err_hide", phone="+79991110017"
+        )
+        test_session.add(
+            AutomationActionLog(
+                custom_automation_id=custom_automation.id,
+                social_account_id=account.id,
+                action_type="join_chat",
+                target_id="144",
+                target_type="chat",
+                result="error",
+                error_message="comments_closed",
+                payload={"blackbox": True, "chat_target_id": 144},
+            )
+        )
+        test_session.add(
+            AutomationActionLog(
+                custom_automation_id=custom_automation.id,
+                social_account_id=account.id,
+                action_type="shilling_post",
+                target_id="99",
+                target_type="chat_post",
+                result="error",
+                error_message="You can't write in this chat (caused by SetTypingRequest)",
+                payload={},
+            )
+        )
+        await test_session.commit()
+        await log_action_error(
+            test_session,
+            account,
+            action_type="join_chat",
+            target_id="145",
+            target_type="chat",
+            payload={"blackbox": True},
+            error_message="comments_closed",
+            automation_id=custom_automation.id,
+        )
+        data = await list_error_feed(test_session, custom_automation.id)
+        assert data["total"] == 0
+        assert data["items"] == []
+
     async def test_inbound_dm_skips_existing_lead_peer(
         self, test_session: AsyncSession, custom_automation: CustomAutomation
     ):

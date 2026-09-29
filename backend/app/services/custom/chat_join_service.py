@@ -478,21 +478,22 @@ async def _apply_membership_result(
         reason = str(join_result.get("reason") or join_result.get("error") or "unusable")[:64]
         if reason != "already_moderated":
             await blackbox_unusable_chat(session, chat_target, reason=reason)
-            await log_action_error(
-                session,
-                account,
-                action_type="join_chat",
-                target_id=str(chat_target.id),
-                target_type="chat",
-                error_message=str(join_result.get("error") or reason)[:2000],
-                payload={
-                    "chat_target_id": chat_target.id,
-                    "membership_id": membership.id,
-                    "account_id": account.id,
-                    "blackbox": True,
-                },
-                automation_id=automation_id,
-            )
+            if reason != "comments_closed" and str(join_result.get("error") or "") != "comments_closed":
+                await log_action_error(
+                    session,
+                    account,
+                    action_type="join_chat",
+                    target_id=str(chat_target.id),
+                    target_type="chat",
+                    error_message=str(join_result.get("error") or reason)[:2000],
+                    payload={
+                        "chat_target_id": chat_target.id,
+                        "membership_id": membership.id,
+                        "account_id": account.id,
+                        "blackbox": True,
+                    },
+                    automation_id=automation_id,
+                )
         membership.last_join_error = join_result.get("error")
         membership.next_join_attempt_at = None
         schedule_account_retry(account)

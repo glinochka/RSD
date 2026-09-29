@@ -1,9 +1,9 @@
 """Slow weekly rotation of joined channels/chats between watchers.
 
 Each account leaves 3–5 of its oldest chats per Moscow week (one leave at a
-time, 18–36 hours apart). Another account picks those chats up; the leaver
-joins a chat someone else has held the longest. Looks like a person cleaning
-subscriptions, not a farm swapping the whole list at once.
+time, 18–36 hours apart). Another account that is under quota picks that chat
+up. The leaver gets a still-unclaimed chat from the global pool — never a chat
+another watcher already holds.
 """
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ from .chat_membership_service import (
     account_occupied_count,
     apply_account_join_cooldown,
     ensure_memberships_for_automation,
+    pick_unclaimed_chat_id,
     release_membership,
     reuse_or_queue_membership,
 )
@@ -241,10 +242,9 @@ async def _rotate_one_account(
     from .chat_join_service import leave_chat_for_account
 
     outcome = await leave_chat_for_account(session, chat_target, account)
-    if outcome.get("status") not in {"left", "failed"}:
+    if outcome.get("status") != "left":
         return {"status": outcome.get("status"), "reason": "leave_not_ready", "account_id": account.id}
 
-    # "failed" often means already not a participant — still free the slot.
     await release_membership(membership, reason="weekly_rotation")
     await apply_account_join_cooldown(session, automation_id, account.id)
 
@@ -260,7 +260,7 @@ async def _rotate_one_account(
             priority=WATCHER_REPLACE_PRIORITY,
         )
 
-    replacement_chat_id = await _oldest_foreign_chat_id(
+    replacement_chat_id = await pick_unclaimed_chat_id(
         session,
         automation_id,
         account.id,

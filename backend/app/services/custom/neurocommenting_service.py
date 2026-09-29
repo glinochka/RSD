@@ -10,9 +10,11 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .account_roles import account_matches_action
 from .account_pacing import farm_overlap_active_hours
 from .chat_inspect_service import probe_comments_readonly
 from .chat_membership_service import (
+    account_is_joined,
     ensure_watcher_membership,
     get_reader_account,
     is_chat_watchable,
@@ -20,20 +22,19 @@ from .chat_membership_service import (
     recover_reader_after_error,
     retire_reader_and_replace,
 )
-from .chat_scope import apply_entity_metadata, commit_chat_scan, count_target_actions_today, is_broadcast_channel, is_lab_chat, is_paused
-from .pending_action_service import ensure_accounts_ready, has_pending_action
+from .chat_scope import apply_entity_metadata, commit_chat_scan, count_target_actions_today, is_broadcast_channel, is_lab_chat, is_paused, is_public_readable
+from .pending_action_service import enqueue_pending_action
 from .post_engagement import NEUROCOMMENTING, SHILLING, SKIP, claim_post_engagement, post_target_id
 from .rotation_service import (
     current_daily_messages_sent,
     moscow_day_start_utc_naive,
     record_successful_send,
-    select_account_for_action,
 )
 from .shilling_service import perform_post_shilling
 from .telegram_account_client import TelegramAccountClient
-from .telegram_error_handler import execute_with_telegram_retry
+from .telegram_error_handler import execute_with_telegram_retry, is_chat_write_forbidden
 from .telegram_invite import chat_entity_key
-from ...alembic.models import AutomationActionLog, ChatTarget, CustomAutomation, CustomPrompt, PromptType, SocialAccount
+from ...alembic.models import AutomationActionLog, ChatTarget, CustomAutomation, CustomPrompt, PoolAccount, PromptType, SocialAccount
 from ...config import settings
 from ...services.ai_authoring import ai_client
 from .prompt_service import render_prompt
@@ -310,9 +311,15 @@ async def _send_comment(
                 target_type="chat_post",
                 payload=payload,
                 automation_id=automation_id,
+                log_errors=False,
             )
     except Exception as exc:
         logger.warning("Send comment failed for chat %s post %s: %s", chat_target.id, post_id, exc)
+        if is_chat_write_forbidden(exc):
+            from .chat_membership_service import blackbox_unusable_chat
+
+            await blackbox_unusable_chat(session, chat_target, reason="comments_closed")
+            await session.commit()
         return False
 
     record_successful_send(account)
@@ -480,40 +487,19 @@ async def process_chat_target(
             continue
         if claimed != NEUROCOMMENTING or not neuro_enabled:
             continue
-        tried_actors: set[int] = set()
-        actor = None
-        ready = False
-        while True:
-            actor = await select_account_for_action(
-                session,
-                automation_id,
-                "commenting",
-                consume_quota=False,
-                exclude_account_ids=tried_actors or None,
-                ignore_rest=lab_mode,
-            )
-            if not actor or account_reached_daily_cap(actor, account_comment_daily_limit(actor, automation, lab_mode=lab_mode)):
-                actor = None
-                break
-            tried_actors.add(actor.id)
-            ready = await ensure_accounts_ready(
-                session,
-                automation_id,
-                chat_target,
-                [actor],
-                action_type="neurocommenting",
-                target_id=post_target_id(chat_target.id, post.id),
-                payload={"post_id": post.id, "post_text": (post.text or "")[:500]},
-            )
-            if ready:
-                break
-            if await has_pending_action(
-                session, automation_id, "neurocommenting", post_target_id(chat_target.id, post.id)
-            ):
-                break
-        if not ready:
+        actor = account
+        if account_reached_daily_cap(actor, account_comment_daily_limit(actor, automation, lab_mode=lab_mode)):
             continue
-        if not actor:
+        pool = await session.scalar(
+            select(PoolAccount).where(
+                PoolAccount.social_account_id == actor.id,
+                PoolAccount.custom_automation_id == automation_id,
+            )
+        )
+        if not account_matches_action(pool, actor, "commenting"):
+            continue
+        joined = await account_is_joined(session, chat_target.id, actor.id)
+        if not joined and not is_public_readable(chat_target):
             continue
 
         # ── Anti-spam-bot delay ──────────────────────────────────────────────
@@ -528,7 +514,6 @@ async def process_chat_target(
                 min_delay = random.uniform(POST_COMMENT_DELAY_MIN_SECONDS, POST_COMMENT_DELAY_MAX_SECONDS)
                 if post_age < min_delay:
                     delay_until = posted_at + timedelta(seconds=min_delay)
-                    from .pending_action_service import enqueue_pending_action
                     pending = await enqueue_pending_action(
                         session,
                         automation_id=automation_id,

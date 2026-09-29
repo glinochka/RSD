@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .chat_scope import commit_chat_scan, count_target_actions_today, is_paused, is_group_chat, is_lab_chat
 from .chat_membership_service import (
     ensure_watcher_membership,
+    get_reader_account,
     is_chat_watchable,
     list_watchable_chats,
 )
@@ -26,7 +27,7 @@ from .post_engagement import SHILLING as POST_SHILLING, get_post_engagement_clai
 from .rotation_service import accounts_are_distinct, record_successful_send, select_account_for_action
 from .telegram_account_client import TelegramAccountClient
 from .telegram_invite import chat_entity_key
-from .telegram_error_handler import execute_with_telegram_retry
+from .telegram_error_handler import execute_with_telegram_retry, is_chat_write_forbidden
 from ...alembic.models import (
     AutomationActionLog,
     ChatMessage,
@@ -217,14 +218,30 @@ async def _pick_speaker_pair(
     session: AsyncSession,
     automation: CustomAutomation,
     exclude_account_ids: set[int] | None = None,
+    *,
+    prefer_account: SocialAccount | None = None,
 ) -> tuple[SocialAccount, SocialAccount] | None:
     excluded = set(exclude_account_ids or set())
-    account_a = await select_account_for_action(
-        session,
-        automation,
-        "shilling_question",
-        exclude_account_ids=excluded,
-    )
+    account_a = None
+    if prefer_account and prefer_account.id not in excluded:
+        from .account_roles import account_matches_action
+        from ...alembic.models import PoolAccount
+
+        pool = await session.scalar(
+            select(PoolAccount).where(
+                PoolAccount.social_account_id == prefer_account.id,
+                PoolAccount.custom_automation_id == automation.id,
+            )
+        )
+        if account_matches_action(pool, prefer_account, "shilling_question"):
+            account_a = prefer_account
+    if account_a is None:
+        account_a = await select_account_for_action(
+            session,
+            automation,
+            "shilling_question",
+            exclude_account_ids=excluded,
+        )
     if account_a is None:
         return None
     excluded.add(account_a.id)
@@ -328,9 +345,15 @@ async def _send_message(
                 target_type="chat_post" if (comment_to is not None or discussion_post_id is not None) else "chat",
                 payload=payload or {},
                 automation_id=automation_id,
+                log_errors=False,
             )
     except Exception as exc:
         logger.warning("Shilling send failed for chat %s account %s: %s", chat_target.id, account.id, exc)
+        if is_chat_write_forbidden(exc):
+            from .chat_membership_service import blackbox_unusable_chat
+
+            await blackbox_unusable_chat(session, chat_target, reason="comments_closed")
+            await session.commit()
         return None
     message_id = getattr(message, "id", None)
     if message_id:
@@ -388,6 +411,32 @@ async def _already_succeeded(
     return result.scalar_one_or_none() is not None
 
 
+async def _leave_shilling_guests(
+    session: AsyncSession,
+    chat_target: ChatTarget,
+    accounts: list[SocialAccount],
+) -> None:
+    """Second speaker joins only for the dialogue, then leaves so the pool stays exclusive."""
+    from .chat_join_service import leave_chat_for_account
+    from .chat_membership_service import (
+        WATCHER_PURPOSE,
+        get_membership,
+        release_membership,
+    )
+    from ...alembic.models import ChatJoinStatus
+
+    for account in accounts:
+        membership = await get_membership(session, chat_target.id, account.id)
+        if membership is None:
+            continue
+        if (membership.purpose or WATCHER_PURPOSE) == WATCHER_PURPOSE:
+            continue
+        if membership.join_status == ChatJoinStatus.JOINED.value:
+            await leave_chat_for_account(session, chat_target, account)
+        await release_membership(membership, reason="shilling_guest")
+    await session.commit()
+
+
 async def perform_shilling_dialogue(
     session: AsyncSession,
     automation: CustomAutomation,
@@ -402,7 +451,17 @@ async def perform_shilling_dialogue(
     sleep: Callable[[float], Any] | None = None,
 ) -> dict[str, Any]:
     """Send setup from account A and a reply from account B. Never one userbot to itself."""
-    pair = await _pick_speaker_pair(session, automation)
+    if comment_to is not None and chat_target.comments_open is False:
+        from .chat_membership_service import blackbox_unusable_chat
+
+        await blackbox_unusable_chat(session, chat_target, reason="comments_closed")
+        return {"status": "skipped", "reason": "comments_closed"}
+
+    pair = await _pick_speaker_pair(
+        session,
+        automation,
+        prefer_account=await get_reader_account(session, chat_target),
+    )
     if not pair:
         return {"status": "skipped", "reason": "need_two_accounts"}
     account_a, account_b = pair
@@ -414,8 +473,6 @@ async def perform_shilling_dialogue(
     if comment_to is not None:
         from .chat_inspect_service import ensure_comment_access
 
-        if chat_target.comments_open is False:
-            return {"status": "skipped", "reason": "comments_closed"}
         for speaker in (account_a, account_b):
             probe = await ensure_comment_access(session, chat_target, speaker)
             if probe.account_blocked:
@@ -426,6 +483,9 @@ async def perform_shilling_dialogue(
                 await retire_reader_and_replace(session, chat_target, speaker.id, error=probe.error)
                 return {"status": "skipped", "reason": "reader_lost"}
             if probe.comments_open is False:
+                from .chat_membership_service import blackbox_unusable_chat
+
+                await blackbox_unusable_chat(session, chat_target, reason="comments_closed")
                 return {"status": "skipped", "reason": "comments_closed"}
 
     ready = await ensure_accounts_ready(
@@ -467,6 +527,7 @@ async def perform_shilling_dialogue(
         },
     )
     if not first_id:
+        await _leave_shilling_guests(session, chat_target, [account_a, account_b])
         return {"status": "error", "reason": "setup_failed"}
 
     wait_for = delay_seconds
@@ -497,6 +558,7 @@ async def perform_shilling_dialogue(
         },
     )
     if not second_id:
+        await _leave_shilling_guests(session, chat_target, [account_a, account_b])
         return {"status": "error", "reason": "reply_failed", "setup_message_id": first_id}
 
     await _log(
@@ -519,6 +581,7 @@ async def perform_shilling_dialogue(
             "_mod_probed": False,
         },
     )
+    await _leave_shilling_guests(session, chat_target, [account_a, account_b])
     return {
         "status": "ok",
         "setup_account_id": account_a.id,

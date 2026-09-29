@@ -3,10 +3,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...alembic.models import AutomationActionLog, ChatTarget, SocialAccount
+from .telegram_error_handler import _OPERATIONAL_SKIP_MARKERS, is_operational_skip_error
 
 ERROR_RESULTS = ("error", "banned", "rate_limited")
 
@@ -33,6 +34,10 @@ def _account_label(account: SocialAccount | None) -> str | None:
     return account.display_name or account.username or account.phone_number or f"#{account.id}"
 
 
+def _is_expected_unusable_error(message: str | None, payload: dict[str, Any]) -> bool:
+    return is_operational_skip_error(message, payload)
+
+
 async def list_error_feed(
     session: AsyncSession,
     automation_id: int,
@@ -47,6 +52,18 @@ async def list_error_feed(
     ]
     if action_type:
         filters.append(AutomationActionLog.action_type == action_type)
+    skip_message = or_(
+        *[
+            AutomationActionLog.error_message.ilike(f"%{marker}%")
+            for marker in _OPERATIONAL_SKIP_MARKERS
+        ]
+    )
+    filters.append(
+        or_(
+            AutomationActionLog.error_message.is_(None),
+            not_(skip_message),
+        )
+    )
     from sqlalchemy import func
 
     total = await session.scalar(select(func.count()).select_from(AutomationActionLog).where(*filters))
@@ -57,7 +74,11 @@ async def list_error_feed(
         .limit(limit)
         .offset(offset)
     )
-    logs = list(result.scalars().all())
+    logs = [
+        log
+        for log in result.scalars().all()
+        if not _is_expected_unusable_error(log.error_message, log.payload if isinstance(log.payload, dict) else {})
+    ][:limit]
     account_ids = {log.social_account_id for log in logs}
     accounts: dict[int, SocialAccount] = {}
     if account_ids:

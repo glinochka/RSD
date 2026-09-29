@@ -3,7 +3,9 @@
 Design change (2026-09-25):
   • Accounts JOIN the channels/chats they are assigned to, then receive
     updates naturally instead of polling public channels from outside.
-  • Each account gets a stable subset of chats (50–100) sharded by hash.
+  • Each account gets 50–100 unique chats from the global pool.
+  • Two watchers never share a channel. Shilling guests join only for the
+    dialogue, then leave.
   • Joins happen slowly: one per account, 1–5 hours apart, during active hours.
   • Public-readable pull mode is kept as fallback only for chats that cannot
     be joined (invite links not available) — not as the default strategy.
@@ -45,7 +47,7 @@ ACTOR_PURPOSE = MembershipPurpose.ACTOR.value
 
 # How many chats each account should actively monitor.
 TARGET_CHATS_PER_ACCOUNT = 50
-MIN_CHATS_PER_ACCOUNT = 30
+MIN_CHATS_PER_ACCOUNT = 50
 MAX_TARGET_CHATS_PER_ACCOUNT = 100
 REJOIN_COOLDOWN_DAYS = 21
 
@@ -214,6 +216,45 @@ def _target_chat_count_for_account(account_id: int) -> int:
     return MIN_CHATS_PER_ACCOUNT + int(frac * (MAX_TARGET_CHATS_PER_ACCOUNT - MIN_CHATS_PER_ACCOUNT))
 
 
+async def claimed_watcher_chat_ids(
+    session: AsyncSession,
+    automation_id: int,
+    *,
+    exclude_account_id: int | None = None,
+) -> set[int]:
+    """Chats already taken by a watcher. One live account per channel."""
+    filters = [
+        AccountChatMembership.custom_automation_id == automation_id,
+        AccountChatMembership.purpose == WATCHER_PURPOSE,
+        AccountChatMembership.join_status.in_(list(_OCCUPIED_STATUSES)),
+    ]
+    if exclude_account_id:
+        filters.append(AccountChatMembership.social_account_id != exclude_account_id)
+    rows = await session.execute(
+        select(AccountChatMembership.chat_target_id).where(*filters).distinct()
+    )
+    return {int(chat_id) for (chat_id,) in rows.all()}
+
+
+async def pick_unclaimed_chat_id(
+    session: AsyncSession,
+    automation_id: int,
+    account_id: int,
+    *,
+    exclude_chat_ids: set[int] | None = None,
+) -> int | None:
+    """Next unique pool chat for this account (not watched by anyone else)."""
+    blocked = await _blocked_chat_ids_for_account(session, automation_id, account_id)
+    blocked |= set(exclude_chat_ids or ())
+    claimed = await claimed_watcher_chat_ids(session, automation_id, exclude_account_id=account_id)
+    chats = await _active_assignable_chats(session, automation_id)
+    for chat in sorted(chats, key=lambda item: _account_chat_hash(account_id, item.id)):
+        if chat.id in blocked or chat.id in claimed:
+            continue
+        return int(chat.id)
+    return None
+
+
 async def _active_assignable_chats(session: AsyncSession, automation_id: int) -> list[ChatTarget]:
     result = await session.execute(
         select(ChatTarget).where(
@@ -222,6 +263,7 @@ async def _active_assignable_chats(session: AsyncSession, automation_id: int) ->
             ChatTarget.provider == "telegram",
             ChatTarget.source != ChatSource.TEST.value,
             ChatTarget.mod_status != "moderated",
+            or_(ChatTarget.comments_open.is_(None), ChatTarget.comments_open.is_(True)),
         )
     )
     return list(result.scalars().all())
@@ -274,6 +316,12 @@ async def reuse_or_queue_membership(
             return None
         if existing.join_status == ChatJoinStatus.JOINED.value:
             return existing
+        if purpose == WATCHER_PURPOSE:
+            claimed = await claimed_watcher_chat_ids(
+                session, automation_id, exclude_account_id=account_id
+            )
+            if chat_target_id in claimed:
+                return None
         existing.purpose = existing.purpose or purpose
         existing.priority = max(int(existing.priority or 0), int(priority))
         existing.join_status = ChatJoinStatus.PENDING.value
@@ -282,6 +330,10 @@ async def reuse_or_queue_membership(
         existing.last_join_error = None
         existing.updated_at = now
         return existing
+    if purpose == WATCHER_PURPOSE:
+        claimed = await claimed_watcher_chat_ids(session, automation_id, exclude_account_id=account_id)
+        if chat_target_id in claimed:
+            return None
     membership = _new_membership(
         automation_id,
         chat_target_id,
@@ -353,15 +405,20 @@ async def _assign_chats_to_account(
     automation_id: int,
     account: SocialAccount,
     all_chats: list[ChatTarget],
+    *,
+    claimed: set[int] | None = None,
 ) -> int:
-    """Ensure account has its stable subset of chats assigned (not necessarily joined yet)."""
+    """Give this account unique chats nobody else already watches."""
     blocked_ids = await _blocked_chat_ids_for_account(session, automation_id, account.id)
+    taken = claimed if claimed is not None else set()
     target_count = _target_chat_count_for_account(account.id)
     scored = sorted(all_chats, key=lambda chat: _account_chat_hash(account.id, chat.id))
 
     added = 0
     for chat in scored:
         if chat.id in blocked_ids:
+            continue
+        if chat.id in taken:
             continue
         if chat.comments_open is False:
             continue
@@ -378,8 +435,72 @@ async def _assign_chats_to_account(
         if queued is None:
             continue
         blocked_ids.add(chat.id)
+        taken.add(chat.id)
         added += 1
+    if added:
+        await session.flush()
     return added
+
+
+async def _dedupe_watcher_assignments(
+    session: AsyncSession,
+    automation_id: int,
+) -> list[AccountChatMembership]:
+    """Keep one watcher per chat. Return JOINED extras that still need a Telegram leave."""
+    rows = (
+        await session.execute(
+            select(AccountChatMembership).where(
+                AccountChatMembership.custom_automation_id == automation_id,
+                AccountChatMembership.purpose == WATCHER_PURPOSE,
+                AccountChatMembership.join_status.in_(list(_OCCUPIED_STATUSES)),
+            )
+        )
+    ).scalars().all()
+    by_chat: dict[int, list[AccountChatMembership]] = {}
+    for membership in rows:
+        by_chat.setdefault(int(membership.chat_target_id), []).append(membership)
+    rank = {
+        ChatJoinStatus.JOINED.value: 0,
+        ChatJoinStatus.JOINING.value: 1,
+        ChatJoinStatus.PENDING.value: 2,
+        ChatJoinStatus.RATE_LIMITED.value: 3,
+        ChatJoinStatus.ERROR.value: 4,
+    }
+    to_leave: list[AccountChatMembership] = []
+    for members in by_chat.values():
+        if len(members) < 2:
+            continue
+        members.sort(key=lambda item: (rank.get(item.join_status, 9), int(item.id)))
+        for extra in members[1:]:
+            if extra.join_status == ChatJoinStatus.JOINED.value:
+                to_leave.append(extra)
+            else:
+                await release_membership(extra, reason="exclusive_pool")
+    return to_leave
+
+
+async def _leave_one_extra_watcher(
+    session: AsyncSession,
+    extras: list[AccountChatMembership],
+) -> None:
+    """Leave at most one JOINED extra per account. Release only after Telegram leave succeeds."""
+    if not extras:
+        return
+    from .chat_join_service import leave_chat_for_account
+
+    seen_accounts: set[int] = set()
+    for extra in extras:
+        if extra.social_account_id in seen_accounts:
+            continue
+        account = await session.get(SocialAccount, extra.social_account_id)
+        chat_target = await session.get(ChatTarget, extra.chat_target_id)
+        if not account or not chat_target:
+            continue
+        outcome = await leave_chat_for_account(session, chat_target, account)
+        if outcome.get("status") != "left":
+            continue
+        await release_membership(extra, reason="exclusive_pool")
+        seen_accounts.add(extra.social_account_id)
 
 
 async def _release_moderated_slots(session: AsyncSession, automation_id: int) -> int:
@@ -400,22 +521,11 @@ async def _release_moderated_slots(session: AsyncSession, automation_id: int) ->
 
 
 async def _redistribute_moderated_chats(session: AsyncSession, automation_id: int) -> int:
-    """Free black-boxed slots, then assign fresh chats so no account sits idle."""
-    await _release_moderated_slots(session, automation_id)
-    all_chats = await _active_assignable_chats(session, automation_id)
-    accounts = await list_alive_session_accounts(session, automation_id)
-    total_replaced = 0
-    for account in accounts:
-        if not _account_can_open_session(account):
-            continue
-        current_count = await account_occupied_count(session, account.id)
-        target_count = _target_chat_count_for_account(account.id)
-        if current_count >= target_count:
-            continue
-        added = await _assign_chats_to_account(session, automation_id, account, all_chats)
-        if added:
-            total_replaced += added
-    return total_replaced
+    """Free black-boxed slots and drop overlapping watchers. Assignment happens after."""
+    released = await _release_moderated_slots(session, automation_id)
+    extras = await _dedupe_watcher_assignments(session, automation_id)
+    await _leave_one_extra_watcher(session, extras)
+    return released
 
 
 # ---------------------------------------------------------------------------
@@ -736,7 +846,10 @@ async def ensure_memberships_for_account(
     if not account or not _account_can_open_session(account):
         return 0
     all_chats = await _active_assignable_chats(session, automation_id)
-    return await _assign_chats_to_account(session, automation_id, account, all_chats)
+    claimed = await claimed_watcher_chat_ids(session, automation_id)
+    return await _assign_chats_to_account(
+        session, automation_id, account, all_chats, claimed=claimed
+    )
 
 
 async def ensure_memberships_for_automation(session: AsyncSession, automation_id: int) -> int:
@@ -745,11 +858,14 @@ async def ensure_memberships_for_automation(session: AsyncSession, automation_id
 
     all_chats = await _active_assignable_chats(session, automation_id)
     accounts = await list_alive_session_accounts(session, automation_id)
+    claimed = await claimed_watcher_chat_ids(session, automation_id)
     total_added = 0
     for account in accounts:
         if not _account_can_open_session(account):
             continue
-        added = await _assign_chats_to_account(session, automation_id, account, all_chats)
+        added = await _assign_chats_to_account(
+            session, automation_id, account, all_chats, claimed=claimed
+        )
         if added:
             total_added += added
     if total_added:
