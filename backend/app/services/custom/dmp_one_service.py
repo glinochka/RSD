@@ -103,8 +103,8 @@ async def _generate_outreach_message(
             "company": company or "",
             "website": website or "",
             "page": page or "",
-            "partner_utm_url": automation.partner_utm_url or "",
-            "partner_promo_code": automation.partner_promo_code or "",
+            "partner_utm_url": "",
+            "partner_promo_code": "",
             "registered": registered or "unknown",
         },
     )
@@ -116,7 +116,9 @@ async def _generate_outreach_message(
             temperature=0.8,
         )
         data = _extract_json(response.choices[0].message.content or "")
-        return str(data.get("message") or "").strip()[:500]
+        from .conversation_guard import sanitize_public_text
+
+        return sanitize_public_text(str(data.get("message") or "").strip())[:500]
     except Exception as exc:
         logger.warning("DMP outreach generation failed: %s", exc)
         return ""

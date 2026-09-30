@@ -479,6 +479,8 @@ def test_peer_dialog_does_not_park_public_writes():
     assert action_uses_humanization_rest("humanization_session") is True
     assert action_uses_target_rest("peer_dialog") is False
     assert action_uses_humanization_rest("peer_dialog") is True
+    assert action_uses_target_rest("inbound_dm") is False
+    assert action_uses_humanization_rest("inbound_dm") is True
     assert action_uses_target_rest("account_warmup") is False
     assert action_uses_target_rest("neurocommenting") is True
     assert action_uses_target_rest("shilling_chat") is True

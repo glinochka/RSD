@@ -22,6 +22,7 @@ from .chat_membership_service import (
     list_watchable_chats,
 )
 from .account_pacing import account_active_window, in_account_active_hours
+from .conversation_guard import sanitize_public_text
 from .pending_action_service import ensure_accounts_ready
 from .post_engagement import SHILLING as POST_SHILLING, get_post_engagement_claim, post_target_id
 from .rotation_service import accounts_are_distinct, record_successful_send, select_account_for_action
@@ -185,10 +186,10 @@ async def light_vary_shilling_lines(setup: str, reply: str) -> tuple[str, str]:
         varied_setup = str(data.get("setup") or "").strip()[:500]
         varied_reply = str(data.get("reply") or "").strip()[:500]
         if varied_setup and varied_reply:
-            return varied_setup, varied_reply
+            return sanitize_public_text(varied_setup), sanitize_public_text(varied_reply)
     except Exception as exc:
         logger.warning("Shilling light-vary failed: %s", exc)
-    return source_setup, source_reply
+    return sanitize_public_text(source_setup), sanitize_public_text(source_reply)
 
 
 async def generate_shilling_dialogue(
@@ -211,7 +212,7 @@ async def generate_shilling_dialogue(
         setup, reply = DEFAULT_SHILLING_SETUP, DEFAULT_SHILLING_REPLY
     if vary:
         setup, reply = await light_vary_shilling_lines(setup, reply)
-    return setup, reply
+    return sanitize_public_text(setup), sanitize_public_text(reply)
 
 
 async def _pick_speaker_pair(

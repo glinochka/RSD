@@ -93,6 +93,18 @@ except Exception:  # pragma: no cover - older Telethon
     class UserAlreadyParticipantError(Exception):
         pass
 
+try:
+    from telethon.errors import InviteHashExpiredError
+except Exception:  # pragma: no cover - older Telethon
+    class InviteHashExpiredError(Exception):
+        pass
+
+try:
+    from telethon.errors import InviteHashInvalidError
+except Exception:  # pragma: no cover - older Telethon
+    class InviteHashInvalidError(Exception):
+        pass
+
 
 _LOOKUP_ERRORS = {
     "UsernameNotOccupiedError": "Такого чата или канала нет",
@@ -442,6 +454,8 @@ async def _try_join_chat(
         return {"status": "failed", "error": "account_channels_full", "slots_full": True}
     except InviteHashExpiredError:
         return {"status": "failed", "error": "Ссылка-приглашение истекла"}
+    except InviteHashInvalidError:
+        return {"status": "failed", "error": "Некорректная ссылка-приглашение"}
     except UserAlreadyParticipantError:
         try:
             async with TelegramAccountClient.for_account(account) as client:
@@ -1128,6 +1142,8 @@ async def leave_chat_for_account(
     account: SocialAccount,
 ) -> dict[str, Any]:
     """Leave a channel/megagroup (or basic chat) with one account."""
+    if getattr(account, "is_frozen", False) or account.is_banned or not account.is_active:
+        return {"status": "skipped", "error": "account_unavailable"}
     if not account.session_file_path and not getattr(account, "encrypted_session", None):
         return {"status": "failed", "error": "no session file"}
     try:
@@ -1158,6 +1174,12 @@ async def leave_chat_for_account(
     except FloodWaitError as exc:
         return {"status": "rate_limited", "error": f"FloodWait: {exc.seconds or 60}s"}
     except Exception as exc:
+        from .telegram_error_handler import _classify_telegram_error, update_account_after_telegram_error
+
+        kind = _classify_telegram_error(exc).get("kind")
+        if kind in {"frozen", "deactivated", "session"}:
+            await update_account_after_telegram_error(session, account, exc)
+            return {"status": "skipped", "error": kind}
         logger.warning("Leave chat %s failed for account %s: %s", chat_target.id, account.id, exc)
         return {"status": "failed", "error": _friendly_telegram_error(exc, "Не удалось выйти")[:255]}
 

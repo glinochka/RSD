@@ -496,6 +496,10 @@ async def _leave_one_extra_watcher(
         chat_target = await session.get(ChatTarget, extra.chat_target_id)
         if not account or not chat_target:
             continue
+        if getattr(account, "is_frozen", False) or account.is_banned or not account.is_active:
+            await release_membership(extra, reason="account_dead")
+            seen_accounts.add(extra.social_account_id)
+            continue
         outcome = await leave_chat_for_account(session, chat_target, account)
         if outcome.get("status") != "left":
             continue

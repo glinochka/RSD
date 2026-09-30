@@ -10,13 +10,21 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .account_pacing import account_should_idle
+from .account_pacing import account_humanization_should_idle as account_should_idle, farm_overlap_active_hours
+from .conversation_guard import (
+    conversation_has_link,
+    entity_matches_peer_keys,
+    incoming_asks_for_link,
+    offer_fields,
+    peer_identity_keys,
+    sanitize_dm_text,
+)
 from .human_dm import is_ready_to_reply
 from .prompt_service import render_prompt
 from .rotation_service import list_alive_session_accounts
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import execute_with_telegram_retry, log_action_error
-from ...alembic.models import AutomationActionLog, CustomAutomation, CustomLead, CustomPrompt, PromptType, SocialAccount
+from ...alembic.models import AutomationActionLog, CustomAutomation, CustomLead, CustomPrompt, PoolAccount, PromptType, SocialAccount
 from ...services.ai_authoring import ai_client
 
 logger = logging.getLogger(__name__)
@@ -26,19 +34,25 @@ MAX_REPLIES_PER_HOUR = 10
 TELEGRAM_SERVICE_USER_IDS = {777000, 42777, 333000}
 TELEGRAM_SERVICE_USERNAMES = {"telegram", "telegramnotifications"}
 
-DEFAULT_INBOUND_DM_PROMPT = """Ты отвечаешь в личных сообщениях Telegram от имени живого человека.
+DEFAULT_INBOUND_DM_PROMPT = """Тебе написали в личку. Ты живой человек, не отдел продаж и не бот.
+
+Правила:
+- 1–3 коротких предложения, разговорно.
+- На «привет / как дела / давно не писал» отвечай как другу. Не предлагай продукт, ссылку и промокод.
+- Продукт упоминай только если собеседник сам спросил про задачу/сервис.
+- Ссылку и промокод вставляй ТОЛЬКО если они явно попросили («скинь ссылку», «дай промокод») и поля ниже не пустые. Иначе не выдумывай и не вставляй URL.
+- Не повторяй одно и то же. Не пиши списки фич.
 
 Входящее сообщение:
 {incoming}
 
-Контекст продукта/сервиса:
+Контекст продукта (не рекламируй сам):
 {product_context}
 
-Ссылка с UTM: {partner_utm_url}
-Промокод: {partner_promo_code}
+Ссылка (только если попросили): {partner_utm_url}
+Промокод (только если попросили): {partner_promo_code}
 
-Дай короткий нативный ответ (1–3 предложения). Если спрашивают ссылку или промокод — дай их.
-Не создавай ощущение рекламы. Верни ТОЛЬКО текст ответа без кавычек и пояснений.
+Верни ТОЛЬКО текст ответа без кавычек и пояснений.
 """
 
 
@@ -61,6 +75,21 @@ def _product_context(automation: CustomAutomation) -> str:
         automation.industry or "",
     ]
     return "\n".join(part.strip() for part in parts if part and str(part).strip())
+
+
+async def _load_pool_peer_keys(session: AsyncSession, automation_id: int) -> set[str]:
+    rows = await session.execute(
+        select(SocialAccount.username, SocialAccount.display_name).join(
+            PoolAccount, PoolAccount.social_account_id == SocialAccount.id
+        ).where(
+            PoolAccount.custom_automation_id == automation_id,
+            PoolAccount.removed_at.is_(None),
+        )
+    )
+    keys: set[str] = set()
+    for username, display_name in rows.all():
+        keys.update(peer_identity_keys(username=username, display_name=display_name))
+    return keys
 
 
 async def _load_prompt(session: AsyncSession, automation_id: int) -> str:
@@ -140,15 +169,22 @@ async def _generate_reply(
     session: AsyncSession,
     automation: CustomAutomation,
     incoming: str,
+    *,
+    allow_link: bool,
 ) -> str:
     template = await _load_prompt(session, automation.id)
+    url, promo = offer_fields(
+        url=automation.partner_utm_url,
+        promo=automation.partner_promo_code,
+        allow_link=allow_link,
+    )
     prompt = render_prompt(
         template,
         {
             "incoming": incoming,
             "product_context": _product_context(automation),
-            "partner_utm_url": automation.partner_utm_url or "",
-            "partner_promo_code": automation.partner_promo_code or "",
+            "partner_utm_url": url,
+            "partner_promo_code": promo,
         },
     )
     response = await ai_client.chat.completions.create(
@@ -160,13 +196,15 @@ async def _generate_reply(
     if text.startswith("```"):
         text = re.sub(r"^```(?:\w+)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
-    return text[:2000]
+    return sanitize_dm_text(text, allow_link=allow_link)[:2000]
 
 
 async def _process_account(
     session: AsyncSession,
     automation: CustomAutomation,
     account: SocialAccount,
+    *,
+    pool_peer_keys: set[str],
 ) -> dict[str, Any]:
     if not account.session_file_path or not account.is_active or account.is_banned or getattr(account, "is_frozen", False):
         return {"status": "skipped", "reason": "inactive"}
@@ -187,11 +225,15 @@ async def _process_account(
                     continue
                 if is_official_telegram_peer(entity):
                     continue
+                if entity_matches_peer_keys(entity, pool_peer_keys):
+                    continue
                 peer_id = int(getattr(entity, "id", 0) or 0)
                 username = getattr(entity, "username", None)
                 if await _lead_exists_for_peer(session, automation.id, account.id, peer_id, username):
                     continue
                 messages = await client.get_messages(entity, limit=8)
+                history_texts = [str(getattr(item, "text", "") or "") for item in (messages or [])]
+                already_shared_link = conversation_has_link(history_texts)
                 for msg in reversed(list(messages or [])):
                     if not msg or not getattr(msg, "text", None) or getattr(msg, "out", False):
                         continue
@@ -204,8 +246,11 @@ async def _process_account(
                     # Field only: 1–4 min before opening the chat. Test lab never calls this path.
                     if not is_ready_to_reply(msg, external_id, lab_mode=False):
                         continue
+                    allow_link = incoming_asks_for_link(incoming) and not already_shared_link
                     try:
-                        reply = await _generate_reply(session, automation, incoming)
+                        reply = await _generate_reply(
+                            session, automation, incoming, allow_link=allow_link
+                        )
                     except Exception as exc:
                         await log_action_error(
                             session,
@@ -267,6 +312,8 @@ async def _process_account(
                     )
                     await session.commit()
                     handled += 1
+                    if allow_link:
+                        already_shared_link = True
                     if account_should_idle(account) or await _hourly_reply_count(session, automation.id, account.id) >= MAX_REPLIES_PER_HOUR:
                         return {"status": "ok", "handled": handled}
     except Exception as exc:
@@ -293,9 +340,14 @@ async def run_inbound_dm_pass(automation_id: int) -> dict[str, Any]:
         automation = await session.get(CustomAutomation, automation_id)
         if not automation or automation.status == "archived":
             return {"status": "skipped", "reason": "not_found"}
+        if not farm_overlap_active_hours():
+            return {"status": "skipped", "reason": "night"}
         accounts = await list_alive_session_accounts(session, automation_id)
+        pool_peer_keys = await _load_pool_peer_keys(session, automation_id)
         total_handled = 0
         for account in accounts:
-            outcome = await _process_account(session, automation, account)
+            outcome = await _process_account(
+                session, automation, account, pool_peer_keys=pool_peer_keys
+            )
             total_handled += int(outcome.get("handled") or 0)
         return {"status": "ok", "handled": total_handled, "accounts": len(accounts)}

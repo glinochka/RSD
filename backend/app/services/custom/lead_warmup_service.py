@@ -20,6 +20,7 @@ from .lead_delivery_service import (
     deliver_lead_to_manager,
     infer_dmp_handoff_reason,
 )
+from .conversation_guard import incoming_asks_for_link, offer_fields, sanitize_dm_text, text_contains_url
 from .prompt_service import render_prompt
 from .solution_templates import uses_sales_handoff
 from .telegram_account_client import TelegramAccountClient
@@ -30,7 +31,7 @@ from ...services.ai_authoring import ai_client
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_QUALIFICATION_PROMPT = """Ты квалифицируешь лид в Telegram-переписке.
+DEFAULT_QUALIFICATION_PROMPT = """Ты квалифицируешь лид в Telegram-переписке как живой человек, не отдел продаж.
 
 История переписки:
 {history}
@@ -38,8 +39,11 @@ DEFAULT_QUALIFICATION_PROMPT = """Ты квалифицируешь лид в Te
 Последнее сообщение лида:
 {last_incoming}
 
-Ссылка с UTM: {partner_utm_url}
-Промокод: {partner_promo_code}
+Ссылка (вставляй только если явно попросили и поле не пустое): {partner_utm_url}
+Промокод (вставляй только если явно попросили и поле не пустое): {partner_promo_code}
+
+Запрещено кидать URL на «привет», «как дела», «ну что», «сколько стоит».
+Ссылку/промокод — только после прямой просьбы («скинь ссылку», «дай промокод»).
 
 Верни ТОЛЬКО JSON:
 {
@@ -153,13 +157,21 @@ async def _classify_dialogue(
     history: str,
     last_incoming: str,
 ) -> dict[str, Any]:
+    history = history or ""
+    last_incoming = last_incoming or ""
+    allow_link = incoming_asks_for_link(last_incoming) and not text_contains_url(history)
+    url, promo = offer_fields(
+        url=automation.partner_utm_url,
+        promo=automation.partner_promo_code,
+        allow_link=allow_link,
+    )
     prompt = render_prompt(
         await _load_prompt(session, automation.id),
         {
-            "history": history or "",
-            "last_incoming": last_incoming or "",
-            "partner_utm_url": automation.partner_utm_url or "",
-            "partner_promo_code": automation.partner_promo_code or "",
+            "history": history,
+            "last_incoming": last_incoming,
+            "partner_utm_url": url,
+            "partner_promo_code": promo,
         },
     )
     try:
@@ -170,11 +182,12 @@ async def _classify_dialogue(
             temperature=0.4,
         )
         data = _extract_json(response.choices[0].message.content or "")
+        reply = sanitize_dm_text(str(data.get("reply") or "").strip(), allow_link=allow_link)[:500]
         return {
             "qualified": bool(data.get("qualified")),
             "lost": bool(data.get("lost")),
             "continue": bool(data.get("continue", True)),
-            "reply": str(data.get("reply") or "").strip()[:500],
+            "reply": reply,
         }
     except Exception as exc:
         logger.warning("Lead qualification LLM failed: %s", exc)

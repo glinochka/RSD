@@ -1009,7 +1009,11 @@ class TestChatImportAndDedup:
 
         assert PromptType.INBOUND_DM.value in SEO_SAAS_PROMPTS
         assert PROMPT_MARKER in SEO_SAAS_PROMPTS[PromptType.LEAD_QUALIFICATION.value]["content"]
+        assert "seo_jarvis:v2" in PROMPT_MARKER
+        inbound = SEO_SAAS_PROMPTS[PromptType.INBOUND_DM.value]["content"]
+        assert "без продукта и без ссылки" in inbound
         assert "SEO-Джарвис" in SEO_SAAS_PROMPTS[PromptType.DMP_OUTREACH.value]["content"]
+        assert "нельзя вставлять URL" in SEO_SAAS_PROMPTS[PromptType.DMP_OUTREACH.value]["content"]
 
 
 class TestCommentInspect:

@@ -170,6 +170,22 @@ def parse_spambot_reply(text: str | None) -> bool | None:
     return None
 
 
+def _looks_like_invite_error(exc: Exception) -> bool:
+    name = type(exc).__name__.lower()
+    text = str(exc).lower()
+    compact = f"{name} {text}".replace("_", "").replace(" ", "")
+    needles = (
+        "invitehashexpired",
+        "invitehashinvalid",
+        "invitehashempty",
+        "invitehashexpirederror",
+        "invite hash expired",
+        "invite hash invalid",
+        "invite hash empty",
+    )
+    return any(needle.replace(" ", "") in compact or needle in text for needle in needles)
+
+
 def _looks_like_frozen_error(exc: Exception) -> bool:
     lowered = f"{type(exc).__name__} {exc}".lower().replace("_", " ")
     compact = lowered.replace(" ", "")
@@ -246,6 +262,8 @@ def _classify_telegram_error(exc: Exception) -> dict[str, Any]:
         return {"kind": "frozen"}
     if _looks_like_frozen_error(exc):
         return {"kind": "frozen"}
+    if _looks_like_invite_error(exc):
+        return {"kind": "invite_invalid"}
     if FLOOD_ERRORS and isinstance(exc, tuple(FLOOD_ERRORS)):
         seconds = getattr(exc, "seconds", 60)
         return {"kind": "flood", "seconds": seconds}
@@ -568,6 +586,8 @@ async def execute_with_telegram_retry(
             if kind == "session_busy":
                 schedule_account_retry(account)
                 await _log_error(str(exc))
+                raise
+            if kind == "invite_invalid":
                 raise
             if kind == "chat_restricted":
                 if is_chat_write_forbidden(exc):

@@ -28,6 +28,7 @@ from .chat_membership_service import (
     list_watchable_chats,
     recover_reader_after_error,
 )
+from .conversation_guard import sanitize_public_text
 from .prompt_service import render_prompt
 from .account_pacing import account_should_idle, farm_overlap_active_hours
 from .rotation_service import record_successful_send
@@ -43,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 
 DEFAULT_DISCUSSION_PROMPT = """Ты — обычный участник Telegram-чата. К тебе обратились или задали вопрос в сообщении.
-Напиши короткий, естественный, дружелюбный ответ (1-3 предложения). Мягко поделись мнением или опытом, если уместно, но не навязывай продукт и не используй ссылки.
+Напиши короткий, естественный, дружелюбный ответ (1-3 предложения). Мягко поделись мнением или опытом, если уместно, но не навязывай продукт и не используй ссылки, промокоды и названия сервисов.
 
 Сообщение:
 {message_text}
@@ -113,7 +114,7 @@ async def _generate_reply(
             temperature=0.8,
         )
         data = _extract_json(response.choices[0].message.content or "")
-        reply = str(data.get("reply") or "").strip()
+        reply = sanitize_public_text(str(data.get("reply") or "").strip())
         return reply[:500]
     except Exception as exc:
         logger.warning("Discussion reply generation failed: %s", exc)

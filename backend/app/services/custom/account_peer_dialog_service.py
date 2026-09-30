@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .account_pacing import account_humanization_should_idle as account_should_idle
+from .conversation_guard import peer_dialog_text_ok, sanitize_public_text, text_contains_product_pitch
 from .rotation_service import record_successful_humanization
 from .telegram_account_client import TelegramAccountClient
 from .telegram_error_handler import execute_with_telegram_retry
@@ -49,9 +50,10 @@ _FALLBACK_REPLIES = (
 )
 
 _DIALOG_PROMPT = """Ты пишешь короткое личное сообщение в Telegram другу.
-Это живой чат двух знакомых людей, не боты и не поддержка.
+Это живой чат двух знакомых людей, не боты, не поддержка и не продажа.
 Правила:
-- 1 предложение, максимум 2. Без списков, без ссылок, без эмодзи-спама.
+- 1 предложение, максимум 2. Без списков, без ссылок, без промокодов, без названий сервисов.
+- Не упоминай SEO-инструменты, SaaS, Джарвис, сайты и «зайди по ссылке».
 - Ответь по смыслу последнему сообщению, не повторяй его и не цикли вопросы.
 - Не начинай каждое сообщение с «привет».
 - Не задавай вопрос, если предыдущие два сообщения уже были вопросами — просто отреагируй или закругли.
@@ -149,7 +151,10 @@ def _history_blob(history: list[dict[str, Any]]) -> str:
     lines: list[str] = []
     for item in history[-HISTORY_KEEP:]:
         role = "A" if item.get("side") == "low" else "B"
-        lines.append(f"{role}: {item.get('text') or ''}")
+        text = str(item.get("text") or "")
+        if text_contains_product_pitch(text):
+            text = "ну ок, давай потом как-нибудь"
+        lines.append(f"{role}: {text}")
     return "\n".join(lines) or "пока пусто, начни разговор коротко и по-человечески"
 
 
@@ -178,8 +183,8 @@ async def generate_peer_text(history: list[dict[str, Any]], *, opener: bool) -> 
             temperature=0.95,
         )
         data = _extract_json(response.choices[0].message.content or "")
-        text = str(data.get("text") or "").strip()[:280]
-        if text and not _looks_like_repeat(text, history):
+        text = sanitize_public_text(str(data.get("text") or "").strip())[:280]
+        if peer_dialog_text_ok(text) and not _looks_like_repeat(text, history):
             return text
     except Exception as exc:
         logger.warning("Peer dialog generation failed: %s", exc)

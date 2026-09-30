@@ -93,7 +93,6 @@ _TARGET_ACTIONS = frozenset(
         "neurocommenting",
         "discussion",
         "dm",
-        "inbound_dm",
         "lead_delivery",
         "dmp_outreach",
     }
@@ -103,6 +102,7 @@ _HUMANIZATION_ACTIONS = frozenset(
     {
         "account_warmup",
         "peer_dialog",      # inter-account messaging for humanization
+        "inbound_dm",       # private replies must not park comments/shills
         "idle_browse",
         "humanization_session",
         "reaction",

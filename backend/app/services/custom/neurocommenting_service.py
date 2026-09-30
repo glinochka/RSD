@@ -37,6 +37,7 @@ from .telegram_invite import chat_entity_key
 from ...alembic.models import AutomationActionLog, ChatTarget, CustomAutomation, CustomPrompt, PoolAccount, PromptType, SocialAccount
 from ...config import settings
 from ...services.ai_authoring import ai_client
+from .conversation_guard import sanitize_public_text
 from .prompt_service import render_prompt
 
 logger = logging.getLogger(__name__)
@@ -186,7 +187,7 @@ async def _generate_comment(
             temperature=0.8,
         )
         data = _extract_json(response.choices[0].message.content or "")
-        comment = str(data.get("comment") or "").strip()
+        comment = sanitize_public_text(str(data.get("comment") or "").strip())
         return comment[:500]
     except Exception as exc:
         logger.warning("Comment generation failed: %s", exc)
