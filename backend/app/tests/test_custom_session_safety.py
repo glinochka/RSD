@@ -428,12 +428,20 @@ def test_channel_posts_ignore_old_history():
 
 
 def test_accounts_sleep_at_night_and_rest_longer_first_week():
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
     from types import SimpleNamespace
     from zoneinfo import ZoneInfo
 
     from app.services.custom.account_pacing import (
+        CAUTIOUS_TARGET_REST_MAX_SECONDS,
+        CAUTIOUS_TARGET_REST_MIN_SECONDS,
+        TARGET_REST_MAX_SECONDS,
+        TARGET_REST_MIN_SECONDS,
+        account_humanization_stage,
         account_in_first_week,
+        humanization_ramp_factor,
+        humanization_session_action_budget,
+        humanization_session_seconds,
         in_account_active_hours,
         rest_seconds_for_account,
     )
@@ -447,17 +455,28 @@ def test_accounts_sleep_at_night_and_rest_longer_first_week():
     now = datetime(2026, 9, 21, 12, 0, 0)
     fresh = SimpleNamespace(created_at=now - timedelta(days=2))
     aged = SimpleNamespace(created_at=now - timedelta(days=10))
+    veteran = SimpleNamespace(created_at=now - timedelta(days=40))
     assert account_in_first_week(fresh, now=now) is True
     assert account_in_first_week(aged, now=now) is False
+    assert account_humanization_stage(fresh, now=now) == "cautious"
+    assert account_humanization_stage(aged, now=now) == "normal"
+    assert account_humanization_stage(veteran, now=now) == "trusted"
     first_week = rest_seconds_for_account(fresh, now=now)
     later = rest_seconds_for_account(aged, now=now)
-    assert 10 * 60 <= first_week <= 15 * 60
-    assert 8 * 60 <= later <= 22 * 60
+    assert CAUTIOUS_TARGET_REST_MIN_SECONDS <= first_week <= CAUTIOUS_TARGET_REST_MAX_SECONDS
+    assert TARGET_REST_MIN_SECONDS <= later <= TARGET_REST_MAX_SECONDS
+    assert 0.29 <= humanization_ramp_factor(fresh, now=now) <= 0.55
+    assert humanization_ramp_factor(veteran, now=now) == 1.0
+    assert 90 <= humanization_session_seconds(fresh, now=now) <= 180
+    assert 240 <= humanization_session_seconds(veteran, now=now) <= 420
+    assert 2 <= humanization_session_action_budget(fresh, now=now) <= 5
+    assert 7 <= humanization_session_action_budget(veteran, now=now) <= 10
 
 
 def test_peer_dialog_does_not_park_public_writes():
     from app.services.custom.account_pacing import action_uses_humanization_rest, action_uses_target_rest
 
+    assert action_uses_humanization_rest("humanization_session") is True
     assert action_uses_target_rest("peer_dialog") is False
     assert action_uses_humanization_rest("peer_dialog") is True
     assert action_uses_target_rest("account_warmup") is False

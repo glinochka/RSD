@@ -414,6 +414,17 @@ async def _try_join_chat(
             chat_target.invite_link = parsed.canonical
             # JoinChannelRequest / ImportChatInvite success is enough.
             # Megagroup participant RPC often lags and caused false "0/N joined" for chats.
+            try:
+                from .humanization_session import settle_after_join
+
+                await settle_after_join(client, entity, account)
+            except Exception as settle_exc:
+                logger.info(
+                    "Post-join settle skipped for chat %s account %s: %s",
+                    chat_target.id,
+                    account.id,
+                    settle_exc,
+                )
 
         return {
             "status": "joined",

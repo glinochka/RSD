@@ -37,12 +37,34 @@ TARGET_REST_MIN_SECONDS = 40 * 60   # 40 min
 TARGET_REST_MAX_SECONDS = 70 * 60   # 70 min
 
 FIRST_WEEK_DAYS = 7
+TRUSTED_AGE_DAYS = 30
+STAGE_CAUTIOUS = "cautious"   # 0–7 days on the platform
+STAGE_NORMAL = "normal"       # 7–30 days
+STAGE_TRUSTED = "trusted"     # 30+ days
+RAMP_FULL_DAYS = 7
+RAMP_START_FACTOR = 0.30      # day 1 ≈ 30% of the mature budget, day 7 = 100%
 
 # ---------------------------------------------------------------------------
 # Humanization rest  (warmup DMs, peer dialog, idle browse, reactions)
 # ---------------------------------------------------------------------------
 HUMANIZATION_REST_MIN_SECONDS = 15 * 60    # 15 min
 HUMANIZATION_REST_MAX_SECONDS = 30 * 60    # 30 min
+CAUTIOUS_HUMANIZATION_REST_MIN_SECONDS = 20 * 60
+CAUTIOUS_HUMANIZATION_REST_MAX_SECONDS = 40 * 60
+CAUTIOUS_TARGET_REST_MIN_SECONDS = 55 * 60
+CAUTIOUS_TARGET_REST_MAX_SECONDS = 85 * 60
+
+# One connected Telegram session (not a connect/disconnect flash).
+_SESSION_SECONDS = {
+    STAGE_CAUTIOUS: (90, 180),
+    STAGE_NORMAL: (180, 360),
+    STAGE_TRUSTED: (240, 420),
+}
+_SESSION_ACTION_BUDGET = {
+    STAGE_CAUTIOUS: (3, 5),
+    STAGE_NORMAL: (5, 8),
+    STAGE_TRUSTED: (7, 10),
+}
 
 # ---------------------------------------------------------------------------
 # Shared: retry after failed write
@@ -82,7 +104,9 @@ _HUMANIZATION_ACTIONS = frozenset(
         "account_warmup",
         "peer_dialog",      # inter-account messaging for humanization
         "idle_browse",
+        "humanization_session",
         "reaction",
+        "comment_contact",
     }
 )
 
@@ -286,6 +310,63 @@ def account_in_first_week(account: SocialAccount | None, *, now: datetime | None
     return (current - created) < timedelta(days=FIRST_WEEK_DAYS)
 
 
+def account_age_days(account: SocialAccount | None, *, now: datetime | None = None) -> float:
+    """Days since the pool row was created. Unknown age is treated as new."""
+    created = account_created_at(account)
+    if created is None:
+        return 0.0
+    current = now or _utc_now()
+    return max(0.0, (current - created).total_seconds() / 86400.0)
+
+
+def account_humanization_stage(account: SocialAccount | None, *, now: datetime | None = None) -> str:
+    """Cautious / normal / trusted by time in the pool, same bands as typical warmup products."""
+    if account is None:
+        return STAGE_NORMAL
+    created = account_created_at(account)
+    if created is None:
+        return STAGE_CAUTIOUS
+    days = account_age_days(account, now=now)
+    if days < FIRST_WEEK_DAYS:
+        return STAGE_CAUTIOUS
+    if days < TRUSTED_AGE_DAYS:
+        return STAGE_NORMAL
+    return STAGE_TRUSTED
+
+
+def humanization_ramp_factor(account: SocialAccount | None, *, now: datetime | None = None) -> float:
+    """Progressive cap: ~30% on day 0, 100% from day 7."""
+    days = account_age_days(account, now=now)
+    if days >= RAMP_FULL_DAYS:
+        return 1.0
+    return RAMP_START_FACTOR + (1.0 - RAMP_START_FACTOR) * (days / RAMP_FULL_DAYS)
+
+
+def humanization_session_seconds(account: SocialAccount | None, *, now: datetime | None = None) -> float:
+    """How long to keep the MTProto socket open for one humanization pass."""
+    stage = account_humanization_stage(account, now=now)
+    low, high = _SESSION_SECONDS[stage]
+    return random.uniform(float(low), float(high))
+
+
+def humanization_session_action_budget(account: SocialAccount | None, *, now: datetime | None = None) -> int:
+    """How many in-session gestures (read/react/stories/…) this pass may run."""
+    stage = account_humanization_stage(account, now=now)
+    low, high = _SESSION_ACTION_BUDGET[stage]
+    raw = random.randint(low, high) * humanization_ramp_factor(account, now=now)
+    return max(2, int(round(raw)))
+
+
+def post_join_mute_chance(account: SocialAccount | None, *, now: datetime | None = None) -> float:
+    """New accounts mute more often after joining — people do, comment-bots don't."""
+    stage = account_humanization_stage(account, now=now)
+    if stage == STAGE_CAUTIOUS:
+        return 0.72
+    if stage == STAGE_NORMAL:
+        return 0.48
+    return 0.32
+
+
 # ---------------------------------------------------------------------------
 # Daily target max: randomized per account per day
 # ---------------------------------------------------------------------------
@@ -321,7 +402,9 @@ def effective_daily_target_max(
 # ---------------------------------------------------------------------------
 
 def target_rest_seconds_for_account(account: SocialAccount | None, *, now: datetime | None = None) -> float:
-    """40–70 min rest for any neurocommenting / shilling / DM action."""
+    """40–70 min rest; first week sits out longer (55–85 min)."""
+    if account_humanization_stage(account, now=now) == STAGE_CAUTIOUS:
+        return random.uniform(CAUTIOUS_TARGET_REST_MIN_SECONDS, CAUTIOUS_TARGET_REST_MAX_SECONDS)
     return random.uniform(TARGET_REST_MIN_SECONDS, TARGET_REST_MAX_SECONDS)
 
 
@@ -379,8 +462,10 @@ def schedule_account_rest(account: SocialAccount, *, seconds: float | None = Non
 # HUMANIZATION rest helpers  (next_humanization_at  – 15-30 min)
 # ---------------------------------------------------------------------------
 
-def humanization_rest_seconds() -> float:
-    """15–30 min rest after a warmup DM, idle-browse or reaction."""
+def humanization_rest_seconds(account: SocialAccount | None = None, *, now: datetime | None = None) -> float:
+    """15–30 min rest after a warmup DM, idle-browse or reaction; 20–40 in week one."""
+    if account_humanization_stage(account, now=now) == STAGE_CAUTIOUS:
+        return random.uniform(CAUTIOUS_HUMANIZATION_REST_MIN_SECONDS, CAUTIOUS_HUMANIZATION_REST_MAX_SECONDS)
     return random.uniform(HUMANIZATION_REST_MIN_SECONDS, HUMANIZATION_REST_MAX_SECONDS)
 
 
@@ -411,7 +496,7 @@ def account_humanization_should_idle(
 
 def schedule_account_humanization_rest(account: SocialAccount, *, seconds: float | None = None) -> None:
     """Block warmup / idle-browse slot for 15–30 minutes after a humanization send."""
-    delay = humanization_rest_seconds() if seconds is None else seconds
+    delay = humanization_rest_seconds(account) if seconds is None else seconds
     _push_next_humanization_action(account, delay)
 
 

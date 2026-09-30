@@ -125,7 +125,12 @@ def enroll_pool_account(automation: CustomAutomation | None, pool_account: PoolA
     return True
 
 
-def warmup_gap_seconds() -> int:
+def warmup_gap_seconds(account=None) -> int:
+    """1–2 h between warmup lines; first-week accounts wait 2–4 h."""
+    from .account_pacing import STAGE_CAUTIOUS, account_humanization_stage
+
+    if account_humanization_stage(account) == STAGE_CAUTIOUS:
+        return random.randint(2 * 60 * 60, 4 * 60 * 60)
     return random.randint(WARMUP_GAP_MIN_SECONDS, WARMUP_GAP_MAX_SECONDS)
 
 
@@ -266,7 +271,7 @@ async def run_account_warmup_pass(automation_id: int) -> dict[str, Any]:
             pool_account.warmup_status = "warming"
             if index < len(messages):
                 pool_account.warmup_message_index = index
-                pool_account.warmup_next_at = _utc_now() + timedelta(seconds=warmup_gap_seconds())
+                pool_account.warmup_next_at = _utc_now() + timedelta(seconds=warmup_gap_seconds(social))
             else:
                 pool_account.warmup_message_index = 0
                 pool_account.warmup_next_at = None

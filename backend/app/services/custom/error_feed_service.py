@@ -21,6 +21,7 @@ ACTION_LABELS = {
     "dmp_outreach": "DMP.one",
     "account_warmup": "Прогрев аккаунта",
     "peer_dialog": "Переписка аккаунтов",
+    "comment_contact": "Контакт из комментариев",
     "inbound_dm": "Входящее ЛС",
     "post_engagement": "Пост в канале",
     "chat_import": "Импорт чатов",
