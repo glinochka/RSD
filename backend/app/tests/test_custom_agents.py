@@ -6343,6 +6343,18 @@ class TestProductionFieldLogic:
                 payload={},
             )
         )
+        test_session.add(
+            AutomationActionLog(
+                custom_automation_id=custom_automation.id,
+                social_account_id=account.id,
+                action_type="join_chat",
+                target_id="164",
+                target_type="chat",
+                result="error",
+                error_message="Ссылка-приглашение истекла",
+                payload={"chat_target_id": 164, "account_id": account.id},
+            )
+        )
         await test_session.commit()
         await log_action_error(
             test_session,

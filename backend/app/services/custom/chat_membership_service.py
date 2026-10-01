@@ -708,6 +708,12 @@ async def ensure_watcher_membership(
         if existing:
             existing.purpose = WATCHER_PURPOSE
             existing.priority = max(int(existing.priority or 0), priority)
+            if existing.join_status == ChatJoinStatus.ERROR.value:
+                from .chat_join_service import _join_error_is_permanent
+
+                if _join_error_is_permanent(existing.last_join_error):
+                    await blackbox_unusable_chat(session, chat_target, reason="invalid_ref")
+                    return 0
             if existing.join_status in {
                 ChatJoinStatus.ERROR.value,
                 ChatJoinStatus.RATE_LIMITED.value,
@@ -1128,11 +1134,14 @@ async def get_reader_account(
     chat_target: ChatTarget,
     *,
     exclude_account_ids: set[int] | None = None,
+    require_writable: bool = False,
 ) -> SocialAccount | None:
     """Return an account that has actually joined this chat.
 
     With the new joined-watcher model, reading is done by the assigned watcher.
     Public-readable fallback is kept only as a last resort.
+    Set require_writable=True to skip channel-banned accounts that can still
+    read but cannot post comments.
     """
     excluded = set(exclude_account_ids or ())
     excluded |= await _lost_reader_ids(session, chat_target.id)
@@ -1143,6 +1152,8 @@ async def get_reader_account(
         SocialAccount.is_banned.is_(False),
         SocialAccount.is_frozen.is_(False),
     ]
+    if require_writable:
+        filters.append(SocialAccount.is_channel_banned.is_(False))
     if excluded:
         filters.append(AccountChatMembership.social_account_id.notin_(excluded))
     rows = (

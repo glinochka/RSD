@@ -32,7 +32,7 @@ from .rotation_service import (
 )
 from .shilling_service import perform_post_shilling
 from .telegram_account_client import TelegramAccountClient
-from .telegram_error_handler import execute_with_telegram_retry, is_chat_write_forbidden
+from .telegram_error_handler import execute_with_telegram_retry, is_comments_unusable
 from .telegram_invite import chat_entity_key
 from ...alembic.models import AutomationActionLog, ChatTarget, CustomAutomation, CustomPrompt, PoolAccount, PromptType, SocialAccount
 from ...config import settings
@@ -269,6 +269,8 @@ async def _send_comment(
     post_text: str = "",
     lab_mode: bool = False,
 ) -> bool:
+    if getattr(account, "is_channel_banned", False) or getattr(account, "is_frozen", False):
+        return False
     if not account.session_file_path:
         return False
     session_path = _media_root() / account.session_file_path
@@ -291,9 +293,8 @@ async def _send_comment(
             from .chat_join_service import join_linked_discussion
             from .human_dm import human_send_public
 
-            discussion = await join_linked_discussion(client, entity)
-
             async def _send():
+                discussion = await join_linked_discussion(client, entity)
                 return await human_send_public(
                     client,
                     entity,
@@ -316,7 +317,7 @@ async def _send_comment(
             )
     except Exception as exc:
         logger.warning("Send comment failed for chat %s post %s: %s", chat_target.id, post_id, exc)
-        if is_chat_write_forbidden(exc):
+        if is_comments_unusable(exc):
             from .chat_membership_service import blackbox_unusable_chat
 
             await blackbox_unusable_chat(session, chat_target, reason="comments_closed")
@@ -463,12 +464,20 @@ async def process_chat_target(
         if not lab_mode and chat_sent_today + sent >= chat_limit:
             break
 
+        actor = account
+        if getattr(actor, "is_channel_banned", False):
+            actor = await get_reader_account(
+                session, chat_target, require_writable=True, exclude_account_ids={account.id}
+            )
+            if not actor:
+                continue
+
         claimed = await claim_post_engagement(
             session,
             automation_id=automation_id,
             chat_target_id=chat_target.id,
             post_id=post.id,
-            account_id=account.id,
+            account_id=actor.id,
             neuro_enabled=neuro_enabled,
             shilling_enabled=shilling_enabled,
             lab_mode=lab_mode,
@@ -488,7 +497,6 @@ async def process_chat_target(
             continue
         if claimed != NEUROCOMMENTING or not neuro_enabled:
             continue
-        actor = account
         if account_reached_daily_cap(actor, account_comment_daily_limit(actor, automation, lab_mode=lab_mode)):
             continue
         pool = await session.scalar(

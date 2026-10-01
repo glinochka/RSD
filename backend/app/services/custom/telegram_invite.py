@@ -141,6 +141,12 @@ def _looks_like_invite_hash(value: str) -> bool:
     text = (value or "").strip().lstrip("+")
     if not _INVITE_HASH_RE.fullmatch(text):
         return False
+    # t.me/sofiarozhnovskaya is a public username. t.me/kghd11ypouqymziy is a hash.
+    if _USERNAME_RE.fullmatch(text):
+        mixed_case = text != text.lower() and text != text.upper()
+        has_digit = bool(re.search(r"\d", text))
+        if not mixed_case and (not has_digit or "_" in text):
+            return False
     if len(text) >= 16:
         return True
     return bool(re.search(r"\d", text) and re.search(r"[A-Za-z]", text) and len(text) >= 12)

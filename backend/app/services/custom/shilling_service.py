@@ -28,7 +28,7 @@ from .post_engagement import SHILLING as POST_SHILLING, get_post_engagement_clai
 from .rotation_service import accounts_are_distinct, record_successful_send, select_account_for_action
 from .telegram_account_client import TelegramAccountClient
 from .telegram_invite import chat_entity_key
-from .telegram_error_handler import execute_with_telegram_retry, is_chat_write_forbidden
+from .telegram_error_handler import execute_with_telegram_retry, is_comments_unusable
 from ...alembic.models import (
     AutomationActionLog,
     ChatMessage,
@@ -311,31 +311,43 @@ async def _send_message(
             if comment_to is not None or discussion_post_id is not None:
                 from .chat_join_service import join_linked_discussion
 
-                await join_linked_discussion(client, channel_entity)
+                async def _send():
+                    from .human_dm import human_send_public
 
-            async def _send():
-                from .human_dm import human_send_public
-
-                if discussion_post_id is not None and reply_to is not None:
-                    discussion_entity = await _discussion_entity_for_post(
-                        client,
-                        channel_entity,
-                        discussion_post_id,
-                    )
+                    discussion = await join_linked_discussion(client, channel_entity)
+                    if discussion_post_id is not None and reply_to is not None:
+                        discussion_entity = await _discussion_entity_for_post(
+                            client,
+                            channel_entity,
+                            discussion_post_id,
+                        )
+                        return await human_send_public(
+                            client,
+                            discussion_entity,
+                            text,
+                            reply_to=reply_to,
+                            discussion_entity=discussion_entity,
+                        )
                     return await human_send_public(
                         client,
-                        discussion_entity,
+                        channel_entity,
                         text,
+                        comment_to=comment_to,
                         reply_to=reply_to,
-                        discussion_entity=discussion_entity,
+                        discussion_entity=discussion,
                     )
-                return await human_send_public(
-                    client,
-                    channel_entity,
-                    text,
-                    comment_to=comment_to,
-                    reply_to=reply_to,
-                )
+
+            else:
+                async def _send():
+                    from .human_dm import human_send_public
+
+                    return await human_send_public(
+                        client,
+                        channel_entity,
+                        text,
+                        comment_to=comment_to,
+                        reply_to=reply_to,
+                    )
 
             message = await execute_with_telegram_retry(
                 session,
@@ -350,7 +362,7 @@ async def _send_message(
             )
     except Exception as exc:
         logger.warning("Shilling send failed for chat %s account %s: %s", chat_target.id, account.id, exc)
-        if is_chat_write_forbidden(exc):
+        if is_comments_unusable(exc):
             from .chat_membership_service import blackbox_unusable_chat
 
             await blackbox_unusable_chat(session, chat_target, reason="comments_closed")

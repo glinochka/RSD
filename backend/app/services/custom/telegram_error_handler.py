@@ -337,6 +337,23 @@ _WRITE_ONLY_TOKENS = (
 )
 
 
+def is_comments_unusable(exc: Exception) -> bool:
+    """True when this channel/chat cannot take comments from anyone, so it should be black-boxed."""
+    if is_chat_write_forbidden(exc):
+        return True
+    name = type(exc).__name__
+    blob = f"{name} {exc}".lower()
+    compact = blob.replace("_", "").replace(" ", "")
+    needles = (
+        "channelprivate",
+        "chatforbidden",
+        "the channel specified is private",
+        "invitehashexpired",
+        "invite hash expired",
+    )
+    return any(token.replace(" ", "") in compact or token in blob for token in needles)
+
+
 def is_chat_write_forbidden(exc: Exception) -> bool:
     """True when comments/posts are closed for this chat, not a global account ban."""
     name = type(exc).__name__
@@ -414,6 +431,13 @@ _OPERATIONAL_SKIP_MARKERS = (
     "cannot write in this chat",
     "chatwriteforbidden",
     "settypingrequest",
+    "invite hash expired",
+    "invite hash invalid",
+    "ссылка-приглашение истекла",
+    "некорректная ссылка-приглашение",
+    "такого чата или канала нет",
+    "the channel specified is private",
+    "channelprivate",
 )
 
 

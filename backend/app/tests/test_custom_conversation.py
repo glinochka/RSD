@@ -72,3 +72,16 @@ async def test_leave_skips_frozen_account():
     result = await leave_chat_for_account(None, SimpleNamespace(), account)
     assert result["status"] == "skipped"
     assert result["error"] == "account_unavailable"
+
+
+def test_expired_invite_is_permanent_and_hidden():
+    from app.services.custom.chat_join_service import _join_error_is_permanent
+    from app.services.custom.telegram_error_handler import is_comments_unusable, is_operational_skip_error
+
+    assert _join_error_is_permanent("Ссылка-приглашение истекла") is True
+    assert _join_error_is_permanent("invite hash expired") is True
+    assert is_operational_skip_error("Ссылка-приглашение истекла", {"blackbox": True}) is True
+    class ChannelPrivateError(Exception):
+        pass
+    assert is_comments_unusable(ChannelPrivateError("The channel specified is private")) is True
+    assert is_comments_unusable(Exception("You can't write in this chat (caused by SetTypingRequest)")) is True

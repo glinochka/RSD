@@ -56,6 +56,20 @@ def test_parse_bare_invite_hash_not_username():
         assert parsed.is_private is True
 
 
+def test_long_public_usernames_are_not_invite_hashes():
+    samples = [
+        "https://t.me/sofiarozhnovskaya",
+        "https://t.me/dmitriymarketing",
+        "https://t.me/camilla_business",
+        "https://t.me/marketing_solodar",
+        "@marketingovij_kot",
+    ]
+    for raw in samples:
+        parsed = parse_telegram_chat_ref(raw)
+        assert parsed.kind == "username", raw
+        assert parsed.is_private is False
+
+
 def test_parse_channel_id_link():
     parsed = parse_telegram_chat_ref("https://t.me/c/1234567890/12")
     assert parsed.kind == "channel_id"

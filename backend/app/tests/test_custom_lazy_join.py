@@ -748,3 +748,25 @@ class TestWatcherFailover:
         await test_session.refresh(pending)
         assert pending.status == PendingChatActionStatus.FAILED.value
         assert "kicked" in (pending.last_error or "")
+
+    async def test_channel_banned_reader_is_skipped_when_writable_required(
+        self, test_session: AsyncSession, custom_automation: CustomAutomation
+    ):
+        banned = await _add_account(test_session, custom_automation, username="cban", phone="+79991001901")
+        writer = await _add_account(test_session, custom_automation, username="cwrite", phone="+79991001902")
+        banned.is_channel_banned = True
+        chat = await _add_chat(test_session, custom_automation, invite_link="https://t.me/+chanbanwrite")
+        await ensure_memberships_for_chat(
+            test_session, custom_automation.id, chat, account_ids=[banned.id]
+        )
+        await queue_actor_for_chat(test_session, custom_automation.id, chat, writer)
+        await _mark_joined(test_session, chat, banned)
+        await _mark_joined(test_session, chat, writer, purpose=MembershipPurpose.ACTOR.value)
+        await test_session.commit()
+
+        reader = await get_reader_account(test_session, chat)
+        assert reader is not None
+        assert reader.id == banned.id
+        writable = await get_reader_account(test_session, chat, require_writable=True)
+        assert writable is not None
+        assert writable.id == writer.id

@@ -363,6 +363,16 @@ async def _run_action(session: AsyncSession, action: PendingChatAction) -> bool:
         account = await session.get(SocialAccount, action.social_account_id)
         if not account:
             return False
+        if getattr(account, "is_channel_banned", False) or getattr(account, "is_frozen", False):
+            from .chat_membership_service import get_reader_account
+
+            writer = await get_reader_account(session, chat, require_writable=True)
+            if not writer:
+                action.last_error = "account_cannot_write"
+                action.status = FAILED
+                return False
+            account = writer
+            action.social_account_id = writer.id
         daily_cap = int(getattr(chat, "max_daily_target_actions", 3) or 3)
         if await count_target_actions_today(session, action.custom_automation_id, chat.id) >= daily_cap:
             action.last_error = "chat_daily_target_limit"

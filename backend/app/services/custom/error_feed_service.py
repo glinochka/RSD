@@ -53,10 +53,16 @@ async def list_error_feed(
     ]
     if action_type:
         filters.append(AutomationActionLog.action_type == action_type)
+    skip_markers: list[str] = []
+    for marker in _OPERATIONAL_SKIP_MARKERS:
+        skip_markers.append(marker)
+        titled = marker[:1].upper() + marker[1:] if marker else marker
+        if titled and titled not in skip_markers:
+            skip_markers.append(titled)
     skip_message = or_(
         *[
             AutomationActionLog.error_message.ilike(f"%{marker}%")
-            for marker in _OPERATIONAL_SKIP_MARKERS
+            for marker in skip_markers
         ]
     )
     filters.append(

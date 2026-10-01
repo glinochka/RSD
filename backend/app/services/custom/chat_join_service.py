@@ -57,6 +57,9 @@ _PERMANENT_JOIN_ERRORS = (
     "invite hash invalid",
     "comments_closed",
     "invalid invite link",
+    "ссылка-приглашение истекла",
+    "некорректная ссылка-приглашение",
+    "такого чата или канала нет",
 )
 
 JOIN_FAIL_RETRY_MIN_SECONDS = ACCOUNT_RETRY_MIN_SECONDS
@@ -453,9 +456,9 @@ async def _try_join_chat(
     except ChannelsTooMuchError:
         return {"status": "failed", "error": "account_channels_full", "slots_full": True}
     except InviteHashExpiredError:
-        return {"status": "failed", "error": "Ссылка-приглашение истекла"}
+        return {"status": "blackbox", "error": "Ссылка-приглашение истекла", "reason": "invalid_ref"}
     except InviteHashInvalidError:
-        return {"status": "failed", "error": "Некорректная ссылка-приглашение"}
+        return {"status": "blackbox", "error": "Некорректная ссылка-приглашение", "reason": "invalid_ref"}
     except UserAlreadyParticipantError:
         try:
             async with TelegramAccountClient.for_account(account) as client:
@@ -515,16 +518,17 @@ async def _apply_membership_result(
 
     if join_result["status"] == "blackbox":
         reason = str(join_result.get("reason") or join_result.get("error") or "unusable")[:64]
+        error = str(join_result.get("error") or reason)
         if reason != "already_moderated":
             await blackbox_unusable_chat(session, chat_target, reason=reason)
-            if reason != "comments_closed" and str(join_result.get("error") or "") != "comments_closed":
+            if reason != "comments_closed" and error != "comments_closed" and not _join_error_is_permanent(error):
                 await log_action_error(
                     session,
                     account,
                     action_type="join_chat",
                     target_id=str(chat_target.id),
                     target_type="chat",
-                    error_message=str(join_result.get("error") or reason)[:2000],
+                    error_message=error[:2000],
                     payload={
                         "chat_target_id": chat_target.id,
                         "membership_id": membership.id,
@@ -589,21 +593,6 @@ async def _apply_membership_result(
             membership.last_join_error = error
             membership.next_join_attempt_at = None
             membership.join_status = ChatJoinStatus.ERROR.value
-            await log_action_error(
-                session,
-                account,
-                action_type="join_chat",
-                target_id=str(chat_target.id),
-                target_type="chat",
-                error_message=str(error or "join_failed")[:2000],
-                payload={
-                    "chat_target_id": chat_target.id,
-                    "membership_id": membership.id,
-                    "account_id": account.id,
-                    "blackbox": True,
-                },
-                automation_id=automation_id,
-            )
             schedule_account_retry(account)
             await sync_chat_join_status(session, chat_target)
             return

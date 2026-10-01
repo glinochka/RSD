@@ -512,7 +512,13 @@ async def human_send_public(
                 except Exception:
                     pass
             await asyncio.sleep(random.uniform(0.6, 2.4))
-        await show_typing(client, typing_peer, typing_duration_seconds(text, lab_mode=False))
+        try:
+            await show_typing(client, typing_peer, typing_duration_seconds(text, lab_mode=False))
+        except Exception as exc:
+            from .telegram_error_handler import is_comments_unusable
+
+            if is_comments_unusable(exc):
+                raise
     kwargs: dict[str, Any] = {}
     if comment_to is not None:
         kwargs["comment_to"] = comment_to
