@@ -11,3 +11,4 @@ security-audit-logs/
 testfail.txt
 SEOJarvis/
 media/
+docker-compose.override.yml
