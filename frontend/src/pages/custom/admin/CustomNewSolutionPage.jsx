@@ -6,6 +6,7 @@ import { NAVIGATION_ROUTES } from '../../../config/constants';
 import { SOLUTION_KIND_OPTIONS } from '../automation/activityLabels';
 import '../../../styles/projectLayout.css';
 import '../../../styles/projectSettingsPage.css';
+import '../../../styles/customSolutionNav.css';
 
 const CustomNewSolutionPage = () => {
   const navigate = useNavigate();
@@ -38,7 +39,7 @@ const CustomNewSolutionPage = () => {
   };
 
   return (
-    <div className="project-layout">
+    <div className="project-layout ubt-layout">
       <header className="project-topbar">
         <div className="project-topbar-left">
           <button
@@ -56,10 +57,10 @@ const CustomNewSolutionPage = () => {
           <div className="settings-header">
             <div>
               <h2 className="settings-title">Новое решение</h2>
-              <p className="settings-subtitle">Название и клиент. Модули включите в настройках после создания.</p>
+              <p className="settings-subtitle">Название и клиент. Модули УБТ включаются в своих подразделах после создания.</p>
             </div>
           </div>
-          {error ? <p className="form-hint">{error}</p> : null}
+          {error ? <p className="form-hint form-hint--error">{error}</p> : null}
           <form className="settings-form" onSubmit={handleSubmit}>
             <div className="settings-section">
               <div className="form-group">

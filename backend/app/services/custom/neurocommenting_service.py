@@ -37,7 +37,7 @@ from .telegram_invite import chat_entity_key
 from ...alembic.models import AutomationActionLog, ChatTarget, CustomAutomation, CustomPrompt, PoolAccount, PromptType, SocialAccount
 from ...config import settings
 from ...services.ai_authoring import ai_client
-from .conversation_guard import sanitize_public_text
+from .lead_keywords import matched_lead_keyword, normalize_lead_keywords
 from .prompt_service import render_prompt
 
 logger = logging.getLogger(__name__)
@@ -155,7 +155,11 @@ def _extract_json(text: str) -> dict[str, Any]:
     return json.loads(raw)
 
 
-async def _load_prompt(session: AsyncSession, automation_id: int) -> str:
+async def _load_prompt(session: AsyncSession, automation_id: int, prompt_id: int | None = None) -> str:
+    if prompt_id:
+        chosen = await session.get(CustomPrompt, prompt_id)
+        if chosen and chosen.custom_automation_id == automation_id and chosen.content:
+            return str(chosen.content).strip()
     prompt = await session.scalar(
         select(CustomPrompt).where(
             CustomPrompt.custom_automation_id == automation_id,
@@ -174,9 +178,10 @@ async def _generate_comment(
     *,
     post_text: str,
     chat_title: str,
+    prompt_id: int | None = None,
 ) -> str:
     prompt = render_prompt(
-        await _load_prompt(session, automation_id),
+        await _load_prompt(session, automation_id, prompt_id),
         {"post_text": post_text or "", "chat_title": chat_title or ""},
     )
     try:
@@ -204,6 +209,35 @@ def account_comment_daily_limit(
         return 10**9
     from .account_pacing import effective_daily_target_max
     return effective_daily_target_max(account, automation)
+
+
+def _word_count(text: str) -> int:
+    return len(re.findall(r"\w+", text or "", flags=re.UNICODE))
+
+
+def _as_int_list(raw: Any) -> list[int]:
+    items: list[int] = []
+    for value in raw or []:
+        try:
+            items.append(int(value))
+        except (TypeError, ValueError):
+            continue
+    return items
+
+
+def _delay_bounds(run_config: dict[str, Any] | None) -> tuple[float, float]:
+    cfg = run_config or {}
+    try:
+        low = int(cfg.get("delay_before_min") or POST_COMMENT_DELAY_MIN_SECONDS)
+    except (TypeError, ValueError):
+        low = POST_COMMENT_DELAY_MIN_SECONDS
+    try:
+        high = int(cfg.get("delay_before_max") or POST_COMMENT_DELAY_MAX_SECONDS)
+    except (TypeError, ValueError):
+        high = POST_COMMENT_DELAY_MAX_SECONDS
+    low = max(0, min(low, 3600))
+    high = max(low, min(high, 3600))
+    return float(low), float(high)
 
 
 def chat_comment_daily_limit(config: dict | None, *, lab_mode: bool = False) -> int:
@@ -348,6 +382,7 @@ async def process_chat_target(
     max_comments_per_run: int = 1,
     include_lab: bool = False,
     lab_mode: bool = False,
+    run_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if is_lab_chat(chat_target) and not (include_lab or lab_mode):
         return await _skip_chat(session, chat_target, "lab")
@@ -366,10 +401,36 @@ async def process_chat_target(
         return await _skip_chat(session, chat_target, "automation_missing")
     neuro_enabled = bool(automation.is_neurocommenting_enabled) or lab_mode
     shilling_enabled = bool(automation.is_shilling_enabled) and not lab_mode
+    if shilling_enabled:
+        ns = (automation.module_settings or {}).get("neuroshilling") or {}
+        if isinstance(ns, dict) and ns.get("post_shilling") is False:
+            shilling_enabled = False
     if not neuro_enabled and not shilling_enabled:
         return await _skip_chat(session, chat_target, "feature_disabled")
 
-    config = chat_target.neurocommenting_config or {}
+    config = dict(chat_target.neurocommenting_config or {})
+    cfg = run_config or {}
+    if cfg.get("max_per_chat") not in (None, ""):
+        config["max_per_day"] = cfg.get("max_per_chat")
+    allowed_accounts = set(_as_int_list(cfg.get("account_ids")))
+    keywords = normalize_lead_keywords(cfg.get("keywords"))
+    post_filter = str(cfg.get("post_filter") or "new").strip().lower()
+    try:
+        min_words = max(0, int(cfg.get("min_words") or 0))
+    except (TypeError, ValueError):
+        min_words = 0
+    try:
+        probability = max(0, min(100, int(cfg.get("probability") if cfg.get("probability") is not None else 100)))
+    except (TypeError, ValueError):
+        probability = 100
+    prompt_id = cfg.get("prompt_id")
+    try:
+        prompt_id = int(prompt_id) if prompt_id else None
+    except (TypeError, ValueError):
+        prompt_id = None
+    delay_min, delay_max = _delay_bounds(cfg)
+    respect_night = bool(cfg.get("respect_night_hours", True))
+    require_proxy = bool(cfg.get("require_proxy"))
     chat_limit = chat_comment_daily_limit(config, lab_mode=lab_mode)
     # Hard cap: max 3 target actions per chat per day to avoid annoying admins.
     target_actions_today = 0 if lab_mode else await count_target_actions_today(session, automation_id, chat_target.id)
@@ -384,6 +445,12 @@ async def process_chat_target(
         account = await get_reader_account(session, chat_target, exclude_account_ids=tried)
         if not account:
             return await _skip_chat(session, chat_target, "no_account")
+        if allowed_accounts and account.id not in allowed_accounts:
+            tried.add(account.id)
+            continue
+        if require_proxy and not getattr(account, "telegram_proxy", None):
+            tried.add(account.id)
+            continue
         if not account.session_file_path:
             tried.add(account.id)
             continue
@@ -435,7 +502,7 @@ async def process_chat_target(
                     set_post_cursor(chat_target, latest_id)
                 if cursor_reason == "armed_cursor":
                     return await _skip_chat(session, chat_target, "armed_cursor")
-                if not lab_mode and not farm_overlap_active_hours():
+                if not lab_mode and respect_night and not farm_overlap_active_hours():
                     return await _skip_chat(session, chat_target, "night")
             break
         except Exception as exc:
@@ -457,6 +524,13 @@ async def process_chat_target(
         await session.commit()
         return {"status": "ok", "sent": 0, "shilled": 0, "reason": "chat_daily_limit"}
     for post in posts:
+        if min_words and _word_count(post.text or "") < min_words:
+            continue
+        if post_filter == "keywords":
+            if not keywords or not matched_lead_keyword(post.text or "", keywords):
+                continue
+        if probability < 100 and random.random() * 100 > probability:
+            continue
         if await _already_commented(session, automation_id, chat_target.id, post.id):
             continue
         if sent + shilled >= max_comments_per_run:
@@ -520,7 +594,7 @@ async def process_chat_target(
             posted_at = _message_posted_at(post)
             if posted_at is not None:
                 post_age = (_utc_now() - posted_at).total_seconds()
-                min_delay = random.uniform(POST_COMMENT_DELAY_MIN_SECONDS, POST_COMMENT_DELAY_MAX_SECONDS)
+                min_delay = random.uniform(delay_min, delay_max)
                 if post_age < min_delay:
                     delay_until = posted_at + timedelta(seconds=min_delay)
                     pending = await enqueue_pending_action(
@@ -542,7 +616,13 @@ async def process_chat_target(
                     continue
         # ────────────────────────────────────────────────────────────────────
 
-        comment = await _generate_comment(session, automation_id, post_text=post.text, chat_title=chat_target.title or "")
+        comment = await _generate_comment(
+            session,
+            automation_id,
+            post_text=post.text,
+            chat_title=chat_target.title or "",
+            prompt_id=prompt_id,
+        )
         if not comment:
             continue
 
@@ -558,7 +638,7 @@ async def process_chat_target(
     return {"status": "ok", "sent": sent, "shilled": shilled}
 
 
-async def run_neurocommenting_pass(automation_id: int) -> dict[str, Any]:
+async def run_neurocommenting_pass(automation_id: int, run_config: dict[str, Any] | None = None) -> dict[str, Any]:
     from ...alembic.database import async_session_maker
 
     total_sent = 0
@@ -571,19 +651,40 @@ async def run_neurocommenting_pass(automation_id: int) -> dict[str, Any]:
             logger.info("Post engagement disabled or automation not found for %s", automation_id)
             return {"status": "skipped", "reason": "feature_disabled", "chats_processed": 0, "comments_sent": 0}
 
-        chats = [
-            chat
-            for chat in await list_watchable_chats(
-                session,
-                automation_id,
-                limit=settings.CUSTOM_ACTION_SCAN_BATCH,
+        cfg = run_config if isinstance(run_config, dict) else None
+        if cfg is None:
+            cfg = ((automation.module_settings or {}).get("neurocommenting") or {})
+        chat_ids = set(_as_int_list(cfg.get("chat_ids")))
+        if chat_ids:
+            chats = list(
+                (
+                    await session.execute(
+                        select(ChatTarget).where(
+                            ChatTarget.custom_automation_id == automation_id,
+                            ChatTarget.id.in_(chat_ids),
+                            ChatTarget.black_boxed_at.is_(None),
+                        )
+                    )
+                ).scalars().all()
             )
-            if is_broadcast_channel(chat) or not chat.chat_type
-        ]
+        else:
+            chats = [
+                chat
+                for chat in await list_watchable_chats(
+                    session,
+                    automation_id,
+                    limit=settings.CUSTOM_ACTION_SCAN_BATCH,
+                )
+                if is_broadcast_channel(chat) or not chat.chat_type
+            ]
         for chat_target in chats:
             try:
                 res = await process_chat_target(
-                    session, automation_id, chat_target, max_comments_per_run=random.randint(1, 2)
+                    session,
+                    automation_id,
+                    chat_target,
+                    max_comments_per_run=random.randint(1, 2),
+                    run_config=cfg,
                 )
                 chat_count += 1
                 if res.get("sent"):

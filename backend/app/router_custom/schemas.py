@@ -408,6 +408,7 @@ class AccountResponse(BaseModel):
     frozen_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     proxy_label: Optional[str] = None
+    assigned_class: str = "one_day"
 
 
 class AccountQrStartResponse(BaseModel):
@@ -486,6 +487,10 @@ class AccountBanStatsResponse(BaseModel):
     revoked: int = 0
     spamblocked: int = 0
     frozen: int = 0
+    in_work: int = 0
+    quarantine: int = 0
+    invalid: int = 0
+    channel_banned: int = 0
     banned_percent: float
     alert_threshold: float = 0.3
     alert: bool
@@ -810,6 +815,453 @@ class ChatDiscoveryApproveRequest(BaseModel):
 class ChatDiscoveryActionResponse(BaseModel):
     created: int = 0
     rejected: int = 0
+
+
+class UnifiedJobLog(BaseModel):
+    ts: Optional[str] = None
+    level: str = "info"
+    message: str = ""
+
+
+class UnifiedJobResponse(BaseModel):
+    id: str
+    source: str
+    source_id: int
+    category: str
+    job_type: str
+    badge: str = ""
+    title: str
+    subtitle: str = ""
+    status: str
+    params: dict[str, Any] = Field(default_factory=dict)
+    result: dict[str, Any] = Field(default_factory=dict)
+    logs: list[UnifiedJobLog] = Field(default_factory=list)
+    error: Optional[str] = None
+    created_at: Optional[datetime] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    duration_seconds: int = 0
+    can_cancel: bool = False
+    can_approve: bool = False
+
+
+class UnifiedJobListResponse(BaseModel):
+    items: list[UnifiedJobResponse]
+    total: int
+
+
+class UbtStatsResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    period: str
+    dashboard: dict[str, Any]
+    accounts: dict[str, Any]
+    history: dict[str, Any]
+
+
+class ChatBlackboxRequest(BaseModel):
+    chat_id: Optional[int] = None
+    query: Optional[str] = None
+    reason: str = "manual"
+
+
+class NeurocommentingSettings(BaseModel):
+    account_ids: list[int] = Field(default_factory=list)
+    chat_ids: list[int] = Field(default_factory=list)
+    post_filter: str = "new"
+    keywords: list[str] = Field(default_factory=list)
+    probability: int = 100
+    min_words: int = 0
+    max_per_account: Optional[int] = None
+    max_per_chat: int = 10
+    delay_before_min: int = 180
+    delay_before_max: int = 240
+    respect_night_hours: bool = True
+    prompt_id: Optional[int] = None
+    require_proxy: bool = False
+    hide_in_work: bool = False
+    presets: list[dict[str, Any]] = Field(default_factory=list)
+    enabled: Optional[bool] = None
+    warmup_enabled: Optional[bool] = None
+
+
+class NeurocommentingModuleResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool
+    warmup_enabled: bool = False
+    settings: dict[str, Any]
+    accounts: list[dict[str, Any]] = Field(default_factory=list)
+    chats: list[dict[str, Any]] = Field(default_factory=list)
+    folders: list[dict[str, Any]] = Field(default_factory=list)
+    prompts: list[dict[str, Any]] = Field(default_factory=list)
+    jobs: list[dict[str, Any]] = Field(default_factory=list)
+    summary: dict[str, Any] = Field(default_factory=dict)
+    blacklist: list[dict[str, Any]] = Field(default_factory=list)
+    issues: list[str] = Field(default_factory=list)
+    added_ids: list[int] = Field(default_factory=list)
+    add_errors: list[str] = Field(default_factory=list)
+
+
+class NeurocommentingChannelsRequest(BaseModel):
+    links: str = ""
+
+
+class NeurocommentingPresetRequest(BaseModel):
+    name: str = ""
+
+
+class NeurocommentingPromptCreate(BaseModel):
+    name: str = "Мой промпт"
+    content: str = ""
+
+
+class NeurochattingSettings(BaseModel):
+    account_ids: list[int] = Field(default_factory=list)
+    chat_ids: list[int] = Field(default_factory=list)
+    reply_mode: str = "interval"
+    keywords: list[str] = Field(default_factory=list)
+    reply_condition: str = ""
+    probability: int = 30
+    work_mode: str = "count"
+    work_always: bool = False
+    max_per_chat: int = 1
+    max_replies_per_run: int = 1
+    only_joined: bool = False
+    respect_night_hours: bool = True
+    delay_before_min: int = 42
+    delay_before_max: int = 78
+    prompt_id: Optional[int] = None
+    require_proxy: bool = False
+    hide_in_work: bool = False
+    context_depth: int = 5
+    blacklisted_account_ids: list[int] = Field(default_factory=list)
+    presets: list[dict[str, Any]] = Field(default_factory=list)
+    enabled: Optional[bool] = None
+    warmup_enabled: Optional[bool] = None
+
+
+class NeurochattingModuleResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool
+    warmup_enabled: bool = False
+    settings: dict[str, Any]
+    accounts: list[dict[str, Any]] = Field(default_factory=list)
+    chats: list[dict[str, Any]] = Field(default_factory=list)
+    folders: list[dict[str, Any]] = Field(default_factory=list)
+    prompts: list[dict[str, Any]] = Field(default_factory=list)
+    jobs: list[dict[str, Any]] = Field(default_factory=list)
+    summary: dict[str, Any] = Field(default_factory=dict)
+    blacklist: list[dict[str, Any]] = Field(default_factory=list)
+    issues: list[str] = Field(default_factory=list)
+    added_ids: list[int] = Field(default_factory=list)
+    add_errors: list[str] = Field(default_factory=list)
+
+
+class NeurochattingGroupsRequest(BaseModel):
+    links: str = ""
+
+
+class NeurochattingPresetRequest(BaseModel):
+    name: str = ""
+
+
+class NeurochattingPromptCreate(BaseModel):
+    name: str = "Мой промпт"
+    content: str = ""
+
+
+class MasslookingSettings(BaseModel):
+    account_ids: list[int] = Field(default_factory=list)
+    chat_ids: list[int] = Field(default_factory=list)
+    targets: list[str] = Field(default_factory=list)
+    view_feed: bool = True
+    stories_limit: int = 0
+    max_per_account: int = 50
+    skip_seen: bool = True
+    skip_hours: int = 24
+    delay_min: int = 2
+    delay_max: int = 6
+    max_per_hour: int = 30
+    respect_night_hours: bool = True
+    limit_rate: bool = True
+    require_proxy: bool = False
+    hide_in_work: bool = False
+    blacklisted_account_ids: list[int] = Field(default_factory=list)
+    presets: list[dict[str, Any]] = Field(default_factory=list)
+    enabled: Optional[bool] = None
+    warmup_enabled: Optional[bool] = None
+
+
+class MasslookingModuleResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool
+    warmup_enabled: bool = False
+    settings: dict[str, Any]
+    accounts: list[dict[str, Any]] = Field(default_factory=list)
+    chats: list[dict[str, Any]] = Field(default_factory=list)
+    folders: list[dict[str, Any]] = Field(default_factory=list)
+    jobs: list[dict[str, Any]] = Field(default_factory=list)
+    summary: dict[str, Any] = Field(default_factory=dict)
+    issues: list[str] = Field(default_factory=list)
+
+
+class MasslookingPresetRequest(BaseModel):
+    name: str = ""
+
+
+class MassprimingSettings(BaseModel):
+    account_ids: list[int] = Field(default_factory=list)
+    targets: list[str] = Field(default_factory=list)
+    add_contact: bool = True
+    ttl_mode: str = "toggle"
+    ttl_period: int = 86400
+    skip_seen: bool = True
+    skip_hours: int = 72
+    max_per_account: int = 20
+    max_per_hour: int = 8
+    delay_min: int = 8
+    delay_max: int = 25
+    respect_night_hours: bool = True
+    limit_rate: bool = True
+    skip_quarantine: bool = True
+    require_proxy: bool = False
+    hide_in_work: bool = False
+    blacklisted_account_ids: list[int] = Field(default_factory=list)
+    presets: list[dict[str, Any]] = Field(default_factory=list)
+    enabled: Optional[bool] = None
+    warmup_enabled: Optional[bool] = None
+
+
+class MassprimingModuleResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool
+    warmup_enabled: bool = False
+    settings: dict[str, Any]
+    accounts: list[dict[str, Any]] = Field(default_factory=list)
+    jobs: list[dict[str, Any]] = Field(default_factory=list)
+    summary: dict[str, Any] = Field(default_factory=dict)
+    issues: list[str] = Field(default_factory=list)
+
+
+class MassprimingPresetRequest(BaseModel):
+    name: str = ""
+
+
+class ParserSettings(BaseModel):
+    account_ids: list[int] = Field(default_factory=list)
+    chat_ids: list[int] = Field(default_factory=list)
+    folder_ids: list[int] = Field(default_factory=list)
+    targets: list[str] = Field(default_factory=list)
+    source: str = "messages"
+    do_join: bool = True
+    since_hours: int = 24
+    member_limit: int = 1000
+    skip_bots: bool = True
+    skip_deleted: bool = True
+    skip_scam: bool = False
+    only_username: bool = False
+    only_photo: bool = False
+    only_premium: bool = False
+    only_admins: bool = False
+    only_active_stories: bool = False
+    delay_chat: int = 5
+    delay_user: int = 1
+    respect_night_hours: bool = True
+    limit_rate: bool = True
+    require_proxy: bool = False
+    hide_in_work: bool = False
+    blacklisted_account_ids: list[int] = Field(default_factory=list)
+    presets: list[dict[str, Any]] = Field(default_factory=list)
+    enabled: Optional[bool] = None
+
+
+class ParserModuleResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool
+    settings: dict[str, Any]
+    accounts: list[dict[str, Any]] = Field(default_factory=list)
+    chats: list[dict[str, Any]] = Field(default_factory=list)
+    folders: list[dict[str, Any]] = Field(default_factory=list)
+    jobs: list[dict[str, Any]] = Field(default_factory=list)
+    results: list[dict[str, Any]] = Field(default_factory=list)
+    results_total: int = 0
+    summary: dict[str, Any] = Field(default_factory=dict)
+    issues: list[str] = Field(default_factory=list)
+
+
+class ParserPresetRequest(BaseModel):
+    name: str = ""
+
+
+class ParserTargetsRequest(BaseModel):
+    links: str = ""
+
+
+class ChatBroadcastsSettings(BaseModel):
+    account_ids: list[int] = Field(default_factory=list)
+    chat_ids: list[int] = Field(default_factory=list)
+    only_joined: bool = True
+    messages: list[dict[str, Any]] = Field(default_factory=list)
+    first_mode: str = "template"
+    skip_errors: bool = True
+    skip_sent: bool = False
+    limit_rate: bool = True
+    respect_night_hours: bool = True
+    imitate_typing: bool = True
+    warmup_slow: bool = True
+    work_mode: str = "count"
+    max_messages: int = 100
+    delay_group_min: int = 30
+    delay_group_max: int = 90
+    delay_msg_min: int = 3
+    delay_msg_max: int = 8
+    errors_until_stop: int = 10
+    weekdays: list[int] = Field(default_factory=list)
+    work_hour_start: Optional[int] = None
+    work_hour_end: Optional[int] = None
+    end_at: str = ""
+    require_proxy: bool = False
+    hide_in_work: bool = False
+    blacklisted_account_ids: list[int] = Field(default_factory=list)
+    presets: list[dict[str, Any]] = Field(default_factory=list)
+    enabled: Optional[bool] = None
+    warmup_enabled: Optional[bool] = None
+
+
+class ChatBroadcastsModuleResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool
+    warmup_enabled: bool = False
+    settings: dict[str, Any]
+    accounts: list[dict[str, Any]] = Field(default_factory=list)
+    chats: list[dict[str, Any]] = Field(default_factory=list)
+    folders: list[dict[str, Any]] = Field(default_factory=list)
+    jobs: list[dict[str, Any]] = Field(default_factory=list)
+    summary: dict[str, Any] = Field(default_factory=dict)
+    blacklist: list[dict[str, Any]] = Field(default_factory=list)
+    issues: list[str] = Field(default_factory=list)
+    added_ids: list[int] = Field(default_factory=list)
+    add_errors: list[str] = Field(default_factory=list)
+
+
+class ChatBroadcastsGroupsRequest(BaseModel):
+    links: str = ""
+
+
+class ChatBroadcastsPresetRequest(BaseModel):
+    name: str = ""
+
+
+class NeuroshillingSettings(BaseModel):
+    account_ids: list[int] = Field(default_factory=list)
+    chat_ids: list[int] = Field(default_factory=list)
+    channel_ids: list[int] = Field(default_factory=list)
+    chat_shilling: bool = True
+    post_shilling: bool = True
+    unique_messages: bool = True
+    skip_fresh: bool = True
+    require_proxy: bool = False
+    hide_in_work: bool = False
+    delay_min: int = 8
+    delay_max: int = 25
+    prompt_id: Optional[int] = None
+    setup: Optional[str] = None
+    reply: Optional[str] = None
+    blacklisted_account_ids: list[int] = Field(default_factory=list)
+    presets: list[dict[str, Any]] = Field(default_factory=list)
+    enabled: Optional[bool] = None
+    warmup_enabled: Optional[bool] = None
+
+
+class NeuroshillingModuleResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool
+    warmup_enabled: bool = False
+    settings: dict[str, Any]
+    setup: str = ""
+    reply: str = ""
+    accounts: list[dict[str, Any]] = Field(default_factory=list)
+    chats: list[dict[str, Any]] = Field(default_factory=list)
+    folders: list[dict[str, Any]] = Field(default_factory=list)
+    prompts: list[dict[str, Any]] = Field(default_factory=list)
+    jobs: list[dict[str, Any]] = Field(default_factory=list)
+    summary: dict[str, Any] = Field(default_factory=dict)
+    blacklist: list[dict[str, Any]] = Field(default_factory=list)
+    issues: list[str] = Field(default_factory=list)
+    added_ids: list[int] = Field(default_factory=list)
+    add_errors: list[str] = Field(default_factory=list)
+    check: Optional[dict[str, Any]] = None
+
+
+class NeuroshillingTargetsRequest(BaseModel):
+    links: str = ""
+    kind: str = "auto"
+
+
+class NeuroshillingPresetRequest(BaseModel):
+    name: str = ""
+
+
+class NeuroshillingGenerateRequest(BaseModel):
+    topic: str = ""
+
+
+class WarmupSettings(BaseModel):
+    account_ids: list[int] = Field(default_factory=list)
+    chat_ids: list[int] = Field(default_factory=list)
+    mode: str = "auto"
+    intensity: str = "auto"
+    do_warmup_dms: bool = True
+    do_peer_dialogs: bool = True
+    do_reactions: bool = True
+    do_read_channels: bool = True
+    do_stories: bool = True
+    do_comment_contacts: bool = True
+    do_joins: bool = True
+    session_minutes: int = 0
+    require_proxy: bool = False
+    hide_in_work: bool = False
+    blacklisted_account_ids: list[int] = Field(default_factory=list)
+    presets: list[dict[str, Any]] = Field(default_factory=list)
+    enabled: Optional[bool] = None
+    usernames: Optional[list[str]] = None
+    messages: Optional[list[str]] = None
+
+
+class WarmupModuleResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool
+    is_admin: bool = False
+    settings: dict[str, Any]
+    accounts: list[dict[str, Any]] = Field(default_factory=list)
+    chats: list[dict[str, Any]] = Field(default_factory=list)
+    folders: list[dict[str, Any]] = Field(default_factory=list)
+    jobs: list[dict[str, Any]] = Field(default_factory=list)
+    summary: dict[str, Any] = Field(default_factory=dict)
+    username_count: int = 0
+    usernames: list[str] = Field(default_factory=list)
+    messages: list[str] = Field(default_factory=list)
+    issues: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    stages: dict[str, int] = Field(default_factory=dict)
+    added_ids: list[int] = Field(default_factory=list)
+    add_errors: list[str] = Field(default_factory=list)
+
+
+class WarmupTargetsRequest(BaseModel):
+    links: str = ""
+
+
+class WarmupPresetRequest(BaseModel):
+    name: str = ""
 
 
 class ChatMessageResponse(BaseModel):

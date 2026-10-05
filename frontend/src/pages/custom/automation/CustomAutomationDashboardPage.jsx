@@ -3,8 +3,11 @@ import { Link, useParams } from 'react-router-dom';
 import customService from '../../../services/customService';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
 import { ACTION_LABELS, DASHBOARD_ACTIVITY_GROUP, DASHBOARD_ACTIVITY_KEYS } from './activityLabels';
+import { ubtModulePath } from './customNav';
 import '../../../styles/projectDashboard.css';
 import '../../../styles/projectCRMPage.css';
+import '../../../styles/customSolutionNav.css';
+import '../../../styles/customAccountManager.css';
 
 const STATUS_ORDER = ['new', 'warming', 'qualified', 'transferred', 'processing', 'converted', 'lost', 'spam'];
 const STATUS_LABELS = {
@@ -70,152 +73,141 @@ const CustomAutomationDashboardPage = () => {
     .map((key) => [ACTION_LABELS[key], grouped24h[key]]);
 
   return (
-    <div className="project-dashboard">
-      <div className="dashboard-header">
-        <h1 className="dashboard-title">Дашборд</h1>
-        <p className="dashboard-subtitle">
-          {data.client_name || data.name || `Решение #${data.automation_id}`}
-        </p>
+    <div className="ubt-page">
+      <div className="ubt-hero">
+        <div>
+          <h1>Общий дашборд</h1>
+          <p>{data.client_name || data.name || `Решение #${data.automation_id}`}</p>
+        </div>
+        <Link className="acc-btn acc-btn--ghost" to={ubtModulePath(id, 'stats')}>Моя статистика</Link>
       </div>
 
-      <div className="dashboard-stats-grid">
-        <div className="dashboard-stat-card">
-          <div className="dashboard-stat-content">
-            <span className="dashboard-stat-value">{data.actions?.total ?? 0}</span>
-            <span className="dashboard-stat-label">Сообщений</span>
-          </div>
+      <div className="ubt-kpi-grid">
+        <div className="ubt-kpi">
+          <strong>{data.actions?.total ?? 0}</strong>
+          <span>Сообщений</span>
         </div>
-        <div className="dashboard-stat-card">
-          <div className="dashboard-stat-content">
-            <span className="dashboard-stat-value">{data.leads?.total ?? 0}</span>
-            <span className="dashboard-stat-label">Лидов</span>
-          </div>
+        <div className="ubt-kpi">
+          <strong>{data.leads?.total ?? 0}</strong>
+          <span>Лидов</span>
         </div>
-        <div className="dashboard-stat-card">
-          <div className="dashboard-stat-content">
-            <span className="dashboard-stat-value">{data.leads?.by_status?.transferred ?? 0}</span>
-            <span className="dashboard-stat-label">Передано</span>
-          </div>
+        <div className="ubt-kpi">
+          <strong>{data.leads?.by_status?.transferred ?? 0}</strong>
+          <span>Передано</span>
         </div>
-        <div className="dashboard-stat-card">
-          <div className="dashboard-stat-content">
-            <span className="dashboard-stat-value">{data.accounts?.active ?? 0}</span>
-            <span className="dashboard-stat-label">Активные аккаунты</span>
-          </div>
+        <div className="ubt-kpi">
+          <strong>{data.accounts?.active ?? 0}</strong>
+          <span>Активные аккаунты</span>
         </div>
-        <div className="dashboard-stat-card">
-          <div className="dashboard-stat-content">
-            <span className="dashboard-stat-value">{data.accounts?.revoked ?? 0}</span>
-            <span className="dashboard-stat-label">Сессия отозвана</span>
-          </div>
+        <div className="ubt-kpi">
+          <strong>{data.accounts?.revoked ?? 0}</strong>
+          <span>Сессия отозвана</span>
         </div>
-        <div className="dashboard-stat-card">
-          <div className="dashboard-stat-content">
-            <span className="dashboard-stat-value">{data.accounts?.spamblocked ?? 0}</span>
-            <span className="dashboard-stat-label">СПАМБЛОК</span>
-          </div>
+        <div className="ubt-kpi">
+          <strong>{data.accounts?.spamblocked ?? 0}</strong>
+          <span>СПАМБЛОК</span>
         </div>
-        <div className="dashboard-stat-card">
-          <div className="dashboard-stat-content">
-            <span className="dashboard-stat-value">{data.accounts?.frozen ?? 0}</span>
-            <span className="dashboard-stat-label">Заморожены</span>
-          </div>
+        <div className="ubt-kpi">
+          <strong>{data.accounts?.frozen ?? 0}</strong>
+          <span>Заморожены</span>
         </div>
-        <div className="dashboard-stat-card">
-          <div className="dashboard-stat-content">
-            <span className="dashboard-stat-value">{data.accounts?.banned ?? 0}</span>
-            <span className="dashboard-stat-label">Баны аккаунтов</span>
-          </div>
+        <div className="ubt-kpi">
+          <strong>{data.accounts?.banned ?? 0}</strong>
+          <span>Баны аккаунтов</span>
         </div>
-        <div className="dashboard-stat-card">
-          <div className="dashboard-stat-content">
-            <span className="dashboard-stat-value">{data.dmp?.purchased ?? 0}</span>
-            <span className="dashboard-stat-label">DMP куплено</span>
-          </div>
+        <div className="ubt-kpi">
+          <strong>{data.dmp?.purchased ?? 0}</strong>
+          <span>DMP куплено</span>
         </div>
-        <div className="dashboard-stat-card">
-          <div className="dashboard-stat-content">
-            <span className="dashboard-stat-value">
-              {data.dmp?.cost_rub === undefined || data.dmp?.cost_rub === null ? '—' : `${data.dmp.cost_rub} ₽`}
-            </span>
-            <span className="dashboard-stat-label">Расход DMP</span>
-          </div>
+        <div className="ubt-kpi">
+          <strong>
+            {data.dmp?.cost_rub === undefined || data.dmp?.cost_rub === null ? '—' : `${data.dmp.cost_rub} ₽`}
+          </strong>
+          <span>Расход DMP</span>
         </div>
       </div>
 
-      <div className="dashboard-section">
-        <div className="dashboard-section-header">
-          <h2 className="dashboard-section-title">Воронка лидов</h2>
-        </div>
-        {funnel.length === 0 ? (
-          <p className="dashboard-subtitle">Пока нет лидов.</p>
-        ) : (
-          <div className="dashboard-hchart dashboard-hchart--metrics">
-            {funnel.map(([label, count]) => (
-              <div key={label} className="dashboard-hchart-row">
-                <span className="dashboard-hchart-label">{label}</span>
-                <div className="dashboard-hchart-bars">
-                  <div className="dashboard-hchart-bar-track dashboard-hchart-bar-track--single">
-                    <div className="dashboard-hchart-bar-fill">
-                      <div
-                        className="dashboard-hchart-bar dashboard-hchart-bar--leads"
-                        style={{ width: `${Math.round((count / (data.leads.total || 1)) * 100)}%` }}
-                      />
+      <div className="ubt-split">
+        <div className="ubt-panel">
+          <div className="ubt-panel-header">
+            <h2>Воронка лидов</h2>
+          </div>
+          {funnel.length === 0 ? (
+            <p className="ubt-empty">Пока нет лидов.</p>
+          ) : (
+            <div className="dashboard-hchart dashboard-hchart--metrics">
+              {funnel.map(([label, count]) => (
+                <div key={label} className="dashboard-hchart-row">
+                  <span className="dashboard-hchart-label">{label}</span>
+                  <div className="dashboard-hchart-bars">
+                    <div className="dashboard-hchart-bar-track dashboard-hchart-bar-track--single">
+                      <div className="dashboard-hchart-bar-fill">
+                        <div
+                          className="dashboard-hchart-bar dashboard-hchart-bar--leads"
+                          style={{ width: `${Math.round((count / (data.leads.total || 1)) * 100)}%` }}
+                        />
+                      </div>
                     </div>
+                    <span className="dashboard-hchart-value">{count}</span>
                   </div>
-                  <span className="dashboard-hchart-value">{count}</span>
                 </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div className="dashboard-section">
-        <div className="dashboard-section-header">
-          <h2 className="dashboard-section-title">Активность за 24 часа</h2>
-          <Link to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_ACTIVITY(id)} className="btn btn-outline">
-            Все
-          </Link>
+              ))}
+            </div>
+          )}
         </div>
-        {actions24h.length === 0 ? (
-          <p className="dashboard-subtitle">Нет действий за сутки.</p>
-        ) : (
-          <div className="crm-list">
-            {actions24h.map(([label, count]) => (
-              <div key={label} className="crm-item">
-                <div className="crm-item-header">
-                  <strong>{label}</strong>
-                  <span>{count}</span>
-                </div>
-              </div>
-            ))}
+        <div className="ubt-panel">
+          <div className="ubt-panel-header">
+            <h2>Активность за 24 часа</h2>
+            <Link to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_ACTIVITY(id)} className="acc-btn acc-btn--ghost">
+              Все
+            </Link>
           </div>
-        )}
+          {actions24h.length === 0 ? (
+            <p className="ubt-empty">Нет действий за сутки.</p>
+          ) : (
+            <table className="ubt-table">
+              <tbody>
+                {actions24h.map(([label, count]) => (
+                  <tr key={label}>
+                    <td>{label}</td>
+                    <td>{count}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
       </div>
 
-      <div className="dashboard-section">
-        <div className="dashboard-section-header">
-          <h2 className="dashboard-section-title">Последние диалоги</h2>
+      <div className="ubt-panel">
+        <div className="ubt-panel-header">
+          <h2>Последние диалоги</h2>
         </div>
         {!data.leads?.recent?.length ? (
-          <p className="dashboard-subtitle">Диалогов пока нет.</p>
+          <p className="ubt-empty">Диалогов пока нет.</p>
         ) : (
-          <div className="crm-list">
-            {data.leads.recent.map((lead) => (
-              <Link
-                key={lead.id}
-                to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_LEAD_CHAT(id, lead.id)}
-                className="crm-item"
-              >
-                <div className="crm-item-header">
-                  <strong>{lead.contact_value || lead.full_name || `Лид #${lead.id}`}</strong>
-                  <span className="crm-status">{STATUS_LABELS[lead.status] || lead.status}</span>
-                </div>
-                <span>{lead.source}</span>
-              </Link>
-            ))}
-          </div>
+          <table className="ubt-table">
+            <thead>
+              <tr>
+                <th>Контакт</th>
+                <th>Статус</th>
+                <th>Источник</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.leads.recent.map((lead) => (
+                <tr key={lead.id}>
+                  <td>
+                    <Link to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_LEAD_CHAT(id, lead.id)}>
+                      {lead.contact_value || lead.full_name || `Лид #${lead.id}`}
+                    </Link>
+                  </td>
+                  <td>{STATUS_LABELS[lead.status] || lead.status}</td>
+                  <td>{lead.source}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </div>
     </div>

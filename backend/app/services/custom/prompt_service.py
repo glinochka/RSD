@@ -384,6 +384,77 @@ async def list_prompts(session: AsyncSession, automation_id: int) -> list[Custom
     return list(result.scalars().all())
 
 
+async def create_named_prompt(
+    session: AsyncSession,
+    automation_id: int,
+    *,
+    prompt_type: str,
+    name: str,
+    content: str,
+    activate: bool = True,
+) -> CustomPrompt:
+    kind = (prompt_type or "").strip() or PromptType.NEUROCOMMENTING.value
+    title = (name or "").strip() or "Мой промпт"
+    body = (content or "").strip()
+    if not body:
+        raise ValueError("Текст промпта пуст")
+    if activate:
+        current = (
+            await session.execute(
+                select(CustomPrompt).where(
+                    CustomPrompt.custom_automation_id == automation_id,
+                    CustomPrompt.prompt_type == kind,
+                    CustomPrompt.is_active.is_(True),
+                )
+            )
+        ).scalars().all()
+        for item in current:
+            item.is_active = False
+            item.updated_at = _utc_now()
+    prompt = CustomPrompt(
+        custom_automation_id=automation_id,
+        prompt_type=kind,
+        name=title[:200],
+        content=body,
+        model="deepseek-chat",
+        temperature=0.8,
+        max_tokens=200,
+        response_format="json",
+        is_active=activate,
+        version=1,
+        created_at=_utc_now(),
+        updated_at=_utc_now(),
+    )
+    session.add(prompt)
+    await session.commit()
+    await session.refresh(prompt)
+    return prompt
+
+
+async def activate_prompt(session: AsyncSession, automation_id: int, prompt_id: int) -> CustomPrompt:
+    prompt = await get_prompt(session, automation_id, prompt_id)
+    if not prompt:
+        raise ValueError("Prompt not found")
+    siblings = (
+        await session.execute(
+            select(CustomPrompt).where(
+                CustomPrompt.custom_automation_id == automation_id,
+                CustomPrompt.prompt_type == prompt.prompt_type,
+                CustomPrompt.is_active.is_(True),
+            )
+        )
+    ).scalars().all()
+    for item in siblings:
+        if item.id != prompt.id:
+            item.is_active = False
+            item.updated_at = _utc_now()
+    prompt.is_active = True
+    prompt.updated_at = _utc_now()
+    await session.commit()
+    await session.refresh(prompt)
+    return prompt
+
+
 async def get_prompt(session: AsyncSession, automation_id: int, prompt_id: int) -> CustomPrompt | None:
     prompt = await session.get(CustomPrompt, prompt_id)
     if not prompt or prompt.custom_automation_id != automation_id:

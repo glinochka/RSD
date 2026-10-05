@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import CustomSelect from '../../../components/CustomSelect';
 import CustomFileButton from '../../../components/custom/CustomFileButton';
 import FeatureToggle from '../../../components/FeatureToggle';
@@ -7,8 +7,10 @@ import customService from '../../../services/customService';
 import { parseTelegramChatRef } from '../../../utils/telegramChatLink';
 import CustomAutomationChatDiscoveryPage from './CustomAutomationChatDiscoveryPage';
 import { CHAT_TYPE_LABELS } from './activityLabels';
+import { NAVIGATION_ROUTES } from '../../../config/constants';
 import '../../../styles/projectCRMPage.css';
 import '../../../styles/projectSettingsPage.css';
+import '../../../styles/customSolutionNav.css';
 
 const JOIN_STATUSES = [
   { value: '', label: 'Все статусы' },
@@ -76,6 +78,9 @@ function commentsLabel(chat) {
 
 const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
   const { id } = useParams();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const tab = location.pathname.includes('/discovery') ? 'discovery' : defaultTab;
   const [chats, setChats] = useState([]);
   const [total, setTotal] = useState(0);
   const [jobs, setJobs] = useState([]);
@@ -85,7 +90,6 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
   const [isImporting, setIsImporting] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
-  const [tab, setTab] = useState(defaultTab);
   const [showForm, setShowForm] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [inviteLink, setInviteLink] = useState('');
@@ -122,7 +126,7 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
       setTotal(data.total || 0);
       setError(null);
     } catch (err) {
-      setError(err.message || 'Failed to load chats');
+      setError(err.message || 'Не удалось загрузить чаты');
     } finally {
       setIsLoading(false);
     }
@@ -261,7 +265,7 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
       setMessage(`Нашли ${chatTypeLabel(created).toLowerCase()}: ${foundTitle}. Юзерботы вступают в фоне`);
       await loadChats();
     } catch (err) {
-      setError(err.message || 'Failed to create chat');
+      setError(err.message || 'Не удалось добавить чат');
     } finally {
       setIsCreating(false);
     }
@@ -276,7 +280,7 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
       await loadChats();
       await loadFolders();
     } catch (err) {
-      setError(err.message || 'Failed to delete chat');
+      setError(err.message || 'Не удалось удалить чат');
     }
   };
 
@@ -318,7 +322,7 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
       await loadChats();
       setMessage(nextActive ? 'Чат снова в работе' : 'Чат на паузе');
     } catch (err) {
-      setError(err.message || 'Failed to update chat');
+      setError(err.message || 'Не удалось обновить чат');
     }
   };
 
@@ -348,10 +352,10 @@ const CustomAutomationChatsPage = ({ defaultTab = 'list' }) => {
         </div>
       </div>
       <div className="crm-tabs">
-        <button type="button" className={`crm-tab ${tab === 'list' ? 'crm-tab--active' : ''}`} onClick={() => setTab('list')}>
+        <button type="button" className={`crm-tab ${tab === 'list' ? 'crm-tab--active' : ''}`} onClick={() => navigate(NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHATS(id))}>
           Список
         </button>
-        <button type="button" className={`crm-tab ${tab === 'discovery' ? 'crm-tab--active' : ''}`} onClick={() => setTab('discovery')}>
+        <button type="button" className={`crm-tab ${tab === 'discovery' ? 'crm-tab--active' : ''}`} onClick={() => navigate(NAVIGATION_ROUTES.CUSTOM_AUTOMATION_CHAT_DISCOVERY(id))}>
           Автопоиск
         </button>
       </div>

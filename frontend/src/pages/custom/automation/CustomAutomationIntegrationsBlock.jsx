@@ -44,6 +44,7 @@ const CustomAutomationIntegrationsBlock = ({
   onReloadSettings,
   onError,
   onMessage,
+  hideDmp = false,
 }) => {
   const isDmpBot = settings?.solution_kind === 'dmp_bot';
   const showLeadBot = isDmpBot || settings?.solution_kind !== 'seo_saas';
@@ -136,7 +137,7 @@ const CustomAutomationIntegrationsBlock = ({
           client_secret: amoForm.client_secret || undefined,
         });
       }
-      const returnUrl = `${window.location.origin}/custom/automations/${automationId}/settings`;
+      const returnUrl = `${window.location.origin}/custom/automations/${automationId}/integrations`;
       const data = await customService.startAmocrmOAuth(automationId, returnUrl);
       window.location.assign(data.auth_url);
     } catch (err) {
@@ -261,7 +262,7 @@ const CustomAutomationIntegrationsBlock = ({
   };
 
   const showAmocrm = Boolean(settings?.is_amocrm_enabled) && !isDmpBot;
-  const showDmp = Boolean(settings?.is_dmp_one_enabled) || isDmpBot;
+  const showDmp = !hideDmp && (Boolean(settings?.is_dmp_one_enabled) || isDmpBot);
   const showBot = showLeadBot;
   const showSheets = isDmpBot;
   if (!showAmocrm && !showDmp && !showBot && !showSheets) {

@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
 import CustomSelect from '../../../components/CustomSelect';
 import CustomFileButton from '../../../components/custom/CustomFileButton';
 import customService, { mediaUrl } from '../../../services/customService';
@@ -8,24 +8,122 @@ import CustomBulkProfileForm from './CustomBulkProfileForm';
 import CustomAccountConnectForm from './CustomAccountConnectForm';
 import CustomAccountProxyFields from './CustomAccountProxyFields';
 import { ACCOUNT_ROLE_LABELS, ACCOUNT_ROLE_OPTIONS, WARMUP_STATUS_LABELS, exclusiveShillingRoles } from './activityLabels';
-import '../../../styles/projectCRMPage.css';
+import { ubtModulePath } from './customNav';
 import '../../../styles/projectSettingsPage.css';
+import '../../../styles/customAccountManager.css';
 
 const ROLE_FILTERS = [{ value: '', label: 'Все функции' }, ...ACCOUNT_ROLE_OPTIONS];
+const PAGE_SIZES = [25, 50, 100];
+const ACCEPT = '.zip,.csv,.session';
 
-const STATUSES = [
+const CLASS_LABELS = {
+  one_day: 'Однодневный',
+  mid: 'Средний',
+  trusted: 'Доверенный',
+  shilling: 'Шиллинг',
+};
+
+const STATUS_FILTERS = [
   { value: '', label: 'Все статусы' },
   { value: 'active', label: 'Активен' },
-  { value: 'revoked', label: 'Сессия отозвана' },
-  { value: 'spamblock', label: 'СПАМБЛОК' },
+  { value: 'in_work', label: 'В работе' },
+  { value: 'quarantine', label: 'На карантине' },
+  { value: 'spamblock', label: 'Спамблок' },
+  { value: 'invalid', label: 'Невалидные' },
   { value: 'frozen', label: 'Заморожен' },
-  { value: 'banned', label: 'Бан' },
+  { value: 'banned', label: 'Реактивация' },
+  { value: 'channel_banned', label: 'Бан в каналах' },
+  { value: 'revoked', label: 'Сессия отозвана' },
   { value: 'empty', label: 'Пусто' },
 ];
+
+const Ico = ({ d, children }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    {d ? <path d={d} /> : children}
+  </svg>
+);
+
+const KPI_CARDS = [
+  { key: 'active', stat: 'active', label: 'Активные', tone: 'blue', icon: <Ico><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></Ico> },
+  { key: 'in_work', stat: 'in_work', label: 'В работе', tone: 'cyan', icon: <Ico><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></Ico> },
+  { key: 'quarantine', stat: 'quarantine', label: 'На карантине', tone: 'violet', icon: <Ico d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /> },
+  { key: 'spamblock', stat: 'spamblocked', label: 'Спамблок', tone: 'rose', icon: <Ico><circle cx="12" cy="12" r="9" /><path d="M5 5l14 14" /></Ico> },
+  { key: 'invalid', stat: 'invalid', label: 'Невалидные', tone: 'amber', icon: <Ico><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /><path d="M18 8l4 4M22 8l-4 4" /></Ico> },
+  { key: 'frozen', stat: 'frozen', label: 'Замороженные', tone: 'sky', icon: <Ico><path d="M12 2v20M4.9 7.5l14.2 9M4.9 16.5l14.2-9" /></Ico> },
+  { key: 'banned', stat: 'banned', label: 'Реактивация', tone: 'orange', icon: <Ico d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" /> },
+  { key: 'channel_banned', stat: 'channel_banned', label: 'Бан в каналах', tone: 'slate', icon: <Ico d="M5 15H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h1m14 9h1a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-1M8 20h8M9 8v8a3 3 0 0 0 6 0V8" /> },
+];
+
+const formatRelative = (value) => {
+  if (!value) {
+    return '—';
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '—';
+  }
+  const minutes = Math.round((Date.now() - date.getTime()) / 60000);
+  if (minutes < 1) {
+    return 'только что';
+  }
+  if (minutes < 60) {
+    return `${minutes} мин назад`;
+  }
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) {
+    return `${hours} ч назад`;
+  }
+  const days = Math.round(hours / 24);
+  if (days < 14) {
+    return `${days} дн назад`;
+  }
+  return date.toLocaleDateString('ru-RU');
+};
+
+const accountTitle = (account) =>
+  account.display_name || (account.username ? `@${account.username}` : null) || account.phone_number || `ID ${account.id}`;
+
+const initialsOf = (account) => {
+  const name = accountTitle(account).replace('@', '');
+  const parts = String(name).split(/\s+/).filter(Boolean);
+  return ((parts[0]?.[0] || '') + (parts[1]?.[0] || '')).toUpperCase() || '?';
+};
+
+const statusMeta = (account) => {
+  if (account.is_banned) {
+    return { label: 'Бан', chip: 'bad' };
+  }
+  if (account.is_frozen) {
+    return { label: 'Заморожен', chip: 'info' };
+  }
+  if (account.status === 'revoked' || account.is_active === false) {
+    return { label: 'Отозван', chip: 'warn' };
+  }
+  if (account.status === 'empty' || !account.session_file_path) {
+    return { label: 'Пусто', chip: 'mute' };
+  }
+  return { label: 'Активен', chip: 'ok' };
+};
+
+const constraintMeta = (account) => {
+  if (account.is_channel_banned) {
+    return { label: 'Бан в каналах', chip: 'bad' };
+  }
+  if (account.is_frozen) {
+    return { label: 'Frozen', chip: 'info' };
+  }
+  if (account.warmup_status === 'rest' || account.warmup_status === 'warming') {
+    return { label: WARMUP_STATUS_LABELS[account.warmup_status] || 'Карантин', chip: 'warn' };
+  }
+  return { label: '—', chip: 'mute' };
+};
 
 const CustomAutomationAccountsPage = () => {
   const { id } = useParams();
   const { isAdmin } = useCustomAuth();
+  const importInputRef = useRef(null);
+  const dragCount = useRef(0);
+
   const [accounts, setAccounts] = useState([]);
   const [total, setTotal] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
@@ -47,15 +145,22 @@ const CustomAutomationAccountsPage = () => {
   const [savingNameId, setSavingNameId] = useState(null);
   const [nameDrafts, setNameDrafts] = useState({});
   const [bioDrafts, setBioDrafts] = useState({});
-  const [filters, setFilters] = useState({
-    status: '',
-    role: '',
-    search: '',
-  });
+  const [filters, setFilters] = useState({ status: '', role: '', search: '', limit: 25, offset: 0 });
+  const [searchInput, setSearchInput] = useState('');
   const [poolProxies, setPoolProxies] = useState([]);
   const [uploadProxyId, setUploadProxyId] = useState('');
   const [uploadProxyLine, setUploadProxyLine] = useState('');
   const [loginCodes, setLoginCodes] = useState({});
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [panel, setPanel] = useState(null);
+  const [drawerId, setDrawerId] = useState(null);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [sortKey, setSortKey] = useState('name');
+  const [sortDir, setSortDir] = useState('asc');
+  const [proxyText, setProxyText] = useState('');
+  const [proxySaving, setProxySaving] = useState(false);
+  const [proxyMessage, setProxyMessage] = useState(null);
 
   const loadAccounts = useCallback(async () => {
     try {
@@ -64,18 +169,18 @@ const CustomAutomationAccountsPage = () => {
         status: filters.status || undefined,
         role: filters.role || undefined,
         search: filters.search || undefined,
-        limit: 50,
-        offset: 0,
+        limit: filters.limit,
+        offset: filters.offset,
       });
       setAccounts(data.items || []);
       setTotal(data.total || 0);
       setError(null);
     } catch (err) {
-      setError(err.message || 'Failed to load accounts');
+      setError(err.message || 'Не удалось загрузить аккаунты');
     } finally {
       setIsLoading(false);
     }
-  }, [id, filters.status, filters.role, filters.search]);
+  }, [id, filters.status, filters.role, filters.search, filters.limit, filters.offset]);
 
   useEffect(() => {
     loadAccounts();
@@ -108,15 +213,21 @@ const CustomAutomationAccountsPage = () => {
   }, [loadPoolProxies]);
 
   useEffect(() => {
-    if (!isAdmin) {
-      return undefined;
-    }
+    const timer = window.setTimeout(() => {
+      setFilters((prev) => (prev.search === searchInput ? prev : { ...prev, search: searchInput, offset: 0 }));
+    }, 280);
+    return () => window.clearTimeout(timer);
+  }, [searchInput]);
+
+  useEffect(() => {
     customService
       .getAutomationSettings(id)
-      .then((data) => setWarmupEnabled(Boolean(data.account_warmup_enabled)))
+      .then((data) => {
+        setWarmupEnabled(Boolean(data.account_warmup_enabled));
+        setProxyText(data.proxy_list_text || '');
+      })
       .catch(() => {});
-    return undefined;
-  }, [id, isAdmin]);
+  }, [id]);
 
   useEffect(() => {
     if (!uploadSummary || !id) {
@@ -197,7 +308,7 @@ const CustomAutomationAccountsPage = () => {
       await loadAccounts();
       await loadBanStats();
     } catch (err) {
-      setHealthCheckMessage(err.message || 'Health check failed');
+      setHealthCheckMessage(err.message || 'Не удалось проверить аккаунты');
     } finally {
       setIsHealthChecking(false);
     }
@@ -219,11 +330,6 @@ const CustomAutomationAccountsPage = () => {
     }
   };
 
-  const handleSearchSubmit = (e) => {
-    e.preventDefault();
-    loadAccounts();
-  };
-
   const handleFileChange = async (file) => {
     if (!file) {
       return;
@@ -243,12 +349,13 @@ const CustomAutomationAccountsPage = () => {
       });
       setPrepareStatus(null);
       setUploadSuccess(
-        `Загружено: ${result.created}, пропущено: ${result.skipped}, ошибок: ${result.errors.length}`,
+        `Загружено: ${result.created}, пропущено: ${result.skipped}, ошибок: ${(result.errors || []).length}`,
       );
+      setPanel(null);
       await loadAccounts();
       await loadBanStats();
     } catch (err) {
-      setUploadError(err.message || 'Upload failed');
+      setUploadError(err.message || 'Не удалось загрузить файл');
     } finally {
       setIsUploading(false);
     }
@@ -272,7 +379,7 @@ const CustomAutomationAccountsPage = () => {
     try {
       const data = await customService.startAccountWarmup(id);
       setWarmupEnabled(Boolean(data.account_warmup_enabled));
-      setWarmupMessage('Прогрев включён. Он применится только к аккаунтам, которые зальёте после этой кнопки.');
+      setWarmupMessage('Прогрев включён. Он применится к аккаунтам, которые зальёте после этой кнопки.');
     } catch (err) {
       setError(err.message || 'Не удалось включить прогрев');
     } finally {
@@ -335,10 +442,34 @@ const CustomAutomationAccountsPage = () => {
     }
     try {
       await customService.deleteAccount(id, account.id);
+      setDrawerId(null);
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(account.id);
+        return next;
+      });
       await loadAccounts();
       await loadBanStats();
     } catch (err) {
       setError(err.message || 'Не удалось удалить аккаунт');
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (!selectedIds.size) {
+      return;
+    }
+    if (!window.confirm(`Удалить выбранные аккаунты (${selectedIds.size})?`)) {
+      return;
+    }
+    try {
+      await Promise.all([...selectedIds].map((accountId) => customService.deleteAccount(id, accountId)));
+      setSelectedIds(new Set());
+      setDrawerId(null);
+      await loadAccounts();
+      await loadBanStats();
+    } catch (err) {
+      setError(err.message || 'Не удалось удалить аккаунты');
     }
   };
 
@@ -363,381 +494,645 @@ const CustomAutomationAccountsPage = () => {
     }
   };
 
-  const accountStatusMeta = (account) => {
-    if (account.is_banned) {
-      return { label: 'Бан', className: 'crm-status--cancelled' };
+  const handleSaveProxies = async () => {
+    setProxySaving(true);
+    setProxyMessage(null);
+    try {
+      await customService.updateAutomationSettings(id, { proxy_list_text: proxyText });
+      await loadPoolProxies();
+      setProxyMessage('Пул прокси сохранён');
+    } catch (err) {
+      setProxyMessage(err.message || 'Не удалось сохранить прокси');
+    } finally {
+      setProxySaving(false);
     }
-    if (account.is_channel_banned) {
-      return { label: 'Бан в каналах', className: 'crm-status--cancelled' };
-    }
-    if (account.is_frozen) {
-      return { label: 'Заморожен', className: 'crm-status--frozen' };
-    }
-    if (account.status === 'revoked' || account.is_active === false) {
-      return { label: 'Сессия отозвана', className: 'crm-status--revoked' };
-    }
-    if (account.status === 'empty') {
-      return { label: 'Пусто', className: 'crm-status--pending' };
-    }
-    return { label: 'Активен', className: 'crm-status--confirmed' };
   };
 
-  const roleDistribution = accounts.reduce((acc, a) => {
-    (a.roles || []).forEach((role) => {
-      acc[role] = (acc[role] || 0) + 1;
+  const sortedAccounts = useMemo(() => {
+    const rows = [...accounts];
+    const dir = sortDir === 'asc' ? 1 : -1;
+    const valueOf = (account) => {
+      if (sortKey === 'name') {
+        return accountTitle(account).toLowerCase();
+      }
+      if (sortKey === 'role') {
+        return (account.roles || []).join(',');
+      }
+      if (sortKey === 'class') {
+        return account.assigned_class || '';
+      }
+      if (sortKey === 'status') {
+        return statusMeta(account).label;
+      }
+      if (sortKey === 'spamblock') {
+        return account.is_spamblocked ? 1 : 0;
+      }
+      if (sortKey === 'constraint') {
+        return constraintMeta(account).label;
+      }
+      if (sortKey === 'tracking') {
+        return account.last_used_at || '';
+      }
+      if (sortKey === 'proxy') {
+        return account.proxy_label || '';
+      }
+      return '';
+    };
+    rows.sort((a, b) => {
+      const left = valueOf(a);
+      const right = valueOf(b);
+      if (left < right) {
+        return -1 * dir;
+      }
+      if (left > right) {
+        return 1 * dir;
+      }
+      return 0;
     });
-    return acc;
-  }, {});
+    return rows;
+  }, [accounts, sortKey, sortDir]);
+
+  const toggleSort = (key) => {
+    if (sortKey === key) {
+      setSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setSortKey(key);
+    setSortDir('asc');
+  };
+
+  const toggleKpi = (status) => {
+    setFilters((prev) => ({
+      ...prev,
+      status: prev.status === status ? '' : status,
+      offset: 0,
+    }));
+    setSelectedIds(new Set());
+  };
+
+  const toggleRow = (accountId, checked) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (checked) {
+        next.add(accountId);
+      } else {
+        next.delete(accountId);
+      }
+      return next;
+    });
+  };
+
+  const allChecked = accounts.length > 0 && accounts.every((item) => selectedIds.has(item.id));
+  const hasFilters = Boolean(filters.status || filters.role || filters.search);
+  const showEmpty = !isLoading && total === 0 && !hasFilters;
+  const from = total === 0 ? 0 : filters.offset + 1;
+  const to = Math.min(filters.offset + accounts.length, total);
+  const pageCount = Math.max(1, Math.ceil(total / filters.limit) || 1);
+  const page = Math.floor(filters.offset / filters.limit) + 1;
+  const drawerAccount = accounts.find((item) => item.id === drawerId) || null;
+  const warmupPath = ubtModulePath(id, 'warmup');
+
+  const goPage = (nextPage) => {
+    const clamped = Math.min(pageCount, Math.max(1, nextPage));
+    setFilters((prev) => ({ ...prev, offset: (clamped - 1) * prev.limit }));
+  };
+
+  const onDragEnter = (event) => {
+    event.preventDefault();
+    dragCount.current += 1;
+    setIsDragging(true);
+  };
+
+  const onDragOver = (event) => {
+    event.preventDefault();
+  };
+
+  const onDragLeave = () => {
+    dragCount.current -= 1;
+    if (dragCount.current <= 0) {
+      dragCount.current = 0;
+      setIsDragging(false);
+    }
+  };
+
+  const onDrop = (event) => {
+    event.preventDefault();
+    dragCount.current = 0;
+    setIsDragging(false);
+    const file = event.dataTransfer.files && event.dataTransfer.files[0];
+    if (file) {
+      handleFileChange(file);
+    }
+  };
+
+  const flashes = [
+    warmupMessage,
+    healthCheckMessage,
+    spamblockMessage,
+    uploadSuccess,
+    prepareStatus?.status === 'running'
+      ? `Подготовка: живых ${prepareStatus.alive || 0}, профили ${prepareStatus.profiles_done || 0}, чаты ${prepareStatus.chats_joined || 0}`
+      : null,
+    prepareStatus?.status === 'completed' ? 'Подготовка завершена' : null,
+    prepareStatus?.status === 'error' ? prepareStatus.error : null,
+  ].filter(Boolean);
 
   return (
-    <div className="project-crm-page">
-      <div className="crm-header">
-        <div>
-          <h1 className="crm-title">Аккаунты</h1>
-          <p className="crm-subtitle">Один аккаунт по QR или SMS, либо массовый залив сессий.</p>
-        </div>
-        <div className="settings-actions">
-          <button type="button" onClick={handleHealthCheck} disabled={isHealthChecking} className="btn btn-outline">
-            {isHealthChecking ? 'Проверка...' : 'Проверить'}
+    <div
+      className="acc-manager"
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
+      <input
+        ref={importInputRef}
+        type="file"
+        accept={ACCEPT}
+        className="acc-hidden-file"
+        onChange={(event) => {
+          const file = event.target.files && event.target.files[0];
+          if (file) {
+            handleFileChange(file);
+          }
+          event.target.value = '';
+        }}
+      />
+
+      {flashes.map((text) => (
+        <p key={text} className="acc-flash">{text}</p>
+      ))}
+      {uploadError ? <p className="acc-flash acc-flash--error">{uploadError}</p> : null}
+      {error ? <p className="acc-flash acc-flash--error">{error}</p> : null}
+      {banStats?.alert ? (
+        <p className="acc-flash acc-flash--alert">
+          Высокий процент банов: {banStats.banned} из {banStats.total} ({(banStats.banned_percent * 100).toFixed(0)}%).
+        </p>
+      ) : null}
+      {uploadSummary && !prepareStatus ? (
+        <p className="acc-flash">
+          Залито {uploadSummary.created} сессий.
+          {' '}
+          <button type="button" className="acc-btn acc-btn--primary" onClick={handlePrepare} disabled={isPreparing}>
+            {isPreparing ? 'Подготовка...' : 'Подготовить профили и вступить в чаты'}
           </button>
-          <CustomFileButton
-            accept=".zip,.csv,.session"
-            variant="black"
-            busy={isUploading}
-            onFile={handleFileChange}
-          >
-            {isUploading ? 'Загрузка...' : 'Загрузить ZIP / CSV / .session'}
-          </CustomFileButton>
-        </div>
-      </div>
-
-      {warmupMessage ? <p className="crm-flash">{warmupMessage}</p> : null}
-      {healthCheckMessage ? <p className="crm-flash">{healthCheckMessage}</p> : null}
-      {spamblockMessage ? <p className="crm-flash">{spamblockMessage}</p> : null}
-      {uploadSuccess ? <p className="crm-flash">{uploadSuccess}</p> : null}
-      {uploadError ? <p className="crm-flash crm-flash--error">{uploadError}</p> : null}
-      {error ? <p className="crm-flash crm-flash--error">{error}</p> : null}
-
-      <section className="settings-section">
-        <h3 className="settings-section-title">Прокси при заливе файла</h3>
-        <CustomAccountProxyFields
-          proxies={poolProxies}
-          proxyId={uploadProxyId}
-          proxyLine={uploadProxyLine}
-          onProxyIdChange={setUploadProxyId}
-          onProxyLineChange={setUploadProxyLine}
-          disabled={isUploading}
-          hint="Выбранный или новый прокси применится ко всем сессиям в этой загрузке. Свой прокси не попадёт в общий пул и не будет переназначен другим аккаунтам."
-        />
-      </section>
-
-      {isAdmin ? (
-        <div className="settings-section">
-          <h3 className="settings-section-title">Прогрев аккаунтов</h3>
-          <p className="form-hint">
-            После включения прогрев идёт только для следующих заливов: первый день — отдых, второй —
-            мини-диалог с доверенным аккаунтом, на третий день то же и прогрев завершён.
-            Юзернеймы задаются в настройках.
-          </p>
-          <p className="form-hint">
-            {warmupEnabled ? 'Прогрев включён для новых заливов.' : 'Прогрев выключен.'}
-          </p>
-          <div className="settings-actions">
-            <button
-              type="button"
-              className="btn btn-black"
-              disabled={isStartingWarmup || warmupEnabled}
-              onClick={handleStartWarmup}
-            >
-              {isStartingWarmup ? 'Включаем...' : warmupEnabled ? 'Прогрев включён' : 'Начать прогрев'}
-            </button>
-          </div>
-        </div>
-      ) : null}
-      {uploadSummary ? (
-        <div className="settings-section">
-          <h3 className="settings-section-title">После залива</h3>
-          <div className="crm-stats">
-            <div className="crm-stat">
-              <span className="crm-stat-value">{uploadSummary.created}</span>
-              <span className="crm-stat-label">Залито сессий</span>
-            </div>
-            <div className="crm-stat">
-              <span className="crm-stat-value">{banStats ? banStats.active : '…'}</span>
-              <span className="crm-stat-label">Живые</span>
-            </div>
-          </div>
-          {prepareStatus?.status === 'running' ? (
-            <p className="form-hint">
-              Подготовка: профили {prepareStatus.profiles_done || 0}, вступили в чаты {prepareStatus.chats_joined || 0}
-            </p>
-          ) : null}
-          {prepareStatus?.status === 'completed' ? (
-            <p className="form-hint">
-              Готово: оформлено {prepareStatus.profiles_done || 0}, чатов {prepareStatus.chats_joined || 0}
-            </p>
-          ) : null}
-          {prepareStatus?.status === 'error' ? (
-            <p className="form-hint form-hint--error">{prepareStatus.error || 'Ошибка подготовки'}</p>
-          ) : null}
-          <p className="form-hint">
-            Оформление идёт по шаблонам из «Массовое обновление профилей». Затем аккаунты вступают в уже загруженные чаты.
-          </p>
-          <div className="settings-actions">
-            <button
-              type="button"
-              className="btn btn-black"
-              disabled={isPreparing || prepareStatus?.status === 'running'}
-              onClick={handlePrepare}
-            >
-              {isPreparing || prepareStatus?.status === 'running' ? 'Подготовка...' : 'Начать подготовку'}
-            </button>
-          </div>
-        </div>
-      ) : null}
-
-      {banStats && banStats.alert ? (
-        <div className="settings-section settings-section--danger">
-          <h3 className="settings-section-title settings-section-title--danger">Высокий процент банов</h3>
-          <p className="form-hint">
-            Забанено {banStats.banned} из {banStats.total} ({(banStats.banned_percent * 100).toFixed(0)}%).
-            Пополните пул или снизьте активность.
-          </p>
-        </div>
-      ) : null}
-
-      {banStats ? (
-        <p className="form-hint">
-          Активны {banStats.active}
-          {banStats.revoked ? ` · отозваны ${banStats.revoked}` : ''}
-          {banStats.spamblocked ? ` · СПАМБЛОК ${banStats.spamblocked}` : ''}
-          {banStats.frozen ? ` · заморожены ${banStats.frozen}` : ''}
-          {banStats.banned ? ` · бан ${banStats.banned}` : ''}
         </p>
       ) : null}
 
-      {accounts.length > 0 ? (
-        <div className="crm-stats">
-          {ACCOUNT_ROLE_OPTIONS.map((c) => (
-            <div key={c.value} className="crm-stat">
-              <span className="crm-stat-value">{roleDistribution[c.value] || 0}</span>
-              <span className="crm-stat-label">{c.label}</span>
-            </div>
-          ))}
-          <div className="crm-stat">
-            <span className="crm-stat-value">{total}</span>
-            <span className="crm-stat-label">Всего</span>
+      <div className="acc-kpis">
+        {KPI_CARDS.map((card) => (
+          <button
+            key={card.key}
+            type="button"
+            className={`acc-kpi ${filters.status === card.key ? 'is-active' : ''}`}
+            onClick={() => toggleKpi(card.key)}
+          >
+            <span className={`acc-kpi-icon acc-kpi-icon--${card.tone}`}>
+              {card.icon}
+            </span>
+            <strong>{banStats ? banStats[card.stat] || 0 : '…'}</strong>
+            <span>{card.label}</span>
+          </button>
+        ))}
+      </div>
+
+      <div className="acc-cta">
+        <button type="button" className="acc-btn acc-btn--primary" onClick={() => { setDrawerId(null); setPanel('import'); }} disabled={isUploading}>
+          <Ico d="M12 3v12M8 11l4 4 4-4M4 21h16" />
+          Импортировать аккаунты
+        </button>
+        <button type="button" className="acc-btn acc-btn--ghost" onClick={() => { setDrawerId(null); setPanel('add'); }}>
+          <Ico><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M19 8v6M16 11h6" /></Ico>
+          Добавить аккаунт
+        </button>
+        <button type="button" className="acc-btn acc-btn--mint" onClick={() => { setDrawerId(null); setPanel('proxy'); }}>
+          <Ico><rect x="2" y="7" width="20" height="14" rx="2" /><path d="M16 7V5a4 4 0 0 0-8 0v2" /></Ico>
+          Пул прокси
+        </button>
+      </div>
+
+      <div className="acc-table-card">
+        <div className="acc-toolbar">
+          <form className="acc-search" onSubmit={(event) => event.preventDefault()}>
+            <Ico><circle cx="11" cy="11" r="7" /><path d="M20 20l-3-3" /></Ico>
+            <input
+              value={searchInput}
+              onChange={(event) => setSearchInput(event.target.value)}
+              placeholder="Поиск по имени, номеру, username..."
+            />
+          </form>
+          <div className="acc-tools">
+            <button
+              type="button"
+              className={`acc-icon-btn ${filterOpen ? 'is-active' : ''}`}
+              title="Фильтры"
+              onClick={() => setFilterOpen((open) => !open)}
+            >
+              <Ico d="M4 4h16l-6 8v6l-4 2v-8L4 4z" />
+            </button>
+            <button type="button" className="acc-icon-btn" title="Профили" onClick={() => { setDrawerId(null); setPanel('profiles'); }}>
+              <Ico><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M7 8h10M7 12h6" /></Ico>
+            </button>
+            <button type="button" className="acc-icon-btn" title="Проверить сессии" onClick={handleHealthCheck} disabled={isHealthChecking}>
+              <Ico><path d="M21 12a9 9 0 1 1-3-6.7" /><path d="M21 3v6h-6" /></Ico>
+            </button>
+            <Link className="acc-icon-btn" title="Прогрев аккаунтов" to={warmupPath}>
+              <Ico d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" />
+            </Link>
+            <button
+              type="button"
+              className="acc-icon-btn"
+              title="Удалить выбранные"
+              onClick={handleBulkDelete}
+              disabled={!selectedIds.size}
+            >
+              <Ico d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" />
+            </button>
+            {filterOpen ? (
+              <div className="acc-filter-pop">
+                <div>
+                  <label htmlFor="acc-filter-status">Статус</label>
+                  <CustomSelect
+                    id="acc-filter-status"
+                    value={filters.status}
+                    options={STATUS_FILTERS}
+                    onChange={(event) => setFilters((prev) => ({ ...prev, status: event.target.value, offset: 0 }))}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="acc-filter-role">Функция</label>
+                  <CustomSelect
+                    id="acc-filter-role"
+                    value={filters.role}
+                    options={ROLE_FILTERS}
+                    onChange={(event) => setFilters((prev) => ({ ...prev, role: event.target.value, offset: 0 }))}
+                  />
+                </div>
+                <Link className="acc-btn acc-btn--ghost" to={ubtModulePath(id, 'warmup')}>Прогрев</Link>
+                {isAdmin && !warmupEnabled ? (
+                  <button type="button" className="acc-btn acc-btn--ghost" onClick={handleStartWarmup} disabled={isStartingWarmup}>
+                    {isStartingWarmup ? 'Включаем...' : 'Включить для новых заливов'}
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
           </div>
+        </div>
+
+        {showEmpty ? (
+          <div className="acc-empty">
+            <div className="acc-drop">
+              <span className="acc-drop-spark acc-drop-spark--tl">
+                <Ico d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" />
+              </span>
+              <span className="acc-drop-mark">
+                <Ico d="M12 16V6M8 10l4-4 4 4M4 20h16" />
+              </span>
+              <span className="acc-drop-spark acc-drop-spark--tr">
+                <Ico><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="M7 10l5 5 5-5" /></Ico>
+              </span>
+            </div>
+            <p className="acc-empty-kicker">Telegram-комбайн</p>
+            <h2>Здесь появятся ваши аккаунты</h2>
+            <p>
+              Перетащите файлы прямо сюда или импортируйте вручную — комбайн подхватит сессии сам.
+            </p>
+            <div className="acc-empty-actions">
+              <button type="button" className="acc-btn acc-btn--primary" onClick={() => importInputRef.current?.click()} disabled={isUploading}>
+                Импортировать аккаунты
+              </button>
+              <button type="button" className="acc-btn acc-btn--ghost" onClick={() => { setDrawerId(null); setPanel('add'); }}>
+                Добавить вручную
+              </button>
+            </div>
+            <div className="acc-formats">
+              <b>Форматы</b>
+              <span className="acc-format">.session</span>
+              <span className="acc-format">.zip</span>
+              <span className="acc-format">.csv</span>
+            </div>
+          </div>
+        ) : (
+          <div className="acc-table-wrap">
+            <table className="acc-table">
+              <thead>
+                <tr>
+                  <th className="acc-check">
+                    <input
+                      type="checkbox"
+                      checked={allChecked}
+                      onChange={(event) => {
+                        if (event.target.checked) {
+                          setSelectedIds(new Set(accounts.map((item) => item.id)));
+                        } else {
+                          setSelectedIds(new Set());
+                        }
+                      }}
+                    />
+                  </th>
+                  <th>Аватар</th>
+                  <th><button type="button" onClick={() => toggleSort('name')}>Имя</button></th>
+                  <th><button type="button" onClick={() => toggleSort('role')}>Роль</button></th>
+                  <th><button type="button" onClick={() => toggleSort('class')}>Класс</button></th>
+                  <th><button type="button" onClick={() => toggleSort('status')}>Статус</button></th>
+                  <th><button type="button" onClick={() => toggleSort('spamblock')}>Спамблок</button></th>
+                  <th><button type="button" onClick={() => toggleSort('constraint')}>Статус C</button></th>
+                  <th><button type="button" onClick={() => toggleSort('tracking')}>Отлёжка</button></th>
+                  <th><button type="button" onClick={() => toggleSort('proxy')}>Прокси</button></th>
+                  <th>Действия</th>
+                </tr>
+              </thead>
+              <tbody>
+                {isLoading ? (
+                  <tr>
+                    <td colSpan={11}>Загрузка...</td>
+                  </tr>
+                ) : sortedAccounts.length === 0 ? (
+                  <tr>
+                    <td colSpan={11}>Ничего не найдено по текущим фильтрам.</td>
+                  </tr>
+                ) : (
+                  sortedAccounts.map((account) => {
+                    const status = statusMeta(account);
+                    const constraint = constraintMeta(account);
+                    const avatarSrc = mediaUrl(account.avatar_url, account.updated_at || account.last_health_check_at);
+                    return (
+                      <tr
+                        key={account.id}
+                        className={drawerId === account.id ? 'is-open' : ''}
+                        onClick={() => { setPanel(null); setDrawerId(account.id); }}
+                      >
+                        <td className="acc-check" onClick={(event) => event.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.has(account.id)}
+                            onChange={(event) => toggleRow(account.id, event.target.checked)}
+                          />
+                        </td>
+                        <td>
+                          {avatarSrc ? (
+                            <img className="acc-avatar" src={avatarSrc} alt="" />
+                          ) : (
+                            <span className="acc-avatar">{initialsOf(account)}</span>
+                          )}
+                        </td>
+                        <td>
+                          <div className="acc-user">
+                            <b>{accountTitle(account)}</b>
+                            <small>
+                              {account.username ? `@${account.username}` : account.phone_number || `#${account.id}`}
+                            </small>
+                          </div>
+                        </td>
+                        <td>
+                          {(account.roles || []).length
+                            ? (account.roles || []).map((role) => (
+                                <span key={role} className="acc-chip">{ACCOUNT_ROLE_LABELS[role] || role}</span>
+                              ))
+                            : <span className="acc-chip acc-chip--mute">—</span>}
+                        </td>
+                        <td>{CLASS_LABELS[account.assigned_class] || '—'}</td>
+                        <td><span className={`acc-chip acc-chip--${status.chip}`}>{status.label}</span></td>
+                        <td>
+                          <span className={`acc-chip acc-chip--${account.is_spamblocked ? 'bad' : 'ok'}`}>
+                            {account.is_spamblocked ? 'Да' : 'Нет'}
+                          </span>
+                        </td>
+                        <td><span className={`acc-chip acc-chip--${constraint.chip}`}>{constraint.label}</span></td>
+                        <td>{formatRelative(account.last_used_at)}</td>
+                        <td>{account.proxy_label || 'Авто'}</td>
+                        <td onClick={(event) => event.stopPropagation()}>
+                          <button type="button" className="acc-icon-btn" onClick={() => { setPanel(null); setDrawerId(account.id); }} title="Карточка">
+                            <Ico><circle cx="12" cy="5" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="12" cy="19" r="1" /></Ico>
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <div className="acc-pager">
+          <div className="acc-pager-btns">
+            <button type="button" className="acc-icon-btn" onClick={() => goPage(1)} disabled={page <= 1}>«</button>
+            <button type="button" className="acc-icon-btn" onClick={() => goPage(page - 1)} disabled={page <= 1}>‹</button>
+            <button type="button" className="acc-icon-btn" onClick={() => goPage(page + 1)} disabled={page >= pageCount}>›</button>
+            <button type="button" className="acc-icon-btn" onClick={() => goPage(pageCount)} disabled={page >= pageCount}>»</button>
+          </div>
+          <span>Показано {from}–{to} из {total} аккаунтов</span>
+          <select
+            value={filters.limit}
+            onChange={(event) => setFilters((prev) => ({ ...prev, limit: Number(event.target.value), offset: 0 }))}
+          >
+            {PAGE_SIZES.map((size) => (
+              <option key={size} value={size}>{size}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {isDragging ? <div className="acc-drop-overlay">Отпустите файл для импорта</div> : null}
+
+      {panel ? (
+        <div className="acc-drawer-backdrop" onClick={() => setPanel(null)}>
+          <aside className="acc-drawer" onClick={(event) => event.stopPropagation()}>
+            <div className="acc-drawer-head">
+              <div>
+                <h2>
+                  {panel === 'import' && 'Импорт аккаунтов'}
+                  {panel === 'add' && 'Добавить аккаунт'}
+                  {panel === 'proxy' && 'Пул прокси'}
+                  {panel === 'profiles' && 'Массовое обновление профилей'}
+                </h2>
+                <p>
+                  {panel === 'import' && 'ZIP с .session, одиночный .session или CSV.'}
+                  {panel === 'add' && 'QR или код из SMS. 2FA — если включена.'}
+                  {panel === 'proxy' && 'Список для автоназначения при заливе и подключении.'}
+                  {panel === 'profiles' && 'Имя, bio и аватар сразу на пачку аккаунтов.'}
+                </p>
+              </div>
+              <button type="button" className="acc-icon-btn" onClick={() => setPanel(null)}>×</button>
+            </div>
+            <div className="acc-drawer-body">
+              {panel === 'import' ? (
+                <>
+                  <CustomAccountProxyFields
+                    proxies={poolProxies}
+                    proxyId={uploadProxyId}
+                    proxyLine={uploadProxyLine}
+                    onProxyIdChange={setUploadProxyId}
+                    onProxyLineChange={setUploadProxyLine}
+                    disabled={isUploading}
+                  />
+                  <button
+                    type="button"
+                    className="acc-btn acc-btn--primary"
+                    onClick={() => importInputRef.current?.click()}
+                    disabled={isUploading}
+                  >
+                    {isUploading ? 'Загрузка...' : 'Выбрать файл'}
+                  </button>
+                </>
+              ) : null}
+              {panel === 'add' ? (
+                <CustomAccountConnectForm
+                  automationId={id}
+                  hideTitle
+                  onConnected={async () => {
+                    await loadAccounts();
+                    await loadBanStats();
+                  }}
+                />
+              ) : null}
+              {panel === 'proxy' ? (
+                <>
+                  <p className="form-hint">
+                    В пуле сейчас: {poolProxies.length || 'пусто'}.
+                  </p>
+                  {proxyMessage ? <p className="form-hint">{proxyMessage}</p> : null}
+                  <div className="form-group">
+                    <label htmlFor="acc-proxy-text">Список прокси</label>
+                    <textarea
+                      id="acc-proxy-text"
+                      rows={8}
+                      value={proxyText}
+                      onChange={(event) => setProxyText(event.target.value)}
+                      placeholder={'1.2.3.4:1080\n5.6.7.8:1080:user:pass\nsocks5://user:pass@9.8.7.6:1080'}
+                    />
+                  </div>
+                  <CustomFileButton
+                    variant="ubt"
+                    accept=".txt,text/plain"
+                    onFile={async (file) => setProxyText(await file.text())}
+                  >
+                    Загрузить .txt
+                  </CustomFileButton>
+                  <button type="button" className="acc-btn acc-btn--dark" onClick={handleSaveProxies} disabled={proxySaving}>
+                    {proxySaving ? 'Сохранение...' : 'Сохранить пул'}
+                  </button>
+                </>
+              ) : null}
+              {panel === 'profiles' ? (
+                <CustomBulkProfileForm
+                  automationId={id}
+                  embedded
+                  onSuccess={loadAccounts}
+                />
+              ) : null}
+            </div>
+          </aside>
         </div>
       ) : null}
 
-      <CustomAccountConnectForm automationId={id} onConnected={loadAccounts} />
-
-      <CustomBulkProfileForm automationId={id} onSuccess={loadAccounts} />
-
-      <form onSubmit={handleSearchSubmit} className="settings-section">
-        <h3 className="settings-section-title">Фильтр</h3>
-        <div className="form-group">
-          <label htmlFor="acc-status">Статус</label>
-          <CustomSelect
-            id="acc-status"
-            value={filters.status}
-            options={STATUSES}
-            onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}
-          />
-        </div>
-        <div className="form-group">
-          <label htmlFor="acc-role">Функция</label>
-          <CustomSelect
-            id="acc-role"
-            value={filters.role}
-            options={ROLE_FILTERS}
-            onChange={(e) => setFilters((f) => ({ ...f, role: e.target.value }))}
-          />
-        </div>
-        <div className="form-group">
-          <label htmlFor="acc-search">Поиск</label>
-          <input
-            id="acc-search"
-            type="text"
-            value={filters.search}
-            onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))}
-            placeholder="Телефон, username, имя"
-          />
-        </div>
-        <div className="settings-actions">
-          <button type="submit" className="btn btn-outline">Найти</button>
-        </div>
-      </form>
-
-      {isLoading ? (
-        <div className="crm-empty-list"><p>Загрузка...</p></div>
-      ) : accounts.length === 0 ? (
-        <div className="crm-empty-list">
-          <p>Нет аккаунтов</p>
-          <span>Добавьте по QR / SMS или загрузите ZIP с .session.</span>
-        </div>
-      ) : (
-        <div className="crm-list">
-          {accounts.map((account) => {
-            const statusMeta = accountStatusMeta(account);
-            const avatarSrc = mediaUrl(account.avatar_url, account.updated_at || account.last_health_check_at);
-            const title = account.display_name || account.username || account.phone_number || `Аккаунт #${account.id}`;
-            return (
-            <div key={account.id} className="crm-item crm-account-card">
-              <div className="crm-account-head">
-                {avatarSrc ? (
-                  <img className="crm-account-avatar" src={avatarSrc} alt="" />
-                ) : (
-                  <div className="crm-account-avatar crm-account-avatar--placeholder" aria-hidden="true">
-                    {String(title).slice(0, 1).toUpperCase()}
-                  </div>
-                )}
-                <div className="crm-account-meta">
-                  <div className="crm-item-header">
-                    <h5 className="crm-item-title">{title}</h5>
-                    <span className={`crm-status ${statusMeta.className}`}>
-                      {statusMeta.label}
-                    </span>
-                  </div>
-                  <p className="crm-item-subtitle">{account.bio || 'Нет описания'}</p>
-                  <p className="crm-item-subtitle">
-                    {account.phone_number || account.username || `#${account.id}`}
-                  </p>
-                </div>
+      {drawerAccount ? (
+        <div className="acc-drawer-backdrop" onClick={() => setDrawerId(null)}>
+          <aside className="acc-drawer" onClick={(event) => event.stopPropagation()}>
+            <div className="acc-drawer-head">
+              <div>
+                <h2>{accountTitle(drawerAccount)}</h2>
+                <p>
+                  {drawerAccount.username ? `@${drawerAccount.username}` : ''}
+                  {drawerAccount.phone_number ? ` ${drawerAccount.phone_number}` : ''}
+                </p>
               </div>
-              <p className="crm-item-subtitle">
-                {account.is_spamblocked ? <span className="crm-status crm-status--spamblock">СПАМБЛОК</span> : null}
-                {account.is_spamblocked ? ' · ' : ''}
-                {account.is_channel_banned ? <span className="crm-status crm-status--cancelled">Бан в каналах</span> : null}
-                {account.is_channel_banned ? ' · ' : ''}
-                {account.is_frozen ? <span className="crm-status crm-status--frozen">Заморожен</span> : null}
-                {account.is_frozen ? ' · ' : ''}
-                {account.is_banned ? 'Бан · ' : ''}
-                {WARMUP_STATUS_LABELS[account.warmup_status] || ''}
-                {account.warmup_status && account.warmup_status !== 'idle' ? ' · ' : ''}
-                {account.proxy_label ? `${account.proxy_label} · ` : ''}
-                {account.risk_score !== null && account.trust_score !== null
-                  ? `Risk ${account.risk_score} · Trust ${account.trust_score} · `
-                  : ''}
-                {account.daily_messages_sent} / {account.max_daily_messages_per_account ?? '—'} сообщений сегодня
-              </p>
-              <span className="crm-date">
-                {account.last_used_at
-                  ? `Последнее использование ${new Date(account.last_used_at).toLocaleString()}`
-                  : 'Ещё не использовался'}
-                {account.added_at ? ` · добавлен ${new Date(account.added_at).toLocaleString()}` : ''}
-                {account.spamblock_checked_at
-                  ? ` · спамблок ${new Date(account.spamblock_checked_at).toLocaleString()}`
-                  : ''}
-              </span>
+              <button type="button" className="acc-icon-btn" onClick={() => setDrawerId(null)}>×</button>
+            </div>
+            <div className="acc-drawer-body">
+              <div>
+                <span className={`acc-chip acc-chip--${statusMeta(drawerAccount).chip}`}>{statusMeta(drawerAccount).label}</span>
+                {drawerAccount.is_spamblocked ? <span className="acc-chip acc-chip--bad">Спамблок</span> : null}
+                {drawerAccount.is_channel_banned ? <span className="acc-chip acc-chip--bad">Бан в каналах</span> : null}
+                <span className="acc-chip">{CLASS_LABELS[drawerAccount.assigned_class] || 'Класс не задан'}</span>
+              </div>
               <div className="form-group">
-                <label htmlFor={`name-${account.id}`}>Имя</label>
+                <label htmlFor="acc-name">Имя</label>
                 <input
-                  id={`name-${account.id}`}
-                  type="text"
-                  value={nameDrafts[account.id] ?? account.display_name ?? ''}
-                  onChange={(e) => setNameDrafts((prev) => ({ ...prev, [account.id]: e.target.value }))}
+                  id="acc-name"
+                  value={nameDrafts[drawerAccount.id] ?? drawerAccount.display_name ?? ''}
+                  onChange={(event) => setNameDrafts((prev) => ({ ...prev, [drawerAccount.id]: event.target.value }))}
                 />
               </div>
               <div className="form-group">
-                <label htmlFor={`bio-${account.id}`}>Описание</label>
+                <label htmlFor="acc-bio">Bio</label>
                 <textarea
-                  id={`bio-${account.id}`}
-                  rows={2}
-                  maxLength={140}
-                  value={bioDrafts[account.id] ?? account.bio ?? ''}
-                  onChange={(e) => setBioDrafts((prev) => ({ ...prev, [account.id]: e.target.value }))}
-                  placeholder="О себе в Telegram"
+                  id="acc-bio"
+                  rows={3}
+                  value={bioDrafts[drawerAccount.id] ?? drawerAccount.bio ?? ''}
+                  onChange={(event) => setBioDrafts((prev) => ({ ...prev, [drawerAccount.id]: event.target.value }))}
                 />
               </div>
-              <div className="form-group">
-                <label htmlFor={`avatar-${account.id}`}>Аватар</label>
-                <CustomFileButton
-                  id={`avatar-${account.id}`}
-                  accept="image/*"
-                  onFile={(file) => handleAccountAvatar(account, file)}
+              <div className="acc-cta" style={{ justifyContent: 'flex-start' }}>
+                <button
+                  type="button"
+                  className="acc-btn acc-btn--dark"
+                  onClick={() => handleSaveProfile(drawerAccount)}
+                  disabled={savingNameId === drawerAccount.id}
                 >
-                  Выбрать фото
+                  {savingNameId === drawerAccount.id ? 'Сохранение...' : 'Сохранить профиль'}
+                </button>
+                <CustomFileButton variant="ubt" accept="image/*" onFile={(file) => handleAccountAvatar(drawerAccount, file)}>
+                  Аватар
                 </CustomFileButton>
               </div>
-              <div className="form-group">
-                <label htmlFor={`roles-${account.id}`}>Функции</label>
-                <CustomSelect
-                  id={`roles-${account.id}`}
-                  multiple
-                  value={account.roles || []}
-                  options={ACCOUNT_ROLE_OPTIONS}
-                  placeholder="Молчит"
-                  onChange={(e) => handleRolesChange(account.id, e.target.value)}
-                />
-                <span className="form-hint">Шиллинг 1 задаёт вопрос, шиллинг 2 отвечает. Пустой список — аккаунт ничего не делает.</span>
+              <div>
+                <label>Функции</label>
+                <div className="acc-role-list">
+                  {ACCOUNT_ROLE_OPTIONS.map((option) => (
+                    <label key={option.value}>
+                      <input
+                        type="checkbox"
+                        checked={(drawerAccount.roles || []).includes(option.value)}
+                        onChange={(event) => {
+                          const current = drawerAccount.roles || [];
+                          const next = event.target.checked
+                            ? [...current, option.value]
+                            : current.filter((role) => role !== option.value);
+                          handleRolesChange(drawerAccount.id, next);
+                        }}
+                      />
+                      {option.label}
+                    </label>
+                  ))}
+                </div>
               </div>
-              <span className="crm-status crm-status--pending">
-                {(account.roles || []).map((role) => ACCOUNT_ROLE_LABELS[role] || role).join(' · ')
-                  || 'Молчит'}
-              </span>
-              <div className="settings-actions">
+              <p className="form-hint">
+                Прокси: {drawerAccount.proxy_label || 'авто из пула'}. Отлёжка: {formatRelative(drawerAccount.last_used_at)}.
+                {drawerAccount.warmup_status && drawerAccount.warmup_status !== 'idle'
+                  ? ` ${WARMUP_STATUS_LABELS[drawerAccount.warmup_status] || drawerAccount.warmup_status}.`
+                  : ''}
+              </p>
+              <div className="acc-cta" style={{ justifyContent: 'flex-start' }}>
                 <button
                   type="button"
-                  className="btn btn-outline"
-                  disabled={checkingSpamblockId === account.id || account.status === 'empty'}
-                  onClick={() => handleCheckSpamblock(account)}
+                  className="acc-btn acc-btn--ghost"
+                  onClick={() => handleCheckSpamblock(drawerAccount)}
+                  disabled={checkingSpamblockId === drawerAccount.id}
                 >
-                  {checkingSpamblockId === account.id ? 'Проверяем...' : 'Проверить спамблок'}
+                  {checkingSpamblockId === drawerAccount.id ? 'Проверка...' : 'Проверить спамблок'}
                 </button>
-                <button
-                  type="button"
-                  className="btn btn-black"
-                  disabled={savingNameId === account.id}
-                  onClick={() => handleSaveProfile(account)}
-                >
-                  {savingNameId === account.id ? 'Сохранение...' : 'Сохранить'}
+                <button type="button" className="acc-btn acc-btn--ghost" onClick={() => handleTelegramCode(drawerAccount)}>
+                  {loginCodes[drawerAccount.id]?.loading ? 'Читаем...' : 'Код из Telegram'}
                 </button>
-                <button
-                  type="button"
-                  className="btn btn-outline btn-danger"
-                  onClick={() => handleDeleteAccount(account)}
-                >
+                <button type="button" className="acc-btn acc-btn--ghost" onClick={() => handleDeleteAccount(drawerAccount)}>
                   Удалить
                 </button>
               </div>
-              <div className="crm-account-footer">
-                <button
-                  type="button"
-                  className="crm-account-mail"
-                  title="Последний код Telegram"
-                  disabled={loginCodes[account.id]?.loading}
-                  onClick={() => handleTelegramCode(account)}
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path
-                      fill="currentColor"
-                      d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2Zm0 4-8 5L4 8V6l8 5 8-5v2Z"
-                    />
-                  </svg>
-                  <span>Код Telegram</span>
-                </button>
-                {loginCodes[account.id]?.loading ? (
-                  <span className="form-hint">Читаем служебный чат...</span>
-                ) : loginCodes[account.id]?.error ? (
-                  <span className="form-hint crm-flash--error">{loginCodes[account.id].error}</span>
-                ) : loginCodes[account.id]?.code ? (
-                  <span className="crm-account-code">
-                    {loginCodes[account.id].code}
-                    {loginCodes[account.id].sentAt
-                      ? ` · ${new Date(loginCodes[account.id].sentAt).toLocaleString()}`
-                      : ''}
-                  </span>
-                ) : loginCodes[account.id]?.detail ? (
-                  <span className="form-hint">{loginCodes[account.id].detail}</span>
-                ) : null}
-              </div>
+              {loginCodes[drawerAccount.id]?.code ? (
+                <p className="acc-flash">Код: {loginCodes[drawerAccount.id].code}</p>
+              ) : null}
+              {loginCodes[drawerAccount.id]?.detail && !loginCodes[drawerAccount.id]?.code ? (
+                <p className="form-hint">{loginCodes[drawerAccount.id].detail}</p>
+              ) : null}
+              {loginCodes[drawerAccount.id]?.error ? (
+                <p className="acc-flash acc-flash--error">{loginCodes[drawerAccount.id].error}</p>
+              ) : null}
             </div>
-            );
-          })}
+          </aside>
         </div>
-      )}
+      ) : null}
     </div>
   );
 };

@@ -2155,6 +2155,7 @@ class CustomAutomation(Base):
     test_channel_username: Mapped[str | None] = mapped_column(String(128), nullable=True)
     test_chat_username: Mapped[str | None] = mapped_column(String(128), nullable=True)
     proxy_list_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    module_settings: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
 
     created_by_admin_id: Mapped[int | None] = mapped_column(
         ForeignKey("custom_admins.id", ondelete="SET NULL"), nullable=True, index=True
@@ -2215,6 +2216,14 @@ class CustomAutomation(Base):
         cascade="all, delete-orphan",
     )
     dmp_one_imports: Mapped[list["DmpOneImport"]] = relationship(
+        back_populates="automation",
+        cascade="all, delete-orphan",
+    )
+    custom_jobs: Mapped[list["CustomJob"]] = relationship(
+        back_populates="automation",
+        cascade="all, delete-orphan",
+    )
+    parser_users: Mapped[list["ParserUser"]] = relationship(
         back_populates="automation",
         cascade="all, delete-orphan",
     )
@@ -2609,6 +2618,65 @@ class ChatDiscoveryTask(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     automation: Mapped["CustomAutomation"] = relationship(back_populates="chat_discovery_tasks")
+
+
+class CustomJob(Base):
+    __tablename__ = "custom_jobs"
+    __table_args__ = ({"extend_existing": True},)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    custom_automation_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_automations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    category: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    job_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32), default="pending", server_default="pending", nullable=False, index=True
+    )
+    params: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    result: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    logs: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
+
+    automation: Mapped["CustomAutomation"] = relationship(back_populates="custom_jobs")
+
+
+class ParserUser(Base):
+    __tablename__ = "parser_users"
+    __table_args__ = (
+        UniqueConstraint(
+            "custom_automation_id",
+            "telegram_user_id",
+            "source_chat_id",
+            name="uq_parser_user_chat",
+        ),
+        {"extend_existing": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    custom_automation_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_automations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    username: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    first_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    last_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    source_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="messages", server_default="messages")
+    source_chat_id: Mapped[str] = mapped_column(String(128), nullable=False, default="", server_default="")
+    source_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    is_bot: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    is_premium: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    has_photo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    last_message_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive, index=True)
+
+    automation: Mapped["CustomAutomation"] = relationship(back_populates="parser_users")
 
 
 class ChatTarget(Base):

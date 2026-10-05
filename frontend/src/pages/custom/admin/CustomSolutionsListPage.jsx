@@ -7,6 +7,7 @@ import { SOLUTION_KIND_LABELS } from '../automation/activityLabels';
 import '../../../styles/projectLayout.css';
 import '../../../styles/agentsPage.css';
 import '../../../styles/projectDashboard.css';
+import '../../../styles/customSolutionNav.css';
 
 const STATUS_LABELS = {
   draft: 'Черновик',
@@ -70,7 +71,7 @@ const CustomSolutionsListPage = () => {
   };
 
   return (
-    <div className="project-layout">
+    <div className="project-layout ubt-layout">
       <header className="project-topbar">
         <div className="project-topbar-left">
           <h1 className="project-topbar-title">Кастомные агенты</h1>

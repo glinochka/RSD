@@ -355,7 +355,16 @@ async def run_peer_dialog_pass(automation_id: int) -> dict[str, Any]:
         automation = await session.get(CustomAutomation, automation_id)
         if not automation:
             return {"status": "skipped", "reason": "not_found"}
-        accounts = await _load_alive_accounts(session, automation_id)
+        from .warmup_module_service import account_allowed, runtime_warmup_cfg
+
+        cfg = runtime_warmup_cfg(automation)
+        if cfg.get("do_peer_dialogs") is False:
+            return {"status": "skipped", "reason": "peer_dialogs_off", "sent": 0}
+        accounts = [
+            account
+            for account in await _load_alive_accounts(session, automation_id)
+            if account_allowed(cfg, account.id)
+        ]
         if len(accounts) < 2:
             return {"status": "skipped", "reason": "need_two_accounts", "sent": 0}
         by_id = {account.id: account for account in accounts}

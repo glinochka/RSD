@@ -25,7 +25,7 @@ const CustomAutomationChatDiscoveryPage = () => {
       setTasks(data.items || []);
       setError(null);
     } catch (err) {
-      setError(err.message || 'Failed to load discovery tasks');
+      setError(err.message || 'Не удалось загрузить задачи поиска');
     } finally {
       setIsLoading(false);
     }
@@ -63,7 +63,7 @@ const CustomAutomationChatDiscoveryPage = () => {
       setForm((prev) => ({ ...prev, query: '' }));
       await loadTasks();
     } catch (err) {
-      setError(err.message || 'Failed to start discovery');
+      setError(err.message || 'Не удалось запустить поиск');
     } finally {
       setIsStarting(false);
     }
@@ -91,7 +91,7 @@ const CustomAutomationChatDiscoveryPage = () => {
       setMessage(`Одобрено чатов: ${indices.length}`);
       await loadTasks();
     } catch (err) {
-      setError(err.message || 'Failed to approve chats');
+      setError(err.message || 'Не удалось одобрить чаты');
     }
   };
 
@@ -104,7 +104,7 @@ const CustomAutomationChatDiscoveryPage = () => {
       setMessage(`Отклонено чатов: ${indices.length}`);
       await loadTasks();
     } catch (err) {
-      setError(err.message || 'Failed to reject chats');
+      setError(err.message || 'Не удалось отклонить чаты');
     }
   };
 

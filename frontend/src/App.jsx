@@ -59,6 +59,20 @@ import CustomAutomationChatsPage from './pages/custom/automation/CustomAutomatio
 import CustomAutomationLeadsPage from './pages/custom/automation/CustomAutomationLeadsPage';
 import CustomAutomationLeadChatPage from './pages/custom/automation/CustomAutomationLeadChatPage';
 import CustomAutomationDmpPage from './pages/custom/automation/CustomAutomationDmpPage';
+import CustomAutomationDmpConnectionPage from './pages/custom/automation/CustomAutomationDmpConnectionPage';
+import CustomAutomationDmpSettingsPage from './pages/custom/automation/CustomAutomationDmpSettingsPage';
+import CustomAutomationIntegrationsPage from './pages/custom/automation/CustomAutomationIntegrationsPage';
+import CustomAutomationModulePlaceholder from './pages/custom/automation/CustomAutomationModulePlaceholder';
+import CustomAutomationTasksPage from './pages/custom/automation/CustomAutomationTasksPage';
+import CustomAutomationStatsPage from './pages/custom/automation/CustomAutomationStatsPage';
+import CustomAutomationNeurocommentingPage from './pages/custom/automation/CustomAutomationNeurocommentingPage';
+import CustomAutomationNeurochattingPage from './pages/custom/automation/CustomAutomationNeurochattingPage';
+import CustomAutomationMasslookingPage from './pages/custom/automation/CustomAutomationMasslookingPage';
+import CustomAutomationChatBroadcastsPage from './pages/custom/automation/CustomAutomationChatBroadcastsPage';
+import CustomAutomationNeuroshillingPage from './pages/custom/automation/CustomAutomationNeuroshillingPage';
+import CustomAutomationWarmupPage from './pages/custom/automation/CustomAutomationWarmupPage';
+import CustomAutomationMassprimingPage from './pages/custom/automation/CustomAutomationMassprimingPage';
+import CustomAutomationParserPage from './pages/custom/automation/CustomAutomationParserPage';
 import CustomAutomationAmocrmPage from './pages/custom/automation/CustomAutomationAmocrmPage';
 import CustomAutomationPromptsPage from './pages/custom/automation/CustomAutomationPromptsPage';
 import CustomAutomationPromptEditPage from './pages/custom/automation/CustomAutomationPromptEditPage';
@@ -228,13 +242,28 @@ const App = () => {
                   <Route path="dashboard" element={<CustomAutomationDashboardPage />} />
                   <Route path="activity" element={<CustomAutomationActivityPage />} />
                   <Route path="errors" element={<CustomAutomationErrorsPage />} />
-                  <Route path="accounts" element={<CustomAutomationAccountsPage />} />
+                  <Route path="accounts" element={<Navigate to="../ubt/accounts" replace />} />
+                  <Route path="ubt/accounts" element={<CustomAutomationAccountsPage />} />
+                  <Route path="ubt/tasks" element={<CustomAutomationTasksPage />} />
+                  <Route path="ubt/stats" element={<CustomAutomationStatsPage />} />
+                  <Route path="ubt/neurocommenting" element={<CustomAutomationNeurocommentingPage />} />
+                  <Route path="ubt/neurochatting" element={<CustomAutomationNeurochattingPage />} />
+                  <Route path="ubt/masslooking" element={<CustomAutomationMasslookingPage />} />
+                  <Route path="ubt/chat-broadcasts" element={<CustomAutomationChatBroadcastsPage />} />
+                  <Route path="ubt/neuroshilling" element={<CustomAutomationNeuroshillingPage />} />
+                  <Route path="ubt/warmup" element={<CustomAutomationWarmupPage />} />
+                  <Route path="ubt/masspriming" element={<CustomAutomationMassprimingPage />} />
+                  <Route path="ubt/parser" element={<CustomAutomationParserPage />} />
                   <Route path="settings" element={<CustomAutomationSettingsPage />} />
                   <Route path="chats" element={<CustomAutomationChatsPage />} />
                   <Route path="chats/discovery" element={<CustomAutomationChatsPage defaultTab="discovery" />} />
                   <Route path="leads" element={<CustomAutomationLeadsPage />} />
                   <Route path="leads/:leadId/chat" element={<CustomAutomationLeadChatPage />} />
                   <Route path="dmp" element={<CustomAutomationDmpPage />} />
+                  <Route path="dmp/connection" element={<CustomAutomationDmpConnectionPage />} />
+                  <Route path="dmp/settings" element={<CustomAutomationDmpSettingsPage />} />
+                  <Route path="integrations" element={<CustomAutomationIntegrationsPage />} />
+                  <Route path="ubt/:moduleId" element={<CustomAutomationModulePlaceholder />} />
                   <Route path="amocrm" element={<CustomAutomationAmocrmPage />} />
                   <Route path="prompts" element={<CustomAutomationPromptsPage />} />
                   <Route path="prompts/:promptId/edit" element={<CustomAutomationPromptEditPage />} />

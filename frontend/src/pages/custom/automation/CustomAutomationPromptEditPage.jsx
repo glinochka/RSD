@@ -42,7 +42,7 @@ const CustomAutomationPromptEditPage = () => {
       setTestVariables(initial);
       setError(null);
     } catch (err) {
-      setError(err.message || 'Failed to load prompt');
+      setError(err.message || 'Не удалось загрузить промпт');
     } finally {
       setIsLoading(false);
     }
@@ -85,7 +85,7 @@ const CustomAutomationPromptEditPage = () => {
       setMessage('Промпт сохранён. Создана новая версия.');
       await loadPrompt();
     } catch (err) {
-      setError(err.message || 'Failed to save prompt');
+      setError(err.message || 'Не удалось сохранить промпт');
     } finally {
       setIsSaving(false);
     }
@@ -99,7 +99,7 @@ const CustomAutomationPromptEditPage = () => {
       const result = await customService.testPrompt(id, promptId, testVariables);
       setTestResult(result);
     } catch (err) {
-      setError(err.message || 'Test failed');
+      setError(err.message || 'Не удалось проверить промпт');
     } finally {
       setIsTesting(false);
     }

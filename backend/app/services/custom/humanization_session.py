@@ -325,35 +325,69 @@ async def scroll_subscribed_channels(client: Any, *, lab_mode: bool = False) -> 
     return True
 
 
-async def glance_stories(client: Any, *, lab_mode: bool = False) -> bool:
-    telethon = _telethon(client)
+async def mark_peer_stories_read(client: Any, peer: Any, stories: list[Any], *, lab_mode: bool = False) -> int:
+    """ReadStories up to the newest id — the same gesture as opening a tray."""
+    items = [item for item in (stories or []) if int(getattr(item, "id", 0) or 0) > 0]
+    if not items or peer is None:
+        return 0
+    max_id = max(int(getattr(item, "id", 0) or 0) for item in items)
+    if lab_mode:
+        return len(items)
     try:
-        from telethon.tl.functions.stories import GetAllStoriesRequest, ReadStoriesRequest
+        from telethon.tl.functions.stories import ReadStoriesRequest
     except Exception:
-        return False
+        return 0
+    await _pause(False, 0.8, 2.5)
     try:
-        result = await telethon(GetAllStoriesRequest())
+        await _telethon(client)(ReadStoriesRequest(peer=peer, max_id=max_id))
+        return len(items)
+    except Exception as exc:
+        logger.debug("ReadStories skipped: %s", exc)
+        return 0
+
+
+async def load_feed_peer_stories(client: Any) -> list[Any]:
+    try:
+        from telethon.tl.functions.stories import GetAllStoriesRequest
+    except Exception:
+        return []
+    try:
+        result = await _telethon(client)(GetAllStoriesRequest())
     except Exception as exc:
         logger.debug("GetAllStories skipped: %s", exc)
-        return False
-    peers = list(getattr(result, "peer_stories", None) or [])
+        return []
+    return list(getattr(result, "peer_stories", None) or [])
+
+
+async def load_peer_stories(client: Any, entity: Any) -> tuple[Any, list[Any]]:
+    try:
+        from telethon.tl.functions.stories import GetPeerStoriesRequest
+    except Exception:
+        return entity, []
+    try:
+        result = await _telethon(client)(GetPeerStoriesRequest(peer=entity))
+    except Exception as exc:
+        logger.debug("GetPeerStories skipped: %s", exc)
+        return entity, []
+    packed = getattr(result, "stories", None)
+    peer = getattr(packed, "peer", None) or entity
+    stories = list(getattr(packed, "stories", None) or getattr(result, "stories", None) or [])
+    if stories and not isinstance(stories[0], (list, tuple)) and not hasattr(stories[0], "id"):
+        stories = []
+    return peer, stories
+
+
+async def glance_stories(client: Any, *, lab_mode: bool = False) -> bool:
+    peers = await load_feed_peer_stories(client)
     if not peers:
         return True
     viewed = 0
     for peer_stories in random.sample(peers, min(2, len(peers))):
         stories = list(getattr(peer_stories, "stories", None) or [])
-        if not stories:
-            continue
-        max_id = max(int(getattr(item, "id", 0) or 0) for item in stories)
         peer = getattr(peer_stories, "peer", None)
-        if not max_id or peer is None:
-            continue
-        await _pause(lab_mode, 0.8, 2.5)
-        try:
-            await telethon(ReadStoriesRequest(peer=peer, max_id=max_id))
+        counted = await mark_peer_stories_read(client, peer, stories, lab_mode=lab_mode)
+        if counted:
             viewed += 1
-        except Exception:
-            continue
     return viewed > 0 or True
 
 
@@ -533,7 +567,7 @@ async def settle_after_join(client: Any, entity: Any, account: Any | None = None
     return {"actions": done}
 
 
-def _action_catalog(stage: str) -> list[tuple[str, Callable[..., Awaitable[bool]]]]:
+def _action_catalog(stage: str, *, allowed: set[str] | None = None) -> list[tuple[str, Callable[..., Awaitable[bool]]]]:
     """Stage gates writes. Everyone reads; older accounts may react / draft / Saved."""
     actions: list[tuple[str, Callable[..., Awaitable[bool]]]] = [
         ("scroll_channels", scroll_subscribed_channels),
@@ -552,6 +586,8 @@ def _action_catalog(stage: str) -> list[tuple[str, Callable[..., Awaitable[bool]
         )
     if stage == STAGE_TRUSTED:
         actions.append(("saved", note_in_saved))
+    if allowed is not None:
+        actions = [(name, fn) for name, fn in actions if name in allowed]
     return actions
 
 
@@ -561,11 +597,17 @@ async def run_humanization_session(
     *,
     lab_mode: bool = False,
     contact_policy: CommentContactPolicy | None = None,
+    allowed_actions: set[str] | None = None,
+    intensity: str | None = None,
+    session_minutes: int = 0,
 ) -> dict[str, Any]:
     """Keep one socket open, look alive, then go offline."""
-    stage = account_humanization_stage(account)
-    budget = humanization_session_action_budget(account)
-    target_seconds = 0.0 if lab_mode else humanization_session_seconds(account)
+    stage = intensity if intensity in {STAGE_CAUTIOUS, STAGE_NORMAL, STAGE_TRUSTED} else account_humanization_stage(account)
+    budget = humanization_session_action_budget(account, stage=stage)
+    if session_minutes and not lab_mode:
+        target_seconds = float(max(60, min(15 * 60, int(session_minutes) * 60)))
+    else:
+        target_seconds = 0.0 if lab_mode else humanization_session_seconds(account, stage=stage)
     started = time.monotonic()
     done: list[str] = []
     client._comment_contact = None
@@ -578,7 +620,7 @@ async def run_humanization_session(
     done.append("browse")
     content = 1
 
-    catalog = _action_catalog(stage)
+    catalog = _action_catalog(stage, allowed=allowed_actions)
     random.shuffle(catalog)
     for name, fn in catalog:
         if content >= budget:

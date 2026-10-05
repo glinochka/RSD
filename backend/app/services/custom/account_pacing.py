@@ -95,6 +95,7 @@ _TARGET_ACTIONS = frozenset(
         "dm",
         "lead_delivery",
         "dmp_outreach",
+        "chat_broadcast",
     }
 )
 
@@ -105,6 +106,9 @@ _HUMANIZATION_ACTIONS = frozenset(
         "inbound_dm",       # private replies must not park comments/shills
         "idle_browse",
         "humanization_session",
+        "masslooking",
+        "masspriming",
+        "parser",
         "reaction",
         "comment_contact",
     }
@@ -342,17 +346,17 @@ def humanization_ramp_factor(account: SocialAccount | None, *, now: datetime | N
     return RAMP_START_FACTOR + (1.0 - RAMP_START_FACTOR) * (days / RAMP_FULL_DAYS)
 
 
-def humanization_session_seconds(account: SocialAccount | None, *, now: datetime | None = None) -> float:
+def humanization_session_seconds(account: SocialAccount | None, *, now: datetime | None = None, stage: str | None = None) -> float:
     """How long to keep the MTProto socket open for one humanization pass."""
-    stage = account_humanization_stage(account, now=now)
-    low, high = _SESSION_SECONDS[stage]
+    resolved = stage or account_humanization_stage(account, now=now)
+    low, high = _SESSION_SECONDS.get(resolved) or _SESSION_SECONDS[STAGE_NORMAL]
     return random.uniform(float(low), float(high))
 
 
-def humanization_session_action_budget(account: SocialAccount | None, *, now: datetime | None = None) -> int:
+def humanization_session_action_budget(account: SocialAccount | None, *, now: datetime | None = None, stage: str | None = None) -> int:
     """How many in-session gestures (read/react/stories/…) this pass may run."""
-    stage = account_humanization_stage(account, now=now)
-    low, high = _SESSION_ACTION_BUDGET[stage]
+    resolved = stage or account_humanization_stage(account, now=now)
+    low, high = _SESSION_ACTION_BUDGET.get(resolved) or _SESSION_ACTION_BUDGET[STAGE_NORMAL]
     raw = random.randint(low, high) * humanization_ramp_factor(account, now=now)
     return max(2, int(round(raw)))
 

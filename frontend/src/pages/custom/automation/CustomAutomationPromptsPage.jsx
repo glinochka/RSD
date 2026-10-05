@@ -20,7 +20,7 @@ const CustomAutomationPromptsPage = () => {
       setPrompts(data.items || []);
       setError(null);
     } catch (err) {
-      setError(err.message || 'Failed to load prompts');
+      setError(err.message || 'Не удалось загрузить промпты');
     } finally {
       setIsLoading(false);
     }
@@ -37,7 +37,7 @@ const CustomAutomationPromptsPage = () => {
       setMessage('Статус промпта обновлён');
       await loadPrompts();
     } catch (err) {
-      setError(err.message || 'Failed to toggle prompt');
+      setError(err.message || 'Не удалось переключить промпт');
     }
   };
 
@@ -57,7 +57,7 @@ const CustomAutomationPromptsPage = () => {
           <p className="crm-subtitle">Шаблоны ответов по модулям автоматизации.</p>
         </div>
         <Link to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_SETTINGS(id)} className="btn btn-outline">
-          Настройки модулей
+          Общие настройки
         </Link>
       </div>
 

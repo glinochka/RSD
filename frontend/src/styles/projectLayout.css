@@ -189,9 +189,7 @@
   padding: var(--spacing-lg);
 }
 
-.project-content > .project-crm-page,
-.project-content > .project-settings-page,
-.project-content > .project-dashboard {
+.project-content > .ubt-page {
   padding: 0;
 }
 

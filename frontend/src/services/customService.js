@@ -211,6 +211,510 @@ const customService = {
     return handleResponse(response);
   },
 
+  async getUbtStats(automationId, {
+    period,
+    historyType,
+    search,
+    status,
+    visibility,
+    threshold,
+    minAttempts,
+    limit,
+    offset,
+  } = {}) {
+    const params = new URLSearchParams();
+    if (period) {
+      params.set('period', period);
+    }
+    if (historyType) {
+      params.set('history_type', historyType);
+    }
+    if (search) {
+      params.set('search', search);
+    }
+    if (status) {
+      params.set('status', status);
+    }
+    if (visibility) {
+      params.set('visibility', visibility);
+    }
+    if (threshold !== undefined) {
+      params.set('threshold', String(threshold));
+    }
+    if (minAttempts !== undefined) {
+      params.set('min_attempts', String(minAttempts));
+    }
+    if (limit !== undefined) {
+      params.set('limit', String(limit));
+    }
+    if (offset !== undefined) {
+      params.set('offset', String(offset));
+    }
+    const query = params.toString();
+    const url = `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_STATS(automationId)}${query ? `?${query}` : ''}`;
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+    return handleResponse(response);
+  },
+
+  async addStatsBlacklist(automationId, { chatId, query, reason } = {}) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_STATS_BLACKLIST(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        chat_id: chatId || undefined,
+        query: query || undefined,
+        reason: reason || 'manual',
+      }),
+    });
+    return handleResponse(response);
+  },
+
+  async getNeurocommentingModule(automationId) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_NEUROCOMMENTING(automationId)}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+    return handleResponse(response);
+  },
+
+  async saveNeurocommentingModule(automationId, payload) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_NEUROCOMMENTING(automationId)}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+    return handleResponse(response);
+  },
+
+  async runNeurocommentingModule(automationId, payload) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_NEUROCOMMENTING_RUN(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload || {}),
+    });
+    return handleResponse(response);
+  },
+
+  async addNeurocommentingChannels(automationId, links) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_NEUROCOMMENTING_CHANNELS(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ links }),
+    });
+    return handleResponse(response);
+  },
+
+  async saveNeurocommentingPreset(automationId, name) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_NEUROCOMMENTING_PRESETS(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ name }),
+    });
+    return handleResponse(response);
+  },
+
+  async createNeurocommentingPrompt(automationId, { name, content } = {}) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_NEUROCOMMENTING_PROMPTS(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ name, content }),
+    });
+    return handleResponse(response);
+  },
+
+  async blackboxNeurocommentingChat(automationId, { chatId, query } = {}) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_NEUROCOMMENTING_BLACKLIST(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ chat_id: chatId, query }),
+    });
+    return handleResponse(response);
+  },
+
+  async getNeurochattingModule(automationId) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_NEUROCHATTING(automationId)}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+    return handleResponse(response);
+  },
+
+  async saveNeurochattingModule(automationId, payload) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_NEUROCHATTING(automationId)}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+    return handleResponse(response);
+  },
+
+  async runNeurochattingModule(automationId, payload) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_NEUROCHATTING_RUN(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload || {}),
+    });
+    return handleResponse(response);
+  },
+
+  async addNeurochattingGroups(automationId, links) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_NEUROCHATTING_GROUPS(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ links }),
+    });
+    return handleResponse(response);
+  },
+
+  async saveNeurochattingPreset(automationId, name) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_NEUROCHATTING_PRESETS(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ name }),
+    });
+    return handleResponse(response);
+  },
+
+  async createNeurochattingPrompt(automationId, { name, content } = {}) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_NEUROCHATTING_PROMPTS(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ name, content }),
+    });
+    return handleResponse(response);
+  },
+
+  async blackboxNeurochattingChat(automationId, { chatId, query } = {}) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_NEUROCHATTING_BLACKLIST(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ chat_id: chatId, query }),
+    });
+    return handleResponse(response);
+  },
+
+  async getMasslookingModule(automationId) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_MASSLOOKING(automationId)}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+    return handleResponse(response);
+  },
+
+  async saveMasslookingModule(automationId, payload) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_MASSLOOKING(automationId)}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+    return handleResponse(response);
+  },
+
+  async runMasslookingModule(automationId, payload) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_MASSLOOKING_RUN(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload || {}),
+    });
+    return handleResponse(response);
+  },
+
+  async saveMasslookingPreset(automationId, name) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_MASSLOOKING_PRESETS(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ name }),
+    });
+    return handleResponse(response);
+  },
+
+  async getMassprimingModule(automationId) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_MASSPRIMING(automationId)}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+    return handleResponse(response);
+  },
+
+  async saveMassprimingModule(automationId, payload) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_MASSPRIMING(automationId)}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+    return handleResponse(response);
+  },
+
+  async runMassprimingModule(automationId, payload) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_MASSPRIMING_RUN(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload || {}),
+    });
+    return handleResponse(response);
+  },
+
+  async saveMassprimingPreset(automationId, name) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_MASSPRIMING_PRESETS(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ name }),
+    });
+    return handleResponse(response);
+  },
+
+  async getParserModule(automationId) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_PARSER(automationId)}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+    return handleResponse(response);
+  },
+
+  async saveParserModule(automationId, payload) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_PARSER(automationId)}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+    return handleResponse(response);
+  },
+
+  async runParserModule(automationId, payload) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_PARSER_RUN(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload || {}),
+    });
+    return handleResponse(response);
+  },
+
+  async saveParserPreset(automationId, name) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_PARSER_PRESETS(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ name }),
+    });
+    return handleResponse(response);
+  },
+
+  async addParserTargets(automationId, links) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_PARSER_TARGETS(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ links }),
+    });
+    return handleResponse(response);
+  },
+
+  async importParserFile(automationId, file) {
+    const formData = new FormData();
+    formData.append('archive', file);
+    const token = getCustomToken();
+    const headers = {};
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_PARSER_IMPORT(automationId)}`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+    return handleResponse(response);
+  },
+
+  async getParserResults(automationId, { query, limit, offset } = {}) {
+    const params = new URLSearchParams();
+    if (query) params.set('query', query);
+    if (limit !== undefined) params.set('limit', String(limit));
+    if (offset !== undefined) params.set('offset', String(offset));
+    const suffix = params.toString() ? `?${params}` : '';
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_PARSER_RESULTS(automationId)}${suffix}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+    return handleResponse(response);
+  },
+
+  async clearParserResults(automationId) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_PARSER_RESULTS_CLEAR(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    });
+    return handleResponse(response);
+  },
+
+  async getChatBroadcastsModule(automationId) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CHAT_BROADCASTS(automationId)}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+    return handleResponse(response);
+  },
+
+  async saveChatBroadcastsModule(automationId, payload) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CHAT_BROADCASTS(automationId)}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+    return handleResponse(response);
+  },
+
+  async runChatBroadcastsModule(automationId, payload) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CHAT_BROADCASTS_RUN(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload || {}),
+    });
+    return handleResponse(response);
+  },
+
+  async addChatBroadcastsGroups(automationId, links) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CHAT_BROADCASTS_GROUPS(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ links }),
+    });
+    return handleResponse(response);
+  },
+
+  async saveChatBroadcastsPreset(automationId, name) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CHAT_BROADCASTS_PRESETS(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ name }),
+    });
+    return handleResponse(response);
+  },
+
+  async blackboxChatBroadcastsChat(automationId, { chatId, query } = {}) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CHAT_BROADCASTS_BLACKLIST(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ chat_id: chatId, query }),
+    });
+    return handleResponse(response);
+  },
+
+  async getNeuroshillingModule(automationId) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_NEUROSHILLING(automationId)}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+    return handleResponse(response);
+  },
+
+  async saveNeuroshillingModule(automationId, payload) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_NEUROSHILLING(automationId)}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+    return handleResponse(response);
+  },
+
+  async runNeuroshillingModule(automationId, payload) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_NEUROSHILLING_RUN(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload || {}),
+    });
+    return handleResponse(response);
+  },
+
+  async checkNeuroshillingModule(automationId, payload) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_NEUROSHILLING_CHECK(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload || {}),
+    });
+    return handleResponse(response);
+  },
+
+  async addNeuroshillingTargets(automationId, links, kind = 'auto') {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_NEUROSHILLING_TARGETS(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ links, kind }),
+    });
+    return handleResponse(response);
+  },
+
+  async saveNeuroshillingPreset(automationId, name) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_NEUROSHILLING_PRESETS(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ name }),
+    });
+    return handleResponse(response);
+  },
+
+  async generateNeuroshillingLines(automationId, topic) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_NEUROSHILLING_GENERATE(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ topic }),
+    });
+    return handleResponse(response);
+  },
+
+  async blackboxNeuroshillingChat(automationId, { chatId, query } = {}) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_NEUROSHILLING_BLACKLIST(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ chat_id: chatId, query }),
+    });
+    return handleResponse(response);
+  },
+
+  async getWarmupModule(automationId) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_WARMUP(automationId)}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+    return handleResponse(response);
+  },
+
+  async saveWarmupModule(automationId, payload) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_WARMUP(automationId)}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+    return handleResponse(response);
+  },
+
+  async runWarmupModule(automationId, payload) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_WARMUP_RUN(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload || {}),
+    });
+    return handleResponse(response);
+  },
+
+  async addWarmupTargets(automationId, links) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_WARMUP_TARGETS(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ links }),
+    });
+    return handleResponse(response);
+  },
+
+  async saveWarmupPreset(automationId, name) {
+    const response = await fetch(`${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_WARMUP_PRESETS(automationId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ name }),
+    });
+    return handleResponse(response);
+  },
+
   async getAutomationActivity(automationId, { activityType, sort, limit, offset } = {}) {
     const params = new URLSearchParams();
     if (activityType) {
@@ -954,10 +1458,70 @@ const customService = {
     return handleResponse(response);
   },
 
-  async getLeads(automationId, { status, limit, offset } = {}) {
+  async getAutomationJobs(automationId, { bucket, category, search, limit, offset } = {}) {
+    const params = new URLSearchParams();
+    if (bucket) {
+      params.set('bucket', bucket);
+    }
+    if (category) {
+      params.set('category', category);
+    }
+    if (search) {
+      params.set('search', search);
+    }
+    if (limit !== undefined) {
+      params.set('limit', String(limit));
+    }
+    if (offset !== undefined) {
+      params.set('offset', String(offset));
+    }
+    const query = params.toString();
+    const url = `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_JOBS(automationId)}${query ? `?${query}` : ''}`;
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+    return handleResponse(response);
+  },
+
+  async cancelAutomationJob(automationId, jobId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_JOB_CANCEL(automationId, jobId)}`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async startChatInspect(automationId, force = false) {
+    const url = `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CHAT_INSPECT_COMMENTS(automationId)}${force ? '?force=true' : ''}`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    });
+    return handleResponse(response);
+  },
+
+  async runJoinChats(automationId) {
+    const response = await fetch(
+      `${getBaseUrl()}${API_ROUTES.CUSTOM_AUTOMATION_CHAT_JOIN(automationId)}`,
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      },
+    );
+    return handleResponse(response);
+  },
+
+  async getLeads(automationId, { status, source, limit, offset } = {}) {
     const params = new URLSearchParams();
     if (status) {
       params.set('status', status);
+    }
+    if (source) {
+      params.set('source', source);
     }
     if (limit !== undefined) {
       params.set('limit', String(limit));

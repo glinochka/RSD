@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useCustomAuth } from '../../components/custom/useCustomAuth';
 import { NAVIGATION_ROUTES } from '../../config/constants';
 import '../../styles/managementPortal.css';
+import '../../styles/customSolutionNav.css';
 
 const CustomLoginPage = () => {
   const navigate = useNavigate();
@@ -51,7 +52,7 @@ const CustomLoginPage = () => {
   };
 
   return (
-    <div className="management-page">
+    <div className="management-page custom-login">
       <header className="management-header">
         <h1>Кастомные агенты</h1>
       </header>

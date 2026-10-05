@@ -235,6 +235,11 @@ async def run_account_warmup_pass(automation_id: int) -> dict[str, Any]:
         automation = await session.get(CustomAutomation, automation_id)
         if not automation:
             return {"status": "skipped", "reason": "not_found"}
+        from .warmup_module_service import account_allowed, runtime_warmup_cfg
+
+        cfg = runtime_warmup_cfg(automation)
+        if cfg.get("do_warmup_dms") is False:
+            return {"status": "skipped", "reason": "warmup_dms_off", "processed": 0, "dialogs": 0, "completed": 0}
         usernames = normalize_warmup_usernames(automation.account_warmup_usernames)
         messages = normalize_warmup_messages(automation.account_warmup_messages)
         result = await session.execute(
@@ -247,6 +252,8 @@ async def run_account_warmup_pass(automation_id: int) -> dict[str, Any]:
         )
         rows = list(result.all())
         for pool_account, social in rows:
+            if not account_allowed(cfg, social.id):
+                continue
             if not social.is_active or social.is_banned or getattr(social, "is_frozen", False) or not social.session_file_path:
                 continue
             # Use HUMANIZATION idle check – target-action cooldown must NOT block warmup

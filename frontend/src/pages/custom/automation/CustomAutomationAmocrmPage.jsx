@@ -3,7 +3,8 @@ import { Link, useParams } from 'react-router-dom';
 import { NAVIGATION_ROUTES } from '../../../config/constants';
 import customService from '../../../services/customService';
 import '../../../styles/projectSettingsPage.css';
-import '../../../styles/projectCRMPage.css';
+import '../../../styles/customSolutionNav.css';
+import '../../../styles/customAccountManager.css';
 
 const CustomAutomationAmocrmPage = () => {
   const { id } = useParams();
@@ -53,21 +54,18 @@ const CustomAutomationAmocrmPage = () => {
 
   if (isLoading) {
     return (
-      <div className="project-settings-page project-settings-page--loading">
-        <div className="settings-loading">
-          <div className="spinner" />
-          <p>Загрузка...</p>
-        </div>
+      <div className="ubt-page">
+        <p className="ubt-empty">Загрузка...</p>
       </div>
     );
   }
 
   return (
-    <div className="project-settings-page">
-      <div className="settings-header">
+    <div className="ubt-page">
+      <div className="ubt-hero">
         <div>
-          <h1 className="settings-title">AmoCRM</h1>
-          <p className="settings-subtitle">Подключение — в настройках.</p>
+          <h1>AmoCRM</h1>
+          <p>Статус подключения. Ключи и воронка настраиваются в интеграциях.</p>
         </div>
         <span className={`crm-status ${connected ? 'crm-status--confirmed' : 'crm-status--completed'}`}>
           {connected ? 'Подключено' : 'Не подключено'}
@@ -77,24 +75,27 @@ const CustomAutomationAmocrmPage = () => {
       {message ? <p className="form-hint">{message}</p> : null}
       {error ? <p className="form-hint">{error}</p> : null}
 
-      <div className="settings-section">
+      <div className="ubt-panel">
         {!enabled ? (
-          <p className="form-hint">Включите модуль в настройках.</p>
+          <p className="ubt-empty">Включите модуль в общих настройках, затем подключите аккаунт в интеграциях.</p>
         ) : (
           <>
             <p className="form-hint">Поддомен: {connection?.subdomain || '—'}</p>
             <p className="form-hint">Воронка: {connection?.pipeline_id || '—'}</p>
             <p className="form-hint">
               Последняя синхронизация:{' '}
-              {connection?.last_sync_at ? new Date(connection.last_sync_at).toLocaleString() : '—'}
+              {connection?.last_sync_at ? new Date(connection.last_sync_at).toLocaleString('ru-RU') : '—'}
             </p>
           </>
         )}
-        <div className="settings-actions">
-          <Link to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_SETTINGS(id)} className="btn btn-black">
+        <div className="settings-actions" style={{ marginTop: 12 }}>
+          <Link to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_INTEGRATIONS(id)} className="acc-btn acc-btn--dark">
+            Интеграции
+          </Link>
+          <Link to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_SETTINGS(id)} className="acc-btn acc-btn--ghost">
             Настройки
           </Link>
-          <button type="button" onClick={handleSync} disabled={isSyncing || !connected} className="btn btn-outline">
+          <button type="button" onClick={handleSync} disabled={isSyncing || !connected} className="acc-btn acc-btn--ghost">
             {isSyncing ? '...' : 'Синхронизировать статусы'}
           </button>
         </div>

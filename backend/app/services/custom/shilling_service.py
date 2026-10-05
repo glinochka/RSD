@@ -136,6 +136,52 @@ def _session_path(account: SocialAccount) -> Path | None:
     return path if path.exists() else None
 
 
+async def generate_shilling_from_topic(topic: str) -> tuple[str, str]:
+    hint = (topic or "").strip()[:500]
+    if not hint:
+        return "", ""
+    prompt = (
+        "Напиши две короткие реплики обычных людей в Telegram на тему: {topic}\n"
+        "Первая — живой вопрос. Вторая — спокойный ответ знакомого.\n"
+        "Без ссылок, хештегов, призывов купить и рекламных лозунгов. 1–2 предложения каждая.\n"
+        'Верни ТОЛЬКО JSON: {{"setup": "...", "reply": "..."}}'
+    ).format(topic=hint)
+    try:
+        response = await ai_client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=250,
+            temperature=0.7,
+        )
+        data = _extract_json(response.choices[0].message.content or "")
+        setup = sanitize_public_text(str(data.get("setup") or "").strip())[:500]
+        reply = sanitize_public_text(str(data.get("reply") or "").strip())[:500]
+        return setup, reply
+    except Exception as exc:
+        logger.warning("Shilling topic generate failed: %s", exc)
+        return "", ""
+
+
+def _module_cfg(automation: CustomAutomation | None) -> dict[str, Any]:
+    raw = ((getattr(automation, "module_settings", None) or {}).get("neuroshilling") or {}) if automation else {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _as_int_list(raw: Any) -> list[int]:
+    items: list[int] = []
+    seen: set[int] = set()
+    for value in raw or []:
+        try:
+            ident = int(value)
+        except (TypeError, ValueError):
+            continue
+        if ident in seen:
+            continue
+        seen.add(ident)
+        items.append(ident)
+    return items
+
+
 def parse_shilling_lines(content: str | None) -> tuple[str, str]:
     raw = (content or "").strip()
     if not raw:
@@ -210,7 +256,8 @@ async def generate_shilling_dialogue(
     setup, reply = parse_shilling_lines(prompt.content if prompt else "")
     if not setup or not reply:
         setup, reply = DEFAULT_SHILLING_SETUP, DEFAULT_SHILLING_REPLY
-    if vary:
+    cfg = _module_cfg(automation)
+    if vary and bool(cfg.get("unique_messages", True)):
         setup, reply = await light_vary_shilling_lines(setup, reply)
     return sanitize_public_text(setup), sanitize_public_text(reply)
 
@@ -223,11 +270,32 @@ async def _pick_speaker_pair(
     prefer_account: SocialAccount | None = None,
 ) -> tuple[SocialAccount, SocialAccount] | None:
     excluded = set(exclude_account_ids or set())
+    cfg = _module_cfg(automation)
+    allowed = set(_as_int_list(cfg.get("account_ids")))
+    blocked = set(_as_int_list(cfg.get("blacklisted_account_ids")))
+    from .account_roles import account_matches_action
+    from .account_pacing import STAGE_CAUTIOUS, account_humanization_stage
+    from ...alembic.models import PoolAccount
+
+    pool_rows = (
+        await session.execute(
+            select(SocialAccount, PoolAccount)
+            .join(PoolAccount, PoolAccount.social_account_id == SocialAccount.id)
+            .where(PoolAccount.custom_automation_id == automation.id)
+        )
+    ).all()
+    for account, _pool in pool_rows:
+        if allowed and account.id not in allowed:
+            excluded.add(account.id)
+        if account.id in blocked:
+            excluded.add(account.id)
+        if bool(cfg.get("require_proxy")) and not getattr(account, "telegram_proxy", None):
+            excluded.add(account.id)
+        if bool(cfg.get("skip_fresh")) and account_humanization_stage(account) == STAGE_CAUTIOUS:
+            excluded.add(account.id)
+
     account_a = None
     if prefer_account and prefer_account.id not in excluded:
-        from .account_roles import account_matches_action
-        from ...alembic.models import PoolAccount
-
         pool = await session.scalar(
             select(PoolAccount).where(
                 PoolAccount.social_account_id == prefer_account.id,
@@ -545,7 +613,14 @@ async def perform_shilling_dialogue(
 
     wait_for = delay_seconds
     if wait_for is None:
-        wait_for = random.uniform(REPLY_DELAY_MIN_SECONDS, REPLY_DELAY_MAX_SECONDS)
+        cfg = _module_cfg(automation)
+        try:
+            low = float(cfg.get("delay_min") if cfg.get("delay_min") is not None else REPLY_DELAY_MIN_SECONDS)
+            high = float(cfg.get("delay_max") if cfg.get("delay_max") is not None else REPLY_DELAY_MAX_SECONDS)
+        except (TypeError, ValueError):
+            low, high = REPLY_DELAY_MIN_SECONDS, REPLY_DELAY_MAX_SECONDS
+        high = max(low, high)
+        wait_for = random.uniform(low, high)
     elif comment_to is not None and wait_for < COMMENT_REPLY_DELAY_MIN_SECONDS:
         wait_for = COMMENT_REPLY_DELAY_MIN_SECONDS
     sleeper = sleep or __import__("asyncio").sleep
@@ -617,6 +692,12 @@ async def perform_post_shilling(
     target_id = post_target_id(chat_target.id, post_id)
     if await _already_succeeded(session, automation.id, POST_SHILL_ACTION, target_id):
         return {"status": "skipped", "reason": "already_sent"}
+    cfg = _module_cfg(automation)
+    if cfg.get("post_shilling") is False:
+        return {"status": "skipped", "reason": "post_shilling_off"}
+    allowed_channels = set(_as_int_list(cfg.get("channel_ids")))
+    if allowed_channels and chat_target.id not in allowed_channels:
+        return {"status": "skipped", "reason": "channel_not_selected"}
     target_actions_today = await count_target_actions_today(session, automation.id, chat_target.id)
     if target_actions_today >= chat_target.max_daily_target_actions:
         return {"status": "skipped", "reason": "chat_daily_target_limit"}
@@ -991,6 +1072,10 @@ async def run_shilling_pass(automation_id: int) -> dict[str, Any]:
         if not automation or not automation.is_shilling_enabled:
             logger.info("Shilling disabled or automation not found for %s", automation_id)
             return {"status": "skipped", "reason": "feature_disabled", "chats_processed": 0, "dialogues_sent": 0}
+        cfg = _module_cfg(automation)
+        if cfg.get("chat_shilling") is False:
+            return {"status": "skipped", "reason": "chat_shilling_off", "chats_processed": 0, "dialogues_sent": 0}
+        allowed_chats = set(_as_int_list(cfg.get("chat_ids")))
 
         chats = [
             chat
@@ -999,7 +1084,7 @@ async def run_shilling_pass(automation_id: int) -> dict[str, Any]:
                 automation_id,
                 limit=settings.CUSTOM_ACTION_SCAN_BATCH,
             )
-            if is_group_chat(chat)
+            if is_group_chat(chat) and (not allowed_chats or chat.id in allowed_chats)
         ]
         for chat_target in chats:
             try:

@@ -5,7 +5,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import RedirectResponse
-from sqlalchemy import func, or_, select
+from sqlalchemy import String, and_, cast, func, or_, select
 
 from .schemas import (
     AccountBulkClassifyRequest,
@@ -46,6 +46,43 @@ from .schemas import (
     ChatDiscoveryCreate,
     ChatDiscoveryTaskListResponse,
     ChatDiscoveryTaskResponse,
+    UnifiedJobListResponse,
+    UnifiedJobResponse,
+    UbtStatsResponse,
+    ChatBlackboxRequest,
+    NeurocommentingModuleResponse,
+    NeurocommentingSettings,
+    NeurocommentingChannelsRequest,
+    NeurocommentingPresetRequest,
+    NeurocommentingPromptCreate,
+    NeurochattingModuleResponse,
+    NeurochattingSettings,
+    NeurochattingGroupsRequest,
+    NeurochattingPresetRequest,
+    NeurochattingPromptCreate,
+    MasslookingSettings,
+    MasslookingModuleResponse,
+    MasslookingPresetRequest,
+    MassprimingSettings,
+    MassprimingModuleResponse,
+    MassprimingPresetRequest,
+    ParserSettings,
+    ParserModuleResponse,
+    ParserPresetRequest,
+    ParserTargetsRequest,
+    ChatBroadcastsSettings,
+    ChatBroadcastsModuleResponse,
+    ChatBroadcastsGroupsRequest,
+    ChatBroadcastsPresetRequest,
+    NeuroshillingSettings,
+    NeuroshillingModuleResponse,
+    NeuroshillingTargetsRequest,
+    NeuroshillingPresetRequest,
+    NeuroshillingGenerateRequest,
+    WarmupSettings,
+    WarmupModuleResponse,
+    WarmupTargetsRequest,
+    WarmupPresetRequest,
     ChatFolderListResponse,
     ChatFolderResponse,
     ChatImportJobListResponse,
@@ -126,6 +163,7 @@ from ..services.custom.chat_discovery_service import (
 )
 from ..services.custom.chat_import_service import import_chats_from_file, retry_import_errors
 from ..services.custom.chat_inspect_service import get_inspect_status, mark_inspect_running, run_inspect_comments
+from ..services.custom.job_service import cancel_job, get_job, list_jobs, queue_tracked, record_finished
 from ..services.custom.account_prepare_service import (
     get_prepare_status,
     mark_prepare_running,
@@ -151,7 +189,7 @@ from ..services.custom.amocrm_service import (
     update_pipeline_config,
 )
 from ..services.custom.lead_warmup_service import auto_transfer_lead
-from ..services.custom.analytics_service import get_automation_dashboard
+from ..services.custom.analytics_service import blackbox_stats_chat, get_automation_dashboard, get_ubt_stats
 from ..services.custom.activity_feed_service import FEED_ACTIVITY_TYPES, list_activity_feed
 from ..services.custom.error_feed_service import list_error_feed
 from ..services.custom.discussion_service import run_discussion_pass
@@ -182,6 +220,68 @@ from ..services.custom.telegram_notify_bot_service import (
     set_bot_password,
 )
 from ..services.custom.neurocommenting_service import run_neurocommenting_pass
+from ..services.custom.neurocommenting_module_service import (
+    add_neurocommenting_channels,
+    blackbox_neurocommenting_chat,
+    create_neurocommenting_prompt,
+    get_neurocommenting_module,
+    save_neurocommenting_module,
+    save_neurocommenting_preset,
+)
+from ..services.custom.neurochatting_module_service import (
+    add_neurochatting_groups,
+    blackbox_neurochatting_chat,
+    create_neurochatting_prompt,
+    get_neurochatting_module,
+    save_neurochatting_module,
+    save_neurochatting_preset,
+)
+from ..services.custom.masslooking_service import run_masslooking_pass
+from ..services.custom.masslooking_module_service import (
+    get_masslooking_module,
+    save_masslooking_module,
+    save_masslooking_preset,
+)
+from ..services.custom.masspriming_service import run_masspriming_pass
+from ..services.custom.masspriming_module_service import (
+    get_masspriming_module,
+    save_masspriming_module,
+    save_masspriming_preset,
+)
+from ..services.custom.parser_service import run_parser_pass
+from ..services.custom.parser_module_service import (
+    add_parser_targets,
+    clear_parser_results,
+    get_parser_module,
+    import_parser_file,
+    list_parser_results,
+    save_parser_module,
+    save_parser_preset,
+)
+from ..services.custom.chat_broadcast_service import run_chat_broadcast_pass
+from ..services.custom.chat_broadcast_module_service import (
+    add_chat_broadcast_groups,
+    blackbox_chat_broadcast_chat,
+    get_chat_broadcast_module,
+    save_chat_broadcast_module,
+    save_chat_broadcast_preset,
+)
+from ..services.custom.neuroshilling_module_service import (
+    add_neuroshilling_targets,
+    blackbox_neuroshilling_chat,
+    check_neuroshilling_payload,
+    generate_neuroshilling_lines,
+    get_neuroshilling_module,
+    save_neuroshilling_module,
+    save_neuroshilling_preset,
+)
+from ..services.custom.warmup_module_service import (
+    add_warmup_targets,
+    get_warmup_module,
+    run_warmup_module_pass,
+    save_warmup_module,
+    save_warmup_preset,
+)
 from ..services.custom.prompt_service import (
     list_prompts,
     get_prompt,
@@ -335,6 +435,811 @@ async def automation_dashboard(
     async with async_session_maker() as session:
         data = await get_automation_dashboard(session, automation_id)
         return CustomAutomationDashboardResponse.model_validate(data)
+
+
+@router.get("/automations/{automation_id}/stats", response_model=UbtStatsResponse)
+async def automation_ubt_stats(
+    automation_id: int,
+    period: str = "all",
+    history_type: str = "neurocommenting",
+    search: Optional[str] = None,
+    log_status: Optional[str] = Query(None, alias="status"),
+    visibility: Optional[str] = None,
+    threshold: float = Query(50.0, ge=0, le=100),
+    min_attempts: int = Query(3, ge=1, le=100),
+    limit: int = Query(25, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    if period not in {"all", "month", "week", "today"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown period")
+    if history_type not in {"neurocommenting", "shilling", "discussion", "intercept", "dmp", "masslooking", "chat_broadcast"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown history type")
+    async with async_session_maker() as session:
+        data = await get_ubt_stats(
+            session,
+            automation_id,
+            period=period,
+            history_type=history_type,
+            search=search,
+            status=log_status,
+            visibility=visibility,
+            threshold=threshold,
+            min_attempts=min_attempts,
+            limit=limit,
+            offset=offset,
+        )
+        return UbtStatsResponse.model_validate(data)
+
+
+@router.post("/automations/{automation_id}/stats/blacklist", response_model=ChatTargetResponse)
+async def automation_stats_blacklist(
+    automation_id: int,
+    payload: ChatBlackboxRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        try:
+            chat = await blackbox_stats_chat(
+                session,
+                automation_id,
+                chat_id=payload.chat_id,
+                query=payload.query,
+                reason=payload.reason or "manual",
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        return ChatTargetResponse.model_validate(chat)
+
+
+@router.get("/automations/{automation_id}/modules/neurocommenting", response_model=NeurocommentingModuleResponse)
+async def get_neurocommenting_screen(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await get_neurocommenting_module(session, automation_id)
+        return NeurocommentingModuleResponse.model_validate(data)
+
+
+@router.put("/automations/{automation_id}/modules/neurocommenting", response_model=NeurocommentingModuleResponse)
+async def save_neurocommenting_screen(
+    automation_id: int,
+    payload: NeurocommentingSettings,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await save_neurocommenting_module(session, automation_id, payload.model_dump())
+        return NeurocommentingModuleResponse.model_validate(data)
+
+
+@router.post("/automations/{automation_id}/modules/neurocommenting/run")
+async def run_neurocommenting_module(
+    automation_id: int,
+    background_tasks: BackgroundTasks,
+    payload: NeurocommentingSettings | None = None,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        snapshot = payload.model_dump() if payload else None
+        if snapshot:
+            await save_neurocommenting_module(session, automation_id, snapshot)
+            data = await get_neurocommenting_module(session, automation_id)
+        else:
+            data = await get_neurocommenting_module(session, automation_id)
+        issues = data.get("issues") or []
+        if issues:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="; ".join(issues))
+        settings = data["settings"]
+    job_id = await queue_tracked(
+        background_tasks,
+        automation_id,
+        "neurocommenting",
+        run_neurocommenting_pass,
+        automation_id,
+        settings,
+        params=settings,
+    )
+    background_tasks.add_task(_join_chats_background, automation_id)
+    return {"status": "started", "job_id": f"job:{job_id}"}
+
+
+@router.post("/automations/{automation_id}/modules/neurocommenting/channels", response_model=NeurocommentingModuleResponse)
+async def add_neurocommenting_channel_links(
+    automation_id: int,
+    payload: NeurocommentingChannelsRequest,
+    background_tasks: BackgroundTasks,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await add_neurocommenting_channels(session, automation_id, payload.links)
+    if data.get("added_ids"):
+        background_tasks.add_task(_join_chats_background, automation_id)
+    return NeurocommentingModuleResponse.model_validate(data)
+
+
+@router.post("/automations/{automation_id}/modules/neurocommenting/presets", response_model=NeurocommentingModuleResponse)
+async def save_neurocommenting_launch_preset(
+    automation_id: int,
+    payload: NeurocommentingPresetRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await save_neurocommenting_preset(session, automation_id, payload.name)
+        return NeurocommentingModuleResponse.model_validate(data)
+
+
+@router.post("/automations/{automation_id}/modules/neurocommenting/prompts", response_model=NeurocommentingModuleResponse)
+async def create_neurocommenting_module_prompt(
+    automation_id: int,
+    payload: NeurocommentingPromptCreate,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await create_neurocommenting_prompt(session, automation_id, payload.name, payload.content)
+        return NeurocommentingModuleResponse.model_validate(data)
+
+
+@router.post("/automations/{automation_id}/modules/neurocommenting/blacklist", response_model=NeurocommentingModuleResponse)
+async def neurocommenting_blacklist(
+    automation_id: int,
+    payload: ChatBlackboxRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        try:
+            data = await blackbox_neurocommenting_chat(
+                session, automation_id, chat_id=payload.chat_id, query=payload.query
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        return NeurocommentingModuleResponse.model_validate(data)
+
+
+@router.get("/automations/{automation_id}/modules/neurochatting", response_model=NeurochattingModuleResponse)
+async def get_neurochatting_screen(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await get_neurochatting_module(session, automation_id)
+        return NeurochattingModuleResponse.model_validate(data)
+
+
+@router.put("/automations/{automation_id}/modules/neurochatting", response_model=NeurochattingModuleResponse)
+async def save_neurochatting_screen(
+    automation_id: int,
+    payload: NeurochattingSettings,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await save_neurochatting_module(session, automation_id, payload.model_dump())
+        return NeurochattingModuleResponse.model_validate(data)
+
+
+@router.post("/automations/{automation_id}/modules/neurochatting/run")
+async def run_neurochatting_module(
+    automation_id: int,
+    background_tasks: BackgroundTasks,
+    payload: NeurochattingSettings | None = None,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        snapshot = payload.model_dump() if payload else None
+        if snapshot:
+            await save_neurochatting_module(session, automation_id, snapshot)
+            data = await get_neurochatting_module(session, automation_id)
+        else:
+            data = await get_neurochatting_module(session, automation_id)
+        issues = data.get("issues") or []
+        if issues:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="; ".join(issues))
+        settings = data["settings"]
+    job_id = await queue_tracked(
+        background_tasks,
+        automation_id,
+        "discussion",
+        run_discussion_pass,
+        automation_id,
+        settings,
+        params=settings,
+    )
+    if not settings.get("only_joined"):
+        background_tasks.add_task(_join_chats_background, automation_id)
+    return {"status": "started", "job_id": f"job:{job_id}"}
+
+
+@router.post("/automations/{automation_id}/modules/neurochatting/groups", response_model=NeurochattingModuleResponse)
+async def add_neurochatting_group_links(
+    automation_id: int,
+    payload: NeurochattingGroupsRequest,
+    background_tasks: BackgroundTasks,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await add_neurochatting_groups(session, automation_id, payload.links)
+    if data.get("added_ids"):
+        background_tasks.add_task(_join_chats_background, automation_id)
+    return NeurochattingModuleResponse.model_validate(data)
+
+
+@router.post("/automations/{automation_id}/modules/neurochatting/presets", response_model=NeurochattingModuleResponse)
+async def save_neurochatting_launch_preset(
+    automation_id: int,
+    payload: NeurochattingPresetRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await save_neurochatting_preset(session, automation_id, payload.name)
+        return NeurochattingModuleResponse.model_validate(data)
+
+
+@router.post("/automations/{automation_id}/modules/neurochatting/prompts", response_model=NeurochattingModuleResponse)
+async def create_neurochatting_module_prompt(
+    automation_id: int,
+    payload: NeurochattingPromptCreate,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await create_neurochatting_prompt(session, automation_id, payload.name, payload.content)
+        return NeurochattingModuleResponse.model_validate(data)
+
+
+@router.post("/automations/{automation_id}/modules/neurochatting/blacklist", response_model=NeurochattingModuleResponse)
+async def neurochatting_blacklist(
+    automation_id: int,
+    payload: ChatBlackboxRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        try:
+            data = await blackbox_neurochatting_chat(
+                session, automation_id, chat_id=payload.chat_id, query=payload.query
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        return NeurochattingModuleResponse.model_validate(data)
+
+
+@router.get("/automations/{automation_id}/modules/masslooking", response_model=MasslookingModuleResponse)
+async def get_masslooking_screen(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await get_masslooking_module(session, automation_id)
+        return MasslookingModuleResponse.model_validate(data)
+
+
+@router.put("/automations/{automation_id}/modules/masslooking", response_model=MasslookingModuleResponse)
+async def save_masslooking_screen(
+    automation_id: int,
+    payload: MasslookingSettings,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await save_masslooking_module(session, automation_id, payload.model_dump())
+        return MasslookingModuleResponse.model_validate(data)
+
+
+@router.post("/automations/{automation_id}/modules/masslooking/run")
+async def run_masslooking_module(
+    automation_id: int,
+    background_tasks: BackgroundTasks,
+    payload: MasslookingSettings | None = None,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        snapshot = payload.model_dump() if payload else None
+        if snapshot:
+            await save_masslooking_module(session, automation_id, snapshot)
+            data = await get_masslooking_module(session, automation_id)
+        else:
+            data = await get_masslooking_module(session, automation_id)
+        issues = data.get("issues") or []
+        if issues:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="; ".join(issues))
+        settings = data["settings"]
+    job_id = await queue_tracked(
+        background_tasks,
+        automation_id,
+        "masslooking",
+        run_masslooking_pass,
+        automation_id,
+        settings,
+        params=settings,
+    )
+    return {"status": "started", "job_id": f"job:{job_id}"}
+
+
+@router.post("/automations/{automation_id}/modules/masslooking/presets", response_model=MasslookingModuleResponse)
+async def save_masslooking_launch_preset(
+    automation_id: int,
+    payload: MasslookingPresetRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await save_masslooking_preset(session, automation_id, payload.name)
+        return MasslookingModuleResponse.model_validate(data)
+
+
+@router.get("/automations/{automation_id}/modules/chat-broadcasts", response_model=ChatBroadcastsModuleResponse)
+async def get_chat_broadcasts_screen(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await get_chat_broadcast_module(session, automation_id)
+        return ChatBroadcastsModuleResponse.model_validate(data)
+
+
+@router.put("/automations/{automation_id}/modules/chat-broadcasts", response_model=ChatBroadcastsModuleResponse)
+async def save_chat_broadcasts_screen(
+    automation_id: int,
+    payload: ChatBroadcastsSettings,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await save_chat_broadcast_module(session, automation_id, payload.model_dump())
+        return ChatBroadcastsModuleResponse.model_validate(data)
+
+
+@router.post("/automations/{automation_id}/modules/chat-broadcasts/run")
+async def run_chat_broadcasts_module(
+    automation_id: int,
+    background_tasks: BackgroundTasks,
+    payload: ChatBroadcastsSettings | None = None,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        snapshot = payload.model_dump() if payload else None
+        if snapshot:
+            await save_chat_broadcast_module(session, automation_id, snapshot)
+            data = await get_chat_broadcast_module(session, automation_id)
+        else:
+            data = await get_chat_broadcast_module(session, automation_id)
+        issues = data.get("issues") or []
+        if issues:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="; ".join(issues))
+        settings = data["settings"]
+    job_id = await queue_tracked(
+        background_tasks,
+        automation_id,
+        "chat_broadcast",
+        run_chat_broadcast_pass,
+        automation_id,
+        settings,
+        params=settings,
+    )
+    if not settings.get("only_joined"):
+        background_tasks.add_task(_join_chats_background, automation_id)
+    return {"status": "started", "job_id": f"job:{job_id}"}
+
+
+@router.post("/automations/{automation_id}/modules/chat-broadcasts/groups", response_model=ChatBroadcastsModuleResponse)
+async def add_chat_broadcast_group_links(
+    automation_id: int,
+    payload: ChatBroadcastsGroupsRequest,
+    background_tasks: BackgroundTasks,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await add_chat_broadcast_groups(session, automation_id, payload.links)
+    if data.get("added_ids") and not (data.get("settings") or {}).get("only_joined"):
+        background_tasks.add_task(_join_chats_background, automation_id)
+    return ChatBroadcastsModuleResponse.model_validate(data)
+
+
+@router.post("/automations/{automation_id}/modules/chat-broadcasts/presets", response_model=ChatBroadcastsModuleResponse)
+async def save_chat_broadcasts_launch_preset(
+    automation_id: int,
+    payload: ChatBroadcastsPresetRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await save_chat_broadcast_preset(session, automation_id, payload.name)
+        return ChatBroadcastsModuleResponse.model_validate(data)
+
+
+@router.post("/automations/{automation_id}/modules/chat-broadcasts/blacklist", response_model=ChatBroadcastsModuleResponse)
+async def chat_broadcasts_blacklist(
+    automation_id: int,
+    payload: ChatBlackboxRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        try:
+            data = await blackbox_chat_broadcast_chat(
+                session, automation_id, chat_id=payload.chat_id, query=payload.query
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        return ChatBroadcastsModuleResponse.model_validate(data)
+
+
+@router.get("/automations/{automation_id}/modules/neuroshilling", response_model=NeuroshillingModuleResponse)
+async def get_neuroshilling_screen(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await get_neuroshilling_module(session, automation_id)
+        return NeuroshillingModuleResponse.model_validate(data)
+
+
+@router.put("/automations/{automation_id}/modules/neuroshilling", response_model=NeuroshillingModuleResponse)
+async def save_neuroshilling_screen(
+    automation_id: int,
+    payload: NeuroshillingSettings,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await save_neuroshilling_module(session, automation_id, payload.model_dump())
+        return NeuroshillingModuleResponse.model_validate(data)
+
+
+@router.post("/automations/{automation_id}/modules/neuroshilling/run")
+async def run_neuroshilling_module(
+    automation_id: int,
+    background_tasks: BackgroundTasks,
+    payload: NeuroshillingSettings | None = None,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        snapshot = payload.model_dump() if payload else None
+        if snapshot:
+            await save_neuroshilling_module(session, automation_id, snapshot)
+            data = await get_neuroshilling_module(session, automation_id)
+        else:
+            data = await get_neuroshilling_module(session, automation_id)
+        issues = data.get("issues") or []
+        if issues:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="; ".join(issues))
+        settings = data["settings"]
+    job_id = await queue_tracked(
+        background_tasks,
+        automation_id,
+        "shilling",
+        run_shilling_pass,
+        automation_id,
+        params=settings,
+    )
+    background_tasks.add_task(_join_chats_background, automation_id)
+    return {"status": "started", "job_id": f"job:{job_id}"}
+
+
+@router.post("/automations/{automation_id}/modules/neuroshilling/check", response_model=NeuroshillingModuleResponse)
+async def check_neuroshilling_module(
+    automation_id: int,
+    payload: NeuroshillingSettings | None = None,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        snapshot = payload.model_dump() if payload else None
+        if snapshot:
+            data = await save_neuroshilling_module(session, automation_id, snapshot)
+        else:
+            data = await get_neuroshilling_module(session, automation_id)
+        data["check"] = check_neuroshilling_payload(data)
+        return NeuroshillingModuleResponse.model_validate(data)
+
+
+@router.post("/automations/{automation_id}/modules/neuroshilling/targets", response_model=NeuroshillingModuleResponse)
+async def add_neuroshilling_target_links(
+    automation_id: int,
+    payload: NeuroshillingTargetsRequest,
+    background_tasks: BackgroundTasks,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await add_neuroshilling_targets(session, automation_id, payload.links, kind=payload.kind or "auto")
+    if data.get("added_ids"):
+        background_tasks.add_task(_join_chats_background, automation_id)
+    return NeuroshillingModuleResponse.model_validate(data)
+
+
+@router.post("/automations/{automation_id}/modules/neuroshilling/presets", response_model=NeuroshillingModuleResponse)
+async def save_neuroshilling_launch_preset(
+    automation_id: int,
+    payload: NeuroshillingPresetRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await save_neuroshilling_preset(session, automation_id, payload.name)
+        return NeuroshillingModuleResponse.model_validate(data)
+
+
+@router.post("/automations/{automation_id}/modules/neuroshilling/generate", response_model=NeuroshillingModuleResponse)
+async def generate_neuroshilling_module_lines(
+    automation_id: int,
+    payload: NeuroshillingGenerateRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        try:
+            data = await generate_neuroshilling_lines(session, automation_id, payload.topic)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        return NeuroshillingModuleResponse.model_validate(data)
+
+
+@router.post("/automations/{automation_id}/modules/neuroshilling/blacklist", response_model=NeuroshillingModuleResponse)
+async def neuroshilling_blacklist(
+    automation_id: int,
+    payload: ChatBlackboxRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        try:
+            data = await blackbox_neuroshilling_chat(
+                session, automation_id, chat_id=payload.chat_id, query=payload.query
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        return NeuroshillingModuleResponse.model_validate(data)
+
+
+@router.get("/automations/{automation_id}/modules/warmup", response_model=WarmupModuleResponse)
+async def get_warmup_screen(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+    is_admin: bool = Depends(optional_is_custom_admin),
+):
+    async with async_session_maker() as session:
+        data = await get_warmup_module(session, automation_id, is_admin=is_admin)
+        return WarmupModuleResponse.model_validate(data)
+
+
+@router.put("/automations/{automation_id}/modules/warmup", response_model=WarmupModuleResponse)
+async def save_warmup_screen(
+    automation_id: int,
+    payload: WarmupSettings,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+    is_admin: bool = Depends(optional_is_custom_admin),
+):
+    async with async_session_maker() as session:
+        data = await save_warmup_module(session, automation_id, payload.model_dump(), is_admin=is_admin)
+        return WarmupModuleResponse.model_validate(data)
+
+
+@router.post("/automations/{automation_id}/modules/warmup/run")
+async def run_warmup_module(
+    automation_id: int,
+    background_tasks: BackgroundTasks,
+    payload: WarmupSettings | None = None,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+    is_admin: bool = Depends(optional_is_custom_admin),
+):
+    async with async_session_maker() as session:
+        snapshot = payload.model_dump() if payload else None
+        if snapshot:
+            await save_warmup_module(session, automation_id, snapshot, is_admin=is_admin)
+            data = await get_warmup_module(session, automation_id, is_admin=is_admin)
+        else:
+            data = await get_warmup_module(session, automation_id, is_admin=is_admin)
+        issues = data.get("issues") or []
+        if issues:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="; ".join(issues))
+        settings = data["settings"]
+    job_id = await queue_tracked(
+        background_tasks,
+        automation_id,
+        "warmup",
+        run_warmup_module_pass,
+        automation_id,
+        params=settings,
+    )
+    if settings.get("do_joins") and settings.get("chat_ids"):
+        background_tasks.add_task(_join_chats_background, automation_id)
+    return {"status": "started", "job_id": f"job:{job_id}"}
+
+
+@router.post("/automations/{automation_id}/modules/warmup/targets", response_model=WarmupModuleResponse)
+async def add_warmup_target_links(
+    automation_id: int,
+    payload: WarmupTargetsRequest,
+    background_tasks: BackgroundTasks,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await add_warmup_targets(session, automation_id, payload.links)
+    if data.get("added_ids"):
+        background_tasks.add_task(_join_chats_background, automation_id)
+    return WarmupModuleResponse.model_validate(data)
+
+
+@router.post("/automations/{automation_id}/modules/warmup/presets", response_model=WarmupModuleResponse)
+async def save_warmup_launch_preset(
+    automation_id: int,
+    payload: WarmupPresetRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await save_warmup_preset(session, automation_id, payload.name)
+        return WarmupModuleResponse.model_validate(data)
+
+
+@router.get("/automations/{automation_id}/modules/masspriming", response_model=MassprimingModuleResponse)
+async def get_masspriming_screen(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await get_masspriming_module(session, automation_id)
+        return MassprimingModuleResponse.model_validate(data)
+
+
+@router.put("/automations/{automation_id}/modules/masspriming", response_model=MassprimingModuleResponse)
+async def save_masspriming_screen(
+    automation_id: int,
+    payload: MassprimingSettings,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await save_masspriming_module(session, automation_id, payload.model_dump())
+        return MassprimingModuleResponse.model_validate(data)
+
+
+@router.post("/automations/{automation_id}/modules/masspriming/run")
+async def run_masspriming_module(
+    automation_id: int,
+    background_tasks: BackgroundTasks,
+    payload: MassprimingSettings | None = None,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        snapshot = payload.model_dump() if payload else None
+        if snapshot:
+            await save_masspriming_module(session, automation_id, snapshot)
+            data = await get_masspriming_module(session, automation_id)
+        else:
+            data = await get_masspriming_module(session, automation_id)
+        issues = data.get("issues") or []
+        if issues:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="; ".join(issues))
+        settings = data["settings"]
+    job_id = await queue_tracked(
+        background_tasks,
+        automation_id,
+        "masspriming",
+        run_masspriming_pass,
+        automation_id,
+        settings,
+        params=settings,
+    )
+    return {"status": "started", "job_id": f"job:{job_id}"}
+
+
+@router.post("/automations/{automation_id}/modules/masspriming/presets", response_model=MassprimingModuleResponse)
+async def save_masspriming_launch_preset(
+    automation_id: int,
+    payload: MassprimingPresetRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await save_masspriming_preset(session, automation_id, payload.name)
+        return MassprimingModuleResponse.model_validate(data)
+
+
+@router.get("/automations/{automation_id}/modules/parser", response_model=ParserModuleResponse)
+async def get_parser_screen(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await get_parser_module(session, automation_id)
+        return ParserModuleResponse.model_validate(data)
+
+
+@router.put("/automations/{automation_id}/modules/parser", response_model=ParserModuleResponse)
+async def save_parser_screen(
+    automation_id: int,
+    payload: ParserSettings,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await save_parser_module(session, automation_id, payload.model_dump())
+        return ParserModuleResponse.model_validate(data)
+
+
+@router.post("/automations/{automation_id}/modules/parser/run")
+async def run_parser_module(
+    automation_id: int,
+    background_tasks: BackgroundTasks,
+    payload: ParserSettings | None = None,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        snapshot = payload.model_dump() if payload else None
+        if snapshot:
+            await save_parser_module(session, automation_id, snapshot)
+            data = await get_parser_module(session, automation_id)
+        else:
+            data = await get_parser_module(session, automation_id)
+        issues = data.get("issues") or []
+        if issues:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="; ".join(issues))
+        settings = data["settings"]
+    job_id = await queue_tracked(
+        background_tasks,
+        automation_id,
+        "parser",
+        run_parser_pass,
+        automation_id,
+        settings,
+        params=settings,
+    )
+    return {"status": "started", "job_id": f"job:{job_id}"}
+
+
+@router.post("/automations/{automation_id}/modules/parser/presets", response_model=ParserModuleResponse)
+async def save_parser_launch_preset(
+    automation_id: int,
+    payload: ParserPresetRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await save_parser_preset(session, automation_id, payload.name)
+        return ParserModuleResponse.model_validate(data)
+
+
+@router.post("/automations/{automation_id}/modules/parser/targets", response_model=ParserModuleResponse)
+async def add_parser_target_links(
+    automation_id: int,
+    payload: ParserTargetsRequest,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await add_parser_targets(session, automation_id, payload.links)
+        return ParserModuleResponse.model_validate(data)
+
+
+@router.post("/automations/{automation_id}/modules/parser/import", response_model=ParserModuleResponse)
+async def import_parser_chats_file(
+    automation_id: int,
+    archive: UploadFile = File(...),
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    content = await archive.read()
+    async with async_session_maker() as session:
+        try:
+            data = await import_parser_file(
+                session,
+                automation_id,
+                filename=archive.filename or "chats.txt",
+                content=content,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except Exception as exc:
+            logger.exception("Parser import failed: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Не удалось прочитать файл. Нужен CSV, Excel или список ссылок.",
+            ) from exc
+        return ParserModuleResponse.model_validate(data)
+
+
+@router.get("/automations/{automation_id}/modules/parser/results")
+async def get_parser_result_rows(
+    automation_id: int,
+    query: str = "",
+    limit: int = 200,
+    offset: int = 0,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        return await list_parser_results(session, automation_id, query=query, limit=limit, offset=offset)
+
+
+@router.post("/automations/{automation_id}/modules/parser/results/clear", response_model=ParserModuleResponse)
+async def clear_parser_result_rows(
+    automation_id: int,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await clear_parser_results(session, automation_id)
+        return ParserModuleResponse.model_validate(data)
 
 
 @router.get("/automations/{automation_id}/activity", response_model=ActivityFeedResponse)
@@ -518,6 +1423,7 @@ def _account_response(
         frozen_at=getattr(social_account, "frozen_at", None),
         updated_at=social_account.updated_at,
         proxy_label=proxy_label(getattr(social_account, "telegram_proxy", None)),
+        assigned_class=pool_account.assigned_class or "one_day",
     )
 
 
@@ -549,6 +1455,64 @@ def _queue_account_health_check(background_tasks: BackgroundTasks, automation_id
     background_tasks.add_task(AccountHealthWorker().check_all_accounts_for_automation, automation_id)
 
 
+def _apply_account_query_filters(stmt, *, status: Optional[str] = None, role: Optional[str] = None, search: Optional[str] = None):
+    if role:
+        from ..services.custom.account_roles import ALL_SHILLING_ROLES, LEGACY_SHILLING_ROLE
+
+        blob = cast(PoolAccount.roles, String)
+        if role in ALL_SHILLING_ROLES:
+            stmt = stmt.where(or_(blob.like(f'%"{role}"%'), blob.like(f'%"{LEGACY_SHILLING_ROLE}"%')))
+        else:
+            stmt = stmt.where(blob.like(f'%"{role}"%'))
+    if status in {"loaded", "active"}:
+        stmt = stmt.where(
+            SocialAccount.session_file_path.isnot(None),
+            SocialAccount.is_active.is_(True),
+            SocialAccount.is_banned.is_(False),
+            SocialAccount.is_frozen.is_(False),
+        )
+    elif status == "in_work":
+        stmt = stmt.where(SocialAccount.daily_messages_sent > 0, SocialAccount.is_active.is_(True))
+    elif status == "quarantine":
+        stmt = stmt.where(PoolAccount.warmup_status.in_(["rest", "warming"]))
+    elif status == "revoked":
+        stmt = stmt.where(
+            SocialAccount.session_file_path.isnot(None),
+            SocialAccount.is_active.is_(False),
+        )
+    elif status == "invalid":
+        stmt = stmt.where(
+            or_(
+                SocialAccount.session_file_path.is_(None),
+                and_(
+                    SocialAccount.session_file_path.isnot(None),
+                    SocialAccount.is_active.is_(False),
+                    SocialAccount.is_banned.is_(False),
+                ),
+            )
+        )
+    elif status == "spamblock":
+        stmt = stmt.where(SocialAccount.is_spamblocked.is_(True))
+    elif status == "frozen":
+        stmt = stmt.where(SocialAccount.is_frozen.is_(True))
+    elif status == "banned":
+        stmt = stmt.where(SocialAccount.is_banned.is_(True))
+    elif status == "channel_banned":
+        stmt = stmt.where(SocialAccount.is_channel_banned.is_(True))
+    elif status == "empty":
+        stmt = stmt.where(SocialAccount.session_file_path.is_(None))
+    if search:
+        pattern = f"%{search}%"
+        stmt = stmt.where(
+            or_(
+                SocialAccount.phone_number.ilike(pattern),
+                SocialAccount.username.ilike(pattern),
+                SocialAccount.display_name.ilike(pattern),
+            )
+        )
+    return stmt
+
+
 @router.get("/automations/{automation_id}/accounts", response_model=AccountListResponse)
 async def list_accounts(
     automation_id: int,
@@ -574,51 +1538,19 @@ async def list_accounts(
             .join(SocialAccount, PoolAccount.social_account_id == SocialAccount.id)
             .where(PoolAccount.account_pool_id == pool.id)
         )
-        if role:
-            from sqlalchemy import String, cast
-
-            from ..services.custom.account_roles import ALL_SHILLING_ROLES, LEGACY_SHILLING_ROLE
-
-            blob = cast(PoolAccount.roles, String)
-            if role in ALL_SHILLING_ROLES:
-                stmt = stmt.where(or_(blob.like(f'%"{role}"%'), blob.like(f'%"{LEGACY_SHILLING_ROLE}"%')))
-            else:
-                stmt = stmt.where(blob.like(f'%"{role}"%'))
-        if status == "loaded" or status == "active":
-            stmt = stmt.where(
-                SocialAccount.session_file_path.isnot(None),
-                SocialAccount.is_active.is_(True),
-                SocialAccount.is_frozen.is_(False),
-            )
-        elif status == "revoked":
-            stmt = stmt.where(
-                SocialAccount.session_file_path.isnot(None),
-                SocialAccount.is_active.is_(False),
-            )
-        elif status == "spamblock":
-            stmt = stmt.where(SocialAccount.is_spamblocked.is_(True))
-        elif status == "frozen":
-            stmt = stmt.where(SocialAccount.is_frozen.is_(True))
-        elif status == "banned":
-            stmt = stmt.where(SocialAccount.is_banned.is_(True))
-        elif status == "empty":
-            stmt = stmt.where(SocialAccount.session_file_path.is_(None))
-        if search:
-            pattern = f"%{search}%"
-            stmt = stmt.where(
-                or_(
-                    SocialAccount.phone_number.ilike(pattern),
-                    SocialAccount.username.ilike(pattern),
-                    SocialAccount.display_name.ilike(pattern),
-                )
-            )
+        stmt = _apply_account_query_filters(stmt, status=status, role=role, search=search)
+        count_stmt = (
+            select(func.count(PoolAccount.id))
+            .select_from(PoolAccount)
+            .join(SocialAccount, PoolAccount.social_account_id == SocialAccount.id)
+            .where(PoolAccount.account_pool_id == pool.id)
+        )
+        count_stmt = _apply_account_query_filters(count_stmt, status=status, role=role, search=search)
         stmt = stmt.order_by(PoolAccount.added_at.desc()).limit(limit).offset(offset)
 
         result = await session.execute(stmt)
         rows = result.all()
-        total = await session.scalar(
-            select(func.count(PoolAccount.id)).where(PoolAccount.account_pool_id == pool.id)
-        )
+        total = await session.scalar(count_stmt)
 
         max_daily = automation.max_daily_messages_per_account
         _reset_counters_if_needed([social_account for _, social_account in rows])
@@ -690,6 +1622,37 @@ async def account_ban_stats(
                 SocialAccount.is_frozen.is_(True),
             )
         )
+        in_work = await session.scalar(
+            select(func.count(PoolAccount.id))
+            .join(SocialAccount, PoolAccount.social_account_id == SocialAccount.id)
+            .where(
+                PoolAccount.account_pool_id == pool.id,
+                SocialAccount.is_active.is_(True),
+                SocialAccount.daily_messages_sent > 0,
+            )
+        )
+        quarantine = await session.scalar(
+            select(func.count(PoolAccount.id)).where(
+                PoolAccount.account_pool_id == pool.id,
+                PoolAccount.warmup_status.in_(["rest", "warming"]),
+            )
+        )
+        empty = await session.scalar(
+            select(func.count(PoolAccount.id))
+            .join(SocialAccount, PoolAccount.social_account_id == SocialAccount.id)
+            .where(
+                PoolAccount.account_pool_id == pool.id,
+                SocialAccount.session_file_path.is_(None),
+            )
+        )
+        channel_banned = await session.scalar(
+            select(func.count(PoolAccount.id))
+            .join(SocialAccount, PoolAccount.social_account_id == SocialAccount.id)
+            .where(
+                PoolAccount.account_pool_id == pool.id,
+                SocialAccount.is_channel_banned.is_(True),
+            )
+        )
         banned_percent = round((banned or 0) / total, 2) if total else 0.0
         alert_threshold = float(settings.CUSTOM_BAN_ALERT_THRESHOLD or 0.3)
         is_alert = banned_percent >= alert_threshold
@@ -705,6 +1668,10 @@ async def account_ban_stats(
             revoked=revoked or 0,
             spamblocked=spamblocked or 0,
             frozen=frozen or 0,
+            in_work=in_work or 0,
+            quarantine=quarantine or 0,
+            invalid=(revoked or 0) + (empty or 0),
+            channel_banned=channel_banned or 0,
             banned_percent=banned_percent,
             alert_threshold=alert_threshold,
             alert=is_alert,
@@ -734,6 +1701,12 @@ async def run_account_health_check(
         1
         for r in results
         if r.get("status") in {"error", "not_found", "session_invalid", "banned", "spamblock", "frozen"}
+    )
+    await record_finished(
+        automation_id,
+        "health_check",
+        result={"Всего": len(results), "OK": ok, "Fallback": fallback, "Ошибок": error},
+        message=f"Проверено {len(results)}: OK {ok}, ошибок {error}",
     )
     return AccountHealthCheckResponse(
         results=[AccountHealthCheckResult(**r) for r in results],
@@ -1008,9 +1981,16 @@ async def start_account_warmup(
         db_automation.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         await session.commit()
         await session.refresh(db_automation)
+        usernames = normalize_warmup_usernames(db_automation.account_warmup_usernames)
+        await record_finished(
+            automation_id,
+            "warmup",
+            result={"Включен": True, "Юзернеймов": len(usernames)},
+            message="Прогрев включён для следующих заливов",
+        )
         return AccountWarmupStartResponse(
             account_warmup_enabled=True,
-            account_warmup_usernames=normalize_warmup_usernames(db_automation.account_warmup_usernames),
+            account_warmup_usernames=usernames,
         )
 
 
@@ -1191,7 +2171,7 @@ async def start_account_prepare(
     if current.get("status") == "running":
         return AccountPrepareStatusResponse(**current)
     mark_prepare_running(automation_id)
-    background_tasks.add_task(prepare_accounts, automation_id)
+    await queue_tracked(background_tasks, automation_id, "prepare", prepare_accounts, automation_id)
     return AccountPrepareStatusResponse(status="running", alive=current.get("alive") or 0)
 
 
@@ -1511,7 +2491,7 @@ async def run_neurocommenting(
     background_tasks: BackgroundTasks,
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
-    background_tasks.add_task(run_neurocommenting_pass, automation_id)
+    await queue_tracked(background_tasks, automation_id, "neurocommenting", run_neurocommenting_pass, automation_id)
     return {"status": "started"}
 
 
@@ -1538,7 +2518,7 @@ async def run_discussion(
     background_tasks: BackgroundTasks,
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
-    background_tasks.add_task(run_discussion_pass, automation_id)
+    await queue_tracked(background_tasks, automation_id, "discussion", run_discussion_pass, automation_id)
     return {"status": "started"}
 
 
@@ -1565,7 +2545,7 @@ async def run_shilling(
     background_tasks: BackgroundTasks,
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
-    background_tasks.add_task(run_shilling_pass, automation_id)
+    await queue_tracked(background_tasks, automation_id, "shilling", run_shilling_pass, automation_id)
     return {"status": "started"}
 
 
@@ -1689,7 +2669,7 @@ async def start_inspect_comments(
     if current.get("status") == "running":
         return ChatInspectStatusResponse(**current)
     mark_inspect_running(automation_id)
-    background_tasks.add_task(run_inspect_comments, automation_id, force)
+    await queue_tracked(background_tasks, automation_id, "inspect", run_inspect_comments, automation_id, force)
     return ChatInspectStatusResponse(status="running", total=current.get("total") or 0)
 
 
@@ -1707,7 +2687,7 @@ async def run_join_chats(
     background_tasks: BackgroundTasks,
     automation: CustomAutomation = Depends(get_current_custom_automation),
 ):
-    background_tasks.add_task(_join_chats_background, automation_id)
+    await queue_tracked(background_tasks, automation_id, "join", _join_chats_background, automation_id)
     return {"status": "started"}
 
 
@@ -1766,6 +2746,58 @@ async def list_chat_discovery_tasks(
             items=[ChatDiscoveryTaskResponse.model_validate(i) for i in items],
             total=total or 0,
         )
+
+
+@router.get("/automations/{automation_id}/jobs", response_model=UnifiedJobListResponse)
+async def list_automation_jobs(
+    automation_id: int,
+    bucket: str = "all",
+    category: Optional[str] = None,
+    search: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        data = await list_jobs(
+            session,
+            automation_id,
+            bucket=bucket,
+            category=category,
+            search=search,
+            limit=limit,
+            offset=offset,
+        )
+        return UnifiedJobListResponse(
+            items=[UnifiedJobResponse.model_validate(item) for item in data["items"]],
+            total=data["total"],
+        )
+
+
+@router.get("/automations/{automation_id}/jobs/{job_id}", response_model=UnifiedJobResponse)
+async def get_automation_job(
+    automation_id: int,
+    job_id: str,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        item = await get_job(session, automation_id, job_id)
+        if not item:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+        return UnifiedJobResponse.model_validate(item)
+
+
+@router.post("/automations/{automation_id}/jobs/{job_id}/cancel", response_model=UnifiedJobResponse)
+async def cancel_automation_job(
+    automation_id: int,
+    job_id: str,
+    automation: CustomAutomation = Depends(get_current_custom_automation),
+):
+    async with async_session_maker() as session:
+        item = await cancel_job(session, automation_id, job_id)
+        if not item:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+        return UnifiedJobResponse.model_validate(item)
 
 
 @router.get("/automations/{automation_id}/chats/discovery/{task_id}", response_model=ChatDiscoveryTaskResponse)

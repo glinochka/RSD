@@ -340,6 +340,7 @@ async def import_chats_from_file(
     filename: str,
     content: bytes,
     created_by_admin_id: int | None = None,
+    quality_filter: bool = True,
 ) -> ChatImportJob:
     if content is None:
         raise ValueError("empty file")
@@ -390,7 +391,7 @@ async def import_chats_from_file(
             if row_keys & existing or row_keys & seen:
                 duplicates += 1
                 continue
-            skip_reason = import_quality_skip_reason(parsed, now=now)
+            skip_reason = import_quality_skip_reason(parsed, now=now) if quality_filter else None
             if skip_reason:
                 skipped += 1
                 seen.update(row_keys)

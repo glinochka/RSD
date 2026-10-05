@@ -1,20 +1,27 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import CustomSelect from '../../../components/CustomSelect';
 import FeatureToggle from '../../../components/FeatureToggle';
-import CustomFileButton from '../../../components/custom/CustomFileButton';
 import customService from '../../../services/customService';
 import { useCustomAuth } from '../../../components/custom/useCustomAuth';
-import CustomAutomationIntegrationsBlock from './CustomAutomationIntegrationsBlock';
+import { NAVIGATION_ROUTES } from '../../../config/constants';
 import { ACTIVITY_MODULE_TOGGLES } from './activityLabels';
+import { ubtModulePath } from './customNav';
 import '../../../styles/projectSettingsPage.css';
 import '../../../styles/projectCRMPage.css';
+import '../../../styles/customSolutionNav.css';
 
 const ROTATION_STRATEGIES = [
   { value: 'round_robin', label: 'По кругу' },
   { value: 'least_used', label: 'Меньше использовался' },
   { value: 'risk_weighted', label: 'По риску бана' },
 ];
+
+const UBT_OWNED_TOGGLES = new Set([
+  'is_neurocommenting_enabled',
+  'is_shilling_enabled',
+  'is_digital_footprint_enabled',
+]);
 
 const CustomAutomationSettingsPage = () => {
   const { id } = useParams();
@@ -134,15 +141,11 @@ const CustomAutomationSettingsPage = () => {
       const payload = settings.solution_kind === 'dmp_bot'
         ? {
             is_dmp_one_enabled: true,
-            is_lead_qualification_enabled: Boolean(form.is_lead_qualification_enabled),
           }
         : {
             rotation_strategy: form.rotation_strategy,
             max_daily_messages_per_account: form.max_daily_messages_per_account,
             is_chat_monitoring_enabled: form.is_chat_monitoring_enabled,
-            is_neurocommenting_enabled: form.is_neurocommenting_enabled,
-            is_shilling_enabled: form.is_shilling_enabled,
-            is_digital_footprint_enabled: form.is_digital_footprint_enabled,
             is_dmp_one_enabled: form.is_dmp_one_enabled,
             is_amocrm_enabled: form.is_amocrm_enabled,
             lead_keywords: Array.isArray(form.lead_keywords) ? form.lead_keywords : [],
@@ -150,13 +153,6 @@ const CustomAutomationSettingsPage = () => {
             partner_utm_url: form.partner_utm_url,
             partner_promo_code: form.partner_promo_code,
             conversion_check_url: form.conversion_check_url,
-            proxy_list_text: form.proxy_list_text || '',
-            account_warmup_usernames: isAdmin
-              ? (form.account_warmup_usernames || []).map((item) => String(item || '').trim()).filter(Boolean)
-              : undefined,
-            account_warmup_messages: isAdmin
-              ? (form.account_warmup_messages || []).map((item) => String(item || '').trim()).filter(Boolean)
-              : undefined,
           };
       const data = await customService.updateAutomationSettings(id, payload);
       setSettings(data);
@@ -211,7 +207,7 @@ const CustomAutomationSettingsPage = () => {
           <p className="settings-subtitle">
             {settings?.solution_kind === 'dmp_bot'
               ? 'Бот, DMP, таблица и доступ клиента.'
-              : 'Модули, ротация и доступ клиента.'}
+              : 'Перехват, ротация, партнёрка и доступ клиента.'}
           </p>
         </div>
       </div>
@@ -232,14 +228,17 @@ const CustomAutomationSettingsPage = () => {
           <h3 className="settings-section-title">Модули</h3>
           <div className="settings-toggles">
             {settings.solution_kind === 'dmp_bot' ? (
-              <FeatureToggle
-                title="Квалификация"
-                description="ИИ найдёт чат по номеру и квалифицирует лид. В бот и таблицу уйдёт только квалифицированный."
-                checked={Boolean(form.is_lead_qualification_enabled)}
-                onChange={(checked) => setForm((prev) => ({ ...prev, is_lead_qualification_enabled: checked }))}
-              />
+              <div>
+                <p className="form-hint">
+                  Квалификация номеров и передача в CRM живут в разделе DMP, а не здесь.
+                </p>
+                <Link className="btn btn-outline" to={NAVIGATION_ROUTES.CUSTOM_AUTOMATION_DMP_SETTINGS(id)}>Настройки DMP</Link>
+              </div>
             ) : (
               ACTIVITY_MODULE_TOGGLES.filter((field) => {
+                if (UBT_OWNED_TOGGLES.has(field.name)) {
+                  return false;
+                }
                 if (field.name === 'is_amocrm_enabled' && settings.solution_kind === 'seo_saas') {
                   return false;
                 }
@@ -254,6 +253,11 @@ const CustomAutomationSettingsPage = () => {
               ))
             )}
           </div>
+          {settings.solution_kind === 'dmp_bot' ? null : (
+            <p className="form-hint">
+              Нейрокомментинг, нейрочаттинг, шиллинг и прогрев включаются в своих подразделах Телеграм УБТ.
+            </p>
+          )}
         </div>
 
         {settings.solution_kind === 'dmp_bot' ? null : (
@@ -396,46 +400,9 @@ const CustomAutomationSettingsPage = () => {
         <div className="settings-section">
           <h3 className="settings-section-title">Прокси</h3>
           <p className="form-hint">
-            Один прокси на строку. При сохранении список равномерно раздаётся по аккаунтам,
-            чтобы Telegram не видел все запросы с IP сервера.
-            Форматы: <code>host:port</code>, <code>host:port:user:pass</code>,{' '}
-            <code>socks5://user:pass@host:port</code>.
+            Список прокси и раздача по аккаунтам живут в менеджере аккаунтов. Здесь его не дублируем, чтобы сохранение настроек не затирало пул.
           </p>
-          {settings.proxy_count > 0 ? (
-            <p className="form-hint">
-              {settings.proxy_count} прокси на {settings.accounts_with_proxy || 0} аккаунтов
-              {Array.isArray(settings.proxy_distribution) && settings.proxy_distribution.length
-                ? ` — ${settings.proxy_distribution
-                    .map((item) => `${item.host}:${item.port} (${item.account_count})`)
-                    .join(', ')}`
-                : ''}
-              .
-            </p>
-          ) : (
-            <p className="form-hint">Пока нет прокси — аккаунты ходят с IP VPS.</p>
-          )}
-          <div className="form-group">
-            <label htmlFor="proxy_list_text">Список прокси</label>
-            <textarea
-              id="proxy_list_text"
-              name="proxy_list_text"
-              rows={8}
-              value={form.proxy_list_text || ''}
-              onChange={handleChange}
-              placeholder={'1.2.3.4:1080\n5.6.7.8:1080:user:pass\nsocks5://user:pass@9.8.7.6:1080'}
-            />
-          </div>
-          <div className="settings-actions">
-            <CustomFileButton
-              accept=".txt,text/plain"
-              onFile={async (file) => {
-                const text = await file.text();
-                setForm((prev) => ({ ...prev, proxy_list_text: text }));
-              }}
-            >
-              Загрузить .txt
-            </CustomFileButton>
-          </div>
+          <Link className="btn btn-outline" to={ubtModulePath(id, 'accounts')}>Пул прокси</Link>
         </div>
         )}
 
@@ -443,43 +410,12 @@ const CustomAutomationSettingsPage = () => {
           <div className="settings-section">
             <h3 className="settings-section-title">Прогрев аккаунтов</h3>
             <p className="form-hint">
-              1–3 юзернейма доверенных аккаунтов, которым новые сессии пишут мини-диалог на второй и третий день.
+              Доверенные юзернеймы и сценарий диалога задаются в подразделе «Прогрев».
               {form.account_warmup_enabled
-                ? ' Прогрев включён — следующие заливы идут в прогрев.'
-                : ' Прогрев ещё не включён: кнопка «Начать прогрев» в разделе Аккаунты.'}
+                ? ' Сейчас прогрев включён — следующие заливы идут в него.'
+                : ' Сейчас выключен — включить можно там же или кнопкой в менеджере аккаунтов.'}
             </p>
-            {[0, 1, 2].map((index) => (
-              <div key={`warmup-user-${index}`} className="form-group">
-                <label htmlFor={`warmup-user-${index}`}>Юзернейм {index + 1}</label>
-                <input
-                  id={`warmup-user-${index}`}
-                  type="text"
-                  value={(form.account_warmup_usernames || [])[index] || ''}
-                  onChange={(e) => {
-                    const next = [...(form.account_warmup_usernames || [])];
-                    next[index] = e.target.value;
-                    setForm((prev) => ({ ...prev, account_warmup_usernames: next }));
-                  }}
-                  placeholder="@username"
-                />
-              </div>
-            ))}
-            {[0, 1, 2].map((index) => (
-              <div key={`warmup-msg-${index}`} className="form-group">
-                <label htmlFor={`warmup-msg-${index}`}>Сообщение {index + 1}</label>
-                <input
-                  id={`warmup-msg-${index}`}
-                  type="text"
-                  value={(form.account_warmup_messages || [])[index] || ''}
-                  onChange={(e) => {
-                    const next = [...(form.account_warmup_messages || [])];
-                    next[index] = e.target.value;
-                    setForm((prev) => ({ ...prev, account_warmup_messages: next }));
-                  }}
-                  placeholder={index === 0 ? 'Привет' : index === 1 ? 'Как дела?' : 'Что нового?'}
-                />
-              </div>
-            ))}
+            <Link className="btn btn-outline" to={ubtModulePath(id, 'warmup')}>Открыть прогрев</Link>
           </div>
         ) : null}
 
@@ -489,14 +425,6 @@ const CustomAutomationSettingsPage = () => {
           </button>
         </div>
       </form>
-
-      <CustomAutomationIntegrationsBlock
-        automationId={id}
-        settings={settings}
-        onReloadSettings={loadSettings}
-        onError={setError}
-        onMessage={setSuccess}
-      />
 
       {isAdmin ? (
         <div className="settings-section">

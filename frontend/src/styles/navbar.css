@@ -113,7 +113,6 @@
 .navbar-link-button:hover::after {
   background-color: var(--color-text);
 }
-}
 
 .nav a.active::after {
   background-color: var(--color-primary);

@@ -10,7 +10,7 @@ const CONNECT_CLASSES = [
   { value: 'shilling', label: 'Шиллинг' },
 ];
 
-const CustomAccountConnectForm = ({ automationId, onConnected }) => {
+const CustomAccountConnectForm = ({ automationId, onConnected, hideTitle = false }) => {
   const [mode, setMode] = useState('qr');
   const [assignClass, setAssignClass] = useState('one_day');
   const [message, setMessage] = useState(null);
@@ -224,9 +224,13 @@ const CustomAccountConnectForm = ({ automationId, onConnected }) => {
   };
 
   return (
-    <section className="settings-section">
-      <h3 className="settings-section-title">Добавить аккаунт</h3>
-      <p className="form-hint">Как у ИИ-агента: QR или код по SMS. 2FA — если включена на аккаунте.</p>
+    <section className={hideTitle ? 'account-connect-form' : 'settings-section'}>
+      {hideTitle ? null : (
+        <>
+          <h3 className="settings-section-title">Добавить аккаунт</h3>
+          <p className="form-hint">Как у ИИ-агента: QR или код по SMS. 2FA — если включена на аккаунте.</p>
+        </>
+      )}
 
       {message ? <p className="crm-flash">{message}</p> : null}
       {error ? <p className="crm-flash crm-flash--error">{error}</p> : null}

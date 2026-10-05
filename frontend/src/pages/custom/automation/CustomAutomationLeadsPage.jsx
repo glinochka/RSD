@@ -52,7 +52,7 @@ const CustomAutomationLeadsPage = () => {
       setTotal(data.total || 0);
       setError(null);
     } catch (err) {
-      setError(err.message || 'Failed to load leads');
+      setError(err.message || 'Не удалось загрузить лиды');
     } finally {
       setIsLoading(false);
     }
@@ -70,7 +70,7 @@ const CustomAutomationLeadsPage = () => {
       setMessage('Статус обновлён');
       await loadLeads();
     } catch (err) {
-      setError(err.message || 'Failed to update status');
+      setError(err.message || 'Не удалось обновить статус');
     } finally {
       setUpdating((prev) => ({ ...prev, [leadId]: false }));
     }
@@ -86,7 +86,7 @@ const CustomAutomationLeadsPage = () => {
       setMessage('Лид передан');
       await loadLeads();
     } catch (err) {
-      setError(err.message || 'Failed to transfer lead');
+      setError(err.message || 'Не удалось передать лид');
     }
   };
 

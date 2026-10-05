@@ -10,8 +10,8 @@ const STATUSES = [
   { value: 'empty', label: 'Пусто' },
 ];
 
-const CustomBulkProfileForm = ({ automationId, onSuccess }) => {
-  const [isOpen, setIsOpen] = useState(false);
+const CustomBulkProfileForm = ({ automationId, onSuccess, embedded = false }) => {
+  const [isOpen, setIsOpen] = useState(embedded);
   const [form, setForm] = useState({
     status: 'loaded',
     bioTemplate: '',
@@ -61,13 +61,15 @@ const CustomBulkProfileForm = ({ automationId, onSuccess }) => {
   }
 
   return (
-    <div className="settings-section">
-      <div className="crm-item-header">
-        <h3 className="crm-item-title">Массовое обновление профилей</h3>
-        <button type="button" onClick={() => setIsOpen(false)} className="btn btn-outline">
-          Скрыть
-        </button>
-      </div>
+    <div className={embedded ? '' : 'settings-section'}>
+      {embedded ? null : (
+        <div className="crm-item-header">
+          <h3 className="crm-item-title">Массовое обновление профилей</h3>
+          <button type="button" onClick={() => setIsOpen(false)} className="btn btn-outline">
+            Скрыть
+          </button>
+        </div>
+      )}
 
       {message ? <p className="form-hint">{message}</p> : null}
       {error ? <p className="form-hint">{error}</p> : null}
@@ -117,9 +119,11 @@ const CustomBulkProfileForm = ({ automationId, onSuccess }) => {
           <button type="submit" disabled={isSubmitting} className="btn btn-black">
             {isSubmitting ? 'Отправка...' : 'Обновить профили'}
           </button>
-          <button type="button" onClick={() => setIsOpen(false)} className="btn btn-outline">
-            Отмена
-          </button>
+          {embedded ? null : (
+            <button type="button" onClick={() => setIsOpen(false)} className="btn btn-outline">
+              Отмена
+            </button>
+          )}
         </div>
       </form>
     </div>

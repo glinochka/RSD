@@ -23,6 +23,9 @@ from .chat_monitoring_service import scan_chats_and_process
 from .dmp_one_service import poll_pending_imports
 from .neurocommenting_service import run_lab_neurocommenting_pass, run_neurocommenting_pass
 from .discussion_service import run_discussion_pass
+from .masslooking_service import run_masslooking_pass
+from .masspriming_service import run_masspriming_pass
+from .chat_broadcast_service import run_chat_broadcast_pass
 from .amocrm_service import run_amocrm_sync_for_automation
 from .chat_discovery_service import run_pending_discovery_for_automation
 from .inbound_dm_service import run_inbound_dm_pass
@@ -77,6 +80,9 @@ class CustomAutomationScheduler:
             "neurocommenting": settings.CUSTOM_NEUROCOMMENTING_INTERVAL_SECONDS,
             "shilling": settings.CUSTOM_SHILLING_INTERVAL_SECONDS,
             "discussion": settings.CUSTOM_DISCUSSION_INTERVAL_SECONDS,
+            "masslooking": settings.CUSTOM_MASSLOOKING_INTERVAL_SECONDS,
+            "masspriming": settings.CUSTOM_MASSPRIMING_INTERVAL_SECONDS,
+            "chat_broadcast": settings.CUSTOM_CHAT_BROADCAST_INTERVAL_SECONDS,
             "lead_warmup": settings.CUSTOM_LEAD_WARMUP_INTERVAL_SECONDS,
             "inbound_dm": settings.CUSTOM_INBOUND_DM_INTERVAL_SECONDS,
             "account_warmup": settings.CUSTOM_ACCOUNT_WARMUP_INTERVAL_SECONDS,
@@ -100,6 +106,9 @@ class CustomAutomationScheduler:
             "neurocommenting": run_neurocommenting_pass,
             "shilling": run_shilling_pass,
             "discussion": run_discussion_pass,
+            "masslooking": run_masslooking_pass,
+            "masspriming": run_masspriming_pass,
+            "chat_broadcast": run_chat_broadcast_pass,
             "lead_warmup": run_lead_warmup_pass,
             "inbound_dm": run_inbound_dm_pass,
             "account_warmup": run_account_warmup_pass,
@@ -115,6 +124,12 @@ class CustomAutomationScheduler:
         }
 
     @staticmethod
+    @staticmethod
+    def _module_enabled(automation: CustomAutomation, key: str) -> bool:
+        blob = getattr(automation, "module_settings", None) or {}
+        return bool((blob.get(key) or {}).get("enabled"))
+
+    @staticmethod
     def _has_modules_on(automation: CustomAutomation) -> bool:
         return any(
             [
@@ -124,6 +139,11 @@ class CustomAutomationScheduler:
                 automation.is_dmp_one_enabled,
                 automation.is_amocrm_enabled,
                 automation.is_shilling_enabled,
+                CustomAutomationScheduler._module_enabled(automation, "masslooking"),
+                CustomAutomationScheduler._module_enabled(automation, "masspriming"),
+                CustomAutomationScheduler._module_enabled(automation, "chat_broadcasts"),
+                bool(getattr(automation, "account_warmup_enabled", False)),
+                CustomAutomationScheduler._module_enabled(automation, "warmup"),
             ]
         )
 
@@ -140,6 +160,17 @@ class CustomAutomationScheduler:
             return jobs
 
         jobs = {"join", "discovery", "account_warmup", "peer_dialog", "idle_browse", "mod_probe", "chat_rotation", "inbound_dm", "session_hygiene"}
+        wu = (getattr(automation, "module_settings", None) or {}).get("warmup") or {}
+        if isinstance(wu, dict):
+            if str(wu.get("mode") or "auto").strip().lower() == "manual":
+                jobs.discard("account_warmup")
+                jobs.discard("peer_dialog")
+                jobs.discard("idle_browse")
+            else:
+                if wu.get("do_warmup_dms") is False:
+                    jobs.discard("account_warmup")
+                if wu.get("do_peer_dialogs") is False:
+                    jobs.discard("peer_dialog")
         if (getattr(automation, "test_channel_username", None) or "").strip():
             jobs.add("test_watch")
         if automation.is_chat_monitoring_enabled:
@@ -150,6 +181,12 @@ class CustomAutomationScheduler:
             jobs.add("shilling")
         if automation.is_digital_footprint_enabled:
             jobs.add("discussion")
+        if CustomAutomationScheduler._module_enabled(automation, "masslooking"):
+            jobs.add("masslooking")
+        if CustomAutomationScheduler._module_enabled(automation, "masspriming"):
+            jobs.add("masspriming")
+        if CustomAutomationScheduler._module_enabled(automation, "chat_broadcasts"):
+            jobs.add("chat_broadcast")
         if automation.is_chat_monitoring_enabled or automation.is_dmp_one_enabled:
             jobs.add("lead_warmup")
         if automation.is_dmp_one_enabled:

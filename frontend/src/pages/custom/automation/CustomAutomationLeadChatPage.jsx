@@ -33,7 +33,7 @@ const CustomAutomationLeadChatPage = () => {
       setLead(data);
       setError(null);
     } catch (err) {
-      setError(err.message || 'Failed to load lead');
+      setError(err.message || 'Не удалось загрузить лид');
     }
   }, [id, leadId]);
 
@@ -43,7 +43,7 @@ const CustomAutomationLeadChatPage = () => {
       setMessages(data.items || []);
       setError(null);
     } catch (err) {
-      setError(err.message || 'Failed to load messages');
+      setError(err.message || 'Не удалось загрузить сообщения');
     }
   }, [id, leadId]);
 
@@ -65,7 +65,7 @@ const CustomAutomationLeadChatPage = () => {
       setMessage('Статус обновлён');
       await loadLead();
     } catch (err) {
-      setError(err.message || 'Failed to update status');
+      setError(err.message || 'Не удалось обновить статус');
     } finally {
       setUpdatingStatus(false);
     }
@@ -81,7 +81,7 @@ const CustomAutomationLeadChatPage = () => {
       setMessage('Лид передан');
       await loadLead();
     } catch (err) {
-      setError(err.message || 'Failed to transfer lead');
+      setError(err.message || 'Не удалось передать лид');
     }
   };
 

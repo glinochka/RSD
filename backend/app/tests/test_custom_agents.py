@@ -6849,3 +6849,1195 @@ class TestPeerDialogAndWarmupPacing:
             assert left.id != right.id
 
 
+class TestUbtJobsAndStats:
+    async def test_jobs_and_stats_endpoints(
+        self,
+        client: AsyncClient,
+        client_token: str,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from datetime import datetime, timedelta, timezone
+
+        from app.alembic.models import ChatJoinStatus, CustomJob
+        from app.services.account_pool_service import get_or_create_default_pool
+
+        headers = {"Authorization": f"Bearer {client_token}"}
+        jobs = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/jobs",
+            headers=headers,
+        )
+        assert jobs.status_code == 200
+        assert jobs.json()["items"] == []
+
+        empty = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/stats",
+            headers=headers,
+        )
+        assert empty.status_code == 200
+        body = empty.json()
+        assert body["dashboard"]["accounts"] == 0
+        assert body["dashboard"]["jobs"] == 0
+        assert "parsed" not in str(body).lower()
+        assert body["history"]["summary"]["neurocommenting"]["attempts"] == 0
+
+        pool = await get_or_create_default_pool(test_session, custom_automation.id)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number="+79990000321",
+            username="stats_acc",
+            display_name="Stats Acc",
+            account_class=AccountClass.TRUSTED.value,
+            encrypted_session="mock_encrypted_session",
+            session_file_path="sessions/stats_acc.session",
+            is_active=True,
+            is_banned=False,
+            telegram_proxy={"host": "1.1.1.1", "port": 1080},
+            account_age_days=12,
+        )
+        test_session.add(account)
+        await test_session.flush()
+        test_session.add(
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account.id,
+                assigned_class=AccountClass.TRUSTED.value,
+                custom_automation_id=custom_automation.id,
+            )
+        )
+        chat = ChatTarget(
+            custom_automation_id=custom_automation.id,
+            provider="telegram",
+            external_chat_id="-100321",
+            invite_link="https://t.me/stats_channel",
+            title="Stats Channel",
+            chat_type="channel",
+            mode="neurocommenting",
+            source="manual",
+            join_status=ChatJoinStatus.JOINED.value,
+            is_active=True,
+            comments_open=True,
+        )
+        test_session.add(chat)
+        await test_session.flush()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        for result in ("success", "success", "error"):
+            test_session.add(
+                AutomationActionLog(
+                    custom_automation_id=custom_automation.id,
+                    social_account_id=account.id,
+                    action_type="neurocommenting",
+                    target_id=f"{chat.id}:11",
+                    target_type="chat_post",
+                    result=result,
+                    payload={"chat_target_id": chat.id, "chat_title": chat.title, "text": "Комментарий"},
+                    created_at=now - timedelta(hours=1),
+                )
+            )
+        test_session.add(
+            CustomJob(
+                custom_automation_id=custom_automation.id,
+                category="module",
+                job_type="neurocommenting",
+                title="Нейрокомментинг",
+                status="completed",
+                params={},
+                result={},
+                logs=[],
+            )
+        )
+        await test_session.commit()
+
+        stats = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/stats?history_type=neurocommenting&min_attempts=1",
+            headers=headers,
+        )
+        assert stats.status_code == 200
+        payload = stats.json()
+        assert payload["dashboard"]["accounts"] == 1
+        assert payload["dashboard"]["chats"] == 1
+        assert payload["dashboard"]["jobs"] >= 1
+        assert payload["dashboard"]["comments"] == 2
+        assert payload["accounts"]["with_proxy"] == 1
+        assert payload["history"]["summary"]["neurocommenting"]["attempts"] == 3
+        assert payload["history"]["summary"]["neurocommenting"]["success"] == 2
+        assert payload["history"]["items"]
+        assert payload["history"]["whitelist"] or payload["history"]["generated_blacklist"]
+
+        listed = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/jobs",
+            headers=headers,
+        )
+        assert listed.status_code == 200
+        assert listed.json()["total"] >= 1
+
+        boxed = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/stats/blacklist",
+            headers=headers,
+            json={"query": "Stats Channel"},
+        )
+        assert boxed.status_code == 200
+        after = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/stats",
+            headers=headers,
+        )
+        assert after.status_code == 200
+        assert after.json()["history"]["blacklist"]
+
+
+class TestNeurocommentingModule:
+    async def test_module_screen_save_and_run_guard(
+        self,
+        client: AsyncClient,
+        client_token: str,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from app.alembic.models import ChatJoinStatus
+        from app.services.account_pool_service import get_or_create_default_pool
+        from app.services.custom.account_roles import default_roles_for_class
+
+        headers = {"Authorization": f"Bearer {client_token}"}
+        empty = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/modules/neurocommenting",
+            headers=headers,
+        )
+        assert empty.status_code == 200
+        body = empty.json()
+        assert body["enabled"] is False
+        assert body["settings"]["post_filter"] == "new"
+        assert "Аккаунты не выбраны" in body["issues"]
+
+        blocked = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/modules/neurocommenting/run",
+            headers=headers,
+            json=body["settings"],
+        )
+        assert blocked.status_code == 400
+
+        pool = await get_or_create_default_pool(test_session, custom_automation.id)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number="+79990000444",
+            username="nc_acc",
+            display_name="NC Acc",
+            account_class=AccountClass.TRUSTED.value,
+            encrypted_session="mock",
+            session_file_path="sessions/nc_acc.session",
+            is_active=True,
+            is_banned=False,
+        )
+        test_session.add(account)
+        await test_session.flush()
+        test_session.add(
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account.id,
+                assigned_class=AccountClass.TRUSTED.value,
+                custom_automation_id=custom_automation.id,
+                roles=default_roles_for_class(AccountClass.TRUSTED.value),
+            )
+        )
+        chat = ChatTarget(
+            custom_automation_id=custom_automation.id,
+            provider="telegram",
+            invite_link="https://t.me/nc_channel",
+            title="NC Channel",
+            chat_type="channel",
+            mode="neurocommenting",
+            source="manual",
+            join_status=ChatJoinStatus.JOINED.value,
+            is_active=True,
+            comments_open=True,
+        )
+        test_session.add(chat)
+        await test_session.commit()
+        await test_session.refresh(account)
+        await test_session.refresh(chat)
+
+        saved = await client.put(
+            f"/api/custom/automations/{custom_automation.id}/modules/neurocommenting",
+            headers=headers,
+            json={
+                "enabled": True,
+                "account_ids": [account.id],
+                "chat_ids": [chat.id],
+                "post_filter": "keywords",
+                "keywords": ["seo", "сайт"],
+                "probability": 80,
+                "min_words": 12,
+                "max_per_chat": 4,
+                "delay_before_min": 90,
+                "delay_before_max": 150,
+            },
+        )
+        assert saved.status_code == 200
+        payload = saved.json()
+        assert payload["enabled"] is True
+        assert payload["settings"]["account_ids"] == [account.id]
+        assert payload["settings"]["chat_ids"] == [chat.id]
+        assert payload["settings"]["keywords"] == ["seo", "сайт"]
+        assert payload["issues"] == []
+
+        started = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/modules/neurocommenting/run",
+            headers=headers,
+            json=payload["settings"] | {"enabled": True},
+        )
+        assert started.status_code == 200
+        assert started.json()["status"] == "started"
+        assert started.json()["job_id"].startswith("job:")
+
+
+class TestNeurochattingModule:
+    async def test_module_screen_save_and_run_guard(
+        self,
+        client: AsyncClient,
+        client_token: str,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from app.alembic.models import ChatJoinStatus
+        from app.services.account_pool_service import get_or_create_default_pool
+        from app.services.custom.account_roles import default_roles_for_class
+
+        headers = {"Authorization": f"Bearer {client_token}"}
+        empty = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/modules/neurochatting",
+            headers=headers,
+        )
+        assert empty.status_code == 200
+        body = empty.json()
+        assert body["enabled"] is False
+        assert body["settings"]["reply_mode"] == "interval"
+        assert body["settings"]["probability"] == 30
+        assert "Аккаунты не выбраны" in body["issues"]
+        assert "Группы не указаны" in body["issues"]
+
+        blocked = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/modules/neurochatting/run",
+            headers=headers,
+            json=body["settings"],
+        )
+        assert blocked.status_code == 400
+
+        pool = await get_or_create_default_pool(test_session, custom_automation.id)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number="+79990000555",
+            username="chat_acc",
+            display_name="Chat Acc",
+            account_class=AccountClass.TRUSTED.value,
+            encrypted_session="mock",
+            session_file_path="sessions/chat_acc.session",
+            is_active=True,
+            is_banned=False,
+        )
+        test_session.add(account)
+        await test_session.flush()
+        test_session.add(
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account.id,
+                assigned_class=AccountClass.TRUSTED.value,
+                custom_automation_id=custom_automation.id,
+                roles=default_roles_for_class(AccountClass.TRUSTED.value),
+            )
+        )
+        chat = ChatTarget(
+            custom_automation_id=custom_automation.id,
+            provider="telegram",
+            invite_link="https://t.me/chat_group",
+            title="Chat Group",
+            chat_type="supergroup",
+            mode="discussion",
+            source="manual",
+            join_status=ChatJoinStatus.JOINED.value,
+            is_active=True,
+        )
+        test_session.add(chat)
+        await test_session.commit()
+        await test_session.refresh(account)
+        await test_session.refresh(chat)
+
+        saved = await client.put(
+            f"/api/custom/automations/{custom_automation.id}/modules/neurochatting",
+            headers=headers,
+            json={
+                "enabled": True,
+                "account_ids": [account.id],
+                "chat_ids": [chat.id],
+                "reply_mode": "triggers",
+                "keywords": ["вопрос", "помощь"],
+                "probability": 40,
+                "max_per_chat": 2,
+                "only_joined": True,
+                "context_depth": 5,
+                "delay_before_min": 42,
+                "delay_before_max": 78,
+            },
+        )
+        assert saved.status_code == 200
+        payload = saved.json()
+        assert payload["enabled"] is True
+        assert payload["settings"]["account_ids"] == [account.id]
+        assert payload["settings"]["chat_ids"] == [chat.id]
+        assert payload["settings"]["keywords"] == ["вопрос", "помощь"]
+        assert payload["settings"]["only_joined"] is True
+        assert payload["issues"] == []
+
+        started = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/modules/neurochatting/run",
+            headers=headers,
+            json=payload["settings"] | {"enabled": True},
+        )
+        assert started.status_code == 200
+        assert started.json()["status"] == "started"
+        assert started.json()["job_id"].startswith("job:")
+
+
+class TestMasslookingModule:
+    async def test_module_screen_save_and_run_guard(
+        self,
+        client: AsyncClient,
+        client_token: str,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from app.services.account_pool_service import get_or_create_default_pool
+        from app.services.custom.account_roles import default_roles_for_class
+        from app.services.custom.masslooking_service import normalize_story_targets
+
+        assert normalize_story_targets("@ChannelName\nhttps://t.me/other\n+invitehash") == ["@channelname", "@other"]
+
+        headers = {"Authorization": f"Bearer {client_token}"}
+        empty = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/modules/masslooking",
+            headers=headers,
+        )
+        assert empty.status_code == 200
+        body = empty.json()
+        assert body["enabled"] is False
+        assert body["settings"]["view_feed"] is True
+        assert body["settings"]["max_per_hour"] == 30
+        assert "Выберите хотя бы один аккаунт" in body["issues"]
+
+        blocked = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/modules/masslooking/run",
+            headers=headers,
+            json=body["settings"],
+        )
+        assert blocked.status_code == 400
+
+        pool = await get_or_create_default_pool(test_session, custom_automation.id)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number="+79990000666",
+            username="look_acc",
+            display_name="Look Acc",
+            account_class=AccountClass.TRUSTED.value,
+            encrypted_session="mock",
+            session_file_path="sessions/look_acc.session",
+            is_active=True,
+            is_banned=False,
+        )
+        test_session.add(account)
+        await test_session.flush()
+        test_session.add(
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account.id,
+                assigned_class=AccountClass.TRUSTED.value,
+                custom_automation_id=custom_automation.id,
+                roles=default_roles_for_class(AccountClass.TRUSTED.value),
+            )
+        )
+        await test_session.commit()
+        await test_session.refresh(account)
+
+        saved = await client.put(
+            f"/api/custom/automations/{custom_automation.id}/modules/masslooking",
+            headers=headers,
+            json={
+                "enabled": True,
+                "account_ids": [account.id],
+                "targets": ["@demo_channel", "https://t.me/stories_user"],
+                "stories_limit": 10,
+                "max_per_account": 50,
+                "skip_seen": True,
+                "skip_hours": 24,
+                "view_feed": True,
+            },
+        )
+        assert saved.status_code == 200
+        payload = saved.json()
+        assert payload["enabled"] is True
+        assert payload["settings"]["account_ids"] == [account.id]
+        assert payload["settings"]["targets"] == ["@demo_channel", "@stories_user"]
+        assert payload["issues"] == []
+
+        started = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/modules/masslooking/run",
+            headers=headers,
+            json=payload["settings"] | {"enabled": True},
+        )
+        assert started.status_code == 200
+        assert started.json()["status"] == "started"
+        assert started.json()["job_id"].startswith("job:")
+
+
+class TestChatBroadcastsModule:
+    async def test_spintax_and_vars(self):
+        from types import SimpleNamespace
+
+        from app.services.custom.chat_broadcast_service import apply_spintax, fill_broadcast_vars, normalize_broadcast_messages
+
+        assert normalize_broadcast_messages(["  hello  ", {"text": "second"}, ""]) == [
+            {"text": "hello"},
+            {"text": "second"},
+        ]
+        spun = apply_spintax("{alpha|alpha}")
+        assert spun == "alpha"
+        chat = SimpleNamespace(title="Demo Group", invite_link="https://t.me/demo_group")
+        account = SimpleNamespace(display_name="Ivan Petrov", username="ivan")
+        filled = fill_broadcast_vars("Hi {group_title} from {my_first_name} @{group_username}", chat=chat, account=account)
+        assert filled == "Hi Demo Group from Ivan @demo_group"
+
+        from app.services.custom.scheduler_manager import CustomAutomationScheduler
+
+        jobs = CustomAutomationScheduler._enabled_jobs(
+            SimpleNamespace(
+                is_chat_monitoring_enabled=False,
+                is_neurocommenting_enabled=False,
+                is_digital_footprint_enabled=False,
+                is_dmp_one_enabled=False,
+                is_amocrm_enabled=False,
+                is_shilling_enabled=False,
+                module_settings={"chat_broadcasts": {"enabled": True}},
+            )
+        )
+        assert "chat_broadcast" in jobs
+        assert CustomAutomationScheduler._has_modules_on(
+            SimpleNamespace(
+                is_chat_monitoring_enabled=False,
+                is_neurocommenting_enabled=False,
+                is_digital_footprint_enabled=False,
+                is_dmp_one_enabled=False,
+                is_amocrm_enabled=False,
+                is_shilling_enabled=False,
+                module_settings={"chat_broadcasts": {"enabled": True}},
+            )
+        ) is True
+
+    async def test_module_screen_save_and_run_guard(
+        self,
+        client: AsyncClient,
+        client_token: str,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from app.alembic.models import ChatJoinStatus
+        from app.services.account_pool_service import get_or_create_default_pool
+        from app.services.custom.account_roles import default_roles_for_class
+
+        headers = {"Authorization": f"Bearer {client_token}"}
+        empty = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/modules/chat-broadcasts",
+            headers=headers,
+        )
+        assert empty.status_code == 200
+        body = empty.json()
+        assert body["enabled"] is False
+        assert body["settings"]["only_joined"] is True
+        assert body["settings"]["first_mode"] == "template"
+        assert body["settings"]["imitate_typing"] is True
+        assert "Выберите хотя бы один аккаунт" in body["issues"]
+        assert "Добавьте хотя бы одно сообщение в цепочку" in body["issues"]
+
+        blocked = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/modules/chat-broadcasts/run",
+            headers=headers,
+            json=body["settings"],
+        )
+        assert blocked.status_code == 400
+
+        rejected = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/modules/chat-broadcasts/groups",
+            headers=headers,
+            json={"links": "https://t.me/addlist/abc123"},
+        )
+        assert rejected.status_code == 200
+        assert any("addlist" in item.lower() for item in rejected.json().get("add_errors") or [])
+
+        pool = await get_or_create_default_pool(test_session, custom_automation.id)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number="+79990000777",
+            username="bc_acc",
+            display_name="Broadcast Acc",
+            account_class=AccountClass.TRUSTED.value,
+            encrypted_session="mock",
+            session_file_path="sessions/bc_acc.session",
+            is_active=True,
+            is_banned=False,
+        )
+        test_session.add(account)
+        await test_session.flush()
+        test_session.add(
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account.id,
+                assigned_class=AccountClass.TRUSTED.value,
+                custom_automation_id=custom_automation.id,
+                roles=default_roles_for_class(AccountClass.TRUSTED.value),
+            )
+        )
+        chat = ChatTarget(
+            custom_automation_id=custom_automation.id,
+            provider="telegram",
+            invite_link="https://t.me/bc_group",
+            title="Broadcast Group",
+            chat_type="supergroup",
+            mode="monitoring",
+            source="manual",
+            join_status=ChatJoinStatus.JOINED.value,
+            is_active=True,
+        )
+        test_session.add(chat)
+        await test_session.commit()
+        await test_session.refresh(account)
+        await test_session.refresh(chat)
+
+        saved = await client.put(
+            f"/api/custom/automations/{custom_automation.id}/modules/chat-broadcasts",
+            headers=headers,
+            json={
+                "enabled": True,
+                "account_ids": [account.id],
+                "chat_ids": [chat.id],
+                "only_joined": True,
+                "first_mode": "template",
+                "messages": [{"text": "Привет, {group_title}! {ок|хорошо}"}],
+                "skip_errors": True,
+                "skip_sent": True,
+                "imitate_typing": True,
+                "delay_group_min": 30,
+                "delay_group_max": 90,
+            },
+        )
+        assert saved.status_code == 200, saved.text
+        payload = saved.json()
+        assert payload["enabled"] is True
+        assert payload["settings"]["account_ids"] == [account.id]
+        assert payload["settings"]["messages"][0]["text"].startswith("Привет")
+        assert payload["issues"] == []
+
+        started = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/modules/chat-broadcasts/run",
+            headers=headers,
+            json=payload["settings"] | {"enabled": True},
+        )
+        assert started.status_code == 200
+        assert started.json()["status"] == "started"
+        assert started.json()["job_id"].startswith("job:")
+
+        preset = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/modules/chat-broadcasts/presets",
+            headers=headers,
+            json={"name": "Утро"},
+        )
+        assert preset.status_code == 200
+        assert any(item["name"] == "Утро" for item in preset.json()["settings"]["presets"])
+
+
+class TestNeuroshillingModule:
+    async def test_module_screen_save_and_run_guard(
+        self,
+        client: AsyncClient,
+        client_token: str,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from app.services.account_pool_service import get_or_create_default_pool
+        from app.services.custom.account_roles import SHILLING_ANSWER_ROLE, SHILLING_QUESTION_ROLE
+
+        headers = {"Authorization": f"Bearer {client_token}"}
+        empty = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/modules/neuroshilling",
+            headers=headers,
+        )
+        assert empty.status_code == 200
+        body = empty.json()
+        assert body["enabled"] is False
+        assert body["settings"]["chat_shilling"] is True
+        assert body["settings"]["post_shilling"] is True
+        assert body["settings"]["unique_messages"] is True
+        assert "Выберите хотя бы два аккаунта" in body["issues"]
+        assert "Модуль нейрошиллинга выключен" in body["issues"]
+        assert body["setup"]
+        assert body["reply"]
+
+        blocked = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/modules/neuroshilling/run",
+            headers=headers,
+            json=body["settings"],
+        )
+        assert blocked.status_code == 400
+
+        missing_topic = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/modules/neuroshilling/generate",
+            headers=headers,
+            json={"topic": ""},
+        )
+        assert missing_topic.status_code == 400
+
+        pool = await get_or_create_default_pool(test_session, custom_automation.id)
+        question = SocialAccount(
+            provider="telegram",
+            phone_number="+79990000881",
+            username="ns_q",
+            display_name="NS Question",
+            account_class=AccountClass.TRUSTED.value,
+            encrypted_session="mock",
+            session_file_path="sessions/ns_q.session",
+            is_active=True,
+            is_banned=False,
+        )
+        answer = SocialAccount(
+            provider="telegram",
+            phone_number="+79990000882",
+            username="ns_a",
+            display_name="NS Answer",
+            account_class=AccountClass.TRUSTED.value,
+            encrypted_session="mock",
+            session_file_path="sessions/ns_a.session",
+            is_active=True,
+            is_banned=False,
+        )
+        test_session.add_all([question, answer])
+        await test_session.flush()
+        test_session.add_all(
+            [
+                PoolAccount(
+                    account_pool_id=pool.id,
+                    social_account_id=question.id,
+                    assigned_class=AccountClass.TRUSTED.value,
+                    custom_automation_id=custom_automation.id,
+                    roles=[SHILLING_QUESTION_ROLE],
+                ),
+                PoolAccount(
+                    account_pool_id=pool.id,
+                    social_account_id=answer.id,
+                    assigned_class=AccountClass.TRUSTED.value,
+                    custom_automation_id=custom_automation.id,
+                    roles=[SHILLING_ANSWER_ROLE],
+                ),
+            ]
+        )
+        await test_session.commit()
+        await test_session.refresh(question)
+        await test_session.refresh(answer)
+
+        saved = await client.put(
+            f"/api/custom/automations/{custom_automation.id}/modules/neuroshilling",
+            headers=headers,
+            json={
+                "enabled": True,
+                "account_ids": [question.id, answer.id],
+                "chat_ids": [],
+                "channel_ids": [],
+                "chat_shilling": True,
+                "post_shilling": True,
+                "unique_messages": True,
+                "skip_fresh": False,
+                "delay_min": 8,
+                "delay_max": 25,
+                "setup": "Кто уже пробовал этот сервис?",
+                "reply": "Пользуюсь сам, в личке расскажу как заходил.",
+            },
+        )
+        assert saved.status_code == 200, saved.text
+        payload = saved.json()
+        assert payload["enabled"] is True
+        assert payload["settings"]["account_ids"] == [question.id, answer.id]
+        assert payload["settings"]["chat_ids"] == []
+        assert payload["setup"].startswith("Кто уже")
+        assert payload["issues"] == []
+
+        checked = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/modules/neuroshilling/check",
+            headers=headers,
+            json=payload["settings"] | {"enabled": True, "setup": payload["setup"], "reply": payload["reply"]},
+        )
+        assert checked.status_code == 200
+        assert checked.json()["check"]["ok"] is True
+        assert checked.json()["check"]["accounts"] == 2
+
+        started = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/modules/neuroshilling/run",
+            headers=headers,
+            json=payload["settings"] | {"enabled": True, "setup": payload["setup"], "reply": payload["reply"]},
+        )
+        assert started.status_code == 200
+        assert started.json()["status"] == "started"
+        assert started.json()["job_id"].startswith("job:")
+
+        preset = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/modules/neuroshilling/presets",
+            headers=headers,
+            json={"name": "Утро"},
+        )
+        assert preset.status_code == 200
+        assert any(item["name"] == "Утро" for item in preset.json()["settings"]["presets"])
+
+
+class TestWarmupModule:
+    async def test_module_screen_save_and_run_guard(
+        self,
+        client: AsyncClient,
+        client_token: str,
+        admin_token: str,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from types import SimpleNamespace
+
+        from app.services.account_pool_service import get_or_create_default_pool
+        from app.services.custom.account_roles import default_roles_for_class
+        from app.services.custom.scheduler_manager import CustomAutomationScheduler
+
+        headers = {"Authorization": f"Bearer {client_token}"}
+        admin = {"Authorization": f"Bearer {admin_token}"}
+        empty = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/modules/warmup",
+            headers=headers,
+        )
+        assert empty.status_code == 200
+        body = empty.json()
+        assert body["enabled"] is False
+        assert body["settings"]["mode"] == "auto"
+        assert body["settings"]["do_warmup_dms"] is True
+        assert body["usernames"] == []
+        assert "Прогрев выключен" in body["issues"]
+
+        blocked = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/modules/warmup/run",
+            headers=headers,
+            json=body["settings"],
+        )
+        assert blocked.status_code == 400
+
+        jobs = CustomAutomationScheduler._enabled_jobs(
+            SimpleNamespace(
+                is_chat_monitoring_enabled=False,
+                is_neurocommenting_enabled=False,
+                is_digital_footprint_enabled=False,
+                is_dmp_one_enabled=False,
+                is_amocrm_enabled=False,
+                is_shilling_enabled=False,
+                test_channel_username="",
+                telegram_bot_token_enc="",
+                module_settings={"warmup": {"mode": "manual"}},
+            )
+        )
+        assert "account_warmup" not in jobs
+        assert "idle_browse" not in jobs
+        assert "peer_dialog" not in jobs
+
+        pool = await get_or_create_default_pool(test_session, custom_automation.id)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number="+79990000991",
+            username="wu_acc",
+            display_name="Warmup Acc",
+            account_class=AccountClass.TRUSTED.value,
+            encrypted_session="mock",
+            session_file_path="sessions/wu_acc.session",
+            is_active=True,
+            is_banned=False,
+        )
+        test_session.add(account)
+        await test_session.flush()
+        test_session.add(
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account.id,
+                assigned_class=AccountClass.TRUSTED.value,
+                custom_automation_id=custom_automation.id,
+                roles=default_roles_for_class(AccountClass.TRUSTED.value),
+            )
+        )
+        await test_session.commit()
+        await test_session.refresh(account)
+
+        saved = await client.put(
+            f"/api/custom/automations/{custom_automation.id}/modules/warmup",
+            headers=headers,
+            json={
+                "enabled": True,
+                "account_ids": [account.id],
+                "mode": "auto",
+                "do_peer_dialogs": False,
+                "session_minutes": 4,
+                "usernames": ["hacked_peer"],
+            },
+        )
+        assert saved.status_code == 200, saved.text
+        payload = saved.json()
+        assert payload["enabled"] is True
+        assert payload["settings"]["account_ids"] == [account.id]
+        assert payload["settings"]["session_minutes"] == 4
+        assert payload["settings"]["do_peer_dialogs"] is False
+        assert payload["usernames"] == []
+        assert payload["issues"] == []
+
+        admin_saved = await client.put(
+            f"/api/custom/automations/{custom_automation.id}/modules/warmup",
+            headers=admin,
+            json={
+                "enabled": True,
+                "account_ids": [account.id],
+                "usernames": ["trusted_peer"],
+                "messages": ["Привет", "Как дела?", "Что нового?"],
+            },
+        )
+        assert admin_saved.status_code == 200
+        assert admin_saved.json()["usernames"] == ["trusted_peer"]
+
+        client_view = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/modules/warmup",
+            headers=headers,
+        )
+        assert client_view.json()["usernames"] == []
+        assert client_view.json()["username_count"] == 1
+
+        started = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/modules/warmup/run",
+            headers=headers,
+            json=payload["settings"] | {"enabled": True},
+        )
+        assert started.status_code == 200
+        assert started.json()["status"] == "started"
+        assert started.json()["job_id"].startswith("job:")
+
+        preset = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/modules/warmup/presets",
+            headers=headers,
+            json={"name": "Утро"},
+        )
+        assert preset.status_code == 200
+        assert any(item["name"] == "Утро" for item in preset.json()["settings"]["presets"])
+
+
+class TestMassprimingModule:
+    async def test_toggle_ttl_never_sends_text(self):
+        from types import SimpleNamespace
+
+        from telethon.tl.functions.contacts import AddContactRequest
+        from telethon.tl.functions.messages import SetHistoryTTLRequest
+
+        from app.services.custom.masspriming_service import (
+            is_primeable_user,
+            normalize_prime_targets,
+            prime_peer,
+        )
+
+        assert normalize_prime_targets("@Alice\nhttps://t.me/otheruser\n+79991234567\nhttps://t.me/+invitehash") == [
+            "@alice",
+            "@otheruser",
+        ]
+        assert is_primeable_user(SimpleNamespace(bot=False, deleted=False, is_self=False, broadcast=False)) is True
+        assert is_primeable_user(SimpleNamespace(bot=True, deleted=False, is_self=False, broadcast=False)) is False
+        assert is_primeable_user(SimpleNamespace(broadcast=True, megagroup=False, bot=False)) is False
+
+        class FakeTelethon:
+            def __init__(self):
+                self.calls = []
+
+            async def __call__(self, request):
+                self.calls.append(request)
+                return True
+
+        async def no_sleep(_delay=0):
+            return None
+
+        entity = SimpleNamespace(first_name="Ivan", last_name="", contact=False, bot=False, username="target")
+        client = FakeTelethon()
+        result = await prime_peer(
+            client,
+            entity,
+            add_contact_flag=True,
+            ttl_mode="toggle",
+            ttl_period=86400,
+            sleeper=no_sleep,
+        )
+        assert result["ttl_mode"] == "toggle"
+        assert result["contact"] in {"added", "skipped"}
+        assert any(isinstance(item, AddContactRequest) for item in client.calls)
+        periods = [item.period for item in client.calls if isinstance(item, SetHistoryTTLRequest)]
+        assert periods == [86400, 0]
+        assert not any("Send" in type(item).__name__ or "send" in type(item).__name__.lower() for item in client.calls)
+
+    async def test_module_screen_save_and_run_guard(
+        self,
+        client: AsyncClient,
+        client_token: str,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from types import SimpleNamespace
+
+        from app.services.account_pool_service import get_or_create_default_pool
+        from app.services.custom.account_roles import default_roles_for_class
+        from app.services.custom.scheduler_manager import CustomAutomationScheduler
+
+        headers = {"Authorization": f"Bearer {client_token}"}
+        empty = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/modules/masspriming",
+            headers=headers,
+        )
+        assert empty.status_code == 200
+        body = empty.json()
+        assert body["enabled"] is False
+        assert body["settings"]["add_contact"] is True
+        assert body["settings"]["ttl_mode"] == "toggle"
+        assert body["settings"]["max_per_hour"] == 8
+        assert "Выберите хотя бы один аккаунт" in body["issues"]
+        assert "Добавьте хотя бы один @username" in body["issues"]
+
+        blocked = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/modules/masspriming/run",
+            headers=headers,
+            json=body["settings"],
+        )
+        assert blocked.status_code == 400
+
+        jobs = CustomAutomationScheduler._enabled_jobs(
+            SimpleNamespace(
+                is_chat_monitoring_enabled=False,
+                is_neurocommenting_enabled=False,
+                is_digital_footprint_enabled=False,
+                is_dmp_one_enabled=False,
+                is_amocrm_enabled=False,
+                is_shilling_enabled=False,
+                test_channel_username="",
+                telegram_bot_token_enc="",
+                module_settings={"masspriming": {"enabled": True}},
+            )
+        )
+        assert "masspriming" in jobs
+
+        pool = await get_or_create_default_pool(test_session, custom_automation.id)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number="+79990000771",
+            username="prime_acc",
+            display_name="Prime Acc",
+            account_class=AccountClass.TRUSTED.value,
+            encrypted_session="mock",
+            session_file_path="sessions/prime_acc.session",
+            is_active=True,
+            is_banned=False,
+        )
+        test_session.add(account)
+        await test_session.flush()
+        test_session.add(
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account.id,
+                assigned_class=AccountClass.TRUSTED.value,
+                custom_automation_id=custom_automation.id,
+                roles=default_roles_for_class(AccountClass.TRUSTED.value),
+            )
+        )
+        await test_session.commit()
+        await test_session.refresh(account)
+
+        saved = await client.put(
+            f"/api/custom/automations/{custom_automation.id}/modules/masspriming",
+            headers=headers,
+            json={
+                "enabled": True,
+                "account_ids": [account.id],
+                "targets": ["@demo_user", "https://t.me/prime_target", "+79990000000"],
+                "add_contact": True,
+                "ttl_mode": "toggle",
+                "skip_seen": True,
+                "skip_hours": 48,
+                "max_per_account": 12,
+            },
+        )
+        assert saved.status_code == 200, saved.text
+        payload = saved.json()
+        assert payload["enabled"] is True
+        assert payload["settings"]["account_ids"] == [account.id]
+        assert payload["settings"]["targets"] == ["@demo_user", "@prime_target"]
+        assert payload["issues"] == []
+
+        started = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/modules/masspriming/run",
+            headers=headers,
+            json=payload["settings"] | {"enabled": True},
+        )
+        assert started.status_code == 200
+        assert started.json()["status"] == "started"
+        assert started.json()["job_id"].startswith("job:")
+
+        preset = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/modules/masspriming/presets",
+            headers=headers,
+            json={"name": "Вечер"},
+        )
+        assert preset.status_code == 200
+        assert any(item["name"] == "Вечер" for item in preset.json()["settings"]["presets"])
+
+
+class TestParserModule:
+    async def test_filters_and_message_window(self):
+        from datetime import datetime, timedelta
+        from types import SimpleNamespace
+
+        from app.services.custom.parser_module_service import file_to_import_payload
+        from app.services.custom.parser_service import (
+            collect_authors_from_messages,
+            describe_user,
+            normalize_parser_targets,
+            user_passes_filters,
+        )
+        from app.services.custom.scheduler_manager import CustomAutomationScheduler
+
+        refs = normalize_parser_targets("@DemoGroup\nhttps://t.me/othergroup\n-1001234567890")
+        assert "https://t.me/demogroup" in refs
+        assert "https://t.me/othergroup" in refs
+        assert any("1234567890" in item for item in refs)
+
+        bot = describe_user(SimpleNamespace(id=1, bot=True, deleted=False, username="helper_bot", photo=None, premium=False, scam=False, fake=False, is_self=False, first_name="Bot"))
+        person = describe_user(SimpleNamespace(id=2, bot=False, deleted=False, username="ivan", photo=object(), premium=True, scam=False, fake=False, is_self=False, first_name="Ivan"))
+        assert user_passes_filters(bot, skip_bots=True) is False
+        assert user_passes_filters(person, skip_bots=True, only_username=True, only_photo=True) is True
+        assert user_passes_filters(person, only_premium=True) is True
+
+        now = datetime.utcnow()
+        messages = [
+            SimpleNamespace(date=now, sender=SimpleNamespace(id=2, bot=False, deleted=False, username="ivan", photo=object(), premium=False, scam=False, fake=False, is_self=False, first_name="Ivan", last_name="")),
+            SimpleNamespace(date=now - timedelta(days=10), sender=SimpleNamespace(id=3, bot=False, deleted=False, username="old", photo=None, premium=False, scam=False, fake=False, is_self=False, first_name="Old", last_name="")),
+        ]
+        collected = collect_authors_from_messages(messages, since=now - timedelta(hours=24), member_limit=1000)
+        assert [item["telegram_user_id"] for item in collected] == [2]
+
+        name, payload = file_to_import_payload("seo_chats.txt", b"@DemoGroup\nhttps://t.me/othergroup\n")
+        assert name.endswith(".csv")
+        assert b"invite_link" in payload
+
+        jobs = CustomAutomationScheduler._enabled_jobs(
+            SimpleNamespace(
+                is_chat_monitoring_enabled=False,
+                is_neurocommenting_enabled=False,
+                is_digital_footprint_enabled=False,
+                is_dmp_one_enabled=False,
+                is_amocrm_enabled=False,
+                is_shilling_enabled=False,
+                test_channel_username="",
+                telegram_bot_token_enc="",
+                module_settings={"parser": {"enabled": True}},
+            )
+        )
+        assert "parser" not in jobs
+
+    async def test_module_screen_save_import_and_run_guard(
+        self,
+        client: AsyncClient,
+        client_token: str,
+        test_session: AsyncSession,
+        custom_automation: CustomAutomation,
+    ):
+        from app.services.account_pool_service import get_or_create_default_pool
+        from app.services.custom.account_roles import default_roles_for_class
+
+        headers = {"Authorization": f"Bearer {client_token}"}
+        empty = await client.get(
+            f"/api/custom/automations/{custom_automation.id}/modules/parser",
+            headers=headers,
+        )
+        assert empty.status_code == 200
+        body = empty.json()
+        assert body["enabled"] is False
+        assert body["settings"]["source"] == "messages"
+        assert body["settings"]["skip_bots"] is True
+        assert "Выберите хотя бы один аккаунт" in body["issues"]
+        assert "Добавьте чаты" in "".join(body["issues"])
+
+        blocked = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/modules/parser/run",
+            headers=headers,
+            json=body["settings"],
+        )
+        assert blocked.status_code == 400
+
+        pool = await get_or_create_default_pool(test_session, custom_automation.id)
+        account = SocialAccount(
+            provider="telegram",
+            phone_number="+79990000881",
+            username="parser_acc",
+            display_name="Parser Acc",
+            account_class=AccountClass.TRUSTED.value,
+            encrypted_session="mock",
+            session_file_path="sessions/parser_acc.session",
+            is_active=True,
+            is_banned=False,
+        )
+        test_session.add(account)
+        await test_session.flush()
+        test_session.add(
+            PoolAccount(
+                account_pool_id=pool.id,
+                social_account_id=account.id,
+                assigned_class=AccountClass.TRUSTED.value,
+                custom_automation_id=custom_automation.id,
+                roles=default_roles_for_class(AccountClass.TRUSTED.value),
+            )
+        )
+        await test_session.commit()
+        await test_session.refresh(account)
+
+        imported = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/modules/parser/import",
+            headers=headers,
+            files={"archive": ("seo_chats.txt", b"@DemoGroupName\nhttps://t.me/othergroupname\n", "text/plain")},
+        )
+        assert imported.status_code == 200, imported.text
+        imported_body = imported.json()
+        assert imported_body["import_job"]["processed_rows"] >= 1
+        assert imported_body["folders"]
+        assert imported_body["settings"]["folder_ids"]
+
+        saved = await client.put(
+            f"/api/custom/automations/{custom_automation.id}/modules/parser",
+            headers=headers,
+            json={
+                "enabled": True,
+                "account_ids": [account.id],
+                "folder_ids": imported_body["settings"]["folder_ids"],
+                "chat_ids": imported_body["settings"]["chat_ids"],
+                "targets": ["@DemoGroupName"],
+                "source": "messages",
+                "since_hours": 24,
+                "member_limit": 500,
+                "do_join": True,
+            },
+        )
+        assert saved.status_code == 200, saved.text
+        payload = saved.json()
+        assert payload["enabled"] is True
+        assert payload["settings"]["account_ids"] == [account.id]
+        assert payload["issues"] == []
+
+        started = await client.post(
+            f"/api/custom/automations/{custom_automation.id}/modules/parser/run",
+            headers=headers,
+            json=payload["settings"] | {"enabled": True},
+        )
+        assert started.status_code == 200
+        assert started.json()["status"] == "started"
+        assert started.json()["job_id"].startswith("job:")
+

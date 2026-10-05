@@ -96,18 +96,32 @@ async def run_idle_browse_pass(automation_id: int) -> dict[str, Any]:
         automation = await session.get(CustomAutomation, automation_id)
         if not automation:
             return {"status": "skipped", "reason": "automation_not_found"}
+        from .warmup_module_service import account_allowed, runtime_warmup_cfg, session_action_allowlist
 
-        rows = await _eligible_accounts(session, automation_id)
+        cfg = runtime_warmup_cfg(automation)
+        rows = [
+            (pool_account, social)
+            for pool_account, social in await _eligible_accounts(session, automation_id)
+            if account_allowed(cfg, social.id)
+        ]
         if not rows:
             return {"browsed": 0, "errors": 0}
 
         sample = rows if len(rows) <= ACCOUNTS_PER_PASS else random.sample(rows, ACCOUNTS_PER_PASS)
+        intensity = None if cfg.get("intensity") in (None, "auto") else cfg.get("intensity")
+        allow = session_action_allowlist(cfg)
         for pool_account, social in sample:
             try:
                 policy = await load_comment_contact_policy(session, social)
                 async with TelegramAccountClient.for_account(social) as client:
                     outcome = await run_humanization_session(
-                        client, social, lab_mode=False, contact_policy=policy
+                        client,
+                        social,
+                        lab_mode=False,
+                        contact_policy=policy,
+                        allowed_actions=allow,
+                        intensity=intensity,
+                        session_minutes=int(cfg.get("session_minutes") or 0),
                     )
                 contact = outcome.get("comment_contact")
                 if isinstance(contact, dict) and contact.get("status"):

@@ -18,6 +18,11 @@ const ACTION_FILTERS = [
   { value: 'lead_warmup', label: 'Прогрев лида' },
   { value: 'inbound_dm', label: 'Входящее ЛС' },
   { value: 'discussion', label: 'Цифровой след' },
+  { value: 'masslooking', label: 'Масслукинг' },
+  { value: 'chat_broadcast', label: 'Чат-рассылки' },
+  { value: 'account_warmup', label: 'Прогрев аккаунтов' },
+  { value: 'masspriming', label: 'Масспрайминг' },
+  { value: 'parser', label: 'Парсер' },
 ];
 
 const PAGE_SIZE = 50;

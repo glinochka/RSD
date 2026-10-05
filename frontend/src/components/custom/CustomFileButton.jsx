@@ -16,7 +16,11 @@ const CustomFileButton = ({
   const inputId = id || autoId;
   const inputRef = useRef(null);
   const isDisabled = Boolean(disabled || busy);
-  const btnClass = variant === 'black' ? 'btn btn-black' : 'btn btn-outline';
+  const btnClass = variant === 'ubt'
+    ? 'acc-btn acc-btn--ghost'
+    : variant === 'black'
+      ? 'btn btn-black'
+      : 'btn btn-outline';
 
   return (
     <span className={`custom-file-btn ${className}`.trim()}>
